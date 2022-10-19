@@ -1,7 +1,7 @@
 {
   "github_fulltag": "true",
   "last_update": "15-10-2022",
-  "repository": "ChristoffBo/Hassio",
+  "repository": "ChristoffBo/homeassistant",
   "slug": "lidarr",
   "source": "github",
   "upstream_repo": "linuxserver/docker-lidarr",
