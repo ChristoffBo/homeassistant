@@ -1,0 +1,8 @@
+{
+  "last_update": "15-10-2022",
+  "repository": "ChristoffBo/Hassio",
+  "slug": "bazarr",
+  "source": "github",
+  "upstream_repo": "linuxserver/docker-bazarr",
+  "upstream_version": "1.1.2"
+}
