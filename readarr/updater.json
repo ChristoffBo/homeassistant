@@ -2,7 +2,7 @@
   "github_beta": "true",
   "github_fulltag": "true",
   "last_update": "27-09-2022",
-  "repository": "ChristoffBo/Hassio",
+  "repository": "ChristoffBo/homeassistant",
   "slug": "readarr",
   "source": "github",
   "upstream_repo": "linuxserver/docker-readarr",
