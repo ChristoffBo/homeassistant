@@ -1,0 +1,8 @@
+{
+  "last_update": "27-09-2022",
+  "repository": "ChristoffBo/Hassio",
+  "slug": "radarr",
+  "source": "github",
+  "upstream_repo": "linuxserver/docker-radarr",
+  "upstream_version": "4.2.4.6635"
+}
