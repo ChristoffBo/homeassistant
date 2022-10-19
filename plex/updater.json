@@ -1,7 +1,7 @@
 {
   "github_fulltag": "true",
   "last_update": "29-09-2022",
-  "repository": "ChristoffBo/Hassio",
+  "repository": "ChristoffBo/homeassistant",
   "slug": "plex",
   "source": "github",
   "upstream_repo": "linuxserver/docker-plex",
