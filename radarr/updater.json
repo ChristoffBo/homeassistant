@@ -1,6 +1,6 @@
 {
   "last_update": "27-09-2022",
-  "repository": "ChristoffBo/Hassio",
+  "repository": "ChristoffBo/homeassistant",
   "slug": "radarr",
   "source": "github",
   "upstream_repo": "linuxserver/docker-radarr",
