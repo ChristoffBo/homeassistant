@@ -2,7 +2,7 @@
   "github_beta": "true",
   "github_fulltag": "true",
   "last_update": "11-10-2022",
-  "repository": "ChristoffBo/Hassio",
+  "repository": "ChristoffBo/homeassistant",
   "slug": "prowlarr",
   "source": "github",
   "upstream_repo": "linuxserver/docker-prowlarr",
