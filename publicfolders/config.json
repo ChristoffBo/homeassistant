@@ -1,0 +1,43 @@
+{
+  "init": false,
+  "slug": "public_folders",
+  "name": "Public Folders",
+  "version": "V1.0.0",
+  "description": "Server files on http.",
+  "arch":
+  [
+    "armhf",
+    "armv7",
+    "aarch64",
+    "amd64",
+    "i386"
+  ],
+  "startup": "services",
+  "boot": "auto",
+  "map":
+  [
+    "media:ro"
+  ],
+  "ports":
+  {
+    "8080/tcp": 8080
+  },
+  "ports_description":
+  {
+    "8080/tcp": "Port to serve files on."
+  },
+  "options":
+  {
+    "folders":
+    [
+      "media:/media"
+    ]
+  },
+  "schema":
+  {
+    "folders":
+    [
+      "str"
+    ]
+  }
+}

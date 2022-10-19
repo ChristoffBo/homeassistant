@@ -1,0 +1,10 @@
+{
+    "name": "public_folders",
+    "version": "1.0.0",
+    "description": "Public Folders",
+    "author": "Rusketh",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js"
+    }
+}
