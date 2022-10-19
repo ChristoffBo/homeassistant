@@ -3,6 +3,6 @@
   "repository": "ChristoffBo/Hassio",
   "slug": "flaresolverr",
   "source": "github",
-  "upstream_repo": "FlareSolverr/FlareSolverr",
+  "upstream_repo": "ChristoffBo/homeassistant",
   "upstream_version": "2.2.9"
 }
