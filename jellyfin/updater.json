@@ -1,7 +1,7 @@
 {
   "github_fulltag": "true",
   "last_update": "13-10-2022",
-  "repository": "ChristoffBo/Hassio",
+  "repository": "ChristoffBo/homeassistant",
   "slug": "jellyfin",
   "source": "github",
   "upstream_repo": "linuxserver/docker-jellyfin",
