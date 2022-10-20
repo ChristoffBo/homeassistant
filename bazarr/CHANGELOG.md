@@ -1,5 +1,5 @@
 
-## 1.1.2 (15-10-2022)
+## 1.1.2 (18-10-2022)
 - Update to latest version from linuxserver/docker-bazarr
 - New feature : localdisks mounting added
 
