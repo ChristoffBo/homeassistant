@@ -1,4 +1,4 @@
-ARG BUILD_FROM=linuxserver/heimdall:arm32v7-v2.4.10-ls166
+ARG BUILD_FROM=linuxserver/heimdall:amd64-v2.4.10-ls166
 # hadolint ignore=DL3006
 FROM $BUILD_FROM
 
