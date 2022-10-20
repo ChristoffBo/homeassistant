@@ -28,4 +28,15 @@
   "host_network": true,
   "auth_api": false,
   "hassio_api": false
+   ],
+  "webui": "http://[HOST]:[PORT:82]",
+  "boot": "auto",
+  "options": {
+    "PUID": 1001,
+    "PGID": 1001
+  },
+  "schema": {
+    "PUID": "int",
+    "PGID": "int",
+    "TZ": "str?"
 }
