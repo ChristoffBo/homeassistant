@@ -1,7 +1,7 @@
 {
   "image": "smeagolworms4/mqtt-explorer",
   "name": "MQTT Explorer",
-  "version": "1.0.0",
+  "version": "browser-1.0.1",
   "slug": "mqtt-explorer",
   "description": "An all-round MQTT client that provides a structured topic overview.",
   "arch": [
