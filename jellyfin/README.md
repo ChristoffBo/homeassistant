@@ -1,3 +1,4 @@
+## &#9888; Open Request : [✨ [REQUEST] Jellyfin database location (opened 2022-10-18)](https://github.com/alexbelgium/hassio-addons/issues/514) by [@basziee](https://github.com/basziee)
 # Home assistant add-on: jellyfin
 
 [![Donate][donation-badge]](https://www.buymeacoffee.com/alexbelgium)
@@ -14,7 +15,7 @@
 
 _Thanks to everyone having starred my repo! To star it click on the image below, then it will be on top right. Thanks!_
 
-[![Stargazers repo roster for @alexbelgium/hassio-addons](https://reporoster.com/stars/dark/alexbelgium/hassio-addons)](https://github.com/alexbelgium/hassio-addons/stargazers)
+
 [![Stargazers repo roster for @alexbelgium/hassio-addons](https://git-lister.onrender.com/api/stars/alexbelgium/hassio-addons?limit=30)](https://github.com/alexbelgium/hassio-addons/stargazers)
 
 ## About
