@@ -1,3 +1,6 @@
+
+## v2.4.13 (20-10-2022)
+- Update to latest version from linuxserver/heimdall
 ## 0.2.0
 
  - Update heimdall to 2.4.10 (linuxserver/heimdall:v2.4.10-ls166)
