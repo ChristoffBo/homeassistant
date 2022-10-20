@@ -40,5 +40,5 @@
     "TZ": "str?"
   },
   "environment": {},
-  "image": "ghcr.io/hassio-addons/base:12.2.4-{arch}"
+  "image": "petersendev/hassio-heimdall-{arch}"
 }
