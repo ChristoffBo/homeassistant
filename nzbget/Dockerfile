@@ -27,8 +27,12 @@ ENV S6_CMD_WAIT_FOR_SERVICES=1 \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 \
     S6_SERVICES_GRACETIME=0
 
+RUN \
+    # Specific modifications
+    sed -i '1a mkdir -p /config/addons_config/nzbget' /etc/cont-init.d/10-adduser
+
 # Global LSIO modifications
-ARG CONFIGLOCATION="/config/addons_config/prowlarr"
+ARG CONFIGLOCATION="/config/addons_config/nzbget"
 # hadolint ignore=SC2015, SC2013
 RUN \
     # Avoid custom-init.d duplications
@@ -50,7 +54,7 @@ RUN \
 # 3 Install apps #
 ##################
 
-# Add rootfs
+# Copy local files
 COPY rootfs/ /
 
 # Corrects permissions for s6 v3
@@ -70,10 +74,7 @@ RUN if ! command -v bash >/dev/null 2>/dev/null; then (apt-get update && apt-get
     && chmod -R 755 /etc/cont-init.d || printf '%s\n' "${MODULES}" >/MODULESFILE
 
 # Manual apps
-ENV PACKAGES="jq \
-    curl \
-    cifs-utils \
-    keyutils"
+ENV PACKAGES="nginx"
 
 # Automatic apps & bashio
 # hadolint ignore=SC2015
@@ -93,7 +94,6 @@ RUN if ! command -v bash >/dev/null 2>/dev/null; then (apt-get update && apt-get
 #WORKDIR /
 #ENTRYPOINT [ "/usr/bin/env" ]
 #CMD [ "/entrypoint.sh" ]
-#SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ############
 # 5 Labels #
