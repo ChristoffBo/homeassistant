@@ -3,6 +3,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "technitium-dns",
   "source": "github",
-  "upstream_repo": "https://github.com/hassio-addons/addon-debian-base",
+  "upstream_repo": "ghcr.io/hassio-addons/base/",
   "upstream_version": "6.1.2"
 }
