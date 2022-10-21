@@ -39,7 +39,7 @@
     "5380/tcp": "DNS web console",
     "8053/tcp": "DNS-over-HTTPS using reverse proxy"
   },
-  "host_network": true,
+  "host_network": false,
   "auth_api": false,
   "hassio_api": false
 }
