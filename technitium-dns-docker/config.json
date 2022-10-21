@@ -1,6 +1,6 @@
 {
   "name": "Technitium DNS Docker",
-  "version": "9.2",
+  "version": "9.1",
   "slug": "technitium-dns-Docker",
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/help.html#introduction",
