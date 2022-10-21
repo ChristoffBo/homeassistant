@@ -1,4 +1,4 @@
-FROM technitium/dns-server:9.1
+FROM technitium/dns-server:latest
 
 
 
