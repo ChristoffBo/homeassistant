@@ -3,6 +3,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "samba_backup",
   "source": "github",
-  "upstream_repo": "https://github.com/hassio-addons/base",
+  "upstream_repo": "https://github.com/hassio-addons/addon-base",
   "upstream_version": "6.1.1"
 }
