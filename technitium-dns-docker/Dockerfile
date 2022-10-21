@@ -1,4 +1,4 @@
-FROM=https://hub.docker.com/r/technitium/dns-server:9.1
+FROM https://hub.docker.com/r/technitium/dns-server:9.1
 
 
 
