@@ -1,0 +1,11 @@
+{
+  "build_from": {
+    "aarch64": "technitium/dns-server:9.1",
+    "amd64": "technitium/dns-server:9.1",
+    "armv7": "technitium/dns-server:9.1"
+  },
+  "codenotary": {
+    "base_image": "codenotary@frenck.dev",
+    "signer": "codenotary@frenck.dev"
+  }
+}
