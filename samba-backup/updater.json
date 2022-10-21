@@ -1,8 +1,0 @@
-{
-  "last_update": "21-10-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "samba_backup",
-  "source": "github",
-  "upstream_repo": "https://github.com/hassio-addons/addon-debian-base",
-  "upstream_version": "6.1.2"
-}
