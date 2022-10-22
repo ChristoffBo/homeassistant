@@ -5,5 +5,5 @@
   "slug": "plex",
   "source": "github",
   "upstream_repo": "linuxserver/docker-plex",
-  "upstream_version": "1.29.1.6316-f4cdfea9c-ls139"
+  "upstream_version": "1.29.1.6316-f4cdfea9c-ls140"
 }
