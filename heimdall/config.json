@@ -38,4 +38,7 @@
     "PUID": "int",
     "PGID": "int",
     "TZ": "str?"
+  },
+  "environment": {},
+  "image": "petersendev/hassio-heimdall-{arch}"
 }
