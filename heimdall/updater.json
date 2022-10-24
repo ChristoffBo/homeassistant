@@ -4,6 +4,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "emby",
   "source": "github",
-  "upstream_repo": "linuxserver/docker-emby",
+  "upstream_repo": "linuxserver/heimdall",
   "upstream_version": "4.8.0.13"
 }
