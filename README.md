@@ -7,3 +7,5 @@
                       Please use https://github.com/alexbelgium/hassio-addons for the most up to date addons
                                  
                                       https://github.com/jdeath/homeassistant-addons
+
+                                        https://github.com/Poeschl/Hassio-Addons
