@@ -5,5 +5,5 @@
   "slug": "heimdall",
   "source": "github",
   "upstream_repo": "linuxserver/heimdall",
-  "upstream_version": "v2.4.10-ls166"
+  "upstream_version": "v2.4.13"
 }
