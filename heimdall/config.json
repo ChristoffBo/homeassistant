@@ -40,5 +40,5 @@
     "TZ": "str?"
   },
   "environment": {},
-  "image": "linuxserver/heimdall-{arch}"
+  "image": "linuxserver/heimdall:2.4.13"
 }
