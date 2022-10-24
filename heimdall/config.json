@@ -40,5 +40,5 @@
     "TZ": "str?"
   },
   "environment": {},
-  "image": "petersendev/hassio-heimdall-{arch}"
+  "image": "linuxserver/heimdall:amd64-v2.4.13-ls189"
 }
