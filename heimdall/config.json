@@ -1,6 +1,6 @@
 {
   "name": "heimdall",
-  "version": "0.2.2",
+  "version": "0.2.0",
   "slug": "heimdall",
   "legacy": false,
   "maintenance": {
@@ -38,4 +38,7 @@
     "PUID": "int",
     "PGID": "int",
     "TZ": "str?"
+  },
+  "environment": {},
+  "image": "petersendev/hassio-heimdall-{arch}"
 }
