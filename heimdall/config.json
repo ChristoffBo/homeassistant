@@ -38,7 +38,4 @@
     "PUID": "int",
     "PGID": "int",
     "TZ": "str?"
-  },
-  "environment": {},
-  "image": "christoffbo/homeassistant-heimdall-{arch}"
 }
