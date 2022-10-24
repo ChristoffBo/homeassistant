@@ -1,9 +1,9 @@
 {
   "github_beta": "true",
-  "last_update": "21-10-2022",
+  "last_update": "24-10-2022",
   "repository": "ChristoffBo/homeassistant",
   "slug": "emby",
   "source": "github",
   "upstream_repo": "linuxserver/heimdall",
-  "upstream_version": "v2.4.10-ls166"
+  "upstream_version": "2.4.13"
 }
