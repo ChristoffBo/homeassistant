@@ -1,4 +1,7 @@
 
+## v2.4.13 (24-10-2022)
+- Update to latest version from linuxserver/heimdall
+
 ## 2.4.13 (24-10-2022)
 - Update to latest version from linuxserver/heimdall
 ## 0.2.0
