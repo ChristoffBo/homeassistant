@@ -40,5 +40,5 @@
     "TZ": "str?"
   },
   "environment": {},
-  "image": "Christoffbo/homeassistant-heimdall-{arch}"
+  "image": "christoffbo/homeassistant-heimdall-{arch}"
 }
