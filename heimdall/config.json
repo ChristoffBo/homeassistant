@@ -40,5 +40,5 @@
     "TZ": "str?"
   },
   "environment": {},
-  "image": "christoffbo/homeassistant-{arch}"
+  "image": "linuxserver/heimdall-{arch}"
 }
