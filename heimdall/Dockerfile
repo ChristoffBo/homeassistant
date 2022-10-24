@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=linuxserver/heimdall:amd64-v2.4.13-ls189
 # hadolint ignore=DL3006
 FROM $BUILD_FROM
 
