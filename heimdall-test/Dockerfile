@@ -1,4 +1,4 @@
-ARG BUILD_FROM=https://hub.docker.com/r/linuxserver/heimdall:latest
+ARG BUILD_FROM=lscr.io/linuxserver/qbittorrent:amd64
 # hadolint ignore=DL3006
 FROM $BUILD_FROM
 
