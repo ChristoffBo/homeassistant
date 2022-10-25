@@ -1,4 +1,4 @@
-ARG BUILD_FROM=lscr.io/linuxserver/heimdall:amd64-latest
+ARG BUILD_FROM=https://hub.docker.com/r/linuxserver/heimdall:latest
 # hadolint ignore=DL3006
 FROM $BUILD_FROM
 
