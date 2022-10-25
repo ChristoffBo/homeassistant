@@ -1,0 +1,10 @@
+{
+  "build_from": {
+    "aarch64": "lscr.io/linuxserver/heimdall:arm64v8-v2.4.10-ls166",
+    "amd64": "lscr.io/linuxserver/heimdall:amd64-v2.4.10-ls166",
+    "armv7": "lscr.io/linuxserver/heimdall:arm32v7-v2.4.10-ls166"
+  },
+  "codenotary": {
+    "signer": "alexandrep.github@gmail.com"
+  }
+}
