@@ -1,8 +1,8 @@
 {
   "build_from": {
-        "armhf": "lscr.io/linuxserver/heimdall:2.4.13",
-        "aarch64": "lscr.io/linuxserver/heimdall:2.4.13",
-        "amd64": "lscr.io/linuxserver/heimdall:2.4.13"
+        "armhf": "lscr.io/linuxserver/heimdall:arm32v7-v2.4.10-ls166",
+        "aarch64": "lscr.io/linuxserver/heimdall:arm64v8-v2.4.10-ls166",
+        "amd64": "lscr.io/linuxserver/heimdall:amd64-v2.4.10-ls166"
   },
   "codenotary": {
     "base_image": "linuxserver/io",
