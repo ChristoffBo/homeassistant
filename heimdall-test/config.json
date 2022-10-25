@@ -34,8 +34,4 @@
     "PUID": "int",
     "PGID": "int",
     "TZ": "str?"
- },
-  "host_network": true,
-  "auth_api": false,
-  "hassio_api": false
-}
+ }
