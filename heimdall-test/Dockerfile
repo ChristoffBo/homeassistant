@@ -1,4 +1,4 @@
-ARG BUILD_FROM=lscr.io/linuxserver/heimdall:latest
+ARG BUILD_FROM=lscr.io/linuxserver/heimdall:2.4.13
 # hadolint ignore=DL3006
 FROM $BUILD_FROM
 
