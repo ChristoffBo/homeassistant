@@ -1,4 +1,4 @@
-ARG BUILD_FROM=lscr.io/linuxserver/qbittorrent:amd64
+ARG BUILD_FROM=
 # hadolint ignore=DL3006
 FROM $BUILD_FROM
 
