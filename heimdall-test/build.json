@@ -1,8 +1,8 @@
 {
   "build_from": {
-        "armhf": "https://hub.docker.com/r/linuxserver/heimdall:latest",
-        "aarch64": "https://hub.docker.com/r/linuxserver/heimdall:latest",
-        "amd64": "https://hub.docker.com/r/linuxserver/heimdall:latest"
+        "armhf": "lscr.io/linuxserver/heimdall:arm32v7",
+        "aarch64": "lscr.io/linuxserver/heimdall:arm64v8",
+        "amd64": "lscr.io/linuxserver/heimdall:amd64"
   },
   "codenotary": {
     "base_image": "linuxserver/io",
