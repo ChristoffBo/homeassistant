@@ -2,7 +2,7 @@ ARG BUILD_FROM
 # hadolint ignore=DL3006
 FROM $BUILD_FROM
 
-ARG CONFIGLOCATION="/config/addons_config/prowlarr"
+ARG CONFIGLOCATION="/config/addons_config/heimdall"
 
 RUN 
 
