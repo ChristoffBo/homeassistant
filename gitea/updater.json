@@ -1,6 +1,6 @@
 {
   "last_update": "07-09-2022",
-  "repository": "alexbelgium/hassio-addons",
+  "repository": "ChristoffBo/homeassistant",
   "slug": "gitea",
   "source": "github",
   "upstream_repo": "go-gitea/gitea",
