@@ -4,6 +4,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "chrony",
   "source": "github",
-  "upstream_repo": "ghcr.io/hassio-addons/base",
+  "upstream_repo": "ghcr.io/hassio-addons/base:12.2.4",
   "upstream_version": "12.2.4"
 }
