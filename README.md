@@ -1,4 +1,8 @@
-                                              Christoff Bothma Hassio Addons
+                                          Christoff Bothma Hassio Addons Collection
+                                              
+                                        The Only Addon I created is the Technitium DNS Addon
+                                              
+                                           For all other addons please use below
 
                                              Most Addons are from Alex Belgium
 
