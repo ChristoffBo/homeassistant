@@ -1,0 +1,8 @@
+{
+  "last_update": "17-10-2022",
+  "repository": "ChristoffBo/homeassistant",
+  "slug": "picotts",
+  "source": "github",
+  "upstream_repo": "ghcr.io/home-assistant/amd64-base",
+  "upstream_version": "3.1.6"
+}
