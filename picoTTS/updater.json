@@ -1,8 +1,8 @@
 {
-  "last_update": "17-10-2022",
+  "last_update": "27-10-2022",
   "repository": "ChristoffBo/homeassistant",
   "slug": "picotts",
   "source": "github",
   "upstream_repo": "https://github.com/hassio-addons/addon-base",
-  "upstream_version": "3.1.6"
+  "upstream_version": "12.2.4"
 }

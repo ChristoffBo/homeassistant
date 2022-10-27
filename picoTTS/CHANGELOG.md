@@ -1,3 +1,6 @@
+
+## 12.2.4 (27-10-2022)
+- Update to latest version from https://github.com/hassio-addons/addon-base
 ## 1.6.0 - 2022-07-28
 
 * 🔼 Updated Alpine to `3.16`
