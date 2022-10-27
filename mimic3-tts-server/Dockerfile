@@ -16,7 +16,7 @@ RUN \
     \
     && curl -J -L -o /tmp/packages-microsoft-prod.deb \
         "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.3/mycroft-mimic3-tts_0.2.3_amd64.deb" \
-    && apt install ./tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \    
+    && apt install /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \    
     && dpkg -i /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
     && rm /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb 
     
