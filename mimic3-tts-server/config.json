@@ -16,6 +16,5 @@
   },
   "ports_description": {
     "59125/tcp": "mimic3-server port"
-    ],
   }
 }
