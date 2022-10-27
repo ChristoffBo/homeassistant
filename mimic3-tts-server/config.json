@@ -2,7 +2,7 @@
   "name": "Mimic3 TTS Server",
   "version": "0.0.1",
   "slug": "mimic3tts",
-  "description": "Mimic3, a fast and offline neural tts system",
+  "description": "Mimic - The Mycroft TTS Engine",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mimic3-tts-server",
   "arch": [
     "armhf",
@@ -16,6 +16,6 @@
     "59125/tcp": 59125
   },
   "ports_description": {
-    "59125/tcp": "Port for mimic3-server"
+    "59125/tcp": "mimic3-server port"
   }
 }
