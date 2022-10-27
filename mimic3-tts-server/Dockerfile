@@ -9,7 +9,6 @@ ARG BUILD_ARCH=amd64
 RUN \
     apt-get update \
     && apt-get upgrade -y \
-    && apt-get install nginx -y \
     && apt-get install curl -y \
     && apt-get install wget -y \
     && apt-get install -y libespeak-ng1 python3 python3-pip python3-venv git \
@@ -18,7 +17,7 @@ RUN \
     && curl -J -L -o /tmp/packages-microsoft-prod.deb \
         "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.3/mycroft-mimic3-tts_0.2.3_amd64.deb" \
     && dpkg -i /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
-    && rm /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
+    && rm /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb 
     
 COPY run.sh /
 RUN chmod a+x /run.sh
