@@ -1,0 +1,14 @@
+# https://developers.home-assistant.io/docs/add-ons/configuration#add-on-dockerfile
+build_from:
+  aarch64: "ghcr.io/home-assistant/aarch64-base-debian:bullseye"
+  amd64: "ghcr.io/home-assistant/amd64-base-debian:bullseye"
+  armhf: "ghcr.io/home-assistant/armhf-base-debian:bullseye"
+  armv7: "ghcr.io/home-assistant/armv7-base-debian:bullseye"
+  i386: "ghcr.io/home-assistant/i386-base-debian:bullseye"
+labels:
+  org.opencontainers.image.title: "Home Assistant Add-on: mimic3 tts server"
+  org.opencontainers.image.description: "A fast and local neural text to speech system developed by Mycroft, running in server mode for home assistant usage."
+  org.opencontainers.image.source: "https://github.com/Oliver2213/ha-addons"
+  org.opencontainers.image.licenses: "GNU General Public License 3.0"
+
+
