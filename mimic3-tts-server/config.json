@@ -17,8 +17,5 @@
   "ports_description": {
     "59125/tcp": "mimic3-server port"
     ],
-  "host_network": false,
-  "map": [
-    "share:rw"
   }
 }
