@@ -1,6 +1,6 @@
 {
   "name": "Mimic TTS Server",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "slug": "mimic3tts",
   "description": "Mimic - The Mycroft TTS Engine",
    },
