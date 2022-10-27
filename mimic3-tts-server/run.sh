@@ -1,6 +1,4 @@
 #!/bin/bash
-cd mimic3
-source ./.venv/bin/activate
-pip3 install --upgrade pip
+cd /usr/bin
 
 mimic3-server
