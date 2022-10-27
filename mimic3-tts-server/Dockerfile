@@ -18,15 +18,15 @@ RUN \
     && curl -J -L -o /tmp/packages-microsoft-prod.deb \
         "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.3/mycroft-mimic3-tts_0.2.3_amd64.deb" \
     && dpkg -i /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
-    && rm /tmp/packages-microsoft-prod.deb \
+    && rm /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
     
-       
-
-EXPOSE 59125
 COPY run.sh /
 RUN chmod a+x /run.sh
-CMD [ "./.venv/bin/python", "-m", "mimic3-server" ]
-CMD [ "./run.sh" ]
+CMD [ "./run.sh" ]       
+
+
+EXPOSE 59125
+
 
 # Build arguments
 ARG BUILD_ARCH
