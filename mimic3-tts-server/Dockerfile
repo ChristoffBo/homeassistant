@@ -16,9 +16,11 @@ RUN \
      && rm -rf /var/lib/{apt,dpkg,cache,log}/ \
      && git clone --depth=1 https://github.com/MycroftAI/mimic3
      
-RUN mycroft-start all     
+   
 
 RUN cd mimic3 && ./install.sh
+
+RUN mycroft-start all  
 
 EXPOSE 59125
 COPY run.sh /
