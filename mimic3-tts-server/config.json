@@ -15,6 +15,6 @@
     "59125/tcp": 59125
   },
   "ports_description": {
-    "59125/tcp": "mimic3-server port"
+    "59125/tcp": "Mimic Webui"
   }
 }
