@@ -1,12 +1,9 @@
-# Home Assistant Add-on: mimic3 tts server
-![Supports aarch64 Architecture][aarch64-shield]
-![Supports amd64 Architecture][amd64-shield]
-![Supports armhf Architecture][armhf-shield]
-![Supports armv7 Architecture][armv7-shield]
-![Supports i386 Architecture][i386-shield]
+Mimic - The Mycroft TTS Engine
+Build Status codecov.io Coverity Scan
 
-A [Mimic3](https://github.com/MycroftAI/mimic3) local tts server for Home Assistant.
-Once installed, use the marytts integration and point it at your port (default is 59125).
+Mimic is a fast, lightweight Text-to-speech engine developed by Mycroft A.I. and VocaliD, based on Carnegie Mellon University’s Flite (Festival-Lite) software. Mimic takes in text and reads it out loud to create a high quality voice.
+
+Official project site: mimic.mycroft.ai
 
 ## Example configuration.yaml entry
 ```yaml
