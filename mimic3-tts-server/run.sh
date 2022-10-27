@@ -12,7 +12,7 @@ if [ -f "$FILE" ]; then
 else
 mkdir -p /data/tts/        
 mkdir -p /data/cache/
-chmod 77 /data/tts/
+chmod 777 /data/tts/
 chmod 777 /data/cache/
 chmod 777 /var/lib/apt/lists/auxfiles
 chmod 777 /var/cache/apt
