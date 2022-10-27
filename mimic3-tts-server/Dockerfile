@@ -7,20 +7,15 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG BUILD_ARCH=amd64
 RUN \
-     apt-get update && apt-get install -y libespeak-ng1 python3 python3-pip python3-venv git \
-     && apt-get install libatomic1 libgomp1 libatlas-base-dev \ 
-     \
-     && mycroft-pip install --upgrade pip \
-     \
-     && mycroft-pip install mycroft-plugin-tts-mimic3[all] \
-     \
-     && git clone --depth=1 https://github.com/MycroftAI/mimic3
-     
-   
-
-RUN cd mimic3 && ./install.sh
-
-RUN mycroft-start all  
+    apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install nginx -y \
+    && apt-get install curl -y \
+    && apt-get install wget -y \
+    && apt-get install -y libespeak-ng1 python3 python3-pip python3-venv git \
+    && apt-get install libatomic1 libgomp1 libatlas-base-dev  
+    
+       
 
 EXPOSE 59125
 COPY run.sh /
