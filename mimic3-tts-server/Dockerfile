@@ -8,12 +8,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG BUILD_ARCH=amd64
 RUN \
      apt-get update && apt-get install -y libespeak-ng1 python3 python3-pip python3-venv git \
-     && apt-get clean autoclean \ 
-     && apt-get autoremove --yes \
+     && apt-get install libatomic1 libgomp1 libatlas-base-dev \ 
+     \
      && mycroft-pip install --upgrade pip \
+     \
      && mycroft-pip install mycroft-plugin-tts-mimic3[all] \
-     && mycroft-config set tts.module mimic3_tts_plug \
-     && rm -rf /var/lib/{apt,dpkg,cache,log}/ \
+     \
      && git clone --depth=1 https://github.com/MycroftAI/mimic3
      
    
