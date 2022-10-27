@@ -4,7 +4,6 @@ Build Status codecov.io Coverity Scan
 Mimic is a fast, lightweight Text-to-speech engine developed by Mycroft A.I. and VocaliD, based on Carnegie Mellon University’s Flite (Festival-Lite) software. Mimic takes in text and reads it out loud to create a high quality voice.
 
 Official project site: mimic.mycroft.ai
-
 ## Example configuration.yaml entry
 ```yaml
   tts:
