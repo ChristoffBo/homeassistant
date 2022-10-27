@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "slug": "mimic3tts",
   "description": "Mimic3, a fast and offline neural tts system",
-  "url": "https://github.com/Oliver2213/ha-addons/tree/main/mimic3-tts-server",
+  "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mimic3-tts-server",
   "arch": [
     "armhf",
     "armv7",
