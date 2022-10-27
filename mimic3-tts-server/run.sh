@@ -5,8 +5,8 @@ echo "==========================================================================
 echo ""Checking Mimic Server Install                                                     ""
 echo "===================================================================================="
 
-FILE="/tmp/mycroft-mimic3-tts_0.2.3_amd64.deb/"
-if [ -d "$FILE" ]; then
+FILE="/tmp/mycroft-mimic3-tts_0.2.3_amd64.deb"
+if [ -f "$FILE" ]; then
 
  echo "Mimic is Already Installed"
 else
