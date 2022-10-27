@@ -1,5 +1,5 @@
 # https://developers.home-assistant.io/docs/add-ons/configuration#add-on-dockerfile
-ARG BUILD_FROM
+ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base/amd64:6.1.2
 FROM $BUILD_FROM
 
 LABEL org.opencontainers.image.source=https://github.com/Oliver2213/ha-addons
