@@ -4,12 +4,11 @@
   "slug": "mimic3tts",
   "description": "Mimic - The Mycroft TTS Engine",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mimic3-tts-server",
+  "codenotary": "bothmacell@gmail.com",
   "arch": [
-    "armhf",
     "armv7",
     "aarch64",
-    "amd64",
-    "i386"
+    "amd64"
   ],
   "init": false,
   "ports": {
