@@ -3,9 +3,11 @@ Mimic TTS Server
 Wait a minute after initial start as Mimic will download the first voice...
 
 Web UI for testing can be found at "homeassistantIP":59125, please note after selecting a voice Mimic will download the voice first
-so please be patiant.
+so please be patient.
 
 Tested on Intel Nuc I7
+
+
 
  tts:
 
@@ -14,7 +16,7 @@ Tested on Intel Nuc I7
     port: 59125
     voice: en_US/ljspeech_low
 
-Also Note If a new version of Technitium is launched, Backup Technitium in the Webui, uninstall the Addon and Reinstall.
+
 
 License
 MIT License
