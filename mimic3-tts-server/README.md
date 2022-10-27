@@ -11,7 +11,7 @@ Official project site: mimic.mycroft.ai
   - platform: marytts
     host: "homeassistantIP"
     port: 59125
-    voice: en_US/hifi-tts_low
+    voice: en_US/ljspeech_low
 ```
 
 [aarch64-shield]: https://img.shields.io/badge/aarch64-yes-green.svg
