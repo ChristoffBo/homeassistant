@@ -3,7 +3,7 @@ ARG BUILD_FROM
 ARG BUILD_VERSION
 FROM mycroftai/mimic3:0.2.3
 
-WORKDIR /SHARE
+WORKDIR /share
 
     
 
