@@ -14,11 +14,5 @@ Addon Created by Christoff Bothma
   - platform: marytts
     host: "homeassistantIP"
     port: 59125
-    voice: en_US/ljspeech_low
+    voice: en_US/en_UK/apope_low
 ```
-
-[aarch64-shield]: https://img.shields.io/badge/aarch64-yes-green.svg
-[amd64-shield]: https://img.shields.io/badge/amd64-yes-green.svg
-[armhf-shield]: https://img.shields.io/badge/armhf-yes-green.svg
-[armv7-shield]: https://img.shields.io/badge/armv7-yes-green.svg
-[i386-shield]: https://img.shields.io/badge/i386-yes-green.svg
