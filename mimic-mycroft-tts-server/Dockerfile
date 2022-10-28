@@ -6,12 +6,12 @@ FROM mycroftai/mimic3:0.2.3
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN \
-     mkdir -p "${HOME}/.local/share/mycroft/mimic3"
-    && chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
+     mkdir -p "${HOME}/.local/share/mycroft/mimic3" \
+     && chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
 
-COPY run.sh /
-RUN chmod a+x /run.sh
-CMD [ "./run.sh" ]       
+#COPY run.sh /
+#RUN chmod a+x /run.sh
+#CMD [ "./run.sh" ]       
 
 
 EXPOSE 59125
