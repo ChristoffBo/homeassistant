@@ -1,6 +1,7 @@
 #!/bin/bash
 
-
+mkdir -p "${HOME}/.local/share/mycroft/mimic3"
+chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
 
 echo ""
 echo "======================================================================================"
