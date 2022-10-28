@@ -2,10 +2,7 @@ ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base/amd64:6.1.2
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH=amd64
 
-
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-
 
 RUN \
     apt-get update \
@@ -18,16 +15,12 @@ RUN \
         "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.3/mycroft-mimic3-tts_0.2.3_amd64.deb" \
     && dpkg -i /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
     && apt-get install -f
-   
-   
     
 COPY run.sh /
 RUN chmod a+x /run.sh
 CMD [ "./run.sh" ]       
 
-
 EXPOSE 59125
-
 
 # Build arguments
 ARG BUILD_ARCH
