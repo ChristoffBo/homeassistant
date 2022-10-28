@@ -15,7 +15,8 @@ RUN \
     && curl -J -L -o /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
         "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.3/mycroft-mimic3-tts_0.2.3_amd64.deb" \
     && dpkg -i /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb \
-    && apt-get install -f
+    && apt-get install -f \
+    && rm /tmp/mycroft-mimic3-tts_0.2.3_amd64.deb
     
 COPY run.sh /
 RUN chmod a+x /run.sh
