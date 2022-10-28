@@ -1,0 +1,16 @@
+---
+name: Mimic TTS Server
+version: 0.0.2
+slug: mimic3tts
+description: Mimic - The Mycroft TTS Engine
+url: https://mimic.mycroft.ai/
+codenotary: bothmacell@gmail.com
+arch:
+- armv7
+- aarch64
+- amd64
+init: false
+ports:
+  59125/tcp: 59125
+ports_description:
+  59125/tcp: Mimic Webui
