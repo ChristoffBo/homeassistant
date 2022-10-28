@@ -1,11 +1,10 @@
-
 ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base/amd64:6.1.2
-
+ARG BUILD_ARCH=amd64
 
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ARG BUILD_ARCH=amd64
+
 
 RUN \
     apt-get update \
