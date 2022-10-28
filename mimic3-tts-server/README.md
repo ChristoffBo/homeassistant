@@ -8,11 +8,11 @@ Official project site: mimic.mycroft.ai
 Addon Created by Christoff Bothma
 
 ## Example configuration.yaml entry
-```yaml
+
   tts:
 
   - platform: marytts
     host: "homeassistantIP"
     port: 59125
-    voice: en_US/en_UK/apope_low
-```
+    voice: en_UK/apope_low
+
