@@ -16,6 +16,10 @@
     "NET_ADMIN"
   ],
   "init": false,
+  "map": [
+    "config:rw",
+    "share:rw"
+  ],
   "ports": {
     "59125/tcp": 59125
   },
