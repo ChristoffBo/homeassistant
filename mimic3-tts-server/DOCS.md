@@ -9,13 +9,6 @@ Tested on Intel Nuc I7
 
 
 
- tts:
-
-  - platform: marytts
-    host: "homeassistantIP"
-    port: 59125
-    voice: en_US/ljspeech_low
-
 
 
 
