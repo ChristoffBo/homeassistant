@@ -7,6 +7,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN \
     apt-get update \
     && apt-get upgrade -y \
+    && apt-get install nginx -y \
     && apt-get install curl -y \
     && apt-get install -y libespeak-ng1 python3 python3-pip python3-venv git \
     && apt-get install libatomic1 libgomp1 libatlas-base-dev \
