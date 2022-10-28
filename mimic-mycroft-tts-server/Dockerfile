@@ -10,6 +10,9 @@ RUN chmod a+rwx /home/user/.local/share/mycroft/mimic3
 COPY /root/.local/share/mycroft/mimic3/voices/ /usr/share/mycroft/mimic3/voices/
 WORKDIR /home/mimic3/app
 
+COPY run.sh /
+RUN chmod a+x /run.sh
+CMD [ "./run.sh" ]     
 
 
 EXPOSE 59125
