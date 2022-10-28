@@ -3,7 +3,7 @@ ARG BUILD_FROM
 ARG BUILD_VERSION
 FROM mycroftai/mimic3:0.2.3
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 
 RUN \
      mkdir -p "${HOME}/.local/share/mycroft/mimic3" \
