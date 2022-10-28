@@ -13,7 +13,7 @@ echo ""Checking Voices And Uncompressing                                        
 echo "======================================================================================"
 
 
-mimic3-server --preload-voice en_US/ljspeech_low --cache-dir /data/cache/
+mimic3-server --preload-voice en_UK/apope_low --cache-dir /data/cache/
 
 
 
