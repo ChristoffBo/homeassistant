@@ -15,6 +15,10 @@ ports:
 ports_description:
   59125/tcp: Mimic Webui
  map: 
-    config:rw
-    share:rw
+   - config:rw
+   - share:rw
+privileged:
+   - SYS_ADMIN
+   - DAC_READ_SEARCH
+   - NET_ADMIN
    
