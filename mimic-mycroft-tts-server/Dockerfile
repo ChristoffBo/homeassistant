@@ -3,14 +3,14 @@ ARG BUILD_FROM
 ARG BUILD_VERSION
 FROM mycroftai/mimic3:0.2.3
 
-RUN mkdir -p "${HOME}/.local/share/mycroft/mimic3" 
-RUN chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
+#RUN mkdir -p "${HOME}/.local/share/mycroft/mimic3" 
+#RUN chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
 
 
 
-#COPY run.sh /
-#RUN chmod a+x /run.sh
-#CMD [ "./run.sh" ]       
+COPY run.sh /
+RUN chmod a+x /run.sh
+CMD [ "./run.sh" ]       
 
 
 EXPOSE 59125
