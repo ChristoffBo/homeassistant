@@ -1,3 +1,3 @@
-Mimic TTS Will preload the en_US/ljspeech_low voice
+Mimic TTS Will preload the en_UK/apope_low
 
 Testing Release
