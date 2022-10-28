@@ -1,14 +1,12 @@
 
-#ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base/amd64:6.1.2
+ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base/amd64:6.1.2
 
-ARG BUILD_FROM
-ARG BUILD_VERSION
-FROM ${BUILD_FROM}
 
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-#ARG BUILD_ARCH=amd64
+ARG BUILD_ARCH=amd64
+
 RUN \
     apt-get update \
     && apt-get upgrade -y \
