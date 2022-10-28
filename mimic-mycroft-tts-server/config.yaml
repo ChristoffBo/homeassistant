@@ -1,7 +1,7 @@
 ---
-name: Mimic TTS Server
+name: Mimic Mycroft TTS Server
 version: 0.0.2
-slug: mimic3tts
+slug: mimictts
 description: Mimic - The Mycroft TTS Engine
 url: https://mimic.mycroft.ai/
 codenotary: bothmacell@gmail.com
