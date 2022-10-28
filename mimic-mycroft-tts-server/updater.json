@@ -1,8 +1,0 @@
-{
-  "last_update": "17-10-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "mimictts",
-  "source": "github",
-  "upstream_repo": "https://hub.docker.com/r/mycroftai/mimic3",
-  "upstream_version": "0.2.3"
-}
