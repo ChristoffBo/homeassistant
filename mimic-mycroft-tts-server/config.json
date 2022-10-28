@@ -9,6 +9,11 @@
     "armv7",
     "aarch64",
     "amd64"
+  },
+  "privileged": [
+    "SYS_ADMIN",
+    "DAC_READ_SEARCH",
+    "NET_ADMIN"
   ],
   "init": false,
   "ports": {
