@@ -1,6 +1,6 @@
 Christoff Bothma Hassio Addons Collection
 
-The Only Addons I created is the Technitium DNS and Mimic TTS Servers they where only tested amd64.
+The Only Addons I created is the Technitium DNS and Mimic TTS Servers they where only tested on amd64.
                                               
 Most Addons are from Alex Belgium
 
