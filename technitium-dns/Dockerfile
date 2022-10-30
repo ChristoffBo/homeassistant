@@ -1,12 +1,13 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base/amd64:6.1.2
-# hadolint ignore=DL3006
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
+ARG BUILD_ARCH
 
-# Set shell
+
+
+
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Setup base system
-ARG BUILD_ARCH=amd64
+
 RUN \
     apt-get update \
     && apt-get upgrade -y \
