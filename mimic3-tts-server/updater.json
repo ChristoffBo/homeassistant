@@ -4,5 +4,5 @@
   "slug": "mimic_tts",
   "source": "github",
   "upstream_repo": "https://github.com/hassio-addons/addon-debian-base",
-  "upstream_version": "6.1.2"
+  "upstream_version": "6.1.1"
 }
