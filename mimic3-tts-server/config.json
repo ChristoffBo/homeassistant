@@ -9,6 +9,9 @@
     "armv7",
     "aarch64",
     "amd64"
+    },
+  "ingress": true,
+  "ingress_stream": true,
   ],
   "init": false,
   "ports": {
