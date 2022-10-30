@@ -12,7 +12,7 @@
     ],
   "ingress": true,
   "ingress_stream": true,
-   ],
+},
   "init": false,
   "ports": {
     "59125/tcp": 59125
