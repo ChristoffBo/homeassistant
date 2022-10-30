@@ -1,0 +1,20 @@
+{
+  "name": "Mycroft AI Server",
+  "version": "1.0.0",
+  "slug": "mycroft_ai",
+  "description": "Mycroft AI",
+  "url": "https://mimic.mycroft.ai/",
+  "codenotary": "bothmacell@gmail.com",
+  "arch": [
+    "armv7",
+    "aarch64",
+    "amd64"
+  ],
+  "init": false,
+  "ports": {
+    "59125/tcp": 59125
+  },
+  "ports_description": {
+    "59125/tcp": "Mimic Webui"
+  }
+}
