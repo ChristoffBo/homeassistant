@@ -5,7 +5,7 @@ Mimic is a fast, lightweight Text-to-speech engine developed by Mycroft A.I. and
 
 Official project site: mimic.mycroft.ai
 
-Full Local Offline TSS Server
+Full Local Offline TTS Server
 
 Addon Created by Christoff Bothma
 
