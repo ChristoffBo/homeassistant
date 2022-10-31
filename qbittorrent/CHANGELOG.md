@@ -1,11 +1,8 @@
 
-## 4.4.5-r2-ls225 (31-10-2022)
+## 4.4.5-r2-ls224 (25-10-2022)
 - Update to latest version from linuxserver/docker-qbittorrent
 
-## 4.4.5-r2-ls224 (23-10-2022)
-- Update to latest version from linuxserver/docker-qbittorrent
-
-## 4.4.5-r1-ls223 (19-10-2022)
+## 4.4.5-r1-ls223 (20-10-2022)
 - Update to latest version from linuxserver/docker-qbittorrent
 
 ## 4.4.5-r0-ls222 (18-10-2022)
