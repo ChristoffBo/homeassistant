@@ -1,6 +1,6 @@
 
-## 2.2.10 (22-10-2022)
-- Update to latest version from flaresolverr/flaresolverr
+## 2.2.10 (25-10-2022)
+- Update to latest version from FlareSolverr/FlareSolverr
 
 ## 2.2.9 (27-09-2022)
 - Update to latest version from FlareSolverr/FlareSolverr
