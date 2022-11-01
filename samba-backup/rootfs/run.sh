@@ -16,6 +16,7 @@ function run-backup {
         flock -n -x 200 || { bashio::log.warning "Backup already running. Trigger ignored."; return 0; }
 
         bashio::log.info "Backup running ..."
+        get-sensor
         update-sensor "${SAMBA_STATUS[1]}"
 
         # run entire backup steps
@@ -31,17 +32,18 @@ function run-backup {
 }
 
 
-# read in user config
+# init config and sensor
 get-config
-
-# setup Home Assistant sensor
 get-sensor
-update-sensor "${SAMBA_STATUS[0]}"
 
-# run precheck and exit entire addon
-if [ "$SKIP_PRECHECK" = false ] && ! smb-precheck; then
+# run precheck and exit entire addon in case the check fails
+if [ "$SKIP_PRECHECK" = true ]; then
+    update-sensor "${SAMBA_STATUS[0]}"
+elif ! smb-precheck; then
     update-sensor "${SAMBA_STATUS[3]}"
     exit 1
+else
+    update-sensor "${SAMBA_STATUS[0]}" "ALL"
 fi
 
 bashio::log.info "Samba Backup started successfully"
@@ -70,7 +72,7 @@ while true; do
         restore-sensor
 
     elif [ "$input" = "reset-counter" ]; then
-        reset-counter
+        get-sensor && reset-counter
         bashio::log.info "Counter variables reset successfully"
 
     elif [ "$input" = "trigger" ]; then
