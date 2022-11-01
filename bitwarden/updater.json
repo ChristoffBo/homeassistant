@@ -1,8 +1,0 @@
-{
-  "last_update": "15-10-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "bitwarden",
-  "source": "github",
-  "upstream_repo": "dani-garcia/bitwarden_rs",
-  "upstream_version": "1.26.0"
-}
