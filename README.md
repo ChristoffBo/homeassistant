@@ -4,7 +4,7 @@ The Only Addons I created is the Technitium DNS and Mimic TTS Servers they where
                                               
 Most Addons are from Alex Belgium
 
-I use these on my home assistant and dont like having 30 repos added on my homeassistant
+I use these on my home assistant and dont like having a bunch of repos added on my homeassistant
 
 For all other addons please use below
 
