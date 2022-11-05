@@ -13,6 +13,8 @@
     "armv7"
   ],
   "map": [
+    "config:rw",
+    "share:rw",
     "ssl"
   ],
   "ports": {
