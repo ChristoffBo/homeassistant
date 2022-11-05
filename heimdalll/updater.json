@@ -1,8 +1,0 @@
-{
-  "last_update": "02-11-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "technitium-dns",
-  "source": "github",
-  "upstream_repo": "linuxserver/heimdall",
-  "upstream_version": "v2.4.10-ls166"
-}
