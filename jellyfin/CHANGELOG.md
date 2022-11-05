@@ -1,8 +1,9 @@
+- Addition of hardware drivers for AMD, intel, RFFMPEG
 
-## 10.8.7-1-ls186 (01-11-2022)
+## 10.8.7-1-ls186 (02-11-2022)
 - Update to latest version from linuxserver/docker-jellyfin
 
-## 10.8.6-1-ls185 (31-10-2022)
+## 10.8.6-1-ls185 (01-11-2022)
 - Update to latest version from linuxserver/docker-jellyfin
 
 ## 10.8.5-1-ls184 (29-10-2022)

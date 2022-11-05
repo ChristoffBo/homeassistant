@@ -90,6 +90,7 @@
     "NET_ADMIN"
   ],
   "schema": {
+    "DOCKER_MODS": "list(linuxserver/mods:jellyfin-opencl-intel|linuxserver/mods:jellyfin-amd|linuxserver/mods:jellyfin-rffmpeg)?",
     "PGID": "int",
     "PUID": "int",
     "TZ": "str?",
@@ -103,6 +104,6 @@
   },
   "slug": "jellyfin",
   "url": "https://github.com/alexbelgium/hassio-addons",
-  "version": "10.8.7-1-ls186",
+  "version": "10.8.7-1-ls186-6",
   "video": true
 }

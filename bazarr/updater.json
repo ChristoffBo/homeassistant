@@ -1,6 +1,6 @@
 {
   "last_update": "18-10-2022",
-  "repository": "ChristoffBo/homeassistant",
+  "repository": "alexbelgium/hassio-addons",
   "slug": "bazarr",
   "source": "github",
   "upstream_repo": "linuxserver/docker-bazarr",

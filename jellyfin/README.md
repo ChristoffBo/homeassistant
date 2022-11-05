@@ -1,4 +1,3 @@
-## &#9888; Open Request : [✨ [REQUEST] Jellyfin database location (opened 2022-10-18)](https://github.com/alexbelgium/hassio-addons/issues/514) by [@basziee](https://github.com/basziee)
 # Home assistant add-on: jellyfin
 
 [![Donate][donation-badge]](https://www.buymeacoffee.com/alexbelgium)
@@ -37,6 +36,7 @@ networkdisks: "//SERVER/SHARE" # optional, list of smb servers to mount, separat
 cifsusername: "username" # optional, smb username, same for all smb shares
 cifspassword: "password" # optional, smb password
 cifsdomain: "domain" # optional, allow setting the domain for the smb share
+DOCKER_MODS: linuxserver/mods:jellyfin-opencl-intel|linuxserver/mods:jellyfin-amd|linuxserver/mods:jellyfin-rffmpeg # Install graphic drivers
 ```
 
 ## Installation

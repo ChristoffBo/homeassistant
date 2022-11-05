@@ -30,7 +30,7 @@ ENV S6_CMD_WAIT_FOR_SERVICES=0 \
 
 # Global LSIO modifications
 ARG CONFIGLOCATION="/config"
-# hadolint ignore=SC2015, SC2013, SC2086
+# hadolint ignore=SC2015, SC2013, SC2086, SC2016
 RUN \
     # Avoid custom-init.d duplications
     for file in $(grep -sril 'Potential tampering with custom' /etc/cont-init.d /etc/services.d /etc/s6-overlay/s6-rc.d); do rm -f $file; done \
@@ -45,7 +45,10 @@ RUN \
     && for file in $(grep -Esril "/config[ '\"/]|/config\$" /etc /defaults); do sed -Ei "s=(/config)+(/| |$|\"|\')=$CONFIGLOCATION\2=g" $file; done \
     \
     # Avoid chmod /config
-    && for file in /etc/services.d/*/* /etc/cont-init.d/* /etc/s6-overlay/s6-rc.d/*/*;do if [ -f $files ] && [[ ! -z $(awk '/chown.*abc:abc.*\\/,/.*\/config( |$)/{print FILENAME}' $file) ]] ; then sed -i "s|/config$|/data|g" $file; fi ;done
+    && for file in /etc/services.d/*/* /etc/cont-init.d/* /etc/s6-overlay/s6-rc.d/*/*;do if [ -f $files ] && [[ ! -z $(awk '/chown.*abc:abc.*\\/,/.*\/config( |$)/{print FILENAME}' $file) ]] ; then sed -i "s|/config$|/data|g" $file; fi ;done \
+    \
+    # Docker mods addition
+    && if [ -f /docker-mods ]; then sed -i 's|bash|bashio|g' /docker-mods && sed -i "1a if bashio::config.has_value \"DOCKER_MODS\"; then DOCKER_MODS=\$(bashio::config \"DOCKER_MODS\"); fi" /docker-mods; fi
 
 ##################
 # 3 Install apps #
@@ -71,7 +74,7 @@ RUN if ! command -v bash >/dev/null 2>/dev/null; then (apt-get update && apt-get
     && chmod -R 755 /etc/cont-init.d || printf '%s\n' "${MODULES}" >/MODULESFILE
 
 # Manual apps
-ENV PACKAGES="nginx"
+ENV PACKAGES="nginx intel-media-va-driver-non-free"
 
 # Automatic apps & bashio
 # hadolint ignore=SC2015
