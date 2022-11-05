@@ -1,6 +1,7 @@
 ARG BUILD_FROM
-# hadolint ignore=DL3006
-FROM $BUILD_FROM
+FROM ${BUILD_FROM}
+ARG BUILD_ARCH
+
 
 RUN apk add --no-cache \
         jq=1.6-r1 \
