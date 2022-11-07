@@ -1,8 +1,0 @@
-{
-  "last_update": "09-08-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "sonarr",
-  "source": "github",
-  "upstream_repo": "linuxserver/docker-sonarr",
-  "upstream_version": "3.0.9.1549"
-}
