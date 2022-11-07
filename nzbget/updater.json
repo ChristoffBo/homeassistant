@@ -1,9 +1,0 @@
-{
-  "github_fulltag": "true",
-  "last_update": "03-11-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "nzbget",
-  "source": "github",
-  "upstream_repo": "linuxserver/docker-nzbget",
-  "upstream_version": "v21.1-ls128"
-}
