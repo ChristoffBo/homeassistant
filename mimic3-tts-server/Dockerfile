@@ -12,11 +12,11 @@ RUN \
     && apt-get install -y libespeak-ng1 python3 python3-pip python3-venv git \
     && apt-get install libatomic1 libgomp1 libatlas-base-dev \
     \   
-    && curl -J -L -o /tmp/mycroft-mimic3-tts_amd64.deb \
+    && curl -J -L -o /tmp/mycroft-mimic3-tts.deb \
         "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.4/mycroft-mimic3-tts_0.2.4_amd64.deb" \
-    && dpkg -i /tmp/mycroft-mimic3-tts_amd64.deb \
+    && dpkg -i /tmp/mycroft-mimic3-tts.deb \
     && apt-get install -f \
-    && rm /tmp/mycroft-mimic3-tts_amd64.deb
+    && rm /tmp/mycroft-mimic3-tts.deb
     
 COPY run.sh /
 RUN chmod a+x /run.sh
