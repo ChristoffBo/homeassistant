@@ -4,6 +4,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "heimdall",
   "source": "github",
-  "upstream_repo": "lscr.io/linuxserver/heimdall",
+  "upstream_repo": "linuxserver/heimdall",
   "upstream_version": ""
 }
