@@ -1,6 +1,6 @@
 {
   "name": "heimdall",
-  "version": "2.4.15",
+  "version": "0.2.0",
   "slug": "heimdall",
   "legacy": false,
   "maintenance": {
@@ -40,5 +40,5 @@
     "TZ": "str?"
   },
   "environment": {},
-  "image": "linuxserver/heimdall-{arch}"
+  "image": "petersendev/hassio-heimdall-{arch}"
 }
