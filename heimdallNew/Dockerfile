@@ -10,6 +10,8 @@ RUN apk add --no-cache \
     && tar zxvf \
         /tmp/bashio.tar.gz \
         --strip 1 -C /tmp/bashio \
+    && mkdir -p /var/www/localhost/heimdall/artisan \
+    && chown -R abc:abc /var/www/localhost/heimdall/artisan \    
     \
     && mv /tmp/bashio/lib /usr/lib/bashio \
     && ln -s /usr/lib/bashio/bashio /usr/bin/bashio \
