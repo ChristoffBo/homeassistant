@@ -5,5 +5,5 @@
   "slug": "plex",
   "source": "github",
   "upstream_repo": "lscr.io/linuxserver/heimdall",
-  "upstream_version": "1.29.2.6364-6d72b0cf6-ls144"
+  "upstream_version": ""
 }
