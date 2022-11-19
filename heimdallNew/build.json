@@ -1,0 +1,7 @@
+{
+  "build_from": {
+    "armhf": "linuxserver/heimdall:arm32v7-latest",
+    "aarch64": "linuxserver/heimdall:arm64v8-latest",
+    "amd64": "linuxserver/heimdall:amd64-v2.4.10-latest"
+  }
+}
