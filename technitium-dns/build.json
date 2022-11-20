@@ -5,7 +5,7 @@
     "armv7": "technitium/dns-server:latest"
   },
   "codenotary": {
-    "base_image": "codenotary@frenck.dev",
-    "signer": "codenotary@frenck.dev"
+    "base_image": "shreyas@technitium.com",
+    "signer": "shreyas@technitium.com"
   }
 }
