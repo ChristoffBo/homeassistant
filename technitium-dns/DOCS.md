@@ -8,8 +8,7 @@ Password - admin
 
 Please change after first startup......
 
-Also Note If a new version of Technitium is launched, Backup Technitium in the Webui,
-uninstall the Addon and Reinstall.
+
 
 ## License
 
