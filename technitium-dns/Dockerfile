@@ -1,12 +1,13 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
-  
+
+
 COPY install.sh /
 RUN chmod a+x /install.sh
 CMD [ "/install.sh" ]
 
-# Build arguments
+
 ARG BUILD_ARCH
 ARG BUILD_DATE
 ARG BUILD_DESCRIPTION
