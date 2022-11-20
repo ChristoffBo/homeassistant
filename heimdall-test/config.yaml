@@ -1,14 +1,14 @@
 ---
-name: heimdall-test
+name: heimdall
 version: 0.0.2
-slug: heimdall-test
+slug: heimdall
 legacy: false
 init: false
 maintenance:
 github_release: https://github.com/linuxserver/docker-heimdall
 version_regex: "(\\d+\\.\\d+\\.\\d+)-(ls\\d+)"
 description: Application Dashboard
-url: https://github.com/petersendev/hassio-addons/tree/master/heimdall#readme
+url: https://heimdall.site/
 startup: services
 arch:
 - aarch64
