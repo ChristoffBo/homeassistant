@@ -3,6 +3,7 @@ name: heimdall-test
 version: 0.2.0
 slug: heimdall-test
 legacy: false
+init: false
 maintenance:
 github_release: https://github.com/linuxserver/docker-heimdall
 version_regex: "(\\d+\\.\\d+\\.\\d+)-(ls\\d+)"
