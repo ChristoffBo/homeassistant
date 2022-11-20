@@ -1,11 +1,19 @@
-# Home assistant add-ons: christoffbo
+# Home assistant addons: christoffbo
 
 
 ## About
 
-Home Assistant allows anyone to create add-on repositories to share their
-add-ons for Home Assistant easily. This repository is one of those repositories,
-providing extra Home Assistant add-ons for your installation.
+Home Assistant allows anyone to create add-on repositories.
+This Repo was created for personal use and as such these add-ons are provided as is.
+All these addons was tested on an Intel NUC I7
+
+I Do not claim to have created all the addons in this repo.
+
+I Only created the following Addons:
+
+Heimdall
+Mimic3-tts-server
+technitium-dns
 
 
 ## Installation
