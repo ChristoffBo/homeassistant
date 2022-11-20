@@ -1,12 +1,10 @@
 {
   "name": "Technitium DNS",
-  "version": "9.0",
+  "version": "9.1",
   "slug": "technitium-dns",
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/help.html#introduction",
   "codenotary": "bothmacell@gmail.com",
-  "ingress": true,
-  "ingress_port": 8053,
   "startup": "services",
   "init": false,
   "arch": [
