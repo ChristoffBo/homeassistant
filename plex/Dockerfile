@@ -59,7 +59,7 @@ RUN \
     && if [ -f /docker-mods ]; then sed -i 's|bash|bashio|g' /docker-mods && sed -i "1a if bashio::config.has_value \"DOCKER_MODS\"; then DOCKER_MODS=\$(bashio::config \"DOCKER_MODS\"); fi" /docker-mods; fi \
     \
     # Replace lsiown if not found
-    && if [ ! -f /usr/bin/lsiown ]; then sed -i "s|lsiown|chown|g" /etc/s6-overlay/s6-rc.d/*/run; fi
+    && if [ ! -f /usr/bin/lsiown ] && [ -d /etc/s6-overlay/s6-rc.d ]; then sed -i "s|lsiown|chown|g" /etc/s6-overlay/s6-rc.d/*/run; fi
 
 
 ##################
@@ -98,7 +98,7 @@ RUN if ! command -v bash >/dev/null 2>/dev/null; then (apt-get update && apt-get
     && chmod 777 /automatic_packages.sh \
     && eval /./automatic_packages.sh "${PACKAGES:-}" \
     && rm /automatic_packages.sh || (printf '%s\n' "${PACKAGES:-}" > /ENVFILE; \
-    if [ -f /etc/s6-overlay/s6-rc.d/init-migrations/run ]; then chmod +x /etc/cont-init.d/00-aaa_dockerfile_backup.sh && sed -i "1a /./etc/cont-init.d/00-aaa_dockerfile_backup.sh" /etc/s6-overlay/s6-rc.d/init-migrations/run;fi)
+    if [ -f /etc/s6-overlay/s6-rc.d/00-legacy/up ]; then chmod +x /etc/cont-init.d/00-aaa_dockerfile_backup.sh && sed -i "1i /./etc/cont-init.d/00-aaa_dockerfile_backup.sh" /etc/s6-overlay/s6-rc.d/00-legacy/up;fi)
 
 ################
 # 4 Entrypoint #
