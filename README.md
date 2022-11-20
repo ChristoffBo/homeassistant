@@ -1,4 +1,4 @@
-# Home assistant add-on: christoffbo
+# Home assistant add-ons: christoffbo
 
 
 ## About
