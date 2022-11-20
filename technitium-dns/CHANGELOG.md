@@ -2,10 +2,8 @@
 ## 9.1 (20-11-2022)
 - Update to latest version from technitium/dns-server
 
-## 6.1.3 (02-11-2022)
-- Update to latest version from https://github.com/hassio-addons/addon-debian-base
+## 0.1 (20-11-2022)
+- Changed Docker File, Technitium now uses the Docker Image from technitium/dns-server created by Shreyas Zare founder of Technitium
 
-## 6.1.2 (17-10-2022)
-- Update to latest version from https://github.com/hassio-addons/addon-debian-base
 
 Based on Tachnitium DNS
