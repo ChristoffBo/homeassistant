@@ -1,6 +1,6 @@
 #include <tunables/global>
 
-profile technitium_addon flags=(attach_disconnected,mediate_deleted) {
+profile mqtt-explorer_addon flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
   capability,
