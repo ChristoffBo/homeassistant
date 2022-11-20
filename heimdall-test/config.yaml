@@ -4,8 +4,8 @@ version: 0.2.0
 slug: heimdall-test
 legacy: false
 maintenance:
-  github_release: https://github.com/linuxserver/docker-heimdall
-  version_regex: "(\\d+\\.\\d+\\.\\d+)-(ls\\d+)"
+github_release: https://github.com/linuxserver/docker-heimdall
+version_regex: "(\\d+\\.\\d+\\.\\d+)-(ls\\d+)"
 description: Application Dashboard
 url: https://github.com/petersendev/hassio-addons/tree/master/heimdall#readme
 startup: services
