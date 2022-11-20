@@ -3,7 +3,7 @@
 
 ## About
 
-This addon is based on Technitium-DNS .
+This addon is based on the Technitium-DNS docker image.
 
 ## Installation
 
