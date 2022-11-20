@@ -1,4 +1,4 @@
-# Hassio Add-ons by petersendev: heimdall
+# Hassio Add-ons by ChristoffBo: heimdall
 
 ## About
 
