@@ -1,10 +1,5 @@
 # Home assistant add-on: WireGuard Easy
 
-You have found the easiest way to install & manage WireGuard on any Linux host!
-
-_Thanks to everyone having starred my repo! To star it click on the image below, then it will be on top right. Thanks!_
-
-[![Stargazers repo roster for @jdeath/homeassistant-addons](https://reporoster.com/stars/jdeath/homeassistant-addons)](https://github.com/jdeath/homeassistant-addons/stargazers)
 
 ## About
 
