@@ -12,7 +12,7 @@
   "map": [
     "ssl:rw"
   ],
-  "name": "wgeasy",
+  "name": "WireGuard Easy",
   "options": {
     "WG_HOST": "hassio.local",
     "PASSWORD": "",
