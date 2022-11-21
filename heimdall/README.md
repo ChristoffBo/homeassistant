@@ -3,7 +3,7 @@
 
 ## About
 
-This addon is based on Heimdall.
+This addon is based on Heimdall docker image.
 
 ## Installation
 
