@@ -10,7 +10,7 @@ All these addons was tested on an Intel NUC I7
 I Only created the following Addons:
 
 Heimdall,
-Mimic3-tts-server,
+Mimic3-tts-server and
 technitium-dns.
 
 
