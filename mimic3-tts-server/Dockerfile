@@ -5,7 +5,7 @@ ARG BUILD_ARCH
 WORKDIR /home/mimic3/app
 
 COPY install.sh /
-RUN chmod a+x /install.sh
+#RUN chmod a+x /install.sh
 CMD [ "/install.sh" ]
 
 EXPOSE 59125
