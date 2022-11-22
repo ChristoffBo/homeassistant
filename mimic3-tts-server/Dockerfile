@@ -6,7 +6,7 @@ WORKDIR /home/mimic3/app
 
 COPY install.sh /
 RUN chmod a+x /install.sh
-CMD [ "/install.sh" ]
+CMD [ "/run.sh" ]
 
 EXPOSE 59125
 
