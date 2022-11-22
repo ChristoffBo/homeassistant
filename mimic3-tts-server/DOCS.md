@@ -1,6 +1,6 @@
 Mimic TTS Server
 
-Mimic only uses the preloaded UK Voice.
+Wait a minute after initial start as Mimic will download the first voice...
 
 Web UI for testing can be found at "homeassistantIP":59125, please note after selecting a voice Mimic will download the voice first
 so please be patient.
