@@ -4,9 +4,9 @@ ARG BUILD_ARCH
 
 WORKDIR /home/mimic3/app
 
-RUN \
-    mkdir -p "${HOME}/.local/share/mycroft/mimic3" \
-    && chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
+CMD \
+     mkdir -p "${HOME}/.local/share/mycroft/mimic3" \
+     && chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
 
 # COPY install.sh /
 # RUN chmod a+x /install.sh
