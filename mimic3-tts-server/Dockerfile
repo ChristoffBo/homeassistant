@@ -4,7 +4,7 @@ ARG BUILD_ARCH
 
 WORKDIR /home/mimic3/app
 
-CMD \
+RUN \
      mkdir -p "${HOME}/.local/share/mycroft/mimic3" \
      && chmod a+rwx "${HOME}/.local/share/mycroft/mimic3"
 
