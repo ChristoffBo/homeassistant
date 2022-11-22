@@ -4,15 +4,9 @@ ARG BUILD_ARCH
 
 WORKDIR /home/mimic3/app
 
-COPY /root/.local/share/mycroft/mimic3/voices/ /usr/share/mycroft/mimic3/voices/
-
-COPY tests/* ./tests
-
-COPY /home/mimic3/app/ ./
-
-# COPY install.sh /
-# RUN chmod a+x /install.sh
-# CMD [ "/install.sh" ]
+COPY install.sh /
+RUN chmod a+x /install.sh
+CMD [ "/install.sh" ]
 
 EXPOSE 59125
 
