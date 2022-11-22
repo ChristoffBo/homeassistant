@@ -1,0 +1,11 @@
+{
+  "build_from": {
+    "aarch64": "mycroftai/mimic3:latest",
+    "amd64": "mycroftai/mimic3:latest",
+    "armv7": "mycroftai/mimic3:latest"
+  },
+  "codenotary": {
+    "base_image": "codenotary@frenck.dev",
+    "signer": "codenotary@frenck.dev"
+  }
+}
