@@ -5,7 +5,7 @@ echo ""Preloading Voices UK and Afrikaans                                       
 echo "======================================================================================"
 
 
-mimic3-download 'en_UK/*'
+mimic3-download 'en_UK/apope_low*'
 mimic3-download 'af_ZA/*'
 
 
