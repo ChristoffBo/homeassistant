@@ -6,9 +6,23 @@ echo "==========================================================================
 echo ""Preloading Voices UK and Afrikaans                                             ""
 echo "======================================================================================"
 
+if [ -d "/root/.local/share/mycroft/mimic3/voices/en_UK/apope_low" ] 
+then
+    echo "UK Voice Already Preloaded" 
+else
+    echo "Preloading UK Voice"
+    mimic3-download 'en_UK/apope_low*'
+    
+fi
 
-mimic3-download 'en_UK/apope_low*'
-mimic3-download 'af_ZA/*'
+if [ -d "/root/.local/share/mycroft/mimic3/voices/af_ZA/google-nwu_low" ] 
+then
+    echo "Afrikaans Voice Already Preloaded" 
+else
+    echo "Preloading Afrikaans Voice"
+    mimic3-download 'af_ZA/*
+    
+fi
 
 
 echo ""
