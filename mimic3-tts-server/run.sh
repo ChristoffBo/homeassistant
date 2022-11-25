@@ -1,7 +1,7 @@
 #!/bin/bash
 echo ""
 echo "======================================================================================"
-echo ""Preloading Voices                                                                   ""
+echo ""Preloading Voices, US, UK and Afrikaans                                             ""
 echo "======================================================================================"
 
 mimic3-download 'en_US/*'
