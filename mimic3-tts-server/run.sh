@@ -16,7 +16,7 @@ else
 fi
 
 
-if [ -d "/root/.local/share/mycroft/mimic3/voices/en_UK/" ] 
+if [ -d "/root/.local/share/mycroft/mimic3/voices/af_ZA/" ] 
 then
     echo "Afrikaans Voice Already Preloaded" 
 else
