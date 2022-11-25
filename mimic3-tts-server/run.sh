@@ -5,6 +5,7 @@ echo ""Preloading Voices                                                        
 echo "======================================================================================"
 
 mimic3-download 'en_US/*'
+mimic3-download 'en_UK/*'
 mimic3-download 'afrikaans/*'
 
 echo ""
