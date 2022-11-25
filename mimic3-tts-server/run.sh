@@ -10,7 +10,7 @@ if [ -d "/root/.local/share/mycroft/mimic3/voices/en_UK/" ]
 then
     echo "UK Voice Already Preloaded" 
 else
-    echo "Preloading Voices"
+    echo "Preloading UK Voice"
     mimic3-download 'en_UK/apope_low*' 
     
 fi
@@ -20,7 +20,7 @@ if [ -d "/root/.local/share/mycroft/mimic3/voices/af_ZA/" ]
 then
     echo "Afrikaans Voice Already Preloaded" 
 else
-    echo "Preloading Voices"
+    echo "Preloading Afrikaans Voice"
     mimic3-download 'af_ZA/*'
     
 fi
