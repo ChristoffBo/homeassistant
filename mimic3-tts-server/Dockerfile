@@ -18,8 +18,6 @@ RUN \
     && apt-get install -f \
     && rm /tmp/mycroft-mimic3-tts.deb
     
-CMD mimic3-download 'en_UK/apope_low*'
-CMD mimic3-download 'af_ZA/*'
     
 COPY run.sh /
 RUN chmod a+x /run.sh
