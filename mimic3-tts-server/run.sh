@@ -1,10 +1,10 @@
 #!/bin/bash
 echo ""
 echo "======================================================================================"
-echo ""Preloading Voices, US, UK and Afrikaans                                             ""
+echo ""Preloading Voices UK and Afrikaans                                             ""
 echo "======================================================================================"
 
-mimic3-download 'en_US/*'
+
 mimic3-download 'en_UK/*'
 mimic3-download 'af_ZA/*'
 
