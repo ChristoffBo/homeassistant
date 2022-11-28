@@ -1,6 +1,6 @@
 {
   "name": "OpenVPN Client",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "slug": "openvpn_client",
   "description": "OpenVPN Client",
   "url": "https://github.com/ChristoffBo/homeassistant/blob/main/Ovpn",
