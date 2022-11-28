@@ -4,8 +4,8 @@ This is a Add-On for [Home Assistant](https://www.home-assistant.io) which enabl
 
 ## Installation
 
-Move your client.ovpn file to hassio/share folder in your server.
+Move your client.ovpn file to /share folder on your server.
+Create a file in /share folder called auth.txt and add your username and password on the first and second line.
+edit your ovpn file and add the following auth-user-pass /share/auth.txt
 
-
-
-Then, scroll down and locate the OpenVPN Client Hass.io Add-Ons section. Click on OpenVPN Client, then INSTALL and Start.
+Click on OpenVPN Client, then INSTALL and Start.
