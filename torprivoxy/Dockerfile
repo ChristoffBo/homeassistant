@@ -4,7 +4,7 @@ ARG BUILD_ARCH
 
 
 
-CMD ["runsvdir" "/etc/service"]
+
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
