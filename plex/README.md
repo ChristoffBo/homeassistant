@@ -1,7 +1,4 @@
-## &#9888; Open Issue : [🐛 [plex] issue with networkdisks (opened 2022-11-15)](https://github.com/alexbelgium/hassio-addons/issues/554) by [@bilak](https://github.com/bilak)
-# Home assistant add-on: plex
 
-[![Donate][donation-badge]](https://www.buymeacoffee.com/alexbelgium)
 
 ![Version](https://img.shields.io/badge/dynamic/json?label=Version&query=%24.version&url=https%3A%2F%2Fraw.githubusercontent.com%2Falexbelgium%2Fhassio-addons%2Fmaster%2Fplex%2Fconfig.json)
 ![Ingress](https://img.shields.io/badge/dynamic/json?label=Ingress&query=%24.ingress&url=https%3A%2F%2Fraw.githubusercontent.com%2Falexbelgium%2Fhassio-addons%2Fmaster%2Fplex%2Fconfig.json)
