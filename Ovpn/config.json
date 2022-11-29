@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "slug": "openvpn_client",
   "description": "OpenVPN Client",
+  "codenotary": "bothmacell@gmail.com",
   "url": "https://github.com/ChristoffBo/homeassistant/blob/main/Ovpn",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "application",
