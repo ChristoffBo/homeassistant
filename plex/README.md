@@ -6,6 +6,7 @@
 
 Forked to add latest beta versions, smb and local hdd mount.
 
+- Latest version : https://github.com/alexbelgium
 - Inital version : https://github.com/petersendev/hassio-addons
 - CIFS code : https://github.com/dianlight/hassio-addons
 
