@@ -32,9 +32,9 @@ comparison to installing any other Hass.io add-on.
 ## Configuration
 
 ```
-Move your client.ovpn file to /share folder on your server.
+Move your client.ovpn file to /share folder on your HomeAssistant server.
 
-Create a file in /share folder called auth.txt and add your username and password on the first and second line.
+Create a file in /share folder called auth.txt and add your username and password on the first and second lines.
 
 edit your ovpn file and add the following auth-user-pass /share/auth.txt
 
