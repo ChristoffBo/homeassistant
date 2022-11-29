@@ -38,7 +38,7 @@ Create a file in /share folder called auth.txt and add your username and passwor
 
 edit your ovpn file and add the following auth-user-pass /share/auth.txt
 
-Click on OpenVPN Client, then INSTALL and Start.
+Start the Addon and check the logs.
 ```
 
 
