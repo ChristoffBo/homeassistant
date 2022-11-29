@@ -1,6 +1,6 @@
 # OpenVPN Client Add-On
 
-This is a Add-On for [Home Assistant](https://www.home-assistant.io) 
+This is an Add-On for [Home Assistant](https://www.home-assistant.io) 
 
 ## Installation
 
