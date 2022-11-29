@@ -32,9 +32,15 @@ comparison to installing any other Hass.io add-on.
 ## Configuration
 
 ```
-port : 5380 #port you want to run on.
+Move your client.ovpn file to /share folder on your server.
+
+Create a file in /share folder called auth.txt and add your username and password on the first and second line.
+
+edit your ovpn file and add the following auth-user-pass /share/auth.txt
+
+Click on OpenVPN Client, then INSTALL and Start.
 ```
 
-Webui can be found at `<your-ip>:port`.
+
 
 [repository]: https://github.com/ChristoffBo/homeassistant/
