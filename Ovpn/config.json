@@ -6,6 +6,7 @@
   "codenotary": "bothmacell@gmail.com",
   "url": "https://github.com/ChristoffBo/homeassistant/blob/main/Ovpn",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+  "image": "ghcr.io/christoffbo/openvpn_client-{arch}",
   "startup": "application",
   "init": false,
   "boot": "auto",
