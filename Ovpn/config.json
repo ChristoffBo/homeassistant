@@ -1,9 +1,10 @@
 {
   "name": "OpenVPN Client",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "openvpn_client",
   "description": "OpenVPN Client",
   "codenotary": "bothmacell@gmail.com",
+  "image": "ghcr.io/christoffbo/ovpn-{arch}",
   "url": "https://github.com/ChristoffBo/homeassistant/blob/main/Ovpn",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "application",
