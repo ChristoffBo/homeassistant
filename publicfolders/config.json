@@ -2,7 +2,7 @@
   "init": false,
   "slug": "public_folders",
   "name": "Public Folders",
-  "version": "V1.0.0",
+  "version": "V1.0.1",
   "description": "Server files on http.",
   "arch":
   [
