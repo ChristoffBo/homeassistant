@@ -1,8 +1,0 @@
-{
-  "last_update": "07-09-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "gitea",
-  "source": "github",
-  "upstream_repo": "go-gitea/gitea",
-  "upstream_version": "1.17.3"
-}
