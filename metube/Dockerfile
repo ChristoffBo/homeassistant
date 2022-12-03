@@ -10,7 +10,9 @@ ARG BUILD_ARCH
 RUN apk update && \
     apk add cifs-utils
     
-
+ENV PACKAGES="jq \
+    cifs-utils \
+    keyutils"
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
