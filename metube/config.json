@@ -64,6 +64,13 @@
     "8081/tcp": "Web interface"
   },
   "schema": {},
+   "cifsdomain": "str?",
+    "cifspassword": "str?",
+    "cifsusername": "str?",
+    "claim": "str",
+    "localdisks": "str?",
+    "networkdisks": "str?",
+    "smbv1": "bool?"
   "slug": "metube",
   "startup": "services",
   "upstream": "",
