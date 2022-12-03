@@ -4,7 +4,7 @@
     "aarch64"
   ],
   "boot": "auto",
-  "description": "Web GUI for youtube-dl",
+  "description": "Youtube Video Downloader",
   "environment": {
     "DOWNLOAD_DIR": "/share/metube/"
   },
