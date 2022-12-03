@@ -3,16 +3,7 @@ FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
 
-#COPY install.sh /
-#RUN chmod a+x /install.sh
-#CMD [ "/install.sh" ]
 
-RUN apk update && \
-    apk add cifs-utils
-    
-ENV PACKAGES="jq \
-    cifs-utils \
-    keyutils"
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
