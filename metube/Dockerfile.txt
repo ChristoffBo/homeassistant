@@ -7,9 +7,9 @@ ARG BUILD_ARCH
 #RUN chmod a+x /install.sh
 #CMD [ "/install.sh" ]
 
-ENV PACKAGES="jq \
-    cifs-utils \
-    keyutils"
+RUN apk update && \
+    apk add cifs-utils
+    
 
 
 ARG BUILD_ARCH
