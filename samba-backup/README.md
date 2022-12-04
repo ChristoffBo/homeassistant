@@ -1,12 +1,6 @@
 # Home Assistant Add-on: Samba Backup
 
-![Supports aarch64 Architecture][aarch64-shield] ![Supports amd64 Architecture][amd64-shield] ![Supports armhf Architecture][armhf-shield] ![Supports armv7 Architecture][armv7-shield] ![Supports i386 Architecture][i386-shield]
-
-![Current version][version]
-
-[<img src="https://raw.githubusercontent.com/thomasmauerer/hassio-addons/master/samba-backup/images/donate-paypal.svg" width=200/>](https://www.paypal.com/donate/?hosted_button_id=LP732BXWCKM3C)
-
-Create backups and store them on a Samba share.
+https://github.com/thomasmauerer/hassio-addons/tree/master/samba-backup
 
 ## About
 
