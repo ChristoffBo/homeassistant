@@ -1,5 +1,6 @@
 # Public Folders
 
+https://github.com/Rusketh/RuskethsHomeAddons
  
  By default files under the HA media directory will be served on HTTP port 8080.
 http://<HA-IP>:<port>/<handle>/<filepath>
