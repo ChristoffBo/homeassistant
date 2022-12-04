@@ -1,6 +1,10 @@
-# Public Folders
+# Home assistant add-on: Public Folders
 
-https://github.com/Rusketh/RuskethsHomeAddons
+- Latest version : https://github.com/Rusketh/RuskethsHomeAddons
+
+## About
+
+
  
  By default files under the HA media directory will be served on HTTP port 8080.
 http://<HA-IP>:<port>/<handle>/<filepath>
