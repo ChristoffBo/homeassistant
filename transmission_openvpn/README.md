@@ -12,7 +12,7 @@ This addon is based on the [Haugene docker image](https://github.com/haugene/doc
 The installation of this add-on is pretty straightforward and not different in
 comparison to installing any other Hass.io add-on.
 
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
+
 1. Install this add-on.
 1. Click the `Save` button to store your configuration.
 1. Start the add-on.
@@ -31,4 +31,3 @@ Complete transmission options are in /config/addons_config/transmission (make su
 
 Webui can be found at `<your-ip>:9091`.
 
-[repository]: https://github.com/alexbelgium/hassio-addons
