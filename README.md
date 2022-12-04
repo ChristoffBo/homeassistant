@@ -23,7 +23,10 @@ Add the repository manually, please follow the procedure highlighted in the [Hom
 These Addons was forked from the following repos:
 
 https://github.com/alexbelgium/hassio-addons
+
 https://github.com/petersendev/hassio-addons
+
 https://github.com/Rusketh/RuskethsHomeAddons
+
 https://github.com/thomasmauerer/hassio-addons/tree/master/samba-backup
 
