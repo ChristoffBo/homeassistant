@@ -3,7 +3,7 @@
 
 ## About
 
-- Latest version : https://github.com/alexbelgium
+- Latest version : https://github.com/alexbelgium/hassio-addons
 
 [jellyfin](https://jellyfin.media/) organizes video, music, live TV, and photos from personal media libraries and streams them to smart TVs, streaming boxes and mobile devices. This container is packaged as a standalone jellyfin Media Server.
 
