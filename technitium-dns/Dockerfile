@@ -2,6 +2,9 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
+ENV DNS_SERVER_LOG_USING_LOCAL_TIME=true
+    
+
 
 COPY install.sh /
 RUN chmod a+x /install.sh
