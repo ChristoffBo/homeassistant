@@ -1,3 +1,10 @@
+# Home assistant add-on: mqtt-explorer
+
+- Latest version : https://github.com/adamoutler/mqtt-explorer
+
+## About
+
+
 Enter your MQTT server connection information, Username and password, then connect. Each message sent to the MQTT server will be displayed.  You can send your own messages as well.
 
 see the [MQTT Explorer website](https://mqtt-explorer.com/) for more information.
