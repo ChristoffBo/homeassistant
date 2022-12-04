@@ -1,0 +1,9 @@
+{
+  "github_fulltag": "true",
+  "last_update": "19-11-2022",
+  "repository": "ChristoffBo/homeassistant",
+  "slug": "transmission_openvpn",
+  "source": "github",
+  "upstream_repo": "haugene/docker-transmission-openvpn",
+  "upstream_version": "v4.3.2"
+}
