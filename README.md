@@ -24,3 +24,5 @@ https://github.com/thomasmauerer/hassio-addons/tree/master/samba-backup
 
 https://github.com/adamoutler/mqtt-explorer
 
+https://github.com/jdeath/homeassistant-addons
+
