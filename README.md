@@ -22,3 +22,5 @@ https://github.com/Rusketh/RuskethsHomeAddons
 
 https://github.com/thomasmauerer/hassio-addons/tree/master/samba-backup
 
+https://github.com/adamoutler/mqtt-explorer
+
