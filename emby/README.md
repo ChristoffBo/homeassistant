@@ -37,4 +37,4 @@ comparison to installing any other Hass.io add-on.
 1. Check the logs of the add-on to see if everything went well.
 1. Carefully configure the add-on to your preferences, see the official documentation for for that.
 
-[repository]: https://github.com/alexbelgium/hassio-addons
+
