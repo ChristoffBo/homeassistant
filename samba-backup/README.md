@@ -1,6 +1,6 @@
 # Home Assistant Add-on: Samba Backup
 
-https://github.com/thomasmauerer/hassio-addons/tree/master/samba-backup
+- Latest version: https://github.com/thomasmauerer/hassio-addons/tree/master/samba-backup
 
 ## About
 
