@@ -8,11 +8,11 @@ This Repo was created for personal use only and is a collection of addons from o
 
 I Only created the following Addons:
 
-Heimdall
+Heimdall,
 
-Mimic3-tts-server
+Mimic3-tts-server,
 
-technitium-dns
+technitium-dns.
 
 
 ## Installation
