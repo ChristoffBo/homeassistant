@@ -5,7 +5,6 @@
 
 Home Assistant allows anyone to create add-on repositories.
 This Repo was created for personal use only and is a collection of addons from other creators aswell.These add-ons are provided as is.
-All these addons was tested on an Intel NUC I7
 
 I Only created the following Addons:
 
