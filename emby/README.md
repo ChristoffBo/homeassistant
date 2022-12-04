@@ -30,7 +30,7 @@ silent: true #suppresses debug messages
 The installation of this add-on is pretty straightforward and not different in
 comparison to installing any other Hass.io add-on.
 
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
+
 1. Install this add-on.
 1. Click the `Save` button to store your configuration.
 1. Start the add-on.
