@@ -1,4 +1,7 @@
 
+## 6.2.0 (13-12-2022)
+- Update to latest version from https://github.com/hassio-addons/addon-debian-base
+
 ## 0.2.4 (05-11-2022)
 - Update Mimic to 0.2.4
 
