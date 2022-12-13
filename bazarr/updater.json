@@ -1,8 +1,0 @@
-{
-  "last_update": "06-12-2022",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "bazarr",
-  "source": "github",
-  "upstream_repo": "linuxserver/docker-bazarr",
-  "upstream_version": "1.1.3"
-}
