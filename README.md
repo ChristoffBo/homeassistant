@@ -12,17 +12,4 @@ This Repo was created for personal use only and is a collection of addons from o
 
 Add the repository manually, please follow the procedure highlighted in the [Home Assistant website](https://home-assistant.io/hassio/installing_third_party_addons). Use the following URL to add this repository: https://github.com/ChristoffBo/homeassistant
 
-## Thank you to the below creators:
-
-https://github.com/alexbelgium/hassio-addons
-
-https://github.com/petersendev/hassio-addons
-
-https://github.com/Rusketh/RuskethsHomeAddons
-
-https://github.com/thomasmauerer/hassio-addons/tree/master/samba-backup
-
-https://github.com/adamoutler/mqtt-explorer
-
-https://github.com/jdeath/homeassistant-addons
 
