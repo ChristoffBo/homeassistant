@@ -56,6 +56,7 @@
     "VERSION": "docker"
   },
   "host_network": true,
+  "image": "ghcr.io/alexbelgium/plex_nas-{arch}",
   "init": false,
   "map": [
     "share:rw",
@@ -111,8 +112,8 @@
     "smbv1": "bool?"
   },
   "slug": "plex_nas",
-  "url": "https://github.com/ChristoffBo/homeassistant/blob/main/plex",
-  "version": "1.29.2.6364-6d72b0cf6-ls146",
+  "url": "https://github.com/alexbelgium/hassio-addons/tree/master/plex",
+  "version": "1.29.2.6364-6d72b0cf6-ls145",
   "video": true,
   "webui": "[PROTO:ssl]://[HOST]:[PORT:32400]/web"
 }
