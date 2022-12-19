@@ -5,6 +5,16 @@ ARG BUILD_ARCH
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN \
+    mycroft-mimic3-tts="0.2.4" \
+    \
+    && ARCH="${BUILD_ARCH}" \
+    && if [ "${BUILD_ARCH}" = "aarch64" ]; then ARCH="arm64"; fi \
+    && if [ "${BUILD_ARCH}" = "armv7" ]; then ARCH="armhf"; fi \
+    && if [ "${BUILD_ARCH}" = "armv7" ]; then ARCH="amd64"; fi \
+    \
+    && curl -J -L -o /tmp/grafana.deb \
+        "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.4/mycroft-mimic3-tts_${mycroft-mimic3-tts}_${ARCH}.deb" \
+    \
     apt-get update \
     && apt-get upgrade -y \
     && apt-get install nginx -y \
