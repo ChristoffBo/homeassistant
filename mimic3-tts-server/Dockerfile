@@ -2,8 +2,6 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
 RUN \
     mycroft-mimic3-tts="0.2.4" \
     \
