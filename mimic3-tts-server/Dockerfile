@@ -10,9 +10,9 @@ RUN \
     && ARCH="${BUILD_ARCH}" \
     && if [ "${BUILD_ARCH}" = "aarch64" ]; then ARCH="arm64"; fi \
     && if [ "${BUILD_ARCH}" = "armv7" ]; then ARCH="armhf"; fi \
-    && if [ "${BUILD_ARCH}" = "armv7" ]; then ARCH="amd64"; fi \
+    && if [ "${BUILD_ARCH}" = "amd64" ]; then ARCH="amd64"; fi \
     \
-    && curl -J -L -o /tmp/grafana.deb \
+    && curl -J -L -o /tmp/mycroft-mimic3-tts.deb \
         "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.4/mycroft-mimic3-tts_${mycroft-mimic3-tts}_${ARCH}.deb" \
     \
     apt-get update \
@@ -22,8 +22,6 @@ RUN \
     && apt-get install -y libespeak-ng1 python3 python3-pip python3-venv git \
     && apt-get install libatomic1 libgomp1 libatlas-base-dev \
     \   
-    && curl -J -L -o /tmp/mycroft-mimic3-tts.deb \
-        "https://github.com/MycroftAI/mimic3/releases/download/release%2Fv0.2.4/mycroft-mimic3-tts_0.2.4_amd64.deb" \
     && dpkg -i /tmp/mycroft-mimic3-tts.deb \
     && apt-get install -f \
     && rm /tmp/mycroft-mimic3-tts.deb
