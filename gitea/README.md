@@ -1,6 +1,6 @@
 # Home assistant add-on: Gitea
 
-- Latest version : https://github.com/alexbelgium/hassio-addons
+
 
 ## About
 
@@ -25,7 +25,7 @@ Webui can be found at `<your-ip>:port`.
 The installation of this add-on is pretty straightforward and not different in
 comparison to installing any other Hass.io add-on.
 
-
+1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
 1. Install this add-on.
 1. Click the `Save` button to store your configuration.
 1. Start the add-on.
@@ -33,4 +33,4 @@ comparison to installing any other Hass.io add-on.
 1. Go to the webui, where you will initialize the app
 1. Restart the addon, to apply any option that should be applied
 
-
+[repository]: https://github.com/alexbelgium/hassio-addons
