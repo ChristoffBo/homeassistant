@@ -20,8 +20,10 @@ comparison to installing any other Hass.io add-on.
 ## Configuration
 
 ```
-port : 59125 #port you want to run on.
+port : 59125 (or the port you changed it to)
+
 HomeAssistant : Add the following to you config.yaml or tts.yaml
+
                 - Platform: marytts
                   host: (Your homeassistant IP)
                   port: 59125
