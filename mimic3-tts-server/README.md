@@ -21,6 +21,11 @@ comparison to installing any other Hass.io add-on.
 
 ```
 port : 59125 #port you want to run on.
+HomeAssistant : Add the following to you config.yaml or tts.yaml
+                - Platform: marytts
+                  host: (Your homeassistant IP)
+                  port: 59125
+                  voice: en_UK/apope_low (anyone of the supported voices can be used)
 ```
 
 Webui can be found at `<your-ip>:port`.
