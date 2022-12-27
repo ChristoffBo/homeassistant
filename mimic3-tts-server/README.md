@@ -23,7 +23,7 @@ port : 59125 (or the port you changed it to)
 
 HomeAssistant : Add the following to your config.yaml or tts.yaml
 
-                `- Platform: marytts
+                 - Platform: marytts
                    host: (Your homeassistant IP)
                    port: 59125
                    voice: en_UK/apope_low` (any of the supported voices can be used)
