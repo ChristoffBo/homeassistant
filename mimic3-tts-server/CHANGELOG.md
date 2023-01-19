@@ -1,4 +1,7 @@
 
+## 6.2.1 (19-01-2023)
+- Update to latest version from https://github.com/hassio-addons/addon-debian-base
+
 ## 6.2.0 (13-12-2022)
 - Update to latest version from https://github.com/hassio-addons/addon-debian-base
 
