@@ -1,8 +1,4 @@
 
-# Home assistant add-on: plex
-
-
-
 ## About
 
 Forked to add latest beta versions, smb and local hdd mount.

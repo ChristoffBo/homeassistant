@@ -28,6 +28,7 @@
     "/dev/nvme0n1p1",
     "/dev/nvme0n1p2",
     "/dev/mmcblk",
+    "/dev/fuse",
     "/dev/sda1",
     "/dev/sdb1",
     "/dev/sdc1",
@@ -112,7 +113,7 @@
   },
   "slug": "plex_nas",
   "url": "https://github.com/alexbelgium/hassio-addons/tree/master/plex",
-  "version": "1.30.1.6562-915986d62-ls148",
+  "version": "1.30.1.6562-915986d62-ls148-2",
   "video": true,
   "webui": "[PROTO:ssl]://[HOST]:[PORT:32400]/web"
 }
