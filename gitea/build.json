@@ -1,7 +1,7 @@
 {
   "build_from": {
-    "aarch64": "gitea/gitea:latest",
-    "amd64": "gitea/gitea:latest"
+    "aarch64": "gitea/gitea:1.18.3",
+    "amd64": "gitea/gitea:1.18.3"
   },
   "codenotary": {
     "signer": "alexandrep.github@gmail.com"
