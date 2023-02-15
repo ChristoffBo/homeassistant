@@ -1,6 +1,6 @@
 ![TOR Privoxy Logo](https://i.imgur.com/rGdIzv9.png)
 
-**TOR and Privoxy in docker container**
+
 ===
 
 # Home assistant add-on: TorPrivoxy
