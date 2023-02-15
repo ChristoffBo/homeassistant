@@ -1,4 +1,4 @@
-# Home assistant add-on: Technitium-DNS 
+# Home assistant add-on: TorPrivoxy
 
 
 ## About
