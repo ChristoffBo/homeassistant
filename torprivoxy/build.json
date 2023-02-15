@@ -1,0 +1,11 @@
+{
+  "build_from": {
+    "aarch64": "avpnusr/torprivoxy:latest",
+    "amd64": "avpnusr/torprivoxy:latest",
+    "armv7": "avpnusr/torprivoxy:latest"
+  },
+  "codenotary": {
+    "base_image": "shreyas@technitium.com",
+    "signer": "shreyas@technitium.com"
+  }
+}
