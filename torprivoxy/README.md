@@ -1,7 +1,7 @@
 ![TOR Privoxy Logo](https://i.imgur.com/rGdIzv9.png)
 
 
-===
+
 
 # Home assistant add-on: TorPrivoxy
 
