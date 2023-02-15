@@ -1,8 +1,8 @@
 {
-  "last_update": "04-12-2022",
+  "last_update": "15-02-2023",
   "repository": "ChristoffBo/homeassistant",
   "slug": "technitium-dns",
   "source": "dockerhub",
   "upstream_repo": "avpnusr/torprivoxy",
-  "upstream_version": ""
+  "upstream_version": "31-12-2022-debian"
 }
