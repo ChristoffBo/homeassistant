@@ -1,3 +1,5 @@
+---
+configuration:
   additional_apps:
     name: additional_apps
     description: Additional apps to install at boot
@@ -39,7 +41,7 @@
     description: See upstream app documentation
   certfile:
     name: certfile
-    description: fullchain.pem #ssl certificate, must be located in /ssl
+    description: "fullchain.pem #ssl certificate, must be located in /ssl"
   checkip_command:
     name: checkip_command
     description: See upstream app documentation
@@ -264,7 +266,7 @@
     description: See upstream app documentation
   localdisks:
     name: localdisks
-    description: Physical name of the partition (ex. sda1) or the share (ex. SharedFiles) to mount separated by commas (ex: sda1,sdb1,MYNAS)
+    description: Physical name of the partition (ex. sda1) or the share (ex. SharedFiles) to mount separated by commas (ex. sda1,sdb1,MYNAS)
   log_level:
     name: log_level
     description: See upstream app documentation
@@ -277,6 +279,7 @@
   MAILER_ENABLED:
     name: MAILER_ENABLED
     description: See upstream app documentation
+  OPENVPN_PROVIDER:
     name: OPENVPN_PROVIDER
     description: See upstream app documentation
   OPENVPN_USERNAME:
@@ -401,7 +404,7 @@
     description: See upstream app documentation
   silent:
     name: silent
-    description: true #suppresses debug messages
+    description: "true #suppresses debug messages"
   SMARTCTL_COMMAND_DEVICE_TYPE:
     name: SMARTCTL_COMMAND_DEVICE_TYPE
     description: See upstream app documentation
@@ -419,7 +422,7 @@
     description: See upstream app documentation
   ssl:
     name: ssl
-    description: true/false : enables ssl. Need certfile and keyfile filled'
+    description: true/false.  enables ssl. Need certfile and keyfile filled'
   storage_dir:
     name: storage_dir
     description: See upstream app documentation
@@ -500,7 +503,7 @@
     description: See upstream app documentation
   whitelist:
     name: whitelist
-    description: ""localhost,192.168.0.0/16"" # list ip subnets that won''t need a password
+    description: '"localhost,192.168.0.0/16" # list ip subnets that do no need a password'
   WHOOGLE_ALT_IG:
     name: WHOOGLE_ALT_IG
     description: See upstream app documentation
