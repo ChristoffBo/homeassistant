@@ -1,3 +1,5 @@
+![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/metube/icon.png)
+
 # Home assistant add-on: MeTube
 
 
