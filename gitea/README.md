@@ -1,3 +1,4 @@
+![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/gitea/logo.png)
 # Home assistant add-on: Gitea
 
 
