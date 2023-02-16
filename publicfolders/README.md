@@ -1,3 +1,4 @@
+![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/publicfolders/logo.png)
 # Home assistant add-on: Public Folders
 
 - Latest version : https://github.com/Rusketh/RuskethsHomeAddons
