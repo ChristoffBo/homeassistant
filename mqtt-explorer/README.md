@@ -1,3 +1,4 @@
+![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/mqtt-explorer/icon.png)
 # Home assistant add-on: mqtt-explorer
 
 - Latest version : https://github.com/adamoutler/mqtt-explorer
