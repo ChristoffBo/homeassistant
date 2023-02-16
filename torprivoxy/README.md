@@ -1,4 +1,4 @@
-![TOR Privoxy Logo](https://i.imgur.com/rGdIzv9.png)
+![TOR Privoxy Logo](https://github.com/ChristoffBo/homeassistant/blob/main/torprivoxy/logo.png)
 
 
 
