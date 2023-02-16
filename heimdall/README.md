@@ -1,3 +1,4 @@
+![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/heimdall/logo.png)
 # Home assistant add-on: Heimdall
 
 
