@@ -3,7 +3,7 @@
 
 
 
-![OPVPN Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/ovpn/logo.png)
+![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/ovpn/logo.png)
 
 
 
