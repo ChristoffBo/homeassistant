@@ -1,4 +1,4 @@
-![Technitium DNS Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/technitium-dns/logo.png)
+![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/technitium-dns/logo.png)
 
 
 
