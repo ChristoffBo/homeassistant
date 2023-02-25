@@ -4,7 +4,7 @@ ARG BUILD_ARCH
 
 COPY install.sh /
 RUN chmod a+x /install.sh
-CMD [ "/install.sh" ]
+CMD [ "/run.sh" ]
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
