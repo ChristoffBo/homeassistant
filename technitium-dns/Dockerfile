@@ -3,7 +3,7 @@ FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
 COPY install.sh /
-RUN chmod a+x /install.sh
+RUN chmod a+x /run.sh
 CMD [ "/run.sh" ]
 
 ARG BUILD_ARCH
