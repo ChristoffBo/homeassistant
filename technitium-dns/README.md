@@ -1,7 +1,3 @@
-![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/technitium-dns/logo.png)
-
-
-
 # Home assistant add-on: Technitium-DNS 
 
 

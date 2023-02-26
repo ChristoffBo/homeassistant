@@ -2,14 +2,9 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
-RUN apt update; apt install curl -y; \
-curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel STS /
-
-COPY run.sh /
-RUN chmod a+x /run.sh
-ENTRYPOINT [ "/run.sh" ]
-
-
+COPY install.sh /
+RUN chmod a+x /install.sh
+CMD [ "/install.sh" ]
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
