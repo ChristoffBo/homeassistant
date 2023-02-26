@@ -2,9 +2,17 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
+RUN apt update; apt install curl -y; \
+curl https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb --output packages-microsoft-prod.deb; \
+dpkg -i packages-microsoft-prod.deb; \
+rm packages-microsoft-prod.deb
+
+
 COPY run.sh /
 RUN chmod a+x /run.sh
 ENTRYPOINT [ "/run.sh" ]
+
+
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
