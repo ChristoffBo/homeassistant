@@ -3,11 +3,7 @@ FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
 RUN apt update; apt install curl -y; \
-curl https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb --output packages-microsoft-prod.deb; \
-dpkg -i packages-microsoft-prod.deb; \
-rm packages-microsoft-prod.deb
-
-RUN apt update; apt install libmsquic -y; apt clean -y;
+curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel STS /
 
 COPY run.sh /
 RUN chmod a+x /run.sh
