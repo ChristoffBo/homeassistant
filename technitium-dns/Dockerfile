@@ -4,7 +4,7 @@ ARG BUILD_ARCH
 
 COPY run.sh /
 RUN chmod a+x /run.sh
-CMD [ "/run.sh" ]
+ENTRYPOINT [ "/run.sh" ]
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
