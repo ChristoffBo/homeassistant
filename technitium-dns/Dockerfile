@@ -9,8 +9,6 @@ rm packages-microsoft-prod.deb
 
 RUN apt update; apt install libmsquic -y; apt clean -y;
 
-COPY ./DnsServerApp/bin/Release/publish/ .
-
 COPY run.sh /
 RUN chmod a+x /run.sh
 ENTRYPOINT [ "/run.sh" ]
