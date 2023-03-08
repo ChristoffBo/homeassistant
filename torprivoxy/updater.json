@@ -4,5 +4,5 @@
   "slug": "torprivoxy",
   "source": "dockerhub",
   "upstream_repo": "avpnusr/torprivoxy",
-  "upstream_version": "31-12-2022-debian"
+  "upstream_version": "04-03-2023-debian"
 }
