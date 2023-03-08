@@ -1,6 +1,6 @@
 {
   "name": "torprivoxy",
-  "version": "04-03-2023-debian",
+  "version": "31-12-2022-debian",
   "slug": "torprivoxy",
   "description": "Privoxy via TOR",
   "url": "https://github.com/avpnusr/torprivoxy",
