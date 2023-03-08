@@ -3,6 +3,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "torprivoxy",
   "source": "dockerhub",
-  "upstream_repo": "avpnusr/torprivoxy",
+  "upstream_repo": "avpnusr/torprivoxy:latest-debian",
   "upstream_version": "31-12-2022-debian"
 }
