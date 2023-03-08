@@ -5,7 +5,7 @@
     "armv7": "avpnusr/torprivoxy:04-03-2023"
   },
   "codenotary": {
-    "base_image": "shreyas@technitium.com",
-    "signer": "shreyas@technitium.com"
+    "base_image": "avpnusr",
+    "signer": "bothmacell@gmail.com"
   }
 }
