@@ -1,4 +1,7 @@
 
+## 31-12-2022-debian (14-03-2023)
+- Update to latest version from avpnusr/torprivoxy
+
 ## 31-12-2022-debian (08-03-2023)
 - Update to latest version from avpnusr/torprivoxy
 

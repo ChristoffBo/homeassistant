@@ -1,8 +1,8 @@
 {
-  "last_update": "08-03-2023",
+  "last_update": "14-03-2023",
   "repository": "ChristoffBo/homeassistant",
   "slug": "torprivoxy",
   "source": "dockerhub",
   "upstream_repo": "avpnusr/torprivoxy",
-  "upstream_version": "11-03-2023-debian"
+  "upstream_version": "31-12-2022-debian"
 }
