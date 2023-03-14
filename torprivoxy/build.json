@@ -1,8 +1,9 @@
 {
   "build_from": {
-    "aarch64": "avpnusr/torprivoxy",
-    "amd64": "avpnusr/torprivoxy",
-    "armv7": "avpnusr/torprivoxy"
+    "aarch64": "avpnusr/torprivoxy:latest",
+    "amd64": "avpnusr/torprivoxy:latest",
+    "armv7": "avpnusr/torprivoxy:latest",
+    "armv6": "avpnusr/torprivoxy:latest"
   },
   "codenotary": {
     "base_image": "avpnusr",
