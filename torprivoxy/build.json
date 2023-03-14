@@ -1,9 +1,9 @@
 {
   "build_from": {
-    "aarch64": "avpnusr/torprivoxy:11-03-2023-debian",
-    "amd64": "avpnusr/torprivoxy:11-03-2023-debian",
-    "armv7": "avpnusr/torprivoxy:11-03-2023-debian",
-    "armv6": "avpnusr/torprivoxy:11-03-2023-debian"
+    "aarch64": "avpnusr/torprivoxy:11-03-2023",
+    "amd64": "avpnusr/torprivoxy:11-03-2023",
+    "armv7": "avpnusr/torprivoxy:11-03-2023",
+    "armv6": "avpnusr/torprivoxy:11-03-2023"
   },
   "codenotary": {
     "base_image": "avpnusr",
