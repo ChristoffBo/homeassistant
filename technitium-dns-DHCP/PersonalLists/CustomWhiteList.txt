@@ -16,7 +16,6 @@
 106c06cd218b007d-b1e8a1331f68446599e96a4b46a050f5.ams.plex.servicesstaging.plex.tv
 1337x.to
 196-15-159-91.7c65f8731b10b52efa14edf7c152ec40da4f648a.myunraid.net
-https://protect-za.mimecast.com/s/op6hC987rpty8J6uott_E?domain=196.21.187.2
 1drv.com
 2.android.pool.ntp.org
 25916activ.ibroadlink.com
@@ -109,7 +108,7 @@ api.weatherbit.io
 api.xiaomi.com
 apibay.org
 app.destinyitemmanager.com
-https://protect-za.mimecast.com/s/Bs9AC0gyR2hOjn9TDkm1l?domain=app.emby.media
+app.emby.media
 app.plex.tv
 app.prolific.co
 app.smartsheet.com
@@ -143,7 +142,7 @@ bolt.dropbox.com
 borat-tracker.cf
 bothma.duckdns.org
 bothmainc.co.za
-https://protect-za.mimecast.com/s/lqSUCg5VJxcX8vjC27bHT?domain=bothmainc.za.solar-assistant.io
+bothmainc.za.solar-assistant.io
 brands.home-assistant.io
 brave-core-ext.s3.brave.com
 brave.com
@@ -306,7 +305,7 @@ forcesafesearch.google.com
 forums.sonar
 forums.sonarr.tv
 forums.unraid.net
-https://protect-za.mimecast.com/s/Ud58Cj2VRvtLgzwf7iBDP?domain=ftp.debian.org
+ftp.debian.org
 gaijinent.com
 gaming.tsogosun.com
 gateway-outlook.bingviz.com
@@ -411,9 +410,9 @@ m1.tuyaeu.com
 m2.tuyaeu.com
 magnet4you.me
 magnetdl.com
-https://protect-za.mimecast.com/s/yatPCk5VRwcVgDRTJMlcQ?domain=mail.advancedvoice.co.za
-https://protect-za.mimecast.com/s/R9SMClOVYvSJLW3SY3H4A?domain=mail.google.com
-https://protect-za.mimecast.com/s/lZY_CmwVZ2TwvV7TNhcjS?domain=mail.services.live.com
+mail.advancedvoice.co.za
+mail.google.com
+mail.services.live.com
 matjhabeng.cabedocs.com
 mb3admin.com
 me.plexapp.com
@@ -574,7 +573,6 @@ rockstargames.com
 router.utorrent.com
 rtl.life360.com
 rtm.tnt-ea.com
-https://protect-za.mimecast.com/s/xXneCnZV5YS0n41f0usqN?domain=s3.amazonaws.com
 sabcnews.com
 safebrowsing.googleapis.com
 safesearch.googleapis.com
