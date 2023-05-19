@@ -668,9 +668,9 @@ maccubedholdings.co.za
 magicmaid.co.za
 magicpeople.co.za
 mahood.co.za
-https://protect-za.mimecast.com/s/w_7lCAn7DQtyjLlHGAB54?domain=mail.bs-eiendomme.co.za
-https://protect-za.mimecast.com/s/WxmICBg7B8hQvpRC6ga_R?domain=mail.marketingmachine.co.za
-https://protect-za.mimecast.com/s/YVgYCDR7kYi2XNJUAygkk?domain=mail.mavusoandbatauitsolutions.co.za
+mail.bs-eiendomme.co.za
+mail.marketingmachine.co.za
+mail.mavusoandbatauitsolutions.co.za
 mailcompanion.co.za
 mailserve.co.za
 makeoverbeautyshop.co.za
