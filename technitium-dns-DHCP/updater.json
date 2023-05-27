@@ -1,8 +1,8 @@
 {
-  "last_update": "01-05-2023",
+  "last_update": "27-05-2023",
   "repository": "ChristoffBo/homeassistant",
   "slug": "technitium-dns-dhcp",
   "source": "dockerhub",
   "upstream_repo": "technitium/dns-server",
-  "upstream_version": "11.1.1"
+  "upstream_version": "11.2"
 }
