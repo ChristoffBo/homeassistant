@@ -1,8 +1,8 @@
 {
-  "last_update": "15-05-2023",
+  "last_update": "13-06-2023",
   "repository": "ChristoffBo/homeassistant",
   "slug": "mimic_tts",
   "source": "github",
   "upstream_repo": "https://github.com/hassio-addons/addon-debian-base",
-  "upstream_version": "6.2.7"
+  "upstream_version": "7.0.0"
 }
