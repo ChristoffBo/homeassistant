@@ -11,7 +11,7 @@
   "map": [
     "share:rw"
   ],
-  "version": "2023-06-26",
+  "version": "2023-06-27",
   "name": "metube",
   "options": {},
   "ports": {
@@ -23,7 +23,7 @@
   "schema": {},
   "slug": "metube",
   "startup": "services",
-  "upstream": "2023-06-26",
+  "upstream": "2023-06-27",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "webui": "[PROTO:ssl]://[HOST]:[PORT:8081]",
   "ingress": true,
