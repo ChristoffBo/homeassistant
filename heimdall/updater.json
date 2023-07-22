@@ -1,9 +1,9 @@
 {
   "github_fulltag": "true",
-  "last_update": "14-07-2023",
+  "last_update": "22-07-2023",
   "repository": "ChristoffBo/homeassistant",
   "slug": "plex",
   "source": "github",
   "upstream_repo": "linuxserver/docker-heimdall",
-  "upstream_version": "v2.5.6-ls223"
+  "upstream_version": "v2.5.6-ls224"
 }
