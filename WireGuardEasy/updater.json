@@ -7,4 +7,5 @@
   "source": "dockerhub",
   "upstream_repo": "weejewel/wg-easy",
   "upstream_version": "7",
+  "fulltag": "false"
 }
