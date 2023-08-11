@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=https://hub.docker.com/r/weejewel/wg-easy/amd64:latest
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
