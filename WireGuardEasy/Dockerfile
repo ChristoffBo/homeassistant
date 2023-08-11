@@ -1,5 +1,6 @@
 ARG BUILD_FROM
-FROM weejewel/wg-easy
+FROM ${BUILD_FROM}
+ARG BUILD_ARCH
 
 VOLUME [ "/ssl" ]
 
