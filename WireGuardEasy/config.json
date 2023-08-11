@@ -46,7 +46,7 @@
   "slug": "wgeasy",
   "startup": "services",
   "upstream": "1.0",
-  "url": "https://github.com/jdeath/homeassistant-addons/tree/main/wgeasy",
+  "url": "https://https://hub.docker.com/r/weejewel/wg-easy",
   "version": "7",
   "webui": "[PROTO:ssl]://[HOST]:[PORT:51821]",
   "ingress": true,
