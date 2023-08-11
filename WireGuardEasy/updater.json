@@ -1,11 +1,11 @@
 {
   "github_fulltag": "true",
-  "last_update": "27-06-2022",
+  "last_update": "",
   "beta": "false",
   "repository": "ChristoffBo/homeassistant",
   "slug": "wgeasy",
   "source": "dockerhub",
   "upstream_repo": "weejewel/wg-easy",
-  "upstream_version": "7",
+  "upstream_version": "",
   "fulltag": "false"
 }
