@@ -5,7 +5,7 @@
     "armv7": "weejewel/wg-easy:latest"
   },
   "codenotary": {
-    "base_image": "shreyas@technitium.com",
-    "signer": "shreyas@technitium.com"
+    "base_image": "",
+    "signer": ""
   }
 }
