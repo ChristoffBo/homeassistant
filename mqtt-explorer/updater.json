@@ -3,7 +3,7 @@
   "last_update": "31-08-2023",
   "beta": "false",
   "repository": "ChristoffBo/homeassistant",
-  "slug": "metube",
+  "slug": "mqtt_explorer",
   "source": "dockerhub",
   "upstream_repo": "smeagolworms4/mqtt-explorer",
   "upstream_version": "master"
