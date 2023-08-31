@@ -8,6 +8,3 @@ All other configuration is performed within the Web UI.
 # Instructions
 see https://mqtt-explorer.com/
 
-# Source
-https://github.com/GollumDom/addon-repository
-
