@@ -15,6 +15,7 @@ About
 This addon is based on the smeagolworms4/mqtt-explorer docker image.
 
 Installation
+
 The installation of this add-on is pretty straightforward and not different in comparison to installing any other Hass.io add-on.
 
 Add my Hass.io add-ons repository to your Hass.io instance.
