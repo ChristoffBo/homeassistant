@@ -15,7 +15,7 @@
   "ingress_port": 4000,
   "panel_icon": "mdi:access-point-network",
   "panel_admin": true,
-  "image": "smeagolworms4/mqtt-explorer",
+  "image": "smeagolworms4/mqtt-explorer:latest",
   "map": [
     "addons"
   ],
