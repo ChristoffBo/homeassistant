@@ -5,5 +5,5 @@
   "slug": "mqtt_explorer",
   "source": "dockerhub",
   "upstream_repo": "smeagolworms4/mqtt-explorer",
-  "upstream_version": "master"
+  "upstream_version": "latest"
 }
