@@ -1,10 +1,10 @@
 {
   "github_fulltag": "true",
-  "last_update": "19-10-2023",
+  "last_update": "20-10-2023",
   "beta": "false",
   "repository": "ChristoffBo/homeassistant",
   "slug": "metube",
   "source": "dockerhub",
   "upstream_repo": "alexta69/metube",
-  "upstream_version": "2023-10-19"
+  "upstream_version": "2023-10-20"
 }
