@@ -6,7 +6,7 @@
   "codenotary": "bothmacell@gmail.com",
   "url": "https://github.com/ChristoffBo/homeassistant/blob/main/Ovpn",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
-  "startup": "application",
+  "startup": "services",
   "init": false,
   "boot": "auto",
   "host_network": true,
