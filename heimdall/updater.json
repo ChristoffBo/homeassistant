@@ -5,5 +5,5 @@
   "slug": "heimdall",
   "source": "github",
   "upstream_repo": "linuxserver/docker-heimdall",
-  "upstream_version": "v2.6.1-ls256"
+  "upstream_version": "v2.6.1-ls257"
 }
