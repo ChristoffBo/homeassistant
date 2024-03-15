@@ -1,9 +1,9 @@
 {
   "github_fulltag": "true",
-  "last_update": "12-12-2023",
+  "last_update": "15-03-2024",
   "repository": "ChristoffBo/homeassistant",
   "slug": "mqtt_explorer",
   "source": "dockerhub",
   "upstream_repo": "smeagolworms4/mqtt-explorer",
-  "upstream_version": "master"
+  "upstream_version": ""
 }
