@@ -1,4 +1,7 @@
 
+## v2.6.1-ls259 (23-03-2024)
+- Update to latest version from linuxserver/docker-heimdall
+
 ## v2.6.1-ls258 (16-03-2024)
 - Update to latest version from linuxserver/docker-heimdall
 
