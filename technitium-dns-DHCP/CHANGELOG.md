@@ -1,4 +1,7 @@
 
+## 13.3.0 (21-12-2024)
+- Update to latest version from technitium/dns-server
+
 ## 13.2.2 (02-12-2024)
 - Update to latest version from technitium/dns-server
 
