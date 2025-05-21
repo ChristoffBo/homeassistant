@@ -5,7 +5,6 @@
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/help.html#introduction",
   "codenotary": "bothmacell@gmail.com",
-  "webui": "http://[HOST]:5380",
   "startup": "services",
   "init": false,
   "arch": [
