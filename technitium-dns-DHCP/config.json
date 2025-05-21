@@ -41,5 +41,6 @@
   },
   "host_network": true,
   "auth_api": false,
-  "hassio_api": false
+  "hassio_api": false,
+  "webui": "http://[HOST]:5380"
 }
