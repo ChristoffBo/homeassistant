@@ -1,6 +1,6 @@
 {
   "name": "TechNitium DNS",
-  "version": "1.0.0",
+  "version": "13.6.1",
   "slug": "technitium_dns",
   "description": "TechNitium DNS server for managing DNS requests",
   "startup": "services",
@@ -39,8 +39,7 @@
   "panel_iframe": {
     "title": "TechNitium DNS",
     "icon": "mdi:dns",
-    "url": "http://localhost:8053" 
+    "url": "http://localhost:5380" 
   }
 }
 
-Sent from Workspace ONE Boxer
