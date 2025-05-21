@@ -15,8 +15,6 @@
   "map": [
     "ssl"
   ],
-    "init": false,
-
   "panel_iframe": {
     "title": "TechNitium DNS",
     "icon": "mdi:dns",
