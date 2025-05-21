@@ -16,11 +16,6 @@
   "map": [
     "ssl"
   ],
-  "panel_iframe": {
-    "title": "TechNitium DNS",
-    "icon": "mdi:dns",
-    "url": "http://localhost:5380" 
-},
   "ports": {
     "53/udp": 53,
     "53/tcp": 53,
