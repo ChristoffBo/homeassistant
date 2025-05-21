@@ -52,7 +52,7 @@
     "5335/udp": "DNS server port Mask",
     "5380/tcp": "DNS web console",
     "8053/tcp": "DNS-over-HTTPS using reverse proxy"
-  },
+},
   "host_network": true,
   "auth_api": false,
   "hassio_api": false,
