@@ -5,6 +5,7 @@
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/help.html#introduction",
   "codenotary": "bothmacell@gmail.com",
+  "webui": "http://[HOST]:5380",
   "startup": "services",
   "init": false,
   "arch": [
@@ -42,21 +43,4 @@
   "host_network": true,
   "auth_api": false,
   "hassio_api": false
-}
-    "53/tcp": "DNS server port",
-    "67/tcp": "DHCP server port",
-    "80/tcp": "DNS-over-HTTPS service certbot certificate renewal",
-    "443/tcp": "DNS-over-HTTPS service",
-    "853/tcp": "DNS-over-TLS service",
-    "5335/tcp": "DNS server port Mask",
-    "5335/udp": "DNS server port Mask",
-    "5380/tcp": "DNS web console",
-    "8053/tcp": "DNS-over-HTTPS using reverse proxy"
-  },
-  "host_network": true,
-  "auth_api": false,
-  "hassio_api": false,
-  "ingress": true,
-  "ingress_port": 5380,
-  "webui": "http://[HOST]:5380"
 }
