@@ -7,8 +7,7 @@
   "codenotary": "bothmacell@gmail.com",
   "startup": "services",
   "init": false,
-  "webui": "http://[HOST]:5380",
-  "arch": [
+    "arch": [
     "aarch64",
     "amd64",
     "armv7"
