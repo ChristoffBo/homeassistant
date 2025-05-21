@@ -1,4 +1,6 @@
-
+## 13.6.0 (21-05-2025)
+- Finally Added Inggress
+  
 ## 13.6.0 (26-04-2025)
 - Update to latest version from technitium/dns-server
 
