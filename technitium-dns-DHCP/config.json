@@ -1,16 +1,12 @@
 {
   "name": "Technitium DNS & DHCP",
-  "version": "13.6.1",
+  "version": "13.6.0",
   "slug": "technitium-dns-dhcp",
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/help.html#introduction",
   "codenotary": "bothmacell@gmail.com",
   "startup": "services",
   "init": false,
-  "panel_iframe":
-    "title": "Technitium DNS",
-    "icon": "mdi:dns",
-    "url": "http://localhost:8530",
   "arch": [
     "aarch64",
     "amd64",
