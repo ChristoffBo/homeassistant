@@ -7,6 +7,10 @@
   "codenotary": "bothmacell@gmail.com",
   "startup": "services",
   "init": false,
+  "panel_iframe":
+    "title": "Technitium DNS",
+    "icon": "mdi:dns",
+    "url": "http://localhost:8530",
   "arch": [
     "aarch64",
     "amd64",
