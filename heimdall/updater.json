@@ -1,9 +1,9 @@
 {
   "github_fulltag": "true",
-  "last_update": "13-06-2025",
+  "last_update": "04-07-2025",
   "repository": "ChristoffBo/homeassistant",
   "slug": "heimdall",
   "source": "github",
   "upstream_repo": "linuxserver/docker-heimdall",
-  "upstream_version": "v2.6.3-ls310"
+  "upstream_version": "v2.6.3-ls311"
 }
