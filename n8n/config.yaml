@@ -17,8 +17,8 @@ map:
     read_only: false
     path: /home/node/
 environment:
-    PUID: "1"
-    PGID: "1"
+    PUID: "0"
+    PGID: "0"
     N8N_SECURE_COOKIE: "false"
     TINI_SUBREAPER: "true"
 image: docker.n8n.io/n8nio/n8n
