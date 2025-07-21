@@ -27,3 +27,4 @@ startup: services
 webui: "[PROTO:ssl]://[HOST]:[PORT:5678]"
 ingress: true
 ingress_port: 5678 
+host_network: true
