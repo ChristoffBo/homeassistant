@@ -7,7 +7,7 @@ description: >-
 arch:
   - amd64
   - aarch64
-url: "https://github.com/jdeath/homeassistant-addons"
+url: "https://https://github.com/ChristoffBo/homeassistant"
 ports:
   5678/tcp: 5678 
 ports_description:
