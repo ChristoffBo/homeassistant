@@ -21,8 +21,7 @@
     "80/tcp": 80,
   },
   "map": [
-    "config:rw",
-    "addon_config:rw"
+     "ssl"
   ],
   "options": {},
   "schema": {}
