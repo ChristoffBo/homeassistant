@@ -8,7 +8,7 @@
         "amd64",
         "aarch64"
     ],
-    "url": "https://https://github.com/ChristoffBo/homeassistant",
+    "url": "https://n8n.io/",
     "ports": {
         "5678/tcp": 5678
     },
