@@ -15,4 +15,4 @@ port : 8088 or 80 #port you want to run on.
 Webui can be found at <your-ip>:port.
 
 Default Username: admin
-Dafeualt Password: admin
+Default Password: admin
