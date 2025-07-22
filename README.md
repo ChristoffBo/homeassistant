@@ -5,7 +5,7 @@
 
 Home Assistant allows anyone to create add-on repositories.
 This Repo was created for personal use only.
-This Repo Consist of Addons I created and from other sources.
+This Repo consist of Addons I created and from other sources.
 I do not claim to own any of these softwares or addons.
 
 ## Installation
