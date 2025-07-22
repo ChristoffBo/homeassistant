@@ -4,7 +4,7 @@
   "beta": "false",
   "repository": "ChristoffBo/homeassistant",
   "slug": "n8n",
-  "source": "github",
+  "source": "dockerhub",
   "upstream_repo": "n8n-io/n8n",
   "upstream_version": "1.102.4",
   "paused": "false"
