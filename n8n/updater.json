@@ -6,6 +6,6 @@
   "slug": "n8n",
   "source": "dockerhub",
   "upstream_repo": "n8n-io/n8n",
-  "upstream_version": "1.103.2",
+  "upstream_version": "",
   "paused": "false"
 }
