@@ -16,6 +16,10 @@
     "armv7",
     "i386"
   ],
+  "ports": {
+    "80/udp": 80,
+    "80/tcp": 80,
+ },
   "map": [
     "config:rw",
     "addon_config:rw"
