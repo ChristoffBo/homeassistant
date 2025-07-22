@@ -1,7 +1,6 @@
 {
   "build_from": {
-    "armhf": "lscr.io/linuxserver/heimdall:arm32v7-latest",
-    "aarch64": "lscr.io/linuxserver/heimdall:arm64v8-latest",
-    "amd64": "lscr.io/linuxserver/heimdall:amd64-latest"
+    "aarch64": "n8nio/n8n:latest",
+    "amd64": "n8nio/n8n:latest"
   }
 }
