@@ -6,6 +6,7 @@
   "startup": "services",
   "boot": "auto",
   "ingress": true,
+  "init": false,
   "ingress_port": 8088,
   "panel_title": "Gotify",
   "panel_icon": "mdi:message-text-outline",
