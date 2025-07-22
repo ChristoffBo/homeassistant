@@ -1,6 +1,6 @@
 {
   "build_from": {
-    "aarch64": "n8nio/n8n:latest",
-    "amd64": "n8nio/n8n:latest"
+    "aarch64": "ghcr.io/n8nio/n8n:latest",
+    "amd64": "ghcr.io/n8nio/n8n:latest"
   }
 }
