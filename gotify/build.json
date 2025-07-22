@@ -8,3 +8,11 @@
     "signer": "none@none.com"
   }
 }
+
+{
+  "build_from": {
+    "armhf": "lscr.io/linuxserver/heimdall:arm32v7-latest",
+    "aarch64": "lscr.io/linuxserver/heimdall:arm64v8-latest",
+    "amd64": "lscr.io/linuxserver/heimdall:amd64-latest"
+  }
+}
