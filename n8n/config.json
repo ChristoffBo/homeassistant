@@ -28,7 +28,6 @@
         "N8N_SECURE_COOKIE": "false",
         "TINI_SUBREAPER": "true"
     },
-    "image": "docker.n8n.io/n8nio/n8n",
     "boot": "auto",
     "startup": "services",
     "webui": "[PROTO:ssl]://[HOST]:[PORT:5678]",
