@@ -16,3 +16,5 @@ Webui can be found at <your-ip>:port.
 
 Default Username: admin
 Default Password: admin
+
+Gotify Server can be reached at http://(LOCALHOST):Port chosen (8088)
