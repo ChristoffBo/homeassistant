@@ -1,0 +1,8 @@
+{
+  "last_update": "26-04-2025",
+  "repository": "ChristoffBo/homeassistant",
+  "slug": "gotify",
+  "source": "dockerhub",
+  "upstream_repo": "gotify/server",
+  "upstream_version": "1.0.0"
+}
