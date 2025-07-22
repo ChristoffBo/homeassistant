@@ -1,6 +1,6 @@
 {
   "name": "Gotify",
-  "version": "1.0.0",
+  "version": "2.6.3",
   "slug": "gotify",
   "description": "A simple server for sending and receiving messages",
   "startup": "services",
@@ -9,9 +9,16 @@
   "ingress_port": 8088,
   "panel_title": "Gotify",
   "panel_icon": "mdi:message-text-outline",
-  "arch": ["aarch64", "amd64", "armv7", "i386"],
-  "map": ["config:rw", "addon_config:rw"],
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7",
+    "i386"
+  ],
+  "map": [
+    "config:rw",
+    "addon_config:rw"
+  ],
   "options": {},
   "schema": {}
 }
-
