@@ -1,11 +1,8 @@
 {
-  "github_fulltag": "true",
-  "last_update": "22-07-2025",
-  "beta": "false",
+  "last_update": "26-04-2025",
   "repository": "ChristoffBo/homeassistant",
   "slug": "n8n",
   "source": "dockerhub",
-  "upstream_repo": "n8n-io/n8n",
-  "upstream_version": "",
-  "paused": "false"
+  "upstream_repo": "n8nio/n8n",
+  "upstream_version": "13.6.0"
 }
