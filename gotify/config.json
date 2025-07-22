@@ -5,7 +5,7 @@
   "description": "A simple server for sending and receiving messages",
   "startup": "services",
   "boot": "auto",
-  "ingress": true,
+  "ingress": false,
   "init": false,
   "ingress_port": 8088,
   "panel_title": "Gotify",
