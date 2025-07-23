@@ -20,7 +20,7 @@ RUN mkdir -p /var/lib/zerotier-one /app/backend/data /var/log/supervisor
 WORKDIR /opt
 RUN git clone https://github.com/dec0dos/zero-ui.git
 WORKDIR /opt/zero-ui
-RUN npm install --production
+RUN npm install --production --legacy-peer-deps
 
 # Copy supervisord config
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
