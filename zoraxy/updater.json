@@ -3,7 +3,7 @@
   "last_update": "23-07-2025",
   "repository": "ChristoffBo/homeassistant",
   "slug": "zoraxy",
-  "source": "github",
+  "source": "dockerhub",
   "upstream_repo": "zoraxydocker/zoraxy:latest",
   "upstream_version": ""
 }
