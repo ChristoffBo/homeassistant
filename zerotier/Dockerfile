@@ -1,23 +1,15 @@
 # Base image
-FROM ubuntu:22.04
+FROM alpine:3.19
 
 # Install dependencies
-RUN apt-get update && \
-    apt-get install -y \
-      wget \
+RUN apk update && \
+    apk add --no-cache \
       curl \
-      ca-certificates \
+      bash \
       supervisor \
-      zerotier-one \
+      npm \
       git \
-      build-essential
-      
-# Install Zerotier Official Repo
-RUN curl -s https://install.zerotier.com | bash
-      
-# Install Node.js for ZeroUI (if required)
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs
+      zerotier-one
 
 # Create directories
 RUN mkdir -p /var/lib/zerotier-one /app/backend/data /var/log/supervisor
