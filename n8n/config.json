@@ -1,6 +1,6 @@
 {
   "name": "n8n",
-  "version": "1.102.4",
+  "version": "1.104.0",
   "slug": "n8n",
   "description": "n8n is an extendable workflow automation tool.",
   "arch": [
