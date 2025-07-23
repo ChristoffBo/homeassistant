@@ -12,6 +12,5 @@
     "9993/udp": 9993,
     "4000/tcp": 4000
   },
-  "arch": ["amd64", "aarch64", "armv7"],
-  "image": ""
+  "arch": ["amd64", "aarch64", "armv7"]
 }
