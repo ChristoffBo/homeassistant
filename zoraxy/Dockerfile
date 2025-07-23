@@ -1,5 +1,5 @@
 # Use the official Zoraxy image as the base
-FROM ghcr.io/zoraxy/zoraxy:latest
+FROM zoraxydocker/zoraxy:latest
 
 # Add labels required by Home Assistant
 LABEL \
