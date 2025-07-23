@@ -1,23 +1,22 @@
 {
-    "name": "ZeroTier Controller with ZeroUI",
-    "version": "1.0.0",
-    "slug": "zerotier_zero_ui_combined",
-    "description": "ZeroTier controller with ZeroUI web UI combined into a single Home Assistant add-on container",
-    "startup": "services",
-    "boot": "auto",
-    "hassio_api": false,
-    "host_network": false,
-    "privileged": [
-        "NET_ADMIN"
-    ],
-    "options": {},
-    "schema": {},
-    "ports": {
-        "9993/udp": 9993,
-        "4000/tcp": 4000
-    },
-    "map": [
-        "config:rw"
-    ],
-    "image": null
+  "name": "ZeroTier Controller with ZeroUI",
+  "version": "1.0.0",
+  "slug": "zerotier_zero_ui",
+  "description": "ZeroTier controller and ZeroUI web UI combined in a single Home Assistant add-on container.",
+  "startup": "services",
+  "boot": "auto",
+  "hassio_api": false,
+  "host_network": false,
+  "privileged": ["NET_ADMIN"],
+  "ports": {
+    "9993/udp": 9993,
+    "4000/tcp": 4000
+  },
+  "map": [
+    "config:rw"
+  ],
+  "options": {},
+  "schema": {},
+  "arch": ["amd64", "aarch64", "armv7"],
+  "image": null
 }
