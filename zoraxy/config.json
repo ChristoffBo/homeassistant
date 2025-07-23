@@ -1,0 +1,25 @@
+{
+  "name": "Zoraxy",
+  "version": "1.0.0",
+  "slug": "zoraxy",
+  "description": "A reverse proxy and dashboard powered by Docker.",
+  "url": "https://github.com/yourusername/hassio-zoraxy",
+  "startup": "services",
+  "boot": "auto",
+  "arch": ["amd64", "aarch64", "armv7"],
+  "image": "ghcr.io/zoraxy/zoraxy:latest",
+  "ports": {
+    "8080/tcp": 8080
+  },
+  "map": ["config:rw"],
+  "panel_icon": "mdi:reverse",
+  "panel_title": "Zoraxy",
+  "ingress": true,
+  "ingress_port": 8080,
+  "ingress_stream": true,
+  "host_network": false,
+  "privileged": [],
+  "environment": {},
+  "options": {},
+  "schema": {}
+}
