@@ -8,8 +8,14 @@ RUN apk update && \
       bash \
       supervisor \
       npm \
-      git \
-      zerotier-one
+      git
+
+# Download ZeroTier static binary
+WORKDIR /usr/sbin
+RUN curl -L -o zerotier-one.tar.gz https://download.zerotier.com/RELEASES/1.10.6/dist/zerotier-one-x86_64-linux-musl.tar.gz && \
+    tar xzf zerotier-one.tar.gz && \
+    chmod +x zerotier-one zerotier-cli zerotier-idtool && \
+    rm zerotier-one.tar.gz
 
 # Create directories
 RUN mkdir -p /var/lib/zerotier-one /app/backend/data /var/log/supervisor
