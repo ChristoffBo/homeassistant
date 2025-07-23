@@ -13,5 +13,5 @@
     "4000/tcp": 4000
   },
   "arch": ["amd64", "aarch64", "armv7"],
-  "image": null
+  "image": ""
 }
