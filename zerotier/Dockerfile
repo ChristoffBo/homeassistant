@@ -11,7 +11,10 @@ RUN apt-get update && \
       zerotier-one \
       git \
       build-essential
-
+      
+# Install Zerotier Official Repo
+RUN curl -s https://install.zerotier.com | bash
+      
 # Install Node.js for ZeroUI (if required)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs
