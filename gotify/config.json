@@ -10,7 +10,7 @@
   "ingress_port": 8088,
   "panel_title": "Gotify",
   "panel_icon": "mdi:message-text-outline",
-  "webui": "http://[HOST]:[PORT:8070]",
+  "webui": "http://[HOST]:[PORT:8080]",
   "host_network": false,
   "arch": [
     "aarch64",
@@ -19,7 +19,7 @@
   "ports": {
     "80/tcp": 8088,
     "80/udp": 8088,
-    "8090/tcp": 8070
+    "8090/tcp": 8080
   },
   "map": [
      "ssl"
