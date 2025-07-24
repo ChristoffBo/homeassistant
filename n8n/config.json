@@ -26,7 +26,7 @@
     "PGID": "0",
     "N8N_SECURE_COOKIE": "false",
     "TINI_SUBREAPER": "true",
-    "build_from":""
+    "image": ""
   },
   "boot": "auto",
   "startup": "services",
