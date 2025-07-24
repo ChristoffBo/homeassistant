@@ -25,7 +25,8 @@
     "PUID": "0",
     "PGID": "0",
     "N8N_SECURE_COOKIE": "false",
-    "TINI_SUBREAPER": "true"
+    "TINI_SUBREAPER": "true",
+    "build_from":""
   },
   "boot": "auto",
   "startup": "services",
