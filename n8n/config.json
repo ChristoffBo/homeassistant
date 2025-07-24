@@ -30,9 +30,9 @@
   "boot": "auto",
   "startup": "services",
   "webui": "[PROTO:ssl]://[HOST]:[PORT:5678]",
-  "ingress": true,
+  "ingress": false,
   "ingress_port": 5678,
-  "host_network": true,
+  "host_network": false,
   "auth_api": false,
   "hassio_api": false
 }
