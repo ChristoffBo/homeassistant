@@ -10,6 +10,7 @@
   "ingress_port": 8088,
   "panel_title": "Gotify",
   "panel_icon": "mdi:message-text-outline",
+  "host_network": true,
   "arch": [
     "aarch64",
     "amd64"
