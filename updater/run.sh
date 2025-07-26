@@ -58,6 +58,10 @@ update_addon_if_needed() {
   local upstream_version=$(jq -r '.upstream_version' "$updater_file")
   local slug=$(jq -r '.slug' "$updater_file")
 
+  # Fetch latest Docker tag
+  local latest_version
+  latest_version=$(get_latest_docker_tag "$upstream_repo")
+
   # Read current GitHub repo version from config.json if it exists
   local github_version="N/A"
   if [ -f "$config_file" ]; then
@@ -73,11 +77,9 @@ update_addon_if_needed() {
   echo "Latest Docker version:  $latest_version"
   echo "Current GitHub version (config.json): $github_version"
 
-  latest_version=$(get_latest_docker_tag "$upstream_repo")
-
   if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
     echo "Update available: $upstream_version -> $latest_version"
-    jq --arg v "$latest_version" --arg dt "$(date +%Y-%m-%d)" \
+    jq --arg v "$latest_version" --arg dt "$(date +%d-%m-%Y)" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
     if [ -f "$config_file" ]; then
@@ -85,9 +87,21 @@ update_addon_if_needed() {
       echo "Updated config.json version to $latest_version"
     fi
 
-    # Append simple changelog entry
-    echo "Updated to version $latest_version on $(date +%Y-%m-%d)" >> "$changelog_file"
-    echo "CHANGELOG.md updated."
+    # Ensure CHANGELOG.md exists; create if missing
+    if [ ! -f "$changelog_file" ]; then
+      touch "$changelog_file"
+      echo "Created new CHANGELOG.md"
+    fi
+
+    # Append changelog entry
+    {
+      echo "v$latest_version ($(date +%d-%m-%Y))"
+      echo ""
+      echo "    Update to latest version from $upstream_repo (changelog : https://github.com/${upstream_repo#*/}/releases)"
+      echo ""
+    } >> "$changelog_file"
+
+    echo "CHANGELOG.md updated with version and changelog link."
   else
     echo "No update needed; already at latest version."
   fi
