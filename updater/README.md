@@ -1,22 +1,25 @@
-# Home Assistant Addons Updater
+# Home Assistant Addons Docker Version Updater
 
-This add-on automatically manages and updates Home Assistant add-ons using the [ChristoffBo homeassistant repository](https://github.com/ChristoffBo/homeassistant).
+This add-on periodically checks the add-ons in your configured GitHub repository, compares their Docker image versions with the latest available tags on Docker registries, and updates the add-ons’ `config.json` version fields accordingly.
 
-## Features
+## Configuration Options
 
-- Pulls your GitHub repo periodically
-- Can be extended to update add-ons automatically
-
-## Installation
-
-Add your custom repository URL to Home Assistant add-ons, then install this add-on.
-
-## Configuration
-
-No configuration needed by default.
+| Option                 | Description                           | Default                                     |
+|------------------------|-------------------------------------|---------------------------------------------|
+| github_repo            | GitHub repository URL to clone/pull | https://github.com/ChristoffBo/homeassistant.git |
+| github_username        | GitHub username (for private repos)  | (empty)                                    |
+| github_token           | GitHub personal access token          | (empty)                                    |
+| update_interval_minutes| How often to check for updates (min) | 60                                         |
 
 ## Usage
 
-Start the add-on, and it will keep your repository up to date every hour.
+1. Add this add-on repository to your Home Assistant add-ons.
+2. Configure the options as needed (especially GitHub credentials if private).
+3. Start the add-on.
+4. It will automatically update version numbers of your add-ons to match the latest Docker image tags.
 
+## Notes
 
+- Supports Docker Hub and GitHub Container Registry (ghcr.io) for tag lookups.
+- The add-on only updates the `config.json` version fields; deploying updated add-ons is a separate step.
+- Docker Hub API has rate limits; consider providing credentials for heavy use.
