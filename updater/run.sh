@@ -4,7 +4,7 @@ set -e
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 
-# Colors
+# Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
@@ -14,7 +14,7 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
-# Read config values from addon options.json
+# Load configuration from Home Assistant addon options.json
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
@@ -86,69 +86,52 @@ update_addon_if_needed() {
     return
   fi
 
-  local upstream_repo=$(jq -r '.upstream_repo' "$updater_file")
-  local upstream_version=$(jq -r '.upstream_version' "$updater_file")
-  local slug=$(jq -r '.slug' "$updater_file")
+  local upstream_repo
+  upstream_repo=$(jq -r '.upstream_repo' "$updater_file")
+  local slug
+  slug=$(jq -r '.slug' "$updater_file")
 
   local latest_version
   latest_version=$(get_latest_docker_tag "$upstream_repo")
 
-  local github_version="N/A"
-  if [ -f "$config_file" ]; then
-    github_version=$(jq -r '.version // empty' "$config_file")
-    if [ -z "$github_version" ]; then
-      github_version="N/A"
-    fi
-  fi
-
-  echo "----------------------------"
-  echo "Addon: $slug"
-  echo "Current Docker version: $upstream_version"
-  echo "Latest Docker version:  $latest_version"
-  echo "Current GitHub version (config.json): $github_version"
-
-  updated_anything=false
+  local now_datetime
   now_datetime=$(date '+%d-%m-%Y %H:%M')
 
-  if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
-    jq --arg v "$latest_version" --arg dt "$now_datetime" \
-      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
-    echo "Updater.json version update: $upstream_version -> $latest_version"
-    updated_anything=true
-  fi
+  # Always update updater.json with latest version and timestamp
+  jq --arg v "$latest_version" --arg dt "$now_datetime" \
+    '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+  echo "Updater.json updated to $latest_version"
 
-  if [ "$latest_version" != "$github_version" ] && [ "$latest_version" != "null" ]; then
-    if [ -f "$config_file" ]; then
-      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-      echo "Config.json version update: $github_version -> $latest_version"
-      updated_anything=true
-    fi
-  fi
-
-  if [ "$updated_anything" = true ]; then
-    if [ ! -f "$changelog_file" ]; then
-      touch "$changelog_file"
-      echo "Created new CHANGELOG.md"
-    fi
-
-    {
-      echo "v$latest_version ($now_datetime)"
-      echo ""
-      echo "    Update to latest version from $upstream_repo (changelog : https://github.com/${upstream_repo#*/}/releases)"
-      echo ""
-    } >> "$changelog_file"
-
-    echo -e "${GREEN}Addon '$slug' updated to $latest_version ⬆️${NC}"
-
-    title="Addon Updated: $slug"
-    message="Updated $slug to version $latest_version on $now_datetime"
-
-    send_gotify "$title" "$message"
-    send_mailrise "$message"
-
+  # Always update config.json with latest version (if exists)
+  if [ -f "$config_file" ]; then
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+    echo "Config.json updated to $latest_version"
   else
-    echo -e "${BLUE}Addon '$slug' is already up-to-date ✔${NC}"
+    echo "No config.json found in $addon_path"
   fi
+
+  # Append changelog entry
+  if [ ! -f "$changelog_file" ]; then
+    touch "$changelog_file"
+    echo "Created new CHANGELOG.md"
+  fi
+
+  {
+    echo "v$latest_version ($now_datetime)"
+    echo ""
+    echo "    Update to latest version from $upstream_repo (changelog : https://github.com/${upstream_repo#*/}/releases)"
+    echo ""
+  } >> "$changelog_file"
+
+  echo -e "${GREEN}Addon '$slug' updated to $latest_version ⬆️${NC}"
+
+  # Send notifications
+  local title="Addon Updated: $slug"
+  local message="Updated $slug to version $latest_version on $now_datetime"
+
+  send_gotify "$title" "$message"
+  send_mailrise "$message"
+
   echo "----------------------------"
 }
 
