@@ -4,6 +4,7 @@ set -e
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 
+# Colored output
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
@@ -24,8 +25,9 @@ fi
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
+# GitHub API auth header if token provided
 GITHUB_AUTH_HEADER=""
 if [ -n "$GITHUB_TOKEN" ]; then
   GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
@@ -104,6 +106,34 @@ get_latest_docker_tag() {
   fi
 }
 
+get_image_from_build_json() {
+  local addon_path="$1"
+  local arch="$(uname -m)"
+  local build_json="$addon_path/build.json"
+  if [ ! -f "$build_json" ]; then
+    echo ""
+    return
+  fi
+
+  local image=""
+  case "$arch" in
+    x86_64)
+      image=$(jq -r '.build_from.amd64 // empty' "$build_json")
+      ;;
+    aarch64)
+      image=$(jq -r '.build_from.aarch64 // empty' "$build_json")
+      ;;
+    armv7l|armhf)
+      image=$(jq -r '.build_from.armhf // empty' "$build_json")
+      ;;
+    *)
+      image=$(jq -r '.build_from.amd64 // empty' "$build_json") # fallback
+      ;;
+  esac
+
+  echo "$image"
+}
+
 update_addon_if_needed() {
   local addon_path="$1"
   local updater_file="$addon_path/updater.json"
@@ -116,21 +146,11 @@ update_addon_if_needed() {
     return
   fi
 
-  local image=""
-  # Try config.json image first
-  image=$(jq -r '.image // empty' "$config_file" 2>/dev/null)
-
-  # If no image, try build.json build_from with platform arch
+  # Get Docker image from config.json or build.json
+  local image
+  image=$(jq -r '.image // empty' "$config_file")
   if [ -z "$image" ] && [ -f "$build_file" ]; then
-    ARCH=$(uname -m)
-    if [ "$ARCH" = "x86_64" ]; then
-      PLATFORM="amd64"
-    elif [ "$ARCH" = "aarch64" ]; then
-      PLATFORM="aarch64"
-    else
-      PLATFORM="amd64"
-    fi
-    image=$(jq -r ".build_from[\"$PLATFORM\"] // empty" "$build_file" 2>/dev/null)
+    image=$(get_image_from_build_json "$addon_path")
   fi
 
   if [ -z "$image" ]; then
@@ -138,9 +158,10 @@ update_addon_if_needed() {
     return
   fi
 
+  # Create updater.json if missing
   if [ ! -f "$updater_file" ]; then
     log "$COLOR_YELLOW" "updater.json missing for addon at $addon_path, creating."
-    jq -n --arg slug "$(basename "$addon_path")" --arg image "$image" --arg upstream_version "" --arg last_update "" \
+    jq -n --arg slug "$(basename "$addon_path")" --arg image "$image" --argjson upstream_version '""' --arg last_update "" \
       '{slug: $slug, image: $image, upstream_version: $upstream_version, last_update: $last_update}' > "$updater_file"
   fi
 
@@ -160,38 +181,45 @@ update_addon_if_needed() {
 
   if [ -z "$latest_version" ]; then
     log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest Docker version:  WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Latest Docker version: WARNING: Could not fetch"
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
   fi
 
-  log "$COLOR_BLUE" "Latest Docker version:  $latest_version"
+  log "$COLOR_BLUE" "Latest Docker version: $latest_version"
 
   if [ "$latest_version" != "$upstream_version" ]; then
     log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
+
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
       log "$COLOR_YELLOW" "Created new CHANGELOG.md"
     fi
+
     {
       echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
       echo ""
       echo "    Update to latest version from $image"
       echo ""
     } >> "$changelog_file"
+
     log "$COLOR_GREEN" "CHANGELOG.md updated."
   else
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
   fi
+
   log "$COLOR_BLUE" "----------------------------"
 }
 
 perform_update_check() {
   clone_or_update_repo
+
   for addon_path in "$REPO_DIR"/*/; do
     update_addon_if_needed "$addon_path"
   done
@@ -216,10 +244,10 @@ while true; do
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-    sleep 60
+    sleep 60  # prevent multiple runs in same minute
   else
-    NEXT_RUN_DATE=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || date -v+1d -f '%H:%M' "$CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null)
-    log "$COLOR_BLUE" "📅 Next check scheduled at $CHECK_TIME tomorrow ($( [ -z "$NEXT_RUN_DATE" ] && echo unknown || echo "$NEXT_RUN_DATE" ))"
+    NEXT_CHECK=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "unknown")
+    log "$COLOR_BLUE" "📅 Next check scheduled at $CHECK_TIME tomorrow ($NEXT_CHECK)"
   fi
 
   sleep 30
