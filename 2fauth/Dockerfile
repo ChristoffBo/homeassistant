@@ -1,4 +1,4 @@
-ARG BUILD_FROM=
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 SHELL ["/bin/sh", "-c"]
