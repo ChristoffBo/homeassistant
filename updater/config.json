@@ -23,5 +23,5 @@
   "map": ["config:ro", "addons:rw", "backup:rw", "share:rw"],
   "init": false,
   "host_network": false,
-  "privileged": ""
+  "privileged": []
 }
