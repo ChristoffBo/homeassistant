@@ -4,7 +4,6 @@ set -e
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 
-# Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
@@ -14,11 +13,10 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
-# Load configuration from Home Assistant addon options.json
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")
 
 GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_PATH")
 GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG_PATH")
@@ -28,7 +26,6 @@ send_gotify() {
   local title="$1"
   local message="$2"
   local priority="${3:-5}"
-
   if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
     curl -s -X POST "$GOTIFY_URL/message" \
       -F "title=$title" \
@@ -40,7 +37,6 @@ send_gotify() {
 
 send_mailrise() {
   local message="$1"
-
   if [ -n "$MAILRISE_URL" ]; then
     curl -s -X POST "$MAILRISE_URL" \
       -H "Content-Type: text/plain" \
@@ -88,6 +84,8 @@ update_addon_if_needed() {
 
   local upstream_repo
   upstream_repo=$(jq -r '.upstream_repo' "$updater_file")
+  local current_version
+  current_version=$(jq -r '.upstream_version' "$updater_file")
   local slug
   slug=$(jq -r '.slug' "$updater_file")
 
@@ -97,40 +95,39 @@ update_addon_if_needed() {
   local now_datetime
   now_datetime=$(date '+%d-%m-%Y %H:%M')
 
-  # Always update updater.json with latest version and timestamp
-  jq --arg v "$latest_version" --arg dt "$now_datetime" \
-    '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
-  echo "Updater.json updated to $latest_version"
+  if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "null" ]; then
+    # Update updater.json
+    jq --arg v "$latest_version" --arg dt "$now_datetime" \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
-  # Always update config.json with latest version (if exists)
-  if [ -f "$config_file" ]; then
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-    echo "Config.json updated to $latest_version"
+    # Update or add version in config.json
+    if [ -f "$config_file" ]; then
+      jq --arg v "$latest_version" 'if has("version") then .version = $v else . + {"version": $v} end' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+    fi
+
+    # Append changelog
+    if [ ! -f "$changelog_file" ]; then
+      touch "$changelog_file"
+    fi
+
+    {
+      echo "v$latest_version ($now_datetime)"
+      echo ""
+      echo "    Update to latest version from $upstream_repo (changelog : https://github.com/${upstream_repo#*/}/releases)"
+      echo ""
+    } >> "$changelog_file"
+
+    echo -e "${GREEN}Addon '$slug' updated to $latest_version ⬆️${NC}"
+
+    # Send notifications
+    local title="Addon Updated: $slug"
+    local message="Updated $slug to version $latest_version on $now_datetime"
+
+    send_gotify "$title" "$message"
+    send_mailrise "$message"
   else
-    echo "No config.json found in $addon_path"
+    echo -e "${BLUE}Addon '$slug' is already up-to-date ✔${NC}"
   fi
-
-  # Append changelog entry
-  if [ ! -f "$changelog_file" ]; then
-    touch "$changelog_file"
-    echo "Created new CHANGELOG.md"
-  fi
-
-  {
-    echo "v$latest_version ($now_datetime)"
-    echo ""
-    echo "    Update to latest version from $upstream_repo (changelog : https://github.com/${upstream_repo#*/}/releases)"
-    echo ""
-  } >> "$changelog_file"
-
-  echo -e "${GREEN}Addon '$slug' updated to $latest_version ⬆️${NC}"
-
-  # Send notifications
-  local title="Addon Updated: $slug"
-  local message="Updated $slug to version $latest_version on $now_datetime"
-
-  send_gotify "$title" "$message"
-  send_mailrise "$message"
 
   echo "----------------------------"
 }
