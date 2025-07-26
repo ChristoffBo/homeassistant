@@ -30,11 +30,11 @@ Configuration
 -------------
 The following options are available in the add-on settings (GUI-configurable):
 
-APP_URL: https://auth.bothmainc.com
+APP_URL: https://auth.something.com
 MAIL_ENCRYPTION: false
 MAIL_FROM_ADDRESS: 2fa@notifications.co.za
 MAIL_FROM_NAME: 2Fauth
-MAIL_HOST: 10.0.0.99
+MAIL_HOST: 0.0.0.0
 MAIL_MAILER: smtp
 MAIL_PORT: 8025
 PGID: 0
