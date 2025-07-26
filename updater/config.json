@@ -12,13 +12,19 @@
     "github_repo": "https://github.com/ChristoffBo/homeassistant.git",
     "github_username": "",
     "github_token": "",
-    "check_time": "03:00"
+    "check_time": "03:00",
+    "gotify_url": "",
+    "gotify_token": "",
+    "mailrise_url": ""
   },
   "schema": {
     "github_repo": "str",
     "github_username": "str",
     "github_token": "str",
-    "check_time": "str"
+    "check_time": "str",
+    "gotify_url": "str?",
+    "gotify_token": "str?",
+    "mailrise_url": "str?"
   },
   "map": ["config:ro", "addons:rw", "backup:rw", "share:rw"],
   "init": false,
