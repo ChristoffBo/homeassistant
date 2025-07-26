@@ -1,15 +1,25 @@
 {
   "name": "Home Assistant Addons Updater",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "slug": "addons_updater",
-  "description": "Automatically update your Home Assistant add-ons from ChristoffBo repo",
+  "description": "Automatically update Home Assistant add-ons from configurable GitHub repo",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
   "boot": "auto",
   "arch": ["amd64", "armv7", "aarch64"],
   "ports": {},
-  "options": {},
-  "schema": {},
+  "options": {
+    "github_repo": "https://github.com/ChristoffBo/homeassistant.git",
+    "github_username": "",
+    "github_token": "",
+    "update_interval_minutes": 60
+  },
+  "schema": {
+    "github_repo": "str",
+    "github_username": "str",
+    "github_token": "str",
+    "update_interval_minutes": "int"
+  },
   "map": ["config:ro", "addons:rw", "backup:rw", "share:rw"],
   "init": false,
   "host_network": false,
