@@ -11,7 +11,6 @@
     "8001/tcp": 8001
   },
   "ingress": false,
-  "panel_icon": "https://user-images.githubusercontent.com/1289128/276442834-bdb528d0-78fa-4155-ba15-7165d88b9836.png",
   "privileged": true,
   "map": [
     "config:rw",
