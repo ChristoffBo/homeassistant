@@ -18,7 +18,7 @@ log() {
 }
 
 if [ ! -f "$CONFIG_PATH" ]; then
-  log "$COLOR_RED" "❌ ERROR: Config file $CONFIG_PATH not found!"
+  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
 fi
 
@@ -34,67 +34,160 @@ if [ -n "$GITHUB_TOKEN" ]; then
 fi
 
 clone_or_update_repo() {
-  log "$COLOR_BLUE" "🔄 Checking repository: $GITHUB_REPO"
+  log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
   if [ ! -d "$REPO_DIR" ]; then
-    log "$COLOR_BLUE" "📥 Repository not found locally. Cloning..."
+    log "$COLOR_BLUE" "Repository not found locally. Cloning..."
     if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
       AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
       git clone "$AUTH_REPO" "$REPO_DIR"
     else
       git clone "$GITHUB_REPO" "$REPO_DIR"
     fi
-    log "$COLOR_GREEN" "✅ Repository cloned successfully."
+    log "$COLOR_GREEN" "Repository cloned successfully."
   else
-    log "$COLOR_BLUE" "📡 Repository found. Pulling latest changes..."
+    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
     git pull
-    log "$COLOR_GREEN" "✅ Repository updated."
+    log "$COLOR_GREEN" "Repository updated."
   fi
 }
 
-# ... [fetch functions unchanged] ...
+fetch_latest_dockerhub_tag() {
+  local repo="$1"
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
+  local retries=3
+  local count=0
+  local tag=""
+  while [ $count -lt $retries ]; do
+    tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
+    if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+      echo "$tag"
+      return 0
+    fi
+    count=$((count+1))
+    sleep $((count * 2))
+  done
+  echo ""
+}
+
+fetch_latest_linuxserver_tag() {
+  local repo="$1"
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
+  local tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
+  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+    echo "$tag"
+  else
+    echo ""
+  fi
+}
+
+fetch_latest_ghcr_tag() {
+  local image="$1"
+  local repo_path="${image#ghcr.io/}"
+  local url="https://ghcr.io/v2/${repo_path}/tags/list"
+  local tags_json=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" 2>/dev/null)
+  local tag=$(echo "$tags_json" | jq -r '.tags[-1]' 2>/dev/null)
+  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+    echo "$tag"
+  else
+    echo ""
+  fi
+}
+
+get_latest_docker_tag() {
+  local image="$1"
+  local image_no_tag="${image%%:*}"
+
+  # Fix for lscr.io/linuxserver/ images to map to linuxserver/ on Docker Hub API
+  if [[ "$image_no_tag" == lscr.io/linuxserver/* ]]; then
+    image_no_tag="${image_no_tag#lscr.io/}"
+  fi
+
+  if [[ "$image_no_tag" == linuxserver/* ]]; then
+    echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
+  elif [[ "$image_no_tag" == ghcr.io/* ]]; then
+    echo "$(fetch_latest_ghcr_tag "$image_no_tag")"
+  else
+    echo "$(fetch_latest_dockerhub_tag "$image_no_tag")"
+  fi
+}
 
 update_addon_if_needed() {
-  # ... [same logic] ...
+  local addon_path="$1"
+  local updater_file="$addon_path/updater.json"
+  local config_file="$addon_path/config.json"
+  local build_file="$addon_path/build.json"
+  local changelog_file="$addon_path/CHANGELOG.md"
 
   if [ ! -f "$config_file" ] && [ ! -f "$build_file" ]; then
-    log "$COLOR_YELLOW" "⚠️ No config.json or build.json found in $addon_path, skipping."
+    log "$COLOR_YELLOW" "No config.json or build.json found in $addon_path, skipping."
     return
   fi
 
-  # ... [same logic] ...
+  local image=""
+
+  if [ -f "$build_file" ]; then
+    local arch=$(uname -m)
+    if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
+    image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
+  fi
+
+  if [ -z "$image" ] && [ -f "$config_file" ]; then
+    image=$(jq -r '.image // empty' "$config_file")
+  fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "⚠️ Addon at $addon_path has no Docker image defined, skipping."
+    log "$COLOR_YELLOW" "Addon at $addon_path has no Docker image defined, skipping."
     return
   fi
 
-  # ... [same logic] ...
+  local slug
+  slug=$(jq -r '.slug // empty' "$config_file")
+  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
+    slug=$(basename "$addon_path")
+  fi
+
+  local upstream_version=""
+  if [ -f "$updater_file" ]; then
+    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
+  fi
 
   log "$COLOR_BLUE" "----------------------------"
-  log "$COLOR_BLUE" "🧩 Addon: $slug"
-  log "$COLOR_BLUE" "📦 Current Docker version: $upstream_version"
+  log "$COLOR_BLUE" "Addon: $slug"
+  log "$COLOR_BLUE" "Current Docker version: $upstream_version"
 
-  # ... [same logic] ...
+  local latest_version
+  latest_version=$(get_latest_docker_tag "$image")
 
   if [ -z "$latest_version" ]; then
-    log "$COLOR_YELLOW" "⚠️ WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "📦 Latest Docker version:  ⚠️ Could not fetch"
-    log "$COLOR_BLUE" "✔️ Addon '$slug' is already up-to-date"
+    log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
+    log "$COLOR_BLUE" "Latest Docker version:  WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
   fi
 
-  log "$COLOR_BLUE" "📦 Latest Docker version:  $latest_version"
+  log "$COLOR_BLUE" "Latest Docker version:  $latest_version"
 
   if [ "$latest_version" != "$upstream_version" ]; then
-    log "$COLOR_GREEN" "⬆️ Update available: $upstream_version -> $latest_version"
+    log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
 
-    # ... [updating files logic] ...
+    jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
+      jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
+        '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
+
+    mv "$updater_file.tmp" "$updater_file"
+
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
+
+    if [ -f "$config_file.tmp" ]; then
+      mv "$config_file.tmp" "$config_file"
+    fi
 
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
-      log "$COLOR_YELLOW" "📝 Created new CHANGELOG.md"
+      log "$COLOR_YELLOW" "Created new CHANGELOG.md"
     fi
 
     {
@@ -104,9 +197,9 @@ update_addon_if_needed() {
       echo ""
     } >> "$changelog_file"
 
-    log "$COLOR_GREEN" "📝 CHANGELOG.md updated."
+    log "$COLOR_GREEN" "CHANGELOG.md updated."
   else
-    log "$COLOR_BLUE" "✔️ Addon '$slug' is already up-to-date"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
   fi
 
   log "$COLOR_BLUE" "----------------------------"
