@@ -4,15 +4,49 @@ set -e
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 
+# Colors
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 if [ ! -f "$CONFIG_PATH" ]; then
   echo "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
 fi
 
+# Read config values from addon options.json
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
+
+GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_PATH")
+GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG_PATH")
+MAILRISE_URL=$(jq -r '.mailrise_url // empty' "$CONFIG_PATH")
+
+send_gotify() {
+  local title="$1"
+  local message="$2"
+  local priority="${3:-5}"
+
+  if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
+    curl -s -X POST "$GOTIFY_URL/message" \
+      -F "title=$title" \
+      -F "message=$message" \
+      -F "priority=$priority" \
+      -F "token=$GOTIFY_TOKEN" > /dev/null
+  fi
+}
+
+send_mailrise() {
+  local message="$1"
+
+  if [ -n "$MAILRISE_URL" ]; then
+    curl -s -X POST "$MAILRISE_URL" \
+      -H "Content-Type: text/plain" \
+      --data "$message" > /dev/null
+  fi
+}
 
 clone_or_update_repo() {
   echo "Checking repository: $GITHUB_REPO"
@@ -36,10 +70,8 @@ clone_or_update_repo() {
 get_latest_docker_tag() {
   local repo="$1"
   local tag=""
-
   url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
   tag=$(curl -s "$url" | jq -r '.results[0].name')
-
   echo "$tag"
 }
 
@@ -58,11 +90,9 @@ update_addon_if_needed() {
   local upstream_version=$(jq -r '.upstream_version' "$updater_file")
   local slug=$(jq -r '.slug' "$updater_file")
 
-  # Fetch latest Docker tag
   local latest_version
   latest_version=$(get_latest_docker_tag "$upstream_repo")
 
-  # Read current GitHub repo version from config.json if it exists
   local github_version="N/A"
   if [ -f "$config_file" ]; then
     github_version=$(jq -r '.version // empty' "$config_file")
@@ -77,40 +107,53 @@ update_addon_if_needed() {
   echo "Latest Docker version:  $latest_version"
   echo "Current GitHub version (config.json): $github_version"
 
-  if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
-    echo "Update available: $upstream_version -> $latest_version"
-    jq --arg v "$latest_version" --arg dt "$(date +%d-%m-%Y)" \
-      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+  updated_anything=false
+  now_datetime=$(date '+%d-%m-%Y %H:%M')
 
+  if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
+    jq --arg v "$latest_version" --arg dt "$now_datetime" \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+    echo "Updater.json version update: $upstream_version -> $latest_version"
+    updated_anything=true
+  fi
+
+  if [ "$latest_version" != "$github_version" ] && [ "$latest_version" != "null" ]; then
     if [ -f "$config_file" ]; then
       jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-      echo "Updated config.json version to $latest_version"
+      echo "Config.json version update: $github_version -> $latest_version"
+      updated_anything=true
     fi
+  fi
 
-    # Ensure CHANGELOG.md exists; create if missing
+  if [ "$updated_anything" = true ]; then
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
       echo "Created new CHANGELOG.md"
     fi
 
-    # Append changelog entry
     {
-      echo "v$latest_version ($(date +%d-%m-%Y))"
+      echo "v$latest_version ($now_datetime)"
       echo ""
       echo "    Update to latest version from $upstream_repo (changelog : https://github.com/${upstream_repo#*/}/releases)"
       echo ""
     } >> "$changelog_file"
 
-    echo "CHANGELOG.md updated with version and changelog link."
+    echo -e "${GREEN}Addon '$slug' updated to $latest_version ⬆️${NC}"
+
+    title="Addon Updated: $slug"
+    message="Updated $slug to version $latest_version on $now_datetime"
+
+    send_gotify "$title" "$message"
+    send_mailrise "$message"
+
   else
-    echo "No update needed; already at latest version."
+    echo -e "${BLUE}Addon '$slug' is already up-to-date ✔${NC}"
   fi
   echo "----------------------------"
 }
 
 perform_update_check() {
   clone_or_update_repo
-
   for addon_path in "$REPO_DIR"/*/; do
     update_addon_if_needed "$addon_path"
   done
@@ -118,7 +161,6 @@ perform_update_check() {
 
 LAST_RUN_FILE="/data/last_run_date.txt"
 
-# Run one-time check immediately on start
 echo "Performing initial update check on startup..."
 perform_update_check
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
@@ -138,8 +180,7 @@ while true; do
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     echo "Scheduled update checks complete."
-
-    sleep 60  # avoid multiple runs in the same minute
+    sleep 60
   else
     sleep 30
   fi
