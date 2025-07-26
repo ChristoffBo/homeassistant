@@ -1,0 +1,62 @@
+{
+  "name": "2FAuth",
+  "version": "1.0.0",
+  "slug": "2fauth",
+  "description": "Web app to manage your 2FA accounts and generate security codes",
+  "url": "https://github.com/ChristoffBo/homeassistant",
+  "webui": "https://[HOST]:[PORT:8001]",
+  "startup": "services",
+  "boot": "auto",
+  "ports": {
+    "8001/tcp": 8001
+  },
+  "ingress": false,
+  "panel_icon": "https://user-images.githubusercontent.com/1289128/276442834-bdb528d0-78fa-4155-ba15-7165d88b9836.png",
+  "privileged": true,
+  "map": [
+    "config:rw",
+    "ssl",
+    "media",
+    "backup",
+    "share",
+    "addons"
+  ],
+  "devices": [],
+  "arch": ["amd64", "armv7", "aarch64"],
+  "schema": {
+    "APP_URL": "str",
+    "MAIL_ENCRYPTION": "bool",
+    "MAIL_FROM_ADDRESS": "str",
+    "MAIL_FROM_NAME": "str",
+    "MAIL_HOST": "str",
+    "MAIL_MAILER": "str",
+    "MAIL_PORT": "int",
+    "PGID": "int",
+    "PUID": "int",
+    "TZ": "str"
+  },
+  "options": {
+    "APP_URL": "https://auth.bothmainc.com",
+    "MAIL_ENCRYPTION": false,
+    "MAIL_FROM_ADDRESS": "2fa@notifications.co.za",
+    "MAIL_FROM_NAME": "2Fauth",
+    "MAIL_HOST": "10.0.0.99",
+    "MAIL_MAILER": "smtp",
+    "MAIL_PORT": 8025,
+    "PGID": 0,
+    "PUID": 0,
+    "TZ": "Africa/Johannesburg"
+  },
+  "environment": {
+    "APP_URL": "!!env_var(APP_URL)",
+    "MAIL_ENCRYPTION": "!!env_var(MAIL_ENCRYPTION)",
+    "MAIL_FROM_ADDRESS": "!!env_var(MAIL_FROM_ADDRESS)",
+    "MAIL_FROM_NAME": "!!env_var(MAIL_FROM_NAME)",
+    "MAIL_HOST": "!!env_var(MAIL_HOST)",
+    "MAIL_MAILER": "!!env_var(MAIL_MAILER)",
+    "MAIL_PORT": "!!env_var(MAIL_PORT)",
+    "PGID": "!!env_var(PGID)",
+    "PUID": "!!env_var(PUID)",
+    "TZ": "!!env_var(TZ)"
+  }
+}
