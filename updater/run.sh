@@ -56,7 +56,6 @@ clone_or_update_repo() {
 fetch_latest_dockerhub_tag() {
   local repo="$1"
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
-  # Retry with backoff
   local retries=3
   local count=0
   local tag=""
@@ -101,7 +100,6 @@ fetch_latest_ghcr_tag() {
 get_latest_docker_tag() {
   local image="$1"
   local image_no_tag="${image%%:*}"
-
   if [[ "$image_no_tag" == linuxserver/* ]]; then
     echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
   elif [[ "$image_no_tag" == ghcr.io/* ]]; then
@@ -124,16 +122,15 @@ update_addon_if_needed() {
 
   local image
   image=$(jq -r '.image // empty' "$config_file")
-
+  
   if [ -z "$image" ]; then
     log "$COLOR_YELLOW" "Addon at $addon_path has no Docker image defined, skipping."
     return
   fi
 
-  # Create updater.json if missing and populate minimal data
   if [ ! -f "$updater_file" ]; then
     log "$COLOR_YELLOW" "updater.json missing for addon at $addon_path, creating."
-    jq -n --arg slug "$(basename "$addon_path")" --arg image "$image" --argjson upstream_version '""' --arg last_update "" \
+    jq -n --arg slug "$(basename "$addon_path")" --arg image "$image" --arg upstream_version "" --arg last_update "" \
       '{slug: $slug, image: $image, upstream_version: $upstream_version, last_update: $last_update}' > "$updater_file"
   fi
 
@@ -165,20 +162,16 @@ update_addon_if_needed() {
   if [ "$latest_version" != "$upstream_version" ]; then
     log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
 
-    # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
-    # Update config.json version field
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
-    # Ensure CHANGELOG.md exists; create if missing
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
       log "$COLOR_YELLOW" "Created new CHANGELOG.md"
     fi
 
-    # Append changelog entry
     {
       echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
       echo ""
@@ -204,7 +197,6 @@ perform_update_check() {
 
 LAST_RUN_FILE="/data/last_run_date.txt"
 
-# Initial update check on startup
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
 perform_update_check
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
@@ -224,8 +216,18 @@ while true; do
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
     sleep 60  # prevent multiple runs in same minute
   else
-    next_check=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y')
-    log "$COLOR_BLUE" "📅 Next check scheduled at $CHECK_TIME tomorrow ($next_check)"
+    # Calculate next check time in a portable way:
+    # Get epoch seconds for today CHECK_TIME
+    today_check_epoch=$(date -d "$(date +%Y-%m-%d) $CHECK_TIME" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M" "$(date +%Y-%m-%d) $CHECK_TIME" +%s)
+    now_epoch=$(date +%s)
+    if [ "$now_epoch" -ge "$today_check_epoch" ]; then
+      next_check_epoch=$((today_check_epoch + 86400))
+    else
+      next_check_epoch=$today_check_epoch
+    fi
+    next_check=$(date -d "@$next_check_epoch" '+%H:%M %d-%m-%Y' 2>/dev/null || date -r $next_check_epoch '+%H:%M %d-%m-%Y')
+
+    log "$COLOR_BLUE" "📅 Next check scheduled at $next_check"
   fi
 
   sleep 30
