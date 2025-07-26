@@ -3,6 +3,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "mailrise",
   "source": "dockerhub",
-  "upstream_repo": "technitium/dns-server",
+  "upstream_repo": "yoryan/mailrise",
   "upstream_version": "13.6.0"
 }
