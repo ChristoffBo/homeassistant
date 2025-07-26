@@ -47,6 +47,7 @@ update_addon_if_needed() {
   local addon_path="$1"
   local updater_file="$addon_path/updater.json"
   local config_file="$addon_path/config.json"
+  local changelog_file="$addon_path/CHANGELOG.md"
 
   if [ ! -f "$updater_file" ]; then
     echo "No updater.json found in $addon_path, skipping."
@@ -66,15 +67,17 @@ update_addon_if_needed() {
 
   if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
     echo "Update available for $slug: $upstream_version -> $latest_version"
-    # Update updater.json with new version and last update date
     jq --arg v "$latest_version" --arg dt "$(date +%Y-%m-%d)" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
-    # Update config.json version if config.json exists
     if [ -f "$config_file" ]; then
       jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
       echo "Updated config.json version for $slug to $latest_version"
     fi
+
+    # Append simple changelog entry
+    echo "Updated to version $latest_version on $(date +%Y-%m-%d)" >> "$changelog_file"
+    echo "Updated CHANGELOG.md for $slug"
   else
     echo "$slug is up to date."
   fi
