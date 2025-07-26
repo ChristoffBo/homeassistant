@@ -24,19 +24,18 @@ send_notification() {
             -F "token=$GOTIFY_TOKEN" \
             -F "title=Addon Updater" \
             -F "message=$MESSAGE" \
-            -F "priority=5" > /dev/null || warn "❌ Gotify notification failed"
+            -F "priority=5" > /dev/null || warn "❌ Gotify failed"
     fi
     if [[ "$MAILRISE_URL" != "" ]]; then
         curl -s -X POST "$MAILRISE_URL" \
             -H "Content-Type: application/json" \
-            -d "{\"message\": \"$MESSAGE\"}" > /dev/null || warn "❌ Mailrise notification failed"
+            -d "{\"message\": \"$MESSAGE\"}" > /dev/null || warn "❌ Mailrise failed"
     fi
 }
 
 get_latest_docker_tag() {
     local image="$1"
     local latest_tag=""
-
     for ((i=0; i<5; i++)); do
         latest_tag=$(curl -s "https://hub.docker.com/v2/repositories/${image}/tags/?page_size=1&page=1&ordering=last_updated" | jq -r '.results[0].name' || echo "")
         if [[ "$latest_tag" != "" && "$latest_tag" != "null" ]]; then
@@ -46,7 +45,6 @@ get_latest_docker_tag() {
         warn "Retrying to fetch tag for $image..."
         sleep 2
     done
-
     echo ""
 }
 
@@ -63,7 +61,7 @@ run_check() {
         IMAGE=$(jq -r '.image // empty' "$CONFIG_FILE")
 
         if [[ "$IMAGE" == "" || "$IMAGE" == "null" ]]; then
-            warn "⚠️ Skipping $NAME — no Docker image defined"
+            warn "⚠️ Skipping $NAME — no Docker image"
             continue
         fi
 
@@ -78,7 +76,7 @@ run_check() {
         LATEST_VERSION=$(get_latest_docker_tag "$IMAGE")
 
         if [[ "$LATEST_VERSION" == "" ]]; then
-            warn "⚠️ Could not fetch latest tag for $IMAGE"
+            warn "⚠️ Could not get latest tag for $IMAGE"
             continue
         fi
 
@@ -86,24 +84,28 @@ run_check() {
             jq --arg ver "$LATEST_VERSION" '.version = $ver' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
             NOW=$(date +"%d-%m-%Y %H:%M")
             echo "{\"last_update\": \"$NOW\"}" > "$UPDATER_JSON"
-            log "⬆️ Updated $NAME to version $LATEST_VERSION"
+            log "⬆️ Updated $NAME from $CURRENT_VERSION ➡️ $LATEST_VERSION"
+            send_notification "Updated $NAME to version $LATEST_VERSION"
         else
             log "✔ $NAME is already up-to-date ($CURRENT_VERSION)"
         fi
     done
 
-    log "⏰ Next check scheduled at $CHECK_TIME tomorrow"
+    log "📅 Next check scheduled at $CHECK_TIME tomorrow"
 }
 
-# --- RUN IMMEDIATE CHECK ---
-run_check
-
-# --- SLEEP LOOP UNTIL TIME MATCH ---
+# 🚨 This loop keeps the container running
+first_run=true
 while true; do
     NOW=$(date +%H:%M)
-    if [[ "$NOW" == "$CHECK_TIME" ]]; then
+
+    if $first_run; then
         run_check
-        sleep 60  # avoid multiple runs in the same minute
+        first_run=false
+    elif [[ "$NOW" == "$CHECK_TIME" ]]; then
+        run_check
+        sleep 60
     fi
+
     sleep 30
 done
