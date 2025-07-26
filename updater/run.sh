@@ -12,7 +12,7 @@ fi
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-UPDATE_INTERVAL=$(jq -r '.update_interval_minutes' "$CONFIG_PATH")
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
 clone_or_update_repo() {
   echo "Checking repository: $GITHUB_REPO"
@@ -37,7 +37,6 @@ get_latest_docker_tag() {
   local repo="$1"
   local tag=""
 
-  # Docker Hub tag fetch
   url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
   tag=$(curl -s "$url" | jq -r '.results[0].name')
 
@@ -47,6 +46,7 @@ get_latest_docker_tag() {
 update_addon_if_needed() {
   local addon_path="$1"
   local updater_file="$addon_path/updater.json"
+  local config_file="$addon_path/config.json"
 
   if [ ! -f "$updater_file" ]; then
     echo "No updater.json found in $addon_path, skipping."
@@ -61,22 +61,49 @@ update_addon_if_needed() {
 
   latest_version=$(get_latest_docker_tag "$upstream_repo")
 
+  echo "Current version: $upstream_version"
+  echo "Latest version:  $latest_version"
+
   if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
     echo "Update available for $slug: $upstream_version -> $latest_version"
-    jq --arg v "$latest_version" '.upstream_version = $v | .last_update = "'$(date +%d-%m-%Y)'"' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+    # Update updater.json with new version and last update date
+    jq --arg v "$latest_version" --arg dt "$(date +%Y-%m-%d)" \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+
+    # Update config.json version if config.json exists
+    if [ -f "$config_file" ]; then
+      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+      echo "Updated config.json version for $slug to $latest_version"
+    fi
   else
     echo "$slug is up to date."
   fi
 }
 
+LAST_RUN_FILE="/data/last_run_date.txt"
+
 while true; do
-  clone_or_update_repo
+  TODAY=$(date +%Y-%m-%d)
+  CURRENT_TIME=$(date +%H:%M)
 
-  for addon_path in "$REPO_DIR"/*/; do
-    update_addon_if_needed "$addon_path"
-  done
+  LAST_RUN=""
+  if [ -f "$LAST_RUN_FILE" ]; then
+    LAST_RUN=$(cat "$LAST_RUN_FILE")
+  fi
 
-  echo "Sleeping for $UPDATE_INTERVAL minutes before next check..."
-  sleep "$((UPDATE_INTERVAL * 60))"
+  if [ "$CURRENT_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+    echo "Running update checks at $CURRENT_TIME on $TODAY"
+    clone_or_update_repo
+
+    for addon_path in "$REPO_DIR"/*/; do
+      update_addon_if_needed "$addon_path"
+    done
+
+    echo "$TODAY" > "$LAST_RUN_FILE"
+    echo "Update checks complete."
+
+    sleep 60  # avoid multiple runs in the same minute
+  else
+    sleep 30
+  fi
 done
-
