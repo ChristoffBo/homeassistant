@@ -2,7 +2,7 @@
   "name": "Mailrise",
   "version": "1.0.0",
   "slug": "mailrise",
-  "description": "SMTP to Apprise notification gateway using Mailrise",
+  "description": "SMTP to Apprise notification gateway using Mailrise (DockerHub: yoryan/mailrise)",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mailrise",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
@@ -11,12 +11,10 @@
   "ingress": false,
   "panel_icon": "mdi:email-send",
   "options": {
-    "config": "[email]\nport = 8025\n\n[profile:notify]\nurls = discord://TOKEN/GUILD/CHANNEL"
+    "config": "[email]\nport = 8025\n\n[profile:notify]\nurls = gotify://192.168.1.100/XYZ"
   },
   "schema": {
     "config": "str"
   },
-  "build_from": {
-    "amd64": "ghcr.io/strasharo/mailrise:latest"
-  }
+  "image": "yoryan/mailrise"
 }
