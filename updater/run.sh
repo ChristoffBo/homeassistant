@@ -72,6 +72,8 @@ fetch_latest_dockerhub_tag() {
 
 fetch_latest_linuxserver_tag() {
   local repo="$1"
+  # Strip lscr.io prefix if present
+  repo="${repo#lscr.io/}"
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
   local tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
   if [ -n "$tag" ] && [ "$tag" != "null" ]; then
@@ -97,7 +99,10 @@ fetch_latest_ghcr_tag() {
 get_latest_docker_tag() {
   local image="$1"
   local image_no_tag="${image%%:*}"
-  if [[ "$image_no_tag" == linuxserver/* ]]; then
+
+  if [[ "$image_no_tag" == lscr.io/* ]]; then
+    echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
+  elif [[ "$image_no_tag" == linuxserver/* ]]; then
     echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
   elif [[ "$image_no_tag" == ghcr.io/* ]]; then
     echo "$(fetch_latest_ghcr_tag "$image_no_tag")"
@@ -106,30 +111,30 @@ get_latest_docker_tag() {
   fi
 }
 
-get_image_from_build_json() {
+get_docker_image_from_addon() {
   local addon_path="$1"
-  local arch="$(uname -m)"
-  local build_json="$addon_path/build.json"
-  if [ ! -f "$build_json" ]; then
-    echo ""
-    return
+  local image=""
+
+  # Check build.json for build_from for current architecture or any
+  if [ -f "$addon_path/build.json" ]; then
+    # Try to detect architecture from options.json or fallback to amd64
+    local arch="amd64"
+    if [ -f "$addon_path/options.json" ]; then
+      arch=$(jq -r '.arch // empty' "$addon_path/options.json" | head -1)
+    fi
+    if [ -z "$arch" ] || [ "$arch" == "null" ]; then
+      arch="amd64"
+    fi
+
+    image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // empty' "$addon_path/build.json")
   fi
 
-  local image=""
-  case "$arch" in
-    x86_64)
-      image=$(jq -r '.build_from.amd64 // empty' "$build_json")
-      ;;
-    aarch64)
-      image=$(jq -r '.build_from.aarch64 // empty' "$build_json")
-      ;;
-    armv7l|armhf)
-      image=$(jq -r '.build_from.armhf // empty' "$build_json")
-      ;;
-    *)
-      image=$(jq -r '.build_from.amd64 // empty' "$build_json") # fallback
-      ;;
-  esac
+  # If no image found in build.json, check config.json image field
+  if [ -z "$image" ] || [ "$image" == "null" ]; then
+    if [ -f "$addon_path/config.json" ]; then
+      image=$(jq -r '.image // empty' "$addon_path/config.json")
+    fi
+  fi
 
   echo "$image"
 }
@@ -138,7 +143,6 @@ update_addon_if_needed() {
   local addon_path="$1"
   local updater_file="$addon_path/updater.json"
   local config_file="$addon_path/config.json"
-  local build_file="$addon_path/build.json"
   local changelog_file="$addon_path/CHANGELOG.md"
 
   if [ ! -f "$config_file" ]; then
@@ -146,28 +150,25 @@ update_addon_if_needed() {
     return
   fi
 
-  # Get Docker image from config.json or build.json
   local image
-  image=$(jq -r '.image // empty' "$config_file")
-  if [ -z "$image" ] && [ -f "$build_file" ]; then
-    image=$(get_image_from_build_json "$addon_path")
-  fi
+  image=$(get_docker_image_from_addon "$addon_path")
 
   if [ -z "$image" ]; then
     log "$COLOR_YELLOW" "Addon at $addon_path has no Docker image defined, skipping."
     return
   fi
 
-  # Create updater.json if missing
+  # Create updater.json if missing and populate minimal data
   if [ ! -f "$updater_file" ]; then
     log "$COLOR_YELLOW" "updater.json missing for addon at $addon_path, creating."
-    jq -n --arg slug "$(basename "$addon_path")" --arg image "$image" --argjson upstream_version '""' --arg last_update "" \
+    jq -n --arg slug "$(basename "$addon_path")" --arg image "$image" --arg upstream_version "" --arg last_update "" \
       '{slug: $slug, image: $image, upstream_version: $upstream_version, last_update: $last_update}' > "$updater_file"
   fi
 
   local slug upstream_version
   slug=$(jq -r '.slug // empty' "$updater_file")
   upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
+
   if [ -z "$slug" ]; then
     slug=$(basename "$addon_path")
   fi
@@ -181,27 +182,31 @@ update_addon_if_needed() {
 
   if [ -z "$latest_version" ]; then
     log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest Docker version: WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Latest Docker version:  WARNING: Could not fetch"
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
   fi
 
-  log "$COLOR_BLUE" "Latest Docker version: $latest_version"
+  log "$COLOR_BLUE" "Latest Docker version:  $latest_version"
 
   if [ "$latest_version" != "$upstream_version" ]; then
     log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
 
+    # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
+    # Update config.json version field (note: config.json version usually includes 'v' prefix)
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
+    # Ensure CHANGELOG.md exists; create if missing
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
       log "$COLOR_YELLOW" "Created new CHANGELOG.md"
     fi
 
+    # Append changelog entry
     {
       echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
       echo ""
@@ -246,8 +251,13 @@ while true; do
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
     sleep 60  # prevent multiple runs in same minute
   else
-    NEXT_CHECK=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "unknown")
-    log "$COLOR_BLUE" "📅 Next check scheduled at $CHECK_TIME tomorrow ($NEXT_CHECK)"
+    # Schedule next check time, fallback to showing time only if date fails
+    NEXT_CHECK=""
+    if NEXT_CHECK=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null); then
+      log "$COLOR_BLUE" "📅 Next check scheduled at $CHECK_TIME tomorrow ($NEXT_CHECK)"
+    else
+      log "$COLOR_BLUE" "📅 Next check scheduled at $CHECK_TIME tomorrow (unknown)"
+    fi
   fi
 
   sleep 30
