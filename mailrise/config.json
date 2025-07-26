@@ -1,0 +1,20 @@
+{
+  "name": "Mailrise",
+  "version": "1.0.0",
+  "slug": "mailrise",
+  "description": "Send email-to-notifications with Mailrise (SMTP to Apprise bridge)",
+  "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mailrise",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "ingress": false,
+  "panel_icon": "mdi:email-send",
+  "options": {
+    "config": "[email]\nport = 8025\n\n[profile:notify]\nurls = discord://TOKEN/GUILD/CHANNEL"
+  },
+  "schema": {
+    "config": "str"
+  },
+  "image": "strasharo/mailrise"
+}
