@@ -16,7 +16,9 @@ What’s Inside
 
         Heimdall — Application dashboard addon
 
-        And more...
+        LinuxServer Heimdall — Alternative Heimdall packaging
+
+        Update Checker — Automated addon update management
 
     Scripts and helpers to automate addon updates and management.
 
