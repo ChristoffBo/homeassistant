@@ -2,7 +2,7 @@
   "name": "Mailrise",
   "version": "1.0.0",
   "slug": "mailrise",
-  "description": "Send email-to-notifications with Mailrise (SMTP to Apprise bridge)",
+  "description": "SMTP to Apprise notification gateway using Mailrise",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mailrise",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
@@ -16,5 +16,7 @@
   "schema": {
     "config": "str"
   },
-  "image": "strasharo/mailrise"
+  "build_from": {
+    "amd64": "ghcr.io/strasharo/mailrise:latest"
+  }
 }
