@@ -1,0 +1,17 @@
+{
+  "name": "Home Assistant Addons Updater",
+  "version": "1.0.0",
+  "slug": "addons_updater",
+  "description": "Automatically update your Home Assistant add-ons from ChristoffBo repo",
+  "url": "https://github.com/ChristoffBo/homeassistant",
+  "startup": "services",
+  "boot": "auto",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "ports": {},
+  "options": {},
+  "schema": {},
+  "map": ["config:ro", "addons:rw", "backup:rw", "share:rw"],
+  "init": false,
+  "host_network": false,
+  "privileged": false
+}
