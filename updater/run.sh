@@ -58,32 +58,57 @@ update_addon_if_needed() {
   local upstream_version=$(jq -r '.upstream_version' "$updater_file")
   local slug=$(jq -r '.slug' "$updater_file")
 
-  echo "Checking $slug against Docker Hub for updates..."
+  # Read current GitHub repo version from config.json if it exists
+  local github_version="N/A"
+  if [ -f "$config_file" ]; then
+    github_version=$(jq -r '.version // empty' "$config_file")
+    if [ -z "$github_version" ]; then
+      github_version="N/A"
+    fi
+  fi
+
+  echo "----------------------------"
+  echo "Addon: $slug"
+  echo "Current Docker version: $upstream_version"
+  echo "Latest Docker version:  $latest_version"
+  echo "Current GitHub version (config.json): $github_version"
 
   latest_version=$(get_latest_docker_tag "$upstream_repo")
 
-  echo "Current version: $upstream_version"
-  echo "Latest version:  $latest_version"
-
   if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
-    echo "Update available for $slug: $upstream_version -> $latest_version"
+    echo "Update available: $upstream_version -> $latest_version"
     jq --arg v "$latest_version" --arg dt "$(date +%Y-%m-%d)" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
     if [ -f "$config_file" ]; then
       jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-      echo "Updated config.json version for $slug to $latest_version"
+      echo "Updated config.json version to $latest_version"
     fi
 
     # Append simple changelog entry
     echo "Updated to version $latest_version on $(date +%Y-%m-%d)" >> "$changelog_file"
-    echo "Updated CHANGELOG.md for $slug"
+    echo "CHANGELOG.md updated."
   else
-    echo "$slug is up to date."
+    echo "No update needed; already at latest version."
   fi
+  echo "----------------------------"
+}
+
+perform_update_check() {
+  clone_or_update_repo
+
+  for addon_path in "$REPO_DIR"/*/; do
+    update_addon_if_needed "$addon_path"
+  done
 }
 
 LAST_RUN_FILE="/data/last_run_date.txt"
+
+# Run one-time check immediately on start
+echo "Performing initial update check on startup..."
+perform_update_check
+echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
+echo "Initial update check complete."
 
 while true; do
   TODAY=$(date +%Y-%m-%d)
@@ -95,15 +120,10 @@ while true; do
   fi
 
   if [ "$CURRENT_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
-    echo "Running update checks at $CURRENT_TIME on $TODAY"
-    clone_or_update_repo
-
-    for addon_path in "$REPO_DIR"/*/; do
-      update_addon_if_needed "$addon_path"
-    done
-
+    echo "Running scheduled update checks at $CURRENT_TIME on $TODAY"
+    perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
-    echo "Update checks complete."
+    echo "Scheduled update checks complete."
 
     sleep 60  # avoid multiple runs in the same minute
   else
