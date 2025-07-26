@@ -46,6 +46,27 @@ send_mailrise() {
   fi
 }
 
+send_startup_notification() {
+  local title="Addon Started"
+  local message="HomeAssistant Addon Startup Notification"
+
+  if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
+    curl -s -X POST "$GOTIFY_URL/message" \
+      -F "title=$title" \
+      -F "message=$message" \
+      -F "priority=5" \
+      -F "token=$GOTIFY_TOKEN" > /dev/null
+    echo "Gotify startup notification sent."
+  fi
+
+  if [ -n "$MAILRISE_URL" ]; then
+    curl -s -X POST "$MAILRISE_URL" \
+      -H "Content-Type: text/plain" \
+      --data "$message" > /dev/null
+    echo "Mailrise startup notification sent."
+  fi
+}
+
 clone_or_update_repo() {
   echo "Checking repository: $GITHUB_REPO"
   if [ ! -d "$REPO_DIR" ]; then
@@ -148,7 +169,11 @@ perform_update_check() {
 LAST_RUN_FILE="/data/last_run_date.txt"
 
 echo "Performing initial update check on startup..."
+
+send_startup_notification
+
 perform_update_check
+
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
 echo "Initial update check complete."
 
