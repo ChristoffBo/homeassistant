@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:alpine3.19
+ARG BUILD_FROM=2fauth/2fauth:latest
 FROM ${BUILD_FROM}
 
 # Install dependencies
