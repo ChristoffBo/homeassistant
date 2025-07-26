@@ -52,7 +52,7 @@ clone_or_update_repo() {
   fi
 }
 
-# Fetch latest tag from Docker Hub
+# Fetch latest tag from Docker Hub with retry/backoff
 fetch_latest_dockerhub_tag() {
   local repo="$1"
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
@@ -71,7 +71,7 @@ fetch_latest_dockerhub_tag() {
   echo ""
 }
 
-# Fetch latest tag from linuxserver.io
+# Fetch latest tag from linuxserver.io (uses Docker Hub API)
 fetch_latest_linuxserver_tag() {
   local repo="$1"
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
@@ -100,6 +100,7 @@ fetch_latest_ghcr_tag() {
 get_latest_docker_tag() {
   local image="$1"
   local image_no_tag="${image%%:*}"
+
   if [[ "$image_no_tag" == linuxserver/* ]]; then
     echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
   elif [[ "$image_no_tag" == ghcr.io/* ]]; then
@@ -107,6 +108,42 @@ get_latest_docker_tag() {
   else
     echo "$(fetch_latest_dockerhub_tag "$image_no_tag")"
   fi
+}
+
+# Function to extract Docker image from config.json or build.json
+get_addon_image() {
+  local addon_path="$1"
+  local config_file="$addon_path/config.json"
+  local build_file="$addon_path/build.json"
+  local image=""
+
+  if [ -f "$config_file" ]; then
+    image=$(jq -r '
+      if has("image") and (.image | type == "string") then
+        .image
+      elif has("repository") then
+        .repository
+      elif has("image") and (.image | type == "object") and (.image.repository? != null) then
+        .image.repository
+      else
+        empty
+      end
+    ' "$config_file")
+  fi
+
+  if [ -z "$image" ] && [ -f "$build_file" ]; then
+    image=$(jq -r '
+      if has("image") then
+        .image
+      elif has("repository") then
+        .repository
+      else
+        empty
+      end
+    ' "$build_file")
+  fi
+
+  echo "$image"
 }
 
 update_addon_if_needed() {
@@ -121,8 +158,8 @@ update_addon_if_needed() {
   fi
 
   local image
-  image=$(jq -r '.image // empty' "$config_file")
-  
+  image=$(get_addon_image "$addon_path")
+
   if [ -z "$image" ]; then
     log "$COLOR_YELLOW" "Addon at $addon_path has no Docker image defined, skipping."
     return
@@ -163,72 +200,4 @@ update_addon_if_needed() {
     log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
 
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
-      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
-
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-
-    if [ ! -f "$changelog_file" ]; then
-      touch "$changelog_file"
-      log "$COLOR_YELLOW" "Created new CHANGELOG.md"
-    fi
-
-    {
-      echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
-      echo ""
-      echo "    Update to latest version from $image"
-      echo ""
-    } >> "$changelog_file"
-
-    log "$COLOR_GREEN" "CHANGELOG.md updated."
-  else
-    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
-  fi
-
-  log "$COLOR_BLUE" "----------------------------"
-}
-
-perform_update_check() {
-  clone_or_update_repo
-
-  for addon_path in "$REPO_DIR"/*/; do
-    update_addon_if_needed "$addon_path"
-  done
-}
-
-LAST_RUN_FILE="/data/last_run_date.txt"
-
-log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
-perform_update_check
-echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
-
-while true; do
-  NOW_TIME=$(date +%H:%M)
-  TODAY=$(date +%Y-%m-%d)
-  LAST_RUN=""
-  if [ -f "$LAST_RUN_FILE" ]; then
-    LAST_RUN=$(cat "$LAST_RUN_FILE")
-  fi
-
-  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
-    log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
-    perform_update_check
-    echo "$TODAY" > "$LAST_RUN_FILE"
-    log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-    sleep 60  # prevent multiple runs in same minute
-  else
-    # Calculate next check time in a portable way:
-    # Get epoch seconds for today CHECK_TIME
-    today_check_epoch=$(date -d "$(date +%Y-%m-%d) $CHECK_TIME" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M" "$(date +%Y-%m-%d) $CHECK_TIME" +%s)
-    now_epoch=$(date +%s)
-    if [ "$now_epoch" -ge "$today_check_epoch" ]; then
-      next_check_epoch=$((today_check_epoch + 86400))
-    else
-      next_check_epoch=$today_check_epoch
-    fi
-    next_check=$(date -d "@$next_check_epoch" '+%H:%M %d-%m-%Y' 2>/dev/null || date -r $next_check_epoch '+%H:%M %d-%m-%Y')
-
-    log "$COLOR_BLUE" "📅 Next check scheduled at $next_check"
-  fi
-
-  sleep 30
-done
+      '.upstream_vers_
