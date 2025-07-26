@@ -1,0 +1,8 @@
+{
+  "last_update": "26-07-2025",
+  "repository": "ChristoffBo/homeassistant",
+  "slug": "mailrise",
+  "source": "dockerhub",
+  "upstream_repo": "yoryan/mailrise",
+  "upstream_version": "stable"
+}
