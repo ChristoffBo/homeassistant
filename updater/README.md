@@ -1,110 +1,102 @@
-Home Assistant Addons Docker Version Updater
-Overview
+Home Assistant Addon Updater
 
-This Home Assistant addon monitors your installed addons' Docker image versions, automatically updating their config.json version fields to match the latest available Docker tags.
+A Home Assistant addon script to automatically check and update your Home Assistant addons' Docker image versions by pulling the latest tags from Docker registries.
+Supports Docker Hub, LinuxServer.io, and GHCR images.
 
-It supports fetching the latest Docker tags from multiple container registries including:
+Features
 
-    Docker Hub (default)
+    Clone or update your addon repository from GitHub (supports private repos with authentication).
 
-    linuxserver.io Docker registry
+    Automatically fetch the latest Docker image tags from:
+
+        Docker Hub (including LinuxServer.io images)
+
+        GitHub Container Registry (GHCR)
+
+    Update config.json and updater.json with the latest Docker image version.
+
+    Maintain and append to a CHANGELOG.md with update details.
+
+    Scheduled update checks daily at a configurable time.
+
+    Support for build.json multi-architecture images.
+
+    Logs progress with colored and emoji-enhanced output.
+
+    Shows DockerHub API rate limit info before each scheduled check.
+
+    Safe retries on DockerHub API calls.
+
+    Skips addons without Docker image definitions.
+
+How to Use
+
+    Configure your addon
+
+Create or update your /data/options.json with the following keys:
+
+{
+"github_repo": "https://github.com/yourusername/your-addons-repo.git",
+"github_username": "your-github-username", // Optional, for private repos
+"github_token": "your-github-personal-access-token", // Optional, for private repos
+"dockerhub_token": "your-dockerhub-personal-access-token", // Optional, for DockerHub API rate limit auth
+"check_time": "03:00" // Daily check time in HH:MM (24h) format
+}
+
+    Start the addon
+
+The script will:
+
+    Clone your repository if not already present.
+
+    Pull the latest updates from GitHub.
+
+    Check each addon folder for Docker image tags.
+
+    Update versions and changelogs if new tags are found.
+
+    Run daily update checks at your specified check_time.
+
+    View logs
+
+Logs show:
+
+    What addons were checked.
+
+    Which addons were updated.
+
+    DockerHub API rate limit remaining.
+
+    Next scheduled check time.
+
+    Optional
+
+    Configure notifications or further customize your addon as needed.
+
+Supported Docker Registries
+
+    Docker Hub (including LinuxServer.io images)
 
     GitHub Container Registry (GHCR)
 
-This ensures accurate version tracking for addons regardless of where their Docker images are hosted.
+    Future support for other registries can be added.
 
-The addon provides:
+Notes
 
-    Automatic creation and update of updater.json files per addon
+    The script requires jq and git installed in the addon environment.
 
-    Clear, colored logs with update status (green for updated, blue for up-to-date, yellow for warnings)
+    Make sure your GitHub and DockerHub tokens have the necessary permissions.
 
-    Notifications via Gotify and Mailrise (optional and configurable)
+    Logs are cleared daily at 17:00 to keep output clean.
 
-    Scheduled daily update checks at a configurable time (default: 03:00)
-
-    Immediate update check on addon startup
-
-    DockerHub API retry/backoff on rate limits or failures
-
-    Skips addons that do not specify a Docker image
-
-    Shows DockerHub API rate limit info before scheduling next run
-
-Configuration
-
-Configure via the Home Assistant addon options or by editing options.json:
-
-{
-  "github_repo": "https://github.com/ChristoffBo/homeassistant.git",
-  "github_username": "",
-  "github_token": "",
-  "check_time": "03:00",
-  "gotify_url": "http://your-gotify-server:port",
-  "gotify_token": "your-gotify-token",
-  "mailrise_url": "http://your-mailrise-endpoint"
-}
-
-Option	Description	Required	Default
-github_repo	Your GitHub repository URL containing addon sources	No	As above
-github_username	GitHub username for private repo access (optional)	No	Empty
-github_token	GitHub access token for private repo access (optional)	No	Empty
-check_time	Daily time to check for addon updates (HH:MM, 24h format)	No	03:00
-gotify_url	Gotify server URL for notifications	No	Empty
-gotify_token	Gotify API token	No	Empty
-mailrise_url	Mailrise webhook URL for notifications	No	Empty
-How It Works
-
-    On startup, the addon immediately scans all installed addons in /addons/.
-
-    For each addon with a config.json file containing an .image field, it detects the container registry hosting the image and fetches the latest Docker tag accordingly:
-
-        Docker Hub (default registry)
-
-        linuxserver.io Docker Hub registry
-
-        GitHub Container Registry (ghcr.io)
-
-    If the latest Docker tag differs from the version in config.json, it updates the version and records the update time in updater.json.
-
-    Adds missing updater.json files automatically for addons with Docker images.
-
-    Logs updates with color-coded output and status messages.
-
-    Sends notifications via Gotify and Mailrise if configured.
-
-    Shows DockerHub API rate limits before scheduling the next daily check.
-
-    Waits and repeats daily checks at the configured check_time.
-
-Logging
-
-    Green: Addons updated to a new Docker tag.
-
-    Blue: Addons already up-to-date.
-
-    Yellow: Warnings including missing Docker image fields, API fetch errors, retries, or notification failures.
-
-Notifications
-
-    Notifications are sent on successful addon updates if Gotify or Mailrise URLs and tokens are configured.
-
-    No notifications if not configured.
-
-Requirements & Permissions
-
-    Requires read/write access to the /addons/ directory.
-
-    Internet access to Docker Hub, linuxserver.io, GitHub Container Registry, Gotify, and/or Mailrise as applicable.
-
-    Permissions to create and update addon config files and updater.json.
+    Addons without Docker image info are skipped with a notice.
 
 Troubleshooting
 
-    Ensure addons' config.json includes a valid .image field specifying the Docker image.
+    If you get "UNAUTHORIZED" errors querying DockerHub, ensure you have set a valid DockerHub token (dockerhub_token) in your config.
 
-    Check logs for warnings about missing images or API errors.
+    Check that your GitHub token has repo permissions if your repo is private.
 
-    Confirm network connectivity to Docker registries and notification endpoints.
+    Verify your check_time is in HH:MM 24-hour format.
 
-    Review API rate limit info logged before next scheduled run.
+    Review addon folder structure; it expects a config.json or build.json file with Docker image info.
