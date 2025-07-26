@@ -1,10 +1,9 @@
-ARG BUILD_FROM=2fauth/2fauth:latest
+ARG BUILD_FROM=ghcr.io/hassio-addons/base:alpine3.19
 FROM ${BUILD_FROM}
 
-# Use shell that exists
 SHELL ["/bin/sh", "-c"]
 
-# Install necessary tools
+# Install required packages
 RUN apk add --no-cache bash docker-cli curl
 
 # Copy your run script
