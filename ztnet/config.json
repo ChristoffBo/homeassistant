@@ -1,0 +1,23 @@
+{
+  "name": "ZeroTier Controller",
+  "version": "1.0.0",
+  "slug": "zerotiercontroller",
+  "description": "Self-hosted ZeroTier Controller with PostgreSQL backend and web UI.",
+  "url": "https://github.com/ChristoffBo/homeassistant/tree/main/zerotiercontroller",
+  "arch": ["amd64", "aarch64"],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "ingress": false,
+  "panel_icon": "mdi:lan",
+  "ports": {
+    "3000/tcp": 3000,
+    "5432/tcp": 5432,
+    "9993/udp": 9993
+  },
+  "host_network": false,
+  "privileged": true,
+  "map": ["config:rw", "ssl", "addons:rw", "backup", "share", "media"],
+  "options": {},
+  "schema": {}
+}
