@@ -127,7 +127,6 @@ update_addon_if_needed() {
   local image=""
 
   if [ -f "$build_file" ]; then
-    # Read architecture-based image if exists; default to amd64 or first available
     local arch=$(uname -m)
     if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
@@ -149,7 +148,6 @@ update_addon_if_needed() {
   fi
 
   local upstream_version=""
-
   if [ -f "$updater_file" ]; then
     upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
   fi
@@ -181,8 +179,7 @@ update_addon_if_needed() {
 
     mv "$updater_file.tmp" "$updater_file"
 
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || \
-      true # silently ignore if config.json has no version field or is missing
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
 
     if [ -f "$config_file.tmp" ]; then
       mv "$config_file.tmp" "$config_file"
@@ -238,8 +235,15 @@ while true; do
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
     sleep 60  # prevent multiple runs in same minute
   else
-    # Calculate next check time for logging, fallback without 'tomorrow'
-    NEXT_CHECK_TIME=$(date -d "today $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+    CURRENT_SEC=$(date +%s)
+    CHECK_SEC=$(date -d "$CHECK_TIME" +%s 2>/dev/null || echo 0)
+
+    if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
+      NEXT_CHECK_TIME=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+    else
+      NEXT_CHECK_TIME=$(date -d "today $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+    fi
+
     log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
   fi
 
