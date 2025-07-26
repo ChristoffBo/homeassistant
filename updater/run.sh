@@ -26,6 +26,7 @@ send_gotify() {
   local title="$1"
   local message="$2"
   local priority="${3:-5}"
+
   if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
     curl -s -X POST "$GOTIFY_URL/message" \
       -F "title=$title" \
@@ -37,6 +38,7 @@ send_gotify() {
 
 send_mailrise() {
   local message="$1"
+
   if [ -n "$MAILRISE_URL" ]; then
     curl -s -X POST "$MAILRISE_URL" \
       -H "Content-Type: text/plain" \
@@ -100,14 +102,18 @@ update_addon_if_needed() {
     jq --arg v "$latest_version" --arg dt "$now_datetime" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
-    # Update or add version in config.json
+    # Update config.json version unconditionally
     if [ -f "$config_file" ]; then
-      jq --arg v "$latest_version" 'if has("version") then .version = $v else . + {"version": $v} end' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+      echo "Config.json updated to $latest_version"
+    else
+      echo "No config.json found in $addon_path"
     fi
 
     # Append changelog
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
+      echo "Created new CHANGELOG.md"
     fi
 
     {
