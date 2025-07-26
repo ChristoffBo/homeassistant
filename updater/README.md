@@ -1,97 +1,97 @@
-# Home Assistant Addons Docker Version Updater
+Home Assistant Addons Docker Version Updater
 
-This add-on automatically checks your Home Assistant add-ons repository for updated Docker image versions and updates the add-ons' version numbers accordingly. It keeps your add-ons in sync with the latest Docker tags and logs all updates for easy tracking.
+Overview
 
----
+This Home Assistant addon monitors your installed addons' Docker image versions, automatically updating their config.json version fields to match the latest available Docker tags on Docker Hub.
 
-## Features
+It helps keep your addons metadata accurate and provides:
 
-- Automatically clones or updates your add-ons GitHub repository.
-- Checks the latest Docker image tags for each add-on.
-- Updates `updater.json` and the add-on’s `config.json` with the new Docker image version.
-- Appends a simple update entry in `CHANGELOG.md`.
-- Logs current and latest versions along with update status.
-- Runs an initial update check on add-on startup.
-- Runs daily scheduled checks at a configurable time.
+    Automatic updater.json file creation and tracking for each addon
 
----
+    Colored and clear logs indicating update status (updated in green, up-to-date in blue, warnings in yellow)
 
-## Configuration
+    Notifications on updates via Gotify and Mailrise (configurable)
 
-The add-on options (set in the Supervisor UI):
+    Daily scheduled update checks at a configurable time (default: 03:00)
 
-| Option          | Description                                  | Example                                   |
-|-----------------|----------------------------------------------|-------------------------------------------|
-| `github_repo`     | URL to your add-ons GitHub repository         | `https://github.com/YourUsername/homeassistant.git` |
-| `github_username` | (Optional) GitHub username for private repos  | `myusername`                              |
-| `github_token`    | (Optional) GitHub token for private repos     | `ghp_xxx...`                             |
-| `check_time`      | Daily time to run update checks (`HH:MM` 24h) | `"03:00"` (3 AM daily)                    |
+    Immediate update check on addon startup
 
----
+    Displays DockerHub API rate limit info before scheduling next check
 
-## Usage
+    Skips addons that do not specify a Docker image
 
-- When the add-on starts, it runs an immediate update check.
-- Then, it runs daily at the configured `check_time`.
-- All update actions and version info are logged in the add-on logs.
-- Each add-on’s `CHANGELOG.md` will be appended with a line like:
+    Robust DockerHub API call retry logic
 
+Configuration
 
----
+Configure the addon through the Home Assistant addon options UI or by editing options.json with these settings:
 
-## Add-on Folder Setup
-
-Each add-on in your repository must include an `updater.json` file to enable the updater script to track Docker image versions.
-
----
-
-### Example `updater.json`
-
-```json
 {
-"slug": "example_addon",
-"upstream_repo": "your-dockerhub-username/example_addon",
-"upstream_version": "1.0.0",
-"last_update": "01-01-2025"
+"github_repo": "https://github.com/ChristoffBo/homeassistant.git",
+"github_username": "",
+"github_token": "",
+"check_time": "03:00",
+"gotify_url": "http://your-gotify-server:port",
+"gotify_token": "your-gotify-token",
+"mailrise_url": "http://your-mailrise-endpoint"
 }
-Explanation:
 
-    slug: Unique identifier, usually the add-on folder name.
+Options:
 
-    upstream_repo: Docker Hub repo name (e.g., username/repository).
+github_repo - Your GitHub repository URL containing addon sources (optional)
+github_username - GitHub username for private repo access (optional)
+github_token - GitHub access token for private repo access (optional)
+check_time - Daily time to check for addon updates (HH:MM, 24h format), default "03:00"
+gotify_url - Gotify server URL for notifications (optional)
+gotify_token - Gotify API token (optional)
+mailrise_url - Mailrise webhook URL for notifications (optional)
 
-    upstream_version: Current Docker tag version.
+How It Works
 
-    last_update: Last update date (DD-MM-YYYY), auto-updated by the script.
+    On startup, the addon immediately checks all installed addons under /addons/.
 
-Example Add-on Folder Structure
+    For each addon, if a config.json exists and contains an .image field, it fetches the latest Docker tag from Docker Hub.
 
-example_addon/
-├── config.json
-├── updater.json
-├── CHANGELOG.md
-└── other addon files...
+    If the tag differs from the current version field in config.json, it updates config.json and records the update timestamp in updater.json.
+
+    Logs are colored and provide clear status messages.
+
+    Sends notifications via Gotify and Mailrise upon successful updates.
+
+    Displays Docker Hub API rate limits before scheduling the next daily check.
+
+    Then waits, running the check again daily at the configured check_time.
+
 Logging
 
-You can view detailed logs from the Supervisor UI. Logs show:
+    Green logs: Addons updated with new Docker tags.
 
-    Add-on slug.
+    Blue logs: Addons already up-to-date.
 
-    Current Docker image version.
+    Yellow warnings: Missing Docker image field, API fetch errors, retry attempts, or notification failures.
 
-    Latest Docker image version.
+Notifications
 
-    Current version in config.json (GitHub).
+    Notifications are sent on successful addon updates if Gotify or Mailrise URLs and tokens are configured.
 
-    Whether an update was performed.
+    No notifications are sent if these are not configured.
 
-    Changelog updates.
-Notes
+Requirements & Permissions
 
-    For private GitHub repositories, set github_username and github_token.
+    The addon needs read/write access to the /addons/ directory.
 
-    The add-on assumes your Docker images are hosted on Docker Hub.
+    For DockerHub API access, internet connection is required.
 
-    The script fetches only the latest Docker tag based on last updated time.
+    For notifications, network access to Gotify and/or Mailrise servers is required.
 
-    If CHANGELOG.md does not exist, it will be created automatically.
+    The addon must run with permissions to read/write addon config files and create/update updater.json.
+
+Troubleshooting
+
+    If no updates appear and versions are not changing, verify that your addons’ config.json includes a valid .image field specifying the Docker image.
+
+    Check the addon logs for warnings about missing Docker images or API fetch errors.
+
+    Verify network access to Docker Hub, Gotify, and Mailrise endpoints.
+
+    Check API rate limits logged before the next scheduled run.
