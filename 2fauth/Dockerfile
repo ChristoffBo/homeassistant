@@ -1,16 +1,14 @@
-# Use the official Home Assistant add-on base image
-ARG BUILD_FROM= 2fauth/2fauth:latest
+ARG BUILD_FROM=2fauth/2fauth:latest
 FROM ${BUILD_FROM}
 
-# Set shell options
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Use shell that exists
+SHELL ["/bin/sh", "-c"]
 
-# Install required tools (minimal, since 2FAuth is run via Docker inside the add-on)
-RUN apk add --no-cache docker-cli curl
+# Install necessary tools
+RUN apk add --no-cache bash docker-cli curl
 
-# Copy run script into the container
+# Copy your run script
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
-# Entrypoint
-CMD [ "/run.sh" ]
+CMD ["/run.sh"]
