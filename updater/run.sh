@@ -137,7 +137,7 @@ update_addon_if_needed() {
   fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "Addon at $addon_path has no Docker image defined, skipping."
+    log "$COLOR_YELLOW" "Addon '$(basename "$addon_path")' has no Docker image defined, skipping."
     return
   fi
 
