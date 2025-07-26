@@ -34,83 +34,49 @@ clone_or_update_repo() {
 }
 
 get_latest_docker_tag() {
-  local image="$1"
-  # Separate registry and repo:tag parts
-  local registry=""
-  local repo_tag="$image"
+  local repo="$1"
+  local tag=""
 
-  if [[ "$image" == *"/"*"/"* ]]; then
-    # image with registry: e.g. ghcr.io/user/repo:tag
-    registry=$(echo "$image" | cut -d/ -f1)
-    repo_tag=${image#*/}
-  fi
+  # Docker Hub tag fetch
+  url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
+  tag=$(curl -s "$url" | jq -r '.results[0].name')
 
-  # Default tag
-  local current_tag="latest"
-  if [[ "$repo_tag" == *":"* ]]; then
-    current_tag="${repo_tag##*:}"
-    repo_tag="${repo_tag%:*}"
-  fi
-
-  # Handle Docker Hub (docker.io) and GHCR
-  if [[ "$registry" == "" || "$registry" == "docker.io" ]]; then
-    # Docker Hub API v2
-    local url="https://registry.hub.docker.com/v2/repositories/$repo_tag/tags?page_size=1&ordering=last_updated"
-    latest_tag=$(curl -s "$url" | jq -r '.results[0].name')
-  elif [[ "$registry" == "ghcr.io" ]]; then
-    # GitHub Container Registry API (public only, no auth)
-    # repo_tag includes user/org and image name: user/image
-    local gh_repo="$repo_tag"
-    latest_tag=$(curl -s "https://ghcr.io/v2/$gh_repo/tags/list" | jq -r '.tags[-1]')
-  else
-    echo "Registry $registry not supported for auto tag lookup"
-    latest_tag=""
-  fi
-
-  echo "$latest_tag"
+  echo "$tag"
 }
 
-update_addon_version() {
+update_addon_if_needed() {
   local addon_path="$1"
-  local config_file="$addon_path/config.json"
+  local updater_file="$addon_path/updater.json"
 
-  local addon_name=$(basename "$addon_path")
-  local current_version=$(jq -r '.version' "$config_file")
-  local image=$(jq -r '.image' "$config_file")
-
-  if [[ "$image" == "null" || -z "$image" ]]; then
-    echo "Add-on '$addon_name' has no image field; skipping."
+  if [ ! -f "$updater_file" ]; then
+    echo "No updater.json found in $addon_path, skipping."
     return
   fi
 
-  echo "Checking add-on '$addon_name' image '$image'..."
+  local upstream_repo=$(jq -r '.upstream_repo' "$updater_file")
+  local upstream_version=$(jq -r '.upstream_version' "$updater_file")
+  local slug=$(jq -r '.slug' "$updater_file")
 
-  latest_tag=$(get_latest_docker_tag "$image")
+  echo "Checking $slug against Docker Hub for updates..."
 
-  if [[ -z "$latest_tag" || "$latest_tag" == "null" ]]; then
-    echo "Could not determine latest tag for image '$image'."
-    return
-  fi
+  latest_version=$(get_latest_docker_tag "$upstream_repo")
 
-  if [[ "$current_version" != "$latest_tag" ]]; then
-    echo "Updating add-on '$addon_name' version from '$current_version' to '$latest_tag'."
-    # Update the version field in config.json
-    jq --arg ver "$latest_tag" '.version=$ver' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+  if [ "$latest_version" != "$upstream_version" ] && [ "$latest_version" != "null" ]; then
+    echo "Update available for $slug: $upstream_version -> $latest_version"
+    jq --arg v "$latest_version" '.upstream_version = $v | .last_update = "'$(date +%d-%m-%Y)'"' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
   else
-    echo "Add-on '$addon_name' is already up to date (version $current_version)."
+    echo "$slug is up to date."
   fi
 }
 
 while true; do
   clone_or_update_repo
 
-  # Iterate over add-ons folders
   for addon_path in "$REPO_DIR"/*/; do
-    if [ -f "$addon_path/config.json" ]; then
-      update_addon_version "$addon_path"
-    fi
+    update_addon_if_needed "$addon_path"
   done
 
   echo "Sleeping for $UPDATE_INTERVAL minutes before next check..."
-  sleep "${UPDATE_INTERVAL}m"
+  sleep "$((UPDATE_INTERVAL * 60))"
 done
+
