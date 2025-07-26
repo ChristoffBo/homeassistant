@@ -19,10 +19,5 @@
   },
   "schema": {
     "config": "str"
-  },
-  "build_from": {
-    "amd64": "yoryan/mailrise:latest",
-    "armv7": "yoryan/mailrise:latest",
-    "aarch64": "yoryan/mailrise:latest"
   }
 }
