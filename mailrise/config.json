@@ -1,10 +1,14 @@
 {
   "name": "Mailrise",
-  "version": "1.0.0",
+  "version": "stable",
   "slug": "mailrise",
   "description": "SMTP to Apprise notification gateway using Mailrise (based on yoryan/mailrise)",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mailrise",
-  "arch": ["amd64", "armv7", "aarch64"],
+  "arch": [
+    "amd64",
+    "armv7",
+    "aarch64"
+  ],
   "startup": "services",
   "boot": "auto",
   "init": false,
