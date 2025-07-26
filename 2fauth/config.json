@@ -15,11 +15,7 @@
   "privileged": true,
   "map": [
     "config:rw",
-    "ssl",
-    "media",
-    "backup",
-    "share",
-    "addons"
+    "ssl"
   ],
   "devices": [],
   "arch": ["amd64", "armv7", "aarch64"],
