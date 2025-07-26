@@ -1,8 +1,8 @@
 {
-  "name": "Home Assistant Addons Updater",
-  "version": "1.1.0",
-  "slug": "addons_updater",
-  "description": "Automatically update Home Assistant add-ons from configurable GitHub repo",
+  "name": "Home Assistant Addons Docker Version Updater",
+  "version": "1.0.0",
+  "slug": "addons_version_updater",
+  "description": "Checks and updates add-on version numbers to match latest Docker image tags",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
   "boot": "auto",
