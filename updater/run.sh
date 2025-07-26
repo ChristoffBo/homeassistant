@@ -19,17 +19,17 @@ warn() {
 
 send_notification() {
     MESSAGE="$1"
-    if [[ "$GOTIFY_URL" != "" && "$GOTIFY_TOKEN" != "" ]]; then
+    if [[ -n "$GOTIFY_URL" && -n "$GOTIFY_TOKEN" ]]; then
         curl -s -X POST "$GOTIFY_URL/message" \
             -F "token=$GOTIFY_TOKEN" \
             -F "title=Addon Updater" \
             -F "message=$MESSAGE" \
-            -F "priority=5" > /dev/null || warn "❌ Gotify failed"
+            -F "priority=5" > /dev/null || warn "❌ Gotify notification failed"
     fi
-    if [[ "$MAILRISE_URL" != "" ]]; then
+    if [[ -n "$MAILRISE_URL" ]]; then
         curl -s -X POST "$MAILRISE_URL" \
             -H "Content-Type: application/json" \
-            -d "{\"message\": \"$MESSAGE\"}" > /dev/null || warn "❌ Mailrise failed"
+            -d "{\"message\": \"$MESSAGE\"}" > /dev/null || warn "❌ Mailrise notification failed"
     fi
 }
 
@@ -38,14 +38,35 @@ get_latest_docker_tag() {
     local latest_tag=""
     for ((i=0; i<5; i++)); do
         latest_tag=$(curl -s "https://hub.docker.com/v2/repositories/${image}/tags/?page_size=1&page=1&ordering=last_updated" | jq -r '.results[0].name' || echo "")
-        if [[ "$latest_tag" != "" && "$latest_tag" != "null" ]]; then
+        if [[ -n "$latest_tag" && "$latest_tag" != "null" ]]; then
             echo "$latest_tag"
             return
         fi
-        warn "Retrying to fetch tag for $image..."
+        warn "Retrying to fetch tag for $image (attempt $((i+1)))..."
         sleep 2
     done
     echo ""
+}
+
+get_rate_limit() {
+    # Fetch DockerHub rate limit headers via HEAD request
+    local headers
+    headers=$(curl -sI "https://hub.docker.com/v2/repositories/library/alpine/tags/?page_size=1")
+    local limit remaining reset
+
+    limit=$(echo "$headers" | grep -i '^RateLimit-Limit:' | awk '{print $2}' | tr -d $'\r')
+    remaining=$(echo "$headers" | grep -i '^RateLimit-Remaining:' | awk '{print $2}' | tr -d $'\r')
+    reset_epoch=$(echo "$headers" | grep -i '^RateLimit-Reset:' | awk '{print $2}' | tr -d $'\r')
+
+    if [[ -z "$limit" || -z "$remaining" || -z "$reset_epoch" ]]; then
+        echo "Rate limit info: unknown"
+        return
+    fi
+
+    local reset_time
+    reset_time=$(date -d "@$reset_epoch" +"%H:%M:%S")
+
+    echo "DockerHub API rate limit: $remaining / $limit remaining, resets at $reset_time"
 }
 
 run_check() {
@@ -60,12 +81,11 @@ run_check() {
         NAME=$(jq -r '.name' "$CONFIG_FILE")
         IMAGE=$(jq -r '.image // empty' "$CONFIG_FILE")
 
-        if [[ "$IMAGE" == "" || "$IMAGE" == "null" ]]; then
+        if [[ -z "$IMAGE" || "$IMAGE" == "null" ]]; then
             warn "⚠️ Skipping $NAME — no Docker image"
             continue
         fi
 
-        # Ensure updater.json exists
         UPDATER_JSON="$ADDONS_PATH/$addon/updater.json"
         if [[ ! -f "$UPDATER_JSON" ]]; then
             NOW=$(date +"%d-%m-%Y %H:%M")
@@ -75,7 +95,7 @@ run_check() {
         CURRENT_VERSION=$(jq -r '.version' "$CONFIG_FILE")
         LATEST_VERSION=$(get_latest_docker_tag "$IMAGE")
 
-        if [[ "$LATEST_VERSION" == "" ]]; then
+        if [[ -z "$LATEST_VERSION" ]]; then
             warn "⚠️ Could not get latest tag for $IMAGE"
             continue
         fi
@@ -91,11 +111,14 @@ run_check() {
         fi
     done
 
+    RATE_LIMIT_INFO=$(get_rate_limit)
+    log "$RATE_LIMIT_INFO"
+
     log "📅 Next check scheduled at $CHECK_TIME tomorrow"
 }
 
-# Keep container running, run check on startup and then daily at CHECK_TIME
 first_run=true
+
 while true; do
     NOW=$(date +%H:%M)
 
@@ -104,7 +127,7 @@ while true; do
         first_run=false
     elif [[ "$NOW" == "$CHECK_TIME" ]]; then
         run_check
-        sleep 60
+        sleep 60  # avoid multiple runs in the same minute
     fi
 
     sleep 30
