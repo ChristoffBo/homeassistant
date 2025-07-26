@@ -6,6 +6,7 @@ REPO_DIR=/data/homeassistant
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -89,8 +90,13 @@ clone_or_update_repo() {
 get_latest_docker_tag() {
   local repo="$1"
   local tag=""
-  url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
   tag=$(curl -s "$url" | jq -r '.results[0].name')
+
+  if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+    echo "WARNING: Could not fetch latest docker tag for repo $repo"
+    tag=""
+  fi
   echo "$tag"
 }
 
@@ -109,29 +115,39 @@ update_addon_if_needed() {
   upstream_repo=$(jq -r '.upstream_repo' "$updater_file")
   local current_version
   current_version=$(jq -r '.upstream_version' "$updater_file")
+  local last_update
+  last_update=$(jq -r '.last_update // "Never"' "$updater_file")
   local slug
   slug=$(jq -r '.slug' "$updater_file")
 
   local latest_version
   latest_version=$(get_latest_docker_tag "$upstream_repo")
 
+  if [ -z "$latest_version" ]; then
+    echo "Skipping update check for $slug due to missing latest tag."
+    return
+  fi
+
   local now_datetime
   now_datetime=$(date '+%d-%m-%Y %H:%M')
 
-  if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "null" ]; then
-    # Update updater.json
+  echo "----------------------------"
+  echo "Addon: $slug"
+  echo -e "${YELLOW}Last updated: $last_update${NC}"
+  echo "Current Docker version: $current_version"
+  echo "Latest Docker version:  $latest_version"
+
+  if [ "$latest_version" != "$current_version" ]; then
     jq --arg v "$latest_version" --arg dt "$now_datetime" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
-    # Update config.json version unconditionally
     if [ -f "$config_file" ]; then
       jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-      echo "Config.json updated to $latest_version"
+      echo -e "${GREEN}Updated config.json version to $latest_version${NC}"
     else
       echo "No config.json found in $addon_path"
     fi
 
-    # Append changelog
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
       echo "Created new CHANGELOG.md"
@@ -146,7 +162,6 @@ update_addon_if_needed() {
 
     echo -e "${GREEN}Addon '$slug' updated to $latest_version ⬆️${NC}"
 
-    # Send notifications
     local title="Addon Updated: $slug"
     local message="Updated $slug to version $latest_version on $now_datetime"
 
@@ -155,7 +170,6 @@ update_addon_if_needed() {
   else
     echo -e "${BLUE}Addon '$slug' is already up-to-date ✔${NC}"
   fi
-
   echo "----------------------------"
 }
 
