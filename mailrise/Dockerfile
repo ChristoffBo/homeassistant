@@ -1,7 +1,6 @@
-ARG BUILD_FROM
-FROM strasharo/mailrise:latest
+FROM ghcr.io/strasharo/mailrise:latest
 
 COPY run.sh /run.sh
-RUN chmod a+x /run.sh
+RUN chmod +x /run.sh
 
 CMD [ "/run.sh" ]
