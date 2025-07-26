@@ -7,6 +7,7 @@ REPO_DIR=/data/homeassistant
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -90,14 +91,22 @@ clone_or_update_repo() {
 get_latest_docker_tag() {
   local repo="$1"
   local tag=""
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
-  tag=$(curl -s "$url" | jq -r '.results[0].name')
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=5&ordering=last_updated"
+  
+  # Try to get latest non-'latest' tag first
+  tag=$(curl -s "$url" | jq -r '.results[] | select(.name != "latest") | .name' | head -n 1)
 
-  if [ -z "$tag" ] || [ "$tag" = "null" ]; then
-    echo "WARNING: Could not fetch latest docker tag for repo $repo"
-    tag=""
+  # If no non-latest tag found, fallback to 'latest' or empty
+  if [ -z "$tag" ]; then
+    tag=$(curl -s "$url" | jq -r '.results[0].name')
   fi
-  echo "$tag"
+
+  # Final sanity check
+  if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+    echo ""
+  else
+    echo "$tag"
+  fi
 }
 
 update_addon_if_needed() {
@@ -124,7 +133,9 @@ update_addon_if_needed() {
   latest_version=$(get_latest_docker_tag "$upstream_repo")
 
   if [ -z "$latest_version" ]; then
+    echo "Could not fetch latest docker tag for repo $upstream_repo"
     echo "Skipping update check for $slug due to missing latest tag."
+    echo "----------------------------"
     return
   fi
 
@@ -205,6 +216,7 @@ while true; do
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     echo "Scheduled update checks complete."
+    echo -e "${CYAN}Next scheduled update check will run at $CHECK_TIME tomorrow.${NC}"
     sleep 60
   else
     sleep 30
