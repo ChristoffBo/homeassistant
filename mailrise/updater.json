@@ -4,5 +4,5 @@
   "slug": "mailrise",
   "source": "dockerhub",
   "upstream_repo": "yoryan/mailrise",
-  "upstream_version": "13.6.0"
+  "upstream_version": "1.3.0"
 }
