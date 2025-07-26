@@ -1,7 +1,7 @@
 {
   "last_update": "26-04-2025",
   "repository": "ChristoffBo/homeassistant",
-  "slug": "technitium-dns-dhcp",
+  "slug": "mailrise",
   "source": "dockerhub",
   "upstream_repo": "technitium/dns-server",
   "upstream_version": "13.6.0"
