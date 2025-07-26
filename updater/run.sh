@@ -4,6 +4,7 @@ set -e
 
 CONFIG_PATH=/data/options.json
 ADDONS_PATH=/addons
+
 CHECK_TIME=$(jq -r '.check_time' $CONFIG_PATH)
 GOTIFY_URL=$(jq -r '.gotify_url' $CONFIG_PATH)
 GOTIFY_TOKEN=$(jq -r '.gotify_token' $CONFIG_PATH)
@@ -35,17 +36,8 @@ send_notification() {
 
 get_latest_docker_tag() {
     local image="$1"
-    local latest_tag=""
-    for ((i=0; i<5; i++)); do
-        latest_tag=$(curl -s "https://hub.docker.com/v2/repositories/${image}/tags/?page_size=1&page=1&ordering=last_updated" | jq -r '.results[0].name' || echo "")
-        if [[ "$latest_tag" != "" && "$latest_tag" != "null" ]]; then
-            echo "$latest_tag"
-            return
-        fi
-        warn "Retrying to fetch tag for $image..."
-        sleep 2
-    done
-    echo ""
+    local latest_tag=$(curl -s "https://hub.docker.com/v2/repositories/${image}/tags/?page_size=1&page=1&ordering=last_updated" | jq -r '.results[0].name')
+    echo "$latest_tag"
 }
 
 run_check() {
@@ -75,7 +67,7 @@ run_check() {
         CURRENT_VERSION=$(jq -r '.version' "$CONFIG_FILE")
         LATEST_VERSION=$(get_latest_docker_tag "$IMAGE")
 
-        if [[ "$LATEST_VERSION" == "" ]]; then
+        if [[ "$LATEST_VERSION" == "" || "$LATEST_VERSION" == "null" ]]; then
             warn "⚠️ Could not get latest tag for $IMAGE"
             continue
         fi
@@ -94,18 +86,4 @@ run_check() {
     log "📅 Next check scheduled at $CHECK_TIME tomorrow"
 }
 
-# 🚨 This loop keeps the container running
-first_run=true
-while true; do
-    NOW=$(date +%H:%M)
-
-    if $first_run; then
-        run_check
-        first_run=false
-    elif [[ "$NOW" == "$CHECK_TIME" ]]; then
-        run_check
-        sleep 60
-    fi
-
-    sleep 30
-done
+run_check
