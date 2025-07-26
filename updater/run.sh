@@ -1,101 +1,128 @@
-update_addon_if_needed() {
-  local addon_path="$1"
-  local updater_file="$addon_path/updater.json"
-  local config_file="$addon_path/config.json"
-  local changelog_file="$addon_path/CHANGELOG.md"
-  local slug
-  slug=$(basename "$addon_path")
+#!/bin/bash
 
-  if [ ! -f "$config_file" ]; then
-    echo "No config.json found in $addon_path, skipping updater.json creation."
-    return
-  fi
+set -e
 
-  local config_version
-  config_version=$(jq -r '.version // empty' "$config_file")
+ADDONS_DIR="/addons"
+NOW=$(date +"%d-%m-%Y %H:%M")
+CONFIG_FILE="/data/options.json"
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_FILE")
+GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_FILE")
+GOTIFY_TOKEN=$(jq -r '.gotify_token' "$CONFIG_FILE")
+MAILRISE_URL=$(jq -r '.mailrise_url' "$CONFIG_FILE")
 
-  if [ -z "$config_version" ]; then
-    echo "Addon '$slug' has empty version in config.json, assuming no docker image, skipping updater.json creation."
-    return
-  fi
-
-  if [ ! -f "$updater_file" ]; then
-    echo "No updater.json found in $addon_path, creating one with defaults..."
-    cat > "$updater_file" << EOF
-{
-  "slug": "$slug",
-  "upstream_repo": "",
-  "upstream_version": "",
-  "last_update": "Never"
+log_info() {
+  echo -e "\033[1;36m$1\033[0m"
 }
-EOF
+
+log_success() {
+  echo -e "\033[1;32m$1 ✔\033[0m"
+}
+
+log_warning() {
+  echo -e "\033[1;33m$1\033[0m"
+}
+
+log_update() {
+  echo -e "\033[1;32m$1 🟢\033[0m"
+}
+
+log_up_to_date() {
+  echo -e "\033[1;34m$1 🔵\033[0m"
+}
+
+send_notification() {
+  local message="$1"
+
+  if [[ -n "$GOTIFY_URL" && -n "$GOTIFY_TOKEN" ]]; then
+    curl -s -X POST "$GOTIFY_URL/message" \
+      -F "token=$GOTIFY_TOKEN" \
+      -F "title=Addon Updater" \
+      -F "message=$message" > /dev/null
   fi
 
-  local upstream_repo
-  upstream_repo=$(jq -r '.upstream_repo' "$updater_file")
-  local current_version
-  current_version=$(jq -r '.upstream_version' "$updater_file")
-  local last_update
-  last_update=$(jq -r '.last_update // "Never"' "$updater_file")
-
-  if [ -z "$upstream_repo" ]; then
-    echo "No 'upstream_repo' set in updater.json for $slug, skipping update check."
-    echo "----------------------------"
-    return
+  if [[ -n "$MAILRISE_URL" ]]; then
+    curl -s -X POST "$MAILRISE_URL" -d "$message" > /dev/null
   fi
+}
 
-  local latest_version
-  latest_version=$(get_latest_docker_tag "$upstream_repo")
+get_latest_tag() {
+  local repo_url="$1"
+  local retries=5
+  local delay=2
 
-  if [ -z "$latest_version" ]; then
-    echo "Could not fetch latest docker tag for repo $upstream_repo"
-    echo "Skipping update check for $slug due to missing latest tag."
-    echo "----------------------------"
-    return
-  fi
+  for ((i=1; i<=retries; i++)); do
+    local result
+    result=$(curl -s --retry 0 "https://hub.docker.com/v2/repositories/${repo_url}/tags?page_size=1&page=1&ordering=last_updated")
 
-  local now_datetime
-  now_datetime=$(date '+%d-%m-%Y %H:%M')
-
-  echo "----------------------------"
-  echo "Addon: $slug"
-  echo -e "${YELLOW}Last updated: $last_update${NC}"
-
-  # Update if needed
-  if [ "$latest_version" != "$current_version" ]; then
-    jq --arg v "$latest_version" --arg dt "$now_datetime" \
-      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
-
-    if [ -f "$config_file" ]; then
-      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-      echo -e "${GREEN}Updated config.json version to $latest_version${NC}"
+    if [[ -z "$result" || "$result" == "null" ]]; then
+      log_warning "Attempt $i: Failed to fetch tags from DockerHub for $repo_url. Retrying in ${delay}s..."
+      sleep $delay
+      delay=$((delay * 2))
     else
-      echo "No config.json found in $addon_path"
+      echo "$result" | jq -r '.results[0].name'
+      return
     fi
+  done
 
-    if [ ! -f "$changelog_file" ]; then
-      touch "$changelog_file"
-      echo "Created new CHANGELOG.md"
-    fi
+  echo ""
+}
 
-    {
-      echo "v$latest_version ($now_datetime)"
-      echo ""
-      echo "    Update to latest version from $upstream_repo (changelog : https://github.com/${upstream_repo#*/}/releases)"
-      echo ""
-    } >> "$changelog_file"
+update_addon() {
+  local addon_path="$1"
+  local config_path="$addon_path/config.json"
+  local updater_path="$addon_path/updater.json"
 
-    echo -e "${GREEN}Addon '$slug' updated to $latest_version ⬆️${NC}"
+  if [[ ! -f "$config_path" ]]; then
+    return
   fi
 
-  # Refresh current version after potential update
-  config_version=$(jq -r '.version // empty' "$config_file")
+  local name=$(jq -r '.name' "$config_path")
+  local version=$(jq -r '.version' "$config_path")
+  local image=$(jq -r '.image // empty' "$config_path")
+  local slug=$(jq -r '.slug // empty' "$config_path")
 
-  echo "Current Docker version: $config_version"
-  echo "Latest Docker version:  $latest_version"
+  if [[ -z "$image" ]]; then
+    log_warning "Skipping '$name' – No Docker image defined"
+    return
+  fi
 
-  if [ "$config_version" = "$latest_version" ]; then
-    echo -e "${BLUE}Addon '$slug' is already up-to-date ✔${NC}"
+  # Ensure updater.json exists
+  if [[ ! -f "$updater_path" ]]; then
+    echo "{\"last_update\": \"$NOW\"}" > "$updater_path"
+  fi
+
+  latest_tag=$(get_latest_tag "$image")
+
+  if [[ -z "$latest_tag" || "$latest_tag" == "null" ]]; then
+    log_warning "Addon: $slug"
+    log_warning "Could not fetch latest tag for image $image"
+    echo "----------------------------"
+    return
+  fi
+
+  last_update=$(jq -r '.last_update' "$updater_path" 2>/dev/null)
+
+  log_info "Addon: $slug"
+  log_warning "Last updated: ${last_update:-Never}"
+  log_info "Current Docker version: $version"
+  log_info "Latest Docker version:  $latest_tag"
+
+  if [[ "$version" != "$latest_tag" ]]; then
+    jq --arg v "$latest_tag" '.version = $v' "$config_path" > "$config_path.tmp" && mv "$config_path.tmp" "$config_path"
+    echo "{\"last_update\": \"$NOW\"}" > "$updater_path"
+    log_update "Addon '$slug' updated to version $latest_tag"
+    send_notification "Addon '$slug' updated to version $latest_tag"
+  else
+    log_up_to_date "Addon '$slug' is already up-to-date"
   fi
   echo "----------------------------"
 }
+
+log_info "🚀 HomeAssistant Addon Updater started at $NOW"
+send_notification "HomeAssistant Addon Startup Notification"
+
+for addon in "$ADDONS_DIR"/*; do
+  [ -d "$addon" ] && update_addon "$addon"
+done
+
+log_info "Next check scheduled at $CHECK_TIME tomorrow"
