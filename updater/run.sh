@@ -1,25 +1,45 @@
 #!/usr/bin/env bash
 set -e
 
-echo "Starting Home Assistant Addons Updater from ChristoffBo repo..."
+echo "Starting Home Assistant Addons Updater with configurable repo..."
 
-# Example: clone or pull your GitHub repo with addons definitions and update logic
-REPO_DIR=/data/homeassistant
+CONFIG_PATH=/data/options.json
 
-if [ ! -d "$REPO_DIR" ]; then
-  echo "Cloning repo..."
-  git clone https://github.com/ChristoffBo/homeassistant.git "$REPO_DIR"
-else
-  echo "Pulling latest changes..."
-  cd "$REPO_DIR"
-  git pull origin main
+if [ ! -f "$CONFIG_PATH" ]; then
+  echo "ERROR: Config file $CONFIG_PATH not found!"
+  exit 1
 fi
 
-# TODO: Add your add-ons update logic here
-# For example, parse your repo files and trigger Home Assistant addon updates
+# Read config values using jq
+GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
+GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
+GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
+UPDATE_INTERVAL=$(jq -r '.update_interval_minutes' "$CONFIG_PATH")
+
+REPO_DIR=/data/homeassistant
+
+clone_or_update_repo() {
+  if [ ! -d "$REPO_DIR" ]; then
+    echo "Cloning repository $GITHUB_REPO..."
+    if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+      AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
+      git clone "$AUTH_REPO" "$REPO_DIR"
+    else
+      git clone "$GITHUB_REPO" "$REPO_DIR"
+    fi
+  else
+    echo "Pulling latest changes in $REPO_DIR..."
+    cd "$REPO_DIR"
+    if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+      git pull
+    else
+      git pull
+    fi
+  fi
+}
 
 while true; do
-  echo "Checking for add-ons updates from your repo..."
-  # Placeholder for actual update commands
-  sleep 3600
+  clone_or_update_repo
+  echo "Waiting $UPDATE_INTERVAL minutes before next check..."
+  sleep "${UPDATE_INTERVAL}m"
 done
