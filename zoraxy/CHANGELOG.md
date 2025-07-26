@@ -1,4 +1,7 @@
 
+##  (26-07-2025)
+- Update to latest version from zoraxydocker/zoraxy:latest
+
 ##  (23-07-2025)
 - Update to latest version from zoraxydocker/zoraxy:latest
 

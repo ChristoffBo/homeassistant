@@ -1,9 +1,9 @@
 {
   "github_fulltag": "true",
-  "last_update": "23-07-2025",
+  "last_update": "26-07-2025",
   "repository": "ChristoffBo/homeassistant",
   "slug": "zoraxy",
   "source": "dockerhub",
   "upstream_repo": "zoraxydocker/zoraxy:latest",
-  "upstream_version": "3.2.5r2"
+  "upstream_version": ""
 }
