@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:alpine3.19
+ARG BUILD_FROM=
 FROM ${BUILD_FROM}
 
 SHELL ["/bin/sh", "-c"]
