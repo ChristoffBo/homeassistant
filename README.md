@@ -16,7 +16,7 @@ What’s Inside
 
         Heimdall — Application dashboard addon
 
-        LinuxServer Heimdall — Alternative Heimdall packaging
+        Technitium DNS — The best DNS and DHCP server with ingress!
 
         Update Checker — Automated addon update management
 
