@@ -52,7 +52,6 @@ clone_or_update_repo() {
   fi
 }
 
-# Fetch latest tag from Docker Hub with retry/backoff
 fetch_latest_dockerhub_tag() {
   local repo="$1"
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
@@ -71,7 +70,6 @@ fetch_latest_dockerhub_tag() {
   echo ""
 }
 
-# Fetch latest tag from linuxserver.io (uses Docker Hub API)
 fetch_latest_linuxserver_tag() {
   local repo="$1"
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
@@ -83,7 +81,6 @@ fetch_latest_linuxserver_tag() {
   fi
 }
 
-# Fetch latest tag from GitHub Container Registry
 fetch_latest_ghcr_tag() {
   local image="$1"
   local repo_path="${image#ghcr.io/}"
@@ -110,14 +107,11 @@ get_latest_docker_tag() {
   fi
 }
 
-# Function to extract Docker image from config.json or build.json
 get_addon_image() {
   local addon_path="$1"
-  local config_file="$addon_path/config.json"
-  local build_file="$addon_path/build.json"
   local image=""
 
-  if [ -f "$config_file" ]; then
+  if [ -f "$addon_path/config.json" ]; then
     image=$(jq -r '
       if has("image") and (.image | type == "string") then
         .image
@@ -128,19 +122,19 @@ get_addon_image() {
       else
         empty
       end
-    ' "$config_file")
+    ' "$addon_path/config.json")
   fi
 
-  if [ -z "$image" ] && [ -f "$build_file" ]; then
+  if [ -z "$image" ] && [ -f "$addon_path/build.json" ]; then
     image=$(jq -r '
-      if has("image") then
+      if has("image") and (.image | type == "string") then
         .image
       elif has("repository") then
         .repository
       else
         empty
       end
-    ' "$build_file")
+    ' "$addon_path/build.json")
   fi
 
   echo "$image"
@@ -200,4 +194,36 @@ update_addon_if_needed() {
     log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
 
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
-      '.upstream_vers_
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+
+    if [ ! -f "$changelog_file" ]; then
+      touch "$changelog_file"
+      log "$COLOR_YELLOW" "Created new CHANGELOG.md"
+    fi
+
+    {
+      echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
+      echo ""
+      echo "    Update to latest version from $image"
+      echo ""
+    } >> "$changelog_file"
+
+    log "$COLOR_GREEN" "CHANGELOG.md updated."
+  else
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
+  fi
+
+  log "$COLOR_BLUE" "----------------------------"
+}
+
+perform_update_check() {
+  clone_or_update_repo
+
+  for addon_path in "$REPO_DIR"/*/; do
+    update_addon_if_needed "$addon_path"
+  done
+}
+
+LAST_RUN_FILE="/data/last_run_date.txt"
