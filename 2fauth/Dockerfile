@@ -1,5 +1,5 @@
 # Use the official Home Assistant add-on base image
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:latest
+ARG BUILD_FROM= 2fauth/2fauth:latest
 FROM ${BUILD_FROM}
 
 # Set shell options
