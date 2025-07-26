@@ -92,16 +92,15 @@ get_latest_docker_tag() {
   local repo="$1"
   local tag=""
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=5&ordering=last_updated"
-  
-  # Try to get latest non-'latest' tag first
+
+  echo "Fetching Docker tags from: $url" >&2  # debug output to stderr
+
   tag=$(curl -s "$url" | jq -r '.results[] | select(.name != "latest") | .name' | head -n 1)
 
-  # If no non-latest tag found, fallback to 'latest' or empty
   if [ -z "$tag" ]; then
     tag=$(curl -s "$url" | jq -r '.results[0].name')
   fi
 
-  # Final sanity check
   if [ -z "$tag" ] || [ "$tag" = "null" ]; then
     echo ""
   else
