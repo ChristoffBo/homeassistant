@@ -12,13 +12,13 @@
     "github_repo": "https://github.com/ChristoffBo/homeassistant.git",
     "github_username": "",
     "github_token": "",
-    "update_interval_minutes": 60
+    "check_time": "03:00"
   },
   "schema": {
     "github_repo": "str",
     "github_username": "str",
     "github_token": "str",
-    "update_interval_minutes": "int"
+    "check_time": "str"
   },
   "map": ["config:ro", "addons:rw", "backup:rw", "share:rw"],
   "init": false,
