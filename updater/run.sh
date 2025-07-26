@@ -146,4 +146,88 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "Addon: $slug"
-  l
+  log "$COLOR_BLUE" "Current Docker version: $upstream_version"
+
+  local latest_version
+  latest_version=$(get_latest_docker_tag "$image")
+
+  if [[ -z "$latest_version" ]]; then
+    log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
+    log "$COLOR_BLUE" "Latest Docker version: WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
+    log "$COLOR_BLUE" "----------------------------"
+    return
+  fi
+
+  log "$COLOR_BLUE" "Latest Docker version: $latest_version"
+
+  if [[ "$latest_version" != "$upstream_version" ]]; then
+    log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
+
+    jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+
+    if [ ! -f "$changelog_file" ]; then
+      touch "$changelog_file"
+      log "$COLOR_YELLOW" "Created new CHANGELOG.md"
+    fi
+
+    {
+      echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
+      echo ""
+      echo "    Update to latest version from $image"
+      echo ""
+    } >> "$changelog_file"
+
+    log "$COLOR_GREEN" "CHANGELOG.md updated."
+  else
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
+  fi
+
+  log "$COLOR_BLUE" "----------------------------"
+}
+
+perform_update_check() {
+  clone_or_update_repo
+
+  for addon_path in "$REPO_DIR"/*/; do
+    update_addon_if_needed "$addon_path"
+  done
+}
+
+main() {
+  log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
+
+  perform_update_check
+  echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
+
+  log "$COLOR_GREEN" "Entering main scheduling loop..."
+
+  while true; do
+    NOW_TIME=$(date +%H:%M)
+    TODAY=$(date +%Y-%m-%d)
+    LAST_RUN=""
+
+    if [ -f "$LAST_RUN_FILE" ]; then
+      LAST_RUN=$(cat "$LAST_RUN_FILE")
+    fi
+
+    if [[ "$NOW_TIME" == "$CHECK_TIME" && "$LAST_RUN" != "$TODAY" ]]; then
+      log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
+      perform_update_check
+      echo "$TODAY" > "$LAST_RUN_FILE"
+      log "$COLOR_GREEN" "✅ Scheduled update checks complete."
+      sleep 60  # avoid multiple runs in same minute
+    else
+      # Show next check time fallback without error
+      local next_check_date
+      next_check_date=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME $(date -d 'tomorrow' '+%d-%m-%Y')")
+      log "$COLOR_BLUE" "📅 Next check scheduled at $next_check_date"
+      sleep 30
+    fi
+  done
+}
+
+main "$@"
