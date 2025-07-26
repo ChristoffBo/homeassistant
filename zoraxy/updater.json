@@ -4,6 +4,6 @@
   "repository": "ChristoffBo/homeassistant",
   "slug": "zoraxy",
   "source": "dockerhub",
-  "upstream_repo": "zoraxydocker/zoraxy:latest",
+  "upstream_repo": "zoraxydocker/zoraxy",
   "upstream_version": ""
 }
