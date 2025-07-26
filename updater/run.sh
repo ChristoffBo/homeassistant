@@ -109,6 +109,7 @@ update_addon_if_needed() {
   local addon_path="$1"
   local updater_file="$addon_path/updater.json"
   local config_file="$addon_path/config.json"
+  local build_file="$addon_path/build.json"
   local changelog_file="$addon_path/CHANGELOG.md"
 
   if [ ! -f "$config_file" ]; then
@@ -116,14 +117,15 @@ update_addon_if_needed() {
     return
   fi
 
-  local image
+  local image=""
 
-  # Check image in build.json or config.json
-  if [ -f "$addon_path/build.json" ]; then
-    image=$(jq -r '.image // empty' "$addon_path/build.json")
+  # Try build.json first for image
+  if [ -f "$build_file" ]; then
+    image=$(jq -r '.image // empty' "$build_file" 2>/dev/null || echo "")
   fi
+  # If empty, try config.json
   if [ -z "$image" ]; then
-    image=$(jq -r '.image // empty' "$config_file")
+    image=$(jq -r '.image // empty' "$config_file" 2>/dev/null || echo "")
   fi
 
   if [ -z "$image" ]; then
@@ -162,12 +164,12 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "Latest Docker version:  $latest_version"
 
-  # Add v prefix if missing
+  # Ensure version prefix v
   if [[ "$latest_version" != v* ]]; then
     latest_version="v$latest_version"
   fi
 
-  # Get current version from config.json
+  # Current version from config.json version field
   local current_version
   current_version=$(jq -r '.version // empty' "$config_file")
 
@@ -229,7 +231,6 @@ while true; do
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
     sleep 60  # prevent multiple runs in same minute
   else
-    # Compute next check time for logging
     next_check=$(date -d "tomorrow $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "unknown")
     log "$COLOR_BLUE" "📅 Next check scheduled at $CHECK_TIME tomorrow ($next_check)"
   fi
