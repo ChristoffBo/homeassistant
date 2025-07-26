@@ -10,7 +10,6 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
-# Read config values using jq
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
@@ -19,21 +18,28 @@ UPDATE_INTERVAL=$(jq -r '.update_interval_minutes' "$CONFIG_PATH")
 REPO_DIR=/data/homeassistant
 
 clone_or_update_repo() {
+  echo "Checking repository: $GITHUB_REPO"
   if [ ! -d "$REPO_DIR" ]; then
-    echo "Cloning repository $GITHUB_REPO..."
+    echo "Repository not found locally. Cloning..."
     if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
       AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
       git clone "$AUTH_REPO" "$REPO_DIR"
+      echo "Repository cloned successfully."
     else
       git clone "$GITHUB_REPO" "$REPO_DIR"
+      echo "Repository cloned successfully."
     fi
   else
-    echo "Pulling latest changes in $REPO_DIR..."
+    echo "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
-    if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-      git pull
+    # Capture git pull output
+    PULL_OUTPUT=$(git pull)
+
+    if echo "$PULL_OUTPUT" | grep -q "Already up to date."; then
+      echo "Repository is already up to date."
     else
-      git pull
+      echo "Repository updated with changes:"
+      echo "$PULL_OUTPUT"
     fi
   fi
 }
