@@ -4,17 +4,6 @@ set -e
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 
-# Detect architecture for selecting image in build.json
-ARCH=$(uname -m)
-# Normalize architecture names as used in build_from keys
-case "$ARCH" in
-  x86_64) ARCH_KEY="amd64" ;;
-  aarch64 | arm64) ARCH_KEY="aarch64" ;;
-  armv7l) ARCH_KEY="armv7" ;;
-  armv6l) ARCH_KEY="armhf" ;;
-  *) ARCH_KEY="$ARCH" ;;
-esac
-
 # Colored output
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
@@ -37,6 +26,12 @@ GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
+
+# GitHub API auth header if token provided
+GITHUB_AUTH_HEADER=""
+if [ -n "$GITHUB_TOKEN" ]; then
+  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
+fi
 
 clone_or_update_repo() {
   log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
@@ -103,7 +98,12 @@ get_latest_docker_tag() {
   local image="$1"
   local image_no_tag="${image%%:*}"
 
-  if [[ "$image_no_tag" == linuxserver/* ]] || [[ "$image_no_tag" == lscr.io/* ]]; then
+  # Fix for lscr.io/linuxserver/ images to map to linuxserver/ on Docker Hub API
+  if [[ "$image_no_tag" == lscr.io/linuxserver/* ]]; then
+    image_no_tag="${image_no_tag#lscr.io/}"
+  fi
+
+  if [[ "$image_no_tag" == linuxserver/* ]]; then
     echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
   elif [[ "$image_no_tag" == ghcr.io/* ]]; then
     echo "$(fetch_latest_ghcr_tag "$image_no_tag")"
@@ -124,34 +124,34 @@ update_addon_if_needed() {
     return
   fi
 
-  # Try to get docker image from build.json first
   local image=""
+
   if [ -f "$build_file" ]; then
-    image=$(jq -r --arg arch "$ARCH_KEY" '.build_from[$arch] // empty' "$build_file")
+    # Read architecture-based image if exists; default to amd64 or first available
+    local arch=$(uname -m)
+    if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
+    image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
   fi
 
-  # If no image in build.json, fallback to config.json
   if [ -z "$image" ] && [ -f "$config_file" ]; then
     image=$(jq -r '.image // empty' "$config_file")
   fi
 
-  if [ -z "$image" ]; then
+  if [ -z "$image" ] || [ "$image" == "null" ]; then
     log "$COLOR_YELLOW" "Addon at $addon_path has no Docker image defined, skipping."
     return
   fi
 
-  # Create updater.json if missing
-  if [ ! -f "$updater_file" ]; then
-    log "$COLOR_YELLOW" "updater.json missing for addon at $addon_path, creating."
-    jq -n --arg slug "$(basename "$addon_path")" --arg image "$image" --arg last_update "" \
-      '{slug: $slug, image: $image, upstream_version: "", last_update: $last_update}' > "$updater_file"
+  local slug
+  slug=$(jq -r '.slug // empty' "$config_file")
+  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
+    slug=$(basename "$addon_path")
   fi
 
-  local slug upstream_version
-  slug=$(jq -r '.slug // empty' "$updater_file")
-  upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
-  if [ -z "$slug" ]; then
-    slug=$(basename "$addon_path")
+  local upstream_version=""
+
+  if [ -f "$updater_file" ]; then
+    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
   fi
 
   log "$COLOR_BLUE" "----------------------------"
@@ -163,21 +163,30 @@ update_addon_if_needed() {
 
   if [ -z "$latest_version" ]; then
     log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest Docker version: WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Latest Docker version:  WARNING: Could not fetch"
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
   fi
 
-  log "$COLOR_BLUE" "Latest Docker version: $latest_version"
+  log "$COLOR_BLUE" "Latest Docker version:  $latest_version"
 
   if [ "$latest_version" != "$upstream_version" ]; then
     log "$COLOR_GREEN" "Update available: $upstream_version -> $latest_version"
 
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
-      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
+      jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
+        '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
 
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+    mv "$updater_file.tmp" "$updater_file"
+
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || \
+      true # silently ignore if config.json has no version field or is missing
+
+    if [ -f "$config_file.tmp" ]; then
+      mv "$config_file.tmp" "$config_file"
+    fi
 
     if [ ! -f "$changelog_file" ]; then
       touch "$changelog_file"
@@ -227,18 +236,11 @@ while true; do
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-    sleep 60
+    sleep 60  # prevent multiple runs in same minute
   else
-    # Calculate next check datetime for logging
-    next_check_epoch=$(date -d "$TODAY $CHECK_TIME" +%s)
-    now_epoch=$(date +%s)
-    if [ $now_epoch -ge $next_check_epoch ]; then
-      # Next check is tomorrow
-      next_check_epoch=$((next_check_epoch + 86400))
-    fi
-    next_check=$(date -d "@$next_check_epoch" '+%H:%M %d-%m-%Y')
-
-    log "$COLOR_BLUE" "📅 Next check scheduled at $next_check"
+    # Calculate next check time for logging, fallback without 'tomorrow'
+    NEXT_CHECK_TIME=$(date -d "today $CHECK_TIME" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
   fi
 
   sleep 30
