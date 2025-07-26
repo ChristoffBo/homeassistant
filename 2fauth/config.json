@@ -32,7 +32,7 @@
     "TZ": "str"
   },
   "options": {
-    "APP_URL": "https://auth.bothmainc.com",
+    "APP_URL": "https://auth.something.com",
     "MAIL_ENCRYPTION": false,
     "MAIL_FROM_ADDRESS": "2fa@notifications.co.za",
     "MAIL_FROM_NAME": "2Fauth",
