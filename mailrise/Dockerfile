@@ -1,4 +1,4 @@
-FROM ghcr.io/strasharo/mailrise:latest
+FROM yoryan/mailrise
 
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
