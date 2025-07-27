@@ -100,19 +100,34 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  # Strip tag if present (e.g. image:tag -> image)
   local base_image="${image%%:*}"
+  
+  # For linuxserver.io images, use their API:
+  if [[ "$base_image" =~ ^lscr.io/linuxserver/ ]]; then
+    local repo_name="${base_image#lscr.io/linuxserver/}"
+    # Fetch tags from LinuxServer API
+    local tags_json
+    tags_json=$(curl -s "https://api.linuxserver.io/dockerhub/tags?repo=$repo_name")
 
-  # Adjust for official images without slash
+    # Parse tags, sort by last_updated, get latest tag excluding 'latest'
+    local latest_tag
+    latest_tag=$(echo "$tags_json" | jq -r '[.tags[] | select(.name != "latest")] | sort_by(.last_updated) | reverse | .[0].name')
+    if [ -z "$latest_tag" ] || [ "$latest_tag" == "null" ]; then
+      echo "latest"
+    else
+      echo "$latest_tag"
+    fi
+    return
+  fi
+
+  # Normal Docker Hub images:
   if [[ "$base_image" != *"/"* ]]; then
     base_image="library/$base_image"
   fi
 
-  # Fetch tags JSON from Docker Hub
   local tags_json
   tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/$base_image/tags?page_size=100")
 
-  # Extract tags sorted by last_updated descending, exclude 'latest'
   local latest_tag
   latest_tag=$(echo "$tags_json" | jq -r '[.results[] | select(.name != "latest")] | sort_by(.last_updated) | reverse | .[0].name')
 
@@ -131,6 +146,17 @@ get_docker_source_url() {
     echo "https://github.com/orgs/linuxserver/packages/container/$image"
   else
     echo "https://hub.docker.com/r/$image"
+  fi
+}
+
+clean_image_field() {
+  local image_field="$1"
+  # If it looks like a JSON object string (starts with { ends with }), parse and compact it
+  if [[ "$image_field" =~ ^\{.*\}$ ]]; then
+    echo "$image_field" | jq -c .
+  else
+    # Otherwise return as is
+    echo "$image_field"
   fi
 }
 
@@ -171,12 +197,8 @@ update_addon_if_needed() {
   local current_version
   raw_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null)
 
-  # Remove ANSI escape codes
-  current_version=$(echo "$raw_version" | sed -r 's/\x1B\[[0-9;]*[mK]//g')
-  # Remove any [..] brackets
-  current_version=$(echo "$current_version" | sed 's/\[[^]]*\]//g')
-  # Remove whitespace
-  current_version=$(echo "$current_version" | tr -d '[:space:]')
+  # Remove ANSI escape codes and brackets and whitespace
+  current_version=$(echo "$raw_version" | sed -r 's/\x1B\[[0-9;]*[mK]//g' | sed 's/\[[^]]*\]//g' | tr -d '[:space:]')
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "🧩 Addon: $slug"
@@ -194,7 +216,6 @@ update_addon_if_needed() {
   local timestamp
   timestamp=$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')
 
-  # Rebuild invalid or missing changelog
   if [ ! -f "$changelog_file" ] || ! grep -q "^CHANGELOG for $slug" "$changelog_file"; then
     {
       echo "CHANGELOG for $slug"
@@ -225,18 +246,16 @@ update_addon_if_needed() {
       local updater_image
       updater_image=$(jq -r '.image' "$updater_file")
 
-      if [[ "$updater_image" =~ ^\{.*\}$ ]]; then
-        local fixed_image
-        fixed_image=$(echo "$updater_image" | jq -c .)
-      else
-        fixed_image="$updater_image"
-      fi
+      local fixed_image
+      fixed_image=$(clean_image_field "$updater_image")
 
       jq --arg v "$latest_version" --arg dt "$timestamp" --arg img "$fixed_image" \
          '.upstream_version = $v | .last_update = $dt | .image = $img' "$updater_file" > "$updater_file.tmp"
       mv "$updater_file.tmp" "$updater_file"
     else
-      jq -n --arg slug "$slug" --arg img "$image" --arg v "$latest_version" --arg dt "$timestamp" \
+      local clean_image
+      clean_image=$(clean_image_field "$image")
+      jq -n --arg slug "$slug" --arg img "$clean_image" --arg v "$latest_version" --arg dt "$timestamp" \
          '{slug: $slug, image: $img, upstream_version: $v, last_update: $dt}' > "$updater_file"
     fi
 
