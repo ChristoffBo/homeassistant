@@ -42,7 +42,7 @@ fi
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_CRON=$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")  # Default: every 6 hours
+CHECK_CRON=$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")
 TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
 MAX_LOG_LINES=$(jq -r '.max_log_lines // 1000' "$CONFIG_PATH")
 DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
@@ -110,26 +110,29 @@ get_latest_docker_tag() {
   local image="$1"
   log "$COLOR_CYAN" "🔍 Checking latest version for $image"
   
+  # Remove :latest or other tags if present
+  local image_name=$(echo "$image" | cut -d: -f1)
+  
   # Try different methods based on image source
-  if [[ "$image" =~ ^linuxserver/ ]]; then
+  if [[ "$image_name" =~ ^linuxserver/ ]] || [[ "$image_name" =~ ^lscr.io/linuxserver/ ]]; then
     # For linuxserver.io images
-    local lsio_name=$(echo "$image" | cut -d/ -f2)
+    local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
     local tags=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags" | 
                 jq -r '.tags[] | select(.name != "latest") | .name' | 
                 grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9]+)?$' | sort -Vr)
     echo "$tags" | head -n1
-  elif [[ "$image" =~ ^ghcr.io/ ]]; then
+  elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
     # For GitHub Container Registry
-    local org_repo=$(echo "$image" | cut -d/ -f2-3)
-    local package=$(echo "$image" | cut -d/ -f4)
+    local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
+    local package=$(echo "$image_name" | cut -d/ -f4)
     local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
     curl -s -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | 
       jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$")))' | 
       sort -Vr | head -n1
   else
     # For standard Docker Hub images
-    local namespace=$(echo "$image" | cut -d/ -f1)
-    local repo=$(echo "$image" | cut -d/ -f2)
+    local namespace=$(echo "$image_name" | cut -d/ -f1)
+    local repo=$(echo "$image_name" | cut -d/ -f2)
     if [ "$namespace" = "$repo" ]; then
       # Official image (library/)
       curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/" | 
@@ -146,16 +149,18 @@ get_latest_docker_tag() {
 
 get_docker_source_url() {
   local image="$1"
-  if [[ "$image" =~ ^linuxserver/ ]]; then
-    local lsio_name=$(echo "$image" | cut -d/ -f2)
+  local image_name=$(echo "$image" | cut -d: -f1)
+  
+  if [[ "$image_name" =~ ^linuxserver/ ]] || [[ "$image_name" =~ ^lscr.io/linuxserver/ ]]; then
+    local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
     echo "https://fleet.linuxserver.io/image?name=$lsio_name"
-  elif [[ "$image" =~ ^ghcr.io/ ]]; then
-    local org_repo=$(echo "$image" | cut -d/ -f2-3)
-    local package=$(echo "$image" | cut -d/ -f4)
+  elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
+    local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
+    local package=$(echo "$image_name" | cut -d/ -f4)
     echo "https://github.com/$org_repo/pkgs/container/$package"
   else
-    local namespace=$(echo "$image" | cut -d/ -f1)
-    local repo=$(echo "$image" | cut -d/ -f2)
+    local namespace=$(echo "$image_name" | cut -d/ -f1)
+    local repo=$(echo "$image_name" | cut -d/ -f2)
     if [ "$namespace" = "$repo" ]; then
       echo "https://hub.docker.com/_/$repo"
     else
@@ -217,8 +222,9 @@ update_addon_if_needed() {
   latest_version=$(get_latest_docker_tag "$image")
 
   if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    log "$COLOR_YELLOW" "⚠️ Could not determine latest version for $image, using 'latest'"
-    latest_version="latest"
+    log "$COLOR_YELLOW" "⚠️ Could not determine latest version for $image, skipping update."
+    log "$COLOR_BLUE" "----------------------------"
+    return
   fi
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
@@ -250,6 +256,7 @@ update_addon_if_needed() {
     
     if [ "$DRY_RUN" = "true" ]; then
       log "$COLOR_CYAN" "🛑 Dry run enabled - skipping actual update"
+      log "$COLOR_BLUE" "----------------------------"
       return
     fi
 
