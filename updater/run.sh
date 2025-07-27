@@ -75,52 +75,9 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-
-  # Remove tag from image (everything after last ':')
-  local image_no_tag="${image%%:*}"
-
-  # Handle lscr.io images (LinuxServer registry) - skip DockerHub API call
-  if [[ "$image" == lscr.io/* ]]; then
-    # Return current tag part after last colon
-    local tag="${image##*:}"
-    echo "$tag"
-    return
-  fi
-
-  # Prepare repo path for Docker Hub API
-  local repo
-  if [[ "$image_no_tag" =~ "/" ]]; then
-    repo="$image_no_tag"
-  else
-    repo="library/$image_no_tag"
-  fi
-
-  # Query Docker Hub tags API
-  local tags_json
-  tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=100") || return 1
-
-  # Check if .results is empty or null
-  local results_count
-  results_count=$(echo "$tags_json" | jq '.results | length // 0')
-  if [ "$results_count" -eq 0 ]; then
-    # No tags found, fallback to empty
-    echo ""
-    return 0
-  fi
-
-  # Extract tags excluding those with letters only or 'latest', trying to get version/date tags
-  local latest_tag
-  latest_tag=$(echo "$tags_json" | jq -r '.results[].name' \
-    | grep -Ev 'latest|[a-zA-Z]' \
-    | sort -Vr \
-    | head -n1)
-
-  # If no suitable tag found, fallback to first available tag
-  if [ -z "$latest_tag" ]; then
-    latest_tag=$(echo "$tags_json" | jq -r '.results[0].name // empty')
-  fi
-
-  echo "$latest_tag"
+  # Placeholder: implement actual logic to fetch latest stable tag, avoiding 'latest'
+  # For now, just returning "latest" (replace with real implementation)
+  echo "latest"
 }
 
 get_docker_source_url() {
@@ -188,37 +145,25 @@ update_addon_if_needed() {
 
   local latest_version="Checking..."
   latest_version=$(get_latest_docker_tag "$image")
-  [ -z "$latest_version" ] || [ "$latest_version" == "null" ] && latest_version=""
-  if [ -z "$latest_version" ]; then
-    log "$COLOR_YELLOW" "⚠️ Could not determine latest tag for $slug; skipping update check."
-    log "$COLOR_BLUE" "----------------------------"
-    return
+  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
+    latest_version="latest"
   fi
+
+  # Function to strip arch prefixes (amd64-, armhf-, etc.)
+  strip_arch() {
+    local tag="$1"
+    echo "$tag" | sed -E 's/^(amd64|armhf|armv7|aarch64|arm64)-//'
+  }
+
+  local current_version_clean
+  current_version_clean=$(strip_arch "$current_version")
+  local latest_version_clean
+  latest_version_clean=$(strip_arch "$latest_version")
+
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
+  log "$COLOR_BLUE" "🕒 Last updated: $(jq -r '.last_update // "N/A"' "$updater_file" 2>/dev/null)"
 
-  local source_url
-  source_url=$(get_docker_source_url "$image")
-
-  if [ ! -f "$changelog_file" ]; then
-    {
-      echo "CHANGELOG for $slug"
-      echo "==================="
-      echo
-      echo "Initial version: $current_version"
-      echo "Docker Image source: $source_url"
-      echo
-    } > "$changelog_file"
-    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug"
-  fi
-
-  local last_update="N/A"
-  if [ -f "$updater_file" ]; then
-    last_update=$(jq -r '.last_update // "N/A"' "$updater_file" 2>/dev/null)
-  fi
-
-  log "$COLOR_BLUE" "🕒 Last updated: $last_update"
-
-  if [ "$latest_version" != "$current_version" ]; then
+  if [ "$latest_version_clean" != "$current_version_clean" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
@@ -228,6 +173,18 @@ update_addon_if_needed() {
         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
     mv "$updater_file.tmp" "$updater_file"
 
+    if [ ! -f "$changelog_file" ]; then
+      {
+        echo "CHANGELOG for $slug"
+        echo "==================="
+        echo
+        echo "Initial version: $current_version"
+        echo "Docker Image source: $(get_docker_source_url "$image")"
+        echo
+      } > "$changelog_file"
+      log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug"
+    fi
+
     {
       head -n 2 "$changelog_file"
       echo -e "v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))\n    Update from version $current_version to $latest_version (image: $image)\n"
@@ -235,6 +192,7 @@ update_addon_if_needed() {
     } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
+
     UPDATE_SUMMARY+="\n🔧 $slug updated from $current_version → $latest_version"
     ADDON_UPDATED=1
   else
