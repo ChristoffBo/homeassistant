@@ -21,6 +21,11 @@ log() {
   echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
+# Filter valid semantic version tags or simple numeric tags (modify as needed)
+filter_valid_tags() {
+  grep -E '^[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.-]+)?$' || true
+}
+
 if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
@@ -32,36 +37,31 @@ GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_CRON=$(jq -r '.check_cron' "$CONFIG_PATH")
 TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
 
-NOTIFIER_GOTIFY=$(jq -r '.notifiers.gotify // empty' "$CONFIG_PATH")
-NOTIFIER_MAILRISE=$(jq -r '.notifiers.mailrise // empty' "$CONFIG_PATH")
-NOTIFIER_APPRIS=$(jq -r '.notifiers.appris // empty' "$CONFIG_PATH")
+# Notification config placeholders (expand as needed)
+NOTIFY_GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_PATH")
+NOTIFY_GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG_PATH")
+NOTIFY_MAILRISE_URL=$(jq -r '.mailrise_url // empty' "$CONFIG_PATH")
+NOTIFY_MAILRISE_TOKEN=$(jq -r '.mailrise_token // empty' "$CONFIG_PATH")
+NOTIFY_APRIS_URL=$(jq -r '.apris_url // empty' "$CONFIG_PATH")
+NOTIFY_APRIS_TOKEN=$(jq -r '.apris_token // empty' "$CONFIG_PATH")
 
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
   GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
 fi
 
-send_notification() {
+notify() {
   local title="$1"
   local message="$2"
-
-  if [ -n "$NOTIFIER_GOTIFY" ]; then
-    curl -s -X POST "$NOTIFIER_GOTIFY/message" \
+  # Example Gotify notification
+  if [ -n "$NOTIFY_GOTIFY_URL" ] && [ -n "$NOTIFY_GOTIFY_TOKEN" ]; then
+    curl -s -X POST "$NOTIFY_GOTIFY_URL/message" \
+      -H "X-Gotify-Key: $NOTIFY_GOTIFY_TOKEN" \
       -H "Content-Type: application/json" \
-      -d "{\"title\":\"$title\",\"message\":\"$message\"}" > /dev/null 2>&1
+      -d "{\"title\":\"$title\",\"message\":\"$message\"}" >/dev/null 2>&1 || true
+    log "$COLOR_BLUE" "🔔 Notification sent via Gotify: $title"
   fi
-
-  if [ -n "$NOTIFIER_MAILRISE" ]; then
-    curl -s -X POST "$NOTIFIER_MAILRISE" \
-      -H "Content-Type: application/json" \
-      -d "{\"subject\":\"$title\",\"text\":\"$message\"}" > /dev/null 2>&1
-  fi
-
-  if [ -n "$NOTIFIER_APPRIS" ]; then
-    curl -s -X POST "$NOTIFIER_APPRIS" \
-      -H "Content-Type: application/json" \
-      -d "{\"title\":\"$title\",\"body\":\"$message\"}" > /dev/null 2>&1
-  fi
+  # Add Mailrise and Apris notifications here as needed similarly
 }
 
 clone_or_update_repo() {
@@ -85,17 +85,17 @@ clone_or_update_repo() {
   fi
 }
 
-filter_valid_tags() {
-  # Filter tags: only digits, dots, optional dash/letters allowed
-  grep -E '^[0-9]+(\.[0-9]+)*(-[0-9A-Za-z]+)?$'
-}
-
 get_latest_docker_tag() {
   local image="$1"
-  local image_no_tag="${image%%:*}"
+  local base_image="${image%%:*}"
+  local tag_part="${image#*:}"
 
-  # LinuxServer tags via lscr.io API
-  if [[ "$image_no_tag" =~ ^lscr.io/linuxserver/([^/]+)$ ]]; then
+  # Remove arch suffix for linuxserver images
+  if [[ "$base_image" =~ ^lscr.io/linuxserver/ ]]; then
+    tag_part="${tag_part##*-}"
+  fi
+
+  if [[ "$base_image" =~ ^lscr.io/linuxserver/([^/]+)$ ]]; then
     local repo="${BASH_REMATCH[1]}"
     local tags_json
     tags_json=$(curl -s "https://lscr.io/v2/linuxserver/${repo}/tags/list" 2>/dev/null)
@@ -111,12 +111,14 @@ get_latest_docker_tag() {
     fi
   fi
 
-  # DockerHub official registry
+  # For DockerHub
   local repo=""
-  if [[ "$image" =~ ^([^/]+/[^@:]+) ]]; then
-    repo="${BASH_REMATCH[1]}"
+  if [[ "$base_image" =~ ^([^/]+/[^/]+)$ ]]; then
+    repo="$base_image"
+  elif [[ "$base_image" =~ ^([^/]+)$ ]]; then
+    repo="$base_image"
   else
-    repo="$image"
+    repo="$base_image"
   fi
 
   local token
@@ -133,7 +135,7 @@ get_latest_docker_tag() {
     fi
   fi
 
-  # linuxserver.io DockerHub fallback
+  # Linuxserver fallback
   if [[ "$repo" =~ ^linuxserver/ ]]; then
     local tags_json
     tags_json=$(curl -s "https://hub.linuxserver.io/v2/repositories/$repo/tags?page_size=50" 2>/dev/null)
@@ -145,7 +147,7 @@ get_latest_docker_tag() {
     fi
   fi
 
-  # GHCR fallback (basic)
+  # GHCR fallback
   if [[ "$image" =~ ^ghcr.io/ ]]; then
     local repo_name=${image#ghcr.io/}
     local tags_json
@@ -161,74 +163,57 @@ get_latest_docker_tag() {
   echo ""
 }
 
-sanitize_version() {
-  local ver="$1"
-  ver="${ver//\"/}"
-  ver="${ver#version-}"
-  ver="${ver#v}"
-  ver="$(echo "$ver" | xargs)"  # trim whitespace
-  echo "$ver"
-}
-
 update_addon_if_needed() {
   local addon_path="$1"
   local updater_file="$addon_path/updater.json"
   local config_file="$addon_path/config.json"
   local build_file="$addon_path/build.json"
   local changelog_file="$addon_path/CHANGELOG.md"
-  local slug
 
-  # Validate presence of at least one descriptor file
   if [ ! -f "$config_file" ] && [ ! -f "$build_file" ]; then
     log "$COLOR_YELLOW" "⚠️ Add-on '$(basename "$addon_path")' missing config.json and build.json, skipping."
-    return
+    return 1
   fi
 
-  # Determine Docker image from build.json (multi-arch) or config.json
   local image=""
   if [ -f "$build_file" ]; then
     local arch=$(uname -m)
-    case "$arch" in
-      x86_64) arch="amd64" ;;
-    esac
+    if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file" 2>/dev/null)
-  fi
-  if [ -z "$image" ] || [ "$image" == "null" ]; then
-    if [ -f "$config_file" ]; then
-      image=$(jq -r '.image // empty' "$config_file" 2>/dev/null)
+    # Fix build.json version if invalid
+    if jq -e '.version' "$build_file" >/dev/null 2>&1; then
+      local ver=$(jq -r '.version' "$build_file")
+      if [[ "$ver" == *"\""* ]]; then
+        jq 'del(.version)' "$build_file" > "$build_file.tmp" && mv "$build_file.tmp" "$build_file"
+        log "$COLOR_YELLOW" "⚠️ Removed invalid version field from build.json ($build_file)"
+      fi
     fi
+  fi
+
+  if [ -z "$image" ] && [ -f "$config_file" ]; then
+    image=$(jq -r '.image // empty' "$config_file" 2>/dev/null)
   fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
     log "$COLOR_YELLOW" "⚠️ Add-on '$(basename "$addon_path")' has no Docker image defined, skipping."
-    return
+    return 1
   fi
 
-  # Slug from config or folder name
-  if [ -f "$config_file" ]; then
-    slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null)
-  fi
-  if [ -z "$slug" ]; then
+  local slug
+  slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null)
+  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
     slug=$(basename "$addon_path")
   fi
 
-  # Get current version from config.json or build.json (fallback)
   local current_version=""
   if [ -f "$config_file" ]; then
-    current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null)
-  elif [ -f "$build_file" ]; then
-    current_version=$(jq -r '.version // empty' "$build_file" 2>/dev/null)
+    current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null | tr -d '\n\r ' | tr -d '"')
   fi
-  current_version=$(sanitize_version "$current_version")
 
-  # Get upstream_version & last_update from updater.json if exists
-  local upstream_version=""
   local last_update="N/A"
   if [ -f "$updater_file" ]; then
-    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file" 2>/dev/null)
     last_update=$(jq -r '.last_update // "N/A"' "$updater_file" 2>/dev/null)
   fi
-  upstream_version=$(sanitize_version "$upstream_version")
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "🧩 Addon: $slug"
@@ -238,76 +223,74 @@ update_addon_if_needed() {
 
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
-  latest_version=$(sanitize_version "$latest_version")
 
   if [ -z "$latest_version" ]; then
     log "$COLOR_YELLOW" "⚠️ Could not determine latest tag for $slug, skipping update."
     log "$COLOR_BLUE" "----------------------------"
-    return
+    return 1
   fi
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
-  # If latest_version differs from current_version, update config and changelog
   if [ "$latest_version" != "$current_version" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
-    # Update config.json version
-    if [ -f "$config_file" ]; then
-      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-      mv "$config_file.tmp" "$config_file"
-    fi
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
+    if [ -f "$config_file.tmp" ]; then mv "$config_file.tmp" "$config_file"; fi
 
-    # Update build.json version if present and if version field exists (clean invalid version)
-    if [ -f "$build_file" ]; then
-      # Remove invalid version field if it's not a proper tag
-      local build_version
-      build_version=$(jq -r '.version // empty' "$build_file" 2>/dev/null)
-      if [ -n "$build_version" ] && ! echo "$build_version" | grep -Eq '^[0-9]+(\.[0-9]+)*(-[0-9A-Za-z]+)?$'; then
-        jq 'del(.version)' "$build_file" > "$build_file.tmp" 2>/dev/null || true
-        mv "$build_file.tmp" "$build_file"
-        log "$COLOR_YELLOW" "⚠️ Removed invalid version field from build.json ($build_file)"
-      fi
-    fi
-
-    # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
-      '.upstream_version = $v | .last_update = $dt | .slug = $slug | .image = $image' \
-      "$updater_file" 2>/dev/null > "$updater_file.tmp" || \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
+
     mv "$updater_file.tmp" "$updater_file"
 
-    # Create or prepend CHANGELOG.md
+    # Update or create CHANGELOG.md
     if [ ! -f "$changelog_file" ]; then
       {
         echo "CHANGELOG for $slug"
         echo "==================="
         echo
         echo "Initial version: $current_version"
+        echo "Docker Image source: $(get_docker_source_url "$image")"
         echo
       } > "$changelog_file"
       log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug"
     fi
 
-    local new_entry="v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))\n    Updated from version $current_version to $latest_version (image: $image)\n"
+    local new_entry="v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
+    Update from version $current_version to $latest_version (image: $image)
 
-    { 
+"
+
+    {
       head -n 2 "$changelog_file"
-      echo -e "$new_entry"
+      echo "$new_entry"
       tail -n +3 "$changelog_file"
     } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
 
-    # Send notification
-    send_notification "Addon Update: $slug" "Updated from $current_version to $latest_version"
+    notify "Addon Updated: $slug" "Updated $slug from $current_version to $latest_version"
 
+    log "$COLOR_BLUE" "----------------------------"
+    return 0
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
+    log "$COLOR_BLUE" "----------------------------"
+    return 1
   fi
+}
 
-  log "$COLOR_BLUE" "----------------------------"
+get_docker_source_url() {
+  local image="$1"
+  if [[ "$image" =~ ^linuxserver/ ]]; then
+    echo "https://hub.docker.com/r/$image"
+  elif [[ "$image" =~ ^ghcr.io/ ]]; then
+    echo "https://github.com/orgs/linuxserver/packages/container/$image"
+  else
+    echo "https://hub.docker.com/r/$image"
+  fi
 }
 
 perform_update_check() {
@@ -321,23 +304,21 @@ perform_update_check() {
 
   for addon_path in "$REPO_DIR"/*/; do
     if [ -f "$addon_path/config.json" ] || [ -f "$addon_path/build.json" ] || [ -f "$addon_path/updater.json" ]; then
-      update_addon_if_needed "$addon_path"
-      any_updates=1
+      if update_addon_if_needed "$addon_path"; then
+        any_updates=1
+      fi
     else
       log "$COLOR_YELLOW" "⚠️ Skipping folder $(basename "$addon_path") - no config.json, build.json or updater.json found"
     fi
   done
 
-  if [ "$(git status --porcelain)" ]; then
+  if [ "$any_updates" -eq 1 ] && [ "$(git status --porcelain)" ]; then
     git add .
-    if git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1; then
-      if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-        log "$COLOR_GREEN" "✅ Git push successful."
-      else
-        log "$COLOR_RED" "❌ Git push failed."
-      fi
+    git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1 || true
+    if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+      log "$COLOR_GREEN" "✅ Git push successful."
     else
-      log "$COLOR_RED" "❌ Git commit failed."
+      log "$COLOR_RED" "❌ Git push failed."
     fi
   else
     log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
@@ -351,5 +332,4 @@ log "$COLOR_GREEN" "🏃 Running initial update check on startup..."
 perform_update_check
 log "$COLOR_GREEN" "⏳ Waiting for cron to trigger..."
 
-# Sleep loop just to keep container alive; actual schedule is handled by Home Assistant addon cron
 while sleep 60; do :; done
