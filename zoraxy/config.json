@@ -1,6 +1,6 @@
 {
   "name": "Zoraxy",
-  "version": "[2025-07-27 09:46:30 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for zoraxydocker/zoraxy\u001b[0m\n3.2.5r2",
+  "version": "[2025-07-27 09:46:59 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for zoraxydocker/zoraxy\u001b[0m\n3.2.5r2",
   "slug": "zoraxy",
   "description": "A reverse proxy and dashboard powered by Docker.",
   "startup": "services",

@@ -1,5 +1,11 @@
 CHANGELOG for mailrise
 ===================
+v[2025-07-27 09:46:56 UTC] [0;34m🔍 Checking latest Docker Hub tag for yoryan/mailrise[0m
+1.3.0 (27-07-2025 11:46)
+    Update from version [2025-07-2709:46:27UTC][0;34m🔍CheckinglatestDockerHubtagforyoryan/mailrise[0m1.3.0 to [2025-07-27 09:46:56 UTC] [0;34m🔍 Checking latest Docker Hub tag for yoryan/mailrise[0m
+1.3.0 (image: yoryan/mailrise:latest)
+
+
 v[2025-07-27 09:46:27 UTC] [0;34m🔍 Checking latest Docker Hub tag for yoryan/mailrise[0m
 1.3.0 (27-07-2025 11:46)
     Update from version [2025-07-2709:44:08UTC][0;34m🔍CheckinglatestDockerHubtagforyoryan/mailrise[0mlatest to [2025-07-27 09:46:27 UTC] [0;34m🔍 Checking latest Docker Hub tag for yoryan/mailrise[0m
