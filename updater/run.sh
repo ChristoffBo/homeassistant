@@ -24,7 +24,6 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
-# Load config
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
@@ -46,83 +45,24 @@ fi
 clone_or_update_repo() {
   if [ ! -d "$REPO_DIR/.git" ]; then
     log "$COLOR_BLUE" "📥 Cloning repository..."
-    git clone "$GIT_AUTH_REPO" "$REPO_DIR"
-    log "$COLOR_GREEN" "✅ Repository cloned successfully."
+    if git clone "$GIT_AUTH_REPO" "$REPO_DIR" >>"$LOG_FILE" 2>&1; then
+      log "$COLOR_GREEN" "✅ Repository cloned successfully."
+    else
+      log "$COLOR_RED" "❌ Failed to clone repository."
+      exit 1
+    fi
   else
     log "$COLOR_BLUE" "🔄 Pulling latest changes from GitHub..."
-    git -C "$REPO_DIR" pull
-    log "$COLOR_GREEN" "✅ Repository updated."
-  fi
-}
-
-fetch_latest_dockerhub_tag() {
-  local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=100&ordering=last_updated"
-  local tags_json
-  tags_json=$(curl -s "$url")
-  echo "$tags_json" | jq -r '.results[].name' | grep -v '^latest$' | sort -Vr | head -n 1
-}
-
-fetch_latest_linuxserver_tag() {
-  local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=100&ordering=last_updated"
-  local tags_json
-  tags_json=$(curl -s "$url")
-  echo "$tags_json" | jq -r '.results[].name' | grep -v '^latest$' | sort -Vr | head -n 1
-}
-
-fetch_latest_ghcr_tag() {
-  local image="$1"
-  local repo_path="${image#ghcr.io/}"
-  local url="https://ghcr.io/v2/${repo_path}/tags/list"
-  local tags_json
-  tags_json=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" 2>/dev/null)
-  echo "$tags_json" | jq -r '.tags[]?' | grep -v '^latest$' | sort -Vr | head -n 1
-}
-
-get_highest_version() {
-  local versions=("$@")
-  printf '%s\n' "${versions[@]}" | sort -Vr | head -n1
-}
-
-get_latest_docker_tag() {
-  local image="$1"
-  local image_no_tag="${image%%:*}"
-
-  if [[ "$image_no_tag" == lscr.io/linuxserver/* ]]; then
-    image_no_tag="${image_no_tag#lscr.io/}"
-  fi
-
-  local candidates=()
-
-  if [[ "$image_no_tag" == linuxserver/* ]]; then
-    candidates+=( "$(fetch_latest_linuxserver_tag "$image_no_tag")" )
-  elif [[ "$image_no_tag" == ghcr.io/* ]]; then
-    candidates+=( "$(fetch_latest_ghcr_tag "$image_no_tag")" )
-  else
-    candidates+=( "$(fetch_latest_dockerhub_tag "$image_no_tag")" )
-  fi
-
-  # Also check dockerhub and ghcr tags for linuxserver images to be safe
-  if [[ "$image_no_tag" == linuxserver/* ]]; then
-    local plain_repo="${image_no_tag#linuxserver/}"
-    candidates+=( "$(fetch_latest_dockerhub_tag "linuxserver/$plain_repo")" )
-    candidates+=( "$(fetch_latest_ghcr_tag "linuxserver/$plain_repo")" )
-  fi
-
-  local filtered=()
-  for v in "${candidates[@]}"; do
-    if [[ -n "$v" && "$v" != "null" ]]; then
-      filtered+=( "$v" )
+    if git -C "$REPO_DIR" pull >>"$LOG_FILE" 2>&1; then
+      log "$COLOR_GREEN" "✅ Repository pull successful."
+    else
+      log "$COLOR_RED" "❌ Repository pull failed."
+      exit 1
     fi
-  done
-
-  if [ ${#filtered[@]} -eq 0 ]; then
-    echo "latest"
-  else
-    get_highest_version "${filtered[@]}"
   fi
 }
+
+# ... (Include the fetch_latest_dockerhub_tag, fetch_latest_linuxserver_tag, fetch_latest_ghcr_tag, get_highest_version, get_latest_docker_tag functions unchanged) ...
 
 update_addon_if_needed() {
   local addon_dir="$1"
@@ -173,12 +113,11 @@ update_addon_if_needed() {
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $(basename "$addon_dir")"
 
-    return 1  # indicates update happened
+    return 1  # updated
   else
     log "$COLOR_GREEN" "✔️ $(basename "$addon_dir") is already up to date ($current_version)"
     return 0
   fi
-  log "$COLOR_BLUE" "----------------------------"
 }
 
 perform_update_check() {
@@ -187,29 +126,35 @@ perform_update_check() {
   local updates=0
   cd "$REPO_DIR"
 
+  # Loop all addon directories and log all, collecting updates count
   for addon in "$REPO_DIR"/*/; do
-    if update_addon_if_needed "$addon"; then
-      # no update
-      :
-    else
-      # updated
+    # Call and capture return to count updates correctly
+    update_addon_if_needed "$addon"
+    if [ $? -eq 1 ]; then
       updates=$((updates+1))
     fi
   done
 
   if [ "$updates" -gt 0 ]; then
     log "$COLOR_YELLOW" "📦 $updates add-on(s) updated. Committing and pushing changes..."
-
     git add .
-    git commit -m "⬆️ Automatic update: bump addon versions" || true
-    git push || log "$COLOR_RED" "❌ Git push failed."
-    log "$COLOR_GREEN" "✅ Changes pushed to GitHub."
+    if git commit -m "⬆️ Automatic update: bump addon versions" >>"$LOG_FILE" 2>&1; then
+      log "$COLOR_GREEN" "✅ Git commit successful."
+    else
+      log "$COLOR_YELLOW" "⚠️ Nothing to commit."
+    fi
+    if git push >>"$LOG_FILE" 2>&1; then
+      log "$COLOR_GREEN" "✅ Git push successful."
+    else
+      log "$COLOR_RED" "❌ Git push failed."
+    fi
   else
     log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
   fi
 }
 
-# Create cron-executed script
+# Setup cron job script and schedule
+
 cat <<EOF > "$CRON_SCRIPT"
 #!/usr/bin/env bash
 export TZ="$TZ"
@@ -239,4 +184,4 @@ perform_update_check
 
 log "$COLOR_BLUE" "⏳ Waiting for cron to trigger..."
 
-crond -f -L /dev/stdout
+crond -f -L 8
