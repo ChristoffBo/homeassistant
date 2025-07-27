@@ -128,3 +128,13 @@ vlatest (27-07-2025 05:10)
 
     Update to latest version from technitium/dns-server:latest
 
+
+vlatest"
+} (27-07-2025 05:32)
+
+    Update to latest version from {
+  "aarch64": "technitium/dns-server:latest",
+  "amd64": "technitium/dns-server:latest",
+  "armv7": "technitium/dns-server:latest"
+}
+

@@ -1,8 +1,6 @@
 {
-  "last_update": "27-07-2025 05:03",
-  "repository": "ChristoffBo/homeassistant",
   "slug": "mailrise",
-  "source": "dockerhub",
-  "upstream_repo": "yoryan/mailrise",
-  "upstream_version": "latest"
+  "image": "{\n  \"amd64\": \"yoryan/mailrise:latest\",\n  \"armv7\": \"yoryan/mailrise:latest\",\n  \"aarch64\": \"yoryan/mailrise:latest\"\n}",
+  "upstream_version": "latest\"\n}",
+  "last_update": "27-07-2025 05:32"
 }

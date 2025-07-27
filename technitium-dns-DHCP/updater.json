@@ -1,8 +1,6 @@
 {
-  "last_update": "27-07-2025 05:10",
-  "repository": "ChristoffBo/homeassistant",
-  "slug": "technitium-dns-dhcp",
-  "source": "dockerhub",
-  "upstream_repo": "technitium/dns-server",
-  "upstream_version": "latest"
+  "slug": "technitium-dns-DHCP",
+  "image": "{\n  \"aarch64\": \"technitium/dns-server:latest\",\n  \"amd64\": \"technitium/dns-server:latest\",\n  \"armv7\": \"technitium/dns-server:latest\"\n}",
+  "upstream_version": "latest\"\n}",
+  "last_update": "27-07-2025 05:32"
 }

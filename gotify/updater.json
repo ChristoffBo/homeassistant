@@ -1,8 +1,6 @@
 {
-  "last_update": "27-07-2025 05:01",
-  "repository": "ChristoffBo/homeassistant",
   "slug": "gotify",
-  "source": "dockerhub",
-  "upstream_repo": "gotify/server",
-  "upstream_version": "2"
+  "image": "{\n  \"aarch64\": \"gotify/server:latest\",\n  \"amd64\": \"gotify/server:latest\"\n}",
+  "upstream_version": "latest\"\n}",
+  "last_update": "27-07-2025 05:32"
 }

@@ -408,3 +408,13 @@ v2.7.3 (27-07-2025 05:02)
 
     Update from version v2.7.3-ls315 to 2.7.3 for image lscr.io/linuxserver/heimdall:amd64-latest
 
+
+vamd64-latest"
+} (27-07-2025 05:32)
+
+    Update to latest version from {
+  "armhf": "lscr.io/linuxserver/heimdall:arm32v7-latest",
+  "aarch64": "lscr.io/linuxserver/heimdall:arm64v8-latest",
+  "amd64": "lscr.io/linuxserver/heimdall:amd64-latest"
+}
+

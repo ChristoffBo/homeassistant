@@ -18,3 +18,12 @@ v3.2.5r2 (27-07-2025 05:10)
 
     Update to latest version from zoraxydocker/zoraxy:latest
 
+
+vlatest"
+} (27-07-2025 05:32)
+
+    Update to latest version from {
+  "aarch64": "zoraxydocker/zoraxy:latest",
+  "amd64": "zoraxydocker/zoraxy:latest"
+}
+

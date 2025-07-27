@@ -1,10 +1,6 @@
 {
-  "github_fulltag": "true",
-  "last_update": "22-07-2025",
-  "beta": "false",
-  "repository": "ChristoffBo/homeassistant",
   "slug": "metube",
-  "source": "dockerhub",
-  "upstream_repo": "alexta69/metube",
-  "upstream_version": "2025-07-22"
+  "image": "{\n  \"aarch64\": \"alexta69/metube:latest\",\n  \"amd64\": \"alexta69/metube:latest\",\n  \"armv7\": \"alexta69/metube:latest\"\n}",
+  "upstream_version": "latest\"\n}",
+  "last_update": "27-07-2025 05:32"
 }

@@ -7,5 +7,6 @@
   "codenotary": {
     "base_image": "none@none.com",
     "signer": "none@none.com"
-  }
+  },
+  "version": "latest\"\n}"
 }
