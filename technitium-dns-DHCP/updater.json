@@ -1,6 +1,6 @@
 {
   "slug": "technitium-dns-DHCP",
   "image": "technitium/dns-server:latest",
-  "upstream_version": "[2025-07-27 21:01:26 SAST] \u001b[0;36m🔍 Checking latest version for technitium/dns-server:latest\u001b[0m",
-  "last_update": "2025-07-27 21:01:27"
+  "upstream_version": "[2025-07-27 21:07:45 SAST] \u001b[0;36m🔍 Checking latest version for technitium/dns-server:latest\u001b[0m\n13.6.0",
+  "last_update": "2025-07-27 21:07:46"
 }

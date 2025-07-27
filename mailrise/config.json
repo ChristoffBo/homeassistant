@@ -1,6 +1,6 @@
 {
   "name": "Mailrise",
-  "version": "[2025-07-27 21:01:24 SAST] \u001b[0;36m🔍 Checking latest version for yoryan/mailrise:latest\u001b[0m",
+  "version": "[2025-07-27 21:07:43 SAST] \u001b[0;36m🔍 Checking latest version for yoryan/mailrise:latest\u001b[0m\n1.4.0",
   "slug": "mailrise",
   "description": "SMTP to Apprise notification gateway using Mailrise (based on yoryan/mailrise)",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mailrise",

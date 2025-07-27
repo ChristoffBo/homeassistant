@@ -1,5 +1,13 @@
 CHANGELOG for mailrise
 ===================
+## v[2025-07-27 21:07:43 SAST] [0;36m🔍 Checking latest version for yoryan/mailrise:latest[0m
+1.4.0 (2025-07-27 21:07:44)
+
+- Update from version [2025-07-2721:01:24SAST][0;36m🔍Checkinglatestversionforyoryan/mailrise:latest[0m to [2025-07-27 21:07:43 SAST] [0;36m🔍 Checking latest version for yoryan/mailrise:latest[0m
+1.4.0
+- Docker Image: [yoryan/mailrise:latest](https://hub.docker.com/r/yoryan/mailrise)
+
+
 ## v[2025-07-27 21:01:24 SAST] [0;36m🔍 Checking latest version for yoryan/mailrise:latest[0m (2025-07-27 21:01:25)
 
 - Update from version [2025-07-2720:53:54SAST][0;36m🔍Checkinglatestversionforyoryan/mailrise:latest[0m to [2025-07-27 21:01:24 SAST] [0;36m🔍 Checking latest version for yoryan/mailrise:latest[0m

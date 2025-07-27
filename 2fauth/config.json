@@ -1,6 +1,6 @@
 {
   "name": "2FAuth",
-  "version": "[2025-07-27 21:01:22 SAST] \u001b[0;36m🔍 Checking latest version for 2fauth/2fauth\u001b[0m",
+  "version": "[2025-07-27 21:07:40 SAST] \u001b[0;36m🔍 Checking latest version for 2fauth/2fauth\u001b[0m",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "image": "2fauth/2fauth",
