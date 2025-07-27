@@ -178,3 +178,107 @@ update_addon_if_needed() {
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
+        '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
+
+    mv "$updater_file.tmp" "$updater_file"
+
+    # Ensure CHANGELOG.md exists and prepend changelog
+    if [ ! -f "$changelog_file" ]; then
+      echo "CHANGELOG for $slug" > "$changelog_file"
+      echo "===================" >> "$changelog_file"
+      log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
+    fi
+
+    NEW_ENTRY="\
+v$latest_version ($(date +'%d-%m-%Y %H:%M'))
+    Update from version $current_version to $latest_version (image: $image)
+
+"
+
+    # Prepend new entry after header (2 lines)
+    {
+      head -n 2 "$changelog_file"
+      echo "$NEW_ENTRY"
+      tail -n +3 "$changelog_file"
+    } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
+
+    log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
+
+  else
+    log "$COLOR_BLUE" "Add-on '$slug' is already up-to-date ✔"
+  fi
+
+  log "$COLOR_BLUE" "----------------------------"
+}
+
+perform_update_check() {
+  clone_or_update_repo
+
+  cd "$REPO_DIR"
+  # Set git user config if missing
+  git config user.email "updater@local"
+  git config user.name "HomeAssistant Updater"
+
+  local updated=0
+
+  for addon_path in "$REPO_DIR"/*/; do
+    update_addon_if_needed "$addon_path" && updated=$((updated+1))
+  done
+
+  # Commit and push changes if any
+  if [ "$(git status --porcelain)" ]; then
+    git add .
+    git commit -m "Automatic update: bump addon versions" >> "$LOG_FILE" 2>&1 || true
+
+    if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+      log "$COLOR_GREEN" "Git push successful."
+    else
+      log "$COLOR_RED" "Git push failed. Check your authentication and remote URL."
+    fi
+  else
+    log "$COLOR_BLUE" "No changes to commit."
+  fi
+}
+
+LAST_RUN_FILE="/data/last_run_date.txt"
+
+log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
+perform_update_check
+echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
+
+while true; do
+  NOW_TIME=$(date +%H:%M)
+  TODAY=$(date +%Y-%m-%d)
+  LAST_RUN=""
+
+  if [ -f "$LAST_RUN_FILE" ]; then
+    LAST_RUN=$(cat "$LAST_RUN_FILE")
+  fi
+
+  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+    log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
+    perform_update_check
+    echo "$TODAY" > "$LAST_RUN_FILE"
+    log "$COLOR_GREEN" "✅ Scheduled update checks complete."
+    sleep 60  # prevent multiple runs in same minute
+  else
+    CURRENT_SEC=$(date +%s)
+    CHECK_HOUR=${CHECK_TIME%%:*}
+    CHECK_MIN=${CHECK_TIME##*:}
+    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+    if [ "$TODAY_SEC" -eq 0 ]; then
+      NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
+    else
+      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
+      if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
+        TOMORROW_SEC=$((TODAY_SEC + 86400))
+        NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      else
+        NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      fi
+    fi
+    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
+  fi
+
+  sleep 60
+done
