@@ -75,7 +75,12 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  echo "latest"  # Placeholder
+  # Replace placeholder with real logic to fetch tags, filter out 'latest'
+  # Example: curl Docker Hub API and select highest semver (simplified here)
+  local repo="${image%%:*}"  # strip tag
+  local tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=100")
+  local latest_tag=$(echo "$tags_json" | jq -r '.results[].name' | grep -Ev 'latest|[a-zA-Z]' | sort -Vr | head -n1)
+  echo "${latest_tag:-latest}"
 }
 
 get_docker_source_url() {
