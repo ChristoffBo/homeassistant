@@ -1,5 +1,11 @@
 CHANGELOG for technitium-dns-dhcp
 ===================
+v[2025-07-27 09:48:48 UTC] [0;34m🔍 Checking latest Docker Hub tag for technitium/dns-server[0m
+13.6.0 (27-07-2025 11:48)
+    Update from version [2025-07-2709:46:58UTC][0;34m🔍CheckinglatestDockerHubtagfortechnitium/dns-server[0m13.6.0 to [2025-07-27 09:48:48 UTC] [0;34m🔍 Checking latest Docker Hub tag for technitium/dns-server[0m
+13.6.0 (image: technitium/dns-server:latest)
+
+
 v[2025-07-27 09:46:58 UTC] [0;34m🔍 Checking latest Docker Hub tag for technitium/dns-server[0m
 13.6.0 (27-07-2025 11:46)
     Update from version [2025-07-2709:46:29UTC][0;34m🔍CheckinglatestDockerHubtagfortechnitium/dns-server[0m13.6.0 to [2025-07-27 09:46:58 UTC] [0;34m🔍 Checking latest Docker Hub tag for technitium/dns-server[0m

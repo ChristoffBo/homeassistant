@@ -1,6 +1,6 @@
 {
   "slug": "technitium-dns-DHCP",
   "image": "{\n  \"aarch64\": \"technitium/dns-server:latest\",\n  \"amd64\": \"technitium/dns-server:latest\",\n  \"armv7\": \"technitium/dns-server:latest\"\n}",
-  "upstream_version": "[2025-07-27 09:46:58 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for technitium/dns-server\u001b[0m\n13.6.0",
-  "last_update": "27-07-2025 11:46"
+  "upstream_version": "[2025-07-27 09:48:48 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for technitium/dns-server\u001b[0m\n13.6.0",
+  "last_update": "27-07-2025 11:48"
 }

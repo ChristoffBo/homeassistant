@@ -1,6 +1,6 @@
 {
   "name": "heimdall",
-  "version": "[2025-07-27 09:46:55 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for lscr.io/linuxserver/heimdall\u001b[0m\nlatest",
+  "version": "[2025-07-27 09:48:45 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for lscr.io/linuxserver/heimdall\u001b[0m\nlatest",
   "slug": "heimdall",
   "legacy": false,
   "codenotary": "bothmacell@gmail.com",
