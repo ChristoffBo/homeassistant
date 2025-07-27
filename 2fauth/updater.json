@@ -2,5 +2,6 @@
   "slug": "2fauth",
   "image": "2fauth/2fauth",
   "upstream_version": "5.6.0",
-  "last_update": "27-07-2025 13:04"
+  "last_update": "27-07-2025 13:45",
+  "version": "dev"
 }
