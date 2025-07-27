@@ -1,5 +1,9 @@
 ## 27-07-2025 - Updated from 3.2.5r2 to latest
 
+v3.2.5r2 (27-07-2025 06:03)
+    Update from version latest to 3.2.5r2 (image: zoraxydocker/zoraxy:latest)
+
+
 - Automatic version bump
 
 

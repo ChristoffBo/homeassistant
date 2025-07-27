@@ -2,5 +2,5 @@
   "slug": "heimdall",
   "image": "{\n  \"armhf\": \"lscr.io/linuxserver/heimdall:arm32v7-latest\",\n  \"aarch64\": \"lscr.io/linuxserver/heimdall:arm64v8-latest\",\n  \"amd64\": \"lscr.io/linuxserver/heimdall:amd64-latest\"\n}",
   "upstream_version": "2.7.3",
-  "last_update": "27-07-2025 05:35"
+  "last_update": "27-07-2025 06:03"
 }

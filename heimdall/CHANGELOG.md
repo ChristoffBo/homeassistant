@@ -1,5 +1,9 @@
 ## 27-07-2025 - Updated from 2.7.3 to latest
 
+v2.7.3 (27-07-2025 06:03)
+    Update from version latest to 2.7.3 (image: lscr.io/linuxserver/heimdall:amd64-latest)
+
+
 - Automatic version bump
 
 
