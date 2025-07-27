@@ -97,10 +97,9 @@ get_latest_docker_tag() {
   local latest_version=""
 
   if [[ "$image" == ghcr.io/* ]]; then
-    # ghcr.io/owner/repo:tag
     local owner_repo
     owner_repo=$(echo "$image" | cut -d'/' -f2-3)
-    owner_repo=${owner_repo%%:*}  # remove tag if present
+    owner_repo=${owner_repo%%:*}  # strip tag if present
     log "$COLOR_BLUE" "🔍 Checking latest GitHub release for $owner_repo"
     if [ -n "$GITHUB_TOKEN" ]; then
       latest_version=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$owner_repo/releases/latest" | jq -r '.tag_name // empty')
@@ -119,16 +118,16 @@ get_latest_docker_tag() {
     fi
 
   else
-    # Docker Hub
     local repo="${image%:*}"
-    # Replace / with %2F for Docker Hub API URL encoding if needed
-    repo_encoded=${repo//\//%2F}
+    local repo_encoded=${repo//\//%2F}
     log "$COLOR_BLUE" "🔍 Checking latest Docker Hub tag for $repo"
-    latest_version=$(curl -s "https://hub.docker.com/v2/repositories/$repo_encoded/tags/?page_size=1&page=1&ordering=last_updated" | jq -r '.results[0].name // empty')
-  fi
 
-  if [ -z "$latest_version" ]; then
-    latest_version="latest"
+    latest_version=$(curl -s "https://hub.docker.com/v2/repositories/$repo_encoded/tags/?page_size=10&page=1&ordering=last_updated" \
+      | jq -r '.results[] | select(.name != "latest") | .name' | head -n1)
+
+    if [ -z "$latest_version" ]; then
+      latest_version="latest"
+    fi
   fi
 
   echo "$latest_version"
@@ -171,16 +170,17 @@ update_addon_if_needed() {
     return
   fi
 
-  # Fix updater.json if image is an object (not string)
-  local recreated=()
-  if [ -f "$updater_file" ]; then
-    # Check if image field is an object
-    local image_type
-    image_type=$(jq -r '.image | type' "$updater_file" 2>/dev/null || echo "")
-    if [ "$image_type" != "string" ]; then
-      log "$COLOR_YELLOW" "⚠️ updater.json image field invalid for '$(basename "$addon_path")', recreating updater.json"
-      rm -f "$updater_file"
-      recreated+=("updater.json")
+  # Correct image if it's a JSON object (multiarch), pick current arch's image
+  if jq -e . <<<"$image" >/dev/null 2>&1; then
+    # image is JSON - extract for current arch
+    local arch=$(uname -m)
+    [ "$arch" == "x86_64" ] && arch="amd64"
+    local arch_image=$(echo "$image" | jq -r --arg arch "$arch" '.[$arch] // empty')
+    if [ -n "$arch_image" ]; then
+      image="$arch_image"
+    else
+      # fallback to any available arch
+      image=$(echo "$image" | jq -r 'to_entries[0].value')
     fi
   fi
 
@@ -213,7 +213,7 @@ update_addon_if_needed() {
   local timestamp
   timestamp=$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')
 
-  # Rebuild or create changelog if missing or malformed
+  # Validate or rebuild changelog
   if [ ! -f "$changelog_file" ] || ! grep -q "^CHANGELOG for $slug" "$changelog_file"; then
     {
       echo "CHANGELOG for $slug"
@@ -224,7 +224,29 @@ update_addon_if_needed() {
       echo
     } > "$changelog_file"
     log "$COLOR_YELLOW" "🆕 Created or fixed CHANGELOG.md for $slug"
-    recreated+=("CHANGELOG.md")
+  fi
+
+  # Validate or fix updater.json file (ensure correct structure and no embedded JSON strings)
+  local updater_fixed=0
+  if [ -f "$updater_file" ]; then
+    if ! jq -e . "$updater_file" >/dev/null 2>&1; then
+      updater_fixed=1
+    else
+      # Check if "image" is a JSON object serialized as string
+      local image_type
+      image_type=$(jq -r '.image | type' "$updater_file")
+      if [ "$image_type" != "string" ]; then
+        updater_fixed=1
+      fi
+    fi
+  else
+    updater_fixed=1
+  fi
+
+  if [ $updater_fixed -eq 1 ]; then
+    jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$timestamp" \
+      '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file"
+    log "$COLOR_YELLOW" "🆕 Created or fixed updater.json for $slug"
   fi
 
   local last_update="N/A"
@@ -232,25 +254,15 @@ update_addon_if_needed() {
     last_update=$(jq -r '.last_update // "N/A"' "$updater_file")
   fi
 
-  # Create or update updater.json if missing or recreated earlier
-  if [ ! -f "$updater_file" ]; then
-    jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$timestamp" \
-      '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file"
-    recreated+=("updater.json")
-  else
-    jq --arg v "$latest_version" --arg dt "$timestamp" \
-      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
-  fi
-
-  # Report recreated files if any
-  if [ "${#recreated[@]}" -gt 0 ]; then
-    log "$COLOR_PURPLE" "📄 Recreated files: ${recreated[*]}"
-  fi
+  log "$COLOR_BLUE" "🕒 Last updated: $last_update"
 
   if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+
+    jq --arg v "$latest_version" --arg dt "$timestamp" \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
     NEW_ENTRY="\
 v$latest_version ($timestamp)
