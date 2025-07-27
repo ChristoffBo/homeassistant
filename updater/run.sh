@@ -18,6 +18,25 @@ log() {
   echo -e "${color}$*${COLOR_RESET}"
 }
 
+# Clear log at start
+> "$LOG_FILE"
+
+if [ ! -f "$CONFIG_PATH" ]; then
+  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
+  exit 1
+fi
+
+GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
+GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
+GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
+
+# GitHub API auth header if token provided
+GITHUB_AUTH_HEADER=""
+if [ -n "$GITHUB_TOKEN" ]; then
+  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
+fi
+
 clone_or_update_repo() {
   log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
   if [ ! -d "$REPO_DIR" ]; then
@@ -32,6 +51,8 @@ clone_or_update_repo() {
   else
     log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
+    git reset --hard
+    git clean -fd
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
@@ -39,16 +60,18 @@ clone_or_update_repo() {
 
 fetch_latest_dockerhub_tag() {
   local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=10&ordering=last_updated"
   local retries=3
   local count=0
-  local tag=""
+  
   while [ $count -lt $retries ]; do
-    tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
-    if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-      echo "$tag"
-      return 0
-    fi
+    tags=$(curl -s "$url" | jq -r '.results[].name' 2>/dev/null)
+    for t in $tags; do
+      if [ "$t" != "latest" ]; then
+        echo "$t"
+        return 0
+      fi
+    done
     count=$((count+1))
     sleep $((count * 2))
   done
@@ -57,13 +80,15 @@ fetch_latest_dockerhub_tag() {
 
 fetch_latest_linuxserver_tag() {
   local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
-  local tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
-  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-    echo "$tag"
-  else
-    echo ""
-  fi
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=10&ordering=last_updated"
+  local tags=$(curl -s "$url" | jq -r '.results[].name' 2>/dev/null)
+  for t in $tags; do
+    if [ "$t" != "latest" ]; then
+      echo "$t"
+      return 0
+    fi
+  done
+  echo ""
 }
 
 fetch_latest_ghcr_tag() {
@@ -71,12 +96,14 @@ fetch_latest_ghcr_tag() {
   local repo_path="${image#ghcr.io/}"
   local url="https://ghcr.io/v2/${repo_path}/tags/list"
   local tags_json=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" 2>/dev/null)
-  local tag=$(echo "$tags_json" | jq -r '.tags[-1]' 2>/dev/null)
-  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-    echo "$tag"
-  else
-    echo ""
-  fi
+  local tags=$(echo "$tags_json" | jq -r '.tags[]' 2>/dev/null)
+  for t in $tags; do
+    if [ "$t" != "latest" ]; then
+      echo "$t"
+      return 0
+    fi
+  done
+  echo ""
 }
 
 get_latest_docker_tag() {
@@ -132,14 +159,14 @@ update_addon_if_needed() {
     slug=$(basename "$addon_path")
   fi
 
-  local upstream_version=""
+  local current_version=""
   if [ -f "$updater_file" ]; then
-    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
+    current_version=$(jq -r '.upstream_version // empty' "$updater_file")
   fi
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "Addon: $slug"
-  log "$COLOR_BLUE" "Current version: $upstream_version"
+  log "$COLOR_BLUE" "Current version: ${current_version:-"N/A"}"
   log "$COLOR_BLUE" "Image: $image"
 
   local latest_version
@@ -147,7 +174,7 @@ update_addon_if_needed() {
 
   if [ -z "$latest_version" ]; then
     log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest version available: WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Latest version:  WARNING: Could not fetch"
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
@@ -155,10 +182,10 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "Latest version available: $latest_version"
 
-  if [ "$latest_version" != "$upstream_version" ]; then
-    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$upstream_version' to '$latest_version'"
+  if [ "$latest_version" != "$current_version" ]; then
+    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$current_version' to '$latest_version'"
 
-    # Update updater.json
+    # Update or create updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
@@ -168,18 +195,19 @@ update_addon_if_needed() {
 
     # Update version in config.json if possible
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
+
     if [ -f "$config_file.tmp" ]; then
       mv "$config_file.tmp" "$config_file"
     fi
 
-    # Create or append CHANGELOG.md
+    # Create or append to CHANGELOG.md
     if [ ! -f "$changelog_file" ]; then
       echo "CHANGELOG for $slug" > "$changelog_file"
+      echo "" >> "$changelog_file"
       log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
     fi
 
     {
-      echo ""
       echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
       echo ""
       echo "    Update to latest version from $image"
@@ -187,6 +215,7 @@ update_addon_if_needed() {
     } >> "$changelog_file"
 
     log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
+
   else
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
   fi
@@ -202,28 +231,9 @@ perform_update_check() {
   done
 }
 
-if [ ! -f "$CONFIG_PATH" ]; then
-  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
-  exit 1
-fi
-
-GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
-GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
-GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
-
-GITHUB_AUTH_HEADER=""
-if [ -n "$GITHUB_TOKEN" ]; then
-  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
-fi
-
 LAST_RUN_FILE="/data/last_run_date.txt"
 
-# Clear the log file at start
-> "$LOG_FILE"
-
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
-
 perform_update_check
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
 
@@ -236,18 +246,18 @@ while true; do
     LAST_RUN=$(cat "$LAST_RUN_FILE")
   fi
 
-  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+  if [ "$NOW_TIME" = "$CHECK_TIME" ]; then
     log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
     sleep 60  # prevent multiple runs in same minute
   else
-    # Calculate next check time for logging
     CURRENT_SEC=$(date +%s)
     CHECK_HOUR=${CHECK_TIME%%:*}
     CHECK_MIN=${CHECK_TIME##*:}
     TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+
     if [ "$TODAY_SEC" -eq 0 ]; then
       NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
@@ -260,7 +270,11 @@ while true; do
       fi
     fi
 
-    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
+    # Only show next check time every 10 minutes to reduce log spam
+    LAST_MINUTE=$(date +%M)
+    if (( LAST_MINUTE % 10 == 0 )); then
+      log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
+    fi
   fi
 
   sleep 60
