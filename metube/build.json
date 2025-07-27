@@ -3,6 +3,5 @@
     "aarch64": "alexta69/metube:latest",
     "amd64": "alexta69/metube:latest",
     "armv7": "alexta69/metube:latest"
-  },
-  "version": "latest\"\n}"
+  }
 }
