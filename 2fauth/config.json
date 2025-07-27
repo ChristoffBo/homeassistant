@@ -1,6 +1,6 @@
 {
   "name": "2FAuth",
-  "version": "dev",
+  "version": "5.6.0",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "image": "2fauth/2fauth",
