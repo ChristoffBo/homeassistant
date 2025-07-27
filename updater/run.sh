@@ -1,270 +1,181 @@
 #!/usr/bin/env bash
 set -e
 
-CONFIG_PATH=/data/options.json
-REPO_DIR=/data/homeassistant
-LOG_FILE=/data/updater.log
+REPO_DIR="/data/homeassistant"
+LOG_FILE="/data/updater.log"
+NOW=$(date +"%d-%m-%Y %H:%M:%S")
+GIT_REPO_URL="https://github.com/ChristoffBo/homeassistant.git"
+GIT_USERNAME="yourusername"    # from config
+GIT_TOKEN="yourtoken"          # from config
 
 # Colored output
-COLOR_RESET="\033[0m"
-COLOR_GREEN="\033[0;32m"
-COLOR_BLUE="\033[0;34m"
-COLOR_YELLOW="\033[0;33m"
-COLOR_RED="\033[0;31m"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
 
+# Helper: print log with timestamp
 log() {
-  local color="$1"
-  shift
-  echo -e "${color}$*${COLOR_RESET}"
-  echo "$*" >> "$LOG_FILE"
+    echo -e "[$(date +"%Y-%m-%d %H:%M:%S")] $*" | tee -a "$LOG_FILE"
 }
 
-if [ ! -f "$CONFIG_PATH" ]; then
-  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
-  exit 1
-fi
-
-GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
-GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
-GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
-
-if [ -z "$GITHUB_REPO" ] || [ -z "$GITHUB_USERNAME" ] || [ -z "$GITHUB_TOKEN" ]; then
-  log "$COLOR_RED" "ERROR: github_repo, github_username, and github_token must be set in options.json"
-  exit 1
-fi
-
-# Prepare authenticated repo URL for git commands
-GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
-
-clone_or_update_repo() {
-  log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
-  if [ ! -d "$REPO_DIR" ]; then
-    log "$COLOR_BLUE" "Repository not found locally. Cloning..."
-    git clone "$GIT_AUTH_REPO" "$REPO_DIR" >/dev/null 2>&1
-    log "$COLOR_GREEN" "Repository cloned successfully."
-  else
-    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
-    cd "$REPO_DIR"
-    git pull --ff-only >/dev/null 2>&1 || {
-      log "$COLOR_RED" "Git pull failed. Please check repository state."
-      exit 1
-    }
-    log "$COLOR_GREEN" "Repository updated."
-  fi
-}
-
-fetch_latest_dockerhub_tag() {
-  local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
-  local retries=3
-  local count=0
-  local tag=""
-  while [ $count -lt $retries ]; do
-    tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
-    if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-      echo "$tag"
-      return 0
-    fi
-    count=$((count+1))
-    sleep $((count * 2))
-  done
-  echo ""
-}
-
-fetch_latest_linuxserver_tag() {
-  local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
-  local tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
-  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-    echo "$tag"
-  else
-    echo ""
-  fi
-}
-
-fetch_latest_ghcr_tag() {
-  local image="$1"
-  local repo_path="${image#ghcr.io/}"
-  local url="https://ghcr.io/v2/${repo_path}/tags/list"
-  local tags_json=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" 2>/dev/null)
-  local tag=$(echo "$tags_json" | jq -r '.tags[-1]' 2>/dev/null)
-  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-    echo "$tag"
-  else
-    echo ""
-  fi
-}
-
+# Helper: fetch latest Docker tag (non-latest) for given image
 get_latest_docker_tag() {
-  local image="$1"
-  local image_no_tag="${image%%:*}"
+    local image="$1"
+    # Extract repo and image parts
+    # For example: alexta69/metube -> alexta69/metube
+    # Use Docker Hub API v2 to fetch tags sorted by last_updated
+    # Exclude "latest"
+    local repo image_name
+    repo=$(echo "$image" | cut -d/ -f1)
+    image_name=$(echo "$image" | cut -d/ -f2)
+    # Fallback if no slash
+    if [[ "$image" != *"/"* ]]; then
+        repo="library"
+        image_name="$image"
+    fi
 
-  # Map lscr.io/linuxserver/... to linuxserver/ for API
-  if [[ "$image_no_tag" == lscr.io/linuxserver/* ]]; then
-    image_no_tag="${image_no_tag#lscr.io/}"
-  fi
+    # Fetch tags sorted by last_updated descending
+    local tags_json
+    tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/$repo/$image_name/tags/?page_size=50")
 
-  if [[ "$image_no_tag" == linuxserver/* ]]; then
-    echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
-  elif [[ "$image_no_tag" == ghcr.io/* ]]; then
-    echo "$(fetch_latest_ghcr_tag "$image_no_tag")"
-  else
-    echo "$(fetch_latest_dockerhub_tag "$image_no_tag")"
-  fi
+    # Extract the first tag name that is NOT "latest" and matches semantic version pattern
+    local tag
+    tag=$(echo "$tags_json" | jq -r '.results[].name' | grep -v latest | grep -E '^[0-9]+(\.[0-9]+)*' | head -n 1)
+
+    if [[ -z "$tag" ]]; then
+        # fallback to latest if no proper tag found
+        tag="latest"
+    fi
+
+    echo "$tag"
 }
 
-update_addon_if_needed() {
-  local addon_path="$1"
-  local updater_file="$addon_path/updater.json"
-  local config_file="$addon_path/config.json"
-  local build_file="$addon_path/build.json"
-  local changelog_file="$addon_path/CHANGELOG.md"
+# Update changelog: prepend new entry at top
+update_changelog() {
+    local addon_dir="$1"
+    local addon_name="$2"
+    local from_version="$3"
+    local to_version="$4"
+    local changelog_file="$addon_dir/CHANGELOG.md"
+    local date_str=$(date +"%d-%m-%Y")
 
-  if [ ! -f "$config_file" ] && [ ! -f "$build_file" ]; then
-    log "$COLOR_YELLOW" "Add-on '$(basename "$addon_path")' has no config.json or build.json, skipping."
-    return
-  fi
+    local entry="## $date_str - Updated from $from_version to $to_version
 
-  local image=""
-  if [ -f "$build_file" ]; then
-    local arch=$(uname -m)
-    if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
-    image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
-  fi
+- Automatic version bump
 
-  if [ -z "$image" ] && [ -f "$config_file" ]; then
+"
+
+    if [[ ! -f "$changelog_file" ]]; then
+        echo -e "# Changelog for $addon_name\n\n$entry" > "$changelog_file"
+        log "${GREEN}Created new CHANGELOG.md for $addon_name${NC}"
+    else
+        # Prepend entry
+        tmp_file=$(mktemp)
+        echo -e "$entry" > "$tmp_file"
+        cat "$changelog_file" >> "$tmp_file"
+        mv "$tmp_file" "$changelog_file"
+        log "${GREEN}Updated CHANGELOG.md for $addon_name${NC}"
+    fi
+}
+
+# Update config.json version field
+update_config_version() {
+    local addon_dir="$1"
+    local new_version="$2"
+    local config_file="$addon_dir/config.json"
+
+    # Use jq to update "version" field exactly
+    jq --arg ver "$new_version" '.version=$ver' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+}
+
+# Main update logic for one addon
+update_addon() {
+    local addon_dir="$1"
+    local addon_name=$(basename "$addon_dir")
+
+    log "----------------------------"
+    log "Addon: $addon_name"
+
+    local config_file="$addon_dir/config.json"
+    if [[ ! -f "$config_file" ]]; then
+        log "${YELLOW}Warning: config.json not found for $addon_name, skipping.${NC}"
+        return
+    fi
+
+    # Extract current version
+    local current_version
+    current_version=$(jq -r '.version' "$config_file" | tr -d '"')
+
+    # Extract image name if present
+    local image
     image=$(jq -r '.image // empty' "$config_file")
-  fi
-
-  if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "Add-on '$(basename "$addon_path")' has no Docker image defined, skipping."
-    return
-  fi
-
-  local slug
-  slug=$(jq -r '.slug // empty' "$config_file")
-  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
-    slug=$(basename "$addon_path")
-  fi
-
-  local current_version=""
-  if [ -f "$config_file" ]; then
-    current_version=$(jq -r '.version // empty' "$config_file" | tr -d '\n' | tr -d '"')
-  fi
-
-  local upstream_version=""
-  if [ -f "$updater_file" ]; then
-    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
-  fi
-
-  log "$COLOR_BLUE" "----------------------------"
-  log "$COLOR_BLUE" "Addon: $slug"
-  log "$COLOR_BLUE" "Current version: $current_version"
-  log "$COLOR_BLUE" "Image: $image"
-
-  local latest_version=$(get_latest_docker_tag "$image")
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest version available: Checking..."
-    log "$COLOR_BLUE" "Add-on '$slug' is already up-to-date ✔"
-    log "$COLOR_BLUE" "----------------------------"
-    return
-  fi
-
-  log "$COLOR_BLUE" "Latest version available: $latest_version"
-
-  if [ "$latest_version" != "$current_version" ]; then
-    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$current_version' to '$latest_version'"
-
-    # Update updater.json
-    if [ -f "$updater_file" ]; then
-      jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
-         '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
-         jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
-           '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
-      mv "$updater_file.tmp" "$updater_file"
-    else
-      jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
-        '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file"
+    if [[ -z "$image" ]]; then
+        # try "image" key in config or "url" - you may adjust here
+        # Some add-ons use "image" or "image" key; if none skip
+        image=$(jq -r '.url // empty' "$config_file")
+        if [[ -z "$image" ]]; then
+            log "Addon '$addon_name' has no Docker image defined, skipping."
+            return
+        fi
     fi
 
-    # Update config.json version field (string only, no extra characters)
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null && mv "$config_file.tmp" "$config_file"
+    # Get actual latest version tag from Docker Hub
+    local latest_version
+    latest_version=$(get_latest_docker_tag "$image")
 
-    # Create or prepend CHANGELOG.md
-    if [ ! -f "$changelog_file" ]; then
-      echo "" > "$changelog_file"
-      log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
+    log "Current version: $current_version"
+    log "Latest version available: $latest_version"
+
+    if [[ "$current_version" == "$latest_version" ]]; then
+        log "Add-on '$addon_name' is already up-to-date ✔"
+        return
     fi
 
-    # Prepend changelog entry
-    local changelog_entry="v$latest_version ($(date +'%d-%m-%Y %H:%M'))\n\n    Update from $current_version to $latest_version\n\n"
-    # Use temp file for prepend
-    echo -e "$changelog_entry$(cat "$changelog_file")" > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
-    log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
+    # Update config.json version
+    update_config_version "$addon_dir" "$latest_version"
 
-  else
-    log "$COLOR_BLUE" "Add-on '$slug' is already up-to-date ✔"
-  fi
+    # Update changelog
+    update_changelog "$addon_dir" "$addon_name" "$current_version" "$latest_version"
 
-  log "$COLOR_BLUE" "----------------------------"
+    log "🔄 Updating add-on '$addon_name' from version '$current_version' to '$latest_version'"
 }
 
-perform_update_check() {
-  clone_or_update_repo
-  cd "$REPO_DIR"
+# Git commit and push changes
+git_commit_and_push() {
+    cd "$REPO_DIR"
 
-  for addon_path in */; do
-    update_addon_if_needed "$addon_path"
-  done
+    # Git pull first to avoid conflicts
+    git pull origin main --ff-only || log "${RED}Git pull failed!${NC}"
 
-  # Commit and push changes if any
-  if [ "$(git status --porcelain)" ]; then
-    git add . >/dev/null 2>&1
-    if git commit -m "Automatic update: bump addon versions" >/dev/null 2>&1; then
-      if git push "$GIT_AUTH_REPO" main >/dev/null 2>&1; then
-        log "$COLOR_GREEN" "Git push successful."
-      else
-        log "$COLOR_RED" "Git push failed. Check your authentication and remote URL."
-      fi
+    # Check if any changes
+    if [[ -n $(git status --porcelain) ]]; then
+        git add .
+        git commit -m "Automatic update: bump addon versions" --quiet
+        if git push origin main --quiet; then
+            log "${GREEN}Git push successful.${NC}"
+        else
+            log "${RED}Git push failed.${NC}"
+        fi
     else
-      log "$COLOR_YELLOW" "No changes to commit (commit skipped)."
+        log "No changes to commit."
     fi
-  else
-    log "$COLOR_BLUE" "No changes to commit."
-  fi
 }
 
-LAST_RUN_FILE="/data/last_run_date.txt"
+# MAIN
+log "🚀 HomeAssistant Addon Updater started at $NOW"
 
-log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
-perform_update_check
-echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
+cd "$REPO_DIR"
 
-while true; do
-  NOW_TIME=$(date +%H:%M)
-  TODAY=$(date +%Y-%m-%d)
-  LAST_RUN=""
-  if [ -f "$LAST_RUN_FILE" ]; then
-    LAST_RUN=$(cat "$LAST_RUN_FILE")
-  fi
+# Pull latest from repo to start clean
+git pull origin main --ff-only || log "${RED}Initial git pull failed!${NC}"
 
-  if [ "$NOW_TIME" = "$CHECK_TIME" ]; then
-    if [ "$LAST_RUN" != "$TODAY" ]; then
-      log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
-      perform_update_check
-      echo "$TODAY" > "$LAST_RUN_FILE"
-      log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-      sleep 60
-    else
-      log "$COLOR_BLUE" "✅ Already ran update checks today at $LAST_RUN."
-    fi
-  else
-    # Calculate next scheduled run time for info
-    local NEXT_RUN_TIME=$(date -d "today $CHECK_TIME" +'%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME")
-    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_RUN_TIME"
-  fi
-
-  sleep 60
+for addon_path in "$REPO_DIR"/*/; do
+    # Only directories
+    [[ -d "$addon_path" ]] || continue
+    update_addon "$addon_path"
 done
+
+git_commit_and_push
+
+log "📅 Next check scheduled at $(date -d "+1 hour" +"%H:%M %d-%m-%Y")"
