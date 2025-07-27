@@ -1,6 +1,6 @@
 {
   "name": "2FAuth",
-  "version": "5.6.0",
+  "version": "1.0.1",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "image": "2fauth/2fauth",
@@ -10,19 +10,9 @@
   "ports": {
     "8001/tcp": 8001
   },
-  "ingress": false,
-  "arch": [
-    "amd64",
-    "armv7",
-    "aarch64"
-  ],
-  "map": [
-    "config:rw",
-    "ssl"
-  ],
-  "privileged": [],
-  "devices": [],
+  "arch": ["amd64", "armv7", "aarch64"],
   "schema": {
+    "PORT": "int",
     "APP_URL": "str",
     "MAIL_ENCRYPTION": "bool",
     "MAIL_FROM_ADDRESS": "str",
@@ -35,6 +25,7 @@
     "TZ": "str"
   },
   "options": {
+    "PORT": 8001,
     "APP_URL": "https://auth.something.com",
     "MAIL_ENCRYPTION": false,
     "MAIL_FROM_ADDRESS": "2fa@notifications.co.za",
@@ -56,6 +47,7 @@
     "MAIL_PORT": "!!env_var(MAIL_PORT)",
     "PGID": "!!env_var(PGID)",
     "PUID": "!!env_var(PUID)",
-    "TZ": "!!env_var(TZ)"
+    "TZ": "!!env_var(TZ)",
+    "PORT": "!!env_var(PORT)"
   }
 }
