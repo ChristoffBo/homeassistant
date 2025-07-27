@@ -1,6 +1,6 @@
 {
   "name": "2FAuth",
-  "version": "1.2.1",
+  "version": "1.0.0",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "url": "https://github.com/ChristoffBo/homeassistant",
