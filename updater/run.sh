@@ -5,9 +5,6 @@ CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 LOG_FILE=/data/updater.log
 
-# Clear log at start
-> "$LOG_FILE"
-
 # Colored output
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
@@ -25,6 +22,9 @@ if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
 fi
+
+# Clear log at script start
+> "$LOG_FILE"
 
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
@@ -49,10 +49,10 @@ clone_or_update_repo() {
     fi
     log "$COLOR_GREEN" "Repository cloned successfully."
   else
-    log "$COLOR_BLUE" "Repository found. Resetting local changes and pulling latest changes..."
+    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
-    git reset --hard HEAD
-    git clean -fd
+    git reset --hard HEAD  # Discard local changes to prevent merge conflicts
+    git clean -fd         # Remove untracked files and directories
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
@@ -212,6 +212,9 @@ update_addon_if_needed() {
 }
 
 perform_update_check() {
+  # Clear log before each update check run
+  > "$LOG_FILE"
+
   clone_or_update_repo
 
   for addon_path in "$REPO_DIR"/*/; do
@@ -242,17 +245,23 @@ while true; do
     sleep 60  # prevent multiple runs in same minute
   else
     CURRENT_SEC=$(date +%s)
+    # Parse CHECK_TIME into hours and minutes
     CHECK_HOUR=${CHECK_TIME%%:*}
     CHECK_MIN=${CHECK_TIME##*:}
+
+    # Get today's date in seconds since epoch
     TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
     if [ "$TODAY_SEC" -eq 0 ]; then
+      # fallback if date -d unsupported
       NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
       CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
       if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
+        # Next check is tomorrow at CHECK_TIME
         TOMORROW_SEC=$((TODAY_SEC + 86400))
         NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
       else
+        # Next check is today at CHECK_TIME
         NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
       fi
     fi
