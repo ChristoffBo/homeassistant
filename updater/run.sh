@@ -14,7 +14,7 @@ COLOR_RED="\033[0;31m"
 log() {
   local color="$1"
   shift
-  echo -e "[$(date '+%H:%M:%S')] ${color}$*${COLOR_RESET}"
+  echo -e "${color}$*${COLOR_RESET}"
 }
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -25,6 +25,7 @@ fi
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
@@ -32,6 +33,7 @@ if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
   GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
 fi
 
+# Clear log file before each run
 LOG_FILE="/data/updater.log"
 : > "$LOG_FILE"
 
@@ -53,10 +55,12 @@ fetch_latest_dockerhub_tag() {
   local repo="$1"
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=10&ordering=last_updated"
   local tags_json=$(curl -s "$url")
+  # Find the first tag that is NOT 'latest'
   local tag=$(echo "$tags_json" | jq -r '.results[].name' | grep -v '^latest$' | head -n 1)
   if [ -n "$tag" ]; then
     echo "$tag"
   else
+    # fallback to latest if no other tag found
     echo "latest"
   fi
 }
@@ -89,6 +93,7 @@ get_latest_docker_tag() {
   local image="$1"
   local image_no_tag="${image%%:*}"
 
+  # Fix for lscr.io/linuxserver/ images to map to linuxserver/ on Docker Hub API
   if [[ "$image_no_tag" == lscr.io/linuxserver/* ]]; then
     image_no_tag="${image_no_tag#lscr.io/}"
   fi
@@ -163,11 +168,13 @@ update_addon_if_needed() {
   if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$current_version' to '$latest_version'"
 
+    # Update config.json version
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
     if [ -f "$config_file.tmp" ]; then
       mv "$config_file.tmp" "$config_file"
     fi
 
+    # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
@@ -175,6 +182,7 @@ update_addon_if_needed() {
 
     mv "$updater_file.tmp" "$updater_file"
 
+    # Ensure CHANGELOG.md exists and prepend changelog
     if [ ! -f "$changelog_file" ]; then
       echo "CHANGELOG for $slug" > "$changelog_file"
       echo "===================" >> "$changelog_file"
@@ -187,6 +195,7 @@ v$latest_version ($(date +'%d-%m-%Y %H:%M'))
 
 "
 
+    # Prepend new entry after header (2 lines)
     {
       head -n 2 "$changelog_file"
       echo "$NEW_ENTRY"
@@ -206,6 +215,7 @@ perform_update_check() {
   clone_or_update_repo
 
   cd "$REPO_DIR"
+  # Set git user config if missing
   git config user.email "updater@local"
   git config user.name "HomeAssistant Updater"
 
@@ -215,6 +225,7 @@ perform_update_check() {
     update_addon_if_needed "$addon_path" && updated=$((updated+1))
   done
 
+  # Commit and push changes if any
   if [ "$(git status --porcelain)" ]; then
     git add .
     git commit -m "Automatic update: bump addon versions" >> "$LOG_FILE" 2>&1 || true
@@ -229,8 +240,45 @@ perform_update_check() {
   fi
 }
 
-# Start script
+LAST_RUN_FILE="/data/last_run_date.txt"
 
-log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M:%S')"
+log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
 perform_update_check
-log "$COLOR_GREEN" "✅ HomeAssistant Addon Updater finished at $(date '+%d-%m-%Y %H:%M:%S')"
+echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
+
+while true; do
+  NOW_TIME=$(date +%H:%M)
+  TODAY=$(date +%Y-%m-%d)
+  LAST_RUN=""
+
+  if [ -f "$LAST_RUN_FILE" ]; then
+    LAST_RUN=$(cat "$LAST_RUN_FILE")
+  fi
+
+  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+    log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
+    perform_update_check
+    echo "$TODAY" > "$LAST_RUN_FILE"
+    log "$COLOR_GREEN" "✅ Scheduled update checks complete."
+    sleep 60  # prevent multiple runs in same minute
+  else
+    CURRENT_SEC=$(date +%s)
+    CHECK_HOUR=${CHECK_TIME%%:*}
+    CHECK_MIN=${CHECK_TIME##*:}
+    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+    if [ "$TODAY_SEC" -eq 0 ]; then
+      NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
+    else
+      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
+      if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
+        TOMORROW_SEC=$((TODAY_SEC + 86400))
+        NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      else
+        NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      fi
+    fi
+    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
+  fi
+
+  sleep 60
+done
