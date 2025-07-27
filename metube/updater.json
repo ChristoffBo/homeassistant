@@ -1,6 +1,6 @@
 {
   "slug": "metube",
   "image": "{\n  \"aarch64\": \"alexta69/metube:latest\",\n  \"amd64\": \"alexta69/metube:latest\",\n  \"armv7\": \"alexta69/metube:latest\"\n}",
-  "upstream_version": "[2025-07-27 09:48:47 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for alexta69/metube\u001b[0m\n2025-07-27",
-  "last_update": "27-07-2025 11:48"
+  "upstream_version": "2025-07-27",
+  "last_update": "27-07-2025 12:01"
 }

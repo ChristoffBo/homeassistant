@@ -1,5 +1,9 @@
 CHANGELOG for gotify
 ===================
+v2 (27-07-2025 12:01)
+    Update from version 🔍CheckinglatestDockerHubtagforgotify/server2 to 2 (image: gotify/server:latest)
+
+
 v[2025-07-27 09:48:44 UTC] [0;34m🔍 Checking latest Docker Hub tag for gotify/server[0m
 2 (27-07-2025 11:48)
     Update from version [2025-07-2709:46:54UTC][0;34m🔍CheckinglatestDockerHubtagforgotify/server[0m2 to [2025-07-27 09:48:44 UTC] [0;34m🔍 Checking latest Docker Hub tag for gotify/server[0m
