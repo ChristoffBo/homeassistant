@@ -75,8 +75,7 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  # Implement your logic here to fetch latest tag ignoring "latest" from docker hub, linuxserver.io, or github
-  # For now, a placeholder to return "latest"
+  # Placeholder for your logic to get the latest tag (ignoring 'latest')
   echo "latest"
 }
 
@@ -236,11 +235,32 @@ perform_update_check() {
   fi
 }
 
+get_next_cron_time() {
+  local cron_expr="$1"
+  local tz="$2"
+  # We use "cronnext" if installed, else fallback to parsing with date commands
+  if command -v cronnext >/dev/null 2>&1; then
+    cronnext -c "$cron_expr" -z "$tz" 2>/dev/null
+  else
+    # Fallback: parse the cron expression to get next day, hour, minute approx
+    # This is a simple approach assuming format "min hour day month weekday"
+    # We will just extract minute and hour here.
+    local minute hour
+    minute=$(echo "$cron_expr" | awk '{print $1}')
+    hour=$(echo "$cron_expr" | awk '{print $2}')
+    echo "Next cron run approx at day *, hour $hour, minute $minute ($tz)"
+  fi
+}
+
 log "$COLOR_PURPLE" "🔮 Checking your Github Repo for Updates..."
 log "$COLOR_GREEN" "🚀 Add-on Updater initialized"
 log "$COLOR_GREEN" "📅 Scheduled cron: $CHECK_CRON (Timezone: $TIMEZONE)"
 log "$COLOR_GREEN" "🏃 Running initial update check on startup..."
 perform_update_check
+
+NEXT_CRON_RUN=$(get_next_cron_time "$CHECK_CRON" "$TIMEZONE")
+log "$COLOR_GREEN" "⏰ Next scheduled cron run: $NEXT_CRON_RUN"
+
 log "$COLOR_GREEN" "⏳ Waiting for cron to trigger..."
 
 while sleep 60; do :; done
