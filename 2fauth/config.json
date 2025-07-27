@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
-  "image": "2fauth/2fauth:latest",
+  "image": "2fauth/2fauth",
   "webui": "http://[HOST]:[PORT:8001]",
   "startup": "services",
   "boot": "auto",
