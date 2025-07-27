@@ -1,6 +1,6 @@
 {
   "slug": "heimdall",
   "image": "lscr.io/linuxserver/heimdall:amd64-latest",
-  "upstream_version": "[2025-07-27 11:05:06 UTC] \u001b[0;33m⚠️ No tags found for Docker Hub image lscr.io/linuxserver/heimdall:amd64-latest\u001b[0m",
+  "upstream_version": "27-07-2025",
   "last_update": "27-07-2025 13:05"
 }
