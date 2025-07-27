@@ -1,5 +1,9 @@
 CHANGELOG for gotify
 ===================
+v2 (27-07-2025 12:48)
+    Update from version 2.6.3 to 2 (image: gotify/server:latest)
+
+
 v2.6.3 (27-07-2025 12:22)
     Update from version 2 to 2.6.3 (image: gotify/server:latest)
 
