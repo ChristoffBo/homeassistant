@@ -1,6 +1,6 @@
 {
   "slug": "heimdall",
   "image": "lscr.io/linuxserver/heimdall:amd64-latest",
-  "upstream_version": "27-07-2025",
-  "last_update": "27-07-2025 13:05"
+  "upstream_version": "amd64-latest",
+  "last_update": "27-07-2025 13:32"
 }
