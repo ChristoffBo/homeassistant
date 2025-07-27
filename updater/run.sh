@@ -11,30 +11,12 @@ COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
 COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
-COLOR_DARK_RED="\033[0;31m"
 
 log() {
   local color="$1"
   shift
   echo -e "${color}$*${COLOR_RESET}"
-  echo "$*"
 }
-
-if [ ! -f "$CONFIG_PATH" ]; then
-  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
-  exit 1
-fi
-
-GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
-GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
-GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
-
-# GitHub API auth header if token provided
-GITHUB_AUTH_HEADER=""
-if [ -n "$GITHUB_TOKEN" ]; then
-  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
-fi
 
 clone_or_update_repo() {
   log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
@@ -50,8 +32,6 @@ clone_or_update_repo() {
   else
     log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
-    git reset --hard HEAD  # Reset any local changes to avoid merge errors
-    git clean -fd         # Remove untracked files/folders
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
@@ -59,12 +39,12 @@ clone_or_update_repo() {
 
 fetch_latest_dockerhub_tag() {
   local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=10&ordering=last_updated"
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
   local retries=3
   local count=0
   local tag=""
   while [ $count -lt $retries ]; do
-    tag=$(curl -s "$url" | jq -r '.results[] | select(.name != "latest") | .name' 2>/dev/null | head -n1)
+    tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
     if [ -n "$tag" ] && [ "$tag" != "null" ]; then
       echo "$tag"
       return 0
@@ -130,29 +110,26 @@ update_addon_if_needed() {
   fi
 
   local image=""
-  local slug=""
 
-  # Determine slug from config.json or fallback folder name
-  if [ -f "$config_file" ]; then
-    slug=$(jq -r '.slug // empty' "$config_file")
-  fi
-  if [ -z "$slug" ]; then
-    slug=$(basename "$addon_path")
-  fi
-
-  # Determine image from build.json or config.json
   if [ -f "$build_file" ]; then
     local arch=$(uname -m)
     if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
   fi
+
   if [ -z "$image" ] && [ -f "$config_file" ]; then
     image=$(jq -r '.image // empty' "$config_file")
   fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "Add-on '$slug' has no Docker image defined, skipping."
+    log "$COLOR_YELLOW" "Addon '$(basename "$addon_path")' has no Docker image defined, skipping."
     return
+  fi
+
+  local slug
+  slug=$(jq -r '.slug // empty' "$config_file")
+  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
+    slug=$(basename "$addon_path")
   fi
 
   local upstream_version=""
@@ -169,8 +146,9 @@ update_addon_if_needed() {
   latest_version=$(get_latest_docker_tag "$image")
 
   if [ -z "$latest_version" ]; then
-    log "$COLOR_RED" "⚠️ Could not fetch latest Docker tag for image $image"
-    log "$COLOR_BLUE" "Addon '$slug' is assumed up-to-date."
+    log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
+    log "$COLOR_BLUE" "Latest version available: WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
   fi
@@ -188,35 +166,29 @@ update_addon_if_needed() {
 
     mv "$updater_file.tmp" "$updater_file"
 
-    # Update version in config.json if exists
-    if [ -f "$config_file" ]; then
-      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-      if [ -f "$config_file.tmp" ]; then
-        mv "$config_file.tmp" "$config_file"
-      fi
+    # Update version in config.json if possible
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
+    if [ -f "$config_file.tmp" ]; then
+      mv "$config_file.tmp" "$config_file"
     fi
 
     # Create or append CHANGELOG.md
     if [ ! -f "$changelog_file" ]; then
-      echo "Created new CHANGELOG.md for $slug"
-      echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))" > "$changelog_file"
-      echo "" >> "$changelog_file"
-      echo "    Initial update to version $latest_version from $upstream_version" >> "$changelog_file"
-      echo "" >> "$changelog_file"
-    else
-      {
-        echo ""
-        echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
-        echo ""
-        echo "    Update from $upstream_version to $latest_version"
-        echo ""
-      } >> "$changelog_file"
-      log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
+      echo "CHANGELOG for $slug" > "$changelog_file"
+      log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
     fi
 
-    log "$COLOR_GREEN" "updater.json updated for $slug (was: $upstream_version, now: $latest_version)"
+    {
+      echo ""
+      echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
+      echo ""
+      echo "    Update to latest version from $image"
+      echo ""
+    } >> "$changelog_file"
+
+    log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
   else
-    log "$COLOR_GREEN" "Addon '$slug' is already up-to-date ✔"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
   fi
 
   log "$COLOR_BLUE" "----------------------------"
@@ -230,10 +202,25 @@ perform_update_check() {
   done
 }
 
+if [ ! -f "$CONFIG_PATH" ]; then
+  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
+  exit 1
+fi
+
+GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
+GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
+GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
+
+GITHUB_AUTH_HEADER=""
+if [ -n "$GITHUB_TOKEN" ]; then
+  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
+fi
+
 LAST_RUN_FILE="/data/last_run_date.txt"
 
-# Clear log before starting
-echo "" > "$LOG_FILE"
+# Clear the log file at start
+> "$LOG_FILE"
 
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
 
@@ -243,27 +230,38 @@ echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
 while true; do
   NOW_TIME=$(date +%H:%M)
   TODAY=$(date +%Y-%m-%d)
-
   LAST_RUN=""
+
   if [ -f "$LAST_RUN_FILE" ]; then
     LAST_RUN=$(cat "$LAST_RUN_FILE")
   fi
 
-  if [ "$NOW_TIME" = "$CHECK_TIME" ]; then
-    if [ "$LAST_RUN" != "$TODAY" ]; then
-      log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
-      perform_update_check
-      echo "$TODAY" > "$LAST_RUN_FILE"
-      log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-      sleep 60  # prevent multiple runs in same minute
-    else
-      log "$COLOR_BLUE" "ℹ️ Update check already run today."
-    fi
+  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+    log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
+    perform_update_check
+    echo "$TODAY" > "$LAST_RUN_FILE"
+    log "$COLOR_GREEN" "✅ Scheduled update checks complete."
+    sleep 60  # prevent multiple runs in same minute
   else
-    # No action needed; waiting for scheduled time
-    :
+    # Calculate next check time for logging
+    CURRENT_SEC=$(date +%s)
+    CHECK_HOUR=${CHECK_TIME%%:*}
+    CHECK_MIN=${CHECK_TIME##*:}
+    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+    if [ "$TODAY_SEC" -eq 0 ]; then
+      NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
+    else
+      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
+      if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
+        TOMORROW_SEC=$((TODAY_SEC + 86400))
+        NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      else
+        NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      fi
+    fi
+
+    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
   fi
 
-  # Sleep 60 seconds to re-check every minute
   sleep 60
 done
