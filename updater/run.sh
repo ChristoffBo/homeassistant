@@ -37,8 +37,6 @@ fi
 LOG_FILE="/data/updater.log"
 : > "$LOG_FILE"
 
-declare -a UPDATED_ADDONS=()
-
 clone_or_update_repo() {
   log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
   if [ ! -d "$REPO_DIR" ]; then
@@ -55,20 +53,16 @@ clone_or_update_repo() {
 
 fetch_latest_dockerhub_tag() {
   local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
-  local retries=3
-  local count=0
-  local tag=""
-  while [ $count -lt $retries ]; do
-    tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
-    if [ -n "$tag" ] && [ "$tag" != "null" ]; then
-      echo "$tag"
-      return 0
-    fi
-    count=$((count+1))
-    sleep $((count * 2))
-  done
-  echo ""
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=10&ordering=last_updated"
+  local tags_json=$(curl -s "$url")
+  # Find the first tag that is NOT 'latest'
+  local tag=$(echo "$tags_json" | jq -r '.results[].name' | grep -v '^latest$' | head -n 1)
+  if [ -n "$tag" ]; then
+    echo "$tag"
+  else
+    # fallback to latest if no other tag found
+    echo "latest"
+  fi
 }
 
 fetch_latest_linuxserver_tag() {
@@ -122,7 +116,7 @@ update_addon_if_needed() {
 
   if [ ! -f "$config_file" ] && [ ! -f "$build_file" ]; then
     log "$COLOR_YELLOW" "Add-on '$(basename "$addon_path")' has no config.json or build.json, skipping."
-    return 1
+    return
   fi
 
   local image=""
@@ -138,7 +132,7 @@ update_addon_if_needed() {
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
     log "$COLOR_YELLOW" "Add-on '$(basename "$addon_path")' has no Docker image defined, skipping."
-    return 1
+    return
   fi
 
   local slug
@@ -149,29 +143,29 @@ update_addon_if_needed() {
 
   local current_version=""
   if [ -f "$config_file" ]; then
-    current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null)
-  fi
-  current_version="${current_version//\"/}"  # remove quotes if any
-
-  # Treat empty or "latest" current_version as unknown, so force update if new tag exists
-  local treat_as_unknown=0
-  if [ -z "$current_version" ] || [ "$current_version" == "latest" ]; then
-    treat_as_unknown=1
+    current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null | tr -d '\n\r ' | tr -d '"')
   fi
 
-  local latest_version=""
-  latest_version=$(get_latest_docker_tag "$image")
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    latest_version="latest"
+  local upstream_version=""
+  if [ -f "$updater_file" ]; then
+    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file" 2>/dev/null)
   fi
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "Addon: $slug"
   log "$COLOR_BLUE" "Current version: $current_version"
   log "$COLOR_BLUE" "Image: $image"
+
+  local latest_version="Checking..."
+  latest_version=$(get_latest_docker_tag "$image")
+
+  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
+    latest_version="latest"
+  fi
+
   log "$COLOR_BLUE" "Latest version available: $latest_version"
 
-  if { [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; } || { [ $treat_as_unknown -eq 1 ] && [ "$latest_version" != "latest" ]; }; then
+  if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$current_version' to '$latest_version'"
 
     # Update config.json version
@@ -180,7 +174,7 @@ update_addon_if_needed() {
       mv "$config_file.tmp" "$config_file"
     fi
 
-    # Update updater.json or create it
+    # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
@@ -210,12 +204,8 @@ v$latest_version ($(date +'%d-%m-%Y %H:%M'))
 
     log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
 
-    UPDATED_ADDONS+=("$slug: $current_version → $latest_version at $(date +'%d-%m-%Y %H:%M')")
-
-    return 0
   else
     log "$COLOR_BLUE" "Add-on '$slug' is already up-to-date ✔"
-    return 1
   fi
 
   log "$COLOR_BLUE" "----------------------------"
@@ -232,9 +222,7 @@ perform_update_check() {
   local updated=0
 
   for addon_path in "$REPO_DIR"/*/; do
-    if update_addon_if_needed "$addon_path"; then
-      updated=$((updated+1))
-    fi
+    update_addon_if_needed "$addon_path" && updated=$((updated+1))
   done
 
   # Commit and push changes if any
@@ -249,16 +237,6 @@ perform_update_check() {
     fi
   else
     log "$COLOR_BLUE" "No changes to commit."
-  fi
-
-  # Print summary of updated addons
-  if [ ${#UPDATED_ADDONS[@]} -gt 0 ]; then
-    log "$COLOR_GREEN" "Summary of updates:"
-    for update in "${UPDATED_ADDONS[@]}"; do
-      log "$COLOR_GREEN" " - $update"
-    done
-  else
-    log "$COLOR_BLUE" "No addons were updated during this run."
   fi
 }
 
