@@ -25,7 +25,7 @@
     "github_repo": "str",
     "github_username": "str",
     "github_token": "str",
-    "check_time": "str",  /* Format example: "03:00 AM" or "11:15 PM" */
+    "check_time": "str", 
     "gotify_url": "str?",
     "gotify_token": "str?",
     "mailrise_url": "str?"
