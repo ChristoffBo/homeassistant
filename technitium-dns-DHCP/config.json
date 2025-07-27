@@ -1,6 +1,6 @@
 {
   "name": "Technitium DNS & DHCP",
-  "version": "[2025-07-27 11:02:45 UTC] \u001b[0;33m⚠️ No valid tags found for Docker Hub image technitium/dns-server\u001b[0m",
+  "version": "13.6.0",
   "slug": "technitium-dns-dhcp",
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/",

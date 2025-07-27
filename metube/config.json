@@ -11,7 +11,7 @@
   "map": [
     "share:rw"
   ],
-  "version": "[2025-07-27 11:02:43 UTC] \u001b[0;33m⚠️ No valid tags found for Docker Hub image alexta69/metube\u001b[0m",
+  "version": "2025-07-27",
   "name": "metube",
   "options": {},
   "ports": {

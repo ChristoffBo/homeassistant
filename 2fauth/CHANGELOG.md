@@ -1,5 +1,9 @@
 CHANGELOG for 2fauth
 ===================
+v5.6.0 (27-07-2025 13:04)
+    Update from version [2025-07-2711:02:38UTC][0;33m⚠️NovalidtagsfoundforDockerHubimage2fauth/2fauth[0m to 5.6.0 (image: 2fauth/2fauth)
+
+
 v[2025-07-27 11:02:38 UTC] [0;33m⚠️ No valid tags found for Docker Hub image 2fauth/2fauth[0m (27-07-2025 13:02)
     Update from version dev to [2025-07-27 11:02:38 UTC] [0;33m⚠️ No valid tags found for Docker Hub image 2fauth/2fauth[0m (image: 2fauth/2fauth)
 

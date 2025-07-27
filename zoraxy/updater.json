@@ -1,6 +1,6 @@
 {
   "slug": "zoraxy",
   "image": "zoraxydocker/zoraxy:latest",
-  "upstream_version": "[2025-07-27 11:02:47 UTC] \u001b[0;33m⚠️ No valid tags found for Docker Hub image zoraxydocker/zoraxy\u001b[0m",
-  "last_update": "27-07-2025 13:02"
+  "upstream_version": "v3.2.5r2",
+  "last_update": "27-07-2025 13:04"
 }

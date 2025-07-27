@@ -1,5 +1,9 @@
 CHANGELOG for gotify
 ===================
+v2.6.3 (27-07-2025 13:04)
+    Update from version [2025-07-2711:02:39UTC][0;33m⚠️NovalidtagsfoundforDockerHubimagegotify/server[0m to 2.6.3 (image: gotify/server:latest)
+
+
 v[2025-07-27 11:02:39 UTC] [0;33m⚠️ No valid tags found for Docker Hub image gotify/server[0m (27-07-2025 13:02)
     Update from version 2.6.3 to [2025-07-27 11:02:39 UTC] [0;33m⚠️ No valid tags found for Docker Hub image gotify/server[0m (image: gotify/server:latest)
 
