@@ -1,5 +1,9 @@
 v5.7.0 (27-07-2025)
 
+v5.6.0 (27-07-2025 06:08)
+    Update from version 5.7.0 to 5.6.0 (image: 2fauth/2fauth)
+
+
     Updated from version latest to 5.7.0
 
 ## [latest] - 2025-07-27

@@ -1,5 +1,9 @@
 vlatest (27-07-2025 05:46)
 
+v1.3.0 (27-07-2025 06:08)
+    Update from version latest to 1.3.0 (image: yoryan/mailrise:latest)
+
+
     Update from 1.3.0 to latest
 
 
