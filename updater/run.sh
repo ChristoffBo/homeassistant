@@ -28,31 +28,32 @@ GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
-# GitHub API auth header if token provided
-GITHUB_AUTH_HEADER=""
-if [ -n "$GITHUB_TOKEN" ]; then
-  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
+if [ -z "$GITHUB_USERNAME" ] || [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_REPO" ]; then
+  log "$COLOR_RED" "ERROR: GitHub username, token, or repo not set in options.json"
+  exit 1
 fi
 
+AUTH_REPO_URL="https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@${GITHUB_REPO#https://}"
+
+git config --global user.name "$GITHUB_USERNAME"
+git config --global user.email "${GITHUB_USERNAME}@users.noreply.github.com"
+
+# Clear log file before each run
+LOG_FILE="/data/updater.log"
+: > "$LOG_FILE"
+
 clone_or_update_repo() {
-  log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
+  log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO" | tee -a "$LOG_FILE"
   if [ ! -d "$REPO_DIR" ]; then
-    log "$COLOR_BLUE" "Repository not found locally. Cloning..."
-    if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-      AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
-      git clone "$AUTH_REPO" "$REPO_DIR"
-    else
-      git clone "$GITHUB_REPO" "$REPO_DIR"
-    fi
-    log "$COLOR_GREEN" "Repository cloned successfully."
+    log "$COLOR_BLUE" "Repository not found locally. Cloning..." | tee -a "$LOG_FILE"
+    git clone "$AUTH_REPO_URL" "$REPO_DIR" >> "$LOG_FILE" 2>&1
+    log "$COLOR_GREEN" "Repository cloned successfully." | tee -a "$LOG_FILE"
   else
-    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
+    log "$COLOR_BLUE" "Repository found. Pulling latest changes..." | tee -a "$LOG_FILE"
     cd "$REPO_DIR"
-    git reset --hard HEAD
-    git clean -fd
-    git pull
-    log "$COLOR_GREEN" "Repository updated successfully (git pull)."
-    cd - > /dev/null
+    git remote set-url origin "$AUTH_REPO_URL"
+    git pull origin main >> "$LOG_FILE" 2>&1
+    log "$COLOR_GREEN" "Repository updated." | tee -a "$LOG_FILE"
   fi
 }
 
@@ -124,7 +125,7 @@ update_addon_if_needed() {
   local changelog_file="$addon_path/CHANGELOG.md"
 
   if [ ! -f "$config_file" ] && [ ! -f "$build_file" ]; then
-    log "$COLOR_YELLOW" "No config.json or build.json found in $addon_path, skipping."
+    log "$COLOR_YELLOW" "No config.json or build.json found in $addon_path, skipping." | tee -a "$LOG_FILE"
     return
   fi
 
@@ -141,7 +142,7 @@ update_addon_if_needed() {
   fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "Addon '$(basename "$addon_path")' has no Docker image defined, skipping."
+    log "$COLOR_YELLOW" "Addon '$(basename "$addon_path")' has no Docker image defined, skipping." | tee -a "$LOG_FILE"
     return
   fi
 
@@ -156,72 +157,62 @@ update_addon_if_needed() {
     upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
   fi
 
-  log "$COLOR_BLUE" "----------------------------"
-  log "$COLOR_BLUE" "Addon: $slug"
-  log "$COLOR_BLUE" "Current version: $upstream_version"
-  log "$COLOR_BLUE" "Image: $image"
+  log "$COLOR_BLUE" "----------------------------" | tee -a "$LOG_FILE"
+  log "$COLOR_BLUE" "Addon: $slug" | tee -a "$LOG_FILE"
+  log "$COLOR_BLUE" "Current version: $upstream_version" | tee -a "$LOG_FILE"
+  log "$COLOR_BLUE" "Image: $image" | tee -a "$LOG_FILE"
 
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
 
   if [ -z "$latest_version" ]; then
-    log "$COLOR_DARK_RED" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest version: WARNING: Could not fetch"
-    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
-    log "$COLOR_BLUE" "----------------------------"
+    log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image" | tee -a "$LOG_FILE"
+    log "$COLOR_BLUE" "Latest Docker version:  WARNING: Could not fetch" | tee -a "$LOG_FILE"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔" | tee -a "$LOG_FILE"
+    log "$COLOR_BLUE" "----------------------------" | tee -a "$LOG_FILE"
     return
   fi
 
-  log "$COLOR_BLUE" "Latest version available: $latest_version"
+  log "$COLOR_BLUE" "Latest version available: $latest_version" | tee -a "$LOG_FILE"
 
   if [ "$latest_version" != "$upstream_version" ]; then
-    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$upstream_version' to '$latest_version'"
+    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$upstream_version' to '$latest_version'" | tee -a "$LOG_FILE"
 
     # Update or create updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
+
     mv "$updater_file.tmp" "$updater_file"
 
-    # Update version in config.json if possible
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-    if [ -f "$config_file.tmp" ]; then
-      mv "$config_file.tmp" "$config_file"
+    # Update config.json version field if exists
+    if [ -f "$config_file" ]; then
+      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
+      if [ -f "$config_file.tmp" ]; then
+        mv "$config_file.tmp" "$config_file"
+      fi
     fi
 
-    # Create or append CHANGELOG.md
+    # Create or append changelog
     if [ ! -f "$changelog_file" ]; then
-      echo "CHANGELOG for $slug" > "$changelog_file"
-      log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
+      echo "Created new CHANGELOG.md for $slug" | tee -a "$LOG_FILE"
+      touch "$changelog_file"
     fi
+
     {
       echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
       echo ""
-      echo "    Update from version $upstream_version to $latest_version for image $image"
+      echo "    Update to latest version from $image"
       echo ""
     } >> "$changelog_file"
-    log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
 
-    # Commit and push changes to GitHub
-    cd "$addon_path"
-    git add updater.json CHANGELOG.md config.json 2>/dev/null || true
-
-    if ! git diff --cached --quiet; then
-      git commit -m "Updater: bump $slug to $latest_version"
-      git push origin main || git push
-      log "$COLOR_GREEN" "Pushed changes for $slug to GitHub successfully."
-    else
-      log "$COLOR_BLUE" "No changes to commit for $slug."
-    fi
-
-    cd - > /dev/null
-
+    log "$COLOR_GREEN" "CHANGELOG.md updated for $slug" | tee -a "$LOG_FILE"
   else
-    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔" | tee -a "$LOG_FILE"
   fi
 
-  log "$COLOR_BLUE" "----------------------------"
+  log "$COLOR_BLUE" "----------------------------" | tee -a "$LOG_FILE"
 }
 
 perform_update_check() {
@@ -230,11 +221,25 @@ perform_update_check() {
   for addon_path in "$REPO_DIR"/*/; do
     update_addon_if_needed "$addon_path"
   done
+
+  # Commit and push changes if any
+  cd "$REPO_DIR"
+  if [ -n "$(git status --porcelain)" ]; then
+    git add .
+    git commit -m "Updater: bump versions and update changelogs"
+    if git push origin main >> "$LOG_FILE" 2>&1; then
+      log "$COLOR_GREEN" "✅ Changes pushed successfully to GitHub" | tee -a "$LOG_FILE"
+    else
+      log "$COLOR_RED" "❌ Failed to push changes to GitHub" | tee -a "$LOG_FILE"
+    fi
+  else
+    log "$COLOR_BLUE" "No changes detected; nothing to push." | tee -a "$LOG_FILE"
+  fi
 }
 
 LAST_RUN_FILE="/data/last_run_date.txt"
 
-log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
+log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')" | tee -a "$LOG_FILE"
 perform_update_check
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
 
@@ -247,18 +252,31 @@ while true; do
     LAST_RUN=$(cat "$LAST_RUN_FILE")
   fi
 
-  if [ "$NOW_TIME" = "$CHECK_TIME" ]; then
-    if [ "$LAST_RUN" != "$TODAY" ]; then
-      log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
-      perform_update_check
-      echo "$TODAY" > "$LAST_RUN_FILE"
-      log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-      sleep 60  # prevent multiple runs in same minute
+  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+    log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY" | tee -a "$LOG_FILE"
+    perform_update_check
+    echo "$TODAY" > "$LAST_RUN_FILE"
+    log "$COLOR_GREEN" "✅ Scheduled update checks complete." | tee -a "$LOG_FILE"
+    sleep 60  # prevent multiple runs in same minute
+  else
+    # calculate next check time display
+    CURRENT_SEC=$(date +%s)
+    CHECK_HOUR=${CHECK_TIME%%:*}
+    CHECK_MIN=${CHECK_TIME##*:}
+    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+    if [ "$TODAY_SEC" -eq 0 ]; then
+      NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
-      log "$COLOR_BLUE" "✅ Already ran today at $CHECK_TIME, waiting for next day."
+      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
+      if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
+        TOMORROW_SEC=$((TODAY_SEC + 86400))
+        NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      else
+        NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      fi
     fi
+    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME" | tee -a "$LOG_FILE"
   fi
 
-  # Sleep for 60 seconds before next check
   sleep 60
 done
