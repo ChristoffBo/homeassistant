@@ -13,24 +13,26 @@
   ],
   "ports": {},
   "options": {
-    "github_repo": "https://github.com/ChristoffBo/homeassistant",
+    "github_repo": "https://github.com/yourrepo/homeassistant",
     "github_username": "",
     "github_token": "",
     "check_cron": "0 3 * * *",
-    "timezone": "UTC",
+    "timezone": "Africa/Johannesburg",
     "gotify_url": "",
     "gotify_token": "",
-    "mailrise_url": ""
+    "mailrise_url": "",
+    "apprise_url": ""
   },
   "schema": {
     "github_repo": "str",
     "github_username": "str",
     "github_token": "str",
     "check_cron": "str",
-    "timezone": "str",
+    "timezone": "str?",
     "gotify_url": "str?",
     "gotify_token": "str?",
-    "mailrise_url": "str?"
+    "mailrise_url": "str?",
+    "apprise_url": "str?"
   },
   "map": [
     "config:ro",
