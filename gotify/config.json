@@ -1,6 +1,6 @@
 {
   "name": "Gotify",
-  "version": "2",
+  "version": "[2025-07-27 09:44:07 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for gotify/server\u001b[0m\n2",
   "slug": "gotify",
   "description": "A simple server for sending and receiving messages",
   "startup": "services",
