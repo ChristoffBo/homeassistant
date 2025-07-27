@@ -3,6 +3,10 @@ set -e
 
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
+LOG_FILE=/data/updater.log
+
+# Clear log at start
+> "$LOG_FILE"
 
 # Colored output
 COLOR_RESET="\033[0m"
@@ -14,7 +18,7 @@ COLOR_RED="\033[0;31m"
 log() {
   local color="$1"
   shift
-  echo -e "${color}$*${COLOR_RESET}"
+  echo -e "${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -47,15 +51,8 @@ clone_or_update_repo() {
   else
     log "$COLOR_BLUE" "Repository found. Resetting local changes and pulling latest changes..."
     cd "$REPO_DIR"
-
-    log "$COLOR_BLUE" "Current directory: $(pwd)"
-    log "$COLOR_BLUE" "Listing files:"
-    ls -la
-
-    # Reset any local changes and clean untracked files to allow pull
-    git reset --hard
+    git reset --hard HEAD
     git clean -fd
-
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
@@ -245,23 +242,17 @@ while true; do
     sleep 60  # prevent multiple runs in same minute
   else
     CURRENT_SEC=$(date +%s)
-    # Parse CHECK_TIME into hours and minutes
     CHECK_HOUR=${CHECK_TIME%%:*}
     CHECK_MIN=${CHECK_TIME##*:}
-
-    # Get today's date in seconds since epoch
     TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
     if [ "$TODAY_SEC" -eq 0 ]; then
-      # fallback if date -d unsupported
       NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
       CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
       if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
-        # Next check is tomorrow at CHECK_TIME
         TOMORROW_SEC=$((TODAY_SEC + 86400))
         NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
       else
-        # Next check is today at CHECK_TIME
         NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
       fi
     fi
