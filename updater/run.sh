@@ -45,8 +45,10 @@ clone_or_update_repo() {
     fi
     log "$COLOR_GREEN" "Repository cloned successfully."
   else
-    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
+    log "$COLOR_BLUE" "Repository found. Resetting local changes and pulling latest changes..."
     cd "$REPO_DIR"
+    git reset --hard
+    git clean -fd
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
