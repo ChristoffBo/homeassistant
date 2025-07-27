@@ -25,7 +25,7 @@ fi
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM (24h)
+CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
@@ -242,18 +242,9 @@ perform_update_check() {
 
 LAST_RUN_FILE="/data/last_run_date.txt"
 
-# Log current time and timezone for debugging
-log "$COLOR_BLUE" "Current timezone: $(date +'%Z %z')"
-log "$COLOR_BLUE" "Current time: $(date +'%H:%M')"
-
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
 perform_update_check
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
-
-time_to_minutes() {
-  local t=$1
-  echo $((10#${t%%:*} * 60 + 10#${t##*:}))
-}
 
 while true; do
   NOW_TIME=$(date +%H:%M)
@@ -264,23 +255,30 @@ while true; do
     LAST_RUN=$(cat "$LAST_RUN_FILE")
   fi
 
-  NOW_MIN=$(time_to_minutes "$NOW_TIME")
-  CHECK_MIN=$(time_to_minutes "$CHECK_TIME")
-
-  if [ "$NOW_MIN" -ge "$CHECK_MIN" ] && [ "$NOW_MIN" -lt $((CHECK_MIN + 2)) ] && [ "$LAST_RUN" != "$TODAY" ]; then
+  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
     log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-    sleep 120  # sleep 2 minutes to avoid multiple runs
+    sleep 60  # prevent multiple runs in same minute
   else
     CURRENT_SEC=$(date +%s)
-    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
     CHECK_HOUR=${CHECK_TIME%%:*}
-    CHECK_MIN_PART=${CHECK_TIME##*:}
+    CHECK_MIN=${CHECK_TIME##*:}
+    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
     if [ "$TODAY_SEC" -eq 0 ]; then
       NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
-      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN_PART * 60))
+      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
       if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
-        TOMORROW_SEC=_
+        TOMORROW_SEC=$((TODAY_SEC + 86400))
+        NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      else
+        NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
+      fi
+    fi
+    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
+  fi
+
+  sleep 60
+done
