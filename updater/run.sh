@@ -88,31 +88,30 @@ update_addon_if_needed() {
   local updater_file="$addon_dir/updater.json"
   local changelog_file="$addon_dir/CHANGELOG.md"
 
-  # Skip if config missing
   [ ! -f "$config_file" ] && return
 
-  # Read image
   local image
   image=$(jq -r '.image // empty' "$config_file")
   [ -z "$image" ] && return
 
-  # Versions
   local current_version
   current_version=$(jq -r '.version // ""' "$config_file")
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
 
+  log "$COLOR_BLUE" "----------------------------"
+  log "$COLOR_BLUE" "Addon: $(basename "$addon_dir")"
+  log "$COLOR_BLUE" "Current version: $current_version"
+  log "$COLOR_BLUE" "Latest version: $latest_version"
+
   if [ "$latest_version" != "" ] && [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "null" ]; then
     log "$COLOR_YELLOW" "⬆️  Updating $(basename "$addon_dir") from $current_version to $latest_version"
 
-    # Update config.json version
     jq ".version = \"$latest_version\"" "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
-    # Update updater.json
     jq -n --arg slug "$(basename "$addon_dir")" --arg image "$image" --arg v "$latest_version" --arg dt "$(TZ="$TZ" date '+%d-%m-%Y %H:%M')" \
       '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file"
 
-    # Update changelog - prepend new entry
     if [ ! -f "$changelog_file" ]; then
       echo "CHANGELOG for $(basename "$addon_dir")" > "$changelog_file"
       echo "===================" >> "$changelog_file"
@@ -129,7 +128,6 @@ v$latest_version ($(TZ="$TZ" date '+%d-%m-%Y %H:%M'))
 
     log "$COLOR_GREEN" "CHANGELOG.md updated for $(basename "$addon_dir")"
 
-    # Commit and push only this addon's folder
     git -C "$REPO_DIR" add "$addon_dir"
     git -C "$REPO_DIR" commit -m "Update addon $(basename "$addon_dir") to $latest_version" || true
     git -C "$REPO_DIR" push
@@ -137,6 +135,7 @@ v$latest_version ($(TZ="$TZ" date '+%d-%m-%Y %H:%M'))
   else
     log "$COLOR_GREEN" "✅ $(basename "$addon_dir") is already up to date ($current_version)"
   fi
+  log "$COLOR_BLUE" "----------------------------"
 }
 
 perform_update_check() {
@@ -158,6 +157,13 @@ GITHUB_REPO="$GITHUB_REPO"
 GIT_AUTH_REPO="$GIT_AUTH_REPO"
 GITHUB_USERNAME="$GITHUB_USERNAME"
 GITHUB_TOKEN="$GITHUB_TOKEN"
+
+# Colored output inside cron script
+COLOR_RESET="$COLOR_RESET"
+COLOR_GREEN="$COLOR_GREEN"
+COLOR_BLUE="$COLOR_BLUE"
+COLOR_YELLOW="$COLOR_YELLOW"
+COLOR_RED="$COLOR_RED"
 
 $(declare -f log)
 $(declare -f clone_or_update_repo)
