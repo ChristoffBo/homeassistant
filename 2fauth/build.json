@@ -1,7 +1,0 @@
-{
-  "build_from": {
-    "amd64": "2fauth/2fauth:latest",
-    "aarch64": "2fauth/2fauth:latest",
-    "armv7": "2fauth/2fauth:latest"
-  }
-}
