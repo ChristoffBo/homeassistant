@@ -75,12 +75,52 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  # Replace placeholder with real logic to fetch tags, filter out 'latest'
-  # Example: curl Docker Hub API and select highest semver (simplified here)
-  local repo="${image%%:*}"  # strip tag
-  local tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=100")
-  local latest_tag=$(echo "$tags_json" | jq -r '.results[].name' | grep -Ev 'latest|[a-zA-Z]' | sort -Vr | head -n1)
-  echo "${latest_tag:-latest}"
+
+  # Remove tag from image (everything after last ':')
+  local image_no_tag="${image%%:*}"
+
+  # Handle lscr.io images (LinuxServer registry) - skip DockerHub API call
+  if [[ "$image" == lscr.io/* ]]; then
+    # Return current tag part after last colon
+    local tag="${image##*:}"
+    echo "$tag"
+    return
+  fi
+
+  # Prepare repo path for Docker Hub API
+  local repo
+  if [[ "$image_no_tag" =~ "/" ]]; then
+    repo="$image_no_tag"
+  else
+    repo="library/$image_no_tag"
+  fi
+
+  # Query Docker Hub tags API
+  local tags_json
+  tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=100") || return 1
+
+  # Check if .results is empty or null
+  local results_count
+  results_count=$(echo "$tags_json" | jq '.results | length // 0')
+  if [ "$results_count" -eq 0 ]; then
+    # No tags found, fallback to empty
+    echo ""
+    return 0
+  fi
+
+  # Extract tags excluding those with letters only or 'latest', trying to get version/date tags
+  local latest_tag
+  latest_tag=$(echo "$tags_json" | jq -r '.results[].name' \
+    | grep -Ev 'latest|[a-zA-Z]' \
+    | sort -Vr \
+    | head -n1)
+
+  # If no suitable tag found, fallback to first available tag
+  if [ -z "$latest_tag" ]; then
+    latest_tag=$(echo "$tags_json" | jq -r '.results[0].name // empty')
+  fi
+
+  echo "$latest_tag"
 }
 
 get_docker_source_url() {
@@ -148,7 +188,12 @@ update_addon_if_needed() {
 
   local latest_version="Checking..."
   latest_version=$(get_latest_docker_tag "$image")
-  [ -z "$latest_version" ] || [ "$latest_version" == "null" ] && latest_version="latest"
+  [ -z "$latest_version" ] || [ "$latest_version" == "null" ] && latest_version=""
+  if [ -z "$latest_version" ]; then
+    log "$COLOR_YELLOW" "⚠️ Could not determine latest tag for $slug; skipping update check."
+    log "$COLOR_BLUE" "----------------------------"
+    return
+  fi
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
   local source_url
@@ -173,7 +218,7 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "🕒 Last updated: $last_update"
 
-  if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
+  if [ "$latest_version" != "$current_version" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
