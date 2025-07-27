@@ -17,7 +17,7 @@ COLOR_PURPLE="\033[0;35m"
 log() {
   local color="$1"
   shift
-  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" >&2 | tee -a "$LOG_FILE"
+  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
 notify() {
@@ -95,12 +95,12 @@ clone_or_update_repo() {
 get_latest_docker_tag() {
   local image="$1"
   local latest_version=""
+  local image_no_tag="${image%%:*}"  # Strip tag if present
 
   if [[ "$image" == ghcr.io/* ]]; then
     local owner_repo
-    owner_repo=$(echo "$image" | cut -d'/' -f2-3)
-    owner_repo=${owner_repo%%:*}
-    log "$COLOR_BLUE" "🔍 Checking latest GitHub release for $owner_repo" >&2
+    owner_repo=$(echo "$image_no_tag" | cut -d'/' -f2-3)
+    # Quiet check for latest GitHub release
     if [ -n "$GITHUB_TOKEN" ]; then
       latest_version=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
         "https://api.github.com/repos/$owner_repo/releases/latest" | jq -r '.tag_name // empty')
@@ -111,8 +111,7 @@ get_latest_docker_tag() {
 
   elif [[ "$image" =~ ^linuxserver/ ]]; then
     local repo
-    repo=$(echo "$image" | cut -d'/' -f2 | cut -d':' -f1)
-    log "$COLOR_BLUE" "🔍 Checking latest LinuxServer.io GitHub release for docker-$repo" >&2
+    repo=$(echo "$image_no_tag" | cut -d'/' -f2)
     if [ -n "$GITHUB_TOKEN" ]; then
       latest_version=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
         "https://api.github.com/repos/linuxserver/docker-$repo/releases/latest" | jq -r '.tag_name // empty')
@@ -122,8 +121,8 @@ get_latest_docker_tag() {
     fi
 
   else
-    log "$COLOR_BLUE" "🔍 Checking latest Docker Hub tag for $image" >&2
-    local encoded_image=${image//\//%2F}
+    # Docker Hub API expects URL encoded image name
+    local encoded_image=${image_no_tag//\//%2F}
     latest_version=$(curl -s "https://hub.docker.com/v2/repositories/$encoded_image/tags/?page_size=10&page=1&ordering=last_updated" \
       | jq -r '.results[] | select(.name != "latest") | .name' | head -n1)
   fi
@@ -180,9 +179,12 @@ update_addon_if_needed() {
     slug=$(basename "$addon_path")
   fi
 
+  # Clean current_version string from config.json
   local current_version=""
   if [ -f "$config_file" ]; then
     current_version=$(jq -r '.version // empty' "$config_file" | tr -d '\n\r ')
+    # Remove ANSI escape codes and bracketed info from version
+    current_version=$(echo "$current_version" | sed -r 's/\x1B\[[0-9;]*[mK]//g' | sed 's/\[[^]]*\]//g')
   fi
 
   log "$COLOR_BLUE" "----------------------------"
@@ -226,7 +228,7 @@ update_addon_if_needed() {
   if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
-    # Update config.json version cleanly (only tag, no logs)
+    # Update version in config.json cleanly
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
     # Update or create updater.json
@@ -239,15 +241,14 @@ update_addon_if_needed() {
     fi
     mv "$updater_file.tmp" "$updater_file"
 
-    # Add entry to changelog
-    NEW_ENTRY="\
-v$latest_version ($timestamp)
+    # Prepend changelog entry
+    local new_entry="v$latest_version ($timestamp)
     Update from version $current_version to $latest_version (image: $image)
 
 "
     {
       head -n 2 "$changelog_file"
-      echo "$NEW_ENTRY"
+      echo "$new_entry"
       tail -n +3 "$changelog_file"
     } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
