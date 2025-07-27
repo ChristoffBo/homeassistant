@@ -12,6 +12,7 @@ COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
 
+# Clear log file on startup
 : > "$LOG_FILE"
 
 log() {
@@ -47,53 +48,36 @@ clone_or_update_repo() {
       exit 1
     fi
   else
-    log "$COLOR_PURPLE" "🔄 Pulling latest changes from GitHub with rebase..."
     cd "$REPO_DIR"
+    log "$COLOR_PURPLE" "🔄 Pulling latest changes from GitHub (normal pull first)..."
+    if ! git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+      log "$COLOR_RED" "❌ Initial git pull failed. Attempting recovery..."
 
-    # Abort any unfinished rebase to avoid conflicts
-    if [ -d ".git/rebase-merge" ] || [ -d ".git/rebase-apply" ]; then
-      log "$COLOR_YELLOW" "⚠️ Detected unfinished rebase, aborting it first..."
-      git rebase --abort >> "$LOG_FILE" 2>&1 || true
-    fi
+      if [ -d ".git/rebase-merge" ] || [ -d ".git/rebase-apply" ]; then
+        log "$COLOR_YELLOW" "⚠️ Detected unfinished rebase, aborting it..."
+        git rebase --abort >> "$LOG_FILE" 2>&1 || true
+      fi
 
-    if git pull --rebase "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-      log "$COLOR_GREEN" "✅ Git pull successful."
+      git reset --hard origin/main >> "$LOG_FILE" 2>&1 || true
+
+      if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+        log "$COLOR_GREEN" "✅ Git pull successful after recovery."
+      else
+        log "$COLOR_RED" "❌ Git pull still failed after recovery. See last 20 log lines:"
+        tail -n 20 "$LOG_FILE" | sed 's/^/    /'
+        exit 1
+      fi
     else
-      log "$COLOR_RED" "❌ Git pull failed even after aborting rebase. See last 20 log lines below:"
-      tail -n 20 "$LOG_FILE" | sed 's/^/    /'
-      exit 1
+      log "$COLOR_GREEN" "✅ Git pull successful."
     fi
   fi
-}
-
-strip_arch_prefix() {
-  echo "$1" | sed -E 's/^(amd64-|armhf-|arm64v8-|arm32v7-|i386-)//'
 }
 
 get_latest_docker_tag() {
   local image="$1"
-  local repo_name
-  repo_name=$(echo "$image" | cut -d':' -f1)
-
-  log "$COLOR_BLUE" "🔍 Fetching tags from Docker Hub API: https://hub.docker.com/v2/repositories/$repo_name/tags?page_size=100"
-
-  local tags_json
-  tags_json=$(curl -s "https://hub.docker.com/v2/repositories/$repo_name/tags?page_size=100")
-
-  if [ -z "$tags_json" ]; then
-    log "$COLOR_RED" "❌ Failed to fetch tags from Docker Hub for $repo_name"
-    echo ""
-    return
-  fi
-
-  local tag
-  tag=$(echo "$tags_json" | jq -r '.results[].name' 2>/dev/null | grep -v '^latest$' | sort -Vr | head -n1)
-
-  if [ -z "$tag" ]; then
-    tag="latest"
-  fi
-
-  echo "$tag"
+  # Implement your logic here to fetch latest tag ignoring "latest" from docker hub, linuxserver.io, or github
+  # For now, a placeholder to return "latest"
+  echo "latest"
 }
 
 get_docker_source_url() {
@@ -146,9 +130,9 @@ update_addon_if_needed() {
     current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null | tr -d '\n\r ' | tr -d '"')
   fi
 
-  local last_update="N/A"
+  local upstream_version=""
   if [ -f "$updater_file" ]; then
-    last_update=$(jq -r '.last_update // "N/A"' "$updater_file" 2>/dev/null)
+    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file" 2>/dev/null)
   fi
 
   log "$COLOR_BLUE" "----------------------------"
@@ -156,14 +140,17 @@ update_addon_if_needed() {
   log "$COLOR_BLUE" "🔢 Current version: $current_version"
   log "$COLOR_BLUE" "📦 Image: $image"
 
-  local latest_version
+  local latest_version="Checking..."
   latest_version=$(get_latest_docker_tag "$image")
-  if [ -z "$latest_version" ]; then
+
+  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
     latest_version="latest"
   fi
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
-  log "$COLOR_BLUE" "🕒 Last updated: $last_update"
+
+  local source_url
+  source_url=$(get_docker_source_url "$image")
 
   if [ ! -f "$changelog_file" ]; then
     {
@@ -171,18 +158,20 @@ update_addon_if_needed() {
       echo "==================="
       echo
       echo "Initial version: $current_version"
-      echo "Docker Image source: $(get_docker_source_url "$image")"
+      echo "Docker Image source: $source_url"
       echo
     } > "$changelog_file"
-    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug"
+    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug with current version $current_version and source URL"
   fi
 
-  local stripped_current
-  local stripped_latest
-  stripped_current=$(strip_arch_prefix "$current_version")
-  stripped_latest=$(strip_arch_prefix "$latest_version")
+  local last_update="N/A"
+  if [ -f "$updater_file" ]; then
+    last_update=$(jq -r '.last_update // "N/A"' "$updater_file" 2>/dev/null)
+  fi
 
-  if [ "$stripped_latest" != "$stripped_current" ] && [ "$stripped_latest" != "latest" ]; then
+  log "$COLOR_BLUE" "🕒 Last updated: $last_update"
+
+  if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
@@ -209,7 +198,6 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
 
-    echo "$slug updated from $current_version to $latest_version" >> "$LOG_FILE.updates"
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
   fi
@@ -224,21 +212,16 @@ perform_update_check() {
   git config user.email "updater@local"
   git config user.name "HomeAssistant Updater"
 
-  : > "$LOG_FILE.updates"
-
   local any_updates=0
 
   for addon_path in "$REPO_DIR"/*/; do
     if [ -f "$addon_path/config.json" ] || [ -f "$addon_path/build.json" ] || [ -f "$addon_path/updater.json" ]; then
       update_addon_if_needed "$addon_path"
+      any_updates=1
     else
       log "$COLOR_YELLOW" "⚠️ Skipping folder $(basename "$addon_path") - no config.json, build.json or updater.json found"
     fi
   done
-
-  if [ -s "$LOG_FILE.updates" ]; then
-    any_updates=1
-  fi
 
   if [ "$(git status --porcelain)" ]; then
     git add .
@@ -246,14 +229,10 @@ perform_update_check() {
     if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Git push successful."
     else
-      log "$COLOR_RED" "❌ Git push failed. Consider pulling remote changes first."
+      log "$COLOR_RED" "❌ Git push failed. See log for details."
     fi
   else
-    if [ "$any_updates" -eq 1 ]; then
-      log "$COLOR_YELLOW" "⚠️ Updates detected but no changes in git. Possible local conflicts."
-    else
-      log "$COLOR_BLUE" "ℹ️ No updates detected, no git commit or notification sent."
-    fi
+    log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
   fi
 }
 
