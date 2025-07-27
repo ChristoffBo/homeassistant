@@ -124,3 +124,7 @@
 
 
 Based on Tachnitium DNS
+vlatest (27-07-2025 05:10)
+
+    Update to latest version from technitium/dns-server:latest
+
