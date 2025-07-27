@@ -1,23 +1,23 @@
 {
   "name": "2FAuth",
-  "version": "1.0.0",
+  "version": "1.2.3",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "url": "https://github.com/ChristoffBo/homeassistant",
-  "webui": "https://[HOST]:[PORT:8001]",
+  "webui": "http://[HOST]:[PORT:8001]",
   "startup": "services",
   "boot": "auto",
   "ports": {
     "8001/tcp": 8001
   },
   "ingress": false,
-  "privileged": [],
+  "arch": ["amd64", "armv7", "aarch64"],
   "map": [
     "config:rw",
     "ssl"
   ],
+  "privileged": [],
   "devices": [],
-  "arch": ["amd64", "armv7", "aarch64"],
   "schema": {
     "APP_URL": "str",
     "MAIL_ENCRYPTION": "bool",
