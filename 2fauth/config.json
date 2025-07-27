@@ -4,15 +4,15 @@
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "url": "https://github.com/ChristoffBo/homeassistant",
-  "image": "2fauth/2fauth:latest",
+  "image": "docker.io/2fauth/2fauth:latest",
   "webui": "http://[HOST]:[PORT:8001]",
   "startup": "services",
   "boot": "auto",
   "ports": {
     "8001/tcp": 8001
   },
-  "arch": ["amd64", "armv7", "aarch64"],
   "ingress": false,
+  "arch": ["amd64", "armv7", "aarch64"],
   "map": [
     "config:rw",
     "ssl"
