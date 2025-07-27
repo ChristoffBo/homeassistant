@@ -13,6 +13,7 @@ COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
 COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
+COLOR_PURPLE="\033[0;35m"
 
 log() {
   local color="$1"
@@ -25,11 +26,11 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
-# Load config
+# Load config options
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIME=$(jq -r '.check_time // "02:00"' "$CONFIG_PATH")
+CHECK_TIME=$(jq -r '.check_cron // "02:00"' "$CONFIG_PATH")
 TZ=$(jq -r '.TZ // "UTC"' "$CONFIG_PATH")
 
 CRON_HOUR="${CHECK_TIME%%:*}"
@@ -47,10 +48,20 @@ fi
 clone_or_update_repo() {
   if [ ! -d "$REPO_DIR/.git" ]; then
     log "$COLOR_BLUE" "📥 Cloning repository..."
-    git clone "$GIT_AUTH_REPO" "$REPO_DIR"
+    if git clone "$GIT_AUTH_REPO" "$REPO_DIR"; then
+      log "$COLOR_GREEN" "✅ Repository cloned successfully."
+    else
+      log "$COLOR_RED" "❌ Failed to clone repository!"
+      exit 1
+    fi
   else
-    log "$COLOR_BLUE" "🔄 Pulling latest changes..."
-    git -C "$REPO_DIR" pull
+    log "$COLOR_BLUE" "🔄 Pulling latest changes from GitHub..."
+    if git -C "$REPO_DIR" pull; then
+      log "$COLOR_GREEN" "✅ Git pull successful."
+    else
+      log "$COLOR_RED" "❌ Git pull failed!"
+      exit 1
+    fi
   fi
 }
 
@@ -99,15 +110,20 @@ update_addon_if_needed() {
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
 
+  if [ -z "$latest_version" ]; then
+    log "$COLOR_YELLOW" "⚠️ Could not fetch latest version for $(basename "$addon_dir")"
+    return
+  fi
+
   if [ "$current_version" != "$latest_version" ]; then
     log "$COLOR_YELLOW" "⬆️  Updating $(basename "$addon_dir") from $current_version to $latest_version"
     jq ".version = \"$latest_version\"" "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
     local changelog_file="$addon_dir/CHANGELOG.md"
     local change_date
-    change_date=$(date '+%d-%m-%Y')
-    local docker_url
+    change_date=$(TZ="$TZ" date '+%d-%m-%Y')
 
+    local docker_url
     if [[ "$image" == ghcr.io/* ]]; then
       docker_url="https://github.com/${image#ghcr.io/}"
     elif [[ "$image" == linuxserver/* ]]; then
@@ -126,13 +142,18 @@ update_addon_if_needed() {
     echo "{\"last_update\": \"$change_date\"}" > "$updater_file"
     UPDATED=true
   else
+    local last_update
+    last_update=$(jq -r '.last_update // "N/A"' "$updater_file")
     log "$COLOR_GREEN" "✅ $(basename "$addon_dir") is already up to date ($current_version)"
+    log "$COLOR_GREEN" "🕒 Last updated: $last_update"
   fi
 }
 
 perform_update_check() {
   UPDATED=false
   clone_or_update_repo
+
+  log "$COLOR_PURPLE" "🔍 Checking add-ons in $REPO_DIR..."
 
   for addon in "$REPO_DIR"/*/; do
     update_addon_if_needed "$addon"
@@ -145,6 +166,7 @@ perform_update_check() {
     git -C "$REPO_DIR" add .
     git -C "$REPO_DIR" commit -m "chore: update add-ons automatically"
     git -C "$REPO_DIR" push
+    log "$COLOR_GREEN" "✅ Updates pushed to GitHub."
   else
     log "$COLOR_GREEN" "🟢 No updates found."
   fi
@@ -178,5 +200,9 @@ EOF
 chmod +x "$CRON_SCRIPT"
 echo "$CRON_MINUTE $CRON_HOUR * * * root $CRON_SCRIPT >> /dev/stdout 2>&1" > "$CRON_FILE"
 
-log "$COLOR_BLUE" "⏳ Cron scheduled for $CHECK_TIME daily in timezone: $TZ"
+# Calculate next run time in a portable way
+NEXT_RUN_DATE=$(TZ="$TZ" date -d "+1 day" +%Y-%m-%d)
+NEXT_RUN="$NEXT_RUN_DATE $CHECK_TIME $TZ"
+
+log "$COLOR_BLUE" "⏳ Waiting for cron to trigger at $NEXT_RUN"
 crond -f -L /dev/stdout
