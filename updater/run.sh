@@ -4,6 +4,10 @@ set -e
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 LOG_FILE=/data/updater.log
+LAST_RUN_FILE=/data/last_run_date.txt
+
+# Clear log file at start
+> "$LOG_FILE"
 
 # Colored output
 COLOR_RESET="\033[0m"
@@ -18,10 +22,6 @@ log() {
   echo -e "${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
-clear_log() {
-  : > "$LOG_FILE" && echo "Log cleared at $(date)" >> "$LOG_FILE"
-}
-
 if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
@@ -32,7 +32,6 @@ GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
-# GitHub API auth header if token provided
 GITHUB_AUTH_HEADER=""
 if [ -n "$GITHUB_TOKEN" ]; then
   GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
@@ -50,8 +49,10 @@ clone_or_update_repo() {
     fi
     log "$COLOR_GREEN" "Repository cloned successfully."
   else
-    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
+    log "$COLOR_BLUE" "Repository found. Resetting local changes and pulling latest changes..."
     cd "$REPO_DIR"
+    git reset --hard HEAD
+    git clean -fd
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
@@ -211,16 +212,12 @@ update_addon_if_needed() {
 }
 
 perform_update_check() {
-  clear_log
-
   clone_or_update_repo
 
   for addon_path in "$REPO_DIR"/*/; do
     update_addon_if_needed "$addon_path"
   done
 }
-
-LAST_RUN_FILE="/data/last_run_date.txt"
 
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
 perform_update_check
@@ -235,37 +232,17 @@ while true; do
     LAST_RUN=$(cat "$LAST_RUN_FILE")
   fi
 
-  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+  log "$COLOR_BLUE" "Now: $NOW_TIME, Check time: $CHECK_TIME, Last run: $LAST_RUN, Today: $TODAY"
+
+  if { [[ "$NOW_TIME" > "$CHECK_TIME" ]] || [[ "$NOW_TIME" == "$CHECK_TIME" ]]; } && [ "$LAST_RUN" != "$TODAY" ]; then
     log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
     sleep 60  # prevent multiple runs in same minute
   else
-    CURRENT_SEC=$(date +%s)
-    # Parse CHECK_TIME into hours and minutes
-    CHECK_HOUR=${CHECK_TIME%%:*}
-    CHECK_MIN=${CHECK_TIME##*:}
-
-    # Get today's date in seconds since epoch
-    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
-    if [ "$TODAY_SEC" -eq 0 ]; then
-      # fallback if date -d unsupported
-      NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
-    else
-      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
-      if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
-        # Next check is tomorrow at CHECK_TIME
-        TOMORROW_SEC=$((TODAY_SEC + 86400))
-        NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
-      else
-        # Next check is today at CHECK_TIME
-        NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
-      fi
-    fi
-
-    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
+    log "$COLOR_BLUE" "Waiting for next scheduled check..."
   fi
 
-  sleep 21600
+  sleep 60
 done
