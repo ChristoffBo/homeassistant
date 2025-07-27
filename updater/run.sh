@@ -18,13 +18,14 @@ log() {
   echo -e "${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
+clear_log() {
+  : > "$LOG_FILE" && echo "Log cleared at $(date)" >> "$LOG_FILE"
+}
+
 if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
 fi
-
-# Clear log at script start
-> "$LOG_FILE"
 
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
@@ -51,8 +52,6 @@ clone_or_update_repo() {
   else
     log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
-    git reset --hard HEAD  # Discard local changes to prevent merge conflicts
-    git clean -fd         # Remove untracked files and directories
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
@@ -212,8 +211,7 @@ update_addon_if_needed() {
 }
 
 perform_update_check() {
-  # Clear log before each update check run
-  > "$LOG_FILE"
+  clear_log
 
   clone_or_update_repo
 
