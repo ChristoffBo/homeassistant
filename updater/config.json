@@ -17,6 +17,7 @@
     "github_username": "",
     "github_token": "",
     "check_cron": "0 3 * * *",
+    "timezone": "UTC",
     "gotify_url": "",
     "gotify_token": "",
     "mailrise_url": ""
@@ -26,6 +27,7 @@
     "github_username": "str",
     "github_token": "str",
     "check_cron": "str",
+    "timezone": "str",
     "gotify_url": "str?",
     "gotify_token": "str?",
     "mailrise_url": "str?"
