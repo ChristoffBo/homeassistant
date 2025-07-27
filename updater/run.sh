@@ -13,7 +13,6 @@ COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
 
-# Log function with timestamp & color
 log() {
   local color="$1"
   shift
@@ -22,39 +21,51 @@ log() {
   echo -e "[${timestamp}] ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
-# Read version from JSON file safely
 read_version() {
   local file="$1"
   if [[ -f "$file" ]]; then
-    local version
-    version=$(jq -r '.version // empty' "$file" 2>/dev/null | tr -d '\n\r')
-    echo "$version"
+    jq -r '.version // empty' "$file" 2>/dev/null | tr -d '\n\r'
   else
     echo ""
   fi
 }
 
-# Get Docker Hub tags for a repository (first page, max 100 tags)
+read_image() {
+  local addon_dir="$1"
+  local image=""
+  for file in config.json build.json updater.json; do
+    local filepath="$addon_dir/$file"
+    if [[ -f "$filepath" ]]; then
+      image=$(jq -r '.image // empty' "$filepath" 2>/dev/null)
+      # If image is JSON object (multiarch), pick amd64 or first
+      if echo "$image" | jq -e 'type=="object"' >/dev/null 2>&1; then
+        image=$(echo "$image" | jq -r '.amd64 // .[keys[0]]')
+      fi
+      if [[ -n "$image" && "$image" != "null" ]]; then
+        echo "$image"
+        return 0
+      fi
+    fi
+  done
+  echo ""
+}
+
 fetch_docker_tags() {
   local repo="$1"
   curl -s "https://hub.docker.com/v2/repositories/${repo}/tags?page_size=100" || echo ""
 }
 
-# Extract the best semver tag, ignoring "latest" or any non-version tags
 get_latest_tag() {
   local repo="$1"
   local tags_json="$2"
-  # Extract tag names excluding 'latest' and non-semver tags, sort descending semver, pick first
   echo "$tags_json" | jq -r '.results[].name' 2>/dev/null | \
     grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -rV | head -n1
 }
 
-# Compare semantic versions: returns 0 if $1 == $2, 1 if different
 version_equal() {
   [[ "$1" == "$2" ]]
 }
 
-# Update CHANGELOG.md or create it
 update_changelog() {
   local addon="$1"
   local old_ver="$2"
@@ -70,7 +81,6 @@ update_changelog() {
   log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $addon"
 }
 
-# Send notification if configured
 send_notification() {
   local message="$1"
   local type url token
@@ -103,19 +113,10 @@ send_notification() {
   esac
 }
 
-# Get architecture suffix for Docker tags (e.g., amd64-)
-strip_arch_prefix() {
-  local tag="$1"
-  echo "$tag" | sed -E 's/^(amd64|armv7|aarch64|armhf|arm64)-//'
-}
-
-# Main updater loop
 main() {
-  # Read cron schedule
   local cron_schedule
   cron_schedule=$(jq -r '.cron_schedule // empty' "$CONFIG_PATH")
-  
-  # Read GitHub info for commit & push
+
   local github_url github_user github_token
   github_url=$(jq -r '.github.url // empty' "$CONFIG_PATH" | sed 's/\.git$//')
   github_user=$(jq -r '.github.username // empty' "$CONFIG_PATH")
@@ -126,50 +127,44 @@ main() {
     push_enabled=0
   else
     push_enabled=1
-    # Setup git remote with token
     git -C "$REPO_DIR" remote set-url origin "https://${github_user}:${github_token}@${github_url#https://}"
   fi
 
-  # Load list of addons (folders in REPO_DIR)
   local addons=()
-  while IFS= read -r -d $'\0' addon_dir; do
-    addons+=("$(basename "$addon_dir")")
+  while IFS= read -r -d $'\0' dir; do
+    local basename
+    basename=$(basename "$dir")
+    # Skip hidden folders (like .git)
+    if [[ "$basename" == .* ]]; then
+      continue
+    fi
+    addons+=("$basename")
   done < <(find "$REPO_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
 
   local updated_any=0
   for addon in "${addons[@]}"; do
     log "$COLOR_PURPLE" "🧩 Addon: $addon"
 
-    # Find version: config.json -> build.json -> updater.json
-    local version=""
+    local version
+    version=""
     for file in config.json build.json updater.json; do
-      version=$(read_version "$REPO_DIR/$addon/$file")
-      if [[ -n "$version" ]]; then
+      local v
+      v=$(read_version "$REPO_DIR/$addon/$file")
+      if [[ -n "$v" ]]; then
+        version="$v"
         break
       fi
     done
 
-    # Read docker image from config.json (for simplicity)
     local image
-    image=$(jq -r '.image // empty' "$REPO_DIR/$addon/config.json" 2>/dev/null || echo "")
-    
-    # If image is an object (multiarch), pick architecture or default amd64
-    if echo "$image" | jq -e 'type=="object"' >/dev/null 2>&1; then
-      # Prefer amd64
-      image=$(echo "$image" | jq -r '.amd64 // empty')
-      if [[ -z "$image" ]]; then
-        # fallback to any available
-        image=$(echo "$image" | jq -r '.[keys[0]]')
-      fi
-    fi
-    
-    if [[ -z "$image" || "$image" == "null" ]]; then
+    image=$(read_image "$REPO_DIR/$addon")
+
+    if [[ -z "$image" ]]; then
       log "$COLOR_YELLOW" "⚠️ Add-on '$addon' has no Docker image defined, skipping."
       echo "----------------------------" | tee -a "$LOG_FILE"
       continue
     fi
 
-    # Split image into repo and tag
     local repo tag
     if [[ "$image" == *":"* ]]; then
       repo="${image%%:*}"
@@ -179,11 +174,9 @@ main() {
       tag="latest"
     fi
 
-    # Skip if current version is 'latest'
     if [[ "$version" == "latest" || "$tag" == "latest" ]]; then
       log "$COLOR_YELLOW" "⚠️ Add-on '$addon' uses 'latest' tag; will try to find latest specific version tag."
-      
-      # Fetch tags from Docker Hub
+
       local tags_json
       tags_json=$(fetch_docker_tags "$repo")
       if [[ -z "$tags_json" ]]; then
@@ -191,7 +184,7 @@ main() {
         echo "----------------------------" | tee -a "$LOG_FILE"
         continue
       fi
-      
+
       local latest_tag
       latest_tag=$(get_latest_tag "$repo" "$tags_json")
       if [[ -z "$latest_tag" ]]; then
@@ -199,7 +192,6 @@ main() {
         echo "----------------------------" | tee -a "$LOG_FILE"
         continue
       fi
-
       tag="$latest_tag"
     fi
 
@@ -214,7 +206,6 @@ main() {
 
     log "$COLOR_YELLOW" "⬆️  Updating $addon from $version to $tag"
 
-    # Update version in config.json or build.json or updater.json (in that order)
     for file in config.json build.json updater.json; do
       local filepath="$REPO_DIR/$addon/$file"
       if [[ -f "$filepath" ]]; then
@@ -223,9 +214,7 @@ main() {
       fi
     done
 
-    # Update changelog
     update_changelog "$addon" "$version" "$tag"
-
     updated_any=1
   done
 
@@ -238,13 +227,11 @@ main() {
     else
       log "$COLOR_YELLOW" "⚠️ Git push disabled due to missing credentials."
     fi
-
     send_notification "Addon versions updated."
   else
     log "$COLOR_BLUE" "ℹ️ No updates detected, no git commit or notification sent."
   fi
 
-  # Run cron scheduler if set
   if [[ -n "$cron_schedule" ]]; then
     log "$COLOR_BLUE" "⏰ Starting cron scheduler with schedule: $cron_schedule"
     echo "$cron_schedule /run.sh" | crontab -
