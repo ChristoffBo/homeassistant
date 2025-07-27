@@ -114,27 +114,32 @@ get_latest_docker_tag() {
   if [[ "$image" =~ ^linuxserver/ ]]; then
     # For linuxserver.io images
     local lsio_name=$(echo "$image" | cut -d/ -f2)
-    local tags=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags" | jq -r '.tags[] | select(.name != "latest") | .name' | sort -Vr)
+    local tags=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags" | 
+                jq -r '.tags[] | select(.name != "latest") | .name' | 
+                grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9]+)?$' | sort -Vr)
     echo "$tags" | head -n1
   elif [[ "$image" =~ ^ghcr.io/ ]]; then
     # For GitHub Container Registry
     local org_repo=$(echo "$image" | cut -d/ -f2-3)
     local package=$(echo "$image" | cut -d/ -f4)
     local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
-    curl -s -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
-      jq -r '.tags[] | select(. != "latest")' | sort -Vr | head -n1
+    curl -s -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | 
+      jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$")))' | 
+      sort -Vr | head -n1
   else
     # For standard Docker Hub images
     local namespace=$(echo "$image" | cut -d/ -f1)
     local repo=$(echo "$image" | cut -d/ -f2)
     if [ "$namespace" = "$repo" ]; then
       # Official image (library/)
-      curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/" | \
-        jq -r '.results[] | select(.name != "latest") | .name' | sort -Vr | head -n1
+      curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/" | 
+        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
+        sort -Vr | head -n1
     else
       # User/org image
-      curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/" | \
-        jq -r '.results[] | select(.name != "latest") | .name' | sort -Vr | head -n1
+      curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/" | 
+        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
+        sort -Vr | head -n1
     fi
   fi
 }
