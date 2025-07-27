@@ -60,9 +60,19 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  # (your logic to fetch latest Docker tag from linuxserver.io or DockerHub)
-  # Example placeholder:
+  # Placeholder: Implement real logic to fetch latest tag from linuxserver.io, GitHub, or DockerHub
   echo "latest"
+}
+
+get_docker_source_url() {
+  local image="$1"
+  if [[ "$image" =~ ^linuxserver/ ]]; then
+    echo "https://www.linuxserver.io/dockerhub/$image"
+  elif [[ "$image" =~ ^ghcr.io/ ]]; then
+    echo "https://github.com/orgs/linuxserver/packages/container/$image"
+  else
+    echo "https://hub.docker.com/r/$image"
+  fi
 }
 
 update_addon_if_needed() {
@@ -123,13 +133,21 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
-  # Create CHANGELOG.md if missing
+  # Compose changelog URL for the image source
+  local source_url
+  source_url=$(get_docker_source_url "$image")
+
+  # Create CHANGELOG.md if missing, include current tag and source URL
   if [ ! -f "$changelog_file" ]; then
-    if echo -e "CHANGELOG for $slug\n===================" > "$changelog_file"; then
-      log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug"
-    else
-      log "$COLOR_RED" "❌ Failed to create CHANGELOG.md for $slug"
-    fi
+    {
+      echo "CHANGELOG for $slug"
+      echo "==================="
+      echo
+      echo "Initial version: $current_version"
+      echo "Docker Image source: $source_url"
+      echo
+    } > "$changelog_file"
+    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug with current tag $current_version and source URL"
   fi
 
   local last_update="N/A"
