@@ -57,16 +57,15 @@ generate_changelog() {
   local addon="$1"
   local image="$2"
   local latest_tag="$3"
-  local changelog_file="$addon/CHANGELOG.txt"
+  local changelog_file="$addon/CHANGELOG.md"
 
-  echo -e "v$latest_tag ($(date +'%d-%m-%Y'))\n" \
-    "Update to latest version from $image (changelog: https://github.com/${image/docker-${addon##*/}}/releases)\n" >> "$changelog_file"
+  echo -e "v$latest_tag ($(date +'%d-%m-%Y'))\n\n    Update to latest version from $image\n" >> "$changelog_file"
 }
 
 update_updater_json() {
   local addon="$1"
-  local updated_date=$(date +'%d-%m-%Y')
-  echo "{\"last_update\": \"$updated_date\"}" > "$addon/updater.json"
+  local updated_date=$(date +'%d-%m-%Y %H:%M')
+  jq -n --arg dt "$updated_date" '{last_update: $dt}' > "$addon/updater.json"
 }
 
 update_addons() {
