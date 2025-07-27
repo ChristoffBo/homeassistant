@@ -1,6 +1,6 @@
 {
   "name": "Gotify",
-  "version": "2.6.0",
+  "version": "2",
   "slug": "gotify",
   "description": "A simple server for sending and receiving messages",
   "startup": "services",
@@ -15,14 +15,14 @@
   "arch": [
     "aarch64",
     "amd64"
-   ],
+  ],
   "ports": {
     "80/tcp": 8070,
     "80/udp": 8070,
     "8090/tcp": 8090
   },
   "map": [
-     "ssl"
+    "ssl"
   ],
   "options": {},
   "schema": {}
