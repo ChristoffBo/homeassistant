@@ -103,20 +103,16 @@ get_latest_docker_tag() {
   # Strip tag if present (e.g. image:tag -> image)
   local base_image="${image%%:*}"
 
-  # Query Docker Hub API for tags
-  # Extract repo/user and repo name
-  local repo="${base_image#*/}"
-
-  # If no slash (official image), use library
+  # Adjust for official images without slash
   if [[ "$base_image" != *"/"* ]]; then
     base_image="library/$base_image"
   fi
 
-  # Fetch tags JSON
+  # Fetch tags JSON from Docker Hub
   local tags_json
   tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/$base_image/tags?page_size=100")
 
-  # Extract tags sorted by last_updated (descending)
+  # Extract tags sorted by last_updated descending, exclude 'latest'
   local latest_tag
   latest_tag=$(echo "$tags_json" | jq -r '[.results[] | select(.name != "latest")] | sort_by(.last_updated) | reverse | .[0].name')
 
@@ -224,15 +220,25 @@ update_addon_if_needed() {
     # Update config.json version cleanly
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
-    # Update updater.json
+    # --- Fix updater.json ---
     if [ -f "$updater_file" ] && jq -e . "$updater_file" >/dev/null 2>&1; then
-      jq --arg v "$latest_version" --arg dt "$timestamp" \
-         '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp"
+      local updater_image
+      updater_image=$(jq -r '.image' "$updater_file")
+
+      if [[ "$updater_image" =~ ^\{.*\}$ ]]; then
+        local fixed_image
+        fixed_image=$(echo "$updater_image" | jq -c .)
+      else
+        fixed_image="$updater_image"
+      fi
+
+      jq --arg v "$latest_version" --arg dt "$timestamp" --arg img "$fixed_image" \
+         '.upstream_version = $v | .last_update = $dt | .image = $img' "$updater_file" > "$updater_file.tmp"
+      mv "$updater_file.tmp" "$updater_file"
     else
-      jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$timestamp" \
-         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
+      jq -n --arg slug "$slug" --arg img "$image" --arg v "$latest_version" --arg dt "$timestamp" \
+         '{slug: $slug, image: $img, upstream_version: $v, last_update: $dt}' > "$updater_file"
     fi
-    mv "$updater_file.tmp" "$updater_file"
 
     local NEW_ENTRY="\
 v$latest_version ($timestamp)
@@ -240,7 +246,7 @@ v$latest_version ($timestamp)
 
 "
 
-    # Prepend the new entry after header lines (keep header first 2 lines)
+    # Prepend new changelog entry
     {
       head -n 2 "$changelog_file"
       echo "$NEW_ENTRY"
