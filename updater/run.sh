@@ -47,8 +47,15 @@ clone_or_update_repo() {
   else
     log "$COLOR_BLUE" "Repository found. Resetting local changes and pulling latest changes..."
     cd "$REPO_DIR"
+
+    log "$COLOR_BLUE" "Current directory: $(pwd)"
+    log "$COLOR_BLUE" "Listing files:"
+    ls -la
+
+    # Reset any local changes and clean untracked files to allow pull
     git reset --hard
     git clean -fd
+
     git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
