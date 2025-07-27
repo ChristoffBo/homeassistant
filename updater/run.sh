@@ -24,11 +24,17 @@ notify() {
   local message="$1"
   local title="${2:-Home Assistant Add-on Updater}"
 
-  local gotify_url=$(jq -r '.gotify.url // empty' "$CONFIG_PATH")
-  local gotify_token=$(jq -r '.gotify.token // empty' "$CONFIG_PATH")
-  local mailrise_url=$(jq -r '.mailrise.url // empty' "$CONFIG_PATH")
-  local mailrise_token=$(jq -r '.mailrise.token // empty' "$CONFIG_PATH")
-  local apprise_url=$(jq -r '.apprise.url // empty' "$CONFIG_PATH")
+  local gotify_url
+  local gotify_token
+  local mailrise_url
+  local mailrise_token
+  local apprise_url
+
+  gotify_url=$(jq -r '.gotify.url // empty' "$CONFIG_PATH")
+  gotify_token=$(jq -r '.gotify.token // empty' "$CONFIG_PATH")
+  mailrise_url=$(jq -r '.mailrise.url // empty' "$CONFIG_PATH")
+  mailrise_token=$(jq -r '.mailrise.token // empty' "$CONFIG_PATH")
+  apprise_url=$(jq -r '.apprise.url // empty' "$CONFIG_PATH")
 
   if [ -n "$gotify_url" ] && [ -n "$gotify_token" ]; then
     curl -s -X POST "$gotify_url/message?token=$gotify_token" \
@@ -94,44 +100,31 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  local latest_version=""
-  local image_no_tag="${image%%:*}"  # Strip tag if present
+  # Strip tag if present (e.g. image:tag -> image)
+  local base_image="${image%%:*}"
 
-  if [[ "$image" == ghcr.io/* ]]; then
-    local owner_repo
-    owner_repo=$(echo "$image_no_tag" | cut -d'/' -f2-3)
-    # Quiet check for latest GitHub release
-    if [ -n "$GITHUB_TOKEN" ]; then
-      latest_version=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-        "https://api.github.com/repos/$owner_repo/releases/latest" | jq -r '.tag_name // empty')
-    else
-      latest_version=$(curl -s \
-        "https://api.github.com/repos/$owner_repo/releases/latest" | jq -r '.tag_name // empty')
-    fi
+  # Query Docker Hub API for tags
+  # Extract repo/user and repo name
+  local repo="${base_image#*/}"
 
-  elif [[ "$image" =~ ^linuxserver/ ]]; then
-    local repo
-    repo=$(echo "$image_no_tag" | cut -d'/' -f2)
-    if [ -n "$GITHUB_TOKEN" ]; then
-      latest_version=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-        "https://api.github.com/repos/linuxserver/docker-$repo/releases/latest" | jq -r '.tag_name // empty')
-    else
-      latest_version=$(curl -s \
-        "https://api.github.com/repos/linuxserver/docker-$repo/releases/latest" | jq -r '.tag_name // empty')
-    fi
+  # If no slash (official image), use library
+  if [[ "$base_image" != *"/"* ]]; then
+    base_image="library/$base_image"
+  fi
 
+  # Fetch tags JSON
+  local tags_json
+  tags_json=$(curl -s "https://registry.hub.docker.com/v2/repositories/$base_image/tags?page_size=100")
+
+  # Extract tags sorted by last_updated (descending)
+  local latest_tag
+  latest_tag=$(echo "$tags_json" | jq -r '[.results[] | select(.name != "latest")] | sort_by(.last_updated) | reverse | .[0].name')
+
+  if [ -z "$latest_tag" ] || [ "$latest_tag" == "null" ]; then
+    echo "latest"
   else
-    # Docker Hub API expects URL encoded image name
-    local encoded_image=${image_no_tag//\//%2F}
-    latest_version=$(curl -s "https://hub.docker.com/v2/repositories/$encoded_image/tags/?page_size=10&page=1&ordering=last_updated" \
-      | jq -r '.results[] | select(.name != "latest") | .name' | head -n1)
+    echo "$latest_tag"
   fi
-
-  if [ -z "$latest_version" ]; then
-    latest_version="latest"
-  fi
-
-  echo "$latest_version"
 }
 
 get_docker_source_url() {
@@ -164,9 +157,7 @@ update_addon_if_needed() {
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from' "$build_file" 2>/dev/null)
   fi
 
-  if [ -z "$image" ] && [ -f "$config_file" ]; then
-    image=$(jq -r '.image // empty' "$config_file")
-  fi
+  [ -z "$image" ] && [ -f "$config_file" ] && image=$(jq -r '.image // empty' "$config_file")
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
     log "$COLOR_YELLOW" "⚠️ Add-on '$(basename "$addon_path")' has no Docker image defined, skipping."
@@ -179,13 +170,17 @@ update_addon_if_needed() {
     slug=$(basename "$addon_path")
   fi
 
-  # Clean current_version string from config.json
-  local current_version=""
-  if [ -f "$config_file" ]; then
-    current_version=$(jq -r '.version // empty' "$config_file" | tr -d '\n\r ')
-    # Remove ANSI escape codes and bracketed info from version
-    current_version=$(echo "$current_version" | sed -r 's/\x1B\[[0-9;]*[mK]//g' | sed 's/\[[^]]*\]//g')
-  fi
+  # --- CLEAN current version from config.json ---
+  local raw_version
+  local current_version
+  raw_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null)
+
+  # Remove ANSI escape codes
+  current_version=$(echo "$raw_version" | sed -r 's/\x1B\[[0-9;]*[mK]//g')
+  # Remove any [..] brackets
+  current_version=$(echo "$current_version" | sed 's/\[[^]]*\]//g')
+  # Remove whitespace
+  current_version=$(echo "$current_version" | tr -d '[:space:]')
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "🧩 Addon: $slug"
@@ -194,9 +189,7 @@ update_addon_if_needed() {
 
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    latest_version="latest"
-  fi
+  [ -z "$latest_version" ] && latest_version="latest"
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
@@ -228,27 +221,29 @@ update_addon_if_needed() {
   if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
-    # Update version in config.json cleanly
+    # Update config.json version cleanly
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
-    # Update or create updater.json
+    # Update updater.json
     if [ -f "$updater_file" ] && jq -e . "$updater_file" >/dev/null 2>&1; then
       jq --arg v "$latest_version" --arg dt "$timestamp" \
-        '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp"
+         '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp"
     else
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$timestamp" \
-        '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
+         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
     fi
     mv "$updater_file.tmp" "$updater_file"
 
-    # Prepend changelog entry
-    local new_entry="v$latest_version ($timestamp)
+    local NEW_ENTRY="\
+v$latest_version ($timestamp)
     Update from version $current_version to $latest_version (image: $image)
 
 "
+
+    # Prepend the new entry after header lines (keep header first 2 lines)
     {
       head -n 2 "$changelog_file"
-      echo "$new_entry"
+      echo "$NEW_ENTRY"
       tail -n +3 "$changelog_file"
     } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
