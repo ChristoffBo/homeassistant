@@ -21,39 +21,6 @@ log() {
   echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
-# Notification functions
-notify_gotify() {
-  local message="$1"
-  if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-    curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "{\"message\":\"$message\", \"title\":\"Home Assistant Addon Updater\", \"priority\":5}" >/dev/null 2>&1
-  fi
-}
-
-notify_mailrise() {
-  local message="$1"
-  if [ -n "$MAILRISE_URL" ]; then
-    curl -s -X POST "$MAILRISE_URL" \
-      -H "Content-Type: application/json" \
-      -d "{\"message\":\"$message\"}" >/dev/null 2>&1
-  fi
-}
-
-notify_apprise() {
-  local message="$1"
-  if command -v apprise >/dev/null 2>&1 && [ -n "$APPRISE_URL" ]; then
-    apprise -u "$APPRISE_URL" -t "Home Assistant Addon Updater" -b "$message" >/dev/null 2>&1
-  fi
-}
-
-send_notifications() {
-  local msg="$1"
-  notify_gotify "$msg"
-  notify_mailrise "$msg"
-  notify_apprise "$msg"
-}
-
 if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
@@ -64,12 +31,6 @@ GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_CRON=$(jq -r '.check_cron' "$CONFIG_PATH")
 TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
-
-# Notification config
-GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_PATH")
-GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG_PATH")
-MAILRISE_URL=$(jq -r '.mailrise_url // empty' "$CONFIG_PATH")
-APPRISE_URL=$(jq -r '.apprise_url // empty' "$CONFIG_PATH")
 
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
@@ -82,10 +43,8 @@ clone_or_update_repo() {
     log "$COLOR_PURPLE" "📂 Cloning repository..."
     if git clone "$GIT_AUTH_REPO" "$REPO_DIR" >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Repository cloned successfully."
-      send_notifications "Repository cloned successfully."
     else
       log "$COLOR_RED" "❌ Failed to clone repository."
-      send_notifications "Failed to clone GitHub repository."
       exit 1
     fi
   else
@@ -93,17 +52,15 @@ clone_or_update_repo() {
     cd "$REPO_DIR"
     if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Git pull successful."
-      send_notifications "Git pull successful."
     else
       log "$COLOR_RED" "❌ Git pull failed."
-      send_notifications "Git pull failed."
     fi
   fi
 }
 
 get_latest_docker_tag() {
   local image="$1"
-  # Placeholder for real logic - returns "latest"
+  # Placeholder: Implement real logic to fetch latest tag from linuxserver.io, GitHub, or DockerHub
   echo "latest"
 }
 
@@ -176,9 +133,11 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
+  # Compose changelog URL for the image source
   local source_url
   source_url=$(get_docker_source_url "$image")
 
+  # Create CHANGELOG.md if missing, include current tag and source URL
   if [ ! -f "$changelog_file" ]; then
     {
       echo "CHANGELOG for $slug"
@@ -225,8 +184,6 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
 
-    send_notifications "⬆️ Addon *$slug* updated from $current_version to $latest_version."
-
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
   fi
@@ -257,10 +214,8 @@ perform_update_check() {
     git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1 || true
     if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Git push successful."
-      send_notifications "✅ Git push successful for addon updates."
     else
       log "$COLOR_RED" "❌ Git push failed."
-      send_notifications "❌ Git push failed for addon updates."
     fi
   else
     log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
