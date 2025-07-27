@@ -12,3 +12,8 @@ vlatest"
   "amd64": "gotify/server:latest"
 }
 
+v2 (27-07-2025 05:35)
+
+    Update from latest"
+} to 2 for image gotify/server:latest
+

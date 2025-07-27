@@ -16,3 +16,12 @@ vlatest"
   "aarch64": "yoryan/mailrise:latest"
 }
 
+vlatest (27-07-2025 05:35)
+
+    Update from latest"
+} to latest for image yoryan/mailrise:latest
+
+v1.3.0 (27-07-2025 05:39)
+
+    Updated from latest to 1.3.0
+

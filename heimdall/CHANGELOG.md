@@ -418,3 +418,8 @@ vamd64-latest"
   "amd64": "lscr.io/linuxserver/heimdall:amd64-latest"
 }
 
+v2.7.3 (27-07-2025 05:35)
+
+    Update from amd64-latest"
+} to 2.7.3 for image lscr.io/linuxserver/heimdall:amd64-latest
+

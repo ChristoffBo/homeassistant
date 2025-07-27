@@ -1,6 +1,6 @@
 {
   "slug": "zoraxy",
   "image": "{\n  \"aarch64\": \"zoraxydocker/zoraxy:latest\",\n  \"amd64\": \"zoraxydocker/zoraxy:latest\"\n}",
-  "upstream_version": "latest\"\n}",
-  "last_update": "27-07-2025 05:32"
+  "upstream_version": "3.2.5r2",
+  "last_update": "27-07-2025 05:35"
 }

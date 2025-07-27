@@ -27,3 +27,8 @@ vlatest"
   "amd64": "zoraxydocker/zoraxy:latest"
 }
 
+v3.2.5r2 (27-07-2025 05:35)
+
+    Update from latest"
+} to 3.2.5r2 for image zoraxydocker/zoraxy:latest
+

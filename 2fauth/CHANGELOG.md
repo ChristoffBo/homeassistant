@@ -12,3 +12,7 @@ vlatest (27-07-2025 05:32)
 
     Update to latest version from 2fauth/2fauth
 
+v5.6.0 (27-07-2025 05:38)
+
+    Updated from latest to 5.6.0
+

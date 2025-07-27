@@ -138,3 +138,12 @@ vlatest"
   "armv7": "technitium/dns-server:latest"
 }
 
+vlatest (27-07-2025 05:35)
+
+    Update from latest"
+} to latest for image technitium/dns-server:latest
+
+v13.6.0 (27-07-2025 05:39)
+
+    Updated from latest to 13.6.0
+

@@ -1,6 +1,6 @@
 {
   "slug": "gotify",
   "image": "{\n  \"aarch64\": \"gotify/server:latest\",\n  \"amd64\": \"gotify/server:latest\"\n}",
-  "upstream_version": "latest\"\n}",
-  "last_update": "27-07-2025 05:32"
+  "upstream_version": "2",
+  "last_update": "27-07-2025 05:35"
 }
