@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
-export HOME=/root
-
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
+LOG_FILE=/data/updater.log
 
 # Colored output
 COLOR_RESET="\033[0m"
@@ -12,12 +11,13 @@ COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
 COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
-COLOR_DARK_RED="\033[0;31m" # Dark red (same as red here, adjust if terminal supports)
+COLOR_DARK_RED="\033[0;31m"  # same as red, customize if needed
 
 log() {
   local color="$1"
   shift
   echo -e "${color}$*${COLOR_RESET}"
+  echo "$*"
 }
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -50,9 +50,11 @@ clone_or_update_repo() {
   else
     log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
-    # Stash local changes before pulling
-    git stash push -m "Auto stash before pull"
-    git pull
+    git stash push -m "Auto stash before pull" || true
+    git config pull.rebase false
+    if ! git pull; then
+      log "$COLOR_DARK_RED" "ERROR: Git pull failed."
+    fi
     git stash pop || true
     log "$COLOR_GREEN" "Repository updated."
   fi
@@ -131,29 +133,25 @@ update_addon_if_needed() {
   fi
 
   local image=""
-  local slug=""
-
   if [ -f "$build_file" ]; then
     local arch=$(uname -m)
     if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
-    slug=$(jq -r '.slug // empty' "$build_file")
+  fi
+
+  if [ -z "$image" ] && [ -f "$config_file" ]; then
+    image=$(jq -r '.image // empty' "$config_file")
   fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
-    if [ -f "$config_file" ]; then
-      image=$(jq -r '.image // empty' "$config_file")
-      slug=$(jq -r '.slug // empty' "$config_file")
-    fi
+    log "$COLOR_YELLOW" "Addon '$(basename "$addon_path")' has no Docker image defined, skipping."
+    return
   fi
 
+  local slug
+  slug=$(jq -r '.slug // empty' "$config_file")
   if [ -z "$slug" ] || [ "$slug" == "null" ]; then
     slug=$(basename "$addon_path")
-  fi
-
-  if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "Addon '$slug' has no Docker image defined, skipping."
-    return
   fi
 
   local upstream_version=""
@@ -161,14 +159,9 @@ update_addon_if_needed() {
     upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
   fi
 
-  local current_version=""
-  if [ -f "$config_file" ]; then
-    current_version=$(jq -r '.version // empty' "$config_file")
-  fi
-
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "Addon: $slug"
-  log "$COLOR_BLUE" "Current version: $current_version"
+  log "$COLOR_BLUE" "Current Docker version: $upstream_version"
   log "$COLOR_BLUE" "Image: $image"
 
   local latest_version
@@ -176,7 +169,7 @@ update_addon_if_needed() {
 
   if [ -z "$latest_version" ]; then
     log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest version:  WARNING: Could not fetch"
+    log "$COLOR_BLUE" "Latest Docker version:  WARNING: Could not fetch"
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
@@ -195,28 +188,26 @@ update_addon_if_needed() {
 
     mv "$updater_file.tmp" "$updater_file"
 
-    # Update config.json version
+    # Update config.json version field
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-
     if [ -f "$config_file.tmp" ]; then
       mv "$config_file.tmp" "$config_file"
     fi
 
-    # Create or append CHANGELOG.md
+    # Create or append changelog
     if [ ! -f "$changelog_file" ]; then
-      echo "Created new CHANGELOG.md for $slug"
       touch "$changelog_file"
+      log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
     fi
 
     {
       echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
       echo ""
-      echo "    Update from $upstream_version to $latest_version for image $image"
+      echo "    Update to latest version from $image"
       echo ""
     } >> "$changelog_file"
 
     log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
-    log "$COLOR_GREEN" "updater.json updated for $slug (was: $upstream_version, now: $latest_version)"
   else
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
   fi
@@ -234,33 +225,35 @@ perform_update_check() {
 
 LAST_RUN_FILE="/data/last_run_date.txt"
 
-log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
-perform_update_check
+# Clear log before each run
+> "$LOG_FILE"
+
+log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')" | tee -a "$LOG_FILE"
+
+perform_update_check | tee -a "$LOG_FILE"
+
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
 
 while true; do
   NOW_TIME=$(date +%H:%M)
   TODAY=$(date +%Y-%m-%d)
   LAST_RUN=""
-
   if [ -f "$LAST_RUN_FILE" ]; then
     LAST_RUN=$(cat "$LAST_RUN_FILE")
   fi
 
-  if [ "$NOW_TIME" = "$CHECK_TIME" ]; then
-    if [ "$LAST_RUN" != "$TODAY" ]; then
-      log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
-      perform_update_check
-      echo "$TODAY" > "$LAST_RUN_FILE"
-      log "$COLOR_GREEN" "✅ Scheduled update checks complete."
-      sleep 60  # prevent multiple runs in same minute
-    fi
+  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
+    log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY" | tee -a "$LOG_FILE"
+    perform_update_check | tee -a "$LOG_FILE"
+    echo "$TODAY" > "$LAST_RUN_FILE"
+    log "$COLOR_GREEN" "✅ Scheduled update checks complete." | tee -a "$LOG_FILE"
+    sleep 60  # prevent multiple runs in same minute
   else
-    # Next check scheduling info
     CURRENT_SEC=$(date +%s)
     CHECK_HOUR=${CHECK_TIME%%:*}
     CHECK_MIN=${CHECK_TIME##*:}
     TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+
     if [ "$TODAY_SEC" -eq 0 ]; then
       NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
@@ -273,7 +266,7 @@ while true; do
       fi
     fi
 
-    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
+    log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME" | tee -a "$LOG_FILE"
   fi
 
   sleep 60
