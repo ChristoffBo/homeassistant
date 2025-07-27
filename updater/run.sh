@@ -108,42 +108,64 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  log "$COLOR_CYAN" "🔍 Checking latest version for $image"
+  local log_prefix="$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${COLOR_CYAN}🔍 Checking latest version for $image${COLOR_RESET}"
+  echo "$log_prefix" >> "$LOG_FILE"
   
   # Remove :latest or other tags if present
   local image_name=$(echo "$image" | cut -d: -f1)
+  local latest_version=""
   
   # Try different methods based on image source
   if [[ "$image_name" =~ ^linuxserver/ ]] || [[ "$image_name" =~ ^lscr.io/linuxserver/ ]]; then
     # For linuxserver.io images
     local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
-    local tags=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags" | 
-                jq -r '.tags[] | select(.name != "latest") | .name' | 
-                grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9]+)?$' | sort -Vr)
-    echo "$tags" | head -n1
+    local api_response=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags")
+    if [ -n "$api_response" ]; then
+      latest_version=$(echo "$api_response" | 
+                      jq -r '.tags[] | select(.name != "latest") | .name' | 
+                      grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9]+)?$' | 
+                      sort -Vr | head -n1)
+    fi
   elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
     # For GitHub Container Registry
     local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
     local package=$(echo "$image_name" | cut -d/ -f4)
     local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
-    curl -s -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | 
-      jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$")))' | 
-      sort -Vr | head -n1
+    if [ -n "$token" ]; then
+      latest_version=$(curl -s -H "Authorization: Bearer $token" \
+                         "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
+                         jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$")))' | \
+                         sort -Vr | head -n1)
+    fi
   else
     # For standard Docker Hub images
     local namespace=$(echo "$image_name" | cut -d/ -f1)
     local repo=$(echo "$image_name" | cut -d/ -f2)
     if [ "$namespace" = "$repo" ]; then
       # Official image (library/)
-      curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/" | 
-        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
-        sort -Vr | head -n1
+      local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/")
+      if [ -n "$api_response" ]; then
+        latest_version=$(echo "$api_response" | 
+                        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
+                        sort -Vr | head -n1)
+      fi
     else
       # User/org image
-      curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/" | 
-        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
-        sort -Vr | head -n1
+      local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/")
+      if [ -n "$api_response" ]; then
+        latest_version=$(echo "$api_response" | 
+                        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
+                        sort -Vr | head -n1)
+      fi
     fi
+  fi
+
+  # If we couldn't determine version, log the error
+  if [ -z "$latest_version" ]; then
+    echo "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${COLOR_RED}❌ Failed to get version for $image${COLOR_RESET}" >> "$LOG_FILE"
+    echo "latest"
+  else
+    echo "$latest_version"
   fi
 }
 
@@ -218,10 +240,11 @@ update_addon_if_needed() {
   log "$COLOR_BLUE" "🔢 Current version: $current_version"
   log "$COLOR_BLUE" "📦 Image: $image"
 
+  # Get latest version without logging (we already logged the check)
   local latest_version
-  latest_version=$(get_latest_docker_tag "$image")
+  latest_version=$(get_latest_docker_tag "$image" 2>/dev/null)
 
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
+  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ] || [ "$latest_version" == "latest" ]; then
     log "$COLOR_YELLOW" "⚠️ Could not determine latest version for $image, skipping update."
     log "$COLOR_BLUE" "----------------------------"
     return
