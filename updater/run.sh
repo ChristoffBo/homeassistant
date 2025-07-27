@@ -3,8 +3,6 @@ set -e
 
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
-LAST_RUN_FILE="/data/last_run_date.txt"
-LOG_FILE="/data/updater.log"
 
 # Colored output
 COLOR_RESET="\033[0m"
@@ -18,7 +16,6 @@ log() {
   local color="$1"
   shift
   echo -e "${color}$*${COLOR_RESET}"
-  echo -e "$*"
 }
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -31,7 +28,6 @@ GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
-# GitHub API auth header if token provided
 GITHUB_AUTH_HEADER=""
 if [ -n "$GITHUB_TOKEN" ]; then
   GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
@@ -49,13 +45,26 @@ clone_or_update_repo() {
     fi
     log "$COLOR_GREEN" "Repository cloned successfully."
   else
-    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
-    # Use merge as default, set config to avoid error (optional)
-    git config pull.rebase false
-    git pull
+    # Pull latest changes with rebase to avoid conflicts
+    git pull --rebase || {
+      log "$COLOR_RED" "Git pull failed, attempting to continue."
+    }
+    cd - >/dev/null || true
     log "$COLOR_GREEN" "Repository updated."
   fi
+}
+
+ensure_changelog_exists() {
+  for addon_path in "$REPO_DIR"/*/; do
+    changelog_file="$addon_path/CHANGELOG.md"
+    slug=$(basename "$addon_path")
+    if [ ! -f "$changelog_file" ]; then
+      echo "# Changelog for $slug" > "$changelog_file"
+      echo "" >> "$changelog_file"
+      log "$COLOR_YELLOW" "Created missing CHANGELOG.md for $slug"
+    fi
+  done
 }
 
 fetch_latest_dockerhub_tag() {
@@ -131,44 +140,48 @@ update_addon_if_needed() {
   fi
 
   local image=""
+  local current_version=""
+  local latest_version=""
+  local slug
+  slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null || echo "")
+  if [ -z "$slug" ]; then
+    slug=$(basename "$addon_path")
+  fi
 
   if [ -f "$build_file" ]; then
     local arch=$(uname -m)
     if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
-    image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
+    image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file" 2>/dev/null || echo "")
   fi
 
   if [ -z "$image" ] && [ -f "$config_file" ]; then
-    image=$(jq -r '.image // empty' "$config_file")
+    image=$(jq -r '.image // empty' "$config_file" 2>/dev/null || echo "")
   fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "Addon '$(basename "$addon_path")' has no Docker image defined, skipping."
+    log "$COLOR_YELLOW" "Add-on '$slug' has no Docker image defined, skipping."
     return
   fi
 
-  local slug
-  slug=$(jq -r '.slug // empty' "$config_file")
-  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
-    slug=$(basename "$addon_path")
+  if [ -f "$updater_file" ]; then
+    current_version=$(jq -r '.upstream_version // empty' "$updater_file" 2>/dev/null || echo "")
   fi
 
-  local upstream_version=""
-  if [ -f "$updater_file" ]; then
-    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
+  # Fallback to config.json version if updater.json missing or empty
+  if [ -z "$current_version" ] && [ -f "$config_file" ]; then
+    current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null || echo "")
   fi
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "Addon: $slug"
-  log "$COLOR_BLUE" "Current version: $upstream_version"
+  log "$COLOR_BLUE" "Current version: $current_version"
   log "$COLOR_BLUE" "Image: $image"
 
-  local latest_version
   latest_version=$(get_latest_docker_tag "$image")
 
   if [ -z "$latest_version" ]; then
-    log "$COLOR_DARK_RED" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest version: WARNING: Could not fetch"
+    log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
+    log "$COLOR_BLUE" "Latest version available: WARNING: Could not fetch"
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
@@ -176,8 +189,8 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "Latest version available: $latest_version"
 
-  if [ "$latest_version" != "$upstream_version" ]; then
-    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$upstream_version' to '$latest_version'"
+  if [ "$latest_version" != "$current_version" ]; then
+    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$current_version' to '$latest_version'"
 
     # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
@@ -186,26 +199,32 @@ update_addon_if_needed() {
         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
     mv "$updater_file.tmp" "$updater_file"
 
-    # Update config.json version
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-    if [ -f "$config_file.tmp" ]; then
-      mv "$config_file.tmp" "$config_file"
+    # Update config.json version field
+    if [ -f "$config_file" ]; then
+      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
+      if [ -f "$config_file.tmp" ]; then
+        mv "$config_file.tmp" "$config_file"
+      fi
     fi
 
-    # Create or append CHANGELOG.md
+    # Ensure changelog exists
     if [ ! -f "$changelog_file" ]; then
-      echo "Created new CHANGELOG.md for $slug"
-      touch "$changelog_file"
+      echo "# Changelog for $slug" > "$changelog_file"
+      echo "" >> "$changelog_file"
+      log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
     fi
+
+    # Append changelog entry
     {
       echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
       echo ""
-      echo "    Update from $upstream_version to $latest_version"
+      echo "    Update from version $current_version to $latest_version for Docker image $image"
       echo ""
     } >> "$changelog_file"
+
     log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
   else
-    log "$COLOR_GREEN" "Addon '$slug' is already up-to-date ✔"
+    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
   fi
 
   log "$COLOR_BLUE" "----------------------------"
@@ -213,20 +232,19 @@ update_addon_if_needed() {
 
 perform_update_check() {
   clone_or_update_repo
+  ensure_changelog_exists
 
   for addon_path in "$REPO_DIR"/*/; do
     update_addon_if_needed "$addon_path"
   done
 }
 
-# Clear the log at startup
-: > "$LOG_FILE"
+LAST_RUN_FILE="/data/last_run_date.txt"
 
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
 
-# Run update check immediately on startup
-log "$COLOR_GREEN" "⏯️ Running initial update check on startup"
 perform_update_check
+
 echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
 
 while true; do
@@ -247,9 +265,9 @@ while true; do
   else
     CHECK_HOUR=${CHECK_TIME%%:*}
     CHECK_MIN=${CHECK_TIME##*:}
-
-    CURRENT_SEC=$(date +%s)
     TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+    CURRENT_SEC=$(date +%s)
+
     if [ "$TODAY_SEC" -eq 0 ]; then
       NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
