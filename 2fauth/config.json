@@ -1,6 +1,6 @@
 {
   "name": "2FAuth",
-  "version": "1.0.1",
+  "version": "latest",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "image": "2fauth/2fauth",
@@ -10,7 +10,11 @@
   "ports": {
     "8001/tcp": 8001
   },
-  "arch": ["amd64", "armv7", "aarch64"],
+  "arch": [
+    "amd64",
+    "armv7",
+    "aarch64"
+  ],
   "schema": {
     "PORT": "int",
     "APP_URL": "str",
