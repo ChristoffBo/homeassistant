@@ -14,7 +14,7 @@ COLOR_RED="\033[0;31m"
 log() {
   local color="$1"
   shift
-  echo -e "[$(date '+%H:%M:%S')] ${color}$*${COLOR_RESET}"
+  echo -e "[$(date +'%H:%M:%S')] ${color}$*${COLOR_RESET}"
 }
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -28,7 +28,7 @@ GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-  # Insert credentials into repo URL for push/pull auth
+  # Insert credentials into repo URL for authentication
   GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
 fi
 
@@ -110,14 +110,14 @@ update_addon_if_needed() {
   local changelog_file="$addon_path/CHANGELOG.md"
 
   if [ ! -f "$config_file" ] && [ ! -f "$build_file" ]; then
-    log "$COLOR_YELLOW" "Add-on '$(basename "$addon_path")' has no config.json or build.json, skipping."
+    log "$COLOR_YELLOW" "Add-on '$(basename "$addon_path")' missing config.json or build.json, skipping."
     return
   fi
 
   local image=""
   if [ -f "$build_file" ]; then
     local arch=$(uname -m)
-    if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
+    [[ "$arch" == "x86_64" ]] && arch="amd64"
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file" 2>/dev/null)
   fi
 
@@ -130,11 +130,8 @@ update_addon_if_needed() {
     return
   fi
 
-  local slug
-  slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null)
-  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
-    slug=$(basename "$addon_path")
-  fi
+  local slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null)
+  [ -z "$slug" ] && slug=$(basename "$addon_path")
 
   local current_version=""
   if [ -f "$config_file" ]; then
@@ -151,12 +148,8 @@ update_addon_if_needed() {
   log "$COLOR_BLUE" "Current version: $current_version"
   log "$COLOR_BLUE" "Image: $image"
 
-  local latest_version="Checking..."
-  latest_version=$(get_latest_docker_tag "$image")
-
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    latest_version="latest"
-  fi
+  local latest_version=$(get_latest_docker_tag "$image")
+  [ -z "$latest_version" ] && latest_version="latest"
 
   log "$COLOR_BLUE" "Latest version available: $latest_version"
 
@@ -164,9 +157,7 @@ update_addon_if_needed() {
     log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$current_version' to '$latest_version'"
 
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-    if [ -f "$config_file.tmp" ]; then
-      mv "$config_file.tmp" "$config_file"
-    fi
+    [ -f "$config_file.tmp" ] && mv "$config_file.tmp" "$config_file"
 
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
@@ -181,7 +172,7 @@ update_addon_if_needed() {
       log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
     fi
 
-    NEW_ENTRY="\
+    local NEW_ENTRY="\
 v$latest_version ($(date +'%d-%m-%Y %H:%M'))
     Update from version $current_version to $latest_version (image: $image)
 
@@ -209,10 +200,8 @@ perform_update_check() {
   git config user.email "updater@local"
   git config user.name "HomeAssistant Updater"
 
-  local updated=0
-
   for addon_path in "$REPO_DIR"/*/; do
-    update_addon_if_needed "$addon_path" && updated=$((updated+1))
+    update_addon_if_needed "$addon_path"
   done
 
   if [ "$(git status --porcelain)" ]; then
@@ -222,15 +211,15 @@ perform_update_check() {
     if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "Git push successful."
     else
-      log "$COLOR_RED" "Git push failed. Check your authentication and remote URL."
+      log "$COLOR_RED" "Git push failed. Check authentication and remote URL."
     fi
   else
     log "$COLOR_BLUE" "No changes to commit."
   fi
 }
 
-# Start script
-
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M:%S')"
+
 perform_update_check
+
 log "$COLOR_GREEN" "✅ HomeAssistant Addon Updater finished at $(date '+%d-%m-%Y %H:%M:%S')"
