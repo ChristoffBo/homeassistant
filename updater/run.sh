@@ -18,7 +18,7 @@ COLOR_PURPLE="\033[0;35m"
 log() {
   local color="$1"
   shift
-  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
+  echo -e "$(TZ="$TIMEZONE" date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
 send_notification() {
@@ -75,8 +75,7 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  # Placeholder for actual tag checking logic
-  echo "latest"
+  echo "latest"  # Placeholder
 }
 
 get_docker_source_url() {
@@ -144,11 +143,7 @@ update_addon_if_needed() {
 
   local latest_version="Checking..."
   latest_version=$(get_latest_docker_tag "$image")
-
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    latest_version="latest"
-  fi
-
+  [ -z "$latest_version" ] || [ "$latest_version" == "null" ] && latest_version="latest"
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
   local source_url
@@ -163,7 +158,7 @@ update_addon_if_needed() {
       echo "Docker Image source: $source_url"
       echo
     } > "$changelog_file"
-    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug with current tag $current_version and source URL"
+    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug"
   fi
 
   local last_update="N/A"
@@ -176,29 +171,20 @@ update_addon_if_needed() {
   if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
-    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-    if [ -f "$config_file.tmp" ]; then mv "$config_file.tmp" "$config_file"; fi
-
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
     jq --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
-      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
-
     mv "$updater_file.tmp" "$updater_file"
 
-    NEW_ENTRY="\
-v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
-    Update from version $current_version to $latest_version (image: $image)
-
-"
     {
       head -n 2 "$changelog_file"
-      echo "$NEW_ENTRY"
+      echo -e "v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))\n    Update from version $current_version to $latest_version (image: $image)\n"
       tail -n +3 "$changelog_file"
     } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
-
     UPDATE_SUMMARY+="\n🔧 $slug updated from $current_version → $latest_version"
     ADDON_UPDATED=1
   else
@@ -219,7 +205,7 @@ perform_update_check() {
     if [ -f "$addon_path/config.json" ] || [ -f "$addon_path/build.json" ] || [ -f "$addon_path/updater.json" ]; then
       update_addon_if_needed "$addon_path"
     else
-      log "$COLOR_YELLOW" "⚠️ Skipping folder $(basename "$addon_path") - no config.json, build.json or updater.json found"
+      log "$COLOR_YELLOW" "⚠️ Skipping folder $(basename "$addon_path") - no config/build/updater JSON found"
     fi
   done
 
