@@ -141,10 +141,18 @@ update_addon_if_needed() {
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
 
+  # read last update time from updater.json if present
+  local last_update=""
+  if [ -f "$updater_file" ]; then
+    last_update=$(jq -r '.last_update // empty' "$updater_file")
+  fi
+  [ -z "$last_update" ] && last_update="never"
+
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "🧩 Addon: $(basename "$addon_dir")"
   log "$COLOR_BLUE" "🔢 Current version: $current_version"
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
+  log "$COLOR_BLUE" "🕒 Last updated: $last_update"
 
   if [ "$latest_version" != "" ] && [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "null" ]; then
     log "$COLOR_YELLOW" "⬆️  Updating $(basename "$addon_dir") from $current_version to $latest_version"
