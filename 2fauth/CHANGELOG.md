@@ -1,5 +1,9 @@
 CHANGELOG for 2fauth
 ===================
+v5.6.0 (27-07-2025 11:50)
+    Update from version [2025-07-2709:48:42UTC][0;34m🔍CheckinglatestDockerHubtagfor2fauth/2fauth[0m5.6.0 to 5.6.0 (image: 2fauth/2fauth)
+
+
 v[2025-07-27 09:48:42 UTC] [0;34m🔍 Checking latest Docker Hub tag for 2fauth/2fauth[0m
 5.6.0 (27-07-2025 11:48)
     Update from version [2025-07-2709:46:53UTC][0;34m🔍CheckinglatestDockerHubtagfor2fauth/2fauth[0m5.6.0 to [2025-07-27 09:48:42 UTC] [0;34m🔍 Checking latest Docker Hub tag for 2fauth/2fauth[0m
