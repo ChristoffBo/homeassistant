@@ -1,6 +1,6 @@
 {
   "slug": "technitium-dns-DHCP",
-  "image": "{\n  \"aarch64\": \"technitium/dns-server:latest\",\n  \"amd64\": \"technitium/dns-server:latest\",\n  \"armv7\": \"technitium/dns-server:latest\"\n}",
+  "image": "technitium/dns-server:latest",
   "upstream_version": "13.6.0",
   "last_update": "27-07-2025 13:04"
 }
