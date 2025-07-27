@@ -21,6 +21,17 @@ log() {
   echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
+send_notification() {
+  local message="$1"
+  if [ "$NOTIFIER_ENABLED" == "true" ] && [ -n "$NOTIFIER_SERVICE" ]; then
+    local payload="{\"message\": \"${NOTIFIER_MESSAGE_PREFIX}${message}\"}"
+    curl -s -X POST -H "Content-Type: application/json" -d "$payload" \
+      -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+      http://supervisor/core/api/services/${NOTIFIER_SERVICE//./\/} >> "$LOG_FILE" 2>&1
+    log "$COLOR_PURPLE" "🔔 Notification sent: $message"
+  fi
+}
+
 if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
@@ -31,6 +42,10 @@ GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_CRON=$(jq -r '.check_cron' "$CONFIG_PATH")
 TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
+
+NOTIFIER_ENABLED=$(jq -r '.notifier_enabled // "false"' "$CONFIG_PATH")
+NOTIFIER_SERVICE=$(jq -r '.notifier_service // empty' "$CONFIG_PATH")
+NOTIFIER_MESSAGE_PREFIX=$(jq -r '.notifier_message_prefix // "[Add-on Updater] "' "$CONFIG_PATH")
 
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
@@ -60,7 +75,7 @@ clone_or_update_repo() {
 
 get_latest_docker_tag() {
   local image="$1"
-  # Placeholder: Implement real logic to fetch latest tag from linuxserver.io, GitHub, or DockerHub
+  # Placeholder for actual tag checking logic
   echo "latest"
 }
 
@@ -74,6 +89,9 @@ get_docker_source_url() {
     echo "https://hub.docker.com/r/$image"
   fi
 }
+
+UPDATE_SUMMARY=""
+ADDON_UPDATED=0
 
 update_addon_if_needed() {
   local addon_path="$1"
@@ -133,11 +151,9 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
-  # Compose changelog URL for the image source
   local source_url
   source_url=$(get_docker_source_url "$image")
 
-  # Create CHANGELOG.md if missing, include current tag and source URL
   if [ ! -f "$changelog_file" ]; then
     {
       echo "CHANGELOG for $slug"
@@ -175,7 +191,6 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
     Update from version $current_version to $latest_version (image: $image)
 
 "
-
     {
       head -n 2 "$changelog_file"
       echo "$NEW_ENTRY"
@@ -184,6 +199,8 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
 
+    UPDATE_SUMMARY+="\n🔧 $slug updated from $current_version → $latest_version"
+    ADDON_UPDATED=1
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
   fi
@@ -198,12 +215,9 @@ perform_update_check() {
   git config user.email "updater@local"
   git config user.name "HomeAssistant Updater"
 
-  local any_updates=0
-
   for addon_path in "$REPO_DIR"/*/; do
     if [ -f "$addon_path/config.json" ] || [ -f "$addon_path/build.json" ] || [ -f "$addon_path/updater.json" ]; then
       update_addon_if_needed "$addon_path"
-      any_updates=1
     else
       log "$COLOR_YELLOW" "⚠️ Skipping folder $(basename "$addon_path") - no config.json, build.json or updater.json found"
     fi
@@ -212,13 +226,14 @@ perform_update_check() {
   if [ "$(git status --porcelain)" ]; then
     git add .
     git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1 || true
-    if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-      log "$COLOR_GREEN" "✅ Git push successful."
-    else
-      log "$COLOR_RED" "❌ Git push failed."
-    fi
+    git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1 || log "$COLOR_RED" "❌ Git push failed."
+    log "$COLOR_GREEN" "✅ Git push successful."
   else
     log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
+  fi
+
+  if [ "$ADDON_UPDATED" == "1" ]; then
+    send_notification "$UPDATE_SUMMARY"
   fi
 }
 
