@@ -1,186 +1,140 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-# Colors for output
-RED="\033[0;31m"
-GREEN="\033[0;32m"
-YELLOW="\033[0;33m"
-NC="\033[0m" # No Color
+# ======= USER CONFIGURATION =======
+GITHUB_REPO_URL="https://github.com/ChristoffBo/homeassistant"
+GITHUB_USERNAME="your_username_here"
+GITHUB_TOKEN="your_token_here"
 
+# Directory where repo is cloned
 REPO_DIR="/data/homeassistant"
-GIT_USERNAME="${GIT_USERNAME:-your_username}"
-GIT_TOKEN="${GIT_TOKEN:-your_token}"
-GIT_REPO_URL="https://github.com/ChristoffBo/homeassistant"
+
+# Time format for logs
+TIMESTAMP() {
+  date '+%Y-%m-%d %H:%M:%S'
+}
 
 log() {
-  local color="$1"
-  shift
-  echo -e "${color}[$(date '+%Y-%m-%d %H:%M:%S')] $*${NC}"
+  echo "[$(TIMESTAMP)] $*"
 }
 
-# Ensure repository cloned
-if [ ! -d "$REPO_DIR/.git" ]; then
-  log "$YELLOW" "Cloning repository..."
-  git clone "$GIT_REPO_URL" "$REPO_DIR"
+# Construct authenticated repo URL
+AUTH_REPO_URL="${GITHUB_REPO_URL/https:\/\/github.com/https:\/\/${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com}"
+
+cd "$REPO_DIR" || {
+  log "ERROR: Repository directory $REPO_DIR does not exist."
+  exit 1
+}
+
+# Pull latest changes with authentication
+log "Pulling latest changes from repo..."
+if git pull "$AUTH_REPO_URL" main; then
+  log "Repository updated successfully."
+else
+  log "ERROR: Git pull failed."
+  exit 1
 fi
 
-cd "$REPO_DIR"
+# Iterate over each addon folder
+for ADDON_DIR in "$REPO_DIR"/*; do
+  [ -d "$ADDON_DIR" ] || continue
+  ADDON_NAME=$(basename "$ADDON_DIR")
 
-# Function to update repo with rebase fallback to merge
-git_pull_latest() {
-  git config user.email "updater@example.com"
-  git config user.name "Addon Updater Bot"
-  local remote_url="https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/ChristoffBo/homeassistant.git"
-  git remote set-url origin "$remote_url"
+  CONFIG_JSON="$ADDON_DIR/config.json"
+  BUILD_JSON="$ADDON_DIR/build.json"
+  UPDATER_JSON="$ADDON_DIR/updater.json"
+  CHANGELOG_MD="$ADDON_DIR/CHANGELOG.md"
 
-  log "$YELLOW" "Pulling latest changes..."
-  if ! git pull --rebase origin main; then
-    log "$RED" "Rebase failed due to diverging branches, trying merge..."
-    if ! git merge origin/main --no-ff; then
-      log "$RED" "Git merge also failed. Manual intervention required."
-      return 1
-    fi
+  if [ ! -f "$CONFIG_JSON" ]; then
+    log "Config file missing for addon: $ADDON_NAME. Skipping."
+    continue
   fi
-  log "$GREEN" "Repository updated."
-}
 
-# Append changelog entry at top of CHANGELOG.md (create if missing)
-update_changelog() {
-  local addon=$1
-  local old_ver=$2
-  local new_ver=$3
-  local changelog_file="${REPO_DIR}/${addon}/CHANGELOG.md"
-  local date_now
-  date_now=$(date '+%Y-%m-%d')
+  # Read current version from config.json
+  CURRENT_VERSION=$(jq -r '.version // empty' "$CONFIG_JSON" || echo "")
+  # Read image info from build.json or config.json
+  IMAGE=$(jq -r '.image // empty' "$BUILD_JSON" 2>/dev/null || echo "")
+  if [ -z "$IMAGE" ]; then
+    IMAGE=$(jq -r '.image // empty' "$CONFIG_JSON" || echo "")
+  fi
 
-  local new_entry="## [$new_ver] - $date_now
-- Updated from $old_ver to $new_ver
+  if [ -z "$IMAGE" ]; then
+    log "Add-on '$ADDON_NAME' has no Docker image defined, skipping."
+    continue
+  fi
 
-"
+  # Get image repo and tag
+  IMAGE_REPO="${IMAGE%:*}"
+  IMAGE_TAG="${IMAGE##*:}"
+  [ "$IMAGE_TAG" = "$IMAGE_REPO" ] && IMAGE_TAG="latest"
 
-  if [ ! -f "$changelog_file" ]; then
-    echo -e "$new_entry" > "$changelog_file"
-    log "$GREEN" "Created new CHANGELOG.md for $addon"
+  # Get latest tag from Docker Hub or linuxserver.io Github releases
+  # This example fetches tags from Docker Hub (you can expand to github releases)
+  # Here, only Docker Hub example:
+  DOCKER_HUB_REPO="${IMAGE_REPO#*/}"  # Remove possible prefix like 'library/'
+  DOCKER_HUB_REPO="${DOCKER_HUB_REPO,,}"  # lowercase
+
+  # Extract repo name for docker hub API (for official images, adapt as needed)
+  DOCKER_HUB_API="https://registry.hub.docker.com/v2/repositories/${IMAGE_REPO}/tags?page_size=10"
+
+  # Fetch latest tag (basic, you might want more robust sorting or filter)
+  LATEST_TAG=$(curl -s "$DOCKER_HUB_API" | jq -r '.results[0].name' || echo "latest")
+
+  if [ -z "$LATEST_TAG" ]; then
+    LATEST_TAG="latest"
+  fi
+
+  log "Addon: $ADDON_NAME"
+  log "Current version: $CURRENT_VERSION"
+  log "Image: $IMAGE_REPO:$IMAGE_TAG"
+  log "Latest version available: $LATEST_TAG"
+
+  if [ "$CURRENT_VERSION" = "$LATEST_TAG" ]; then
+    log "Add-on '$ADDON_NAME' is already up-to-date ✔"
+    log "----------------------------"
+    continue
+  fi
+
+  # Update changelog: prepend new entry at top
+  CHANGELOG_ENTRY="## [$LATEST_TAG] - $(date '+%Y-%m-%d')\n\n- Automatic update from version $CURRENT_VERSION to $LATEST_TAG\n"
+  if [ ! -f "$CHANGELOG_MD" ]; then
+    echo -e "$CHANGELOG_ENTRY" > "$CHANGELOG_MD"
+    log "Created new CHANGELOG.md for $ADDON_NAME"
   else
     # Prepend changelog entry
-    tmpfile=$(mktemp)
-    echo -e "$new_entry" > "$tmpfile"
-    cat "$changelog_file" >> "$tmpfile"
-    mv "$tmpfile" "$changelog_file"
-    log "$GREEN" "CHANGELOG.md updated for $addon"
+    (echo -e "$CHANGELOG_ENTRY"; cat "$CHANGELOG_MD") > "$CHANGELOG_MD.tmp" && mv "$CHANGELOG_MD.tmp" "$CHANGELOG_MD"
+    log "Updated CHANGELOG.md for $ADDON_NAME"
   fi
-}
 
-# Update version in config.json
-update_version_in_config() {
-  local addon=$1
-  local new_ver=$2
-  local config_file="${REPO_DIR}/${addon}/config.json"
+  # Update version in config.json to latest tag
+  jq --arg ver "$LATEST_TAG" '.version = $ver' "$CONFIG_JSON" > "$CONFIG_JSON.tmp" && mv "$CONFIG_JSON.tmp" "$CONFIG_JSON"
+  log "Updated config.json version for $ADDON_NAME to $LATEST_TAG"
 
-  if [ -f "$config_file" ]; then
-    # Use jq to update version (if jq not available fallback)
-    if command -v jq >/dev/null 2>&1; then
-      tmpfile=$(mktemp)
-      jq --arg ver "$new_ver" '.version = $ver' "$config_file" > "$tmpfile" && mv "$tmpfile" "$config_file"
-    else
-      # fallback: sed (assumes "version": "..." in one line)
-      sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_ver\"/" "$config_file"
-    fi
-    log "$GREEN" "Updated config.json version for $addon to $new_ver"
+  # Update or create updater.json with last_update info
+  if [ -f "$UPDATER_JSON" ]; then
+    jq --arg dt "$(date '+%Y-%m-%d %H:%M:%S')" '.last_update = $dt' "$UPDATER_JSON" > "$UPDATER_JSON.tmp" && mv "$UPDATER_JSON.tmp" "$UPDATER_JSON"
   else
-    log "$RED" "Config file not found for $addon"
+    echo "{\"last_update\":\"$(date '+%Y-%m-%d %H:%M:%S')\"}" > "$UPDATER_JSON"
   fi
-}
+  log "updater.json updated for $ADDON_NAME"
 
-# Main update function for an addon
-update_addon() {
-  local addon=$1
-  local config_file="${REPO_DIR}/${addon}/config.json"
-  local current_ver
-  local image_tag
-  local latest_ver
-
-  if [ ! -f "$config_file" ]; then
-    log "$RED" "Config file missing for addon: $addon. Skipping."
-    return
-  fi
-
-  # Get current version from config.json
-  current_ver=$(jq -r '.version // empty' "$config_file")
-  # Get image repo from config.json (assumes image key exists)
-  image_tag=$(jq -r '.image // empty' "$config_file")
-
-  if [ -z "$image_tag" ] || [ "$image_tag" == "null" ]; then
-    # fallback to .image_repo or manual assignment (adjust this to your structure)
-    image_tag=$(jq -r '.image_repo // empty' "$config_file")
-  fi
-
-  if [ -z "$image_tag" ]; then
-    log "$YELLOW" "Add-on '$addon' has no Docker image defined, skipping."
-    return
-  fi
-
-  # Query Dockerhub or GitHub or linuxserver.io for latest tag:
-  # For simplicity, here we get latest tag from dockerhub (adjust as needed)
-  latest_ver=$(curl -s "https://registry.hub.docker.com/v2/repositories/${image_tag}/tags?page_size=1" \
-                | jq -r '.results[0].name // empty')
-
-  if [ -z "$latest_ver" ]; then
-    latest_ver="latest"
-  fi
-
-  log "$YELLOW" "Addon: $addon"
-  log "$YELLOW" "Current version: $current_ver"
-  log "$YELLOW" "Latest version available: $latest_ver"
-
-  if [ "$current_ver" != "$latest_ver" ]; then
-    log "$YELLOW" "🔄 Updating add-on '$addon' from version '$current_ver' to '$latest_ver'"
-    update_changelog "$addon" "$current_ver" "$latest_ver"
-    update_version_in_config "$addon" "$latest_ver"
-  else
-    log "$GREEN" "Add-on '$addon' is already up-to-date ✔"
-  fi
-
-  echo "----------------------------"
-}
+done
 
 # Commit and push changes
-git_commit_and_push() {
-  cd "$REPO_DIR"
-
-  if [[ -n $(git status --porcelain) ]]; then
-    git add .
-    git commit -m "Automatic update: bump addon versions" --quiet
-    if git push origin main --quiet; then
-      log "$GREEN" "Git push successful."
-    else
-      log "$RED" "Git push failed."
-    fi
+git add .
+if git diff-index --quiet HEAD --; then
+  log "No changes to commit."
+else
+  git commit -m "Automatic update: bump addon versions"
+  if git push "$AUTH_REPO_URL" main; then
+    log "Git push successful."
   else
-    log "No changes to commit."
+    log "Git push failed."
+    exit 1
   fi
-}
+fi
 
-# Run full update process
-run_update() {
-  log "$GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M:%S')"
+NEXT_CHECK=$(date -d '+1 hour' '+%H:%M %d-%m-%Y' 2>/dev/null || date -v+1H '+%H:%M %d-%m-%Y')
 
-  if ! git_pull_latest; then
-    log "$RED" "Initial git pull failed! Aborting update."
-    return 1
-  fi
+log "📅 Next check scheduled at $NEXT_CHECK"
 
-  # List all addon directories (adjust path and criteria if needed)
-  local addons
-  addons=$(find "$REPO_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \;)
-
-  for addon in $addons; do
-    update_addon "$addon"
-  done
-
-  git_commit_and_push
-
-  log "$GREEN" "📅 Next check scheduled at $(date -d '+1 hour' '+%H:%M %d-%m-%Y')"
-}
-
-run_update
