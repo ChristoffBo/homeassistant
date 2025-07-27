@@ -12,7 +12,6 @@ COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
 
-# Clear log file on startup
 : > "$LOG_FILE"
 
 log() {
@@ -34,7 +33,6 @@ TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
 
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-  # Insert username:token after https://
   GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
 fi
 
@@ -51,30 +49,29 @@ clone_or_update_repo() {
   else
     log "$COLOR_PURPLE" "🔄 Pulling latest changes from GitHub with rebase..."
     cd "$REPO_DIR"
+
+    # Abort any unfinished rebase to avoid conflicts
+    if [ -d ".git/rebase-merge" ] || [ -d ".git/rebase-apply" ]; then
+      log "$COLOR_YELLOW" "⚠️ Detected unfinished rebase, aborting it first..."
+      git rebase --abort >> "$LOG_FILE" 2>&1 || true
+    fi
+
     if git pull --rebase "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Git pull successful."
     else
-      log "$COLOR_RED" "❌ Git pull failed. Attempting to reset local changes and retry..."
-      git reset --hard HEAD >> "$LOG_FILE" 2>&1 || true
-      if git pull --rebase "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-        log "$COLOR_GREEN" "✅ Git pull successful after reset."
-      else
-        log "$COLOR_RED" "❌ Git pull still failing after reset. See last 20 log lines below:"
-        tail -n 20 "$LOG_FILE" | sed 's/^/    /'
-        exit 1
-      fi
+      log "$COLOR_RED" "❌ Git pull failed even after aborting rebase. See last 20 log lines below:"
+      tail -n 20 "$LOG_FILE" | sed 's/^/    /'
+      exit 1
     fi
   fi
 }
 
-# Remove architecture prefix like 'amd64-' from Docker tag for comparison
 strip_arch_prefix() {
   echo "$1" | sed -E 's/^(amd64-|armhf-|arm64v8-|arm32v7-|i386-)//'
 }
 
 get_latest_docker_tag() {
   local image="$1"
-  # Extract repo and image name (remove architecture prefix in tags later)
   local repo_name
   repo_name=$(echo "$image" | cut -d':' -f1)
 
@@ -83,18 +80,15 @@ get_latest_docker_tag() {
   local tags_json
   tags_json=$(curl -s "https://hub.docker.com/v2/repositories/$repo_name/tags?page_size=100")
 
-  # jq may fail if no data, handle gracefully
   if [ -z "$tags_json" ]; then
     log "$COLOR_RED" "❌ Failed to fetch tags from Docker Hub for $repo_name"
     echo ""
     return
   fi
 
-  # Extract tag names ignoring 'latest' and sort by semver descending if possible
   local tag
   tag=$(echo "$tags_json" | jq -r '.results[].name' 2>/dev/null | grep -v '^latest$' | sort -Vr | head -n1)
 
-  # If no tag found, fallback to 'latest'
   if [ -z "$tag" ]; then
     tag="latest"
   fi
@@ -171,7 +165,6 @@ update_addon_if_needed() {
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
   log "$COLOR_BLUE" "🕒 Last updated: $last_update"
 
-  # Create CHANGELOG.md if missing, include current version and source URL
   if [ ! -f "$changelog_file" ]; then
     {
       echo "CHANGELOG for $slug"
@@ -184,7 +177,6 @@ update_addon_if_needed() {
     log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug"
   fi
 
-  # Compare stripped versions (ignore architecture prefixes)
   local stripped_current
   local stripped_latest
   stripped_current=$(strip_arch_prefix "$current_version")
@@ -193,11 +185,9 @@ update_addon_if_needed() {
   if [ "$stripped_latest" != "$stripped_current" ] && [ "$stripped_latest" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
-    # Update config.json version
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
     if [ -f "$config_file.tmp" ]; then mv "$config_file.tmp" "$config_file"; fi
 
-    # Update updater.json upstream_version and last_update
     jq --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
@@ -211,7 +201,6 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
 
 "
 
-    # Insert new changelog entry after first two lines (header)
     {
       head -n 2 "$changelog_file"
       echo "$NEW_ENTRY"
@@ -220,7 +209,6 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
 
-    # Mark that an update occurred
     echo "$slug updated from $current_version to $latest_version" >> "$LOG_FILE.updates"
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
@@ -236,7 +224,6 @@ perform_update_check() {
   git config user.email "updater@local"
   git config user.name "HomeAssistant Updater"
 
-  # Clear update log file to track any updates this run
   : > "$LOG_FILE.updates"
 
   local any_updates=0
@@ -249,7 +236,6 @@ perform_update_check() {
     fi
   done
 
-  # Check if updates occurred
   if [ -s "$LOG_FILE.updates" ]; then
     any_updates=1
   fi
@@ -269,8 +255,6 @@ perform_update_check() {
       log "$COLOR_BLUE" "ℹ️ No updates detected, no git commit or notification sent."
     fi
   fi
-
-  # TODO: Add notifier support here if you want, e.g. call notify() if any_updates==1
 }
 
 log "$COLOR_PURPLE" "🔮 Checking your Github Repo for Updates..."
