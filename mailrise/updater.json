@@ -1,6 +1,6 @@
 {
   "slug": "mailrise",
   "image": "{\n  \"amd64\": \"yoryan/mailrise:latest\",\n  \"armv7\": \"yoryan/mailrise:latest\",\n  \"aarch64\": \"yoryan/mailrise:latest\"\n}",
-  "upstream_version": "[2025-07-27 09:44:08 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for yoryan/mailrise\u001b[0m\nlatest",
-  "last_update": "27-07-2025 11:44"
+  "upstream_version": "[2025-07-27 09:46:27 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for yoryan/mailrise\u001b[0m\n1.3.0",
+  "last_update": "27-07-2025 11:46"
 }
