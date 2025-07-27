@@ -59,7 +59,7 @@ get_latest_tag() {
   local repo="$1"
   local tags_json="$2"
   echo "$tags_json" | jq -r '.results[].name' 2>/dev/null | \
-    grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -rV | head -n1
+    grep -E '^[0-9]+(\.[0-9]+)*$' | sort -rV | head -n1
 }
 
 version_equal() {
@@ -70,14 +70,17 @@ update_changelog() {
   local addon="$1"
   local old_ver="$2"
   local new_ver="$3"
+  local repo="$4"
   local changelog_file="${REPO_DIR}/${addon}/CHANGELOG.md"
   local date_stamp
   date_stamp=$(date "+%Y-%m-%d %H:%M")
-  
+
   if [[ ! -f "$changelog_file" ]]; then
     echo "# Changelog for $addon" > "$changelog_file"
   fi
+
   echo -e "\n## Updated to $new_ver on $date_stamp" >> "$changelog_file"
+  echo -e "\n- Docker image: [${repo}:${new_ver}](https://hub.docker.com/r/${repo}/tags)" >> "$changelog_file"
   log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $addon"
 }
 
@@ -87,12 +90,12 @@ send_notification() {
   type=$(jq -r '.notifier.type // empty' "$CONFIG_PATH")
   url=$(jq -r '.notifier.url // empty' "$CONFIG_PATH")
   token=$(jq -r '.notifier.token // empty' "$CONFIG_PATH")
-  
+
   if [[ -z "$type" || -z "$url" ]]; then
     log "$COLOR_YELLOW" "⚠️ Notifier type or URL not configured; skipping notifications."
     return
   fi
-  
+
   case "$type" in
     gotify)
       curl -s -X POST "${url%/}/message" \
@@ -111,6 +114,29 @@ send_notification() {
       log "$COLOR_RED" "❌ Unknown notifier type: $type"
       ;;
   esac
+}
+
+get_last_update_date() {
+  local addon="$1"
+  local changelog_file="${REPO_DIR}/${addon}/CHANGELOG.md"
+
+  if [[ -f "$changelog_file" ]]; then
+    local last_date
+    last_date=$(grep -E '^## Updated to' "$changelog_file" | tail -1 | sed -E 's/^## Updated to .* on (.*)$/\1/')
+    if [[ -n "$last_date" ]]; then
+      echo "$last_date"
+      return 0
+    fi
+  fi
+
+  for file in config.json build.json updater.json; do
+    local filepath="${REPO_DIR}/${addon}/${file}"
+    if [[ -f "$filepath" ]]; then
+      stat -c '%y' "$filepath" | cut -d'.' -f1
+      return 0
+    fi
+  done
+  echo "Unknown"
 }
 
 main() {
@@ -134,7 +160,6 @@ main() {
   while IFS= read -r -d $'\0' dir; do
     local basename
     basename=$(basename "$dir")
-    # Skip hidden folders (like .git)
     if [[ "$basename" == .* ]]; then
       continue
     fi
@@ -142,16 +167,17 @@ main() {
   done < <(find "$REPO_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
 
   local updated_any=0
+  local notify_msg=""
+
   for addon in "${addons[@]}"; do
     log "$COLOR_PURPLE" "🧩 Addon: $addon"
 
-    local version
-    version=""
+    local current_version=""
     for file in config.json build.json updater.json; do
       local v
       v=$(read_version "$REPO_DIR/$addon/$file")
       if [[ -n "$v" ]]; then
-        version="$v"
+        current_version="$v"
         break
       fi
     done
@@ -174,7 +200,10 @@ main() {
       tag="latest"
     fi
 
-    if [[ "$version" == "latest" || "$tag" == "latest" ]]; then
+    local last_update
+    last_update=$(get_last_update_date "$addon")
+
+    if [[ "$current_version" == "latest" || "$tag" == "latest" ]]; then
       log "$COLOR_YELLOW" "⚠️ Add-on '$addon' uses 'latest' tag; will try to find latest specific version tag."
 
       local tags_json
@@ -195,16 +224,17 @@ main() {
       tag="$latest_tag"
     fi
 
-    log "$COLOR_BLUE" "🔢 Current version: $version"
+    log "$COLOR_BLUE" "🔢 Current version: $current_version"
     log "$COLOR_BLUE" "📦 Image: $repo:$tag"
+    log "$COLOR_BLUE" "🕒 Last update: $last_update"
 
-    if version_equal "$version" "$tag"; then
-      log "$COLOR_GREEN" "✔️ $addon is already up to date ($version)"
+    if version_equal "$current_version" "$tag"; then
+      log "$COLOR_GREEN" "✔️ $addon is already up to date ($current_version)"
       echo "----------------------------" | tee -a "$LOG_FILE"
       continue
     fi
 
-    log "$COLOR_YELLOW" "⬆️  Updating $addon from $version to $tag"
+    log "$COLOR_YELLOW" "⬆️  Updating $addon from $current_version to $tag"
 
     for file in config.json build.json updater.json; do
       local filepath="$REPO_DIR/$addon/$file"
@@ -214,8 +244,12 @@ main() {
       fi
     done
 
-    update_changelog "$addon" "$version" "$tag"
+    update_changelog "$addon" "$current_version" "$tag" "$repo"
+
     updated_any=1
+    notify_msg+="Updated $addon: $current_version -> $tag\n"
+
+    echo "----------------------------" | tee -a "$LOG_FILE"
   done
 
   if [[ $updated_any -eq 1 ]]; then
@@ -227,7 +261,7 @@ main() {
     else
       log "$COLOR_YELLOW" "⚠️ Git push disabled due to missing credentials."
     fi
-    send_notification "Addon versions updated."
+    send_notification "$notify_msg"
   else
     log "$COLOR_BLUE" "ℹ️ No updates detected, no git commit or notification sent."
   fi
