@@ -32,44 +32,41 @@ GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_CRON=$(jq -r '.check_cron' "$CONFIG_PATH")
 TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
 
-NOTIFY_METHOD=$(jq -r '.notify_method // empty' "$CONFIG_PATH") # "gotify", "mailrise", "appirs" or empty
-GOTIFY_URL=$(jq -r '.gotify.url // empty' "$CONFIG_PATH")
-GOTIFY_TOKEN=$(jq -r '.gotify.token // empty' "$CONFIG_PATH")
-MAILRISE_URL=$(jq -r '.mailrise.url // empty' "$CONFIG_PATH")
-MAILRISE_TOKEN=$(jq -r '.mailrise.token // empty' "$CONFIG_PATH")
-APPIRS_URL=$(jq -r '.appirs.url // empty' "$CONFIG_PATH")
-APPIRS_TOKEN=$(jq -r '.appirs.token // empty' "$CONFIG_PATH")
-
 GIT_AUTH_REPO="$GITHUB_REPO"
 if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
   GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
 fi
 
-send_notification() {
-  local title="$1"
-  local message="$2"
-  if [ "$NOTIFY_METHOD" = "gotify" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-    curl -s -X POST "$GOTIFY_URL/message" \
-      -H "X-Gotify-Key: $GOTIFY_TOKEN" \
-      -F "title=$title" \
-      -F "message=$message" \
-      -F "priority=5" >/dev/null 2>&1
-    log "$COLOR_GREEN" "🔔 Notification sent via Gotify: $title"
-  elif [ "$NOTIFY_METHOD" = "mailrise" ] && [ -n "$MAILRISE_URL" ] && [ -n "$MAILRISE_TOKEN" ]; then
-    curl -s -X POST "$MAILRISE_URL/api/notification" \
-      -H "Authorization: Bearer $MAILRISE_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "{\"title\":\"$title\",\"message\":\"$message\"}" >/dev/null 2>&1
-    log "$COLOR_GREEN" "🔔 Notification sent via Mailrise: $title"
-  elif [ "$NOTIFY_METHOD" = "appirs" ] && [ -n "$APPIRS_URL" ] && [ -n "$APPIRS_TOKEN" ]; then
-    curl -s -X POST "$APPIRS_URL/api/notify" \
-      -H "Authorization: Bearer $APPIRS_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "{\"title\":\"$title\",\"message\":\"$message\"}" >/dev/null 2>&1
-    log "$COLOR_GREEN" "🔔 Notification sent via Appirs: $title"
-  else
-    log "$COLOR_YELLOW" "⚠️ Notification method not configured or missing credentials."
-  fi
+notify() {
+  local message="$1"
+  local slug="$2"
+  
+  # Load notification config
+  local method=$(jq -r '.notifier.method // empty' "$CONFIG_PATH")
+  
+  case "$method" in
+    gotify)
+      local url=$(jq -r '.notifier.gotify.url' "$CONFIG_PATH")
+      local token=$(jq -r '.notifier.gotify.token' "$CONFIG_PATH")
+      if [[ -z "$url" || -z "$token" ]]; then
+        log "$COLOR_YELLOW" "⚠️ Gotify notifier configured but missing url or token."
+        return
+      fi
+      curl -s -X POST "$url/message?token=$token" -F "title=Addon Updated: $slug" -F "message=$message" >/dev/null 2>&1
+      log "$COLOR_GREEN" "🔔 Notification sent via Gotify: $message"
+      ;;
+    mailrise)
+      # Implement Mailrise notification if needed
+      log "$COLOR_YELLOW" "⚠️ Mailrise notifier not implemented."
+      ;;
+    appirs)
+      # Implement Appirs notification if needed
+      log "$COLOR_YELLOW" "⚠️ Appirs notifier not implemented."
+      ;;
+    *)
+      log "$COLOR_YELLOW" "⚠️ Notification method not configured or missing credentials."
+      ;;
+  esac
 }
 
 clone_or_update_repo() {
@@ -93,53 +90,66 @@ clone_or_update_repo() {
   fi
 }
 
-# Helper: filter out invalid tags (keep semantic version or date-like, skip 'latest' or empty)
-filter_valid_tags() {
-  grep -E '^[0-9]+(\.[0-9]+)*(-[a-zA-Z0-9._-]+)?$'
+# Fetch tags from Docker Hub - only clean tags, exclude 'latest' or date strings.
+get_latest_docker_tag_dockerhub() {
+  local image="$1"
+  local repo="${image%%:*}"
+  # For images like 'library/nginx' or 'user/image'
+  local namespace="library"
+  local repo_name="$repo"
+
+  if [[ "$repo" == *"/"* ]]; then
+    namespace="${repo%%/*}"
+    repo_name="${repo#*/}"
+  fi
+
+  local tags=$(curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo_name/tags/?page_size=100" | jq -r '.results[].name' 2>/dev/null)
+
+  if [ -z "$tags" ]; then
+    log "$COLOR_YELLOW" "⚠️ No tags found for Docker Hub image $image"
+    echo ""
+    return
+  fi
+
+  # Filter out 'latest' and any tags that don't look like version numbers
+  # Keep tags matching version pattern: digits, dots, dashes (e.g., 1.2.3, v1.0, 2-rc)
+  local valid_tags=$(echo "$tags" | grep -E '^[v]?[0-9]+([.-][0-9a-z]+)*$' | sort -V)
+
+  if [ -z "$valid_tags" ]; then
+    log "$COLOR_YELLOW" "⚠️ No valid tags found for Docker Hub image $image"
+    echo ""
+    return
+  fi
+
+  echo "$valid_tags" | tail -n1
+}
+
+# TODO: Implement similar functions to fetch from linuxserver.io and github if dockerhub empty
+get_latest_docker_tag_linuxserver() {
+  # Placeholder to extend: for now just return empty
+  echo ""
+}
+
+get_latest_docker_tag_github() {
+  # Placeholder to extend: for now just return empty
+  echo ""
 }
 
 get_latest_docker_tag() {
   local image="$1"
-  local base_image="${image%%:*}"
+  local tag=""
 
-  # Strip arch suffix for linuxserver images
-  if [[ "$base_image" =~ ^lscr.io/linuxserver/ ]]; then
-    local repo="${base_image#lscr.io/linuxserver/}"
-    local tags_json
-    tags_json=$(curl -s "https://lscr.io/v2/linuxserver/${repo}/tags/list" 2>/dev/null)
-    local tags
-    tags=$(echo "$tags_json" | jq -r '.tags[]?' 2>/dev/null | filter_valid_tags | sort -V)
-    if [ -n "$tags" ]; then
-      echo "$tags" | tail -n1
-      return
-    else
-      log "$COLOR_YELLOW" "⚠️ No valid tags found for lscr.io/linuxserver/$repo"
-      echo ""
-      return
-    fi
+  tag=$(get_latest_docker_tag_dockerhub "$image")
+
+  if [ -z "$tag" ]; then
+    tag=$(get_latest_docker_tag_linuxserver "$image")
   fi
 
-  # Docker Hub token
-  local token
-  token=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${base_image}:pull" 2>/dev/null | jq -r '.token // empty')
-
-  if [ -n "$token" ]; then
-    local tags_json
-    tags_json=$(curl -s -H "Authorization: Bearer $token" "https://registry.hub.docker.com/v2/repositories/${base_image}/tags?page_size=100" 2>/dev/null)
-    local tags
-    tags=$(echo "$tags_json" | jq -r '.results[].name' 2>/dev/null | filter_valid_tags | sort -V)
-    if [ -n "$tags" ]; then
-      echo "$tags" | tail -n1
-      return
-    else
-      log "$COLOR_YELLOW" "⚠️ No valid tags found for Docker Hub image $base_image"
-      echo ""
-      return
-    fi
+  if [ -z "$tag" ]; then
+    tag=$(get_latest_docker_tag_github "$image")
   fi
 
-  log "$COLOR_YELLOW" "⚠️ Could not fetch tags for $image"
-  echo ""
+  echo "$tag"
 }
 
 get_docker_source_url() {
@@ -150,19 +160,6 @@ get_docker_source_url() {
     echo "https://github.com/orgs/linuxserver/packages/container/$image"
   else
     echo "https://hub.docker.com/r/$image"
-  fi
-}
-
-fix_build_json_version_field() {
-  local build_file="$1"
-  # Remove invalid version field if it contains quotes or invalid JSON fragment
-  if jq -e '.version | strings' "$build_file" >/dev/null 2>&1; then
-    local ver
-    ver=$(jq -r '.version' "$build_file")
-    if [[ "$ver" == *'"'* ]] || [[ "$ver" == *'\n'* ]]; then
-      jq 'del(.version)' "$build_file" > "$build_file.tmp" && mv "$build_file.tmp" "$build_file"
-      log "$COLOR_YELLOW" "⚠️ Removed invalid version field from build.json ($build_file)"
-    fi
   fi
 }
 
@@ -178,8 +175,13 @@ update_addon_if_needed() {
     return
   fi
 
+  # Fix invalid version field in build.json if present
   if [ -f "$build_file" ]; then
-    fix_build_json_version_field "$build_file"
+    # Remove "version" field from build.json if it exists (invalid here)
+    if jq -e '.version' "$build_file" >/dev/null 2>&1; then
+      jq 'del(.version)' "$build_file" > "$build_file.tmp" && mv "$build_file.tmp" "$build_file"
+      log "$COLOR_YELLOW" "⚠️ Removed invalid version field from build.json ($build_file)"
+    fi
   fi
 
   local image=""
@@ -199,9 +201,7 @@ update_addon_if_needed() {
   fi
 
   local slug
-  if [ -f "$config_file" ]; then
-    slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null)
-  fi
+  slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null)
   if [ -z "$slug" ] || [ "$slug" == "null" ]; then
     slug=$(basename "$addon_path")
   fi
@@ -239,18 +239,15 @@ update_addon_if_needed() {
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
     if [ -f "$config_file.tmp" ]; then mv "$config_file.tmp" "$config_file"; fi
 
-    local dt
-    dt=$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')
+    jq --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
+      '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
+      jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
+        '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
 
-    if [ -f "$updater_file" ]; then
-      jq --arg v "$latest_version" --arg dt "$dt" '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || true
-      mv "$updater_file.tmp" "$updater_file"
-    else
-      jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$dt" \
-        '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file"
-    fi
+    mv "$updater_file.tmp" "$updater_file"
 
-    local NEW_ENTRY="v$latest_version ($dt)
+    NEW_ENTRY="\
+v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
     Update from version $current_version to $latest_version (image: $image)
 
 "
@@ -275,7 +272,8 @@ update_addon_if_needed() {
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
 
-    send_notification "Addon Updated: $slug" "Updated from $current_version to $latest_version (image: $image)"
+    notify "Updated $slug from $current_version to $latest_version" "$slug"
+
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
   fi
@@ -286,7 +284,7 @@ update_addon_if_needed() {
 perform_update_check() {
   clone_or_update_repo
 
-  cd "$REPO_DIR" || exit
+  cd "$REPO_DIR"
   git config user.email "updater@local"
   git config user.name "HomeAssistant Updater"
 
@@ -294,9 +292,8 @@ perform_update_check() {
 
   for addon_path in "$REPO_DIR"/*/; do
     if [ -f "$addon_path/config.json" ] || [ -f "$addon_path/build.json" ] || [ -f "$addon_path/updater.json" ]; then
-      if update_addon_if_needed "$addon_path"; then
-        any_updates=1
-      fi
+      update_addon_if_needed "$addon_path"
+      any_updates=1
     else
       log "$COLOR_YELLOW" "⚠️ Skipping folder $(basename "$addon_path") - no config.json, build.json or updater.json found"
     fi
