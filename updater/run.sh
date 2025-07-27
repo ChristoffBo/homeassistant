@@ -3,8 +3,8 @@ set -e
 
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
-LOG_FILE=/data/updater.log
 
+# Colors
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
@@ -14,93 +14,103 @@ COLOR_DARK_RED="\033[0;31m"
 log() {
   local color="$1"
   shift
-  echo -e "${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
+  echo -e "${color}$*${COLOR_RESET}" | tee -a /data/updater.log
 }
 
-# Clear log file on start
-> "$LOG_FILE"
+# Clear previous log on startup
+: > /data/updater.log
 
-if [ ! -f "$CONFIG_PATH" ]; then
-  log "$COLOR_DARK_RED" "ERROR: Config file $CONFIG_PATH not found!"
-  exit 1
-fi
-
+# Load config
+TARGET_HOUR=$(jq -r '.hour' "$CONFIG_PATH")
+TARGET_MINUTE=$(jq -r '.minute' "$CONFIG_PATH")
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
-GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
-GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_TIMES=$(jq -r '.check_times // .check_time' "$CONFIG_PATH")  # Accepts comma-separated or single time
 
-GITHUB_AUTH_HEADER=""
-if [ -n "$GITHUB_TOKEN" ]; then
-  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
+# Clone or pull repo
+if [ ! -d "$REPO_DIR/.git" ]; then
+  log "$COLOR_BLUE" "📥 Cloning repository: $GITHUB_REPO"
+  git clone "$GITHUB_REPO" "$REPO_DIR"
+else
+  log "$COLOR_BLUE" "🔄 Pulling latest from $GITHUB_REPO"
+  cd "$REPO_DIR"
+  git reset --hard HEAD
+  git pull || log "$COLOR_DARK_RED" "❌ Git pull failed"
 fi
 
-# Convert single time to array, or comma-separated string to array
-IFS=',' read -r -a CHECK_TIMES_ARRAY <<< "$CHECK_TIMES"
+# Get latest Docker tag
+get_latest_docker_tag() {
+  local image=$1
+  local repo_name=${image#*/}
+  curl -s "https://hub.docker.com/v2/repositories/${image}/tags?page_size=1" |
+    jq -r '.results[0].name'
+}
 
-declare -A LAST_RUN_TIMES  # Track last run date per check time
+# Update a single addon
+update_addon_if_needed() {
+  local addon_path=$1
+  local config_json="${addon_path}/config.json"
+  local changelog="${addon_path}/CHANGELOG.md"
+  local updater_file="${addon_path}/updater.json"
 
-clone_or_update_repo() {
-  log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
-  if [ ! -d "$REPO_DIR" ]; then
-    log "$COLOR_BLUE" "Repository not found locally. Cloning..."
-    if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-      AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
-      git clone "$AUTH_REPO" "$REPO_DIR"
-    else
-      git clone "$GITHUB_REPO" "$REPO_DIR"
-    fi
-    log "$COLOR_GREEN" "Repository cloned successfully."
+  if [ ! -f "$config_json" ]; then
+    log "$COLOR_YELLOW" "⚠️ Skipping: No config.json in $addon_path"
+    return
+  fi
+
+  local image=$(jq -r '.image' "$config_json")
+  local current_version=$(jq -r '.version' "$config_json")
+  local latest_tag=$(get_latest_docker_tag "$image")
+
+  if [ -z "$latest_tag" ] || [ "$latest_tag" == "null" ]; then
+    log "$COLOR_DARK_RED" "❌ Failed to get latest tag for $image"
+    return
+  fi
+
+  if [ "$current_version" != "$latest_tag" ]; then
+    log "$COLOR_GREEN" "🔁 Updating $(basename "$addon_path"): $current_version → $latest_tag"
+
+    # Update config.json
+    tmp_config=$(mktemp)
+    jq --arg new_version "$latest_tag" '.version = $new_version' "$config_json" > "$tmp_config" && mv "$tmp_config" "$config_json"
+
+    # Update changelog
+    {
+      echo ""
+      echo "## ${latest_tag} ($(date '+%d-%m-%Y'))"
+      echo ""
+      echo "  - Updated to latest docker image tag \`$latest_tag\`"
+    } >> "$changelog"
+
+    log "$COLOR_GREEN" "📄 Updated CHANGELOG.md"
+
+    # Update updater.json
+    echo "{\"last_update\": \"$(date '+%d-%m-%Y')\"}" > "$updater_file"
+    log "$COLOR_GREEN" "🗂️ Updated updater.json"
+
   else
-    log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
-    cd "$REPO_DIR"
-    git reset --hard HEAD
-    git clean -fd
-    git pull
-    log "$COLOR_GREEN" "Repository updated."
+    log "$COLOR_BLUE" "✅ $(basename "$addon_path") already on latest version ($current_version)"
   fi
 }
 
-# [Include all your other helper functions here (fetch_latest_dockerhub_tag, update_addon_if_needed, etc.) exactly as before...]
-
-# For brevity, let's assume all helper functions are here exactly as before
-# Including get_latest_docker_tag, update_addon_if_needed, perform_update_check, etc.
-
-perform_update_check() {
-  clone_or_update_repo
-
-  for addon_path in "$REPO_DIR"/*/; do
-    update_addon_if_needed "$addon_path"
-  done
-}
-
-log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
-perform_update_check
+# Main loop
+log "$COLOR_BLUE" "⏰ Waiting to check updates daily at $TARGET_HOUR:$TARGET_MINUTE"
+LAST_RUN_MINUTE=""
 
 while true; do
-  NOW_TIME=$(date +%H:%M)
-  TODAY=$(date +%Y-%m-%d)
-  RAN=false
+  CURRENT_HOUR=$(date +%H)
+  CURRENT_MINUTE=$(date +%M)
+  TODAY=$(date '+%Y-%m-%d')
 
-  for CHECK_TIME in "${CHECK_TIMES_ARRAY[@]}"; do
-    # Trim whitespace (if any)
-    CHECK_TIME=$(echo "$CHECK_TIME" | xargs)
+  if [[ "$CURRENT_HOUR" == "$TARGET_HOUR" && "$CURRENT_MINUTE" != "$LAST_RUN_MINUTE" ]]; then
+    log "$COLOR_GREEN" "🚀 Starting update check at ${CURRENT_HOUR}:${CURRENT_MINUTE}"
 
-    if [ "$NOW_TIME" = "$CHECK_TIME" ]; then
-      # Check if already ran for this time today
-      if [ "${LAST_RUN_TIMES[$CHECK_TIME]}" != "$TODAY" ]; then
-        log "$COLOR_GREEN" "⏰ Running scheduled update check for $CHECK_TIME at $NOW_TIME"
-        perform_update_check
-        LAST_RUN_TIMES[$CHECK_TIME]="$TODAY"
-        RAN=true
-      else
-        log "$COLOR_YELLOW" "Skipping duplicate run for $CHECK_TIME on $TODAY"
+    for dir in "$REPO_DIR"/*/; do
+      if [ -d "$dir" ]; then
+        update_addon_if_needed "$dir"
       fi
-    fi
-  done
+    done
 
-  if [ "$RAN" = false ]; then
-    log "$COLOR_BLUE" "No scheduled update at $NOW_TIME. Waiting..."
+    LAST_RUN_MINUTE="$CURRENT_MINUTE"
+    log "$COLOR_GREEN" "✅ Update cycle complete at $TODAY $CURRENT_HOUR:$CURRENT_MINUTE"
   fi
 
   sleep 60
