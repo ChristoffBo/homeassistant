@@ -1,6 +1,6 @@
 {
   "slug": "gotify",
   "image": "gotify/server:latest",
-  "upstream_version": "[2025-07-27 20:53:52 SAST] \u001b[0;36m🔍 Checking latest version for gotify/server:latest\u001b[0m",
-  "last_update": "2025-07-27 20:53:53"
+  "upstream_version": "[2025-07-27 21:01:23 SAST] \u001b[0;36m🔍 Checking latest version for gotify/server:latest\u001b[0m",
+  "last_update": "2025-07-27 21:01:23"
 }
