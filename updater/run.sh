@@ -160,9 +160,9 @@ get_latest_docker_tag() {
     fi
   fi
 
-  # If we couldn't determine version, log the error
-  if [ -z "$latest_version" ]; then
-    echo "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${COLOR_RED}❌ Failed to get version for $image${COLOR_RESET}" >> "$LOG_FILE"
+  # If we couldn't determine version, use 'latest'
+  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
+    echo "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${COLOR_YELLOW}⚠️ Using 'latest' tag for $image${COLOR_RESET}" >> "$LOG_FILE"
     echo "latest"
   else
     echo "$latest_version"
@@ -244,12 +244,6 @@ update_addon_if_needed() {
   local latest_version
   latest_version=$(get_latest_docker_tag "$image" 2>/dev/null)
 
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ] || [ "$latest_version" == "latest" ]; then
-    log "$COLOR_YELLOW" "⚠️ Could not determine latest version for $image, skipping update."
-    log "$COLOR_BLUE" "----------------------------"
-    return
-  fi
-
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
   local source_url
@@ -274,7 +268,7 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "🕒 Last updated: $last_update"
 
-  if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
+  if [ "$latest_version" != "$current_version" ]; then
     log "$COLOR_GREEN" "⬆️  Update available for $slug: $current_version → $latest_version"
     
     if [ "$DRY_RUN" = "true" ]; then
