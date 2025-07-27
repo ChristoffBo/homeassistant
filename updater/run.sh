@@ -48,7 +48,6 @@ LOG_FILE="/data/updater.log"
 : > "$LOG_FILE"
 
 clone_or_update_repo() {
-  log "$COLOR_BLUE" "🔄 Pulling latest changes from GitHub..."
   if [ ! -d "$REPO_DIR" ]; then
     log "$COLOR_BLUE" "Repository not found locally. Cloning..."
     if git clone "$GIT_AUTH_REPO" "$REPO_DIR" >> "$LOG_FILE" 2>&1; then
@@ -57,14 +56,22 @@ clone_or_update_repo() {
       log "$COLOR_RED" "❌ Repository clone failed."
       return 1
     fi
+  fi
+}
+
+git_pull_latest() {
+  if [ ! -d "$REPO_DIR" ]; then
+    log "$COLOR_RED" "Repository directory $REPO_DIR not found!"
+    return 1
+  fi
+
+  cd "$REPO_DIR"
+  log "$COLOR_BLUE" "🔄 Pulling latest changes from GitHub..."
+  if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+    log "$COLOR_GREEN" "✅ Repository pull successful."
   else
-    cd "$REPO_DIR"
-    if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-      log "$COLOR_GREEN" "✅ Repository pull successful."
-    else
-      log "$COLOR_RED" "❌ Repository pull failed."
-      return 1
-    fi
+    log "$COLOR_RED" "❌ Repository pull failed."
+    return 1
   fi
 }
 
@@ -73,7 +80,6 @@ fetch_latest_dockerhub_tag() {
   local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=10&ordering=last_updated"
   local tags_json
   tags_json=$(curl -s "$url")
-  # first tag not "latest"
   local tag
   tag=$(echo "$tags_json" | jq -r '.results[].name' | grep -v '^latest$' | head -n 1)
   if [ -n "$tag" ]; then
@@ -195,11 +201,9 @@ update_addon_if_needed() {
   if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
-    # Update config.json version
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
     mv "$config_file.tmp" "$config_file"
 
-    # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
@@ -207,7 +211,6 @@ update_addon_if_needed() {
 
     mv "$updater_file.tmp" "$updater_file"
 
-    # Update or create CHANGELOG.md
     if [ ! -f "$changelog_file" ]; then
       echo "CHANGELOG for $slug" > "$changelog_file"
       echo "===================" >> "$changelog_file"
@@ -220,7 +223,6 @@ v$latest_version ($(date +'%d-%m-%Y %H:%M'))
 
 "
 
-    # Prepend new entry after first two lines
     { head -n 2 "$changelog_file"; echo "$new_entry"; tail -n +3 "$changelog_file"; } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
@@ -234,6 +236,12 @@ v$latest_version ($(date +'%d-%m-%Y %H:%M'))
 
 perform_update_check() {
   clone_or_update_repo || return 1
+
+  # Pull latest from GitHub before checking updates
+  if ! git_pull_latest; then
+    log "$COLOR_RED" "❌ Failed to pull latest changes. Aborting update check."
+    return 1
+  fi
 
   cd "$REPO_DIR"
   git config user.email "updater@local"
