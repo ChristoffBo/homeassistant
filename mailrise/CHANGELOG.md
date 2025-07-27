@@ -1,3 +1,7 @@
+vlatest (27-07-2025 05:46)
+
+    Update from 1.3.0 to latest
+
 
 ## stable (26-07-2025)
 - Update to latest version from yoryan/mailrise
@@ -24,4 +28,3 @@ vlatest (27-07-2025 05:35)
 v1.3.0 (27-07-2025 05:39)
 
     Updated from latest to 1.3.0
-
