@@ -1,3 +1,8 @@
+## 27-07-2025 - Updated from 2.7.3 to latest
+
+- Automatic version bump
+
+
 
 ## v2.7.3-ls315 (25-07-2025)
 - Update to latest version from linuxserver/docker-heimdall (changelog : https://github.com/linuxserver/docker-heimdall/releases)

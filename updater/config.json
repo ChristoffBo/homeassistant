@@ -1,12 +1,16 @@
 {
   "name": "Home Assistant Addons Docker Version Updater",
-  "version": "1.0.0",
+  "version": "latest",
   "slug": "addons_version_updater",
   "description": "Checks and updates add-on version numbers to match latest Docker image tags",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
   "boot": "auto",
-  "arch": ["amd64", "armv7", "aarch64"],
+  "arch": [
+    "amd64",
+    "armv7",
+    "aarch64"
+  ],
   "ports": {},
   "options": {
     "github_repo": "https://github.com/ChristoffBo/homeassistant.git",
@@ -26,7 +30,12 @@
     "gotify_token": "str?",
     "mailrise_url": "str?"
   },
-  "map": ["config:ro", "addons:rw", "backup:rw", "share:rw"],
+  "map": [
+    "config:ro",
+    "addons:rw",
+    "backup:rw",
+    "share:rw"
+  ],
   "init": false,
   "host_network": false,
   "privileged": []
