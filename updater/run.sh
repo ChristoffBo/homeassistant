@@ -26,30 +26,30 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
-# Load config values
 GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_CRON=$(jq -r '.check_cron' "$CONFIG_PATH")
 TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
 
-# Normalize GitHub repo URL (remove trailing .git)
-GITHUB_REPO=${GITHUB_REPO%.git}
-
-# Build authenticated Git URL if credentials exist
-GIT_AUTH_REPO="$GITHUB_REPO"
-if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-  GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@#")
-  safe_token="${GITHUB_TOKEN:0:4}******"
-  log "$COLOR_BLUE" "Using GitHub URL: ${GITHUB_REPO} with user ${GITHUB_USERNAME} and token ${safe_token}"
+if [ -z "$GITHUB_REPO" ] || [ -z "$GITHUB_USERNAME" ] || [ -z "$GITHUB_TOKEN" ] || [ "$GITHUB_REPO" == "null" ] || [ "$GITHUB_USERNAME" == "null" ] || [ "$GITHUB_TOKEN" == "null" ]; then
+  log "$COLOR_RED" "❌ GitHub credentials missing or incomplete; skipping git operations."
+  GIT_AUTH_REPO=""
 else
-  log "$COLOR_YELLOW" "GitHub username or token missing, proceeding without authentication."
+  # Remove trailing .git if present
+  CLEAN_REPO_URL="${GITHUB_REPO%.git}"
+  # Insert credentials after https://
+  GIT_AUTH_REPO=$(echo "$CLEAN_REPO_URL" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
 fi
 
 clone_or_update_repo() {
   log "$COLOR_PURPLE" "🔮 Checking your Github Repo for Updates..."
   if [ ! -d "$REPO_DIR" ]; then
     log "$COLOR_PURPLE" "📂 Cloning repository..."
+    if [ -z "$GIT_AUTH_REPO" ]; then
+      log "$COLOR_RED" "❌ Git authentication info missing; cannot clone."
+      exit 1
+    fi
     if git clone "$GIT_AUTH_REPO" "$REPO_DIR" >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Repository cloned successfully."
     else
@@ -67,66 +67,32 @@ clone_or_update_repo() {
   fi
 }
 
-# Strip arch prefix like amd64- or armhf- from tag for comparison
-strip_arch_prefix() {
-  local tag="$1"
-  echo "$tag" | sed -E 's/^(amd64|armhf|armv7|aarch64|arm64|i386|x86_64)-//'
-}
-
-# Fetch latest Docker tag (ignore 'latest'), check DockerHub first, then LinuxServer.io, then GitHub
 get_latest_docker_tag() {
   local image="$1"
-  local repo=""
-  local tags_json=""
-  local tags=()
-  local clean_tags=()
-  local latest_tag=""
+  # Remove architecture prefix (e.g., amd64-), we do exact tag matching, ignoring 'latest'
+  local clean_image
+  clean_image=$(echo "$image" | sed -E 's/^(amd64-|armhf-|armv7-|aarch64-)//')
 
-  # Extract repo part from image (strip tag if any)
-  repo="${image%%:*}"
+  # Extract namespace and repo
+  local repo
+  repo=$(echo "$clean_image" | cut -d':' -f1)
 
-  # Determine source: dockerhub, linuxserver, or ghcr
-  if [[ "$repo" =~ ^linuxserver/ ]]; then
-    # LinuxServer.io DockerHub namespace
-    repo="${repo#linuxserver/}"
-    tags_json=$(curl -s "https://hub.docker.com/v2/repositories/linuxserver/$repo/tags?page_size=100")
-  elif [[ "$repo" =~ ^ghcr.io/ ]]; then
-    # GitHub Container Registry
-    # Example: ghcr.io/linuxserver/heimdall -> repo=linuxserver/heimdall
-    repo="${repo#ghcr.io/}"
-    # Use GitHub API to get tags (requires no auth for public)
-    tags_json=$(curl -s "https://api.github.com/orgs/linuxserver/packages/container/$repo/tags")
-  else
-    # Default to DockerHub public repo
-    tags_json=$(curl -s "https://hub.docker.com/v2/repositories/$repo/tags?page_size=100")
-  fi
-
-  # Extract tags based on JSON structure
-  # Try DockerHub style first
-  tags=($(echo "$tags_json" | jq -r '.results[].name' 2>/dev/null || echo ""))
-  if [ ${#tags[@]} -eq 0 ]; then
-    # Try GitHub Packages style fallback
-    tags=($(echo "$tags_json" | jq -r '.[].name' 2>/dev/null || echo ""))
-  fi
-
-  # Filter out "latest" and sort version-like tags descending
-  for t in "${tags[@]}"; do
-    if [[ "$t" != "latest" && "$t" =~ ^[0-9] ]]; then
-      clean_tags+=( "$(strip_arch_prefix "$t"):$t" )
-    fi
-  done
-
-  if [ ${#clean_tags[@]} -eq 0 ]; then
-    echo "latest"
+  # Fetch tags from Docker Hub API
+  local tags_json
+  tags_json=$(curl -s "https://hub.docker.com/v2/repositories/$repo/tags?page_size=100")
+  if [ -z "$tags_json" ]; then
+    echo ""
     return
   fi
 
-  # Sort tags descending by version string part (before :)
-  IFS=$'\n' sorted_tags=($(sort -rV <<<"${clean_tags[*]}"))
-  unset IFS
+  # Extract tags excluding 'latest' and pre-release (simple filter)
+  local latest_tag
+  latest_tag=$(echo "$tags_json" | jq -r '.results[].name' 2>/dev/null | grep -v -i 'latest' | grep -E '^[0-9].*' | sort -Vr | head -n1)
 
-  # Extract original tag from first entry
-  latest_tag="${sorted_tags[0]#*:}"
+  if [ -z "$latest_tag" ]; then
+    # Fallback if no numeric tag found
+    latest_tag="latest"
+  fi
 
   echo "$latest_tag"
 }
@@ -200,10 +166,11 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "🚀 Latest version: $latest_version"
 
+  # Compose changelog URL for the image source
   local source_url
   source_url=$(get_docker_source_url "$image")
 
-  # Create CHANGELOG.md if missing, with current version and source URL
+  # Create CHANGELOG.md if missing, include current tag and source URL
   if [ ! -f "$changelog_file" ]; then
     {
       echo "CHANGELOG for $slug"
@@ -213,7 +180,7 @@ update_addon_if_needed() {
       echo "Docker Image source: $source_url"
       echo
     } > "$changelog_file"
-    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug with current version $current_version and source URL"
+    log "$COLOR_YELLOW" "🆕 Created new CHANGELOG.md for $slug with current tag $current_version and source URL"
   fi
 
   local last_update="N/A"
@@ -226,9 +193,11 @@ update_addon_if_needed() {
   if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
     log "$COLOR_GREEN" "⬆️  Updating $slug from $current_version to $latest_version"
 
+    # Update version in config.json
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
     if [ -f "$config_file.tmp" ]; then mv "$config_file.tmp" "$config_file"; fi
 
+    # Update or create updater.json
     jq --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
       '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null || \
       jq -n --arg slug "$slug" --arg image "$image" --arg v "$latest_version" --arg dt "$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')" \
@@ -242,6 +211,7 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
 
 "
 
+    # Prepend new changelog entry after header (first 2 lines)
     {
       head -n 2 "$changelog_file"
       echo "$NEW_ENTRY"
@@ -249,6 +219,7 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
     } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
+
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
   fi
@@ -274,13 +245,14 @@ perform_update_check() {
     fi
   done
 
-  if [ "$(git status --porcelain)" ]; then
+  if [ "$any_updates" -eq 1 ] && [ "$(git status --porcelain)" ]; then
     git add .
     git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1 || true
-    if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-      log "$COLOR_GREEN" "✅ Git push successful."
+    if ! git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+      log "$COLOR_RED" "❌ Git push failed. See log for details."
+      tail -n 20 "$LOG_FILE" | sed 's/^/    /'
     else
-      log "$COLOR_RED" "❌ Git push failed."
+      log "$COLOR_GREEN" "✅ Git push successful."
     fi
   else
     log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
