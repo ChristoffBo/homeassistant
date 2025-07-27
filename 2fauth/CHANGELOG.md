@@ -1,3 +1,7 @@
+v5.7.0 (27-07-2025)
+
+    Updated from version latest to 5.7.0
+
 ## [latest] - 2025-07-27
 - Updated from 5.6.0 to latest
 
