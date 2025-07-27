@@ -1,6 +1,6 @@
 {
   "slug": "metube",
   "image": "{\n  \"aarch64\": \"alexta69/metube:latest\",\n  \"amd64\": \"alexta69/metube:latest\",\n  \"armv7\": \"alexta69/metube:latest\"\n}",
-  "upstream_version": "2025-07-22",
-  "last_update": "27-07-2025 06:03"
+  "upstream_version": "2025-07-27",
+  "last_update": "27-07-2025 07:25"
 }
