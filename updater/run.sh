@@ -5,11 +5,9 @@ CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 LOG_FILE="/data/updater.log"
 
-# Load timezone from config
 TZ=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
 export TZ
 
-# Logging colors
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
@@ -53,18 +51,15 @@ send_notification() {
   esac
 }
 
-# Helper: extract image and tag from addon's config/build/updater.json
 get_image_and_version() {
   local dir="$1"
   local image=""
   local version=""
 
-  # Priority: config.json > build.json > updater.json
   for file in config.json build.json updater.json; do
     if [[ -f "$REPO_DIR/$dir/$file" ]]; then
       image_candidate=$(jq -r '.image // empty' "$REPO_DIR/$dir/$file")
       version_candidate=$(jq -r '.version // empty' "$REPO_DIR/$dir/$file")
-      # Accept first found
       if [[ -n "$image_candidate" ]]; then
         image="$image_candidate"
       fi
@@ -80,22 +75,19 @@ get_image_and_version() {
   echo "$image" "$version"
 }
 
-# Helper: clean Docker tag (remove arch prefixes)
 clean_tag() {
   local tag="$1"
   echo "$tag" | sed -E 's/^(amd64|armhf|arm64|aarch64|x86_64|armv7)-//'
 }
 
-# Helper: fetch latest Docker tag from Docker Hub (ignores 'latest' and 'rc')
 fetch_latest_tag() {
   local repo="$1"
   local api_url="https://hub.docker.com/v2/repositories/$repo/tags?page_size=100"
   log "$COLOR_BLUE" "🔍 Fetching tags from Docker Hub API: $api_url"
-  
-  local tags_json
-  tags_json=$(curl -s "$api_url")
 
-  # Check if tags_json contains results array
+  local tags_json
+  tags_json=$(curl -sS "$api_url")
+
   if ! echo "$tags_json" | jq -e '.results' > /dev/null 2>&1; then
     echo ""
     return 1
@@ -113,15 +105,12 @@ NOTIFY_MSG=""
 cd "$REPO_DIR" || { log "$COLOR_RED" "❌ Could not enter repository directory"; exit 1; }
 
 for addon_dir in */ ; do
-  # Check for config.json presence to identify addon
   if [[ ! -f "$REPO_DIR/$addon_dir/config.json" ]]; then
     continue
   fi
 
   NAME=$(jq -r '.name // empty' "$REPO_DIR/$addon_dir/config.json")
-  if [[ -z "$NAME" ]]; then
-    NAME="$addon_dir"
-  fi
+  [[ -z "$NAME" ]] && NAME="$addon_dir"
 
   read -r IMAGE CURRENT_VERSION < <(get_image_and_version "$addon_dir")
 
@@ -130,7 +119,6 @@ for addon_dir in */ ; do
     continue
   fi
 
-  # Extract repo and tag from IMAGE
   REPO="${IMAGE%:*}"
   TAG="${IMAGE##*:}"
 
@@ -138,7 +126,6 @@ for addon_dir in */ ; do
   log "$COLOR_BLUE" "🔢 Current version: $CURRENT_VERSION"
   log "$COLOR_BLUE" "📦 Image: $IMAGE"
 
-  # If IMAGE is a JSON object (multi-arch), pick arch from config or default to amd64
   if echo "$IMAGE" | jq -e . >/dev/null 2>&1; then
     ARCH=$(jq -r '.arch // "amd64"' "$CONFIG_PATH")
     IMAGE=$(echo "$IMAGE" | jq -r --arg arch "$ARCH" '.[$arch] // empty')
@@ -151,13 +138,10 @@ for addon_dir in */ ; do
     log "$COLOR_BLUE" "📦 Architecture-specific Image: $IMAGE"
   fi
 
-  # Handle 'latest' tag and unsupported tags
   if [[ "$TAG" == "latest" || "$TAG" == *"latest" ]]; then
     log "$COLOR_YELLOW" "⚠️ Add-on '$NAME' uses 'latest' tag; will try to find latest specific version tag."
 
-    # Remove arch prefix for repo lookup if exists in repo name (like lscr.io/linuxserver/...)
     CLEAN_REPO="$REPO"
-    # Docker Hub expects repo path without registry prefix
     if [[ "$REPO" == lscr.io/linuxserver/* ]]; then
       CLEAN_REPO="${REPO#lscr.io/}"
       CLEAN_REPO="linuxserver/$CLEAN_REPO"
@@ -181,14 +165,12 @@ for addon_dir in */ ; do
   if [[ "$CURRENT_VERSION" != "$LATEST_TAG" ]]; then
     log "$COLOR_YELLOW" "⬆️  Updating $NAME from $CURRENT_VERSION to $LATEST_TAG"
 
-    # Update version in build.json, updater.json, and config.json if they exist
     for file in build.json updater.json config.json; do
       if [[ -f "$REPO_DIR/$addon_dir/$file" ]]; then
         jq --arg ver "$LATEST_TAG" '.version = $ver' "$REPO_DIR/$addon_dir/$file" > tmp.$$.json && mv tmp.$$.json "$REPO_DIR/$addon_dir/$file"
       fi
     done
 
-    # Update CHANGELOG.md (create if missing)
     CHANGELOG="$REPO_DIR/$addon_dir/CHANGELOG.md"
     if [[ ! -f "$CHANGELOG" ]]; then
       echo "# Changelog" > "$CHANGELOG"
@@ -205,7 +187,6 @@ for addon_dir in */ ; do
   log "$COLOR_BLUE" "----------------------------"
 done
 
-# Git push if updated
 GIT_URL=$(jq -r '.git.url // empty' "$CONFIG_PATH")
 GIT_USER=$(jq -r '.git.username // empty' "$CONFIG_PATH")
 GIT_TOKEN=$(jq -r '.git.token // empty' "$CONFIG_PATH")
@@ -214,10 +195,7 @@ if [[ $UPDATED -eq 1 ]]; then
   if [[ -z "$GIT_URL" || -z "$GIT_USER" || -z "$GIT_TOKEN" ]]; then
     log "$COLOR_YELLOW" "⚠️ Git credentials incomplete; skipping git push."
   else
-    # Normalize Git URL: remove trailing .git if present
     GIT_URL="${GIT_URL%.git}"
-
-    # Build auth URL
     AUTH_URL=$(echo "$GIT_URL" | sed -E "s#https://#https://$GIT_USER:$GIT_TOKEN@#")
 
     git config --global user.email "updater@local"
@@ -230,17 +208,14 @@ if [[ $UPDATED -eq 1 ]]; then
     }
   fi
 
-  # Send notification
   send_notification "🟢 Addons updated:\n$NOTIFY_MSG"
 else
   log "$COLOR_GREEN" "✅ No updates needed."
 fi
 
-# Cron handling
 CRON_SCHEDULE=$(jq -r '.cron // empty' "$CONFIG_PATH")
 if [[ -n "$CRON_SCHEDULE" ]]; then
   log "$COLOR_BLUE" "⏰ Sleeping until next scheduled run: $CRON_SCHEDULE"
-  # Install cron job and run cron in foreground
   echo "$CRON_SCHEDULE /run.sh" > /etc/crontabs/root
   crond -f -d 8
 else
