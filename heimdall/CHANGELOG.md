@@ -404,3 +404,7 @@
 ## v2.4.15-ls193 (20-11-2022)
 - Update to latest version from linuxserver/docker-heimdall
 
+v2.7.3 (27-07-2025 05:02)
+
+    Update from version v2.7.3-ls315 to 2.7.3 for image lscr.io/linuxserver/heimdall:amd64-latest
+
