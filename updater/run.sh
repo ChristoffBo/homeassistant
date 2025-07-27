@@ -22,7 +22,7 @@ log() {
 
 clone_repo() {
   if [ ! -d "$REPO_DIR" ]; then
-    log "Cloning repository..."
+    log "Cloning repo..."
     git clone "$GIT_AUTH_REPO" "$REPO_DIR"
   else
     cd "$REPO_DIR"
@@ -48,6 +48,7 @@ get_latest_dockerhub_tag() {
 
 get_latest_ghcr_tag() {
   local image="$1"
+  # image like: ghcr.io/owner/repo[:tag]
   local repo_path
   repo_path=$(echo "$image" | sed -E 's|ghcr.io/([^:/]+/[^:/]+).*|\1|')
 
@@ -73,11 +74,13 @@ get_latest_ghcr_tag() {
     ((page++))
   done
 
+  # If no tags, fallback
   if [ "${#tags[@]}" -eq 0 ]; then
     echo ""
     return
   fi
 
+  # Sort tags descending (assuming semantic or date order)
   printf '%s\n' "${tags[@]}" | sort -r | head -n 1
 }
 
@@ -95,15 +98,10 @@ update_addon() {
   local config="$path/config.json"
   local updater="$path/updater.json"
 
-  local slug
-  slug=$(jq -r '.slug' "$config")
+  local slug=$(jq -r '.slug' "$config")
+  local current_version=$(jq -r '.version' "$config" | sed -r 's/\x1B\[[0-9;]*[mK]//g' | tr -d '[:space:]')
 
-  local current_version
-  current_version=$(jq -r '.version' "$config" | sed -r 's/\x1B\[[0-9;]*[mK]//g' | tr -d '[:space:]')
-
-  local image
-  image=$(jq -r '.image // empty' "$config")
-
+  local image=$(jq -r '.image // empty' "$config")
   if [[ -z "$image" || "$image" == "null" ]]; then
     log "⚠️ $slug missing image field, skipping"
     return
@@ -131,12 +129,9 @@ update_addon() {
   if [[ "$latest" != "$current_version" ]]; then
     jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
 
-    local clean_img
-    clean_img=$(clean_image_field "$image")
+    local clean_img=$(clean_image_field "$image")
 
-    local timestamp
-    timestamp=$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')
-
+    local timestamp=$(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M')
     if [ -f "$updater" ]; then
       jq --arg v "$latest" --arg dt "$timestamp" --arg img "$clean_img" \
         '.upstream_version=$v | .last_update=$dt | .image=$img' "$updater" > "$updater.tmp" && mv "$updater.tmp" "$updater"
