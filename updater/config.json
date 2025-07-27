@@ -1,6 +1,6 @@
 {
   "name": "Home Assistant Addons Docker Version Updater",
-  "version": "latest",
+  "version": "1.0.0",
   "slug": "addons_version_updater",
   "description": "Checks and updates add-on version numbers to match latest Docker image tags",
   "url": "https://github.com/ChristoffBo/homeassistant",
