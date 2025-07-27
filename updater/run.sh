@@ -178,6 +178,5 @@ EOF
 chmod +x "$CRON_SCRIPT"
 echo "$CRON_MINUTE $CRON_HOUR * * * root $CRON_SCRIPT >> /dev/stdout 2>&1" > "$CRON_FILE"
 
-NEXT_RUN=$(date -d "tomorrow $CHECK_TIME" '+%Y-%m-%d %H:%M:%S %Z')
-log "$COLOR_BLUE" "⏳ Waiting for cron to trigger at $NEXT_RUN"
+log "$COLOR_BLUE" "⏳ Cron scheduled for $CHECK_TIME daily in timezone: $TZ"
 crond -f -L /dev/stdout
