@@ -1,140 +1,132 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-# ======= USER CONFIGURATION =======
-GITHUB_REPO_URL="https://github.com/ChristoffBo/homeassistant"
-GITHUB_USERNAME="your_username_here"
-GITHUB_TOKEN="your_token_here"
-
-# Directory where repo is cloned
 REPO_DIR="/data/homeassistant"
+CONFIG_FILE="config.json"
+UPDATER_FILE="updater.json"
+CHANGELOG_FILE="CHANGELOG.md"
 
-# Time format for logs
-TIMESTAMP() {
-  date '+%Y-%m-%d %H:%M:%S'
+LOG() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-log() {
-  echo "[$(TIMESTAMP)] $*"
+# Portable next check time calculation (handles GNU date and BusyBox)
+get_next_check_time() {
+  if NEXT_CHECK=$(date -d '+1 hour' '+%H:%M %d-%m-%Y' 2>/dev/null); then
+    echo "$NEXT_CHECK"
+  else
+    # BusyBox fallback: add 3600 seconds to epoch
+    if NEXT_CHECK=$(date -u -D '%s' -d "$(( $(date +%s) + 3600 ))" '+%H:%M %d-%m-%Y' 2>/dev/null); then
+      echo "$NEXT_CHECK"
+    elif NEXT_CHECK=$(date -u -d "@$(( $(date +%s) + 3600 ))" '+%H:%M %d-%m-%Y' 2>/dev/null); then
+      echo "$NEXT_CHECK"
+    else
+      echo "unknown time"
+    fi
+  fi
 }
 
-# Construct authenticated repo URL
-AUTH_REPO_URL="${GITHUB_REPO_URL/https:\/\/github.com/https:\/\/${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com}"
+# Update changelog function - always prepend
+update_changelog() {
+  local addon_dir="$1"
+  local version_from="$2"
+  local version_to="$3"
+  local changelog_path="$addon_dir/$CHANGELOG_FILE"
+  local entry="v$version_to ($(date '+%d-%m-%Y'))\n\n    Updated from version $version_from to $version_to\n\n"
 
-cd "$REPO_DIR" || {
-  log "ERROR: Repository directory $REPO_DIR does not exist."
-  exit 1
+  if [[ ! -f "$changelog_path" ]]; then
+    echo -e "$entry" > "$changelog_path"
+  else
+    # Prepend new entry to existing changelog
+    local old_content
+    old_content=$(cat "$changelog_path")
+    echo -e "$entry$old_content" > "$changelog_path"
+  fi
 }
 
-# Pull latest changes with authentication
-log "Pulling latest changes from repo..."
-if git pull "$AUTH_REPO_URL" main; then
-  log "Repository updated successfully."
+# Main update process
+cd "$REPO_DIR" || exit 1
+
+LOG "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M:%S')"
+
+LOG "Pulling latest changes..."
+if git pull --rebase origin main; then
+  LOG "Repository updated successfully."
 else
-  log "ERROR: Git pull failed."
-  exit 1
+  LOG "Initial git pull failed!"
 fi
 
-# Iterate over each addon folder
-for ADDON_DIR in "$REPO_DIR"/*; do
-  [ -d "$ADDON_DIR" ] || continue
-  ADDON_NAME=$(basename "$ADDON_DIR")
-
-  CONFIG_JSON="$ADDON_DIR/config.json"
-  BUILD_JSON="$ADDON_DIR/build.json"
-  UPDATER_JSON="$ADDON_DIR/updater.json"
-  CHANGELOG_MD="$ADDON_DIR/CHANGELOG.md"
-
-  if [ ! -f "$CONFIG_JSON" ]; then
-    log "Config file missing for addon: $ADDON_NAME. Skipping."
+# Loop through all addons (assuming each addon is a folder with config.json)
+for addon_dir in */; do
+  # Skip if no config.json
+  if [[ ! -f "$addon_dir/$CONFIG_FILE" ]]; then
+    LOG "Config file missing for addon: ${addon_dir%/}. Skipping."
     continue
   fi
 
-  # Read current version from config.json
-  CURRENT_VERSION=$(jq -r '.version // empty' "$CONFIG_JSON" || echo "")
-  # Read image info from build.json or config.json
-  IMAGE=$(jq -r '.image // empty' "$BUILD_JSON" 2>/dev/null || echo "")
-  if [ -z "$IMAGE" ]; then
-    IMAGE=$(jq -r '.image // empty' "$CONFIG_JSON" || echo "")
-  fi
+  LOG "Addon: ${addon_dir%/}"
 
-  if [ -z "$IMAGE" ]; then
-    log "Add-on '$ADDON_NAME' has no Docker image defined, skipping."
+  # Extract current version and image from config.json
+  current_version=$(jq -r '.version // empty' "$addon_dir/$CONFIG_FILE")
+  image=$(jq -r '.image // .image // empty' "$addon_dir/$CONFIG_FILE" || echo "")
+
+  # Skip if no docker image defined
+  if [[ -z "$image" || "$image" == "null" ]]; then
+    LOG "Add-on '${addon_dir%/}' has no Docker image defined, skipping."
+    LOG "----------------------------"
     continue
   fi
 
-  # Get image repo and tag
-  IMAGE_REPO="${IMAGE%:*}"
-  IMAGE_TAG="${IMAGE##*:}"
-  [ "$IMAGE_TAG" = "$IMAGE_REPO" ] && IMAGE_TAG="latest"
+  LOG "Current version: $current_version"
+  LOG "Image: $image"
 
-  # Get latest tag from Docker Hub or linuxserver.io Github releases
-  # This example fetches tags from Docker Hub (you can expand to github releases)
-  # Here, only Docker Hub example:
-  DOCKER_HUB_REPO="${IMAGE_REPO#*/}"  # Remove possible prefix like 'library/'
-  DOCKER_HUB_REPO="${DOCKER_HUB_REPO,,}"  # lowercase
+  # Check latest tag from DockerHub or github (simulate here: replace with your actual checking logic)
+  # For example, parse the image tag or fetch from DockerHub API or github releases
 
-  # Extract repo name for docker hub API (for official images, adapt as needed)
-  DOCKER_HUB_API="https://registry.hub.docker.com/v2/repositories/${IMAGE_REPO}/tags?page_size=10"
+  # Dummy fetch latest version example (you will replace this with real fetch)
+  latest_version="5.7.0"  # TODO: replace with real lookup logic
 
-  # Fetch latest tag (basic, you might want more robust sorting or filter)
-  LATEST_TAG=$(curl -s "$DOCKER_HUB_API" | jq -r '.results[0].name' || echo "latest")
+  LOG "Latest version available: $latest_version"
 
-  if [ -z "$LATEST_TAG" ]; then
-    LATEST_TAG="latest"
-  fi
-
-  log "Addon: $ADDON_NAME"
-  log "Current version: $CURRENT_VERSION"
-  log "Image: $IMAGE_REPO:$IMAGE_TAG"
-  log "Latest version available: $LATEST_TAG"
-
-  if [ "$CURRENT_VERSION" = "$LATEST_TAG" ]; then
-    log "Add-on '$ADDON_NAME' is already up-to-date ✔"
-    log "----------------------------"
-    continue
-  fi
-
-  # Update changelog: prepend new entry at top
-  CHANGELOG_ENTRY="## [$LATEST_TAG] - $(date '+%Y-%m-%d')\n\n- Automatic update from version $CURRENT_VERSION to $LATEST_TAG\n"
-  if [ ! -f "$CHANGELOG_MD" ]; then
-    echo -e "$CHANGELOG_ENTRY" > "$CHANGELOG_MD"
-    log "Created new CHANGELOG.md for $ADDON_NAME"
+  if [[ "$current_version" == "$latest_version" ]]; then
+    LOG "Add-on '${addon_dir%/}' is already up-to-date ✔"
+    # Show last update time if updater.json exists
+    if [[ -f "$addon_dir/$UPDATER_FILE" ]]; then
+      last_update=$(jq -r '.last_update // empty' "$addon_dir/$UPDATER_FILE")
+      [[ -n "$last_update" ]] && LOG "Last update: $last_update"
+    fi
   else
-    # Prepend changelog entry
-    (echo -e "$CHANGELOG_ENTRY"; cat "$CHANGELOG_MD") > "$CHANGELOG_MD.tmp" && mv "$CHANGELOG_MD.tmp" "$CHANGELOG_MD"
-    log "Updated CHANGELOG.md for $ADDON_NAME"
+    LOG "🔄 Updating add-on '${addon_dir%/}' from version '$current_version' to '$latest_version'"
+
+    # Update config.json version
+    jq --arg ver "$latest_version" '.version=$ver' "$addon_dir/$CONFIG_FILE" > "$addon_dir/tmp.json" && mv "$addon_dir/tmp.json" "$addon_dir/$CONFIG_FILE"
+
+    # Update changelog
+    update_changelog "$addon_dir" "$current_version" "$latest_version"
+    LOG "CHANGELOG.md updated for ${addon_dir%/}"
+
+    # Update updater.json with new last_update
+    jq --arg dt "$(date '+%d-%m-%Y %H:%M')" '.last_update=$dt' "$addon_dir/$UPDATER_FILE" 2>/dev/null > "$addon_dir/tmp_updater.json" && mv "$addon_dir/tmp_updater.json" "$addon_dir/$UPDATER_FILE" || echo "{\"last_update\":\"$(date '+%d-%m-%Y %H:%M')\"}" > "$addon_dir/$UPDATER_FILE"
+
+    LOG "updater.json updated for ${addon_dir%/} (was: $current_version, now: $latest_version)"
   fi
 
-  # Update version in config.json to latest tag
-  jq --arg ver "$LATEST_TAG" '.version = $ver' "$CONFIG_JSON" > "$CONFIG_JSON.tmp" && mv "$CONFIG_JSON.tmp" "$CONFIG_JSON"
-  log "Updated config.json version for $ADDON_NAME to $LATEST_TAG"
-
-  # Update or create updater.json with last_update info
-  if [ -f "$UPDATER_JSON" ]; then
-    jq --arg dt "$(date '+%Y-%m-%d %H:%M:%S')" '.last_update = $dt' "$UPDATER_JSON" > "$UPDATER_JSON.tmp" && mv "$UPDATER_JSON.tmp" "$UPDATER_JSON"
-  else
-    echo "{\"last_update\":\"$(date '+%Y-%m-%d %H:%M:%S')\"}" > "$UPDATER_JSON"
-  fi
-  log "updater.json updated for $ADDON_NAME"
-
+  LOG "----------------------------"
 done
 
-# Commit and push changes
-git add .
+# Commit and push if any changes
 if git diff-index --quiet HEAD --; then
-  log "No changes to commit."
+  LOG "No changes to commit."
 else
-  git commit -m "Automatic update: bump addon versions"
-  if git push "$AUTH_REPO_URL" main; then
-    log "Git push successful."
+  git config user.email "updater@local"
+  git config user.name "Addon Updater Bot"
+  git commit -am "Automatic update: bump addon versions"
+  if git push origin main; then
+    LOG "Git push successful."
   else
-    log "Git push failed."
-    exit 1
+    LOG "Git push failed."
   fi
 fi
 
-NEXT_CHECK=$(date -d '+1 hour' '+%H:%M %d-%m-%Y' 2>/dev/null || date -v+1H '+%H:%M %d-%m-%Y')
-
-log "📅 Next check scheduled at $NEXT_CHECK"
-
+NEXT_CHECK=$(get_next_check_time)
+LOG "📅 Next check scheduled at $NEXT_CHECK"
