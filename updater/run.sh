@@ -21,8 +21,52 @@ log() {
   echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
+notify() {
+  local message="$1"
+  local title="${2:-Home Assistant Add-on Updater}"
+
+  # Gotify
+  local gotify_url
+  gotify_url=$(jq -r '.gotify.url // empty' "$CONFIG_PATH")
+  local gotify_token
+  gotify_token=$(jq -r '.gotify.token // empty' "$CONFIG_PATH")
+
+  # Mailrise
+  local mailrise_url
+  mailrise_url=$(jq -r '.mailrise.url // empty' "$CONFIG_PATH")
+  local mailrise_token
+  mailrise_token=$(jq -r '.mailrise.token // empty' "$CONFIG_PATH")
+
+  # Apprise
+  local apprise_url
+  apprise_url=$(jq -r '.apprise.url // empty' "$CONFIG_PATH")
+
+  # Send Gotify notification
+  if [ -n "$gotify_url" ] && [ -n "$gotify_token" ]; then
+    curl -s -X POST "$gotify_url/message?token=$gotify_token" \
+      -H "Content-Type: application/json" \
+      -d "{\"title\":\"$title\",\"message\":\"$message\",\"priority\":5}" > /dev/null 2>&1
+  fi
+
+  # Send Mailrise notification
+  if [ -n "$mailrise_url" ] && [ -n "$mailrise_token" ]; then
+    curl -s -X POST "$mailrise_url/api/notification" \
+      -H "Authorization: Bearer $mailrise_token" \
+      -H "Content-Type: application/json" \
+      -d "{\"message\":\"$message\",\"title\":\"$title\"}" > /dev/null 2>&1
+  fi
+
+  # Send Apprise notification
+  if [ -n "$apprise_url" ]; then
+    curl -s -X POST "$apprise_url" \
+      -H "Content-Type: application/json" \
+      -d "{\"title\":\"$title\",\"body\":\"$message\"}" > /dev/null 2>&1
+  fi
+}
+
 if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
+  notify "ERROR: Config file $CONFIG_PATH not found!" "Add-on Updater ERROR"
   exit 1
 fi
 
@@ -43,8 +87,10 @@ clone_or_update_repo() {
     log "$COLOR_PURPLE" "📂 Cloning repository..."
     if git clone "$GIT_AUTH_REPO" "$REPO_DIR" >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Repository cloned successfully."
+      notify "Repository cloned successfully." "Add-on Updater"
     else
       log "$COLOR_RED" "❌ Failed to clone repository."
+      notify "Failed to clone repository." "Add-on Updater ERROR"
       exit 1
     fi
   else
@@ -52,8 +98,10 @@ clone_or_update_repo() {
     cd "$REPO_DIR"
     if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Git pull successful."
+      notify "Git pull successful." "Add-on Updater"
     else
       log "$COLOR_RED" "❌ Git pull failed."
+      notify "Git pull failed." "Add-on Updater ERROR"
     fi
   fi
 }
@@ -183,6 +231,7 @@ v$latest_version ($(TZ="$TIMEZONE" date '+%d-%m-%Y %H:%M'))
     } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $slug"
+    notify "Updated $slug from $current_version to $latest_version" "Add-on Updater"
 
   else
     log "$COLOR_GREEN" "✔️ $slug is already up to date ($current_version)"
@@ -214,8 +263,10 @@ perform_update_check() {
     git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1 || true
     if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_GREEN" "✅ Git push successful."
+      notify "Git push successful with updates." "Add-on Updater"
     else
       log "$COLOR_RED" "❌ Git push failed."
+      notify "Git push failed!" "Add-on Updater ERROR"
     fi
   else
     log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
