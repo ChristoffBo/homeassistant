@@ -1,6 +1,6 @@
 {
   "slug": "heimdall",
   "image": "{\n  \"armhf\": \"lscr.io/linuxserver/heimdall:arm32v7-latest\",\n  \"aarch64\": \"lscr.io/linuxserver/heimdall:arm64v8-latest\",\n  \"amd64\": \"lscr.io/linuxserver/heimdall:amd64-latest\"\n}",
-  "upstream_version": "[2025-07-27 09:48:45 UTC] \u001b[0;34m🔍 Checking latest Docker Hub tag for lscr.io/linuxserver/heimdall\u001b[0m\nlatest",
-  "last_update": "27-07-2025 11:48"
+  "upstream_version": "version-v2.7.3",
+  "last_update": "27-07-2025 12:15"
 }

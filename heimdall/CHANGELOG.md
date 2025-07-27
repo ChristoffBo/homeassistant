@@ -1,5 +1,9 @@
 CHANGELOG for heimdall
 ===================
+vversion-v2.7.3 (27-07-2025 12:15)
+    Update from version [2025-07-2709:48:45UTC][0;34m🔍CheckinglatestDockerHubtagforlscr.io/linuxserver/heimdall[0mlatest to version-v2.7.3 (image: lscr.io/linuxserver/heimdall:amd64-latest)
+
+
 v[2025-07-27 09:48:45 UTC] [0;34m🔍 Checking latest Docker Hub tag for lscr.io/linuxserver/heimdall[0m
 latest (27-07-2025 11:48)
     Update from version [2025-07-2709:46:55UTC][0;34m🔍CheckinglatestDockerHubtagforlscr.io/linuxserver/heimdall[0mlatest to [2025-07-27 09:48:45 UTC] [0;34m🔍 Checking latest Docker Hub tag for lscr.io/linuxserver/heimdall[0m
