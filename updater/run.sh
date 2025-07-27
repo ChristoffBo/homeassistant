@@ -7,7 +7,7 @@ LOG_FILE="/data/updater.log"
 CRON_SCRIPT="/run_update.sh"
 CRON_FILE="/etc/crontabs/root"
 
-# Colored output
+# Colors
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
@@ -15,8 +15,7 @@ COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
 
 log() {
-  local color="$1"
-  shift
+  local color="$1"; shift
   echo -e "${color}[$(TZ="${TZ}" date '+%Y-%m-%d %H:%M:%S %Z')] $*${COLOR_RESET}"
 }
 
@@ -50,7 +49,7 @@ clone_or_update_repo() {
     git clone "$GIT_AUTH_REPO" "$REPO_DIR"
     log "$COLOR_GREEN" "✅ Repository cloned successfully."
   else
-    log "$COLOR_BLUE" "🔄 Pulling latest changes..."
+    log "$COLOR_BLUE" "🔄 Pulling latest changes from GitHub..."
     git -C "$REPO_DIR" pull
     log "$COLOR_GREEN" "✅ Repository updated."
   fi
@@ -104,6 +103,7 @@ get_latest_docker_tag() {
     candidates+=( "$(fetch_latest_dockerhub_tag "$image_no_tag")" )
   fi
 
+  # Also check dockerhub and ghcr tags for linuxserver images to be safe
   if [[ "$image_no_tag" == linuxserver/* ]]; then
     local plain_repo="${image_no_tag#linuxserver/}"
     candidates+=( "$(fetch_latest_dockerhub_tag "linuxserver/$plain_repo")" )
@@ -130,18 +130,17 @@ update_addon_if_needed() {
   local updater_file="$addon_dir/updater.json"
   local changelog_file="$addon_dir/CHANGELOG.md"
 
-  [ ! -f "$config_file" ] && return
+  [ ! -f "$config_file" ] && return 0
 
   local image
   image=$(jq -r '.image // empty' "$config_file")
-  [ -z "$image" ] && return
+  [ -z "$image" ] && return 0
 
   local current_version
   current_version=$(jq -r '.version // ""' "$config_file")
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
 
-  # read last update time from updater.json if present
   local last_update=""
   if [ -f "$updater_file" ]; then
     last_update=$(jq -r '.last_update // empty' "$updater_file")
@@ -157,34 +156,27 @@ update_addon_if_needed() {
   if [ "$latest_version" != "" ] && [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "null" ]; then
     log "$COLOR_YELLOW" "⬆️  Updating $(basename "$addon_dir") from $current_version to $latest_version"
 
-    # Update version tag only in config.json
     jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
-    # Update updater.json metadata
     jq -n --arg slug "$(basename "$addon_dir")" --arg image "$image" --arg v "$latest_version" --arg dt "$(TZ="$TZ" date '+%d-%m-%Y %H:%M')" \
       '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file"
 
-    # Create changelog if missing
     if [ ! -f "$changelog_file" ]; then
       echo "CHANGELOG for $(basename "$addon_dir")" > "$changelog_file"
       echo "===================" >> "$changelog_file"
       log "$COLOR_YELLOW" "📝 Created new CHANGELOG.md for $(basename "$addon_dir")"
     fi
 
-    # Add only version tag entry to changelog (prepend)
     NEW_ENTRY="v$latest_version ($(TZ="$TZ" date '+%d-%m-%Y %H:%M'))"
 
     { head -n 2 "$changelog_file"; echo "$NEW_ENTRY"; echo ""; tail -n +3 "$changelog_file"; } > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
 
     log "$COLOR_GREEN" "✅ CHANGELOG.md updated for $(basename "$addon_dir")"
 
-    # Commit & push only this addon's directory and changelog
-    git -C "$REPO_DIR" add "$addon_dir"
-    git -C "$REPO_DIR" commit -m "⬆️ Update addon $(basename "$addon_dir") to $latest_version" || true
-    git -C "$REPO_DIR" push
-
+    return 1  # indicates update happened
   else
     log "$COLOR_GREEN" "✔️ $(basename "$addon_dir") is already up to date ($current_version)"
+    return 0
   fi
   log "$COLOR_BLUE" "----------------------------"
 }
@@ -192,9 +184,29 @@ update_addon_if_needed() {
 perform_update_check() {
   clone_or_update_repo
 
+  local updates=0
+  cd "$REPO_DIR"
+
   for addon in "$REPO_DIR"/*/; do
-    update_addon_if_needed "$addon"
+    if update_addon_if_needed "$addon"; then
+      # no update
+      :
+    else
+      # updated
+      updates=$((updates+1))
+    fi
   done
+
+  if [ "$updates" -gt 0 ]; then
+    log "$COLOR_YELLOW" "📦 $updates add-on(s) updated. Committing and pushing changes..."
+
+    git add .
+    git commit -m "⬆️ Automatic update: bump addon versions" || true
+    git push || log "$COLOR_RED" "❌ Git push failed."
+    log "$COLOR_GREEN" "✅ Changes pushed to GitHub."
+  else
+    log "$COLOR_BLUE" "📦 No add-on updates found; no commit necessary."
+  fi
 }
 
 # Create cron-executed script
