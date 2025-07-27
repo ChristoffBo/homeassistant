@@ -6,17 +6,19 @@ REPO_DIR=/data/homeassistant
 LAST_RUN_FILE="/data/last_run_date.txt"
 LOG_FILE="/data/updater.log"
 
-# Colors
+# Colored output
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
 COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
+COLOR_DARK_RED="\033[0;31m"
 
 log() {
   local color="$1"
   shift
-  echo -e "${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
+  echo -e "${color}$*${COLOR_RESET}"
+  echo -e "$*"
 }
 
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -29,62 +31,73 @@ GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
 CHECK_TIME=$(jq -r '.check_time' "$CONFIG_PATH")  # Format HH:MM
 
-# Sanity check for config vars
-if [ -z "$GITHUB_REPO" ] || [ -z "$GITHUB_USERNAME" ] || [ -z "$GITHUB_TOKEN" ]; then
-  log "$COLOR_RED" "GitHub credentials or repo URL missing in $CONFIG_PATH"
-  exit 1
+# GitHub API auth header if token provided
+GITHUB_AUTH_HEADER=""
+if [ -n "$GITHUB_TOKEN" ]; then
+  GITHUB_AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
 fi
-
-# Git remote URL with embedded credentials for push/pull
-AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
 
 clone_or_update_repo() {
   log "$COLOR_BLUE" "Checking repository: $GITHUB_REPO"
-  if [ ! -d "$REPO_DIR/.git" ]; then
+  if [ ! -d "$REPO_DIR" ]; then
     log "$COLOR_BLUE" "Repository not found locally. Cloning..."
-    git clone "$AUTH_REPO" "$REPO_DIR" 2>&1 | tee -a "$LOG_FILE"
+    if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+      AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#https://#https://$GITHUB_USERNAME:$GITHUB_TOKEN@#")
+      git clone "$AUTH_REPO" "$REPO_DIR"
+    else
+      git clone "$GITHUB_REPO" "$REPO_DIR"
+    fi
     log "$COLOR_GREEN" "Repository cloned successfully."
   else
     log "$COLOR_BLUE" "Repository found. Pulling latest changes..."
     cd "$REPO_DIR"
-    git pull "$AUTH_REPO" main 2>&1 | tee -a "$LOG_FILE"
+    # Use merge as default, set config to avoid error (optional)
+    git config pull.rebase false
+    git pull
     log "$COLOR_GREEN" "Repository updated."
   fi
 }
 
 fetch_latest_dockerhub_tag() {
   local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=5&ordering=last_updated"
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
+  local retries=3
+  local count=0
   local tag=""
-  tag=$(curl -s "$url" | jq -r '.results[]?.name' 2>/dev/null | grep -v 'latest' | head -n1)
-  if [ -z "$tag" ] || [ "$tag" == "null" ]; then
+  while [ $count -lt $retries ]; do
     tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
-  fi
-  echo "$tag"
+    if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+      echo "$tag"
+      return 0
+    fi
+    count=$((count+1))
+    sleep $((count * 2))
+  done
+  echo ""
 }
 
 fetch_latest_linuxserver_tag() {
   local repo="$1"
-  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=5&ordering=last_updated"
-  local tag=$(curl -s "$url" | jq -r '.results[]?.name' 2>/dev/null | grep -v 'latest' | head -n1)
-  if [ -z "$tag" ] || [ "$tag" == "null" ]; then
-    tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
+  local url="https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=1&ordering=last_updated"
+  local tag=$(curl -s "$url" | jq -r '.results[0].name' 2>/dev/null)
+  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+    echo "$tag"
+  else
+    echo ""
   fi
-  echo "$tag"
 }
 
 fetch_latest_ghcr_tag() {
   local image="$1"
   local repo_path="${image#ghcr.io/}"
   local url="https://ghcr.io/v2/${repo_path}/tags/list"
-  local tags_json
-  tags_json=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" 2>/dev/null)
-  local tag
-  tag=$(echo "$tags_json" | jq -r '.tags[]' 2>/dev/null | grep -v 'latest' | tail -n1)
-  if [ -z "$tag" ] || [ "$tag" == "null" ]; then
-    tag=$(echo "$tags_json" | jq -r '.tags[-1]' 2>/dev/null)
+  local tags_json=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$url" 2>/dev/null)
+  local tag=$(echo "$tags_json" | jq -r '.tags[-1]' 2>/dev/null)
+  if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+    echo "$tag"
+  else
+    echo ""
   fi
-  echo "$tag"
 }
 
 get_latest_docker_tag() {
@@ -97,31 +110,12 @@ get_latest_docker_tag() {
   fi
 
   if [[ "$image_no_tag" == linuxserver/* ]]; then
-    fetch_latest_linuxserver_tag "$image_no_tag"
+    echo "$(fetch_latest_linuxserver_tag "$image_no_tag")"
   elif [[ "$image_no_tag" == ghcr.io/* ]]; then
-    fetch_latest_ghcr_tag "$image_no_tag"
+    echo "$(fetch_latest_ghcr_tag "$image_no_tag")"
   else
-    fetch_latest_dockerhub_tag "$image_no_tag"
+    echo "$(fetch_latest_dockerhub_tag "$image_no_tag")"
   fi
-}
-
-update_changelog() {
-  local slug="$1"
-  local changelog_file="$2"
-  local latest_version="$3"
-  local image="$4"
-
-  if [ ! -f "$changelog_file" ]; then
-    touch "$changelog_file"
-    log "$COLOR_YELLOW" "Created new CHANGELOG.md for $slug"
-  fi
-
-  echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))" >> "$changelog_file"
-  echo "" >> "$changelog_file"
-  echo "    Update to latest version from $image" >> "$changelog_file"
-  echo "" >> "$changelog_file"
-
-  log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
 }
 
 update_addon_if_needed() {
@@ -137,45 +131,44 @@ update_addon_if_needed() {
   fi
 
   local image=""
-  local slug=""
-  local current_version=""
-  local latest_version=""
 
   if [ -f "$build_file" ]; then
-    local arch
-    arch=$(uname -m)
+    local arch=$(uname -m)
     if [[ "$arch" == "x86_64" ]]; then arch="amd64"; fi
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | select(type=="string")' "$build_file")
-    slug=$(jq -r '.slug // empty' "$build_file")
   fi
 
   if [ -z "$image" ] && [ -f "$config_file" ]; then
     image=$(jq -r '.image // empty' "$config_file")
-    slug=$(jq -r '.slug // empty' "$config_file")
-  fi
-
-  if [ -z "$slug" ]; then
-    slug=$(basename "$addon_path")
-  fi
-
-  if [ -f "$updater_file" ]; then
-    current_version=$(jq -r '.upstream_version // empty' "$updater_file")
   fi
 
   if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "Addon '$slug' has no Docker image defined, skipping."
+    log "$COLOR_YELLOW" "Addon '$(basename "$addon_path")' has no Docker image defined, skipping."
     return
+  fi
+
+  local slug
+  slug=$(jq -r '.slug // empty' "$config_file")
+  if [ -z "$slug" ] || [ "$slug" == "null" ]; then
+    slug=$(basename "$addon_path")
+  fi
+
+  local upstream_version=""
+  if [ -f "$updater_file" ]; then
+    upstream_version=$(jq -r '.upstream_version // empty' "$updater_file")
   fi
 
   log "$COLOR_BLUE" "----------------------------"
   log "$COLOR_BLUE" "Addon: $slug"
-  log "$COLOR_BLUE" "Current version: $current_version"
+  log "$COLOR_BLUE" "Current version: $upstream_version"
   log "$COLOR_BLUE" "Image: $image"
 
+  local latest_version
   latest_version=$(get_latest_docker_tag "$image")
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    log "$COLOR_YELLOW" "WARNING: Could not fetch latest docker tag for image $image"
-    log "$COLOR_BLUE" "Latest version available: WARNING: Could not fetch"
+
+  if [ -z "$latest_version" ]; then
+    log "$COLOR_DARK_RED" "WARNING: Could not fetch latest docker tag for image $image"
+    log "$COLOR_BLUE" "Latest version: WARNING: Could not fetch"
     log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
     log "$COLOR_BLUE" "----------------------------"
     return
@@ -183,8 +176,8 @@ update_addon_if_needed() {
 
   log "$COLOR_BLUE" "Latest version available: $latest_version"
 
-  if [ "$latest_version" != "$current_version" ]; then
-    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$current_version' to '$latest_version'"
+  if [ "$latest_version" != "$upstream_version" ]; then
+    log "$COLOR_GREEN" "🔄 Updating add-on '$slug' from version '$upstream_version' to '$latest_version'"
 
     # Update updater.json
     jq --arg v "$latest_version" --arg dt "$(date +'%d-%m-%Y %H:%M')" \
@@ -193,19 +186,26 @@ update_addon_if_needed() {
         '{slug: $slug, image: $image, upstream_version: $v, last_update: $dt}' > "$updater_file.tmp"
     mv "$updater_file.tmp" "$updater_file"
 
-    # Update config.json version field if exists
-    if [ -f "$config_file" ]; then
-      jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
-      if [ -f "$config_file.tmp" ]; then
-        mv "$config_file.tmp" "$config_file"
-      fi
+    # Update config.json version
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null || true
+    if [ -f "$config_file.tmp" ]; then
+      mv "$config_file.tmp" "$config_file"
     fi
 
-    # Create or update changelog
-    update_changelog "$slug" "$changelog_file" "$latest_version" "$image"
-
+    # Create or append CHANGELOG.md
+    if [ ! -f "$changelog_file" ]; then
+      echo "Created new CHANGELOG.md for $slug"
+      touch "$changelog_file"
+    fi
+    {
+      echo "v$latest_version ($(date +'%d-%m-%Y %H:%M'))"
+      echo ""
+      echo "    Update from $upstream_version to $latest_version"
+      echo ""
+    } >> "$changelog_file"
+    log "$COLOR_GREEN" "CHANGELOG.md updated for $slug"
   else
-    log "$COLOR_BLUE" "Addon '$slug' is already up-to-date ✔"
+    log "$COLOR_GREEN" "Addon '$slug' is already up-to-date ✔"
   fi
 
   log "$COLOR_BLUE" "----------------------------"
@@ -219,51 +219,49 @@ perform_update_check() {
   done
 }
 
-LAST_RUN=""
+# Clear the log at startup
+: > "$LOG_FILE"
 
 log "$COLOR_GREEN" "🚀 HomeAssistant Addon Updater started at $(date '+%d-%m-%Y %H:%M')"
-> "$LOG_FILE"  # Clear log at start
+
+# Run update check immediately on startup
+log "$COLOR_GREEN" "⏯️ Running initial update check on startup"
+perform_update_check
+echo "$(date +%Y-%m-%d)" > "$LAST_RUN_FILE"
 
 while true; do
   NOW_TIME=$(date +%H:%M)
   TODAY=$(date +%Y-%m-%d)
+  LAST_RUN=""
 
   if [ -f "$LAST_RUN_FILE" ]; then
     LAST_RUN=$(cat "$LAST_RUN_FILE")
   fi
 
-  if [ "$NOW_TIME" = "$CHECK_TIME" ] || [ "$LAST_RUN" != "$TODAY" ]; then
+  if [ "$NOW_TIME" = "$CHECK_TIME" ] && [ "$LAST_RUN" != "$TODAY" ]; then
     log "$COLOR_GREEN" "⏰ Running scheduled update checks at $NOW_TIME on $TODAY"
     perform_update_check
     echo "$TODAY" > "$LAST_RUN_FILE"
     log "$COLOR_GREEN" "✅ Scheduled update checks complete."
+    sleep 60  # prevent multiple runs in same minute
+  else
+    CHECK_HOUR=${CHECK_TIME%%:*}
+    CHECK_MIN=${CHECK_TIME##*:}
 
-    # Commit and push changes if any
-    cd "$REPO_DIR"
-    git add .
-    if git diff-index --quiet HEAD --; then
-      log "$COLOR_BLUE" "No changes detected to commit."
+    CURRENT_SEC=$(date +%s)
+    TODAY_SEC=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+    if [ "$TODAY_SEC" -eq 0 ]; then
+      NEXT_CHECK_TIME="$CHECK_TIME (date command not supported)"
     else
-      git config user.email "updater@local"
-      git config user.name "Addon Updater"
-      git commit -m "Updater: automatic version bump $(date +'%Y-%m-%d %H:%M')"
-      if git push "$AUTH_REPO" main; then
-        log "$COLOR_GREEN" "✅ Git push succeeded."
+      CHECK_SEC=$((TODAY_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))
+      if [ "$CURRENT_SEC" -ge "$CHECK_SEC" ]; then
+        TOMORROW_SEC=$((TODAY_SEC + 86400))
+        NEXT_CHECK_TIME=$(date -d "@$((TOMORROW_SEC + CHECK_HOUR * 3600 + CHECK_MIN * 60))" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
       else
-        log "$COLOR_RED" "❌ Git push failed."
+        NEXT_CHECK_TIME=$(date -d "@$CHECK_SEC" '+%H:%M %d-%m-%Y' 2>/dev/null || echo "$CHECK_TIME (unknown)")
       fi
     fi
 
-    # Always pull latest to stay in sync
-    if git pull "$AUTH_REPO" main; then
-      log "$COLOR_GREEN" "✅ Git pull succeeded."
-    else
-      log "$COLOR_RED" "❌ Git pull failed."
-    fi
-
-    sleep 60  # Prevent multiple runs in the same minute
-  else
-    NEXT_CHECK_TIME="$CHECK_TIME"
     log "$COLOR_BLUE" "📅 Next check scheduled at $NEXT_CHECK_TIME"
   fi
 
