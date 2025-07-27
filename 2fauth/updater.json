@@ -1,7 +1,7 @@
 {
   "slug": "2fauth",
   "image": "2fauth/2fauth",
-  "upstream_version": "5.6.0",
-  "last_update": "27-07-2025 13:45",
+  "upstream_version": "[2025-07-27 20:53:52 SAST] \u001b[0;36m🔍 Checking latest version for 2fauth/2fauth\u001b[0m",
+  "last_update": "2025-07-27 20:53:52",
   "version": "dev"
 }

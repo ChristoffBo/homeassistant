@@ -1,6 +1,6 @@
 {
   "name": "Gotify",
-  "version": "2.6.3",
+  "version": "[2025-07-27 20:53:52 SAST] \u001b[0;36m🔍 Checking latest version for gotify/server:latest\u001b[0m",
   "slug": "gotify",
   "description": "A simple server for sending and receiving messages",
   "startup": "services",

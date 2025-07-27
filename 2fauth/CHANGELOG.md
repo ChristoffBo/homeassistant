@@ -1,5 +1,11 @@
 CHANGELOG for 2fauth
 ===================
+## v[2025-07-27 20:53:52 SAST] [0;36m🔍 Checking latest version for 2fauth/2fauth[0m (2025-07-27 20:53:52)
+
+- Update from version dev to [2025-07-27 20:53:52 SAST] [0;36m🔍 Checking latest version for 2fauth/2fauth[0m
+- Docker Image: [2fauth/2fauth](https://hub.docker.com/_/2fauth)
+
+
 
 Initial version: 5.6.0
 Docker Image source: https://hub.docker.com/r/2fauth/2fauth

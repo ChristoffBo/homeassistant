@@ -11,7 +11,7 @@
   "map": [
     "share:rw"
   ],
-  "version": "2025-07-27",
+  "version": "[2025-07-27 20:53:55 SAST] \u001b[0;36m🔍 Checking latest version for alexta69/metube:latest\u001b[0m",
   "name": "metube",
   "options": {},
   "ports": {

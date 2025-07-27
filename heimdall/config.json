@@ -1,6 +1,6 @@
 {
   "name": "heimdall",
-  "version": "27-07-2025",
+  "version": "[2025-07-27 20:53:53 SAST] \u001b[0;36m🔍 Checking latest version for lscr.io/linuxserver/heimdall:amd64-latest\u001b[0m",
   "slug": "heimdall",
   "legacy": false,
   "codenotary": "bothmacell@gmail.com",

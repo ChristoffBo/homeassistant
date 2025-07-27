@@ -1,6 +1,6 @@
 {
   "name": "Technitium DNS & DHCP",
-  "version": "13.6.0",
+  "version": "[2025-07-27 20:53:56 SAST] \u001b[0;36m🔍 Checking latest version for technitium/dns-server:latest\u001b[0m",
   "slug": "technitium-dns-dhcp",
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/",
