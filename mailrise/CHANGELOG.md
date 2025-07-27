@@ -1,5 +1,9 @@
 CHANGELOG for mailrise
 ===================
+vstable (27-07-2025 12:22)
+    Update from version 1.3.0 to stable (image: yoryan/mailrise:latest)
+
+
 v1.3.0 (27-07-2025 12:01)
     Update from version 🔍CheckinglatestDockerHubtagforyoryan/mailrise1.3.0 to 1.3.0 (image: yoryan/mailrise:latest)
 
