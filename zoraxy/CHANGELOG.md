@@ -1,5 +1,9 @@
 CHANGELOG for zoraxy
 ===================
+vv3.2.5r2 (27-07-2025 12:53)
+    Update from version 3.2.5r2 to v3.2.5r2 (image: zoraxydocker/zoraxy:latest)
+
+
 v3.2.5r2 (27-07-2025 12:48)
     Update from version v3.2.5r2 to 3.2.5r2 (image: zoraxydocker/zoraxy:latest)
 

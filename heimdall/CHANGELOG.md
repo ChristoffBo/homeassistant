@@ -1,5 +1,12 @@
 CHANGELOG for heimdall
 ===================
+v[2025-07-27 10:58:30 UTC] [0;33m⚠️ No valid tags found for lscr.io/linuxserver/heimdall[0m (27-07-2025 12:58)
+    Updated from version [2025-07-27 10:56:33 UTC] [0;33m⚠️ No tags found for lscr.io/linuxserver/heimdall[0m to [2025-07-27 10:58:30 UTC] [0;33m⚠️ No valid tags found for lscr.io/linuxserver/heimdall[0m (image: lscr.io/linuxserver/heimdall:amd64-latest)
+
+v[2025-07-27 10:56:33 UTC] [0;33m⚠️ No tags found for lscr.io/linuxserver/heimdall[0m (27-07-2025 12:56)
+    Update from version version-v2.7.3 to [2025-07-27 10:56:33 UTC] [0;33m⚠️ No tags found for lscr.io/linuxserver/heimdall[0m (image: lscr.io/linuxserver/heimdall:amd64-latest)
+
+
 vversion-v2.7.3 (27-07-2025 12:15)
     Update from version [2025-07-2709:48:45UTC][0;34m🔍CheckinglatestDockerHubtagforlscr.io/linuxserver/heimdall[0mlatest to version-v2.7.3 (image: lscr.io/linuxserver/heimdall:amd64-latest)
 
