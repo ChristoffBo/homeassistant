@@ -1,6 +1,6 @@
 {
   "name": "Mailrise",
-  "version": "stable",
+  "version": "[2025-07-27 11:02:42 UTC] \u001b[0;33m⚠️ No valid tags found for Docker Hub image yoryan/mailrise\u001b[0m",
   "slug": "mailrise",
   "description": "SMTP to Apprise notification gateway using Mailrise (based on yoryan/mailrise)",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/mailrise",

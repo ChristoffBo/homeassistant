@@ -1,5 +1,9 @@
 CHANGELOG for mailrise
 ===================
+v[2025-07-27 11:02:42 UTC] [0;33m⚠️ No valid tags found for Docker Hub image yoryan/mailrise[0m (27-07-2025 13:02)
+    Update from version stable to [2025-07-27 11:02:42 UTC] [0;33m⚠️ No valid tags found for Docker Hub image yoryan/mailrise[0m (image: yoryan/mailrise:latest)
+
+
 vstable (27-07-2025 12:22)
     Update from version 1.3.0 to stable (image: yoryan/mailrise:latest)
 

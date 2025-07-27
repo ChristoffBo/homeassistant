@@ -1,6 +1,6 @@
 {
   "slug": "heimdall",
   "image": "lscr.io/linuxserver/heimdall:amd64-latest",
-  "upstream_version": "[2025-07-27 11:00:37 UTC] \u001b[0;33m⚠️ No valid tags found for lscr.io/linuxserver/heimdall\u001b[0m",
-  "last_update": "27-07-2025 13:00"
+  "upstream_version": "[2025-07-27 11:02:40 UTC] \u001b[0;33m⚠️ No valid tags found for lscr.io/linuxserver/heimdall\u001b[0m",
+  "last_update": "27-07-2025 13:02"
 }

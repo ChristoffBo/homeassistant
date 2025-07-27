@@ -1,5 +1,9 @@
 CHANGELOG for zoraxy
 ===================
+v[2025-07-27 11:02:47 UTC] [0;33m⚠️ No valid tags found for Docker Hub image zoraxydocker/zoraxy[0m (27-07-2025 13:02)
+    Update from version v3.2.5r2 to [2025-07-27 11:02:47 UTC] [0;33m⚠️ No valid tags found for Docker Hub image zoraxydocker/zoraxy[0m (image: zoraxydocker/zoraxy:latest)
+
+
 vv3.2.5r2 (27-07-2025 12:53)
     Update from version 3.2.5r2 to v3.2.5r2 (image: zoraxydocker/zoraxy:latest)
 

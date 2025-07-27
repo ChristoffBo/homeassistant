@@ -1,6 +1,6 @@
 {
   "name": "2FAuth",
-  "version": "dev",
+  "version": "[2025-07-27 11:02:38 UTC] \u001b[0;33m⚠️ No valid tags found for Docker Hub image 2fauth/2fauth\u001b[0m",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "image": "2fauth/2fauth",

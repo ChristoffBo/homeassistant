@@ -1,6 +1,6 @@
 {
   "name": "Zoraxy",
-  "version": "v3.2.5r2",
+  "version": "[2025-07-27 11:02:47 UTC] \u001b[0;33m⚠️ No valid tags found for Docker Hub image zoraxydocker/zoraxy\u001b[0m",
   "slug": "zoraxy",
   "description": "A reverse proxy and dashboard powered by Docker.",
   "startup": "services",
