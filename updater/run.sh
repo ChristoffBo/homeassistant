@@ -362,7 +362,7 @@ perform_update_check() {
 
   if ! cd "$REPO_DIR"; then
     log "$COLOR_RED" "❌ Failed to enter repository directory"
-    exit 1
+    return 1
   fi
   
   if [[ "$DRY_RUN" != "true" ]]; then
@@ -376,7 +376,7 @@ perform_update_check() {
     if [ -d "$addon_path" ]; then
       update_addon_if_needed "$addon_path"
       ((addon_count++))
-      if [[ "$(git status --porcelain "$addon_path")" ]]; then
+      if [[ -n "$(git status --porcelain "$addon_path")" ]]; then
         ((updated_count++))
       fi
     fi
@@ -384,10 +384,10 @@ perform_update_check() {
 
   if [ $addon_count -eq 0 ]; then
     log "$COLOR_RED" "❌ No add-ons found in repository!"
-    exit 1
+    return 1
   fi
 
-  if [ $updated_count -gt 0 ] && [ "$(git status --porcelain)" ]; then
+  if [ $updated_count -gt 0 ]; then
     if [[ "$DRY_RUN" == "true" ]]; then
       log "$COLOR_CYAN" "🛑 Dry run enabled - would commit and push updates for $updated_count addon(s)"
       log "$COLOR_CYAN" "   Commit message: '⬆️ Update addon versions'"
@@ -396,26 +396,34 @@ perform_update_check() {
       else
         log "$COLOR_CYAN" "   Would push changes to $GIT_AUTH_REPO"
       fi
-      return
-    fi
-    
-    if [ "$SKIP_PUSH" == "true" ]; then
-      log "$COLOR_CYAN" "⏸️ Skip push enabled - committing changes locally but not pushing"
-      git add .
-      git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1
     else
+      log "$COLOR_GREEN" "💾 Staging changes for commit..."
       git add .
-      git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1
-      if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-        log "$COLOR_GREEN" "✅ Git push successful."
-        if [ "$NOTIFY_ON_SUCCESS" == "true" ]; then
-          send_notification "Add-on Updater Success" "Updated $updated_count add-on(s) and pushed changes" 0
+      
+      log "$COLOR_GREEN" "📝 Creating commit..."
+      if git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1; then
+        log "$COLOR_GREEN" "✅ Successfully committed changes"
+        
+        if [ "$SKIP_PUSH" == "true" ]; then
+          log "$COLOR_CYAN" "⏸️ Skip push enabled - not pushing changes"
+        else
+          log "$COLOR_GREEN" "📤 Pushing changes to remote..."
+          if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+            log "$COLOR_GREEN" "✅ Successfully pushed changes"
+            if [ "$NOTIFY_ON_SUCCESS" == "true" ]; then
+              send_notification "Add-on Updater Success" "Updated $updated_count add-on(s) and pushed changes" 0
+            fi
+          else
+            log "$COLOR_RED" "❌ Failed to push changes"
+            if [ "$NOTIFY_ON_ERROR" == "true" ]; then
+              send_notification "Add-on Updater Error" "Failed to push changes for $updated_count add-on(s)" 5
+            fi
+            return 1
+          fi
         fi
       else
-        log "$COLOR_RED" "❌ Git push failed."
-        if [ "$NOTIFY_ON_ERROR" == "true" ]; then
-          send_notification "Add-on Updater Error" "Failed to push changes for $updated_count add-on(s)" 5
-        fi
+        log "$COLOR_RED" "❌ Failed to create commit"
+        return 1
       fi
     fi
   else
@@ -427,6 +435,7 @@ perform_update_check() {
   
   local duration=$(( $(date +%s) - start_time ))
   log "$COLOR_PURPLE" "🏁 Update check completed in ${duration} seconds"
+  return 0
 }
 
 # Check for lock file to prevent concurrent runs
@@ -442,16 +451,9 @@ trap 'rm -f "$LOCK_FILE" "$TEMP_FILE" 2>/dev/null' EXIT
 # Main execution
 check_dependencies
 
-if [ ! -f "$CONFIG_PATH" ]; then
-  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
-  exit 1
-fi
-
-# Validate and read configuration
-if ! validate_json_file "$CONFIG_PATH"; then
-  log "$COLOR_RED" "❌ Invalid configuration in $CONFIG_PATH"
-  exit 1
-fi
+# Load configuration
+[ ! -f "$CONFIG_PATH" ] && { log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"; exit 1; }
+validate_json_file "$CONFIG_PATH" || { log "$COLOR_RED" "❌ Invalid configuration in $CONFIG_PATH"; exit 1; }
 
 # Read configuration with defaults
 GITHUB_REPO=$(safe_jq '.github_repo' "$CONFIG_PATH" || { log "$COLOR_RED" "❌ github_repo is required"; exit 1; })
@@ -462,13 +464,7 @@ TIMEZONE=$(safe_jq '.timezone // "UTC"' "$CONFIG_PATH")
 MAX_LOG_LINES=$(safe_jq '.max_log_lines // 1000' "$CONFIG_PATH")
 DRY_RUN=$(safe_jq '.dry_run // false' "$CONFIG_PATH")
 SKIP_PUSH=$(safe_jq '.skip_push // false' "$CONFIG_PATH")
-
-# Ensure DRY_RUN is properly set as a string "true" or "false"
-if [[ "$DRY_RUN" == "true" ]]; then
-  DRY_RUN="true"
-else
-  DRY_RUN="false"
-fi
+PERSISTENT=$(safe_jq '.persistent // false' "$CONFIG_PATH")
 
 # Notification settings
 NOTIFICATION_ENABLED=$(safe_jq '.notifications_enabled // false' "$CONFIG_PATH")
@@ -504,17 +500,24 @@ log "$COLOR_GREEN" "   - Dry run: $DRY_RUN"
 log "$COLOR_GREEN" "   - Skip push: $SKIP_PUSH"
 log "$COLOR_GREEN" "   - Check cron: $CHECK_CRON"
 log "$COLOR_GREEN" "   - Timezone: $TIMEZONE"
+log "$COLOR_GREEN" "   - Persistent: $PERSISTENT"
 if [ "$NOTIFICATION_ENABLED" == "true" ]; then
   log "$COLOR_GREEN" "🔔 Notifications: Enabled (Service: $NOTIFICATION_SERVICE)"
 else
   log "$COLOR_GREEN" "🔔 Notifications: Disabled"
 fi
 
-# First run on startup
-perform_update_check
+# Run the update check
+if ! perform_update_check; then
+  log "$COLOR_RED" "⚠️ Update check encountered errors"
+  exit 1
+fi
 
-# Main loop (if running continuously)
-log "$COLOR_GREEN" "⏳ Waiting for cron triggers..."
-while true; do
-  sleep 60
-done
+# Keep the container running if in persistent mode
+if [[ "$PERSISTENT" == "true" ]]; then
+  log "$COLOR_GREEN" "⏳ Entering persistent mode..."
+  while true; do
+    sleep 3600
+    perform_update_check
+  done
+fi
