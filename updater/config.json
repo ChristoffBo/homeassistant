@@ -22,18 +22,14 @@
     "max_log_lines": 1000,
     "dry_run": false,
     "skip_push": false,
-    "notifications": {
-      "enabled": false,
-      "service": "gotify",
-      "config": {
-        "url": "",
-        "token": "",
-        "to": ""
-      },
-      "on_success": true,
-      "on_error": true,
-      "on_updates": true
-    }
+    "notifications_enabled": false,
+    "notification_service": "gotify",
+    "notification_url": "",
+    "notification_token": "",
+    "notification_to": "",
+    "notify_on_success": true,
+    "notify_on_error": true,
+    "notify_on_updates": true
   },
   "schema": {
     "github_repo": "str",
@@ -45,18 +41,14 @@
     "max_log_lines": "int?",
     "dry_run": "bool?",
     "skip_push": "bool?",
-    "notifications": {
-      "enabled": "bool?",
-      "service": "str?",
-      "config": {
-        "url": "str?",
-        "token": "str?",
-        "to": "str?"
-      },
-      "on_success": "bool?",
-      "on_error": "bool?",
-      "on_updates": "bool?"
-    }
+    "notifications_enabled": "bool?",
+    "notification_service": "str?",
+    "notification_url": "str?",
+    "notification_token": "str?",
+    "notification_to": "str?",
+    "notify_on_success": "bool?",
+    "notify_on_error": "bool?",
+    "notify_on_updates": "bool?"
   },
   "map": [
     "config:ro",
