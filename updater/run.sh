@@ -214,7 +214,7 @@ get_latest_docker_tag() {
   local repo_name="${image_name%%:*}"
   
   for ((i=1; i<=retries; i++)); do
-    log "$COLOR_BLUE" "   Checking Docker Hub for $repo_name (attempt $i/$retries)..."
+    log "$COLOR_BLUE" "   Checking Docker Hub for $repo_name (attempt $i/$retries)"
     
     local api_response
     api_response=$(curl -s -f --max-time 30 \
@@ -227,6 +227,7 @@ get_latest_docker_tag() {
       
       if [ -n "$version" ] && [[ "$version" =~ ^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
         version=${version#v}  # Remove 'v' prefix if present
+        log "$COLOR_BLUE" "   Found version: $version"
         break
       fi
     fi
@@ -296,6 +297,7 @@ update_addon_if_needed() {
     
     if [[ "$DRY_RUN" == "true" ]]; then
       log "$COLOR_CYAN" "🛑 Dry run enabled - would update to $latest_version"
+      log "$COLOR_CYAN" "   Version $latest_version is available (current: $current_version)"
       return
     fi
 
