@@ -1,149 +1,164 @@
 Home Assistant Add-on Updater
 
-This is a Home Assistant add-on script that automatically checks and updates your custom add-on Docker image versions. It fetches the latest version tags from Docker Hub, LinuxServer.io, or GitHub Container Registry (GHCR) and updates your add-ons accordingly.
-🔧 Features
+Created by ChristoffBo with help from ChatGPT and Deepseek AI.
 
-    ✅ Pulls or clones your GitHub repo (supports private repos with credentials).
+This add-on automatically checks and updates Docker image versions used in your custom Home Assistant add-ons. It compares the current image version with the latest available from Docker Hub, LinuxServer.io, or GitHub Container Registry and updates your add-on metadata if needed.
 
-    📦 Checks Docker image versions from:
 
-        Docker Hub
+---
 
-        LinuxServer.io
+How It Works
 
-        GHCR (GitHub Container Registry)
+Checks your GitHub repo for Home Assistant add-ons.
 
-    🧠 Compares tags by version number only (ignores latest, architecture prefixes, or date-based tags).
+Compares current Docker image versions with the latest available.
 
-    ✏️ Updates:
+If a new version is found:
 
-        config.json
+Updates config.json, build.json, and updater.json.
 
-        build.json (if present)
+Creates or updates CHANGELOG.md.
 
-        updater.json
+Optionally pushes changes to GitHub.
 
-    📝 Creates or appends to CHANGELOG.md with:
+Sends a notification (if enabled).
 
-        Add-on name
 
-        Old vs. new version
+Scheduled by cron, runs in your timezone.
 
-        Docker image used
 
-        Link to Docker Hub or GHCR image
 
-    🕒 Respects a configurable daily cron time (set via GUI).
+---
 
-    🌍 Timezone-aware using your selected Home Assistant timezone.
+Main Features
 
-    🎨 Clean, color-coded log output with emojis.
+Supports Docker Hub, LinuxServer.io, and GHCR.
 
-    📩 Optional notifications via:
+Ignores latest, architecture-prefixed, or date-based tags.
 
-        Gotify
+Logs everything with timestamps in your configured timezone.
 
-        Apprise
+Uses a lock file to avoid running twice at the same time.
 
-        Mailrise
+Sends optional notifications via Gotify, Apprise, or Mailrise.
 
-        (Only sent when something is updated or created)
+GitHub integration with optional push support.
 
-    🛠 Safe retry for DockerHub API (resilient to rate limits or downtime).
+Supports dry run mode for testing.
 
-    🚫 Skips add-ons without a defined image.
 
-    🧹 Clears logs daily at 17:00 for cleanliness.
 
-    📅 Prints next cron execution time at the end of each run.
+---
 
-⚙️ How to Set Up
+Folder Structure
 
-In the Home Assistant add-on GUI, configure the options:
+Your custom add-ons should be inside this path:
+
+/data/homeassistant/
+
+
+---
+
+Add-on Configuration (via GUI)
+
+Example settings to paste in the add-on configuration tab in Home Assistant:
 
 {
-  "github_repo": "https://github.com/yourusername/your-addons-repo.git",
-  "github_username": "your-github-username",              // Optional, for private repos
-  "github_token": "your-github-personal-access-token",    // Optional, for private repos
-  "dockerhub_token": "your-dockerhub-token",              // Optional, to avoid rate limit
-  "check_time": "03:00",                                  // Daily check time (24h format)
-  "gotify_url": "http://your-gotify-url/message",         // Optional
-  "gotify_token": "your-gotify-token",                    // Optional
-  "apprise_url": "discord://token/serverid",              // Optional
-  "mailrise_url": "http://mailrise:5000/email@example.com"// Optional
+  "github_repo": "https://github.com/YourUser/YourRepo",
+  "github_username": "YourGitHubUsername",
+  "github_token": "YourGitHubToken",
+  "check_cron": "0 9 * * *",
+  "startup_cron": "",
+  "timezone": "Africa/Johannesburg",
+  "max_log_lines": 1000,
+  "dry_run": false,
+  "skip_push": false,
+  "notifications_enabled": true,
+  "notification_service": "gotify",
+  "notification_url": "https://gotify.example.com",
+  "notification_token": "your_token_here",
+  "notification_to": "",
+  "notify_on_success": true,
+  "notify_on_error": true,
+  "notify_on_updates": true
 }
 
-Then start the add-on.
-🚀 What Happens
 
-    Pulls the latest from your GitHub repo.
+---
 
-    Scans each add-on folder:
+Notifications
 
-        Finds the Docker image.
+If enabled, the add-on will send notifications only when updates are found.
+Supported services:
 
-        Gets the latest version tag.
+Gotify
 
-        Compares with current.
+Apprise
 
-        If a newer version is found:
+Mailrise
 
-            Updates config.json, build.json, updater.json
 
-            Adds/updates CHANGELOG.md
 
-            Commits and pushes the changes.
+---
 
-            Sends a notification (if enabled).
+Logging
 
-    Runs again daily at your defined check_time.
+Log file: /data/updater.log
 
-📜 Logs Show:
+Rotates when large
 
-    ✅ Each add-on's name, current version, and updated version.
+Timestamped in your timezone
 
-    🆕 Any files created or updated.
+Shows what was checked and what was updated
 
-    📦 API rate limit info from DockerHub.
 
-    🗓️ The next scheduled check time (Day, Hour, Minute).
 
-    ⚠️ Any errors (like image not found or GitHub push failure).
+---
 
-🔔 Notifications
+Changelog
 
-If enabled, you will receive a notification only if something was created or updated, including:
+Each add-on will get a CHANGELOG.md file (or update the existing one) showing:
 
-    Add-on name
+Version update
 
-    New version
+Time of update
 
-    Files touched
+Image used
 
-    Docker image link
 
-🐳 Supported Registries
 
-    Docker Hub
+---
 
-    LinuxServer.io
+GitHub Support
 
-    GitHub Container Registry (GHCR)
+If GitHub credentials are added:
 
-🧪 Requirements
+Repo is cloned or pulled
 
-    jq and git must be installed in the container (already included).
+Changes are committed and pushed (unless skip_push is true)
 
-    GitHub token (if private repo) must have repo access.
 
-    DockerHub token (optional but helps avoid rate limits).
 
-❗ Troubleshooting
+---
 
-    UNAUTHORIZED from Docker Hub? → Check dockerhub_token
+Advanced Options
 
-    Private repo issues? → Use github_token and github_username
+dry_run: simulate update without making changes
 
-    No updates showing? → Ensure correct image name in config.json
+skip_push: update files locally but don’t push to GitHub
 
-    Logs not showing? → Wait for the scheduled check_time or restart the add-on.
+check_cron: main update schedule
+
+startup_cron: optional run right after startup
+
+
+
+---
+
+Created by ChristoffBo
+With help from ChatGPT and Deepseek AI
+
+
+---
+
+Let me know if you'd like this saved into each add-on's README.md or want icons/descriptions per add-on too.
