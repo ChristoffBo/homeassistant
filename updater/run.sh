@@ -134,21 +134,18 @@ clone_or_update_repo() {
   if [ ! -d "$REPO_DIR" ]; then
     log "$COLOR_CYAN" "📦 Cloning repository from $GITHUB_REPO..."
     
-    # Verify GitHub credentials are set
     if [ -z "$GITHUB_USERNAME" ] || [ -z "$GITHUB_TOKEN" ]; then
       log "$COLOR_RED" "❌ GitHub credentials not configured!"
       log "$COLOR_YELLOW" "   Please set github_username and github_token in your addon configuration"
       exit 1
     fi
     
-    # Check if we can reach GitHub
     if ! curl -s -I https://github.com | grep -q "HTTP/.* 200"; then
       log "$COLOR_RED" "❌ Cannot connect to GitHub!"
       log "$COLOR_YELLOW" "   Please check your internet connection"
       exit 1
     fi
     
-    # Attempt clone with full error output
     if git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" 2>&1 | tee -a "$LOG_FILE"; then
       log "$COLOR_GREEN" "✅ Successfully cloned repository"
     else
@@ -160,10 +157,6 @@ clone_or_update_repo() {
         log "$COLOR_YELLOW" "║ $line"
       done
       log "$COLOR_YELLOW" "╚════════════════════════════════════════════╝"
-      log "$COLOR_YELLOW" "Possible issues:"
-      log "$COLOR_YELLOW" "1. Invalid GitHub credentials"
-      log "$COLOR_YELLOW" "2. Repository doesn't exist or isn't accessible"
-      log "$COLOR_YELLOW" "3. Network connectivity problems"
       exit 1
     fi
   else
@@ -174,30 +167,25 @@ clone_or_update_repo() {
     
     log "$COLOR_CYAN" "🔄 Pulling latest changes from GitHub..."
     
-    # Verify we're in a git repository
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       log "$COLOR_RED" "❌ $REPO_DIR is not a git repository!"
       exit 1
     fi
     
-    # Show current commit info before pull
     log "$COLOR_BLUE" "   Current HEAD: $(git rev-parse --short HEAD)"
     log "$COLOR_BLUE" "   Last commit: $(git log -1 --format='%cd %s' --date=format:'%Y-%m-%d %H:%M:%S')"
     
-    # Reset any local changes that might conflict
     git reset --hard HEAD >> "$LOG_FILE" 2>&1
     git clean -fd >> "$LOG_FILE" 2>&1
     
     if ! git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
       log "$COLOR_RED" "❌ Initial git pull failed. Attempting recovery..."
       
-      # Check for specific git issues
       if [ -d ".git/rebase-merge" ] || [ -d ".git/rebase-apply" ]; then
         log "$COLOR_YELLOW" "⚠️ Detected unfinished rebase, aborting it..."
         git rebase --abort >> "$LOG_FILE" 2>&1 || true
       fi
       
-      # Reset to origin/main
       git fetch origin main >> "$LOG_FILE" 2>&1
       git reset --hard origin/main >> "$LOG_FILE" 2>&1
       
@@ -206,7 +194,6 @@ clone_or_update_repo() {
         log "$COLOR_BLUE" "   New HEAD: $(git rev-parse --short HEAD)"
       else
         log "$COLOR_RED" "❌ Git pull still failed after recovery attempts"
-        log "$COLOR_YELLOW" "   Error details:"
         tail -n 5 "$LOG_FILE" | sed 's/^/   /' | while read -r line; do log "$COLOR_YELLOW" "$line"; done
         send_notification "Add-on Updater Error" "Failed to pull repository $GITHUB_REPO after recovery attempts" 5
         exit 1
@@ -214,7 +201,6 @@ clone_or_update_repo() {
     else
       log "$COLOR_GREEN" "✅ Successfully pulled latest changes"
       log "$COLOR_BLUE" "   New HEAD: $(git rev-parse --short HEAD)"
-      log "$COLOR_BLUE" "   Changes since last update:"
       git log --pretty=format:'   %h - %s (%cd)' --date=format:'%Y-%m-%d %H:%M:%S' HEAD@{1}..HEAD 2>/dev/null || log "$COLOR_BLUE" "   (No new commits)"
     fi
   fi
@@ -223,57 +209,51 @@ clone_or_update_repo() {
 get_latest_docker_tag() {
   local image="$1"
   local image_name=$(echo "$image" | cut -d: -f1)
-  local latest_version=""
   local retries=3
+  local version="latest"
   
   for ((i=1; i<=retries; i++)); do
-    # Try different methods based on image source
     if [[ "$image_name" =~ ^linuxserver/ ]] || [[ "$image_name" =~ ^lscr.io/linuxserver/ ]]; then
-      # For linuxserver.io images
       local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
       local api_response=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags")
       if [ -n "$api_response" ]; then
-        latest_version=$(echo "$api_response" | 
-                        jq -r '.tags[] | select(.name != "latest") | .name' | 
-                        grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9]+)?$' | 
-                        sort -Vr | head -n1)
+        version=$(echo "$api_response" | 
+                 jq -r '.tags[] | select(.name != "latest") | .name' | 
+                 grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$' | 
+                 sort -Vr | head -n1)
       fi
     elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
-      # For GitHub Container Registry
       local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
       local package=$(echo "$image_name" | cut -d/ -f4)
       local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
       if [ -n "$token" ]; then
-        latest_version=$(curl -s -H "Authorization: Bearer $token" \
-                         "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
-                         jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$")))' | \
-                         sort -Vr | head -n1)
+        version=$(curl -s -H "Authorization: Bearer $token" \
+                  "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
+                  jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))' | \
+                  sort -Vr | head -n1)
       fi
     else
-      # For standard Docker Hub images
       local namespace=$(echo "$image_name" | cut -d/ -f1)
       local repo=$(echo "$image_name" | cut -d/ -f2)
       if [ "$namespace" = "$repo" ]; then
-        # Official image (library/)
         local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/")
         if [ -n "$api_response" ]; then
-          latest_version=$(echo "$api_response" | 
-                          jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
-                          sort -Vr | head -n1)
+          version=$(echo "$api_response" | 
+                   jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' | 
+                   sort -Vr | head -n1)
         fi
       else
-        # User/org image
         local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/")
         if [ -n "$api_response" ]; then
-          latest_version=$(echo "$api_response" | 
-                          jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9]+)?$"))) | .name' | 
-                          sort -Vr | head -n1)
+          version=$(echo "$api_response" | 
+                   jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' | 
+                   sort -Vr | head -n1)
         fi
       fi
     fi
 
-    # If we found a version, break the retry loop
-    if [ -n "$latest_version" ] && [ "$latest_version" != "null" ]; then
+    if [[ "$version" =~ ^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+      version=${version#v}
       break
     fi
     
@@ -282,13 +262,11 @@ get_latest_docker_tag() {
     fi
   done
 
-  # If we couldn't determine version after retries, use 'latest'
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    log "$COLOR_YELLOW" "⚠️ Using 'latest' tag for $image after $retries retries"
-    echo "latest"
-  else
-    echo "$latest_version"
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+    version="latest"
   fi
+
+  echo "$version"
 }
 
 get_docker_source_url() {
@@ -317,7 +295,6 @@ update_addon_if_needed() {
     local addon_path="$1"
     local addon_name=$(basename "$addon_path")
     
-    # Skip the updater addon itself
     if [[ "$addon_name" == "updater" ]]; then
         log "$COLOR_BLUE" "🔧 Skipping updater addon (self)"
         return
@@ -325,17 +302,12 @@ update_addon_if_needed() {
 
     log "$COLOR_CYAN" "🔍 Checking add-on: $addon_name"
 
-    # Initialize variables with safe defaults
     local image=""
     local slug="$addon_name"
     local current_version="latest"
-    local upstream_version="latest"
-    local last_update="Never"
     local config_file="$addon_path/config.json"
     local build_file="$addon_path/build.json"
-    local updater_file="$addon_path/updater.json"
 
-    # 1. First try to get info from config.json (if exists and valid)
     if [[ -f "$config_file" ]]; then
         log "$COLOR_BLUE" "   Checking config.json"
         image=$(jq -r '.image | select(.!=null)' "$config_file" 2>/dev/null || true)
@@ -343,7 +315,6 @@ update_addon_if_needed() {
         current_version=$(jq -r '.version | select(.!=null)' "$config_file" 2>/dev/null || echo "latest")
     fi
 
-    # 2. If no image found, try build.json (if exists and valid)
     if [[ -z "$image" && -f "$build_file" ]]; then
         log "$COLOR_BLUE" "   Checking build.json"
         local arch=$(uname -m)
@@ -351,52 +322,16 @@ update_addon_if_needed() {
         image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
     fi
 
-    # 3. Create/update updater.json with the found image
-    local update_time=$(date '+%Y-%m-%d %H:%M:%S')
     if [[ -z "$image" ]]; then
         log "$COLOR_YELLOW" "⚠️ No Docker image found in config.json or build.json"
-        image="$slug:latest"  # Default fallback
+        image="$slug:latest"
     fi
 
-    # Create or update updater.json
-    if [[ -f "$updater_file" ]]; then
-        jq --arg image "$image" --arg slug "$slug" \
-           '.image = $image | .slug = $slug' "$updater_file" > "$updater_file.tmp" 2>/dev/null && \
-        mv "$updater_file.tmp" "$updater_file"
-    else
-        jq -n --arg slug "$slug" --arg image "$image" \
-            --arg upstream "latest" --arg updated "$update_time" \
-            '{
-                slug: $slug,
-                image: $image,
-                upstream_version: $upstream,
-                last_update: $updated
-            }' > "$updater_file" 2>/dev/null
-    fi
-
-    # Get current info from updater.json
-    upstream_version=$(jq -r '.upstream_version | select(.!=null)' "$updater_file" 2>/dev/null || echo "latest")
-    last_update=$(jq -r '.last_update | select(.!=null)' "$updater_file" 2>/dev/null || echo "Never")
+    local latest_version=$(get_latest_docker_tag "$image")
+    local update_time=$(date '+%Y-%m-%d %H:%M:%S')
 
     log "$COLOR_BLUE" "   Current version: $current_version"
     log "$COLOR_BLUE" "   Docker image: $image"
-    log "$COLOR_BLUE" "   Last update: $last_update"
-
-    # Get latest version with retries and proper error handling
-    local latest_version=""
-    for ((i=1; i<=3; i++)); do
-        latest_version=$(get_latest_docker_tag "$image" 2>/dev/null || true)
-        if [[ -n "$latest_version" && "$latest_version" != "null" ]]; then
-            break
-        fi
-        [[ $i -lt 3 ]] && sleep 5
-    done
-
-    if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
-        log "$COLOR_YELLOW" "⚠️ Could not determine latest version after 3 attempts, using 'latest'"
-        latest_version="latest"
-    fi
-
     log "$COLOR_BLUE" "   Available version: $latest_version"
 
     if [[ "$latest_version" != "$current_version" ]]; then
@@ -407,7 +342,6 @@ update_addon_if_needed() {
             return
         fi
 
-        # Update config.json if exists
         if [[ -f "$config_file" ]]; then
             if jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null; then
                 mv "$config_file.tmp" "$config_file"
@@ -417,16 +351,18 @@ update_addon_if_needed() {
             fi
         fi
 
-        # Update updater.json
-        if jq --arg v "$latest_version" --arg dt "$update_time" \
-            '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null; then
-            mv "$updater_file.tmp" "$updater_file"
-            log "$COLOR_GREEN" "✅ Updated updater.json"
+        if [[ -f "$build_file" ]]; then
+            if grep -q 'version' "$build_file"; then
+                if jq --arg v "$latest_version" '.version = $v' "$build_file" > "$build_file.tmp" 2>/dev/null; then
+                    mv "$build_file.tmp" "$build_file"
+                    log "$COLOR_GREEN" "✅ Updated version in build.json"
+                else
+                    log "$COLOR_RED" "❌ Failed to update build.json"
+                fi
+            fi
         fi
 
-        # Update CHANGELOG.md
-        update_changelog "$addon_path" "$slug" "$current_version" "$latest_version" "$image"
-        
+        update_changelog "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
     else
         log "$COLOR_GREEN" "✔️ Already up to date"
     fi
@@ -523,14 +459,12 @@ should_run_from_cron() {
   local current_month=$(date '+%m')
   local current_weekday=$(date '+%w')
 
-  # Parse cron schedule (min hour day month weekday)
   local cron_minute=$(echo "$cron_schedule" | awk '{print $1}')
   local cron_hour=$(echo "$cron_schedule" | awk '{print $2}')
   local cron_day=$(echo "$cron_schedule" | awk '{print $3}')
   local cron_month=$(echo "$cron_schedule" | awk '{print $4}')
   local cron_weekday=$(echo "$cron_schedule" | awk '{print $5}')
 
-  # Check if current time matches cron schedule
   if [[ "$cron_minute" != "*" && "$cron_minute" != "$current_minute" ]]; then
     return 1
   fi
@@ -574,13 +508,11 @@ perform_update_check
 # Main loop
 log "$COLOR_GREEN" "⏳ Waiting for cron triggers..."
 while true; do
-  # Check if we should run based on startup cron
   if [ -n "$STARTUP_CRON" ] && should_run_from_cron "$STARTUP_CRON"; then
     log "$COLOR_BLUE" "⏰ Startup cron triggered ($STARTUP_CRON)"
     perform_update_check
   fi
 
-  # Check if we should run based on regular check cron
   if should_run_from_cron "$CHECK_CRON"; then
     log "$COLOR_BLUE" "⏰ Check cron triggered ($CHECK_CRON)"
     perform_update_check
