@@ -77,7 +77,12 @@ send_notification() {
   
   if [ "$NOTIFICATION_ENABLED" != "true" ]; then
     log "$COLOR_BLUE" "🔕 Notifications are disabled"
-    return
+    return 0
+  fi
+
+  if [ -z "$NOTIFICATION_SERVICE" ] || [ -z "$NOTIFICATION_URL" ] || [ -z "$NOTIFICATION_TOKEN" ]; then
+    log "$COLOR_RED" "❌ Notification service not properly configured"
+    return 1
   fi
 
   log "$COLOR_CYAN" "🔔 Attempting to send notification via $NOTIFICATION_SERVICE"
@@ -97,11 +102,13 @@ send_notification() {
       local response
       response=$(curl -s -w "%{http_code}" -o "$TEMP_FILE" -X POST \
         -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $NOTIFICATION_TOKEN" \
         -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
-        "$NOTIFICATION_URL/message?token=$NOTIFICATION_TOKEN" 2>> "$LOG_FILE")
+        "$NOTIFICATION_URL/message" 2>> "$LOG_FILE")
       
       if [ "$response" -eq 200 ]; then
         log "$COLOR_GREEN" "✅ Gotify notification sent successfully"
+        return 0
       else
         log "$COLOR_RED" "❌ Gotify notification failed with HTTP $response"
         [ -f "$TEMP_FILE" ] && log "$COLOR_RED" "   Response: $(cat "$TEMP_FILE")"
@@ -111,6 +118,7 @@ send_notification() {
       
     "mailrise"|"apprise")
       log "$COLOR_YELLOW" "⚠️ Notification service $NOTIFICATION_SERVICE not fully implemented"
+      return 1
       ;;
       
     *)
@@ -271,8 +279,8 @@ get_latest_docker_tag() {
   for ((i=1; i<=retries; i++)); do
     if [[ "$image_name" =~ ^linuxserver/ ]] || [[ "$image_name" =~ ^lscr.io/linuxserver/ ]]; then
       local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
-      local api_response=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags")
-      if [ -n "$api_response" ]; then
+      local api_response=$(curl -s --fail "https://api.linuxserver.io/v1/images/$lsio_name/tags")
+      if [ $? -eq 0 ] && [ -n "$api_response" ]; then
         version=$(echo "$api_response" | 
                  jq -r '.tags[] | select(.name != "latest") | .name' | 
                  grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$' | 
@@ -281,9 +289,9 @@ get_latest_docker_tag() {
     elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
       local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
       local package=$(echo "$image_name" | cut -d/ -f4)
-      local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
+      local token=$(curl -s --fail "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token?')
       if [ -n "$token" ]; then
-        version=$(curl -s -H "Authorization: Bearer $token" \
+        version=$(curl -s --fail -H "Authorization: Bearer $token" \
                   "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
                   jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))' | \
                   sort -Vr | head -n1)
@@ -292,15 +300,15 @@ get_latest_docker_tag() {
       local namespace=$(echo "$image_name" | cut -d/ -f1)
       local repo=$(echo "$image_name" | cut -d/ -f2)
       if [ "$namespace" = "$repo" ]; then
-        local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/")
-        if [ -n "$api_response" ]; then
+        local api_response=$(curl -s --fail "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/")
+        if [ $? -eq 0 ] && [ -n "$api_response" ]; then
           version=$(echo "$api_response" | 
                    jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' | 
                    sort -Vr | head -n1)
         fi
       else
-        local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/")
-        if [ -n "$api_response" ]; then
+        local api_response=$(curl -s --fail "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/")
+        if [ $? -eq 0 ] && [ -n "$api_response" ]; then
           version=$(echo "$api_response" | 
                    jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' | 
                    sort -Vr | head -n1)
