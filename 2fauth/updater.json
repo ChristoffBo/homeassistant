@@ -1,7 +1,7 @@
 {
   "slug": "2fauth",
   "image": "2fauth/2fauth",
-  "upstream_version": "[2025-07-28 09:39:53 SAST] \u001b[0;33m⚠️ Using 'latest' tag for 2fauth/2fauth after 3 retries\u001b[0m\nlatest",
-  "last_update": "2025-07-28 09:39:41",
+  "upstream_version": "[2025-07-28 09:45:34 SAST] \u001b[0;33m⚠️ Using 'latest' tag for 2fauth/2fauth after 3 retries\u001b[0m\nlatest",
+  "last_update": "2025-07-28 09:45:22",
   "version": "dev"
 }
