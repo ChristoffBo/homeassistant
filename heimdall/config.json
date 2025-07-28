@@ -1,6 +1,6 @@
 {
   "name": "heimdall",
-  "version": "latest",
+  "version": "[2025-07-28 09:10:19 SAST] \u001b[0;33m⚠️ Using 'latest' tag for lscr.io/linuxserver/heimdall:latest after 3 retries\u001b[0m\nlatest",
   "slug": "heimdall",
   "legacy": false,
   "codenotary": "bothmacell@gmail.com",
