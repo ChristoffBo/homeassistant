@@ -9,12 +9,13 @@ LOCK_FILE="/data/updater.lock"
 
 # Color definitions for logging
 COLOR_RESET="\033[0m"
-COLOR_GREEN="\033[0;32m"
-COLOR_BLUE="\033[0;34m"
-COLOR_YELLOW="\033[0;33m"
-COLOR_RED="\033[0;31m"
-COLOR_PURPLE="\033[0;35m"
-COLOR_CYAN="\033[0;36m"
+COLOR_GREEN="\033[0;32m"       # For successful updates/OK status
+COLOR_BLUE="\033[0;34m"        # For current version info
+COLOR_YELLOW="\033[0;33m"      # For warnings
+COLOR_RED="\033[0;31m"         # For errors
+COLOR_PURPLE="\033[0;35m"      # For process start/end
+COLOR_CYAN="\033[0;36m"        # For debug info
+COLOR_WHITE="\033[0;37m"       # For regular info
 
 # Initialize notification variables
 declare -A NOTIFICATION=(
@@ -37,20 +38,9 @@ log() {
     shift
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local level="INFO"
     
-    # Determine log level based on color
-    case "$color" in
-        "$COLOR_RED") level="ERROR" ;;
-        "$COLOR_YELLOW") level="WARN " ;;
-        "$COLOR_GREEN") level="OK   " ;;
-        "$COLOR_BLUE") level="INFO " ;;
-        "$COLOR_PURPLE") level="START" ;;
-        "$COLOR_CYAN") level="DEBUG" ;;
-    esac
-    
-    # Format: [TIMESTAMP] [LEVEL] MESSAGE
-    echo -e "${timestamp} [${level}] ${message}${COLOR_RESET}" | tee -a "$LOG_FILE"
+    # Format: [TIMESTAMP] MESSAGE
+    echo -e "${timestamp} ${color}${message}${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
 # Function to validate version tag format
@@ -58,201 +48,6 @@ validate_version_tag() {
     local version="$1"
     [[ "$version" =~ ^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9]+)?$ ]] || \
     [[ "$version" == "latest" ]]
-}
-
-# Function to send notifications
-send_notification() {
-    [[ "${NOTIFICATION[enabled]}" != "true" ]] && return
-
-    local title="$1"
-    local message="$2"
-    local priority="${3:-0}"
-
-    case "${NOTIFICATION[service]}" in
-        "gotify")
-            [[ -z "${NOTIFICATION[url]}" || -z "${NOTIFICATION[token]}" ]] && {
-                log "$COLOR_RED" "Gotify configuration incomplete"
-                return
-            }
-            curl -sSf -X POST \
-                -H "Content-Type: application/json" \
-                -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
-                "${NOTIFICATION[url]}/message?token=${NOTIFICATION[token]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_YELLOW" "Failed to send Gotify notification"
-            ;;
-        "mailrise")
-            [[ -z "${NOTIFICATION[url]}" || -z "${NOTIFICATION[to]}" ]] && {
-                log "$COLOR_RED" "Mailrise configuration incomplete"
-                return
-            }
-            curl -sSf -X POST \
-                -H "Content-Type: application/json" \
-                -d "{\"to\":\"${NOTIFICATION[to]}\", \"subject\":\"$title\", \"body\":\"$message\"}" \
-                "${NOTIFICATION[url]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_YELLOW" "Failed to send Mailrise notification"
-            ;;
-        "apprise")
-            [[ -z "${NOTIFICATION[url]}" ]] && {
-                log "$COLOR_RED" "Apprise configuration incomplete"
-                return
-            }
-            apprise -vv -t "$title" -b "$message" "${NOTIFICATION[url]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_YELLOW" "Failed to send Apprise notification"
-            ;;
-        *)
-            log "$COLOR_YELLOW" "Unknown notification service: ${NOTIFICATION[service]}"
-            ;;
-    esac
-}
-
-# Check for lock file to prevent concurrent runs
-if [[ -f "$LOCK_FILE" ]]; then
-    log "$COLOR_RED" "Another update process is already running. Exiting."
-    exit 1
-fi
-
-# Create lock file and setup cleanup trap
-touch "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
-
-# Validate configuration file exists
-[[ ! -f "$CONFIG_PATH" ]] && {
-    log "$COLOR_RED" "Config file $CONFIG_PATH not found!"
-    exit 1
-}
-
-# Read and validate configuration
-declare -A CONFIG=(
-    [github_repo]="$(jq -r '.github_repo // empty' "$CONFIG_PATH")"
-    [github_username]="$(jq -r '.github_username // empty' "$CONFIG_PATH")"
-    [github_token]="$(jq -r '.github_token // empty' "$CONFIG_PATH")"
-    [check_cron]="$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")"
-    [startup_cron]="$(jq -r '.startup_cron // empty' "$CONFIG_PATH")"
-    [timezone]="$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")"
-    [max_log_lines]="$(jq -r '.max_log_lines // 1000' "$CONFIG_PATH")"
-    [dry_run]="$(jq -r '.dry_run // false' "$CONFIG_PATH")"
-    [skip_push]="$(jq -r '.skip_push // false' "$CONFIG_PATH")"
-)
-
-# Validate required GitHub configuration
-[[ -z "${CONFIG[github_repo]}" ]] && {
-    log "$COLOR_RED" "GitHub repository URL is required in configuration"
-    exit 1
-}
-
-# Read notification configuration
-if [[ "$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")" == "true" ]]; then
-    NOTIFICATION[enabled]=true
-    NOTIFICATION[service]="$(jq -r '.notification_service // ""' "$CONFIG_PATH")"
-    NOTIFICATION[url]="$(jq -r '.notification_url // ""' "$CONFIG_PATH")"
-    NOTIFICATION[token]="$(jq -r '.notification_token // ""' "$CONFIG_PATH")"
-    NOTIFICATION[to]="$(jq -r '.notification_to // ""' "$CONFIG_PATH")"
-    NOTIFICATION[on_success]="$(jq -r '.notify_on_success // false' "$CONFIG_PATH")"
-    NOTIFICATION[on_error]="$(jq -r '.notify_on_error // true' "$CONFIG_PATH")"
-    NOTIFICATION[on_updates]="$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")"
-fi
-
-# Set timezone
-export TZ="${CONFIG[timezone]}"
-
-# Rotate log file if it's too large
-if [[ -f "$LOG_FILE" && $(wc -l < "$LOG_FILE") -gt "${CONFIG[max_log_lines]}" ]]; then
-    log "$COLOR_YELLOW" "Log file too large, rotating..."
-    tail -n "${CONFIG[max_log_lines]}" "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
-fi
-
-# Construct authenticated GitHub URL
-GIT_AUTH_REPO="${CONFIG[github_repo]}"
-if [[ -n "${CONFIG[github_username]}" && -n "${CONFIG[github_token]}" ]]; then
-    GIT_AUTH_REPO=$(echo "${CONFIG[github_repo]}" | sed -E "s#(https?://)#\1${CONFIG[github_username]}:${CONFIG[github_token]}@#")
-fi
-
-# Function to clone or update the repository
-clone_or_update_repo() {
-    log "$COLOR_PURPLE" "Checking GitHub repository for updates..."
-    
-    if [[ ! -d "$REPO_DIR" ]]; then
-        log "$COLOR_CYAN" "Cloning repository from ${CONFIG[github_repo]}..."
-        
-        # Validate GitHub credentials
-        if [[ -z "${CONFIG[github_username]}" || -z "${CONFIG[github_token]}" ]]; then
-            log "$COLOR_RED" "GitHub credentials not configured!"
-            log "$COLOR_YELLOW" "Please set github_username and github_token in your addon configuration"
-            exit 1
-        fi
-        
-        # Check GitHub connectivity
-        if ! curl -sSf -I https://github.com >/dev/null 2>&1; then
-            log "$COLOR_RED" "Cannot connect to GitHub!"
-            log "$COLOR_YELLOW" "Please check your internet connection"
-            exit 1
-        fi
-        
-        # Clone repository with error handling
-        if git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" 2>&1 | tee -a "$LOG_FILE"; then
-            log "$COLOR_GREEN" "Successfully cloned repository"
-        else
-            log "$COLOR_RED" "Failed to clone repository"
-            log "$COLOR_YELLOW" "Clone error details:"
-            tail -n 5 "$LOG_FILE" | sed 's/^/  /' | while read -r line; do
-                log "$COLOR_YELLOW" "$line"
-            done
-            exit 1
-        fi
-    else
-        cd "$REPO_DIR" || {
-            log "$COLOR_RED" "Failed to enter repository directory"
-            exit 1
-        }
-        
-        log "$COLOR_CYAN" "Pulling latest changes from GitHub..."
-        
-        # Verify git repository
-        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            log "$COLOR_RED" "$REPO_DIR is not a git repository!"
-            exit 1
-        fi
-        
-        # Show current commit info
-        log "$COLOR_BLUE" "Current HEAD: $(git rev-parse --short HEAD)"
-        log "$COLOR_BLUE" "Last commit: $(git log -1 --format='%cd %s' --date=format:'%Y-%m-%d %H:%M:%S')"
-        
-        # Reset any local changes
-        git reset --hard HEAD >> "$LOG_FILE" 2>&1
-        git clean -fd >> "$LOG_FILE" 2>&1
-        
-        if ! git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-            log "$COLOR_RED" "Initial git pull failed. Attempting recovery..."
-            
-            # Handle git issues
-            [[ -d ".git/rebase-merge" || -d ".git/rebase-apply" ]] && {
-                log "$COLOR_YELLOW" "Detected unfinished rebase, aborting it..."
-                git rebase --abort >> "$LOG_FILE" 2>&1 || true
-            }
-            
-            # Reset to origin/main
-            git fetch origin main >> "$LOG_FILE" 2>&1
-            git reset --hard origin/main >> "$LOG_FILE" 2>&1
-            
-            if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-                log "$COLOR_GREEN" "Git pull successful after recovery"
-                log "$COLOR_BLUE" "New HEAD: $(git rev-parse --short HEAD)"
-            else
-                log "$COLOR_RED" "Git pull still failed after recovery attempts"
-                log "$COLOR_YELLOW" "Error details:"
-                tail -n 5 "$LOG_FILE" | sed 's/^/  /' | while read -r line; do 
-                    log "$COLOR_YELLOW" "$line"
-                done
-                send_notification "Add-on Updater Error" "Failed to pull repository ${CONFIG[github_repo]} after recovery attempts" 5
-                exit 1
-            fi
-        else
-            log "$COLOR_GREEN" "Successfully pulled latest changes"
-            log "$COLOR_BLUE" "New HEAD: $(git rev-parse --short HEAD)"
-            git log --pretty=format:'  %h - %s (%cd)' --date=format:'%Y-%m-%d %H:%M:%S' HEAD@{1}..HEAD 2>/dev/null || 
-                log "$COLOR_BLUE" "No new commits"
-        fi
-    fi
 }
 
 # Function to get the latest Docker image tag with improved validation
@@ -313,7 +108,7 @@ get_latest_docker_tag() {
             if validate_version_tag "$latest_version"; then
                 break
             else
-                log "$COLOR_YELLOW" "Invalid version format '$latest_version' for $image, retrying..."
+                log "$COLOR_YELLOW" "Invalid version format received, retrying..."
                 latest_version=""
             fi
         fi
@@ -330,29 +125,6 @@ get_latest_docker_tag() {
     fi
 }
 
-# Function to get Docker image source URL
-get_docker_source_url() {
-    local image="$1"
-    local image_name=$(echo "$image" | cut -d: -f1)
-    
-    if [[ "$image_name" =~ ^linuxserver/ ]] || [[ "$image_name" =~ ^lscr.io/linuxserver/ ]]; then
-        local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
-        echo "https://fleet.linuxserver.io/image?name=$lsio_name"
-    elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
-        local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
-        local package=$(echo "$image_name" | cut -d/ -f4)
-        echo "https://github.com/$org_repo/pkgs/container/$package"
-    else
-        local namespace=$(echo "$image_name" | cut -d/ -f1)
-        local repo=$(echo "$image_name" | cut -d/ -f2)
-        if [[ "$namespace" == "$repo" ]]; then
-            echo "https://hub.docker.com/_/$repo"
-        else
-            echo "https://hub.docker.com/r/$namespace/$repo"
-        fi
-    fi
-}
-
 # Function to update an add-on if needed
 update_addon_if_needed() {
     local addon_path="$1"
@@ -360,11 +132,11 @@ update_addon_if_needed() {
     
     # Skip the updater addon itself
     [[ "$addon_name" == "updater" ]] && {
-        log "$COLOR_BLUE" "Skipping updater addon (self)"
+        log "$COLOR_WHITE" "Skipping updater addon (self)"
         return
     }
 
-    log "$COLOR_CYAN" "Checking add-on: $addon_name"
+    log "$COLOR_WHITE" "Checking add-on: $addon_name"
 
     # Initialize variables
     local image="" slug="$addon_name" current_version="latest" upstream_version="latest" last_update="Never"
@@ -372,7 +144,7 @@ update_addon_if_needed() {
 
     # Get info from config.json if exists
     [[ -f "$config_file" ]] && {
-        log "$COLOR_BLUE" "Checking config.json"
+        log "$COLOR_CYAN" "  Checking config.json"
         image=$(jq -r '.image | select(.!=null)' "$config_file" 2>/dev/null || true)
         slug=$(jq -r '.slug | select(.!=null)' "$config_file" 2>/dev/null || true)
         current_version=$(jq -r '.version | select(.!=null)' "$config_file" 2>/dev/null || echo "latest")
@@ -380,7 +152,7 @@ update_addon_if_needed() {
 
     # Fallback to build.json if no image found
     [[ -z "$image" && -f "$build_file" ]] && {
-        log "$COLOR_BLUE" "Checking build.json"
+        log "$COLOR_CYAN" "  Checking build.json"
         local arch=$(uname -m)
         [[ "$arch" == "x86_64" ]] && arch="amd64"
         image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
@@ -388,7 +160,7 @@ update_addon_if_needed() {
 
     # Default fallback if no image found
     [[ -z "$image" ]] && {
-        log "$COLOR_YELLOW" "No Docker image found in config.json or build.json"
+        log "$COLOR_YELLOW" "  No Docker image found in config.json or build.json"
         image="$slug:latest"
     }
 
@@ -413,9 +185,9 @@ update_addon_if_needed() {
     upstream_version=$(jq -r '.upstream_version | select(.!=null)' "$updater_file" 2>/dev/null || echo "latest")
     last_update=$(jq -r '.last_update | select(.!=null)' "$updater_file" 2>/dev/null || echo "Never")
 
-    log "$COLOR_BLUE" "Current version: $current_version"
-    log "$COLOR_BLUE" "Docker image: $image"
-    log "$COLOR_BLUE" "Last update: $last_update"
+    log "$COLOR_BLUE" "  Current version: $current_version"
+    log "$COLOR_BLUE" "  Docker image: $image"
+    log "$COLOR_BLUE" "  Last update: $last_update"
 
     # Get latest version with validation
     local latest_version=""
@@ -426,17 +198,17 @@ update_addon_if_needed() {
     done
 
     [[ -z "$latest_version" || "$latest_version" == "null" ]] && {
-        log "$COLOR_YELLOW" "Could not determine latest version after 3 attempts, using 'latest'"
+        log "$COLOR_YELLOW" "  Could not determine latest version after 3 attempts, using 'latest'"
         latest_version="latest"
     }
 
-    log "$COLOR_BLUE" "Available version: $latest_version"
+    log "$COLOR_BLUE" "  Available version: $latest_version"
 
     if [[ "$latest_version" != "$current_version" ]]; then
-        log "$COLOR_GREEN" "Update available: $current_version → $latest_version"
+        log "$COLOR_GREEN" "  Update available: $current_version → $latest_version"
         
         [[ "${CONFIG[dry_run]}" == "true" ]] && {
-            log "$COLOR_CYAN" "Dry run enabled - would update to $latest_version"
+            log "$COLOR_CYAN" "  Dry run enabled - would update to $latest_version"
             return
         }
 
@@ -444,9 +216,9 @@ update_addon_if_needed() {
         [[ -f "$config_file" ]] && {
             if jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null; then
                 mv "$config_file.tmp" "$config_file"
-                log "$COLOR_GREEN" "Updated version in config.json"
+                log "$COLOR_GREEN" "  Updated version in config.json"
             else
-                log "$COLOR_RED" "Failed to update config.json"
+                log "$COLOR_RED" "  Failed to update config.json"
             fi
         }
 
@@ -454,154 +226,37 @@ update_addon_if_needed() {
         if jq --arg v "$latest_version" --arg dt "$update_time" \
             '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null; then
             mv "$updater_file.tmp" "$updater_file"
-            log "$COLOR_GREEN" "Updated updater.json"
+            log "$COLOR_GREEN" "  Updated updater.json"
         fi
 
         # Update CHANGELOG.md
         update_changelog "$addon_path" "$slug" "$current_version" "$latest_version" "$image"
     else
-        log "$COLOR_GREEN" "Already up to date"
+        log "$COLOR_GREEN" "  Already up to date"
     fi
-}
-
-# Function to update changelog
-update_changelog() {
-    local addon_path="$1" slug="$2" current_version="$3" latest_version="$4" image="$5"
-    local changelog_file="$addon_path/CHANGELOG.md"
-    local source_url=$(get_docker_source_url "$image")
-    local update_time=$(date '+%Y-%m-%d %H:%M:%S')
-
-    [[ ! -f "$changelog_file" ]] && {
-        printf "# CHANGELOG for %s\n\n## Initial version: %s\nDocker Image: [%s](%s)\n\n" \
-            "$slug" "$current_version" "$image" "$source_url" > "$changelog_file"
-        log "$COLOR_BLUE" "Created new CHANGELOG.md"
-    }
-
-    local new_entry="## $latest_version ($update_time)\n- Update from $current_version to $latest_version\n- Docker Image: [$image]($source_url)\n\n"
-    printf "%b$(cat "$changelog_file")" "$new_entry" > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
-    
-    log "$COLOR_GREEN" "Updated CHANGELOG.md"
-}
-
-# Main update function
-perform_update_check() {
-    local start_time=$(date +%s)
-    log "$COLOR_PURPLE" "Starting update check"
-    
-    clone_or_update_repo
-
-    cd "$REPO_DIR" || exit 1
-    git config user.email "updater@local"
-    git config user.name "HomeAssistant Updater"
-
-    local any_updates=0
-
-    # Process each add-on directory
-    for addon_path in "$REPO_DIR"/*/; do
-        [[ -d "$addon_path" ]] && {
-            update_addon_if_needed "$addon_path"
-            any_updates=1
-        }
-    done
-
-    # Commit and push changes if needed
-    if [[ "$any_updates" -eq 1 && -n "$(git status --porcelain)" ]]; then
-        [[ "${CONFIG[dry_run]}" == "true" ]] && {
-            log "$COLOR_CYAN" "Dry run enabled - skipping git commit/push"
-            return
-        }
-        
-        git add .
-        git commit -m "Update addon versions" >> "$LOG_FILE" 2>&1
-        
-        if [[ "${CONFIG[skip_push]}" != "true" ]]; then
-            if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-                log "$COLOR_GREEN" "Git push successful."
-                [[ "${NOTIFICATION[on_success]}" == "true" ]] && {
-                    local duration=$(( $(date +%s) - start_time ))
-                    send_notification "Add-on Updater Success" "Successfully updated add-ons and pushed changes to repository" 0
-                }
-            else
-                log "$COLOR_RED" "Git push failed."
-                [[ "${NOTIFICATION[on_error]}" == "true" ]] && {
-                    send_notification "Add-on Updater Error" "Failed to push changes to repository" 5
-                }
-            fi
-        else
-            log "$COLOR_CYAN" "Skip push enabled - committed changes locally but not pushing"
-        fi
-    else
-        log "$COLOR_BLUE" "No add-on updates found"
-        [[ "${NOTIFICATION[on_success]}" == "true" ]] && {
-            local duration=$(( $(date +%s) - start_time ))
-            send_notification "Add-on Updater Complete" "No add-on updates were available" 0
-        }
-    fi
-    
-    log "$COLOR_PURPLE" "Update check completed in $(( $(date +%s) - start_time )) seconds"
-}
-
-# Function to check if we should run based on cron schedule
-should_run_from_cron() {
-    local cron_schedule="$1"
-    [[ -z "$cron_schedule" ]] && return 1
-
-    local current_minute=$(date '+%M')
-    local current_hour=$(date '+%H')
-    local current_day=$(date '+%d')
-    local current_month=$(date '+%m')
-    local current_weekday=$(date '+%w')
-
-    # Parse cron schedule (min hour day month weekday)
-    local cron_minute=$(echo "$cron_schedule" | awk '{print $1}')
-    local cron_hour=$(echo "$cron_schedule" | awk '{print $2}')
-    local cron_day=$(echo "$cron_schedule" | awk '{print $3}')
-    local cron_month=$(echo "$cron_schedule" | awk '{print $4}')
-    local cron_weekday=$(echo "$cron_schedule" | awk '{print $5}')
-
-    # Check if current time matches cron schedule
-    [[ "$cron_minute" != "*" && "$cron_minute" != "$current_minute" ]] && return 1
-    [[ "$cron_hour" != "*" && "$cron_hour" != "$current_hour" ]] && return 1
-    [[ "$cron_day" != "*" && "$cron_day" != "$current_day" ]] && return 1
-    [[ "$cron_month" != "*" && "$cron_month" != "$current_month" ]] && return 1
-    [[ "$cron_weekday" != "*" && "$cron_weekday" != "$current_weekday" ]] && return 1
-
-    return 0
 }
 
 # Main execution
 log "$COLOR_PURPLE" "Starting Home Assistant Add-on Updater"
-log "$COLOR_GREEN" "Configuration:"
-log "$COLOR_GREEN" "  GitHub Repo: ${CONFIG[github_repo]}"
-log "$COLOR_GREEN" "  Dry run: ${CONFIG[dry_run]}"
-log "$COLOR_GREEN" "  Skip push: ${CONFIG[skip_push]}"
-log "$COLOR_GREEN" "  Check cron: ${CONFIG[check_cron]}"
-log "$COLOR_GREEN" "  Startup cron: ${CONFIG[startup_cron]:-none}"
+log "$COLOR_WHITE" "Configuration:"
+log "$COLOR_WHITE" "  GitHub Repo: ${CONFIG[github_repo]}"
+log "$COLOR_WHITE" "  Dry run: ${CONFIG[dry_run]}"
+log "$COLOR_WHITE" "  Skip push: ${CONFIG[skip_push]}"
 [[ "${NOTIFICATION[enabled]}" == "true" ]] && {
-    log "$COLOR_GREEN" "Notifications: Enabled (Service: ${NOTIFICATION[service]})"
-    log "$COLOR_GREEN" "  Notify on success: ${NOTIFICATION[on_success]}"
-    log "$COLOR_GREEN" "  Notify on error: ${NOTIFICATION[on_error]}"
-    log "$COLOR_GREEN" "  Notify on updates: ${NOTIFICATION[on_updates]}"
-} || log "$COLOR_GREEN" "Notifications: Disabled"
+    log "$COLOR_WHITE" "Notifications: Enabled (Service: ${NOTIFICATION[service]})"
+} || log "$COLOR_WHITE" "Notifications: Disabled"
 
 # First run on startup
-log "$COLOR_GREEN" "Running initial update check on startup..."
-perform_update_check
+log "$COLOR_PURPLE" "Running initial update check..."
+clone_or_update_repo
 
-# Main loop
-log "$COLOR_GREEN" "Waiting for cron triggers..."
-while true; do
-    # Check if we should run based on startup cron
-    [[ -n "${CONFIG[startup_cron]}" ]] && should_run_from_cron "${CONFIG[startup_cron]}" && {
-        log "$COLOR_BLUE" "Startup cron triggered (${CONFIG[startup_cron]})"
-        perform_update_check
-    }
+cd "$REPO_DIR" || exit 1
+git config user.email "updater@local"
+git config user.name "HomeAssistant Updater"
 
-    # Check if we should run based on regular check cron
-    should_run_from_cron "${CONFIG[check_cron]}" && {
-        log "$COLOR_BLUE" "Check cron triggered (${CONFIG[check_cron]})"
-        perform_update_check
-    }
-
-    sleep 60
+for addon_path in "$REPO_DIR"/*/; do
+    [[ -d "$addon_path" ]] && update_addon_if_needed "$addon_path"
 done
+
+log "$COLOR_PURPLE" "Update check completed"
+log "$COLOR_WHITE" "Waiting for next scheduled check..."
