@@ -54,7 +54,7 @@ Folder Structure
 
 Your custom add-ons should be inside this path:
 
-/data/homeassistant/
+https://github.com/YourUser/YourRepo
 
 
 ---
