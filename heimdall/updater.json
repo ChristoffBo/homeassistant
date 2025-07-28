@@ -1,6 +1,6 @@
 {
   "slug": "heimdall",
   "image": "lscr.io/linuxserver/heimdall:latest",
-  "upstream_version": "[2025-07-28 09:02:17 SAST] \u001b[0;33m⚠️ No repository URL found in config.json, falling back to 'latest'\u001b[0m\nlatest",
-  "last_update": "2025-07-28 09:02:17"
+  "upstream_version": "[2025-07-28 09:06:04 SAST] \u001b[0;33m⚠️ Using 'latest' tag for lscr.io/linuxserver/heimdall:latest after 3 retries\u001b[0m\nlatest",
+  "last_update": "2025-07-28 09:05:52"
 }

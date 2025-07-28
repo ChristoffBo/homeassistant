@@ -1,6 +1,6 @@
 {
   "name": "Zoraxy",
-  "version": "2025-07-28090217SASTNorepositoryURLfoundinconfig.jsonfallingbacktolatest\nlatest",
+  "version": "v3.2.5",
   "slug": "zoraxy",
   "description": "A reverse proxy and dashboard powered by Docker.",
   "startup": "services",

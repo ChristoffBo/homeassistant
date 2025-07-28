@@ -1,3 +1,10 @@
+## [2025-07-28 09:06:04 SAST] [0;33m⚠️ Using 'latest' tag for lscr.io/linuxserver/heimdall:latest after 3 retries[0m
+latest (2025-07-28 09:06:04)
+- Update from 2025-07-28090217SASTNorepositoryURLfoundinconfig.jsonfallingbacktolatest
+latest to [2025-07-28 09:06:04 SAST] [0;33m⚠️ Using 'latest' tag for lscr.io/linuxserver/heimdall:latest after 3 retries[0m
+latest
+- Docker Image: [lscr.io/linuxserver/heimdall:latest](https://fleet.linuxserver.io/image?name=heimdall)
+
 ## 2025-07-28071501SASTUsinglatesttagforlscr.iolinuxserverheimdallamd64-latestafter3retries
 latest (2025-07-28 07:15:17)
 - Update from latest to 2025-07-28071501SASTUsinglatesttagforlscr.iolinuxserverheimdallamd64-latestafter3retries
