@@ -363,7 +363,7 @@ perform_update_check() {
   fi
 
   if [ $updated_count -gt 0 ] && [ "$(git status --porcelain)" ]; then
-    if [ "$DRY_RUN" == "true" ]; then
+    if [[ "$DRY_RUN" == "true" ]]; then
       log "$COLOR_CYAN" "🛑 Dry run enabled - skipping git commit/push"
       return
     fi
@@ -431,6 +431,13 @@ TIMEZONE=$(safe_jq '.timezone // "UTC"' "$CONFIG_PATH")
 MAX_LOG_LINES=$(safe_jq '.max_log_lines // 1000' "$CONFIG_PATH")
 DRY_RUN=$(safe_jq '.dry_run // false' "$CONFIG_PATH")
 SKIP_PUSH=$(safe_jq '.skip_push // false' "$CONFIG_PATH")
+
+# Ensure DRY_RUN is properly set as a string "true" or "false"
+if [[ "$DRY_RUN" == "true" ]]; then
+  DRY_RUN="true"
+else
+  DRY_RUN="false"
+fi
 
 # Notification settings
 NOTIFICATION_ENABLED=$(safe_jq '.notifications_enabled // false' "$CONFIG_PATH")
