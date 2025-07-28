@@ -30,6 +30,12 @@ NOTIFY_ON_UPDATES=true
 log() {
   local color="$1"
   shift
+  echo -e "${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
+}
+
+log_with_timestamp() {
+  local color="$1"
+  shift
   echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
@@ -78,7 +84,7 @@ send_notification() {
 
 # Check for lock file to prevent concurrent runs
 if [ -f "$LOCK_FILE" ]; then
-  log "$COLOR_RED" "⚠️ Another update process is already running. Exiting."
+  log_with_timestamp "$COLOR_RED" "⚠️ Another update process is already running. Exiting."
   exit 1
 fi
 
@@ -87,7 +93,7 @@ touch "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT
 
 if [ ! -f "$CONFIG_PATH" ]; then
-  log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
+  log_with_timestamp "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
 fi
 
@@ -397,7 +403,7 @@ update_changelog() {
 
 perform_update_check() {
   local start_time=$(date +%s)
-  log "$COLOR_PURPLE" "🚀 Starting update check"
+  log_with_timestamp "$COLOR_PURPLE" "🚀 Starting update check"
   
   clone_or_update_repo
 
@@ -417,38 +423,34 @@ perform_update_check() {
   if [ "$any_updates" -eq 1 ] && [ "$(git status --porcelain)" ]; then
     if [ "$DRY_RUN" = "true" ]; then
       log "$COLOR_CYAN" "🛑 Dry run enabled - skipping git commit/push"
-      return
-    fi
-    
-    if [ "$SKIP_PUSH" = "true" ]; then
-      log "$COLOR_CYAN" "⏸️ Skip push enabled - committing changes locally but not pushing"
-      git add .
-      git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1
     else
-      git add .
-      git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1
-      if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-        log "$COLOR_GREEN" "✅ Git push successful."
-        if [ "$NOTIFY_ON_SUCCESS" = "true" ]; then
-          local duration=$(( $(date +%s) - start_time ))
-          send_notification "Add-on Updater Success" "Successfully updated add-ons and pushed changes to repository" 0
-        fi
+      if [ "$SKIP_PUSH" = "true" ]; then
+        log "$COLOR_CYAN" "⏸️ Skip push enabled - committing changes locally but not pushing"
+        git add .
+        git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1
       else
-        log "$COLOR_RED" "❌ Git push failed."
-        if [ "$NOTIFY_ON_ERROR" = "true" ]; then
-          send_notification "Add-on Updater Error" "Failed to push changes to repository" 5
+        git add .
+        git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1
+        if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+          log "$COLOR_GREEN" "✅ Git push successful."
+          if [ "$NOTIFY_ON_SUCCESS" = "true" ]; then
+            send_notification "Add-on Updater Success" "Successfully updated add-ons and pushed changes to repository" 0
+          fi
+        else
+          log "$COLOR_RED" "❌ Git push failed."
+          if [ "$NOTIFY_ON_ERROR" = "true" ]; then
+            send_notification "Add-on Updater Error" "Failed to push changes to repository" 5
+          fi
         fi
       fi
     fi
   else
     log "$COLOR_BLUE" "📦 No add-on updates found"
-    if [ "$NOTIFY_ON_SUCCESS" = "true" ]; then
-      local duration=$(( $(date +%s) - start_time ))
-      send_notification "Add-on Updater Complete" "No add-on updates were available" 0
-    fi
   fi
   
-  log "$COLOR_PURPLE" "🏁 Update check completed in $(( $(date +%s) - start_time )) seconds"
+  local end_time=$(date +%s)
+  local duration=$((end_time - start_time))
+  log_with_timestamp "$COLOR_PURPLE" "🏁 Update check completed in ${duration} seconds"
 }
 
 should_run_from_cron() {
@@ -489,7 +491,7 @@ should_run_from_cron() {
 }
 
 # Main execution
-log "$COLOR_PURPLE" "🔮 Starting Home Assistant Add-on Updater"
+log_with_timestamp "$COLOR_PURPLE" "🔮 Starting Home Assistant Add-on Updater"
 log "$COLOR_GREEN" "⚙️ Configuration:"
 log "$COLOR_GREEN" "   - GitHub Repo: $GITHUB_REPO"
 log "$COLOR_GREEN" "   - Dry run: $DRY_RUN"
