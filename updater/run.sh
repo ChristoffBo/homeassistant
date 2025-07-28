@@ -225,7 +225,7 @@ get_latest_docker_tag() {
                jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' | 
                sort -Vr | head -n1)
       
-      if [[ "$version" =~ ^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+      if [ -n "$version" ] && [[ "$version" =~ ^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
         version=${version#v}  # Remove 'v' prefix if present
         break
       fi
@@ -237,7 +237,7 @@ get_latest_docker_tag() {
     fi
   done
 
-  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+  if [ -z "$version" ] || [[ ! "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
     log "$COLOR_YELLOW" "   ⚠️ Could not determine latest version, using 'latest'"
     version="latest"
   fi
@@ -269,7 +269,7 @@ update_addon_if_needed() {
   fi
 
   # Fall back to build.json if no image found
-  if [[ -z "$image" && -f "$build_file" ]] && validate_json_file "$build_file" ]]; then
+  if [[ -z "$image" && -f "$build_file" ]] && validate_json_file "$build_file"; then
     local arch=$(uname -m)
     [[ "$arch" == "x86_64" ]] && arch="amd64"
     image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
@@ -283,10 +283,15 @@ update_addon_if_needed() {
   local latest_version
   latest_version=$(get_latest_docker_tag "$image")
 
+  if [[ -z "$latest_version" ]]; then
+    log "$COLOR_YELLOW" "⚠️ Could not determine latest version for $image"
+    return
+  fi
+
   log "$COLOR_BLUE" "   Current version: $current_version"
   log "$COLOR_BLUE" "   Available version: $latest_version"
 
-  if [[ "$latest_version" != "$current_version" ]]; then
+  if [[ "$latest_version" != "$current_version" ]] && [[ "$latest_version" != "latest" ]]; then
     log "$COLOR_GREEN" "⬆️ Update available: $current_version → $latest_version"
     
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -305,7 +310,7 @@ update_addon_if_needed() {
     fi
 
     # Update build.json if it exists
-    if [[ -f "$build_file" ]] && validate_json_file "$build_file" ]] && 
+    if [[ -f "$build_file" ]] && validate_json_file "$build_file" && 
        jq -e '.version' "$build_file" >/dev/null 2>&1; then
       if jq --arg v "$latest_version" '.version = $v' "$build_file" > "$build_file.tmp"; then
         mv "$build_file.tmp" "$build_file"
