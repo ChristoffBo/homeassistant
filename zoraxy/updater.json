@@ -1,6 +1,6 @@
 {
   "slug": "zoraxy",
   "image": "zoraxydocker/zoraxy:latest",
-  "upstream_version": "latest",
-  "last_update": "2025-07-28 08:47:04"
+  "upstream_version": "[2025-07-28 09:02:17 SAST] \u001b[0;33m⚠️ No repository URL found in config.json, falling back to 'latest'\u001b[0m\nlatest",
+  "last_update": "2025-07-28 09:02:17"
 }

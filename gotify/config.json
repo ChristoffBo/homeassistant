@@ -1,6 +1,6 @@
 {
   "name": "Gotify",
-  "version": "latest",
+  "version": "2025-07-28090216SASTNorepositoryURLfoundinconfig.jsonfallingbacktolatest\nlatest",
   "slug": "gotify",
   "description": "A simple server for sending and receiving messages",
   "startup": "services",

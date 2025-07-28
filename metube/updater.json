@@ -1,6 +1,6 @@
 {
   "slug": "metube",
   "image": "alexta69/metube:latest",
-  "upstream_version": "2025-07-28071612SASTUsinglatesttagforalexta69metubelatestafter3retries\nlatest",
-  "last_update": "2025-07-28 07:15:21"
+  "upstream_version": "[2025-07-28 09:02:17 SAST] \u001b[0;33m⚠️ No repository URL found in config.json, falling back to 'latest'\u001b[0m\nlatest",
+  "last_update": "2025-07-28 09:02:17"
 }
