@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euo pipefal
 
 # Configuration paths
 CONFIG_PATH="/data/options.json"
