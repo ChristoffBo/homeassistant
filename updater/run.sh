@@ -314,112 +314,145 @@ get_docker_source_url() {
 }
 
 update_addon_if_needed() {
-  local addon_path="$1"
-  local addon_name=$(basename "$addon_path")
-  
-  log "$COLOR_CYAN" "🔍 Checking add-on: $addon_name"
-
-  # Skip the updater addon itself
-  if [ "$addon_name" == "updater" ]; then
-    log "$COLOR_BLUE" "   Skipping self (updater addon)"
-    return
-  fi
-
-  # Check for valid config files
-  local config_file="$addon_path/config.json"
-  local build_file="$addon_path/build.json"
-  
-  if [ ! -f "$config_file" ] && [ ! -f "$build_file" ]; then
-    log "$COLOR_YELLOW" "⚠️ Skipping - missing both config.json and build.json"
-    return
-  fi
-
-  # Try to get image from build.json first
-  local image=""
-  if [ -f "$build_file" ]; then
-    local arch=$(uname -m)
-    [[ "$arch" == "x86_64" ]] && arch="amd64"
-    image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
-  fi
-
-  # Fall back to config.json if no image found
-  if [ -z "$image" ] && [ -f "$config_file" ]; then
-    image=$(jq -r '.image // empty' "$config_file" 2>/dev/null || true)
-  fi
-
-  if [ -z "$image" ] || [ "$image" == "null" ]; then
-    log "$COLOR_YELLOW" "⚠️ Skipping - no valid Docker image defined"
-    return
-  fi
-
-  # Get slug from config or use directory name
-  local slug
-  if [ -f "$config_file" ]; then
-    slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null || true)
-  fi
-  [[ -z "$slug" || "$slug" == "null" ]] && slug="$addon_name"
-
-  # Get current version
-  local current_version="latest"
-  if [ -f "$config_file" ]; then
-    current_version=$(jq -r '.version // "latest"' "$config_file" 2>/dev/null | tr -d '\n\r"' || echo "latest")
-  fi
-
-  log "$COLOR_BLUE" "   Current version: $current_version"
-  log "$COLOR_BLUE" "   Docker image: $image"
-
-  # Get latest version with retries
-  local latest_version=""
-  for ((i=1; i<=3; i++)); do
-    latest_version=$(get_latest_docker_tag "$image")
-    [[ -n "$latest_version" && "$latest_version" != "null" ]] && break
-    [[ $i -lt 3 ]] && sleep 5
-  done
-
-  if [ -z "$latest_version" ] || [ "$latest_version" == "null" ]; then
-    log "$COLOR_YELLOW" "⚠️ Could not determine latest version, using 'latest'"
-    latest_version="latest"
-  fi
-
-  log "$COLOR_BLUE" "   Latest version: $latest_version"
-
-  if [ "$latest_version" != "$current_version" ]; then
-    log "$COLOR_GREEN" "⬆️  Update available: $current_version → $latest_version"
+    local addon_path="$1"
+    local addon_name=$(basename "$addon_path")
     
-    if [ "$DRY_RUN" = "true" ]; then
-      log "$COLOR_CYAN" "🛑 Dry run enabled - would update to $latest_version"
-      return
+    # Skip the updater addon itself
+    if [[ "$addon_name" == "updater" ]]; then
+        log "$COLOR_BLUE" "🔧 Skipping updater addon (self)"
+        return
     fi
 
-    # Update config.json if exists
-    if [ -f "$config_file" ]; then
-      if jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null; then
-        mv "$config_file.tmp" "$config_file"
-        log "$COLOR_GREEN" "✅ Updated version in config.json"
-      else
-        log "$COLOR_RED" "❌ Failed to update config.json"
-      fi
+    log "$COLOR_CYAN" "🔍 Checking add-on: $addon_name"
+
+    # Initialize variables with safe defaults
+    local image=""
+    local slug="$addon_name"
+    local current_version="latest"
+    local upstream_version="latest"
+    local last_update="Never"
+    local config_file="$addon_path/config.json"
+    local build_file="$addon_path/build.json"
+    local updater_file="$addon_path/updater.json"
+
+    # 1. First try to get info from config.json (if exists and valid)
+    if [[ -f "$config_file" ]]; then
+        log "$COLOR_BLUE" "   Checking config.json"
+        image=$(jq -r '.image | select(.!=null)' "$config_file" 2>/dev/null || true)
+        slug=$(jq -r '.slug | select(.!=null)' "$config_file" 2>/dev/null || true)
+        current_version=$(jq -r '.version | select(.!=null)' "$config_file" 2>/dev/null || echo "latest")
     fi
 
-    # Update CHANGELOG.md if exists or create new
+    # 2. If no image found, try build.json (if exists and valid)
+    if [[ -z "$image" && -f "$build_file" ]]; then
+        log "$COLOR_BLUE" "   Checking build.json"
+        local arch=$(uname -m)
+        [[ "$arch" == "x86_64" ]] && arch="amd64"
+        image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
+    fi
+
+    # 3. Create/update updater.json with the found image
+    local update_time=$(date '+%Y-%m-%d %H:%M:%S')
+    if [[ -z "$image" ]]; then
+        log "$COLOR_YELLOW" "⚠️ No Docker image found in config.json or build.json"
+        image="$slug:latest"  # Default fallback
+    fi
+
+    # Create or update updater.json
+    if [[ -f "$updater_file" ]]; then
+        jq --arg image "$image" --arg slug "$slug" \
+           '.image = $image | .slug = $slug' "$updater_file" > "$updater_file.tmp" 2>/dev/null && \
+        mv "$updater_file.tmp" "$updater_file"
+    else
+        jq -n --arg slug "$slug" --arg image "$image" \
+            --arg upstream "latest" --arg updated "$update_time" \
+            '{
+                slug: $slug,
+                image: $image,
+                upstream_version: $upstream,
+                last_update: $updated
+            }' > "$updater_file" 2>/dev/null
+    fi
+
+    # Get current info from updater.json
+    upstream_version=$(jq -r '.upstream_version | select(.!=null)' "$updater_file" 2>/dev/null || echo "latest")
+    last_update=$(jq -r '.last_update | select(.!=null)' "$updater_file" 2>/dev/null || echo "Never")
+
+    log "$COLOR_BLUE" "   Current version: $current_version"
+    log "$COLOR_BLUE" "   Docker image: $image"
+    log "$COLOR_BLUE" "   Last update: $last_update"
+
+    # Get latest version with retries and proper error handling
+    local latest_version=""
+    for ((i=1; i<=3; i++)); do
+        latest_version=$(get_latest_docker_tag "$image" 2>/dev/null || true)
+        if [[ -n "$latest_version" && "$latest_version" != "null" ]]; then
+            break
+        fi
+        [[ $i -lt 3 ]] && sleep 5
+    done
+
+    if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
+        log "$COLOR_YELLOW" "⚠️ Could not determine latest version after 3 attempts, using 'latest'"
+        latest_version="latest"
+    fi
+
+    log "$COLOR_BLUE" "   Available version: $latest_version"
+
+    if [[ "$latest_version" != "$current_version" ]]; then
+        log "$COLOR_GREEN" "⬆️ Update available: $current_version → $latest_version"
+        
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log "$COLOR_CYAN" "🛑 Dry run enabled - would update to $latest_version"
+            return
+        fi
+
+        # Update config.json if exists
+        if [[ -f "$config_file" ]]; then
+            if jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null; then
+                mv "$config_file.tmp" "$config_file"
+                log "$COLOR_GREEN" "✅ Updated version in config.json"
+            else
+                log "$COLOR_RED" "❌ Failed to update config.json"
+            fi
+        fi
+
+        # Update updater.json
+        if jq --arg v "$latest_version" --arg dt "$update_time" \
+            '.upstream_version = $v | .last_update = $dt' "$updater_file" > "$updater_file.tmp" 2>/dev/null; then
+            mv "$updater_file.tmp" "$updater_file"
+            log "$COLOR_GREEN" "✅ Updated updater.json"
+        fi
+
+        # Update CHANGELOG.md
+        update_changelog "$addon_path" "$slug" "$current_version" "$latest_version" "$image"
+        
+    else
+        log "$COLOR_GREEN" "✔️ Already up to date"
+    fi
+}
+
+update_changelog() {
+    local addon_path="$1"
+    local slug="$2"
+    local current_version="$3"
+    local latest_version="$4"
+    local image="$5"
+    
     local changelog_file="$addon_path/CHANGELOG.md"
     local source_url=$(get_docker_source_url "$image")
     local update_time=$(date '+%Y-%m-%d %H:%M:%S')
-    
-    if [ ! -f "$changelog_file" ]; then
-      printf "# CHANGELOG for %s\n\n## Initial version: %s\nDocker Image: [%s](%s)\n\n" \
-        "$slug" "$current_version" "$image" "$source_url" > "$changelog_file"
-      log "$COLOR_BLUE" "   Created new CHANGELOG.md"
+
+    if [[ ! -f "$changelog_file" ]]; then
+        printf "# CHANGELOG for %s\n\n## Initial version: %s\nDocker Image: [%s](%s)\n\n" \
+            "$slug" "$current_version" "$image" "$source_url" > "$changelog_file"
+        log "$COLOR_BLUE" "   Created new CHANGELOG.md"
     fi
 
-    # Prepend new version to changelog
     local new_entry="## $latest_version ($update_time)\n- Update from $current_version to $latest_version\n- Docker Image: [$image]($source_url)\n\n"
     printf "%b$(cat "$changelog_file")" "$new_entry" > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
     
-    log "$COLOR_GREEN" "✅ Successfully updated $slug to $latest_version"
-  else
-    log "$COLOR_GREEN" "✔️ Already up to date"
-  fi
+    log "$COLOR_GREEN" "✅ Updated CHANGELOG.md"
 }
 
 perform_update_check() {
