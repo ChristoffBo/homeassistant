@@ -1,6 +1,6 @@
 {
   "slug": "metube",
-  "image": "2025-07-27",
-  "upstream_version": "latest",
-  "last_update": "2025-07-27 21:25:29"
+  "image": "alexta69/metube:latest",
+  "upstream_version": "2025-07-28 06:47:48 \u001b[1;33mUsing 'latest' tag for alexta69/metube:latest after 3 retries\u001b[0m\nlatest",
+  "last_update": "2025-07-28 06:47:35"
 }

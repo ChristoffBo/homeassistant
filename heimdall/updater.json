@@ -1,6 +1,6 @@
 {
   "slug": "heimdall",
   "image": "lscr.io/linuxserver/heimdall:amd64-latest",
-  "upstream_version": "latest",
-  "last_update": "2025-07-27 21:25:26"
+  "upstream_version": "2025-07-28 06:47:34 \u001b[1;33mUsing 'latest' tag for lscr.io/linuxserver/heimdall:amd64-latest after 3 retries\u001b[0m\nlatest",
+  "last_update": "2025-07-28 06:47:22"
 }
