@@ -1,3 +1,10 @@
+## 2025-07-28065442SASTUsinglatesttagforlscr.iolinuxserverheimdallamd64-latestafter3retries
+latest (2025-07-28 06:54:42)
+- Update from 2025-07-28064734Usinglatesttagforlscr.iolinuxserverheimdallamd64-latestafter3retries
+latest to 2025-07-28065442SASTUsinglatesttagforlscr.iolinuxserverheimdallamd64-latestafter3retries
+latest
+- Docker Image: [lscr.io/linuxserver/heimdall:amd64-latest](https://fleet.linuxserver.io/image?name=heimdall)
+
 ## 2025-07-28 06:47:34 [1;33mUsing 'latest' tag for lscr.io/linuxserver/heimdall:amd64-latest after 3 retries[0m
 latest (2025-07-28 06:47:34)
 - Update from latest to 2025-07-28 06:47:34 [1;33mUsing 'latest' tag for lscr.io/linuxserver/heimdall:amd64-latest after 3 retries[0m
