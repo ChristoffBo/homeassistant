@@ -17,22 +17,46 @@
     "github_username": "",
     "github_token": "",
     "check_cron": "0 3 * * *",
+    "startup_cron": "0 4 * * *",
     "timezone": "Africa/Johannesburg",
-    "gotify_url": "",
-    "gotify_token": "",
-    "mailrise_url": "",
-    "apprise_url": ""
+    "max_log_lines": 1000,
+    "dry_run": false,
+    "skip_push": false,
+    "notifications": {
+      "enabled": false,
+      "service": "gotify",
+      "config": {
+        "url": "",
+        "token": "",
+        "to": ""
+      },
+      "on_success": true,
+      "on_error": true,
+      "on_updates": true
+    }
   },
   "schema": {
     "github_repo": "str",
     "github_username": "str",
     "github_token": "str",
     "check_cron": "str",
+    "startup_cron": "str?",
     "timezone": "str?",
-    "gotify_url": "str?",
-    "gotify_token": "str?",
-    "mailrise_url": "str?",
-    "apprise_url": "str?"
+    "max_log_lines": "int?",
+    "dry_run": "bool?",
+    "skip_push": "bool?",
+    "notifications": {
+      "enabled": "bool?",
+      "service": "str?",
+      "config": {
+        "url": "str?",
+        "token": "str?",
+        "to": "str?"
+      },
+      "on_success": "bool?",
+      "on_error": "bool?",
+      "on_updates": "bool?"
+    }
   },
   "map": [
     "config:ro",
