@@ -15,7 +15,7 @@ Compares current Docker image versions with the latest available.
 
 If a new version is found:
 
-Updates config.json, build.json, and updater.json.
+Updates config.json an build.json.
 
 Creates or updates CHANGELOG.md.
 
@@ -88,7 +88,7 @@ Example settings to paste in the add-on configuration tab in Home Assistant:
 
 Notifications
 
-If enabled, the add-on will send notifications only when updates are found.
+If enabled, the add-on will send notifications.
 Supported services:
 
 Gotify
@@ -161,4 +161,4 @@ With help from ChatGPT and Deepseek AI
 
 ---
 
-Let me know if you'd like this saved into each add-on's README.md or want icons/descriptions per add-on too.
+
