@@ -76,15 +76,27 @@ write_safe_version() {
   local version="$2"
   local max_attempts=3
   local attempt=0
-  local temp_file="${file}.tmp"
   
   version=$(sanitize_version "$version")
   
   while [[ $attempt -lt $max_attempts ]]; do
-    if jq --arg v "$version" '.version = $v' "$file" > "$temp_file" 2>/dev/null; then
-      if verify_config_version "$temp_file"; then
-        mv "$temp_file" "$file"
+    # Create backup
+    cp -f "$file" "${file}.bak" 2>/dev/null || true
+    
+    # Create new content in memory
+    local new_content=$(jq --arg v "$version" '.version = $v' "$file" 2>/dev/null)
+    
+    if [[ -n "$new_content" ]] && jq -e . >/dev/null 2>&1 <<<"$new_content"; then
+      # Write directly to destination
+      echo "$new_content" > "$file"
+      
+      # Verify write was successful
+      if verify_config_version "$file"; then
+        rm -f "${file}.bak"
         return 0
+      else
+        # Restore backup if verification failed
+        mv -f "${file}.bak" "$file" 2>/dev/null || true
       fi
     fi
     
@@ -148,7 +160,7 @@ if [[ -f "$LOCK_FILE" ]]; then
 fi
 
 touch "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
+trap 'rm -f "$LOCK_FILE" 2>/dev/null || true' EXIT
 
 # Load configuration
 if [[ ! -f "$CONFIG_PATH" ]]; then
@@ -156,7 +168,7 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
   exit 1
 fi
 
-GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
+GITHUB_REPO=$(jq -r '.github_repo // empty' "$CONFIG_PATH")
 GITHUB_USERNAME=$(jq -r '.github_username // empty' "$CONFIG_PATH")
 GITHUB_TOKEN=$(jq -r '.github_token // empty' "$CONFIG_PATH")
 CHECK_CRON=$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")
@@ -380,23 +392,24 @@ update_addon_if_needed() {
     local build_file="$addon_path/build.json"
     local updater_file="$addon_path/updater.json"
 
-    # Load current config with validation
+    # Load current config with validation - handle empty/missing files
     if [[ -f "$config_file" ]]; then
         if ! verify_config_version "$config_file"; then
             log "$COLOR_RED" "❌ Existing config.json has invalid version, resetting to 'latest'"
             current_version="latest"
         else
-            current_version=$(sanitize_version "$(jq -r '.version // "latest"' "$config_file")")
-            image=$(jq -r '.image // empty' "$config_file")
-            slug=$(jq -r '.slug // empty' "$config_file")
+            current_version=$(sanitize_version "$(jq -r '.version // "latest"' "$config_file" 2>/dev/null || echo "latest")")
+            image=$(jq -r '.image // empty' "$config_file" 2>/dev/null || echo "")
+            slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null || echo "$addon_name")
         fi
     fi
 
+    # Handle build.json safely
     if [[ -z "$image" && -f "$build_file" ]]; then
         log "$COLOR_BLUE" "   Checking build.json"
         local arch=$(uname -m)
         [[ "$arch" == "x86_64" ]] && arch="amd64"
-        image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
+        image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from // empty | if type=="string" then . else empty end' "$build_file" 2>/dev/null || echo "")
     fi
 
     if [[ -z "$image" ]]; then
@@ -405,33 +418,35 @@ update_addon_if_needed() {
     fi
 
     local update_time=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Safely handle updater.json
     if [[ -f "$updater_file" ]]; then
-        if ! jq --arg image "$image" --arg slug "$slug" \
-           '.image = $image | .slug = $slug' "$updater_file" > "${updater_file}.tmp" 2>/dev/null || \
-           ! mv "${updater_file}.tmp" "$updater_file"; then
-           log "$COLOR_RED" "❌ Failed to update updater.json"
-        fi
+        upstream_version=$(sanitize_version "$(jq -r '.upstream_version // "latest"' "$updater_file" 2>/dev/null || echo "latest")")
+        last_update=$(jq -r '.last_update // empty' "$updater_file" 2>/dev/null || echo "Never")
+        
+        # Update existing updater file safely
+        local updater_content=$(jq --arg image "$image" --arg slug "$slug" \
+           '.image = $image | .slug = $slug' "$updater_file" 2>/dev/null || \
+           jq -n --arg image "$image" --arg slug "$slug" \
+           '{image: $image, slug: $slug, upstream_version: "latest", last_update: "Never"}')
+        echo "$updater_content" > "$updater_file"
     else
-        if ! jq -n --arg slug "$slug" --arg image "$image" \
+        # Create new updater file
+        jq -n --arg slug "$slug" --arg image "$image" \
             --arg upstream "latest" --arg updated "$update_time" \
             '{
                 slug: $slug,
                 image: $image,
                 upstream_version: $upstream,
                 last_update: $updated
-            }' > "$updater_file" 2>/dev/null; then
-            log "$COLOR_RED" "❌ Failed to create updater.json"
-        fi
+            }' > "$updater_file"
     fi
-
-    upstream_version=$(sanitize_version "$(jq -r '.upstream_version // "latest"' "$updater_file")")
-    last_update=$(jq -r '.last_update // empty' "$updater_file")
 
     log "$COLOR_BLUE" "   Current version: $current_version"
     log "$COLOR_BLUE" "   Docker image: $image"
     log "$COLOR_BLUE" "   Last update: ${last_update:-Never}"
 
-    # Get and validate new version
+    # Get and validate new version with better error handling
     local latest_version=""
     for ((i=1; i<=3; i++)); do
         latest_version=$(get_latest_docker_tag "$image")
@@ -445,7 +460,6 @@ update_addon_if_needed() {
 
     [[ -z "$latest_version" ]] && latest_version="latest"
 
-    # Triple-check before writing
     if [[ "$latest_version" != "$current_version" ]]; then
         log "$COLOR_GREEN" "⬆️ Update available: $current_version → $latest_version"
         
@@ -454,7 +468,7 @@ update_addon_if_needed() {
             return
         }
 
-        # Write with validation
+        # Update config.json with better error handling
         if [[ -f "$config_file" ]]; then
             if write_safe_version "$config_file" "$latest_version"; then
                 log "$COLOR_GREEN" "✅ Verified version update in config.json"
@@ -463,20 +477,13 @@ update_addon_if_needed() {
             fi
         fi
 
-        # Update updater.json with same validation
+        # Update updater.json with better error handling
         if [[ -f "$updater_file" ]]; then
-            if jq --arg v "$latest_version" --arg dt "$update_time" \
-                '.upstream_version = $v | .last_update = $dt' "$updater_file" > "${updater_file}.tmp" && \
-                mv "${updater_file}.tmp" "$updater_file"; then
-                
-                if verify_config_version "$updater_file"; then
-                    log "$COLOR_GREEN" "✅ Verified version update in updater.json"
-                else
-                    log "$COLOR_RED" "❌ Failed to validate updater.json version"
-                fi
-            else
-                log "$COLOR_RED" "❌ Failed to update updater.json"
-            fi
+            local new_updater_content=$(jq --arg v "$latest_version" --arg dt "$update_time" \
+                '.upstream_version = $v | .last_update = $dt' "$updater_file" 2>/dev/null || \
+                jq -n --arg v "$latest_version" --arg dt "$update_time" \
+                '{upstream_version: $v, last_update: $dt}')
+            echo "$new_updater_content" > "$updater_file"
         fi
 
         update_changelog "$addon_path" "$slug" "$current_version" "$latest_version" "$image"
