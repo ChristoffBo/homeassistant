@@ -92,26 +92,26 @@ if [ ! -f "$CONFIG_PATH" ]; then
 fi
 
 # Read configuration
-GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
-GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
-GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_CRON=$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")
-STARTUP_CRON=$(jq -r '.startup_cron // empty' "$CONFIG_PATH")
-TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
-MAX_LOG_LINES=$(jq -r '.max_log_lines // 1000' "$CONFIG_PATH")
-DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
-SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH")
+GITHUB_REPO=$(jq -r '.github_repo // empty' "$CONFIG_PATH" 2>/dev/null || true)
+GITHUB_USERNAME=$(jq -r '.github_username // empty' "$CONFIG_PATH" 2>/dev/null || true)
+GITHUB_TOKEN=$(jq -r '.github_token // empty' "$CONFIG_PATH" 2>/dev/null || true)
+CHECK_CRON=$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH" 2>/dev/null || true)
+STARTUP_CRON=$(jq -r '.startup_cron // empty' "$CONFIG_PATH" 2>/dev/null || true)
+TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH" 2>/dev/null || true)
+MAX_LOG_LINES=$(jq -r '.max_log_lines // 1000' "$CONFIG_PATH" 2>/dev/null || true)
+DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH" 2>/dev/null || true)
+SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || true)
 
 # Read notification configuration
-NOTIFICATION_ENABLED=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
+NOTIFICATION_ENABLED=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH" 2>/dev/null || true)
 if [ "$NOTIFICATION_ENABLED" = "true" ]; then
-  NOTIFICATION_SERVICE=$(jq -r '.notification_service // ""' "$CONFIG_PATH")
-  NOTIFICATION_URL=$(jq -r '.notification_url // ""' "$CONFIG_PATH")
-  NOTIFICATION_TOKEN=$(jq -r '.notification_token // ""' "$CONFIG_PATH")
-  NOTIFICATION_TO=$(jq -r '.notification_to // ""' "$CONFIG_PATH")
-  NOTIFY_ON_SUCCESS=$(jq -r '.notify_on_success // false' "$CONFIG_PATH")
-  NOTIFY_ON_ERROR=$(jq -r '.notify_on_error // true' "$CONFIG_PATH")
-  NOTIFY_ON_UPDATES=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")
+  NOTIFICATION_SERVICE=$(jq -r '.notification_service // ""' "$CONFIG_PATH" 2>/dev/null || true)
+  NOTIFICATION_URL=$(jq -r '.notification_url // ""' "$CONFIG_PATH" 2>/dev/null || true)
+  NOTIFICATION_TOKEN=$(jq -r '.notification_token // ""' "$CONFIG_PATH" 2>/dev/null || true)
+  NOTIFICATION_TO=$(jq -r '.notification_to // ""' "$CONFIG_PATH" 2>/dev/null || true)
+  NOTIFY_ON_SUCCESS=$(jq -r '.notify_on_success // false' "$CONFIG_PATH" 2>/dev/null || true)
+  NOTIFY_ON_ERROR=$(jq -r '.notify_on_error // true' "$CONFIG_PATH" 2>/dev/null || true)
+  NOTIFY_ON_UPDATES=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH" 2>/dev/null || true)
 fi
 
 # Set timezone
@@ -218,18 +218,18 @@ get_latest_docker_tag() {
       local api_response=$(curl -s "https://api.linuxserver.io/v1/images/$lsio_name/tags")
       if [ -n "$api_response" ]; then
         version=$(echo "$api_response" | 
-                 jq -r '.tags[] | select(.name != "latest") | .name' | 
+                 jq -r '.tags[] | select(.name != "latest") | .name' 2>/dev/null | 
                  grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$' | 
                  sort -Vr | head -n1)
       fi
     elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
       local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
       local package=$(echo "$image_name" | cut -d/ -f4)
-      local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
+      local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token' 2>/dev/null || true)
       if [ -n "$token" ]; then
         version=$(curl -s -H "Authorization: Bearer $token" \
                   "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
-                  jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))' | \
+                  jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))' 2>/dev/null | \
                   sort -Vr | head -n1)
       fi
     else
@@ -239,14 +239,14 @@ get_latest_docker_tag() {
         local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/$repo/tags/")
         if [ -n "$api_response" ]; then
           version=$(echo "$api_response" | 
-                   jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' | 
+                   jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' 2>/dev/null | 
                    sort -Vr | head -n1)
         fi
       else
         local api_response=$(curl -s "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/")
         if [ -n "$api_response" ]; then
           version=$(echo "$api_response" | 
-                   jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' | 
+                   jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' 2>/dev/null | 
                    sort -Vr | head -n1)
         fi
       fi
@@ -319,7 +319,11 @@ update_addon_if_needed() {
         log "$COLOR_BLUE" "   Checking build.json"
         local arch=$(uname -m)
         [[ "$arch" == "x86_64" ]] && arch="amd64"
-        image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
+        if [ -s "$build_file" ]; then
+            image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
+        else
+            log "$COLOR_YELLOW" "   ⚠️ build.json is empty"
+        fi
     fi
 
     if [[ -z "$image" ]]; then
