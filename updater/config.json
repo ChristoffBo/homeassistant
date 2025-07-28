@@ -29,7 +29,7 @@
     "notification_to": "",
     "notify_on_success": true,
     "notify_on_error": true,
-    "notify_on_updates": true
+    "notify_on_updates": true,
     "persistent": true
   },
   "schema": {
