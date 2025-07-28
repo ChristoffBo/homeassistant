@@ -1,0 +1,31 @@
+{
+  "arch": [
+    "amd64",
+    "aarch64"
+  ],
+  "boot": "auto",
+  "description": "Youtube Video Downloader",
+  "environment": {
+    "DOWNLOAD_DIR": "/share/metube/"
+  },
+  "map": [
+    "share:rw"
+  ],
+  "version": "2025-07-28071612SASTUsinglatesttagforalexta69metubelatestafter3retries\nlatest",
+  "name": "metube",
+  "options": {},
+  "ports": {
+    "8081/tcp": "8081"
+  },
+  "ports_description": {
+    "8081/tcp": "Web interface"
+  },
+  "schema": {},
+  "slug": "metube",
+  "startup": "services",
+  "upstream": "2025-07-22",
+  "url": "https://github.com/ChristoffBo/homeassistant",
+  "webui": "[PROTO:ssl]://[HOST]:[PORT:8081]",
+  "ingress": true,
+  "ingress_port": 8081
+}
