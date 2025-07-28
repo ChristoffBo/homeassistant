@@ -119,6 +119,11 @@ send_notification() {
     return 0
   fi
 
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "$COLOR_CYAN" "🛑 Dry run: Would send notification - Title: '$title', Message: '$message'"
+    return 0
+  fi
+
   if [ -z "$NOTIFICATION_SERVICE" ] || [ -z "$NOTIFICATION_URL" ] || [ -z "$NOTIFICATION_TOKEN" ]; then
     log "$COLOR_RED" "❌ Notification service not properly configured"
     return 1
@@ -169,6 +174,11 @@ clone_or_update_repo() {
       exit 1
     fi
     
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "$COLOR_CYAN" "🛑 Dry run: Would clone repository from $GIT_AUTH_REPO to $REPO_DIR"
+      return
+    fi
+    
     if ! git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" 2>&1 | tee -a "$LOG_FILE"; then
       log "$COLOR_RED" "❌ Failed to clone repository"
       log "$COLOR_YELLOW" "   Check your GitHub credentials and repository URL"
@@ -189,15 +199,23 @@ clone_or_update_repo() {
     fi
     
     # Reset any local changes
-    git reset --hard HEAD >> "$LOG_FILE" 2>&1
-    git clean -fd >> "$LOG_FILE" 2>&1
-    
-    if ! git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-      log "$COLOR_RED" "❌ Git pull failed"
-      log "$COLOR_YELLOW" "   Check your GitHub credentials and network connection"
-      exit 1
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "$COLOR_CYAN" "🛑 Dry run: Would reset local changes in repository"
+    else
+      git reset --hard HEAD >> "$LOG_FILE" 2>&1
+      git clean -fd >> "$LOG_FILE" 2>&1
     fi
-    log "$COLOR_GREEN" "✅ Successfully pulled latest changes"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "$COLOR_CYAN" "🛑 Dry run: Would pull latest changes from $GIT_AUTH_REPO"
+    else
+      if ! git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+        log "$COLOR_RED" "❌ Git pull failed"
+        log "$COLOR_YELLOW" "   Check your GitHub credentials and network connection"
+        exit 1
+      fi
+      log "$COLOR_GREEN" "✅ Successfully pulled latest changes"
+    fi
   fi
 }
 
@@ -298,6 +316,11 @@ update_addon_if_needed() {
     if [[ "$DRY_RUN" == "true" ]]; then
       log "$COLOR_CYAN" "🛑 Dry run enabled - would update to $latest_version"
       log "$COLOR_CYAN" "   Version $latest_version is available (current: $current_version)"
+      
+      # In dry run mode, we still want to show what would happen with notifications
+      if [[ "$NOTIFY_ON_UPDATES" == "true" ]]; then
+        log "$COLOR_CYAN" "🛑 Dry run: Would send update notification for $addon_name"
+      fi
       return
     fi
 
@@ -342,8 +365,10 @@ perform_update_check() {
     exit 1
   fi
   
-  git config user.email "updater@local"
-  git config user.name "HomeAssistant Updater"
+  if [[ "$DRY_RUN" != "true" ]]; then
+    git config user.email "updater@local"
+    git config user.name "HomeAssistant Updater"
+  fi
 
   local addon_count=0
   local updated_count=0
@@ -364,7 +389,13 @@ perform_update_check() {
 
   if [ $updated_count -gt 0 ] && [ "$(git status --porcelain)" ]; then
     if [[ "$DRY_RUN" == "true" ]]; then
-      log "$COLOR_CYAN" "🛑 Dry run enabled - skipping git commit/push"
+      log "$COLOR_CYAN" "🛑 Dry run enabled - would commit and push updates for $updated_count addon(s)"
+      log "$COLOR_CYAN" "   Commit message: '⬆️ Update addon versions'"
+      if [[ "$SKIP_PUSH" == "true" ]]; then
+        log "$COLOR_CYAN" "   Would commit changes locally but not push (skip_push enabled)"
+      else
+        log "$COLOR_CYAN" "   Would push changes to $GIT_AUTH_REPO"
+      fi
       return
     fi
     
