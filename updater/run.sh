@@ -9,6 +9,7 @@ LOCK_FILE="/data/updater.lock"
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
+COLOR_DARK_BLUE="\033[0;94m"  # Darker blue for add-on names
 COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
@@ -306,7 +307,7 @@ update_addon_if_needed() {
         return
     fi
 
-    log "$COLOR_CYAN" "🔍 Checking add-on: $addon_name"
+    log "$COLOR_CYAN" "🔍 Checking add-on: ${COLOR_DARK_BLUE}$addon_name${COLOR_CYAN}"
 
     local image=""
     local slug="$addon_name"
@@ -333,7 +334,7 @@ update_addon_if_needed() {
     fi
 
     if [[ -z "$image" ]]; then
-        log "$COLOR_YELLOW" "⚠️ No Docker image found in config.json or build.json"
+        log "$COLOR_YELLOW" "⚠️ No Docker image found in config.json or build.json for ${COLOR_DARK_BLUE}$addon_name"
         image="$slug:latest"
     fi
 
@@ -345,19 +346,19 @@ update_addon_if_needed() {
     log "$COLOR_BLUE" "   Available version: $latest_version"
 
     if [[ "$latest_version" != "$current_version" ]]; then
-        log "$COLOR_GREEN" "⬆️ Update available: $current_version → $latest_version"
+        log "$COLOR_GREEN" "⬆️ Update available for ${COLOR_DARK_BLUE}$addon_name${COLOR_GREEN}: $current_version → $latest_version"
         
         if [[ "$DRY_RUN" == "true" ]]; then
-            log "$COLOR_CYAN" "🛑 Dry run enabled - would update to $latest_version"
+            log "$COLOR_CYAN" "🛑 Dry run enabled - would update ${COLOR_DARK_BLUE}$addon_name${COLOR_CYAN} to $latest_version"
             return
         fi
 
         if [[ -f "$config_file" ]]; then
             if jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null; then
                 mv "$config_file.tmp" "$config_file"
-                log "$COLOR_GREEN" "✅ Updated version in config.json"
+                log "$COLOR_GREEN" "✅ Updated version in config.json for ${COLOR_DARK_BLUE}$addon_name"
             else
-                log "$COLOR_RED" "❌ Failed to update config.json"
+                log "$COLOR_RED" "❌ Failed to update config.json for ${COLOR_DARK_BLUE}$addon_name"
             fi
         fi
 
@@ -365,16 +366,16 @@ update_addon_if_needed() {
             if grep -q 'version' "$build_file"; then
                 if jq --arg v "$latest_version" '.version = $v' "$build_file" > "$build_file.tmp" 2>/dev/null; then
                     mv "$build_file.tmp" "$build_file"
-                    log "$COLOR_GREEN" "✅ Updated version in build.json"
+                    log "$COLOR_GREEN" "✅ Updated version in build.json for ${COLOR_DARK_BLUE}$addon_name"
                 else
-                    log "$COLOR_RED" "❌ Failed to update build.json"
+                    log "$COLOR_RED" "❌ Failed to update build.json for ${COLOR_DARK_BLUE}$addon_name"
                 fi
             fi
         fi
 
         update_changelog "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
     else
-        log "$COLOR_GREEN" "✔️ Already up to date"
+        log "$COLOR_GREEN" "✔️ ${COLOR_DARK_BLUE}$addon_name${COLOR_GREEN} already up to date"
     fi
 }
 
@@ -392,13 +393,13 @@ update_changelog() {
     if [[ ! -f "$changelog_file" ]]; then
         printf "# CHANGELOG for %s\n\n## Initial version: %s\nDocker Image: [%s](%s)\n\n" \
             "$slug" "$current_version" "$image" "$source_url" > "$changelog_file"
-        log "$COLOR_BLUE" "   Created new CHANGELOG.md"
+        log "$COLOR_BLUE" "   Created new CHANGELOG.md for ${COLOR_DARK_BLUE}$slug"
     fi
 
     local new_entry="## $latest_version ($update_time)\n- Update from $current_version to $latest_version\n- Docker Image: [$image]($source_url)\n\n"
     printf "%b$(cat "$changelog_file")" "$new_entry" > "$changelog_file.tmp" && mv "$changelog_file.tmp" "$changelog_file"
     
-    log "$COLOR_GREEN" "✅ Updated CHANGELOG.md"
+    log "$COLOR_GREEN" "✅ Updated CHANGELOG.md for ${COLOR_DARK_BLUE}$slug"
 }
 
 perform_update_check() {
