@@ -1,6 +1,6 @@
 {
   "slug": "2fauth",
-  "image": "2fauth:latest",
+  "image": "2fauth/2fauth",
   "upstream_version": "2025-07-28071356SASTUsinglatesttagfor2fauthlatestafter3retries\nlatest",
   "last_update": "2025-07-28 07:13:09",
   "version": "dev"
