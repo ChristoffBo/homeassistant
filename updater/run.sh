@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 CONFIG_PATH=/data/options.json
 REPO_DIR=/data/homeassistant
 LOG_FILE="/data/updater.log"
 LOCK_FILE="/data/updater.lock"
+TEMP_FILE="/data/temp.json"
 
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
@@ -14,7 +15,7 @@ COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
 COLOR_CYAN="\033[0;36m"
 
-# Notification variables
+# Notification variables with safer defaults
 NOTIFICATION_ENABLED=false
 NOTIFICATION_SERVICE=""
 NOTIFICATION_URL=""
@@ -33,45 +34,88 @@ log() {
   echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
+validate_json_file() {
+  local file="$1"
+  if [ ! -f "$file" ]; then
+    log "$COLOR_RED" "❌ JSON file not found: $file"
+    return 1
+  fi
+  
+  if ! jq empty "$file" >/dev/null 2>&1; then
+    log "$COLOR_RED" "❌ Invalid JSON in file: $file"
+    return 1
+  fi
+  
+  if [ ! -s "$file" ]; then
+    log "$COLOR_YELLOW" "⚠️ Empty JSON file: $file"
+    return 1
+  fi
+  
+  return 0
+}
+
+safe_jq() {
+  local query="$1"
+  local file="$2"
+  
+  if ! validate_json_file "$file"; then
+    return 1
+  fi
+  
+  if ! jq -e "$query" "$file" >/dev/null 2>&1; then
+    log "$COLOR_YELLOW" "⚠️ jq query failed for '$query' in $file"
+    return 1
+  fi
+  
+  jq -r "$query" "$file"
+}
+
 send_notification() {
   local title="$1"
   local message="$2"
   local priority="${3:-0}"
   
-  if [ "$NOTIFICATION_ENABLED" = "false" ]; then
+  if [ "$NOTIFICATION_ENABLED" != "true" ]; then
+    log "$COLOR_BLUE" "🔕 Notifications are disabled"
     return
   fi
+
+  log "$COLOR_CYAN" "🔔 Attempting to send notification via $NOTIFICATION_SERVICE"
+  log "$COLOR_CYAN" "   Title: $title"
+  log "$COLOR_CYAN" "   Message: $message"
 
   case "$NOTIFICATION_SERVICE" in
     "gotify")
       if [ -z "$NOTIFICATION_URL" ] || [ -z "$NOTIFICATION_TOKEN" ]; then
         log "$COLOR_RED" "❌ Gotify configuration incomplete"
-        return
+        log "$COLOR_RED" "   URL: ${NOTIFICATION_URL:-not set}"
+        log "$COLOR_RED" "   Token: ${NOTIFICATION_TOKEN:-not set}"
+        return 1
       fi
-      curl -s -X POST \
+      
+      log "$COLOR_CYAN" "   Sending to Gotify at $NOTIFICATION_URL"
+      local response
+      response=$(curl -s -w "%{http_code}" -o "$TEMP_FILE" -X POST \
         -H "Content-Type: application/json" \
         -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
-        "$NOTIFICATION_URL/message?token=$NOTIFICATION_TOKEN" >> "$LOG_FILE" 2>&1
-      ;;
-    "mailrise")
-      if [ -z "$NOTIFICATION_URL" ] || [ -z "$NOTIFICATION_TO" ]; then
-        log "$COLOR_RED" "❌ Mailrise configuration incomplete"
-        return
+        "$NOTIFICATION_URL/message?token=$NOTIFICATION_TOKEN" 2>> "$LOG_FILE")
+      
+      if [ "$response" -eq 200 ]; then
+        log "$COLOR_GREEN" "✅ Gotify notification sent successfully"
+      else
+        log "$COLOR_RED" "❌ Gotify notification failed with HTTP $response"
+        [ -f "$TEMP_FILE" ] && log "$COLOR_RED" "   Response: $(cat "$TEMP_FILE")"
+        return 1
       fi
-      curl -s -X POST \
-        -H "Content-Type: application/json" \
-        -d "{\"to\":\"$NOTIFICATION_TO\", \"subject\":\"$title\", \"body\":\"$message\"}" \
-        "$NOTIFICATION_URL" >> "$LOG_FILE" 2>&1
       ;;
-    "apprise")
-      if [ -z "$NOTIFICATION_URL" ]; then
-        log "$COLOR_RED" "❌ Apprise configuration incomplete"
-        return
-      fi
-      apprise -vv -t "$title" -b "$message" "$NOTIFICATION_URL" >> "$LOG_FILE" 2>&1
+      
+    "mailrise"|"apprise")
+      log "$COLOR_YELLOW" "⚠️ Notification service $NOTIFICATION_SERVICE not fully implemented"
       ;;
+      
     *)
       log "$COLOR_YELLOW" "⚠️ Unknown notification service: $NOTIFICATION_SERVICE"
+      return 1
       ;;
   esac
 }
@@ -84,38 +128,50 @@ fi
 
 # Create lock file
 touch "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
+trap 'rm -f "$LOCK_FILE" "$TEMP_FILE" 2>/dev/null' EXIT
 
 if [ ! -f "$CONFIG_PATH" ]; then
   log "$COLOR_RED" "ERROR: Config file $CONFIG_PATH not found!"
   exit 1
 fi
 
-# Read configuration
-GITHUB_REPO=$(jq -r '.github_repo' "$CONFIG_PATH")
-GITHUB_USERNAME=$(jq -r '.github_username' "$CONFIG_PATH")
-GITHUB_TOKEN=$(jq -r '.github_token' "$CONFIG_PATH")
-CHECK_CRON=$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")
-STARTUP_CRON=$(jq -r '.startup_cron // empty' "$CONFIG_PATH")
-TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
-MAX_LOG_LINES=$(jq -r '.max_log_lines // 1000' "$CONFIG_PATH")
-DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
-SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH")
+# Validate and read configuration
+if ! validate_json_file "$CONFIG_PATH"; then
+  log "$COLOR_RED" "❌ Invalid configuration in $CONFIG_PATH"
+  exit 1
+fi
+
+# Safely read configuration with defaults
+GITHUB_REPO=$(safe_jq '.github_repo' "$CONFIG_PATH" || { log "$COLOR_RED" "❌ github_repo is required"; exit 1; })
+GITHUB_USERNAME=$(safe_jq '.github_username // ""' "$CONFIG_PATH")
+GITHUB_TOKEN=$(safe_jq '.github_token // ""' "$CONFIG_PATH")
+CHECK_CRON=$(safe_jq '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")
+STARTUP_CRON=$(safe_jq '.startup_cron // empty' "$CONFIG_PATH")
+TIMEZONE=$(safe_jq '.timezone // "UTC"' "$CONFIG_PATH")
+MAX_LOG_LINES=$(safe_jq '.max_log_lines // 1000' "$CONFIG_PATH")
+DRY_RUN=$(safe_jq '.dry_run // false' "$CONFIG_PATH")
+SKIP_PUSH=$(safe_jq '.skip_push // false' "$CONFIG_PATH")
 
 # Read notification configuration
-NOTIFICATION_ENABLED=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
+NOTIFICATION_ENABLED=$(safe_jq '.notifications_enabled // false' "$CONFIG_PATH")
 if [ "$NOTIFICATION_ENABLED" = "true" ]; then
-  NOTIFICATION_SERVICE=$(jq -r '.notification_service // ""' "$CONFIG_PATH")
-  NOTIFICATION_URL=$(jq -r '.notification_url // ""' "$CONFIG_PATH")
-  NOTIFICATION_TOKEN=$(jq -r '.notification_token // ""' "$CONFIG_PATH")
-  NOTIFICATION_TO=$(jq -r '.notification_to // ""' "$CONFIG_PATH")
-  NOTIFY_ON_SUCCESS=$(jq -r '.notify_on_success // false' "$CONFIG_PATH")
-  NOTIFY_ON_ERROR=$(jq -r '.notify_on_error // true' "$CONFIG_PATH")
-  NOTIFY_ON_UPDATES=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")
+  NOTIFICATION_SERVICE=$(safe_jq '.notification_service // ""' "$CONFIG_PATH")
+  NOTIFICATION_URL=$(safe_jq '.notification_url // ""' "$CONFIG_PATH")
+  NOTIFICATION_TOKEN=$(safe_jq '.notification_token // ""' "$CONFIG_PATH")
+  NOTIFICATION_TO=$(safe_jq '.notification_to // ""' "$CONFIG_PATH")
+  NOTIFY_ON_SUCCESS=$(safe_jq '.notify_on_success // false' "$CONFIG_PATH")
+  NOTIFY_ON_ERROR=$(safe_jq '.notify_on_error // true' "$CONFIG_PATH")
+  NOTIFY_ON_UPDATES=$(safe_jq '.notify_on_updates // true' "$CONFIG_PATH")
+  
+  # Validate notification configuration
+  if [ -z "$NOTIFICATION_SERVICE" ]; then
+    log "$COLOR_RED" "❌ Notification enabled but no service specified"
+    exit 1
+  fi
 fi
 
 # Set timezone
-export TZ="$TIMEZONE"
+export TZ="${TIMEZONE:-UTC}"
 
 # Rotate log file if it's too large
 if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE")" -gt "$MAX_LOG_LINES" ]; then
@@ -308,18 +364,28 @@ update_addon_if_needed() {
     local config_file="$addon_path/config.json"
     local build_file="$addon_path/build.json"
 
+    # Check config.json
     if [[ -f "$config_file" ]]; then
         log "$COLOR_BLUE" "   Checking config.json"
-        image=$(jq -r '.image | select(.!=null)' "$config_file" 2>/dev/null || true)
-        slug=$(jq -r '.slug | select(.!=null)' "$config_file" 2>/dev/null || true)
-        current_version=$(jq -r '.version | select(.!=null)' "$config_file" 2>/dev/null || echo "latest")
+        if validate_json_file "$config_file"; then
+            image=$(safe_jq '.image // empty' "$config_file")
+            slug=$(safe_jq '.slug // empty' "$config_file" || echo "$addon_name")
+            current_version=$(safe_jq '.version // empty' "$config_file" || echo "latest")
+        else
+            log "$COLOR_YELLOW" "⚠️ Skipping invalid config.json in $addon_name"
+        fi
     fi
 
+    # Check build.json if no image found yet
     if [[ -z "$image" && -f "$build_file" ]]; then
         log "$COLOR_BLUE" "   Checking build.json"
-        local arch=$(uname -m)
-        [[ "$arch" == "x86_64" ]] && arch="amd64"
-        image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
+        if validate_json_file "$build_file"; then
+            local arch=$(uname -m)
+            [[ "$arch" == "x86_64" ]] && arch="amd64"
+            image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
+        else
+            log "$COLOR_YELLOW" "⚠️ Skipping invalid build.json in $addon_name"
+        fi
     fi
 
     if [[ -z "$image" ]]; then
@@ -327,7 +393,8 @@ update_addon_if_needed() {
         image="$slug:latest"
     fi
 
-    local latest_version=$(get_latest_docker_tag "$image")
+    local latest_version
+    latest_version=$(get_latest_docker_tag "$image")
     local update_time=$(date '+%Y-%m-%d %H:%M:%S')
 
     log "$COLOR_BLUE" "   Current version: $current_version"
@@ -342,7 +409,8 @@ update_addon_if_needed() {
             return
         fi
 
-        if [[ -f "$config_file" ]]; then
+        # Update config.json if it exists and is valid
+        if [[ -f "$config_file" ]] && validate_json_file "$config_file"; then
             if jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" 2>/dev/null; then
                 mv "$config_file.tmp" "$config_file"
                 log "$COLOR_GREEN" "✅ Updated version in config.json"
@@ -351,7 +419,8 @@ update_addon_if_needed() {
             fi
         fi
 
-        if [[ -f "$build_file" ]]; then
+        # Update build.json if it exists and is valid
+        if [[ -f "$build_file" ]] && validate_json_file "$build_file"; then
             if grep -q 'version' "$build_file"; then
                 if jq --arg v "$latest_version" '.version = $v' "$build_file" > "$build_file.tmp" 2>/dev/null; then
                     mv "$build_file.tmp" "$build_file"
@@ -363,6 +432,10 @@ update_addon_if_needed() {
         fi
 
         update_changelog "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
+        
+        if [[ "$NOTIFY_ON_UPDATES" == "true" ]]; then
+            send_notification "Add-on Update Available" "$addon_name: $current_version → $latest_version" 0
+        fi
     else
         log "$COLOR_GREEN" "✔️ Already up to date"
     fi
@@ -397,7 +470,11 @@ perform_update_check() {
   
   clone_or_update_repo
 
-  cd "$REPO_DIR"
+  cd "$REPO_DIR" || {
+    log "$COLOR_RED" "❌ Failed to enter repository directory"
+    exit 1
+  }
+  
   git config user.email "updater@local"
   git config user.name "HomeAssistant Updater"
 
