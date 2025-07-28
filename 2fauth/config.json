@@ -1,6 +1,6 @@
 {
   "name": "2FAuth",
-  "version": "2025-07-28065429SASTUsinglatesttagfor2fauth2fauthafter3retries\nlatest",
+  "version": "latest",
   "slug": "2fauth",
   "description": "Web app to manage your 2FA accounts and generate security codes",
   "image": "2fauth/2fauth",
