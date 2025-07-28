@@ -218,7 +218,7 @@ get_latest_docker_tag() {
     
     local api_response
     api_response=$(curl -s -f --max-time 30 \
-      "https://registry.hub.docker.com/v2/repositories/${repo_name}/tags/" || true)
+      "https://registry.hub.docker.com/v2/repositories/${repo_name}/tags/" 2>/dev/null || true)
     
     if [ -n "$api_response" ]; then
       version=$(echo "$api_response" | 
@@ -282,7 +282,7 @@ update_addon_if_needed() {
   fi
 
   local latest_version
-  latest_version=$(get_latest_docker_tag "$image")
+  latest_version=$(get_latest_docker_tag "$image" 2>&1 | tail -n1)  # Only capture the last line which should be the version
 
   if [[ -z "$latest_version" ]]; then
     log "$COLOR_YELLOW" "⚠️ Could not determine latest version for $image"
