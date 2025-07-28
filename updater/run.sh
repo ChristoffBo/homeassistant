@@ -117,6 +117,87 @@ write_safe_version() {
   return 1
 }
 
+# Get latest version tag from GitHub
+get_latest_version_tag() {
+  local addon_path="$1"
+  local repo_url=$(get_json_value "$addon_path/config.json" "repository" "")
+  
+  if [[ -z "$repo_url" ]]; then
+    log "$COLOR_YELLOW" "⚠️ No repository URL found in config.json, falling back to 'latest'"
+    echo "latest"
+    return
+  fi
+
+  # Extract owner and repo from URL
+  local owner_repo=$(echo "$repo_url" | sed -E 's#^https://github.com/([^/]+/[^/]+).*$#\1#')
+  if [[ -z "$owner_repo" ]]; then
+    log "$COLOR_YELLOW" "⚠️ Could not parse GitHub repository from URL, falling back to 'latest'"
+    echo "latest"
+    return
+  fi
+
+  # Try to get tags from GitHub API
+  local api_url="https://api.github.com/repos/$owner_repo/tags"
+  local auth_header=""
+  if [[ -n "$GITHUB_TOKEN" ]]; then
+    auth_header="Authorization: token $GITHUB_TOKEN"
+  fi
+
+  local tags=$(curl -s -H "$auth_header" "$api_url" | jq -r '.[].name' 2>/dev/null || true)
+  
+  if [[ -z "$tags" ]]; then
+    log "$COLOR_YELLOW" "⚠️ Could not fetch tags from GitHub, falling back to 'latest'"
+    echo "latest"
+    return
+  fi
+
+  # Find the highest semantic version tag
+  local latest_tag=$(echo "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+  
+  if [[ -z "$latest_tag" ]]; then
+    log "$COLOR_YELLOW" "⚠️ No valid version tags found, falling back to 'latest'"
+    echo "latest"
+  else
+    echo "$latest_tag"
+  fi
+}
+
+# Update CHANGE_LOG.md with version history
+update_change_log() {
+  local addon_path="$1"
+  local old_version="$2"
+  local new_version="$3"
+  local changelog_file="$addon_path/CHANGE_LOG.md"
+
+  # Create directory if it doesn't exist
+  mkdir -p "$addon_path"
+
+  # Create file if it doesn't exist
+  if [[ ! -f "$changelog_file" ]]; then
+    echo "# Change Log" > "$changelog_file"
+    echo "" >> "$changelog_file"
+    echo "## [Unreleased]" >> "$changelog_file"
+    echo "" >> "$changelog_file"
+  fi
+
+  # Add version update entry
+  local update_entry=""
+  if [[ "$old_version" == "latest" ]]; then
+    update_entry="## [${new_version}] - $(date +%Y-%m-%d)\n\n- Updated from latest to ${new_version}\n"
+  else
+    update_entry="## [${new_version}] - $(date +%Y-%m-%d)\n\n- Updated from ${old_version} to ${new_version}\n"
+  fi
+
+  # Insert the new entry after the Unreleased section
+  if grep -q "## \[Unreleased\]" "$changelog_file"; then
+    sed -i "/## \[Unreleased\]/a \\\n${update_entry}" "$changelog_file"
+  else
+    echo -e "\n${update_entry}" >> "$changelog_file"
+  fi
+
+  log "$COLOR_GREEN" "📝 Updated CHANGE_LOG.md with version change: ${old_version} → ${new_version}"
+}
+
 # Update add-on if needed
 update_addon_if_needed() {
   local addon_path="${1%/}"  # Remove trailing slash
@@ -161,14 +242,17 @@ update_addon_if_needed() {
   log "$COLOR_BLUE" "   Current version: $current_version"
   log "$COLOR_BLUE" "   Last update: $last_update"
 
-  # Check for updates (simplified - replace with your actual version check)
-  local latest_version="latest"
+  # Get latest version (try to get a specific tag first)
+  local latest_version=$(get_latest_version_tag "$addon_path")
   
   if [[ "$latest_version" != "$current_version" ]]; then
     log "$COLOR_GREEN" "⬆️ Update available: $current_version → $latest_version"
     
     if [[ "$DRY_RUN" != "true" ]]; then
       if write_safe_version "$config_file" "$latest_version"; then
+        # Update CHANGE_LOG.md
+        update_change_log "$addon_path" "$current_version" "$latest_version"
+        
         # Update updater file
         jq --arg v "$latest_version" --arg updated "$(date '+%Y-%m-%d %H:%M:%S')" \
           '.upstream_version = $v | .last_update = $updated' \
@@ -177,6 +261,7 @@ update_addon_if_needed() {
       fi
     else
       log "$COLOR_CYAN" "🛑 Dry run enabled - would update to $latest_version"
+      log "$COLOR_CYAN" "🛑 Would update CHANGE_LOG.md with: ${current_version} → ${latest_version}"
     fi
   else
     log "$COLOR_GREEN" "✔️ Already up to date"
