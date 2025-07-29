@@ -1,21 +1,27 @@
 #!/usr/bin/with-contenv bashio
 
-# Create directories
+# Create directories with correct permissions
 mkdir -p /data/gitea/{conf,data,logs,repositories}
-
-# Generate config if missing
-if [ ! -f /data/gitea/conf/app.ini ]; then
-    cp /etc/gitea/app.ini /data/gitea/conf/app.ini
-fi
-
-# Configure SSH
-crudini --set /data/gitea/conf/app.ini "server" \
-    DISABLE_SSH "$(! bashio::config 'ssh_enabled'; echo $?)"
-
-# Set permissions
-chown -R git:git /data/gitea
+chown -R ${USER_UID}:${USER_GID} /data/gitea
 chmod -R 750 /data/gitea
 
-# Start Gitea
-exec s6-setuidgid git \
-    /usr/local/bin/gitea web --config /data/gitea/conf/app.ini
+# Process environment variables into app.ini
+for var in $(printenv | grep ^GITEA__); do
+  section_key="${var#GITEA__}"
+  section="${section_key%%__*}"
+  key="${section_key#*__}"
+  key="${key%%=*}"
+  value="${var#*=}"
+  
+  crudini --set /data/gitea/conf/app.ini "${section}" "${key}" "${value}"
+done
+
+# Apply Home Assistant specific configs
+crudini --set /data/gitea/conf/app.ini "" APP_NAME "$(bashio::config 'app_name')"
+crudini --set /data/gitea/conf/app.ini "security" DISABLE_REGISTRATION "$(bashio::config 'disable_registration')"
+crudini --set /data/gitea/conf/app.ini "log" LEVEL "$(bashio::config 'log_level')"
+crudini --set /data/gitea/conf/app.ini "server" DISABLE_SSH "$(! bashio::config 'ssh_enabled'; echo $?)"
+crudini --set /data/gitea/conf/app.ini "server" DOMAIN "$(bashio::config 'domain')"
+
+# Start using official image's entrypoint
+exec /usr/bin/entrypoint /usr/local/bin/gitea web --config /data/gitea/conf/app.ini
