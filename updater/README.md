@@ -40,7 +40,7 @@ Logs everything with timestamps in your configured timezone.
 
 Uses a lock file to avoid running twice at the same time.
 
-Sends optional notifications via Gotify, Apprise, or Mailrise.
+Sends optional notifications via Gotify.
 
 GitHub integration with optional push support.
 
@@ -90,12 +90,6 @@ If enabled, the add-on will send notifications.
 Supported services:
 
 Gotify
-
-Apprise
-
-Mailrise
-
-
 
 ---
 
