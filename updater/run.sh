@@ -11,6 +11,9 @@ LOCK_FILE="/data/updater.lock"
 MAX_LOG_FILES=5
 MAX_LOG_LINES=1000
 
+# Global array to track updates
+declare -a UPDATES_FOUND=()
+
 # ======================
 # COLOR DEFINITIONS
 # ======================
@@ -35,6 +38,7 @@ declare -A NOTIFICATION_SETTINGS=(
     [on_success]=false
     [on_error]=true
     [on_updates]=true
+    [on_start]=true
 )
 
 # ======================
@@ -115,6 +119,7 @@ load_config() {
         NOTIFICATION_SETTINGS[on_success]=$(jq -r '.notify_on_success // false' "$CONFIG_PATH")
         NOTIFICATION_SETTINGS[on_error]=$(jq -r '.notify_on_error // true' "$CONFIG_PATH")
         NOTIFICATION_SETTINGS[on_updates]=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")
+        NOTIFICATION_SETTINGS[on_start]=$(jq -r '.notify_on_start // true' "$CONFIG_PATH")
         
         # Validate notification settings
         if [ -z "${NOTIFICATION_SETTINGS[service]}" ]; then
@@ -186,6 +191,7 @@ log_configuration() {
     
     if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
         log_info "Notifications: Enabled (${NOTIFICATION_SETTINGS[service]})"
+        log_info "Notify on Start: ${NOTIFICATION_SETTINGS[on_start]}"
         log_info "Notify on Success: ${NOTIFICATION_SETTINGS[on_success]}"
         log_info "Notify on Error: ${NOTIFICATION_SETTINGS[on_error]}"
         log_info "Notify on Updates: ${NOTIFICATION_SETTINGS[on_updates]}"
@@ -476,7 +482,7 @@ update_addon_if_needed() {
         if ! latest_version=$(get_latest_docker_tag "$image"); then
             log_warning "Could not determine latest version for $addon_name"
             return
-        fi
+        }
 
         [ -z "$latest_version" ] && latest_version="latest"
 
@@ -499,6 +505,9 @@ handle_addon_update() {
     
     log_success "Update available for $addon_name: $current_version → $latest_version"
     
+    # Store update details for potential notification
+    UPDATES_FOUND+=("$addon_name: $current_version → $latest_version (Image: $image)")
+    
     [ "$DRY_RUN" = "true" ] && {
         log_info "Dry run enabled - would update $addon_name to $latest_version"
         return
@@ -514,11 +523,6 @@ handle_addon_update() {
         update_config_file "$addon_path/build.json" "$latest_version" "$addon_name" "build.json"
 
     update_changelog "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
-    
-    [ "${NOTIFICATION_SETTINGS[on_updates]}" = "true" ] &&
-        send_notification "Add-on Update Available" \
-            "Update for $addon_name: $current_version → $latest_version\nImage: $image" \
-            3
 }
 
 update_config_file() {
@@ -569,6 +573,15 @@ commit_and_push_changes() {
         if git commit -m "⬆️ Update addon versions" >> "$LOG_FILE" 2>&1; then
             log_success "Changes committed"
             
+            # Send update notification if updates were found and notifications are enabled
+            if [ "${#UPDATES_FOUND[@]}" -gt 0 ] && [ "${NOTIFICATION_SETTINGS[on_updates]}" = "true" ]; then
+                local update_message="The following add-ons were updated:\n"
+                for update in "${UPDATES_FOUND[@]}"; do
+                    update_message+="• $update\n"
+                done
+                send_notification "Add-on Updates Applied" "$update_message" 3
+            fi
+            
             [ "$SKIP_PUSH" = "true" ] && {
                 log_info "Skip push enabled - changes not pushed"
                 return 0
@@ -594,6 +607,11 @@ commit_and_push_changes() {
         fi
     else
         log_info "No add-on updates found"
+        # Send notification if no updates were found (optional)
+        [ "${NOTIFICATION_SETTINGS[on_success]}" = "true" ] &&
+            send_notification "Add-on Updater" \
+                "No add-on updates were found during this run" \
+                0
     fi
     
     return 0
@@ -609,6 +627,9 @@ send_notification() {
     local message="$2"
     local priority="${3:-0}"
     
+    # Log that we're attempting to send a notification
+    log_info "Attempting to send notification via ${NOTIFICATION_SETTINGS[service]}"
+    
     case "${NOTIFICATION_SETTINGS[service]}" in
         "gotify")
             # Double-check Gotify URL and token before sending
@@ -623,22 +644,31 @@ send_notification() {
                 return
             fi
             
-            curl -sSf -X POST \
+            if curl -sSf -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
-                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" >> "$LOG_FILE" 2>&1 || \
+                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" >> "$LOG_FILE" 2>&1; then
+                log_success "Gotify notification sent successfully"
+            else
                 log_error "Failed to send Gotify notification"
+            fi
             ;;
         "mailrise"|"ntfy")
-            curl -sSf -X POST \
+            if curl -sSf -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"to\":\"${NOTIFICATION_SETTINGS[to]}\", \"subject\":\"$title\", \"body\":\"$message\"}" \
-                "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
+                "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1; then
+                log_success "${NOTIFICATION_SETTINGS[service]} notification sent successfully"
+            else
                 log_error "Failed to send ${NOTIFICATION_SETTINGS[service]} notification"
+            fi
             ;;
         "apprise")
-            apprise -vv -t "$title" -b "$message" "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
+            if apprise -vv -t "$title" -b "$message" "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1; then
+                log_success "Apprise notification sent successfully"
+            else
                 log_error "Failed to send Apprise notification"
+            fi
             ;;
         *)
             log_warning "Unknown notification service: ${NOTIFICATION_SETTINGS[service]}"
@@ -652,6 +682,10 @@ send_notification() {
 perform_update_check() {
     local start_time=$(date +%s)
     log_info "Starting update check"
+    
+    # Send start notification if enabled
+    [ "${NOTIFICATION_SETTINGS[on_start]}" = "true" ] && 
+        send_notification "Add-on Updater Started" "Starting add-on version update check" 0
     
     clone_or_update_repo
 
@@ -670,6 +704,10 @@ perform_update_check() {
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
     log_info "Update check completed in ${duration} seconds"
+    
+    # Send completion notification if enabled
+    [ "${NOTIFICATION_SETTINGS[on_success]}" = "true" ] && 
+        send_notification "Add-on Updater Completed" "Update check completed in ${duration} seconds" 0
 }
 
 # ======================
