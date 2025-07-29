@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 set -eo pipefail
 
@@ -37,6 +36,12 @@ declare -A NOTIFICATION_SETTINGS=(
     [on_error]=true
     [on_updates]=true
 )
+
+# ======================
+# GLOBAL VARIABLES
+# ======================
+declare -A UPDATED_ADDONS
+declare -A UNCHANGED_ADDONS
 
 # ======================
 # LOGGING FUNCTIONS
@@ -125,7 +130,7 @@ load_config() {
         
         case "${NOTIFICATION_SETTINGS[service]}" in
             "gotify")
-                # Double-check Gotify settings
+                # Enhanced Gotify validation
                 if [ -z "${NOTIFICATION_SETTINGS[url]}" ]; then
                     log_error "Gotify configuration incomplete - missing URL"
                     NOTIFICATION_SETTINGS[enabled]=false
@@ -140,6 +145,14 @@ load_config() {
                 elif [[ ! "${NOTIFICATION_SETTINGS[token]}" =~ ^[A-Za-z0-9._~+-]+$ ]]; then
                     log_error "Gotify token contains invalid characters"
                     NOTIFICATION_SETTINGS[enabled]=false
+                fi
+                
+                # Test Gotify connection if enabled
+                if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
+                    if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}/health" >/dev/null 2>&1; then
+                        log_error "Gotify server not reachable at ${NOTIFICATION_SETTINGS[url]}"
+                        NOTIFICATION_SETTINGS[enabled]=false
+                    fi
                 fi
                 ;;
             "mailrise"|"ntfy")
@@ -470,12 +483,14 @@ update_addon_if_needed() {
 
         [ -z "$image" ] && {
             log_warning "No Docker image found for $addon_name"
+            UNCHANGED_ADDONS["$addon_name"]="No Docker image found"
             return
         }
 
         local latest_version
         if ! latest_version=$(get_latest_docker_tag "$image"); then
             log_warning "Could not determine latest version for $addon_name"
+            UNCHANGED_ADDONS["$addon_name"]="Could not determine latest version"
             return
         fi
 
@@ -489,9 +504,11 @@ update_addon_if_needed() {
             handle_addon_update "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
         else
             log_success "$addon_name already up to date"
+            UNCHANGED_ADDONS["$addon_name"]="Already up to date (current: $current_version)"
         fi
     ) || {
         log_warning "Addon check interrupted for $addon_name"
+        UNCHANGED_ADDONS["$addon_name"]="Check interrupted"
     }
 }
 
@@ -499,6 +516,8 @@ handle_addon_update() {
     local addon_path="$1" addon_name="$2" current_version="$3" latest_version="$4" image="$5"
     
     log_success "Update available for $addon_name: $current_version → $latest_version"
+    
+    UPDATED_ADDONS["$addon_name"]="$current_version → $latest_version"
     
     [ "$DRY_RUN" = "true" ] && {
         log_info "Dry run enabled - would update $addon_name to $latest_version"
@@ -515,11 +534,6 @@ handle_addon_update() {
         update_config_file "$addon_path/build.json" "$latest_version" "$addon_name" "build.json"
 
     update_changelog "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
-    
-    [ "${NOTIFICATION_SETTINGS[on_updates]}" = "true" ] &&
-        send_notification "Add-on Update Available" \
-            "Update for $addon_name: $current_version → $latest_version\nImage: $image" \
-            3
 }
 
 update_config_file() {
@@ -577,16 +591,9 @@ commit_and_push_changes() {
 
             if git push "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
                 log_success "Git push successful"
-                [ "${NOTIFICATION_SETTINGS[on_success]}" = "true" ] &&
-                    send_notification "Add-on Updater Success" \
-                        "Successfully updated add-ons and pushed changes" \
-                        0
+                return 0
             else
                 log_error "Git push failed"
-                [ "${NOTIFICATION_SETTINGS[on_error]}" = "true" ] &&
-                    send_notification "Add-on Updater Error" \
-                        "Failed to push changes to repository" \
-                        5
                 return 1
             fi
         else
@@ -612,13 +619,13 @@ send_notification() {
     
     case "${NOTIFICATION_SETTINGS[service]}" in
         "gotify")
-            # Double-check Gotify URL and token before sending
+            # Enhanced Gotify validation
             if [[ ! "${NOTIFICATION_SETTINGS[url]}" =~ ^https?:// ]] || [[ -z "${NOTIFICATION_SETTINGS[token]}" ]]; then
                 log_error "Invalid Gotify configuration - cannot send notification"
                 return
             fi
             
-            # Validate URL is reachable
+            # Test Gotify connection
             if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}/health" >/dev/null 2>&1; then
                 log_error "Gotify server not reachable at ${NOTIFICATION_SETTINGS[url]}"
                 return
@@ -648,6 +655,36 @@ send_notification() {
 }
 
 # ======================
+# SUMMARY REPORT
+# ======================
+generate_summary_report() {
+    local message="Add-on Update Summary\n\n"
+    
+    if [ ${#UPDATED_ADDONS[@]} -gt 0 ]; then
+        message+="✅ ${#UPDATED_ADDONS[@]} Add-ons Updated:\n"
+        for addon in "${!UPDATED_ADDONS[@]}"; do
+            message+="  - $addon: ${UPDATED_ADDONS[$addon]}\n"
+        done
+    else
+        message+="ℹ️ No add-ons were updated\n"
+    fi
+    
+    message+="\n"
+    
+    if [ ${#UNCHANGED_ADDONS[@]} -gt 0 ]; then
+        message+="ℹ️ ${#UNCHANGED_ADDONS[@]} Add-ons Unchanged:\n"
+        for addon in "${!UNCHANGED_ADDONS[@]}"; do
+            message+="  - $addon: ${UNCHANGED_ADDONS[$addon]}\n"
+        done
+    fi
+    
+    # Add timestamp
+    message+="\nLast run: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    
+    echo -e "$message"
+}
+
+# ======================
 # MAIN FUNCTIONS
 # ======================
 perform_update_check() {
@@ -660,6 +697,10 @@ perform_update_check() {
     git config user.email "updater@local"
     git config user.name "HomeAssistant Updater"
 
+    # Initialize tracking arrays
+    declare -gA UPDATED_ADDONS=()
+    declare -gA UNCHANGED_ADDONS=()
+
     # Check all add-ons
     for addon_path in "$REPO_DIR"/*/; do
         [ -d "$addon_path" ] && update_addon_if_needed "$addon_path"
@@ -667,6 +708,20 @@ perform_update_check() {
 
     # Commit and push changes if any
     commit_and_push_changes
+    
+    # Send summary notification
+    if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
+        local summary=$(generate_summary_report)
+        local title="Add-on Update Summary"
+        local priority=0
+        
+        if [ ${#UPDATED_ADDONS[@]} -gt 0 ]; then
+            title="Add-ons Updated (${#UPDATED_ADDONS[@]})"
+            priority=3
+        fi
+        
+        send_notification "$title" "$summary" "$priority"
+    fi
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
@@ -677,26 +732,20 @@ perform_update_check() {
 # ENTRY POINT
 # ======================
 main() {
-    # Ensure we only run once by checking for a marker file
-    local run_marker="/data/.has_run"
-    if [ -f "$run_marker" ]; then
-        log_info "Script has already run once. Exiting."
-        exit 0
-    fi
-    
-    touch "$run_marker"
-    
     acquire_lock
     load_config
     
-    log_info "Starting Home Assistant Add-on Updater (single run)"
+    log_info "Starting Home Assistant Add-on Updater"
     
     perform_update_check
 
     release_lock
     
-    log_info "Single run completed successfully"
-    exit 0
+    # Sleep indefinitely after completing the update check
+    log_info "Update process completed. Sleeping indefinitely..."
+    while true; do
+        sleep 3600  # Sleep for 1 hour at a time
+    done
 }
 
 main
