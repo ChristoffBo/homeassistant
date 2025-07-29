@@ -74,6 +74,10 @@ log_success() {
     log_with_timestamp "$COLOR_GREEN" "✅ $*"
 }
 
+log_debug() {
+    [ "$DEBUG" = "true" ] && log_with_timestamp "$COLOR_PURPLE" "🐛 $*"
+}
+
 # ======================
 # LOCK MANAGEMENT
 # ======================
@@ -122,6 +126,9 @@ load_config() {
         NOTIFICATION_SETTINGS[on_error]=$(jq -r '.notify_on_error // true' "$CONFIG_PATH")
         NOTIFICATION_SETTINGS[on_updates]=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")
         
+        # Ensure URL ends with /
+        [[ "${NOTIFICATION_SETTINGS[url]}" != */ ]] && NOTIFICATION_SETTINGS[url]="${NOTIFICATION_SETTINGS[url]}/"
+        
         # Validate notification settings
         if [ -z "${NOTIFICATION_SETTINGS[service]}" ]; then
             log_error "Notification service is not specified"
@@ -130,7 +137,6 @@ load_config() {
         
         case "${NOTIFICATION_SETTINGS[service]}" in
             "gotify")
-                # Enhanced Gotify validation
                 if [ -z "${NOTIFICATION_SETTINGS[url]}" ]; then
                     log_error "Gotify configuration incomplete - missing URL"
                     NOTIFICATION_SETTINGS[enabled]=false
@@ -142,16 +148,16 @@ load_config() {
                 if [ -z "${NOTIFICATION_SETTINGS[token]}" ]; then
                     log_error "Gotify configuration incomplete - missing token"
                     NOTIFICATION_SETTINGS[enabled]=false
-                elif [[ ! "${NOTIFICATION_SETTINGS[token]}" =~ ^[A-Za-z0-9._~+-]+$ ]]; then
-                    log_error "Gotify token contains invalid characters"
-                    NOTIFICATION_SETTINGS[enabled]=false
                 fi
                 
-                # Test Gotify connection if enabled
+                # Test Gotify connection
                 if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
-                    if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}/health" >/dev/null 2>&1; then
+                    log_debug "Testing Gotify connection to ${NOTIFICATION_SETTINGS[url]}health"
+                    if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}health" >/dev/null 2>&1; then
                         log_error "Gotify server not reachable at ${NOTIFICATION_SETTINGS[url]}"
                         NOTIFICATION_SETTINGS[enabled]=false
+                    else
+                        log_debug "Gotify connection successful"
                     fi
                 fi
                 ;;
@@ -355,7 +361,7 @@ get_latest_docker_tag() {
     # Check cache first
     if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt $cache_age ]; then
         version=$(cat "$cache_file")
-        [ "$DEBUG" = "true" ] && log_info "Using cached version for $image_name: $version"
+        [ "$DEBUG" = "true" ] && log_debug "Using cached version for $image_name: $version"
         echo "$version"
         return
     fi
@@ -617,37 +623,48 @@ send_notification() {
     local message="$2"
     local priority="${3:-0}"
     
+    # Check if we should send this type of notification
+    case "$priority" in
+        0|1) [ "${NOTIFICATION_SETTINGS[on_success]}" = "false" ] && return ;;
+        3) [ "${NOTIFICATION_SETTINGS[on_updates]}" = "false" ] && return ;;
+        5) [ "${NOTIFICATION_SETTINGS[on_error]}" = "false" ] && return ;;
+    esac
+
+    log_debug "Attempting to send ${NOTIFICATION_SETTINGS[service]} notification with title: $title"
+    
+    # Format message for JSON (escape newlines and quotes)
+    message=$(echo -e "$message" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+    
     case "${NOTIFICATION_SETTINGS[service]}" in
         "gotify")
-            # Enhanced Gotify validation
-            if [[ ! "${NOTIFICATION_SETTINGS[url]}" =~ ^https?:// ]] || [[ -z "${NOTIFICATION_SETTINGS[token]}" ]]; then
-                log_error "Invalid Gotify configuration - cannot send notification"
-                return
-            fi
+            local json_payload="{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}"
+            log_debug "Gotify payload: $json_payload"
             
-            # Test Gotify connection
-            if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}/health" >/dev/null 2>&1; then
-                log_error "Gotify server not reachable at ${NOTIFICATION_SETTINGS[url]}"
-                return
-            fi
-            
-            curl -sSf -X POST \
+            local response=$(curl -sSf --connect-timeout 10 --max-time 20 -X POST \
                 -H "Content-Type: application/json" \
-                -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
-                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" >> "$LOG_FILE" 2>&1 || \
-                log_error "Failed to send Gotify notification"
+                -d "$json_payload" \
+                "${NOTIFICATION_SETTINGS[url]}message?token=${NOTIFICATION_SETTINGS[token]}" 2>&1)
+            
+            if [ $? -ne 0 ]; then
+                log_error "Gotify notification failed: $response"
+            else
+                log_debug "Gotify notification sent successfully"
+            fi
             ;;
+            
         "mailrise"|"ntfy")
-            curl -sSf -X POST \
+            curl -sSf --connect-timeout 10 --max-time 20 -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"to\":\"${NOTIFICATION_SETTINGS[to]}\", \"subject\":\"$title\", \"body\":\"$message\"}" \
                 "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
                 log_error "Failed to send ${NOTIFICATION_SETTINGS[service]} notification"
             ;;
+            
         "apprise")
             apprise -vv -t "$title" -b "$message" "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
                 log_error "Failed to send Apprise notification"
             ;;
+            
         *)
             log_warning "Unknown notification service: ${NOTIFICATION_SETTINGS[service]}"
             ;;
