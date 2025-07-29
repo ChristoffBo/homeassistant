@@ -13,8 +13,8 @@
     "2222/tcp": 2222
   },
   "ports_description": {
-    "3000/tcp": "Web interface",
-    "2222/tcp": "SSH server"
+    "3000/tcp": "Web interface (http://<host>:3000)",
+    "2222/tcp": "SSH server (git@<host> -p 2222)"
   },
   "map": ["share:rw", "ssl"],
   "options": {
@@ -24,5 +24,6 @@
   "schema": {
     "log_level": "list(trace|debug|info|warning|error|fatal)",
     "ssh_enabled": "bool"
-  }
+  },
+  "image": "gitea/gitea"
 }
