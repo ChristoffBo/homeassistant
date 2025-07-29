@@ -3,7 +3,7 @@
   "version": "1.18.0",
   "slug": "gitea",
   "description": "Self-hosted Git service",
-  "url": "https://gitea.io/",
+  "url": "https://gitea.io",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
   "boot": "auto",
@@ -11,16 +11,8 @@
     "3000/tcp": 3000,
     "2222/tcp": 2222
   },
-  "ports_description": {
-    "3000/tcp": "Web Interface",
-    "2222/tcp": "SSH Access"
-  },
   "map": ["share:rw", "ssl"],
-  "options": {
-    "log_level": "info"
-  },
-  "schema": {
-    "log_level": "list(trace|debug|info|warning|error|fatal)"
-  },
+  "options": {},
+  "schema": {},
   "image": "ghcr.io/gitea/gitea:{arch}-1.18.0"
 }
