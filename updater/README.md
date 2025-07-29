@@ -67,8 +67,6 @@ Example settings to paste in the add-on configuration tab in Home Assistant:
   "github_repo": "https://github.com/YourUser/YourRepo",
   "github_username": "YourGitHubUsername",
   "github_token": "YourGitHubToken",
-  "check_cron": "0 9 * * *",
-  "startup_cron": "",
   "timezone": "Africa/Johannesburg",
   "max_log_lines": 1000,
   "dry_run": false,
