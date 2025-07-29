@@ -1,76 +1,93 @@
-==================================================
-            HOME ASSISTANT ADD-ON UPDATER
-==================================================
+===============================================================================
+                     HOME ASSISTANT ADD-ON UPDATER
+===============================================================================
 
-Automatically checks and updates your custom add-ons 
-with version tracking and notifications.
+Keep your custom add-ons automatically updated with version checking and optional
+notifications. This add-on monitors your repository and updates configuration
+files when new versions are available.
 
-■ INSTALLATION
---------------------------------------------------
-1. Add this repository to your Home Assistant
+===============================================================================
+INSTALLATION
+===============================================================================
+
+1. Add this repository to your Home Assistant add-on store
 2. Install the "Add-on Updater" add-on
-3. Configure with your GitHub details below
-4. Add the required automation (see below)
+3. Configure with your GitHub credentials
+4. Set up the required automation (see below)
 
-■ REQUIRED AUTOMATION (COPY-PASTE READY)
---------------------------------------------------
+===============================================================================
+REQUIRED AUTOMATION (COPY-PASTE READY)
+===============================================================================
+
 alias: "Add-on Version Check"
-description: "Daily check for add-on updates"
+description: "Daily check for add-on updates at 3 AM"
 mode: single
 trigger:
-  platform: time
-  at: "03:00"
+  - platform: time
+    at: "03:00"
 condition: []
 action:
-  service: hassio.addon_restart
-  target:
-    addon: a0d7b954_updater
+  - service: hassio.addon_restart
+    target:
+      addon: a0d7b954_updater
 
-■ CONFIGURATION OPTIONS
---------------------------------------------------
-[REQUIRED]
-github_repo    = "https://github.com/your/repo"
-github_username= "your_username"
-github_token   = "ghp_yourtoken"
+===============================================================================
+CONFIGURATION OPTIONS
+===============================================================================
 
-[OPTIONAL]
-timezone       = "America/New_York"
-dry_run        = true (for initial testing)
-debug          = false
-notifications  = true
+[REQUIRED SETTINGS]
+github_repo      = "https://github.com/your/repo"
+github_username  = "your_github_username"
+github_token     = "ghp_yourgithubtoken"
 
-■ NOTIFICATION SETUP
---------------------------------------------------
-[Gotify]
+[RECOMMENDED SETTINGS]
+timezone         = "America/New_York"
+dry_run          = true    # Enable for initial testing
+debug            = false
+
+===============================================================================
+NOTIFICATION SETUP
+===============================================================================
+
+[FOR GOTIFY]
 notification_service = "gotify"
 notification_url    = "https://your.gotify.server"
-notification_token  = "your-app-token"
+notification_token  = "your_app_token"
 
-[ntfy]
+[FOR NTFY]
 notification_service = "ntfy"
 notification_url    = "https://ntfy.sh"
-notification_to     = "your_topic"
+notification_to     = "your_topic_name"
 
-■ TROUBLESHOOTING
---------------------------------------------------
-If automation not running:
-- Verify addon ID matches yours
-- Check automation is enabled
-- Look for errors in HA logs
+===============================================================================
+TROUBLESHOOTING
+===============================================================================
 
-If updates not detected:
-- Check add-on logs
-- Verify GitHub token permissions
-- Ensure Docker images have version tags
+* Automation not running?
+  - Verify the addon ID matches yours (check in Supervisor)
+  - Check the automation is enabled in Settings > Automations
+  - View Home Assistant logs for errors
 
-If notifications failing:
-- Test notification service separately
-- Enable debug mode in add-on config
+* Updates not detected?
+  - Check the add-on logs for connection issues
+  - Verify GitHub token has proper repo permissions
+  - Ensure your Docker images have version tags
 
-■ BEST PRACTICES
---------------------------------------------------
-• First run with dry_run enabled
-• Set up error notifications
-• Schedule checks during off-peak hours
-• Monitor logs after setup
-• Keep your GitHub token secure
+* Notifications failing?
+  - Test your notification service separately first
+  - Enable debug mode for detailed error logs
+  - Double-check URL and token formatting
+
+===============================================================================
+BEST PRACTICES
+===============================================================================
+
+1. Always start with dry_run enabled to test
+2. Configure error notifications before enabling updates
+3. Schedule checks during off-peak hours (e.g., 3 AM)
+4. Monitor logs closely after initial setup
+5. Keep your GitHub token secure
+6. Verify addon ID matches your installation
+7. Test the automation manually after setup
+
+===============================================================================
