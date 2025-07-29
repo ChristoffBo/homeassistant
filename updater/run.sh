@@ -9,6 +9,7 @@ REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 LOCK_FILE="/data/updater.lock"
 RUN_MARKER="/data/.has_run"
+INITIAL_RUN_FILE="/data/.initial_run"
 MAX_LOG_FILES=5
 MAX_LOG_LINES=5000
 
@@ -18,17 +19,17 @@ MAX_LOG_LINES=5000
 declare -A ADDON_STATUS
 declare -A NOTIFICATION_SETTINGS=(
     [enabled]=false
-    [service]=""
+    [service]="gotify"
     [url]=""
     [token]=""
     [to]=""
-    [on_success]=false
+    [on_success]=true
     [on_error]=true
     [on_updates]=true
 )
 
 # ======================
-# LOGGING SYSTEM
+# ENHANCED LOGGING SYSTEM
 # ======================
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
@@ -56,116 +57,79 @@ log_warning() { log_with_timestamp "$COLOR_YELLOW" "⚠️ $*"; }
 log_error() { log_with_timestamp "$COLOR_RED" "❌ $*"; }
 
 # ======================
-# LOCK MANAGEMENT
+# GOTIFY VALIDATION
 # ======================
-acquire_lock() {
-    exec 9>"$LOCK_FILE"
-    if ! flock -n 9; then
-        local pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "unknown")
-        log_error "Another instance is running (PID: $pid)"
-        exit 1
+validate_gotify_config() {
+    local missing=()
+    
+    [ -z "${NOTIFICATION_SETTINGS[url]}" ] && missing+=("url")
+    [ -z "${NOTIFICATION_SETTINGS[token]}" ] && missing+=("token")
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_error "Gotify configuration missing: ${missing[*]}"
+        return 1
     fi
-    echo $$ >&9
-    log_debug "Acquired lock"
-}
-
-release_lock() {
-    flock -u 9
-    exec 9>&-
-    rm -f "$LOCK_FILE"
-    log_debug "Released lock"
+    
+    if [[ ! "${NOTIFICATION_SETTINGS[url]}" =~ ^https?:// ]]; then
+        log_error "Gotify URL must start with http:// or https://"
+        return 1
+    fi
+    
+    # Test Gotify connectivity
+    if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}/health" >/dev/null; then
+        log_error "Cannot connect to Gotify server"
+        return 1
+    fi
+    
+    return 0
 }
 
 # ======================
 # NOTIFICATION SYSTEM
 # ======================
-validate_notification_config() {
+send_notification() {
+    [ "${NOTIFICATION_SETTINGS[enabled]}" = "false" ] && return
+    
     case "${NOTIFICATION_SETTINGS[service]}" in
         "gotify")
-            [[ -z "${NOTIFICATION_SETTINGS[url]}" || -z "${NOTIFICATION_SETTINGS[token]}" ]] && {
-                log_warning "Invalid Gotify config - missing URL or token"
+            validate_gotify_config || {
+                log_warning "Skipping invalid Gotify notification"
                 return 1
             }
-            ;;
-        "ntfy")
-            [[ -z "${NOTIFICATION_SETTINGS[url]}" ]] && {
-                log_warning "Invalid ntfy config - missing URL"
+            
+            local title="$1"
+            local message="$2"
+            local priority="${3:-0}"
+            
+            log_debug "Sending Gotify notification (Priority: $priority)"
+            
+            local response=$(curl -sSf --connect-timeout 10 -X POST \
+                -H "Content-Type: application/json" \
+                -d "{
+                    \"title\":\"$title\",
+                    \"message\":\"$message\",
+                    \"priority\":$priority,
+                    \"extras\": {
+                        \"client::display\": {
+                            \"contentType\": \"text/markdown\"
+                        }
+                    }
+                }" \
+                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" 2>&1)
+            
+            local exit_code=$?
+            
+            if [ $exit_code -ne 0 ]; then
+                log_error "Gotify request failed (Code: $exit_code)"
+                log_debug "Response: $response"
                 return 1
-            }
+            fi
             ;;
         *)
-            log_warning "Unsupported notification service"
+            log_warning "Notification service not implemented: ${NOTIFICATION_SETTINGS[service]}"
             return 1
             ;;
     esac
-    return 0
-}
-
-send_notification() {
-    [ "${NOTIFICATION_SETTINGS[enabled]}" = "false" ] && return
-    validate_notification_config || return
-
-    local title="$1"
-    local message="$2"
-    local priority="${3:-0}"
-
-    log_debug "Sending notification via ${NOTIFICATION_SETTINGS[service]}"
-
-    case "${NOTIFICATION_SETTINGS[service]}" in
-        "gotify")
-            curl -sSf --connect-timeout 10 -X POST \
-                -H "Content-Type: application/json" \
-                -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
-                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" >> "$LOG_FILE" 2>&1 || {
-                log_error "Gotify notification failed"
-                return 1
-            }
-            ;;
-        "ntfy")
-            curl -sSf --connect-timeout 10 -X POST \
-                -H "Title: $title" \
-                -H "Priority: $priority" \
-                -d "$message" \
-                "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || {
-                log_error "ntfy notification failed"
-                return 1
-            }
-            ;;
-    esac
-}
-
-generate_summary() {
-    local updated=0 up_to_date=0 errors=0
-    local message="📋 **Add-on Update Report**\n\n"
-    
-    for addon in "${!ADDON_STATUS[@]}"; do
-        IFS='|' read -r current latest status <<< "${ADDON_STATUS[$addon]}"
-        
-        case "$status" in
-            "updated") 
-                message+="✅ $addon: $current → $latest\n"
-                ((updated++))
-                ;;
-            "up_to_date")
-                message+="🔹 $addon: $current (latest)\n"
-                ((up_to_date++))
-                ;;
-            "no_image")
-                message+="⚪ $addon: No image configured\n"
-                ;;
-            "check_failed")
-                message+="❌ $addon: Version check failed\n"
-                ((errors++))
-                ;;
-            *)
-                message+="❓ $addon: Unknown status\n"
-                ((errors++))
-                ;;
-        esac
-    done
-
-    message+="\n**Summary:** $updated updated, $up_to_date current, $errors errors"
-    echo "$message"
 }
 
 # ======================
@@ -191,7 +155,10 @@ get_latest_docker_tag() {
     if [[ "$image_name" =~ ^linuxserver/ ]]; then
         version=$(curl -sSf --connect-timeout 10 \
             "https://api.linuxserver.io/v1/images/${image_name#linuxserver/}/tags" | \
-            jq -r '.tags[] | select(.name != "latest") | .name' | sort -Vr | head -n1)
+            jq -r '.tags[] | select(.name != "latest") | .name' | sort -Vr | head -n1) || {
+                log_error "Failed to fetch LinuxServer.io tags"
+                return 1
+            }
     
     # GitHub Container Registry
     elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
@@ -199,7 +166,10 @@ get_latest_docker_tag() {
         local package=$(echo "$image_name" | cut -d/ -f4)
         version=$(curl -sSf --connect-timeout 10 \
             "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
-            jq -r '.tags[] | select(. != "latest")' | sort -Vr | head -n1)
+            jq -r '.tags[] | select(. != "latest")' | sort -Vr | head -n1) || {
+                log_error "Failed to fetch GHCR tags"
+                return 1
+            }
     
     # Docker Hub
     else
@@ -209,7 +179,10 @@ get_latest_docker_tag() {
         
         version=$(curl -sSf --connect-timeout 10 \
             "https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/" | \
-            jq -r '.results[] | select(.name != "latest") | .name' | sort -Vr | head -n1)
+            jq -r '.results[] | select(.name != "latest") | .name' | sort -Vr | head -n1) || {
+                log_error "Failed to fetch Docker Hub tags"
+                return 1
+            }
     fi
 
     [ -n "$version" ] && echo "$version" > "$cache_file"
@@ -224,7 +197,7 @@ process_addon() {
     local addon_name=$(basename "$addon_path")
     [ "$addon_name" = "updater" ] && return
 
-    local image="" current_version="latest" status="unknown"
+    local image="" current_version="latest" status="error"
     local config_file="$addon_path/config.json"
     local build_file="$addon_path/build.json"
 
@@ -251,7 +224,7 @@ process_addon() {
     # Get latest version
     local latest_version
     if ! latest_version=$(get_latest_docker_tag "$image"); then
-        log_error "Failed to check version for $addon_name"
+        log_error "Version check failed for $addon_name ($image)"
         ADDON_STATUS["$addon_name"]="$current_version||check_failed"
         return
     fi
@@ -280,7 +253,7 @@ process_addon() {
 }
 
 # ======================
-# MAIN EXECUTION FLOW
+# EXECUTION CONTROL
 # ======================
 load_config() {
     [ ! -f "$CONFIG_PATH" ] && {
@@ -288,62 +261,124 @@ load_config() {
         exit 1
     }
 
-    # Load core settings
+    # Core settings
     DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
     DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
     local clear_marker=$(jq -r '.clear_marker_on_restart // true' "$CONFIG_PATH")
+    local run_interval=$(jq -r '.run_interval // 0' "$CONFIG_PATH")
+    local force_run=$(jq -r '.force_run // false' "$CONFIG_PATH")
 
     # Notification settings
     NOTIFICATION_SETTINGS[enabled]=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
-    NOTIFICATION_SETTINGS[service]=$(jq -r '.notification_service // "ntfy"' "$CONFIG_PATH")
+    NOTIFICATION_SETTINGS[service]=$(jq -r '.notification_service // "gotify"' "$CONFIG_PATH")
     NOTIFICATION_SETTINGS[url]=$(jq -r '.notification_url // ""' "$CONFIG_PATH")
     NOTIFICATION_SETTINGS[token]=$(jq -r '.notification_token // ""' "$CONFIG_PATH")
-    NOTIFICATION_SETTINGS[to]=$(jq -r '.notification_to // ""' "$CONFIG_PATH")
 
-    # Clear run marker if configured
+    # Clear marker if configured
     [ "$clear_marker" = "true" ] && rm -f "$RUN_MARKER"
 
-    log_debug "Configuration loaded"
+    # First run detection
+    if [ ! -f "$INITIAL_RUN_FILE" ]; then
+        touch "$INITIAL_RUN_FILE"
+        rm -f "$RUN_MARKER"
+        log_debug "Initial run detected - cleared marker"
+    fi
+
+    # Force run takes precedence
+    if [ "$force_run" = "true" ]; then
+        log_info "Force run requested via config"
+        rm -f "$RUN_MARKER"
+    fi
+
+    # Interval check
+    if [ "$run_interval" -gt 0 ]; then
+        local last_run=0
+        [ -f "$RUN_MARKER" ] && last_run=$(stat -c %Y "$RUN_MARKER")
+        local next_run=$((last_run + run_interval))
+        
+        if [ $(date +%s) -lt $next_run ]; then
+            log_info "Next run allowed at: $(date -d @$next_run)"
+            return 1
+        fi
+    fi
+
+    # Standard single-run check
+    if [ -f "$RUN_MARKER" ]; then
+        log_info "Already executed this boot cycle"
+        return 1
+    fi
+    
+    return 0
 }
 
-rotate_logs() {
-    [ -f "$LOG_FILE" ] && {
-        local log_size=$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)
-        [ "$log_size" -gt $((MAX_LOG_LINES * 100)) ] && {
-            log_info "Rotating log file"
-            gzip -c "$LOG_FILE" > "$LOG_FILE.$(date +%Y%m%d%H%M%S).gz"
-            > "$LOG_FILE"
-            ls -t "$LOG_FILE".*.gz | tail -n +$((MAX_LOG_FILES + 1)) | xargs rm -f --
-        }
-    }
+generate_summary() {
+    local updated=0 up_to_date=0 errors=0 no_image=0
+    local message="## 📋 Add-on Update Report\n\n"
+    
+    for addon in "${!ADDON_STATUS[@]}"; do
+        IFS='|' read -r current latest status <<< "${ADDON_STATUS[$addon]}"
+        
+        case "$status" in
+            "updated") 
+                message+="✅ **$addon**: $current → $latest\n"
+                ((updated++))
+                ;;
+            "up_to_date")
+                message+="🔹 **$addon**: $current (latest)\n"
+                ((up_to_date++))
+                ;;
+            "no_image")
+                message+="⚪ **$addon**: No image configured\n"
+                ((no_image++))
+                ;;
+            *)
+                message+="❌ **$addon**: Version check failed\n"
+                ((errors++))
+                ;;
+        esac
+    done
+
+    message+="\n**Summary:**\n"
+    message+="- 🟢 Updated: $updated\n"
+    message+="- 🔵 Current: $up_to_date\n"
+    message+="- ⚪ No image: $no_image\n"
+    message+="- 🔴 Errors: $errors"
+    
+    echo "$message"
 }
 
+# ======================
+# MAIN EXECUTION
+# ======================
 main() {
-    rotate_logs
-    load_config
+    # Setup logging
+    exec >> "$LOG_FILE" 2>&1
+    echo -e "\n\n=== Starting update check at $(date) ==="
 
-    # Single-run check
-    [ -f "$RUN_MARKER" ] && {
-        log_info "Add-on already executed this boot. Set clear_marker_on_restart=false to override."
+    # Load configuration
+    if ! load_config; then
+        log_info "Exiting as per configuration"
         exit 0
-    }
+    fi
 
-    # Start main workflow
+    # Start main process
     acquire_lock
-    touch "$RUN_MARKER"
     trap "release_lock" EXIT
 
-    log_info "Starting add-on version checks"
-    
-    # Process each add-on
+    touch "$RUN_MARKER"
+    log_info "Starting version checks..."
+
+    # Process all add-ons
     for addon in "$REPO_DIR"/*/; do
         [ -d "$addon" ] && process_addon "$addon"
     done
 
-    # Send summary notification
+    # Generate and send summary
+    local summary=$(generate_summary)
+    log_info "Update summary:\n$summary"
+    
     if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
-        local summary=$(generate_summary)
-        send_notification "Add-on Update Summary" "$summary" 0
+        send_notification "Home Assistant Add-on Updates" "$summary" 5
     fi
 
     log_success "Completed all checks"
