@@ -124,8 +124,20 @@ load_config() {
         
         case "${NOTIFICATION_SETTINGS[service]}" in
             "gotify")
-                if [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[token]}" ]; then
-                    log_error "Gotify configuration incomplete - missing URL or token"
+                # Double-check Gotify settings
+                if [ -z "${NOTIFICATION_SETTINGS[url]}" ]; then
+                    log_error "Gotify configuration incomplete - missing URL"
+                    NOTIFICATION_SETTINGS[enabled]=false
+                elif [[ ! "${NOTIFICATION_SETTINGS[url]}" =~ ^https?:// ]]; then
+                    log_error "Gotify URL must start with http:// or https://"
+                    NOTIFICATION_SETTINGS[enabled]=false
+                fi
+                
+                if [ -z "${NOTIFICATION_SETTINGS[token]}" ]; then
+                    log_error "Gotify configuration incomplete - missing token"
+                    NOTIFICATION_SETTINGS[enabled]=false
+                elif [[ ! "${NOTIFICATION_SETTINGS[token]}" =~ ^[A-Za-z0-9._~+-]+$ ]]; then
+                    log_error "Gotify token contains invalid characters"
                     NOTIFICATION_SETTINGS[enabled]=false
                 fi
                 ;;
@@ -177,6 +189,12 @@ log_configuration() {
         log_info "Notify on Success: ${NOTIFICATION_SETTINGS[on_success]}"
         log_info "Notify on Error: ${NOTIFICATION_SETTINGS[on_error]}"
         log_info "Notify on Updates: ${NOTIFICATION_SETTINGS[on_updates]}"
+        
+        # Mask sensitive information in logs
+        if [ "${NOTIFICATION_SETTINGS[service]}" = "gotify" ]; then
+            log_info "Gotify URL: ${NOTIFICATION_SETTINGS[url]%%/*}/******"
+            log_info "Gotify Token: ****** (hidden)"
+        fi
     else
         log_info "Notifications: Disabled"
     fi
@@ -593,6 +611,18 @@ send_notification() {
     
     case "${NOTIFICATION_SETTINGS[service]}" in
         "gotify")
+            # Double-check Gotify URL and token before sending
+            if [[ ! "${NOTIFICATION_SETTINGS[url]}" =~ ^https?:// ]] || [[ -z "${NOTIFICATION_SETTINGS[token]}" ]]; then
+                log_error "Invalid Gotify configuration - cannot send notification"
+                return
+            fi
+            
+            # Validate URL is reachable
+            if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}/health" >/dev/null 2>&1; then
+                log_error "Gotify server not reachable at ${NOTIFICATION_SETTINGS[url]}"
+                return
+            fi
+            
             curl -sSf -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
@@ -646,14 +676,26 @@ perform_update_check() {
 # ENTRY POINT
 # ======================
 main() {
+    # Ensure we only run once by checking for a marker file
+    local run_marker="/data/.has_run"
+    if [ -f "$run_marker" ]; then
+        log_info "Script has already run once. Exiting."
+        exit 0
+    fi
+    
+    touch "$run_marker"
+    
     acquire_lock
     load_config
     
-    log_info "Starting Home Assistant Add-on Updater"
+    log_info "Starting Home Assistant Add-on Updater (single run)"
     
     perform_update_check
 
     release_lock
+    
+    log_info "Single run completed successfully"
+    exit 0
 }
 
 main
