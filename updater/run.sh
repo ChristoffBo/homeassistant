@@ -31,21 +31,25 @@ declare -A NOTIFICATION_SETTINGS=(
     [on_updates]=true
 )
 
-# Function to rotate logs
-rotate_logs() {
-    local max_lines="$1"
-    local max_files="$2"
-    
-    if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE")" -gt "$max_lines" ]; then
-        log "$COLOR_YELLOW" "📜 Rotating log file (keeping last $max_files versions)..."
-        
-        for ((i=max_files-1; i>=1; i--)); do
-            [ -f "${LOG_FILE}.${i}" ] && mv "${LOG_FILE}.${i}" "${LOG_FILE}.$((i+1))"
-        done
-        
-        tail -n "$max_lines" "$LOG_FILE" > "${LOG_FILE}.1"
-        : > "$LOG_FILE"
+# Lock file handling
+acquire_lock() {
+    if [ -f "$LOCK_FILE" ]; then
+        local pid=$(cat "$LOCK_FILE")
+        if ps -p "$pid" >/dev/null 2>&1; then
+            log_with_timestamp "$COLOR_RED" "⚠️ Another update process (PID $pid) is running. Exiting."
+            exit 1
+        else
+            log_with_timestamp "$COLOR_YELLOW" "⚠️ Stale lock file found (PID $pid). Removing."
+            rm -f "$LOCK_FILE"
+        fi
     fi
+    echo $$ > "$LOCK_FILE"
+    trap 'release_lock' EXIT INT TERM
+}
+
+release_lock() {
+    [ -f "$LOCK_FILE" ] && rm -f "$LOCK_FILE"
+    trap - EXIT INT TERM
 }
 
 # Logging functions
@@ -85,16 +89,16 @@ send_notification() {
                 "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" >> "$LOG_FILE" 2>&1 || \
                 log "$COLOR_RED" "❌ Failed to send Gotify notification"
             ;;
-        "mailrise")
+        "mailrise"|"ntfy")
             [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[to]}" ] && {
-                log "$COLOR_RED" "❌ Mailrise configuration incomplete"
+                log "$COLOR_RED" "❌ Notification configuration incomplete"
                 return
             }
             curl -sSf -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"to\":\"${NOTIFICATION_SETTINGS[to]}\", \"subject\":\"$title\", \"body\":\"$message\"}" \
                 "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_RED" "❌ Failed to send Mailrise notification"
+                log "$COLOR_RED" "❌ Failed to send notification"
             ;;
         "apprise")
             [ -z "${NOTIFICATION_SETTINGS[url]}" ] && {
@@ -108,37 +112,28 @@ send_notification() {
             apprise -vv -t "$title" -b "$message" "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
                 log "$COLOR_RED" "❌ Failed to send Apprise notification"
             ;;
-        "ntfy")
-            [ -z "${NOTIFICATION_SETTINGS[url]}" ] && {
-                log "$COLOR_RED" "❌ ntfy configuration incomplete"
-                return
-            }
-            curl -sSf -X POST \
-                -H "Priority: $priority" \
-                -H "Title: $title" \
-                -d "$message" \
-                "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_RED" "❌ Failed to send ntfy notification"
-            ;;
         *) log "$COLOR_YELLOW" "⚠️ Unknown notification service: ${NOTIFICATION_SETTINGS[service]}" ;;
     esac
 }
 
-# Check for lock file
-check_lock() {
-    if [ -f "$LOCK_FILE" ]; then
-        local pid=$(cat "$LOCK_FILE")
-        if ps -p "$pid" >/dev/null; then
-            log_with_timestamp "$COLOR_RED" "⚠️ Another update process (PID $pid) is running. Exiting."
-            exit 1
-        else
-            log_with_timestamp "$COLOR_YELLOW" "⚠️ Stale lock file found (PID $pid). Removing."
-            rm -f "$LOCK_FILE"
-        fi
+# Log rotation with validation
+rotate_logs() {
+    local max_lines=${MAX_LOG_LINES:-50}
+    if ! [[ "$max_lines" =~ ^[0-9]+$ ]] || [ "$max_lines" -lt 10 ]; then
+        max_lines=50
+        log "$COLOR_YELLOW" "⚠️ Invalid MAX_LOG_LINES, using default 50"
     fi
-    
-    echo $$ > "$LOCK_FILE"
-    trap 'rm -f "$LOCK_FILE"; exit' EXIT INT TERM
+
+    if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$max_lines" ]; then
+        log "$COLOR_YELLOW" "📜 Rotating log file (keeping $MAX_LOG_FILES versions)..."
+        
+        for ((i=MAX_LOG_FILES-1; i>=1; i--)); do
+            [ -f "${LOG_FILE}.${i}" ] && mv "${LOG_FILE}.${i}" "${LOG_FILE}.$((i+1))"
+        done
+        
+        tail -n "$max_lines" "$LOG_FILE" > "${LOG_FILE}.1" 2>/dev/null || true
+        : > "$LOG_FILE"
+    fi
 }
 
 # Load configuration
@@ -148,13 +143,12 @@ load_config() {
         exit 1
     }
 
-    # Read configuration
     GITHUB_REPO=$(jq -r '.github_repo // empty' "$CONFIG_PATH")
     GITHUB_USERNAME=$(jq -r '.github_username // empty' "$CONFIG_PATH")
     GITHUB_TOKEN=$(jq -r '.github_token // empty' "$CONFIG_PATH")
-    CHECK_CRON=$(jq -r '.check_cron // "0 */6 * * *"' "$CONFIG_PATH")  # Default: every 6 hours
+    CHECK_CRON=$(jq -r '.check_cron // "0 4 * * *"' "$CONFIG_PATH")
     TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
-    MAX_LOG_LINES=$(jq -r '.max_log_lines // 1000' "$CONFIG_PATH")
+    MAX_LOG_LINES=$(jq -r '.max_log_lines // 50' "$CONFIG_PATH")
     DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
     SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH")
     DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
@@ -586,7 +580,7 @@ perform_update_check() {
 }
 
 # Check if current time matches cron schedule
-should_run() {
+should_run_from_cron() {
     local cron_schedule="$1"
     [ -z "$cron_schedule" ] && return 1
 
@@ -614,11 +608,11 @@ should_run() {
 # Main execution
 main() {
     # Clear log file on startup and rotate if needed
-    rotate_logs "$MAX_LOG_LINES" "$MAX_LOG_FILES"
+    rotate_logs
     : > "$LOG_FILE"
     
     # Check for lock and load configuration
-    check_lock
+    acquire_lock
     load_config
     
     # Initial logging
@@ -631,12 +625,11 @@ main() {
     # Main loop - only run when cron schedule matches
     log "$COLOR_GREEN" "⏳ Waiting for next scheduled run ($CHECK_CRON)..."
     while true; do
-        if should_run "$CHECK_CRON"; then
+        if should_run_from_cron "$CHECK_CRON"; then
             perform_update_check
-            # Sleep for 61 minutes to prevent multiple runs in same cron window
+            # Sleep for 61 minutes to prevent multiple runs in same minute
             sleep 3660
         else
-            # Sleep for 1 minute and check again
             sleep 60
         fi
     done
