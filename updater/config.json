@@ -1,8 +1,7 @@
-{
-  "name": "Home Assistant Addons Docker Version Updater",
-  "version": "1.1.0",
+"name": "Home Assistant Addons Docker Version Updater",
+  "version": "1.0.0",
   "slug": "addons_version_updater",
-  "description": "Automatically checks and updates add-on version numbers to match latest Docker image tags with enhanced error handling and notifications",
+  "description": "Checks and updates add-on version numbers to match latest Docker image tags",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
   "boot": "auto",
@@ -22,7 +21,6 @@
     "max_log_lines": 1000,
     "dry_run": false,
     "skip_push": false,
-    "debug": false,
     "notifications_enabled": false,
     "notification_service": "gotify",
     "notification_url": "",
@@ -33,137 +31,32 @@
     "notify_on_updates": true
   },
   "schema": {
-    "github_repo": {
-      "name": "GitHub Repository URL",
-      "description": "URL of your Home Assistant add-ons repository",
-      "required": true,
-      "type": "str"
-    },
-    "github_username": {
-      "name": "GitHub Username",
-      "description": "Your GitHub username for authentication",
-      "required": true,
-      "type": "str"
-    },
-    "github_token": {
-      "name": "GitHub Token",
-      "description": "GitHub personal access token with repo permissions",
-      "required": true,
-      "type": "str",
-      "secret": true
-    },
-    "check_cron": {
-      "name": "Check Schedule",
-      "description": "Cron schedule for periodic version checks (default: daily at 3am)",
-      "required": false,
-      "type": "str",
-      "default": "0 3 * * *"
-    },
-    "startup_cron": {
-      "name": "Startup Check Schedule",
-      "description": "Optional separate cron schedule for checks after startup",
-      "required": false,
-      "type": "str"
-    },
-    "timezone": {
-      "name": "Timezone",
-      "description": "Timezone for cron scheduling and timestamps",
-      "required": false,
-      "type": "str",
-      "default": "UTC"
-    },
-    "max_log_lines": {
-      "name": "Max Log Lines",
-      "description": "Maximum number of lines to keep in log file",
-      "required": false,
-      "type": "int",
-      "default": 1000
-    },
-    "dry_run": {
-      "name": "Dry Run Mode",
-      "description": "Check for updates but don't make any changes",
-      "required": false,
-      "type": "bool",
-      "default": false
-    },
-    "skip_push": {
-      "name": "Skip Git Push",
-      "description": "Commit changes locally but don't push to remote",
-      "required": false,
-      "type": "bool",
-      "default": false
-    },
-    "debug": {
-      "name": "Debug Mode",
-      "description": "Enable debug logging",
-      "required": false,
-      "type": "bool",
-      "default": false
-    },
-    "notifications_enabled": {
-      "name": "Enable Notifications",
-      "description": "Enable notification system",
-      "required": false,
-      "type": "bool",
-      "default": false
-    },
-    "notification_service": {
-      "name": "Notification Service",
-      "description": "Service to use for notifications (gotify/mailrise/ntfy/apprise)",
-      "required": false,
-      "type": "str",
-      "default": "gotify"
-    },
-    "notification_url": {
-      "name": "Notification URL",
-      "description": "Base URL for notification service",
-      "required": false,
-      "type": "str"
-    },
-    "notification_token": {
-      "name": "Notification Token",
-      "description": "Authentication token for notification service",
-      "required": false,
-      "type": "str",
-      "secret": true
-    },
-    "notification_to": {
-      "name": "Notification Recipient",
-      "description": "Recipient address/token for notifications",
-      "required": false,
-      "type": "str"
-    },
-    "notify_on_success": {
-      "name": "Notify on Success",
-      "description": "Send notifications for successful updates",
-      "required": false,
-      "type": "bool",
-      "default": true
-    },
-    "notify_on_error": {
-      "name": "Notify on Error",
-      "description": "Send notifications for errors",
-      "required": false,
-      "type": "bool",
-      "default": true
-    },
-    "notify_on_updates": {
-      "name": "Notify on Updates",
-      "description": "Send notifications when updates are available",
-      "required": false,
-      "type": "bool",
-      "default": true
-    }
+    "github_repo": "str",
+    "github_username": "str",
+    "github_token": "str",
+    "check_cron": "str",
+    "startup_cron": "str?",
+    "timezone": "str?",
+    "max_log_lines": "int?",
+    "dry_run": "bool?",
+    "skip_push": "bool?",
+    "notifications_enabled": "bool?",
+    "notification_service": "str?",
+    "notification_url": "str?",
+    "notification_token": "str?",
+    "notification_to": "str?",
+    "notify_on_success": "bool?",
+    "notify_on_error": "bool?",
+    "notify_on_updates": "bool?",
+    "persistent": "bool?"
   },
   "map": [
     "config:ro",
     "addons:rw",
     "backup:rw",
-    "share:rw",
-    "ssl:rw"
+    "share:rw"
   ],
   "init": false,
   "host_network": false,
-  "privileged": [],
-  "image": "ghcr.io/yourusername/addons-version-updater-{arch}"
+  "privileged": []
 }
