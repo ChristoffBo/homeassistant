@@ -2,7 +2,7 @@
   "name": "Gitea",
   "version": "1.18.0",
   "slug": "gitea",
-  "description": "Self-hosted Git service (direct port access)",
+  "description": "Self-hosted Git service (GHCR mirror)",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
   "boot": "auto",
@@ -14,8 +14,8 @@
     "3000/tcp": "Web Interface",
     "2222/tcp": "SSH Access"
   },
-  "map": ["share:rw"],
+  "map": ["share:rw", "ssl"],
   "options": {},
   "schema": {},
-  "image": "gitea/gitea"
+  "image": "ghcr.io/gitea/gitea:1.18.0"
 }
