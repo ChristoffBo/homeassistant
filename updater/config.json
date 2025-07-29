@@ -30,7 +30,7 @@
     "notification_url": "",
     "notification_token": "",
     "notification_to": "",
-    "notify_on_success": false,
+    "notify_on_success": true,
     "notify_on_error": true,
     "notify_on_updates": true
   },
