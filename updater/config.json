@@ -21,8 +21,6 @@
     "github_repo": "https://github.com/your-repo/homeassistant-addons.git",
     "github_username": "",
     "github_token": "",
-    "check_cron": "0 4 * * *",
-    "startup_cron": "",
     "timezone": "UTC",
     "dry_run": false,
     "skip_push": false,
