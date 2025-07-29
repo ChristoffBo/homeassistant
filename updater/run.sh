@@ -7,6 +7,7 @@ REPO_DIR=/data/homeassistant
 LOG_FILE="/data/updater.log"
 LOCK_FILE="/data/updater.lock"
 MAX_LOG_FILES=5
+MAX_LOG_LINES=50
 
 # Color definitions
 COLOR_RESET="\033[0m"
@@ -17,7 +18,6 @@ COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
 COLOR_CYAN="\033[0;36m"
-COLOR_GRAY="\033[0;37m"
 
 # Initialize notification settings
 declare -A NOTIFICATION_SETTINGS=(
@@ -31,25 +31,21 @@ declare -A NOTIFICATION_SETTINGS=(
     [on_updates]=true
 )
 
-# Lock file handling
+# Improved lock handling with flock
 acquire_lock() {
-    if [ -f "$LOCK_FILE" ]; then
-        local pid=$(cat "$LOCK_FILE")
-        if ps -p "$pid" >/dev/null 2>&1; then
-            log_with_timestamp "$COLOR_RED" "⚠️ Another update process (PID $pid) is running. Exiting."
-            exit 1
-        else
-            log_with_timestamp "$COLOR_YELLOW" "⚠️ Stale lock file found (PID $pid). Removing."
-            rm -f "$LOCK_FILE"
-        fi
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        local pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "unknown")
+        log_with_timestamp "$COLOR_RED" "⚠️ Another update process (PID $pid) is running. Exiting."
+        exit 1
     fi
-    echo $$ > "$LOCK_FILE"
-    trap 'release_lock' EXIT INT TERM
+    echo $$ >&9
 }
 
 release_lock() {
-    [ -f "$LOCK_FILE" ] && rm -f "$LOCK_FILE"
-    trap - EXIT INT TERM
+    flock -u 9
+    exec 9>&-
+    rm -f "$LOCK_FILE"
 }
 
 # Logging functions
@@ -65,73 +61,16 @@ log_with_timestamp() {
     echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
-log_debug() {
-    [ "${DEBUG:-false}" = "true" ] && log "$COLOR_GRAY" "🐛 DEBUG: $*"
-}
-
-# Notification function
-send_notification() {
-    [ "${NOTIFICATION_SETTINGS[enabled]}" = "false" ] && return
-
-    local title="$1"
-    local message="$2"
-    local priority="${3:-0}"
-    
-    case "${NOTIFICATION_SETTINGS[service]}" in
-        "gotify")
-            [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[token]}" ] && {
-                log "$COLOR_RED" "❌ Gotify configuration incomplete"
-                return
-            }
-            curl -sSf -X POST \
-                -H "Content-Type: application/json" \
-                -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
-                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_RED" "❌ Failed to send Gotify notification"
-            ;;
-        "mailrise"|"ntfy")
-            [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[to]}" ] && {
-                log "$COLOR_RED" "❌ Notification configuration incomplete"
-                return
-            }
-            curl -sSf -X POST \
-                -H "Content-Type: application/json" \
-                -d "{\"to\":\"${NOTIFICATION_SETTINGS[to]}\", \"subject\":\"$title\", \"body\":\"$message\"}" \
-                "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_RED" "❌ Failed to send notification"
-            ;;
-        "apprise")
-            [ -z "${NOTIFICATION_SETTINGS[url]}" ] && {
-                log "$COLOR_RED" "❌ Apprise configuration incomplete"
-                return
-            }
-            command -v apprise >/dev/null || {
-                log "$COLOR_RED" "❌ Apprise CLI not installed"
-                return
-            }
-            apprise -vv -t "$title" -b "$message" "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
-                log "$COLOR_RED" "❌ Failed to send Apprise notification"
-            ;;
-        *) log "$COLOR_YELLOW" "⚠️ Unknown notification service: ${NOTIFICATION_SETTINGS[service]}" ;;
-    esac
-}
-
-# Log rotation with validation
+# Log rotation
 rotate_logs() {
-    local max_lines=${MAX_LOG_LINES:-50}
-    if ! [[ "$max_lines" =~ ^[0-9]+$ ]] || [ "$max_lines" -lt 10 ]; then
-        max_lines=50
-        log "$COLOR_YELLOW" "⚠️ Invalid MAX_LOG_LINES, using default 50"
-    fi
-
-    if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$max_lines" ]; then
-        log "$COLOR_YELLOW" "📜 Rotating log file (keeping $MAX_LOG_FILES versions)..."
+    if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$MAX_LOG_LINES" ]; then
+        log "$COLOR_YELLOW" "📜 Rotating log file..."
         
         for ((i=MAX_LOG_FILES-1; i>=1; i--)); do
             [ -f "${LOG_FILE}.${i}" ] && mv "${LOG_FILE}.${i}" "${LOG_FILE}.$((i+1))"
         done
         
-        tail -n "$max_lines" "$LOG_FILE" > "${LOG_FILE}.1" 2>/dev/null || true
+        tail -n "$MAX_LOG_LINES" "$LOG_FILE" > "${LOG_FILE}.1" 2>/dev/null || true
         : > "$LOG_FILE"
     fi
 }
@@ -188,12 +127,10 @@ clone_or_update_repo() {
             exit 1
         }
         
-        check_github_connectivity || exit 1
-        
         if git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" 2>&1 | tee -a "$LOG_FILE"; then
             log "$COLOR_GREEN" "✅ Successfully cloned repository"
         else
-            log_clone_error
+            log "$COLOR_RED" "❌ Failed to clone repository"
             exit 1
         fi
     else
@@ -203,7 +140,6 @@ clone_or_update_repo() {
         }
         
         log "$COLOR_CYAN" "🔄 Pulling latest changes from GitHub..."
-        log_repo_status
         
         git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
             log "$COLOR_RED" "❌ $REPO_DIR is not a git repository!"
@@ -214,193 +150,46 @@ clone_or_update_repo() {
         git reset --hard HEAD >> "$LOG_FILE" 2>&1
         git clean -fd >> "$LOG_FILE" 2>&1
         
-        git_pull_with_recovery || exit 1
+        if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
+            log "$COLOR_GREEN" "✅ Successfully pulled latest changes"
+        else
+            log "$COLOR_RED" "❌ Failed to pull changes"
+            exit 1
+        fi
     fi
-}
-
-check_github_connectivity() {
-    curl -sSf --connect-timeout 10 https://github.com >/dev/null || {
-        log "$COLOR_RED" "❌ Cannot connect to GitHub!"
-        log "$COLOR_YELLOW" "   Please check your internet connection"
-        return 1
-    }
-    return 0
-}
-
-log_clone_error() {
-    log "$COLOR_RED" "❌ Failed to clone repository"
-    log "$COLOR_YELLOW" "╔════════════════════════════════════════════╗"
-    log "$COLOR_YELLOW" "║              CLONE ERROR DETAILS            ║"
-    log "$COLOR_YELLOW" "╠════════════════════════════════════════════╣"
-    tail -n 5 "$LOG_FILE" | while read -r line; do
-        log "$COLOR_YELLOW" "║ $line"
-    done
-    log "$COLOR_YELLOW" "╚════════════════════════════════════════════╝"
-}
-
-log_repo_status() {
-    log "$COLOR_BLUE" "   Current HEAD: $(git rev-parse --short HEAD)"
-    log "$COLOR_BLUE" "   Last commit: $(git log -1 --format='%cd %s' --date=format:'%Y-%m-%d %H:%M:%S')"
-}
-
-git_pull_with_recovery() {
-    if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-        log_successful_pull
-        return 0
-    fi
-    
-    log "$COLOR_RED" "❌ Initial git pull failed. Attempting recovery..."
-    
-    # Handle unfinished rebase/merge if exists
-    [ -d ".git/rebase-merge" ] || [ -d ".git/rebase-apply" ] && {
-        log "$COLOR_YELLOW" "⚠️ Detected unfinished rebase, aborting..."
-        git rebase --abort >> "$LOG_FILE" 2>&1 || true
-    }
-    
-    # Try recovery steps
-    git fetch origin main >> "$LOG_FILE" 2>&1
-    git reset --hard origin/main >> "$LOG_FILE" 2>&1
-    
-    if git pull "$GIT_AUTH_REPO" main >> "$LOG_FILE" 2>&1; then
-        log "$COLOR_GREEN" "✅ Git pull successful after recovery"
-        log "$COLOR_BLUE" "   New HEAD: $(git rev-parse --short HEAD)"
-        return 0
-    else
-        log "$COLOR_RED" "❌ Git pull still failed after recovery attempts"
-        log_error_details
-        send_notification "Add-on Updater Error" "Failed to pull repository $GITHUB_REPO after recovery attempts" 5
-        return 1
-    fi
-}
-
-log_successful_pull() {
-    log "$COLOR_GREEN" "✅ Successfully pulled latest changes"
-    log "$COLOR_BLUE" "   New HEAD: $(git rev-parse --short HEAD)"
-    local new_commits=$(git log --pretty=format:'   %h - %s (%cd)' --date=format:'%Y-%m-%d %H:%M:%S' HEAD@{1}..HEAD 2>/dev/null)
-    if [ -n "$new_commits" ]; then
-        log "$COLOR_BLUE" "   New commits:"
-        echo "$new_commits" | while read -r line; do
-            log "$COLOR_BLUE" "$line"
-        done
-    else
-        log "$COLOR_BLUE" "   (No new commits)"
-    fi
-}
-
-log_error_details() {
-    log "$COLOR_YELLOW" "╔════════════════════════════════════════════╗"
-    log "$COLOR_YELLOW" "║               ERROR DETAILS                 ║"
-    log "$COLOR_YELLOW" "╠════════════════════════════════════════════╣"
-    tail -n 10 "$LOG_FILE" | sed 's/^/║ /' | while read -r line; do
-        log "$COLOR_YELLOW" "$line"
-    done
-    log "$COLOR_YELLOW" "╚════════════════════════════════════════════╝"
 }
 
 # Docker image version checking
 get_latest_docker_tag() {
     local image="$1"
     local image_name=$(echo "$image" | cut -d: -f1)
-    local retries=3
     local version="latest"
-    local cache_file="/tmp/docker_tags_$(echo "$image_name" | tr '/:' '_').cache"
-    local cache_age=14400  # 4 hours
     
-    # Check cache first
-    if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt $cache_age ]; then
-        version=$(cat "$cache_file")
-        log_debug "Using cached version for $image_name: $version"
+    # Skip version check for non-repository images
+    [[ "$image_name" != *"/"* ]] && {
         echo "$version"
         return
-    fi
-    
-    for ((i=1; i<=retries; i++)); do
-        log_debug "Attempt $i to get latest tag for $image_name"
-        
-        if [[ "$image_name" =~ ^linuxserver/|^lscr.io/linuxserver/ ]]; then
-            version=$(get_lsio_tag "$image_name")
-        elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
-            version=$(get_ghcr_tag "$image_name")
-        else
-            version=$(get_dockerhub_tag "$image_name")
-        fi
+    }
 
-        if [[ "$version" =~ ^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            version=${version#v}
-            echo "$version" > "$cache_file"
-            break
-        fi
-        
-        [ $i -lt $retries ] && sleep 5
-    done
-
-    [[ ! "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] && version="latest"
-    echo "$version"
-}
-
-get_lsio_tag() {
-    local image_name="$1"
-    local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
-    local api_response=$(curl -sSf --connect-timeout 10 "https://api.linuxserver.io/v1/images/$lsio_name/tags" || echo "")
-    
-    [ -n "$api_response" ] && echo "$api_response" | 
-        jq -r '.tags[] | select(.name != "latest") | .name' 2>/dev/null | 
-        grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$' | 
-        sort -Vr | head -n1
-}
-
-get_ghcr_tag() {
-    local image_name="$1"
-    local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
-    local package=$(echo "$image_name" | cut -d/ -f4)
-    local token=$(curl -sSf --connect-timeout 10 "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token' 2>/dev/null || echo "")
-    
-    [ -z "$token" ] && return
-
-    curl -sSf --connect-timeout 10 -H "Authorization: Bearer $token" \
-        "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
-        jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))' 2>/dev/null | \
-        sort -Vr | head -n1
-}
-
-get_dockerhub_tag() {
-    local image_name="$1"
     local namespace=$(echo "$image_name" | cut -d/ -f1)
     local repo=$(echo "$image_name" | cut -d/ -f2)
     local api_url
     
-    [ "$namespace" = "$repo" ] && 
-        api_url="https://registry.hub.docker.com/v2/repositories/library/$repo/tags/" ||
-        api_url="https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/"
-    
-    local api_response=$(curl -sSf --connect-timeout 10 "$api_url" || echo "")
-    
-    [ -n "$api_response" ] && echo "$api_response" | 
-        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' 2>/dev/null | 
-        sort -Vr | head -n1
-}
-
-get_docker_source_url() {
-    local image="$1"
-    local image_name=$(echo "$image" | cut -d: -f1)
-    
-    if [[ "$image_name" =~ ^linuxserver/|^lscr.io/linuxserver/ ]]; then
-        local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
-        echo "https://fleet.linuxserver.io/image?name=$lsio_name"
-    elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
-        local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
-        local package=$(echo "$image_name" | cut -d/ -f4)
-        echo "https://github.com/$org_repo/pkgs/container/$package"
+    if [ "$namespace" = "$repo" ]; then
+        api_url="https://registry.hub.docker.com/v2/repositories/library/$repo/tags/"
     else
-        local namespace=$(echo "$image_name" | cut -d/ -f1)
-        local repo=$(echo "$image_name" | cut -d/ -f2)
-        [ "$namespace" = "$repo" ] && 
-            echo "https://hub.docker.com/_/$repo" || 
-            echo "https://hub.docker.com/r/$namespace/$repo"
+        api_url="https://registry.hub.docker.com/v2/repositories/$namespace/$repo/tags/"
     fi
+    
+    version=$(curl -sSf --connect-timeout 10 "$api_url" | \
+        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' 2>/dev/null | \
+        sort -Vr | head -n1) || true
+
+    [[ -z "$version" ]] && version="latest"
+    echo "$version"
 }
 
-# Add-on update functions
+# Add-on update functions with s6 resilience
 update_addon_if_needed() {
     local addon_path="$1"
     local addon_name=$(basename "$addon_path")
@@ -410,46 +199,47 @@ update_addon_if_needed() {
         return
     }
 
-    log "$COLOR_CYAN" "🔍 Checking add-on: ${COLOR_DARK_BLUE}$addon_name${COLOR_CYAN}"
+    (
+        # Run in subshell to isolate from s6 signals
+        log "$COLOR_CYAN" "🔍 Checking add-on: ${COLOR_DARK_BLUE}$addon_name${COLOR_CYAN}"
 
-    local image="" slug="$addon_name" current_version="latest"
-    local config_file="$addon_path/config.json" build_file="$addon_path/build.json"
+        local image="" current_version="latest"
+        local config_file="$addon_path/config.json"
+        local build_file="$addon_path/build.json"
 
-    # Try to get image from config.json first
-    [ -f "$config_file" ] && {
-        log_debug "Checking config.json for $addon_name"
-        image=$(jq -r '.image // empty' "$config_file" 2>/dev/null || true)
-        slug=$(jq -r '.slug // empty' "$config_file" 2>/dev/null || true)
-        current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null || echo "latest")
+        # Try to get image from config.json first
+        [ -f "$config_file" ] && {
+            image=$(jq -r '.image // empty' "$config_file" 2>/dev/null || true)
+            current_version=$(jq -r '.version // empty' "$config_file" 2>/dev/null || echo "latest")
+        }
+
+        # Fall back to build.json if no image found
+        [ -z "$image" ] && [ -f "$build_file" ] && {
+            local arch=$(uname -m)
+            [ "$arch" = "x86_64" ] && arch="amd64"
+            [ -s "$build_file" ] && 
+                image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true)
+        }
+
+        [ -z "$image" ] && {
+            log "$COLOR_YELLOW" "⚠️ No Docker image found for ${COLOR_DARK_BLUE}$addon_name"
+            image="$addon_name:latest"
+        }
+
+        local latest_version=$(get_latest_docker_tag "$image")
+
+        log "$COLOR_BLUE" "   Current version: $current_version"
+        log "$COLOR_BLUE" "   Docker image: $image"
+        log "$COLOR_BLUE" "   Available version: $latest_version"
+
+        if [ "$latest_version" != "$current_version" ]; then
+            handle_addon_update "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
+        else
+            log "$COLOR_GREEN" "✔️ ${COLOR_DARK_BLUE}$addon_name${COLOR_GREEN} already up to date"
+        fi
+    ) || {
+        log "$COLOR_YELLOW" "⚠️ Addon check interrupted for ${COLOR_DARK_BLUE}$addon_name"
     }
-
-    # Fall back to build.json if no image found
-    [ -z "$image" ] && [ -f "$build_file" ] && {
-        log_debug "Checking build.json for $addon_name"
-        local arch=$(uname -m)
-        [ "$arch" = "x86_64" ] && arch="amd64"
-        [ -s "$build_file" ] && 
-            image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from | if type=="string" then . else empty end' "$build_file" 2>/dev/null || true) ||
-            log "$COLOR_YELLOW" "   ⚠️ build.json is empty"
-    }
-
-    [ -z "$image" ] && {
-        log "$COLOR_YELLOW" "⚠️ No Docker image found for ${COLOR_DARK_BLUE}$addon_name"
-        image="$slug:latest"
-    }
-
-    local latest_version=$(get_latest_docker_tag "$image")
-    local update_time=$(date '+%Y-%m-%d %H:%M:%S')
-
-    log "$COLOR_BLUE" "   Current version: $current_version"
-    log "$COLOR_BLUE" "   Docker image: $image"
-    log "$COLOR_BLUE" "   Available version: $latest_version"
-
-    if [ "$latest_version" != "$current_version" ]; then
-        handle_addon_update "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
-    else
-        log "$COLOR_GREEN" "✔️ ${COLOR_DARK_BLUE}$addon_name${COLOR_GREEN} already up to date"
-    fi
 }
 
 handle_addon_update() {
@@ -499,7 +289,7 @@ update_changelog() {
     local addon_path="$1" slug="$2" current_version="$3" latest_version="$4" image="$5"
     
     local changelog_file="$addon_path/CHANGELOG.md"
-    local source_url=$(get_docker_source_url "$image")
+    local source_url="https://hub.docker.com/r/$(echo "$image" | cut -d: -f1)"
     local update_time=$(date '+%Y-%m-%d %H:%M:%S')
 
     [ ! -f "$changelog_file" ] && {
@@ -555,28 +345,30 @@ commit_and_push_changes() {
     return 0
 }
 
-# Main update function
-perform_update_check() {
-    local start_time=$(date +%s)
-    log_with_timestamp "$COLOR_PURPLE" "🚀 Starting update check"
+# Notification function
+send_notification() {
+    [ "${NOTIFICATION_SETTINGS[enabled]}" = "false" ] && return
+
+    local title="$1"
+    local message="$2"
+    local priority="${3:-0}"
     
-    clone_or_update_repo
-
-    cd "$REPO_DIR" || return 1
-    git config user.email "updater@local"
-    git config user.name "HomeAssistant Updater"
-
-    # Check all add-ons
-    for addon_path in "$REPO_DIR"/*/; do
-        [ -d "$addon_path" ] && update_addon_if_needed "$addon_path"
-    done
-
-    # Commit and push changes if any
-    commit_and_push_changes
-    
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    log_with_timestamp "$COLOR_PURPLE" "🏁 Update check completed in ${duration} seconds"
+    case "${NOTIFICATION_SETTINGS[service]}" in
+        "gotify")
+            [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[token]}" ] && {
+                log "$COLOR_RED" "❌ Gotify configuration incomplete"
+                return
+            }
+            curl -sSf -X POST \
+                -H "Content-Type: application/json" \
+                -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
+                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" >> "$LOG_FILE" 2>&1 || \
+                log "$COLOR_RED" "❌ Failed to send Gotify notification"
+            ;;
+        *)
+            log "$COLOR_YELLOW" "⚠️ Notification service ${NOTIFICATION_SETTINGS[service]} not implemented"
+            ;;
+    esac
 }
 
 # Check if current time matches cron schedule
@@ -603,6 +395,30 @@ should_run_from_cron() {
     [[ "$cron_weekday" != "*" && "$cron_weekday" != "$current_weekday" ]] && return 1
 
     return 0
+}
+
+# Main update function
+perform_update_check() {
+    local start_time=$(date +%s)
+    log_with_timestamp "$COLOR_PURPLE" "🚀 Starting update check"
+    
+    clone_or_update_repo
+
+    cd "$REPO_DIR" || return 1
+    git config user.email "updater@local"
+    git config user.name "HomeAssistant Updater"
+
+    # Check all add-ons
+    for addon_path in "$REPO_DIR"/*/; do
+        [ -d "$addon_path" ] && update_addon_if_needed "$addon_path"
+    done
+
+    # Commit and push changes if any
+    commit_and_push_changes
+    
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    log_with_timestamp "$COLOR_PURPLE" "🏁 Update check completed in ${duration} seconds"
 }
 
 # Main execution
@@ -643,13 +459,9 @@ log_configuration() {
     log "$COLOR_GREEN" "   - Check cron: $CHECK_CRON"
     log "$COLOR_GREEN" "   - Timezone: $TIMEZONE"
     log "$COLOR_GREEN" "   - Max log lines: $MAX_LOG_LINES"
-    log "$COLOR_GREEN" "   - Debug mode: $DEBUG"
     
     if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
         log "$COLOR_GREEN" "🔔 Notifications: Enabled (Service: ${NOTIFICATION_SETTINGS[service]})"
-        log "$COLOR_GREEN" "   - Notify on success: ${NOTIFICATION_SETTINGS[on_success]}"
-        log "$COLOR_GREEN" "   - Notify on error: ${NOTIFICATION_SETTINGS[on_error]}"
-        log "$COLOR_GREEN" "   - Notify on updates: ${NOTIFICATION_SETTINGS[on_updates]}"
     else
         log "$COLOR_GREEN" "🔔 Notifications: Disabled"
     fi
