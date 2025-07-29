@@ -8,8 +8,6 @@ CONFIG_PATH="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 LOCK_FILE="/data/updater.lock"
-RUN_MARKER="/data/.has_run"
-INITIAL_RUN_FILE="/data/.initial_run"
 MAX_LOG_FILES=5
 MAX_LOG_LINES=5000
 
@@ -22,7 +20,6 @@ declare -A NOTIFICATION_SETTINGS=(
     [service]="gotify"
     [url]=""
     [token]=""
-    [to]=""
     [on_success]=true
     [on_error]=true
     [on_updates]=true
@@ -57,7 +54,28 @@ log_warning() { log_with_timestamp "$COLOR_YELLOW" "⚠️ $*"; }
 log_error() { log_with_timestamp "$COLOR_RED" "❌ $*"; }
 
 # ======================
-# GOTIFY VALIDATION
+# LOCK MANAGEMENT
+# ======================
+acquire_lock() {
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        local pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "unknown")
+        log_error "Another instance is running (PID: $pid)"
+        exit 1
+    fi
+    echo $$ >&9
+    log_debug "Acquired execution lock"
+}
+
+release_lock() {
+    flock -u 9
+    exec 9>&-
+    rm -f "$LOCK_FILE"
+    log_debug "Released execution lock"
+}
+
+# ======================
+# GOTIFY NOTIFICATION
 # ======================
 validate_gotify_config() {
     local missing=()
@@ -75,7 +93,6 @@ validate_gotify_config() {
         return 1
     fi
     
-    # Test Gotify connectivity
     if ! curl -sSf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}/health" >/dev/null; then
         log_error "Cannot connect to Gotify server"
         return 1
@@ -84,52 +101,36 @@ validate_gotify_config() {
     return 0
 }
 
-# ======================
-# NOTIFICATION SYSTEM
-# ======================
-send_notification() {
-    [ "${NOTIFICATION_SETTINGS[enabled]}" = "false" ] && return
+send_gotify_notification() {
+    local title="$1"
+    local message="$2"
+    local priority="${3:-0}"
     
-    case "${NOTIFICATION_SETTINGS[service]}" in
-        "gotify")
-            validate_gotify_config || {
-                log_warning "Skipping invalid Gotify notification"
-                return 1
+    log_debug "Preparing Gotify notification (Priority: $priority)"
+    
+    local response=$(curl -sSf --connect-timeout 10 -X POST \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"title\":\"$title\",
+            \"message\":\"$message\",
+            \"priority\":$priority,
+            \"extras\": {
+                \"client::display\": {
+                    \"contentType\": \"text/markdown\"
+                }
             }
-            
-            local title="$1"
-            local message="$2"
-            local priority="${3:-0}"
-            
-            log_debug "Sending Gotify notification (Priority: $priority)"
-            
-            local response=$(curl -sSf --connect-timeout 10 -X POST \
-                -H "Content-Type: application/json" \
-                -d "{
-                    \"title\":\"$title\",
-                    \"message\":\"$message\",
-                    \"priority\":$priority,
-                    \"extras\": {
-                        \"client::display\": {
-                            \"contentType\": \"text/markdown\"
-                        }
-                    }
-                }" \
-                "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" 2>&1)
-            
-            local exit_code=$?
-            
-            if [ $exit_code -ne 0 ]; then
-                log_error "Gotify request failed (Code: $exit_code)"
-                log_debug "Response: $response"
-                return 1
-            fi
-            ;;
-        *)
-            log_warning "Notification service not implemented: ${NOTIFICATION_SETTINGS[service]}"
-            return 1
-            ;;
-    esac
+        }" \
+        "${NOTIFICATION_SETTINGS[url]}/message?token=${NOTIFICATION_SETTINGS[token]}" 2>&1)
+    
+    local exit_code=$?
+    
+    if [ $exit_code -ne 0 ]; then
+        log_error "Gotify notification failed (Code: $exit_code)"
+        log_debug "Response: $response"
+        return 1
+    fi
+    
+    log_debug "Gotify notification sent successfully"
 }
 
 # ======================
@@ -253,68 +254,12 @@ process_addon() {
 }
 
 # ======================
-# EXECUTION CONTROL
+# SUMMARY GENERATION
 # ======================
-load_config() {
-    [ ! -f "$CONFIG_PATH" ] && {
-        log_error "Config file not found at $CONFIG_PATH"
-        exit 1
-    }
-
-    # Core settings
-    DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
-    DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
-    local clear_marker=$(jq -r '.clear_marker_on_restart // true' "$CONFIG_PATH")
-    local run_interval=$(jq -r '.run_interval // 0' "$CONFIG_PATH")
-    local force_run=$(jq -r '.force_run // false' "$CONFIG_PATH")
-
-    # Notification settings
-    NOTIFICATION_SETTINGS[enabled]=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
-    NOTIFICATION_SETTINGS[service]=$(jq -r '.notification_service // "gotify"' "$CONFIG_PATH")
-    NOTIFICATION_SETTINGS[url]=$(jq -r '.notification_url // ""' "$CONFIG_PATH")
-    NOTIFICATION_SETTINGS[token]=$(jq -r '.notification_token // ""' "$CONFIG_PATH")
-
-    # Clear marker if configured
-    [ "$clear_marker" = "true" ] && rm -f "$RUN_MARKER"
-
-    # First run detection
-    if [ ! -f "$INITIAL_RUN_FILE" ]; then
-        touch "$INITIAL_RUN_FILE"
-        rm -f "$RUN_MARKER"
-        log_debug "Initial run detected - cleared marker"
-    fi
-
-    # Force run takes precedence
-    if [ "$force_run" = "true" ]; then
-        log_info "Force run requested via config"
-        rm -f "$RUN_MARKER"
-    fi
-
-    # Interval check
-    if [ "$run_interval" -gt 0 ]; then
-        local last_run=0
-        [ -f "$RUN_MARKER" ] && last_run=$(stat -c %Y "$RUN_MARKER")
-        local next_run=$((last_run + run_interval))
-        
-        if [ $(date +%s) -lt $next_run ]; then
-            log_info "Next run allowed at: $(date -d @$next_run)"
-            return 1
-        fi
-    fi
-
-    # Standard single-run check
-    if [ -f "$RUN_MARKER" ]; then
-        log_info "Already executed this boot cycle"
-        return 1
-    fi
-    
-    return 0
-}
-
 generate_summary() {
-    local updated=0 up_to_date=0 errors=0 no_image=0
     local message="## 📋 Add-on Update Report\n\n"
-    
+    local updated=0 up_to_date=0 errors=0 no_image=0
+
     for addon in "${!ADDON_STATUS[@]}"; do
         IFS='|' read -r current latest status <<< "${ADDON_STATUS[$addon]}"
         
@@ -324,7 +269,7 @@ generate_summary() {
                 ((updated++))
                 ;;
             "up_to_date")
-                message+="🔹 **$addon**: $current (latest)\n"
+                message+="🔹 **$addon**: $current (current)\n"
                 ((up_to_date++))
                 ;;
             "no_image")
@@ -332,7 +277,7 @@ generate_summary() {
                 ((no_image++))
                 ;;
             *)
-                message+="❌ **$addon**: Version check failed\n"
+                message+="❌ **$addon**: $status\n"
                 ((errors++))
                 ;;
         esac
@@ -348,25 +293,33 @@ generate_summary() {
 }
 
 # ======================
-# MAIN EXECUTION
+# MAIN EXECUTION FLOW
 # ======================
 main() {
     # Setup logging
     exec >> "$LOG_FILE" 2>&1
-    echo -e "\n\n=== Starting update check at $(date) ==="
+    echo -e "\n\n=== Starting one-time update check at $(date) ==="
 
     # Load configuration
-    if ! load_config; then
-        log_info "Exiting as per configuration"
-        exit 0
+    NOTIFICATION_SETTINGS[enabled]=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
+    NOTIFICATION_SETTINGS[url]=$(jq -r '.notification_url // ""' "$CONFIG_PATH")
+    NOTIFICATION_SETTINGS[token]=$(jq -r '.notification_token // ""' "$CONFIG_PATH")
+    DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
+    DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
+
+    # Validate Gotify if enabled
+    if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
+        validate_gotify_config || {
+            NOTIFICATION_SETTINGS[enabled]=false
+            log_warning "Disabling notifications due to configuration errors"
+        }
     fi
 
-    # Start main process
+    # Start processing
     acquire_lock
     trap "release_lock" EXIT
 
-    touch "$RUN_MARKER"
-    log_info "Starting version checks..."
+    log_info "Starting one-time version checks..."
 
     # Process all add-ons
     for addon in "$REPO_DIR"/*/; do
@@ -378,11 +331,12 @@ main() {
     log_info "Update summary:\n$summary"
     
     if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
-        send_notification "Home Assistant Add-on Updates" "$summary" 5
+        send_gotify_notification "Home Assistant Add-on Updates" "$summary" $((errors > 0 ? 5 : 3))
     fi
 
-    log_success "Completed all checks"
-    exit 0
+    log_success "One-time check completed successfully - exiting"
+    exit 0  # Explicit exit to ensure termination
 }
 
+# Execute
 main
