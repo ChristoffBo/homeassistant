@@ -1,83 +1,80 @@
 Home Assistant Add-on Updater
-============================
+────────────────────────────
 
-A simple way to keep your custom add-ons automatically updated.
+Keep your custom add-ons automatically updated with version checking and notifications.
 
-✧ What This Does
-- Checks your add-ons for available updates daily
-- Updates version numbers in your repository
-- Keeps a changelog of all updates
-- Optional notifications when updates occur
+────────────────────────────
+SETUP INSTRUCTIONS
+────────────────────────────
 
-✓ Requirements
-- Home Assistant OS or Supervised
-- GitHub repository with your add-ons
-- GitHub personal access token with repo permissions
+1. INSTALL THE ADD-ON
+   • Add this repository to your Home Assistant
+   • Install the "Add-on Updater" add-on
+   • Configure with your GitHub details
 
-⚙ Installation
-1. Add this repository to your Home Assistant add-on store
-2. Install the "Add-on Updater" add-on
-3. Configure with your GitHub details (see below)
-4. Create the automation (copy-paste ready below)
+2. REQUIRED AUTOMATION
+Copy this exact automation to your Home Assistant configuration:
 
-🔧 Configuration Options
-[Required]
-github_repo = "https://github.com/your/your-repo"
-github_username = "your_github_name"
-github_token = "ghp_yourtokenhere"
-
-[Optional]
-timezone = "America/New_York" 
-dry_run = false
-debug = false
-
-[Notifications - set all 3]
-notifications_enabled = true
-notification_service = "gotify" (or "ntfy"/"apprise")
-notification_url = "https://your.notification.server"
-notification_token = "yourtoken" (for Gotify)
-
-🔄 Required Automation
-Copy this exact automation to your Home Assistant:
-
-alias: Update Add-ons Daily
-description: Checks for add-on updates at 3 AM
+alias: "Add-on Updater Daily Check"
+description: "Restarts updater add-on to check for updates daily at 3 AM"
+mode: single
 trigger:
   - platform: time
-    at: "03:00"
+    at: "03:00:00"
+condition: []
 action:
   - service: hassio.addon_restart
     target:
       addon: a0d7b954_updater
-mode: single
+    data: {}
 
-❗ Important Notes
-1. The addon ID (a0d7b954_updater) MUST match what you see in your Home Assistant
-2. Time format MUST use quotes around the time
-3. Automation must be in single mode
+3. VERIFICATION
+   • Check add-on logs after first run
+   • Look for "Starting update check" message
+   • Manually trigger automation to test
 
-🔍 Checking It Works
-1. After setup, check the add-on logs
-2. Look for "Starting update check" messages
-3. First run may take longer as it clones your repo
+────────────────────────────
+CONFIGURATION OPTIONS
+────────────────────────────
 
-🛠 Troubleshooting
-If updates aren't happening:
-- Verify your GitHub token has repo permissions
-- Check the add-on logs for errors
-- Make sure the automation is enabled
-- Try manually triggering the automation
+REQUIRED SETTINGS:
+• github_repo: Your repository URL
+• github_username: Your GitHub username  
+• github_token: Personal access token with repo scope
 
-📅 Recommended Schedule
-- Daily checks are best (3 AM shown above)
-- Avoid peak usage times
-- More frequent checks aren't necessary
+OPTIONAL SETTINGS:
+• timezone: Your local timezone
+• dry_run: Test mode (true/false)
+• debug: Verbose logging (true/false)
 
-📢 Notification Setup Examples
-For Gotify:
-notification_url = "https://gotify.yourserver.com"
-notification_token = "your-app-token"
+NOTIFICATION SETUP:
+• Enable in add-on configuration
+• Choose service (Gotify/ntfy/Apprise)
+• Configure URL and credentials
 
-For ntfy:
-notification_url = "https://ntfy.sh"
-notification_to = "your_topic_name"
+────────────────────────────
+TROUBLESHOOTING
+────────────────────────────
+
+AUTOMATION NOT WORKING?
+• Verify addon ID matches yours
+• Check automation is enabled
+• Look for errors in Home Assistant logs
+
+UPDATES NOT DETECTED?
+• Check add-on logs
+• Verify GitHub token permissions
+• Ensure Docker images have version tags
+
+NOTIFICATIONS NOT SENDING?
+• Check notification service is online
+• Verify credentials are correct
+• Enable debug mode for more details
+
+────────────────────────────
+BEST PRACTICES
+────────────────────────────
+✓ Start with dry_run enabled
+✓ Set notifications for errors
+✓ Check logs regularly
+✓ Schedule during off-peak hours
