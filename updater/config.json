@@ -1,24 +1,18 @@
 {
-  "name": "Home Assistant Addons Docker Version Updater",
+  "name": "Addon Version Updater",
   "version": "1.0.0",
-  "slug": "addons_version_updater",
-  "description": "Checks and updates add-on version numbers to match latest Docker image tags",
-  "url": "https://github.com/ChristoffBo/homeassistant",
-  "startup": "services",
+  "slug": "addon_updater",
+  "description": "Automatically updates addon versions from Docker Hub",
+  "url": "https://github.com/yourrepo/addon-updater",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "startup": "application",
   "boot": "auto",
-  "arch": [
-    "amd64",
-    "armv7",
-    "aarch64"
-  ],
-  "ports": {},
   "options": {
-    "github_repo": "https://github.com/yourrepo/homeassistant",
+    "github_repo": "",
     "github_username": "",
     "github_token": "",
     "check_cron": "0 3 * * *",
-    "startup_cron": "0 4 * * *",
-    "timezone": "Africa/Johannesburg",
+    "timezone": "UTC",
     "max_log_lines": 1000,
     "dry_run": false,
     "skip_push": false,
@@ -36,7 +30,6 @@
     "github_username": "str",
     "github_token": "str",
     "check_cron": "str",
-    "startup_cron": "str?",
     "timezone": "str?",
     "max_log_lines": "int?",
     "dry_run": "bool?",
@@ -48,16 +41,7 @@
     "notification_to": "str?",
     "notify_on_success": "bool?",
     "notify_on_error": "bool?",
-    "notify_on_updates": "bool?",
-    "persistent": "bool?"
+    "notify_on_updates": "bool?"
   },
-  "map": [
-    "config:ro",
-    "addons:rw",
-    "backup:rw",
-    "share:rw"
-  ],
-  "init": false,
-  "host_network": false,
-  "privileged": []
+  "map": ["config:rw", "addons:rw", "backup:rw", "share:rw"]
 }
