@@ -285,10 +285,16 @@ get_latest_docker_tag() {
 get_lsio_tag() {
     local image_name="$1"
     local lsio_name=$(echo "$image_name" | sed 's|^lscr.io/linuxserver/||;s|^linuxserver/||')
-    local api_response=$(curl -sSf --connect-timeout 10 "https://api.linuxserver.io/v1/images/$lsio_name/tags" || echo "")
+    
+    # Try the new API endpoint first
+    local api_response=$(curl -sSf --connect-timeout 10 "https://fleet.linuxserver.io/api/v1/images/$lsio_name/tags" || echo "")
+    
+    # Fall back to old endpoint if new one fails
+    [ -z "$api_response" ] && 
+        api_response=$(curl -sSf --connect-timeout 10 "https://api.linuxserver.io/v1/images/$lsio_name/tags" || echo "")
     
     [ -n "$api_response" ] && echo "$api_response" | 
-        jq -r '.tags[] | select(.name != "latest") | .name' 2>/dev/null | 
+        jq -r '.tags[]? | select(.name != "latest") | .name' 2>/dev/null | 
         grep -E '^[vV]?[0-9]+\.[0-9]+(\.[0-9]+)?$' | 
         sort -Vr | head -n1
 }
@@ -303,7 +309,7 @@ get_ghcr_tag() {
 
     curl -sSf --connect-timeout 10 -H "Authorization: Bearer $token" \
         "https://ghcr.io/v2/$org_repo/$package/tags/list" | \
-        jq -r '.tags[] | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))' 2>/dev/null | \
+        jq -r '.tags[]? | select(. != "latest" and (. | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))' 2>/dev/null | \
         sort -Vr | head -n1
 }
 
@@ -319,8 +325,14 @@ get_dockerhub_tag() {
     
     local api_response=$(curl -sSf --connect-timeout 10 "$api_url" || echo "")
     
+    # Return empty if we get a 404
+    if [[ "$api_response" == *"404"* ]]; then
+        echo ""
+        return
+    fi
+    
     [ -n "$api_response" ] && echo "$api_response" | 
-        jq -r '.results[] | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' 2>/dev/null | 
+        jq -r '.results[]? | select(.name != "latest" and (.name | test("^[vV]?[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))) | .name' 2>/dev/null | 
         sort -Vr | head -n1
 }
 
@@ -355,7 +367,6 @@ update_addon_if_needed() {
     }
 
     (
-        # Run in subshell to isolate from s6 signals
         log "$COLOR_CYAN" "🔍 Checking add-on: ${COLOR_DARK_BLUE}$addon_name${COLOR_CYAN}"
 
         local image="" current_version="latest"
@@ -378,16 +389,28 @@ update_addon_if_needed() {
 
         [ -z "$image" ] && {
             log "$COLOR_YELLOW" "⚠️ No Docker image found for ${COLOR_DARK_BLUE}$addon_name"
-            image="$addon_name:latest"
+            return
         }
 
-        local latest_version=$(get_latest_docker_tag "$image")
+        # Skip known problematic images
+        if [[ "$image" == *"2fauth"* ]]; then
+            log "$COLOR_BLUE" "ℹ️ Skipping version check for 2fauth (no version tags available)"
+            return
+        fi
+
+        local latest_version
+        latest_version=$(get_latest_docker_tag "$image") || {
+            log "$COLOR_YELLOW" "⚠️ Could not determine latest version for ${COLOR_DARK_BLUE}$addon_name"
+            return
+        }
+
+        [ -z "$latest_version" ] && latest_version="latest"
 
         log "$COLOR_BLUE" "   Current version: $current_version"
         log "$COLOR_BLUE" "   Docker image: $image"
         log "$COLOR_BLUE" "   Available version: $latest_version"
 
-        if [ "$latest_version" != "$current_version" ]; then
+        if [ "$latest_version" != "$current_version" ] && [ "$latest_version" != "latest" ]; then
             handle_addon_update "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
         else
             log "$COLOR_GREEN" "✔️ ${COLOR_DARK_BLUE}$addon_name${COLOR_GREEN} already up to date"
