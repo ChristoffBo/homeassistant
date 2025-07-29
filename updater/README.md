@@ -24,7 +24,7 @@ Optionally pushes changes to GitHub.
 Sends a notification (if enabled).
 
 
-Scheduled by cron, runs in your timezone.
+Scheduled by HomeAssistant Please Create an Automation.
 
 
 
