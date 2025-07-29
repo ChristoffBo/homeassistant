@@ -14,5 +14,5 @@
   "map": ["share:rw", "ssl"],
   "options": {},
   "schema": {},
-  "image": "ghcr.io/gitea/gitea:{arch}-1.18.0"
+  "image": "ghcr.io/gitea/gitea:1.18.0"
 }
