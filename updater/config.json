@@ -1,4 +1,3 @@
-{
   "name": "Home Assistant Addons Docker Version Updater",
   "version": "1.0.0",
   "slug": "addons_version_updater",
@@ -36,24 +35,28 @@
     "github_username": "str",
     "github_token": "str",
     "check_cron": "str",
-    "startup_cron": "str",
-    "timezone": "str",
-    "max_log_lines": "int",
-    "dry_run": "bool",
-    "skip_push": "bool",
-    "notifications_enabled": "bool",
-    "notification_service": "str",
-    "notification_url": "str",
-    "notification_token": "str",
-    "notification_to": "str",
-    "notify_on_success": "bool",
-    "notify_on_error": "bool",
-    "notify_on_updates": "bool"
+    "startup_cron": "str?",
+    "timezone": "str?",
+    "max_log_lines": "int?",
+    "dry_run": "bool?",
+    "skip_push": "bool?",
+    "notifications_enabled": "bool?",
+    "notification_service": "str?",
+    "notification_url": "str?",
+    "notification_token": "str?",
+    "notification_to": "str?",
+    "notify_on_success": "bool?",
+    "notify_on_error": "bool?",
+    "notify_on_updates": "bool?",
+    "persistent": "bool?"
   },
   "map": [
-    "config:rw",
+    "config:ro",
     "addons:rw",
     "backup:rw",
     "share:rw"
-  ]
+  ],
+  "init": false,
+  "host_network": false,
+  "privileged": []
 }
