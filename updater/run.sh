@@ -100,8 +100,6 @@ load_config() {
     GITHUB_REPO=$(jq -r '.github_repo // empty' "$CONFIG_PATH")
     GITHUB_USERNAME=$(jq -r '.github_username // empty' "$CONFIG_PATH")
     GITHUB_TOKEN=$(jq -r '.github_token // empty' "$CONFIG_PATH")
-    CHECK_CRON=$(jq -r '.check_cron // "0 4 * * *"' "$CONFIG_PATH")
-    STARTUP_CRON=$(jq -r '.startup_cron // empty' "$CONFIG_PATH")
     TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
     DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
     SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH")
@@ -117,6 +115,41 @@ load_config() {
         NOTIFICATION_SETTINGS[on_success]=$(jq -r '.notify_on_success // false' "$CONFIG_PATH")
         NOTIFICATION_SETTINGS[on_error]=$(jq -r '.notify_on_error // true' "$CONFIG_PATH")
         NOTIFICATION_SETTINGS[on_updates]=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")
+        
+        # Validate notification settings
+        if [ -z "${NOTIFICATION_SETTINGS[service]}" ]; then
+            log_error "Notification service is not specified"
+            NOTIFICATION_SETTINGS[enabled]=false
+        fi
+        
+        case "${NOTIFICATION_SETTINGS[service]}" in
+            "gotify")
+                if [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[token]}" ]; then
+                    log_error "Gotify configuration incomplete - missing URL or token"
+                    NOTIFICATION_SETTINGS[enabled]=false
+                fi
+                ;;
+            "mailrise"|"ntfy")
+                if [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[to]}" ]; then
+                    log_error "${NOTIFICATION_SETTINGS[service]} configuration incomplete - missing URL or recipient"
+                    NOTIFICATION_SETTINGS[enabled]=false
+                fi
+                ;;
+            "apprise")
+                if [ -z "${NOTIFICATION_SETTINGS[url]}" ]; then
+                    log_error "Apprise configuration incomplete - missing URL"
+                    NOTIFICATION_SETTINGS[enabled]=false
+                fi
+                if ! command -v apprise >/dev/null; then
+                    log_error "Apprise CLI not installed - notifications disabled"
+                    NOTIFICATION_SETTINGS[enabled]=false
+                fi
+                ;;
+            *)
+                log_error "Unknown notification service: ${NOTIFICATION_SETTINGS[service]}"
+                NOTIFICATION_SETTINGS[enabled]=false
+                ;;
+        esac
     fi
 
     export TZ="$TIMEZONE"
@@ -136,8 +169,6 @@ log_configuration() {
     log_info "GitHub Repo: $GITHUB_REPO"
     log_info "Dry Run: $DRY_RUN"
     log_info "Skip Push: $SKIP_PUSH"
-    log_info "Check Cron: $CHECK_CRON"
-    log_info "Startup Cron: ${STARTUP_CRON:-none}"
     log_info "Timezone: $TIMEZONE"
     log_info "Debug Mode: $DEBUG"
     
@@ -562,10 +593,6 @@ send_notification() {
     
     case "${NOTIFICATION_SETTINGS[service]}" in
         "gotify")
-            [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[token]}" ] && {
-                log_error "Gotify configuration incomplete"
-                return
-            }
             curl -sSf -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":$priority}" \
@@ -573,25 +600,13 @@ send_notification() {
                 log_error "Failed to send Gotify notification"
             ;;
         "mailrise"|"ntfy")
-            [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[to]}" ] && {
-                log_error "Notification configuration incomplete"
-                return
-            }
             curl -sSf -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"to\":\"${NOTIFICATION_SETTINGS[to]}\", \"subject\":\"$title\", \"body\":\"$message\"}" \
                 "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
-                log_error "Failed to send notification"
+                log_error "Failed to send ${NOTIFICATION_SETTINGS[service]} notification"
             ;;
         "apprise")
-            [ -z "${NOTIFICATION_SETTINGS[url]}" ] && {
-                log_error "Apprise configuration incomplete"
-                return
-            }
-            command -v apprise >/dev/null || {
-                log_error "Apprise CLI not installed"
-                return
-            }
             apprise -vv -t "$title" -b "$message" "${NOTIFICATION_SETTINGS[url]}" >> "$LOG_FILE" 2>&1 || \
                 log_error "Failed to send Apprise notification"
             ;;
@@ -599,34 +614,6 @@ send_notification() {
             log_warning "Unknown notification service: ${NOTIFICATION_SETTINGS[service]}"
             ;;
     esac
-}
-
-# ======================
-# CRON HELPER FUNCTIONS
-# ======================
-should_run_from_cron() {
-    local cron_schedule="$1"
-    [ -z "$cron_schedule" ] && return 1
-
-    local current_minute=$(date '+%M')
-    local current_hour=$(date '+%H')
-    local current_day=$(date '+%d')
-    local current_month=$(date '+%m')
-    local current_weekday=$(date '+%w')
-
-    local cron_minute=$(echo "$cron_schedule" | awk '{print $1}')
-    local cron_hour=$(echo "$cron_schedule" | awk '{print $2}')
-    local cron_day=$(echo "$cron_schedule" | awk '{print $3}')
-    local cron_month=$(echo "$cron_schedule" | awk '{print $4}')
-    local cron_weekday=$(echo "$cron_schedule" | awk '{print $5}')
-
-    [[ "$cron_minute" != "*" && "$cron_minute" != "$current_minute" ]] && return 1
-    [[ "$cron_hour" != "*" && "$cron_hour" != "$current_hour" ]] && return 1
-    [[ "$cron_day" != "*" && "$cron_day" != "$current_day" ]] && return 1
-    [[ "$cron_month" != "*" && "$cron_month" != "$current_month" ]] && return 1
-    [[ "$cron_weekday" != "*" && "$cron_weekday" != "$current_weekday" ]] && return 1
-
-    return 0
 }
 
 # ======================
@@ -665,18 +652,6 @@ main() {
     log_info "Starting Home Assistant Add-on Updater"
     
     perform_update_check
-
-    # Main loop - only run when cron schedule matches
-    log_info "⏳ Waiting for next scheduled run ($CHECK_CRON)..."
-    while true; do
-        if should_run_from_cron "$CHECK_CRON"; then
-            perform_update_check
-            # Sleep for 61 minutes to prevent multiple runs in same minute
-            sleep 3660
-        else
-            sleep 60
-        fi
-    done
 
     release_lock
 }
