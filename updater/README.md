@@ -40,31 +40,32 @@ For ntfy:
 - Topic: your-topic-name
 
 4. CREATE AUTOMATION
-You must create this automation in Home Assistant to check for updates daily:
+Copy and paste this into your Home Assistant automations.yaml or UI editor:
 
 alias: "Check for Add-on Updates"
+description: "Daily check for add-on updates"
 trigger:
   - platform: time
-    at: "03:00"
+    at: "03:00:00"
 action:
   - service: hassio.addon_restart
     target:
       addon: a0d7b954_updater
+mode: single
 
 ■ How It Works
-1. The add-on checks each add-on's Docker image for updates
-2. If updates found:
-   - Updates version in config files
-   - Updates changelog
-   - Commits changes to GitHub
-3. Sends notifications if configured
+1. Daily at 3 AM (adjust time in automation if needed)
+2. Restarts the updater add-on
+3. Add-on checks all add-ons for updates
+4. Updates versions if newer ones exist
+5. Sends notifications if configured
 
 ■ Troubleshooting
-- GitHub errors: Check your token has repo access
-- Notifications not working: Verify server URL and tokens
-- No updates found: Check your add-ons have proper image tags
+- If updates aren't happening: Check add-on logs
+- For GitHub errors: Verify token permissions
+- Notification issues: Check server URLs and tokens
 
-■ Tips  
-- Start with dry-run enabled
-- Check logs after first run
-- Daily checks are recommended
+■ Recommended
+- First run: Enable dry-run mode
+- Check logs after installation
+- Set notifications for errors
