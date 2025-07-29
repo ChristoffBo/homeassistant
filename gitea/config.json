@@ -1,0 +1,21 @@
+{
+  "name": "Gitea",
+  "version": "1.18.0",
+  "slug": "gitea",
+  "description": "Self-hosted Git service (direct port access)",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "startup": "services",
+  "boot": "auto",
+  "ports": {
+    "3000/tcp": 3000,
+    "2222/tcp": 2222
+  },
+  "ports_description": {
+    "3000/tcp": "Web Interface",
+    "2222/tcp": "SSH Access"
+  },
+  "map": ["share:rw"],
+  "options": {},
+  "schema": {},
+  "image": "gitea/gitea"
+}
