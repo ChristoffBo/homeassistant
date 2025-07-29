@@ -1,51 +1,56 @@
-#!/usr/bin/with-contenv bash
-set -e
+#!/usr/bin/with-contenv bashio
 
-CONFIG_PATH=/data/options.json
+# ==============================================================================
+# Environment Variables Configuration
+# ==============================================================================
 
-# Colored log output
-COLOR_GREEN="\033[0;32m"
-COLOR_YELLOW="\033[0;33m"
-COLOR_RED="\033[0;31m"
-COLOR_RESET="\033[0m"
-
-log() {
-  local color="$1"
-  shift
-  echo -e "${color}[Gitea Add-on] $*${COLOR_RESET}"
-}
-
-log "${COLOR_GREEN}" "Reading configuration from ${CONFIG_PATH}..."
-
-# Read GUI-configured options
-DOMAIN=$(jq -r '.domain' "$CONFIG_PATH")
-APP_NAME=$(jq -r '.app_name' "$CONFIG_PATH")
-DISABLE_REGISTRATION=$(jq -r '.disable_registration' "$CONFIG_PATH")
-SSH_ENABLED=$(jq -r '.ssh_enabled' "$CONFIG_PATH")
-LOG_LEVEL=$(jq -r '.log_level' "$CONFIG_PATH")
-
-# Export ENV for Gitea
+# Set default environment variables
 export USER_UID=1000
 export USER_GID=1000
-export GITEA__server__PROTOCOL=http
-export GITEA__server__DOMAIN="${DOMAIN}"
-export GITEA__server__ROOT_URL="http://${DOMAIN}:3001/"
+export GITEA__server__PROTOCOL="http"
+export GITEA__server__DOMAIN="localhost"
 export GITEA__server__HTTP_PORT=3000
 export GITEA__server__SSH_PORT=2222
-export GITEA__app_name="${APP_NAME}"
-export GITEA__service__DISABLE_REGISTRATION="${DISABLE_REGISTRATION}"
-export GITEA__log__LEVEL="${LOG_LEVEL}"
-export GITEA__database__DB_TYPE=sqlite3
-export GITEA__database__PATH=/data/gitea/data/gitea.db
-export GITEA__repository__ROOT=/data/gitea/repositories
+export GITEA__server__ROOT_URL="http://localhost:3000/"
+export GITEA__database__DB_TYPE="sqlite3"
+export GITEA__database__PATH="/data/gitea/data/gitea.db"
+export GITEA__repository__ROOT="/data/gitea/repositories"
 
-# SSH toggle (optional, handled internally by Gitea if needed)
-if [ "$SSH_ENABLED" = "false" ]; then
-  log "${COLOR_YELLOW}" "Disabling SSH in Gitea config."
-  export GITEA__server__START_SSH_SERVER=false
-else
-  export GITEA__server__START_SSH_SERVER=true
-fi
+# ==============================================================================
+# Directory Setup
+# ==============================================================================
 
-log "${COLOR_GREEN}" "Launching Gitea..."
-exec /usr/bin/entrypoint
+mkdir -p /data/gitea/{conf,data,logs,repositories}
+chown -R ${USER_UID}:${USER_GID} /data/gitea
+chmod -R 750 /data/gitea
+
+# ==============================================================================
+# Configuration Generation
+# ==============================================================================
+
+# Generate app.ini from environment variables
+cat > /data/gitea/conf/app.ini <<EOL
+[server]
+PROTOCOL = ${GITEA__server__PROTOCOL}
+DOMAIN = ${GITEA__server__DOMAIN}
+HTTP_PORT = ${GITEA__server__HTTP_PORT}
+SSH_PORT = ${GITEA__server__SSH_PORT}
+ROOT_URL = ${GITEA__server__ROOT_URL}
+DISABLE_SSH = false
+
+[database]
+DB_TYPE = ${GITEA__database__DB_TYPE}
+PATH = ${GITEA__database__PATH}
+
+[repository]
+ROOT = ${GITEA__repository__ROOT}
+
+[log]
+LEVEL = $(bashio::config 'log_level')
+EOL
+
+# ==============================================================================
+# Service Startup
+# ==============================================================================
+
+exec /usr/local/bin/gitea web --config /data/gitea/conf/app.ini
