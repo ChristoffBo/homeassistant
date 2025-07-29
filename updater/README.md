@@ -147,12 +147,6 @@ dry_run: simulate update without making changes
 
 skip_push: update files locally but don’t push to GitHub
 
-check_cron: main update schedule
-
-startup_cron: optional run right after startup
-
-
-
 ---
 
 Created by ChristoffBo
