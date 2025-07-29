@@ -2,7 +2,7 @@
   "name": "Gitea",
   "version": "1.18.0",
   "slug": "gitea",
-  "description": "Self-hosted Git service with painless setup",
+  "description": "Official Gitea with full ENV support",
   "url": "https://gitea.io",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
@@ -12,18 +12,32 @@
     "3000/tcp": 3000,
     "2222/tcp": 2222
   },
-  "ports_description": {
-    "3000/tcp": "Web interface (http://<host>:3000)",
-    "2222/tcp": "SSH server (git@<host> -p 2222)"
-  },
   "map": ["share:rw", "ssl"],
+  "image": "gitea/gitea:1.18.0",
+  "environment": {
+    "USER_UID": "1000",
+    "USER_GID": "1000",
+    "GITEA__server__PROTOCOL": "http",
+    "GITEA__server__DOMAIN": "[HOST]",
+    "GITEA__server__HTTP_PORT": "3000",
+    "GITEA__server__SSH_PORT": "2222",
+    "GITEA__server__ROOT_URL": "http://[HOST]:3000/",
+    "GITEA__database__DB_TYPE": "sqlite3",
+    "GITEA__database__PATH": "/data/gitea/data/gitea.db",
+    "GITEA__repository__ROOT": "/data/gitea/repositories"
+  },
   "options": {
     "log_level": "info",
-    "ssh_enabled": true
+    "ssh_enabled": true,
+    "app_name": "Gitea",
+    "disable_registration": false,
+    "domain": "[HOST]"
   },
   "schema": {
     "log_level": "list(trace|debug|info|warning|error|fatal)",
-    "ssh_enabled": "bool"
-  },
-  "image": "gitea/gitea"
+    "ssh_enabled": "bool",
+    "app_name": "str",
+    "disable_registration": "bool",
+    "domain": "str"
+  }
 }
