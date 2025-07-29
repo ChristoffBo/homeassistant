@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "slug": "addon_updater",
   "description": "Automatically updates Home Assistant add-ons to their latest versions",
-  "url": "https://github.com/your-username/your-repo",
+  "url": "https://github.com/ChristoffBo/homeassistant/tree/main/updater",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
