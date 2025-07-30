@@ -1,7 +1,7 @@
 {
   "name": "n8n",
   "version": "1.48.0",
-  "slug": "n8n",
+  "slug": "n8nio",
   "description": "Extendable workflow automation tool for connecting APIs and services.",
   "url": "https://n8n.io/",
   "arch": ["amd64", "armv7", "aarch64"],
