@@ -30,5 +30,5 @@
     "ssl"
   ],
   "host_network": false,
-  "apparmor": false
+  "apparmor": unconfined
 }
