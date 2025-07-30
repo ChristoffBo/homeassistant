@@ -3,7 +3,7 @@
   "version": "1.48.1",
   "slug": "n8n_custom",
   "description": "n8n is an extendable workflow automation tool for connecting APIs and services.",
-  "url": "https://n8n.io/",
+  "url": "https://n8nio/",
   "startup": "services",
   "boot": "auto",
   "init": false,
