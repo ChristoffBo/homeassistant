@@ -1,3 +1,13 @@
-name: Christoffbo's Addons
-url: https://github.com/ChristoffBo/homeassistant
-maintainer: ChristoffBo
+name: "Christoff's Home Assistant Add-ons"
+url: "http://10.0.0.100:3001/cbothma/homeassistant/raw/branch/main"
+maintainer: "Christoff Bo <cbothma@example.com>"
+addons:
+  - "2fauth"
+  - "gitea"
+  - "gotify"
+  - "heimdall"
+  - "mailrise"
+  - "metube"
+  - "technitium-dns-DHCP"
+  - "updater"
+  - "zoraxy"
