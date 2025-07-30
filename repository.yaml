@@ -1,6 +1,6 @@
 name: "Christoff's Home Assistant Add-ons"
 url: "http://10.0.0.100:3001/cbothma/homeassistant/raw/branch/main"
-maintainer: "Christoff Bo <cbothma@example.com>"
+maintainer: "Christoff Bo"
 addons:
   - "2fauth"
   - "gitea"
