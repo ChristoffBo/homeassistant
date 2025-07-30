@@ -2,11 +2,12 @@
   "name": "n8n",
   "version": "1.48.0",
   "slug": "n8n",
-  "description": "Extendable workflow automation tool",
+  "description": "Extendable workflow automation tool for connecting APIs and services.",
   "url": "https://n8n.io/",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
   "boot": "auto",
+  "host_network": false,
   "options": {
     "port": 5678,
     "timezone": "Europe/London",
@@ -24,11 +25,5 @@
   "ports": {
     "5678/tcp": 5678
   },
-  "map": [
-    "config:rw",
-    "share:rw",
-    "ssl"
-  ],
-  "host_network": false,
-  "apparmor": unconfined
+  "map": ["config:rw", "share:rw", "ssl"]
 }
