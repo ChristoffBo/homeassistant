@@ -84,12 +84,21 @@ log_debug() {
 # ======================
 initialize() {
     # Check for required commands
-    for cmd in jq sponge lastversion; do
+    for cmd in jq git lastversion; do
         if ! command -v "$cmd" >/dev/null; then
             log_error "Required command '$cmd' not found. Please install it first."
             exit 1
         fi
     done
+
+    # Check for sponge (from moreutils package)
+    if ! command -v sponge >/dev/null; then
+        log_info "Installing moreutils package for sponge command..."
+        if ! apk add --no-cache moreutils >/dev/null 2>&1; then
+            log_error "Failed to install moreutils package which provides 'sponge' command"
+            exit 1
+        fi
+    fi
 
     bashio::log.info "Starting $(lastversion --version)"
     
