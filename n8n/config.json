@@ -1,7 +1,7 @@
 {
   "name": "n8n Workflow Automation",
-  "version": "1.48.1",
-  "slug": "n8n_custom",
+  "version": "1.48.0",
+  "slug": "n8nio",
   "description": "n8n is an extendable workflow automation tool for connecting APIs and services.",
   "url": "https://n8nio/",
   "startup": "services",
