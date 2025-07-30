@@ -86,11 +86,11 @@ install_dependencies() {
     log_info "Checking and installing required dependencies..."
     
     # Install required packages
-    local packages=("jq" "git" "curl" "moreutils")
+    local packages=("jq" "git" "curl" "moreutils" "py3-pip")
     local missing_packages=()
     
     for pkg in "${packages[@]}"; do
-        if ! command -v "$pkg" >/dev/null; then
+        if ! command -v "$pkg" >/dev/null 2>&1; then
             missing_packages+=("$pkg")
         fi
     done
@@ -104,17 +104,20 @@ install_dependencies() {
     fi
     
     # Install lastversion specifically
-    if ! command -v lastversion >/dev/null; then
+    if ! command -v lastversion >/dev/null 2>&1; then
         log_info "Installing lastversion..."
         if ! pip install --no-cache-dir lastversion >/dev/null 2>&1; then
-            log_error "Failed to install lastversion. Please ensure Python and pip are available."
-            exit 1
+            log_error "Failed to install lastversion. Trying with python3-pip..."
+            if ! apk add --no-cache python3 py3-pip && pip install lastversion >/dev/null 2>&1; then
+                log_error "Failed to install lastversion after retry"
+                exit 1
+            fi
         fi
     fi
     
     # Verify all required commands are now available
     for cmd in jq git lastversion; do
-        if ! command -v "$cmd" >/dev/null; then
+        if ! command -v "$cmd" >/dev/null 2>&1; then
             log_error "Required command '$cmd' still not found after installation attempts"
             exit 1
         fi
@@ -127,7 +130,7 @@ install_dependencies() {
 initialize() {
     install_dependencies
     
-    bashio::log.info "Starting $(lastversion --version)"
+    log_info "Starting $(lastversion --version)"
     
     if bashio::config.true "dry_run"; then
         DRY_RUN=true
