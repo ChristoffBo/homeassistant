@@ -75,15 +75,7 @@ Supported Docker Registries
 
     GitHub Container Registry (GHCR)
 
-Contributing
 
-Contributions are very welcome! 🙌
-
-    Feel free to submit issues for bugs or feature requests.
-
-    Open pull requests with improvements, bug fixes, or new addons.
-
-    Follow conventional commit messages to keep the repo history clean.
 
 License
 
