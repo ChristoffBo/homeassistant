@@ -1,29 +1,36 @@
 {
-  "name": "n8n",
-  "version": "1.48.0",
-  "slug": "n8nio",
-  "description": "Extendable workflow automation tool for connecting APIs and services.",
+  "name": "n8n Workflow Automation",
+  "version": "1.48.1",
+  "slug": "n8n_custom",
+  "description": "n8n is an extendable workflow automation tool for connecting APIs and services.",
   "url": "https://n8n.io/",
-  "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "host_network": false,
+  "init": false,
+  "apparmor": false,
+  "image": "docker.io/n8nio/n8n:1.48.0",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "host_network": true,
+  "map": ["config:rw", "ssl", "share:rw", "addons:rw"],
   "options": {
-    "port": 5678,
     "timezone": "Europe/London",
-    "basic_auth_active": false,
-    "basic_auth_user": "",
-    "basic_auth_password": ""
+    "auth_user": "",
+    "auth_pass": ""
   },
   "schema": {
-    "port": "port",
     "timezone": "str",
-    "basic_auth_active": "bool",
-    "basic_auth_user": "str?",
-    "basic_auth_password": "str?"
+    "auth_user": "str?",
+    "auth_pass": "str?"
+  },
+  "environment": {
+    "N8N_PORT": "5678",
+    "N8N_HOST": "0.0.0.0",
+    "N8N_BASIC_AUTH_ACTIVE": "true",
+    "N8N_BASIC_AUTH_USER": "!auth_user",
+    "N8N_BASIC_AUTH_PASSWORD": "!auth_pass",
+    "TZ": "!timezone"
   },
   "ports": {
     "5678/tcp": 5678
-  },
-  "map": ["config:rw", "share:rw", "ssl"]
+  }
 }
