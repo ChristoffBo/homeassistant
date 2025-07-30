@@ -80,26 +80,53 @@ log_debug() {
 }
 
 # ======================
-# INITIALIZATION
+# UTILITY FUNCTIONS
 # ======================
-initialize() {
-    # Check for required commands
-    for cmd in jq git lastversion; do
-        if ! command -v "$cmd" >/dev/null; then
-            log_error "Required command '$cmd' not found. Please install it first."
-            exit 1
+install_dependencies() {
+    log_info "Checking and installing required dependencies..."
+    
+    # Install required packages
+    local packages=("jq" "git" "curl" "moreutils")
+    local missing_packages=()
+    
+    for pkg in "${packages[@]}"; do
+        if ! command -v "$pkg" >/dev/null; then
+            missing_packages+=("$pkg")
         fi
     done
-
-    # Check for sponge (from moreutils package)
-    if ! command -v sponge >/dev/null; then
-        log_info "Installing moreutils package for sponge command..."
-        if ! apk add --no-cache moreutils >/dev/null 2>&1; then
-            log_error "Failed to install moreutils package which provides 'sponge' command"
+    
+    if [ ${#missing_packages[@]} -gt 0 ]; then
+        log_info "Installing missing packages: ${missing_packages[*]}"
+        if ! apk add --no-cache "${missing_packages[@]}" >/dev/null 2>&1; then
+            log_error "Failed to install required packages"
             exit 1
         fi
     fi
+    
+    # Install lastversion specifically
+    if ! command -v lastversion >/dev/null; then
+        log_info "Installing lastversion..."
+        if ! pip install --no-cache-dir lastversion >/dev/null 2>&1; then
+            log_error "Failed to install lastversion. Please ensure Python and pip are available."
+            exit 1
+        fi
+    fi
+    
+    # Verify all required commands are now available
+    for cmd in jq git lastversion; do
+        if ! command -v "$cmd" >/dev/null; then
+            log_error "Required command '$cmd' still not found after installation attempts"
+            exit 1
+        fi
+    done
+}
 
+# ======================
+# INITIALIZATION
+# ======================
+initialize() {
+    install_dependencies
+    
     bashio::log.info "Starting $(lastversion --version)"
     
     if bashio::config.true "dry_run"; then
@@ -260,6 +287,18 @@ git_pull_with_recovery() {
         send_notification "Add-on Updater Error" "Failed to pull repository $GITHUB_REPO after recovery attempts" 5
         return 1
     fi
+}
+
+log_repo_status() {
+    if ! cd "$REPO_DIR"; then
+        log_error "Failed to enter repository directory"
+        return
+    fi
+    
+    log_info "Current HEAD: $(git rev-parse --short HEAD)"
+    log_info "Branch: $(git rev-parse --abbrev-ref HEAD)"
+    log_info "Status:"
+    git status --short | tee -a "$LOG_FILE"
 }
 
 # ======================
