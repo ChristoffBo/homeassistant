@@ -29,5 +29,6 @@
     "share:rw",
     "ssl"
   ],
-  "host_network": false
+  "host_network": false,
+  "apparmor": false
 }
