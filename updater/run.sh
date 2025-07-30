@@ -1,5 +1,4 @@
 #!/usr/bin/with-contenv bashio
-#!/usr/bin/env bash
 # shellcheck shell=bash
 set -eo pipefail
 
