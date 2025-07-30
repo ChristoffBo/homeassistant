@@ -7,7 +7,6 @@
   "startup": "services",
   "boot": "auto",
   "init": false,
-  "apparmor": false,
   "image": "docker.io/n8nio/n8n:1.48.0",
   "arch": ["amd64", "armv7", "aarch64"],
   "host_network": true,
