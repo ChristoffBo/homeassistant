@@ -12,19 +12,13 @@ RUN apk add --no-cache \
     bash \
     jq \
     curl \
-    tzdata \
-    py3-requests \
-    py3-semantic-version
+    tzdata
 
 # Copy root filesystem
 COPY rootfs /
 
 # Set entrypoint
 ENTRYPOINT ["/init"]
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s \
-    CMD curl -f http://localhost/health || exit 1
 
 # Labels
 LABEL \
