@@ -3,5 +3,5 @@
 # Change to app directory
 cd /app || exit
 
-# Run the application
+# Execute main.py directly (not as module)
 exec python3 /app/main.py
