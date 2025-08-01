@@ -1,48 +1,23 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Assistant Pro</title>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
     <div class="app-container">
-        <header class="app-header">
-            <h1>AI Assistant Pro</h1>
-            <div class="model-selector">
-                <select id="model-select">
-                    <option value="chatgpt-free">ChatGPT 3.5 (Free)</option>
-                    <option value="chatgpt-paid">ChatGPT 4 (Paid)</option>
-                    <option value="deepseek-free">DeepSeek Chat (Free)</option>
-                    <option value="deepseek-paid">DeepSeek Coder (Paid)</option>
-                </select>
-            </div>
-        </header>
-
+        <h1>AI Assistant Pro</h1>
         <div class="chat-container" id="chat-window"></div>
-
-        <div class="input-container">
-            <textarea id="user-input" placeholder="Type your message..."></textarea>
-            <button id="send-button">
-                <i class="material-icons">send</i>
-            </button>
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Type your message...">
+            <button id="send-button">Send</button>
         </div>
-
         <div class="action-buttons">
-            <button id="copy-button">
-                <i class="material-icons">content_copy</i> Copy
-            </button>
-            <button id="download-button">
-                <i class="material-icons">file_download</i> Download
-            </button>
-            <button id="github-button">
-                <i class="material-icons">save</i> Save to GitHub
-            </button>
+            <button id="copy-btn">Copy Chat</button>
+            <button id="download-btn">Download</button>
         </div>
     </div>
-
-    <script src="/static/script.js"></script>
+    <script src="/static/js/app.js"></script>
 </body>
 </html>
