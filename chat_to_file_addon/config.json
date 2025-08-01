@@ -8,8 +8,8 @@
   "boot": "auto",
   "options": {
     "output_dir": "/share/chat_to_file",
-    "openai_key": "free-tier-key-123",  // Replace with actual free-tier key
-    "deepseek_key": "free-tier-key-456" // Replace with actual free-tier key
+    "openai_key": "free-tier-key-123",  
+    "deepseek_key": "free-tier-key-456" 
   },
   "schema": {
     "output_dir": "str",
