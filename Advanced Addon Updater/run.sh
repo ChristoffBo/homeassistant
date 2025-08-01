@@ -9,7 +9,7 @@ if [ -d "/config/.ssh" ]; then
     chmod 700 /root/.ssh
 fi
 
-# Export Supervisor token for notifications
+# Export Supervisor token
 export SUPERVISOR_TOKEN=$(bashio::supervisor.token)
 
 # Run Python updater
