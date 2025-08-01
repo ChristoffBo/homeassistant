@@ -4,4 +4,4 @@
 source /venv/bin/activate
 
 cd /app || exit
-exec python3 -m app.main
+exec python3 main.py
