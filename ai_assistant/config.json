@@ -1,33 +1,27 @@
 {
-  "name": "AI Assistant Pro",
-  "version": "2.2",
+  "name": "AI Assistant",
+  "version": "3.0",
   "slug": "ai_assistant",
-  "description": "Multi-model AI with GitHub export",
+  "description": "Stable version with PID 1 fix",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
-  "options": {
-    "port": 5000,
-    "default_model": "chatgpt-free",
-    "chatgpt_api_key": "",
-    "deepseek_api_key": "",
-    "github_token": "",
-    "github_repo": ""
-  },
-  "schema": {
-    "port": "int(1,65535)",
-    "default_model": "match(chatgpt-free|chatgpt-paid|deepseek-free|deepseek-paid)",
-    "chatgpt_api_key": "str?",
-    "deepseek_api_key": "str?",
-    "github_token": "str?",
-    "github_repo": "str?"
-  },
+  "init": false,
   "ports": {
     "5000/tcp": 5000
   },
+  "map": ["config:rw"],
+  "options": {
+    "openai_key": "",
+    "github_token": ""
+  },
+  "schema": {
+    "openai_key": "str?",
+    "github_token": "str?"
+  },
   "webui": "http://[HOST]:[PORT:5000]",
-  "panel_icon": "mdi:robot",
-  "panel_title": "AI Assistant",
   "ingress": true,
-  "ingress_port": 5000
+  "ingress_port": 5000,
+  "panel_icon": "mdi:robot",
+  "panel_title": "AI Assistant"
 }
