@@ -1,7 +1,4 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/with-contenv sh
 
-# Activate virtual environment
-source /venv/bin/activate
-
-# Start the application through s6
-exec /venv/bin/python /app/main.py
+# IMPORTANT: Use absolute path to Python
+exec /usr/bin/python3 /app/main.py
