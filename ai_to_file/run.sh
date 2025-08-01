@@ -1,7 +1,7 @@
 #!/usr/bin/with-contenv bashio
 
-# Activate virtual environment
-source /venv/bin/activate
-
+# Change to app directory
 cd /app || exit
-exec python3 main.py
+
+# Run the application
+exec python3 /app/main.py
