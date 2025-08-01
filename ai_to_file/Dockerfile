@@ -1,17 +1,21 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
-WORKDIR /app
+# Create and activate virtual environment first
+RUN apk add --no-cache python3 && \
+    python3 -m venv /venv && \
+    /venv/bin/pip install --upgrade pip
 
-# Install Python and pip
-RUN apk add --no-cache python3 py3-pip
+WORKDIR /app
 
 # Copy application files
 COPY app /app
 COPY run.sh /
 
-# Install requirements if they exist
-RUN if [ -f /app/requirements.txt ]; then pip install --no-cache-dir -r /app/requirements.txt; fi
+# Install requirements in venv
+RUN if [ -f /app/requirements.txt ]; then \
+    /venv/bin/pip install --no-cache-dir -r /app/requirements.txt; \
+    fi
 
 # Set executable permissions
 RUN chmod a+x /run.sh
