@@ -1,1 +1,25 @@
-
+{
+  "name": "AI Chat to File",
+  "version": "1.0.0",
+  "slug": "chat_to_file",
+  "description": "Uses free-tier ChatGPT/DeepSeek APIs by default",
+  "arch": ["amd64", "armhf", "armv7", "aarch64"],
+  "startup": "application",
+  "boot": "auto",
+  "options": {
+    "output_dir": "/share/chat_to_file",
+    "openai_key": "free-tier-key-123",  // Replace with actual free-tier key
+    "deepseek_key": "free-tier-key-456" // Replace with actual free-tier key
+  },
+  "schema": {
+    "output_dir": "str",
+    "openai_key": "str?",
+    "deepseek_key": "str?"
+  },
+  "ports": {
+    "5000/tcp": 5000
+  },
+  "map": ["share:rw"],
+  "panel_icon": "mdi:robot",
+  "panel_title": "AI Chat to File"
+}
