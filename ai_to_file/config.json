@@ -1,1 +1,30 @@
-
+{
+  "name": "AI to File",
+  "version": "2.1.0",
+  "slug": "ai_to_file",
+  "description": "Chat with AI models and export conversations",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "startup": "application",
+  "boot": "auto",
+  "options": {
+    "port": 5000,
+    "default_model": "chatgpt",
+    "chatgpt_api_key": "",
+    "deepseek_api_key": ""
+  },
+  "schema": {
+    "port": "int(1,65535)",
+    "default_model": "match(chatgpt|deepseek)",
+    "chatgpt_api_key": "str?",
+    "deepseek_api_key": "str?"
+  },
+  "ports": {
+    "5000/tcp": 5000
+  },
+  "ports_description": {
+    "5000/tcp": "Web interface port"
+  },
+  "webui": "http://[HOST]:[PORT:5000]",
+  "ingress": true,
+  "ingress_port": 5000
+}
