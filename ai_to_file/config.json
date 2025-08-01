@@ -1,6 +1,6 @@
 {
   "name": "AI to File",
-  "version": "2.1.0",
+  "version": "1.0.0",
   "slug": "ai_to_file",
   "description": "Chat with AI models and export conversations to files",
   "arch": ["amd64", "armv7", "aarch64"],
@@ -25,11 +25,11 @@
     "default_model": "match(chatgpt|deepseek)",
     "apis": {
       "chatgpt": {
-        "type": "match(free|pro|custom)",
+        "type": "str",
         "api_key": "str?"
       },
       "deepseek": {
-        "type": "match(free|pro|custom)",
+        "type": "str",
         "api_key": "str?"
       }
     }
