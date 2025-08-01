@@ -1,9 +1,11 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
-# Create virtual environment first
-RUN apk add --no-cache python3 && \
-    python3 -m venv /venv && \
+# Install Python (no pip - we'll use venv)
+RUN apk add --no-cache python3
+
+# Create virtual environment
+RUN python3 -m venv /venv && \
     /venv/bin/pip install --upgrade pip
 
 WORKDIR /app
@@ -16,10 +18,10 @@ RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
 COPY app /app
 COPY run.sh /
 
-# Correct permissions for s6
+# Set permissions
 RUN chmod a+x /run.sh && \
-    chmod -R a+x /app
+    chown -R root:root /app && \
+    chmod -R 755 /app
 
-# s6-overlay compatible init
+# s6-overlay entrypoint
 ENTRYPOINT ["/init"]
-CMD ["/run.sh"]
