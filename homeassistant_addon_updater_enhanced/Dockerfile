@@ -13,12 +13,15 @@ RUN apk add --no-cache \
     jq \
     curl \
     python3 \
-    py3-pip \
     tzdata
 
-# Install Python dependencies
+# Create virtual environment
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+# Install Python dependencies in virtual environment
 COPY requirements.txt /tmp/
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Copy root filesystem
 COPY rootfs /
