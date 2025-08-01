@@ -1,22 +1,30 @@
+# Home Assistant base image
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install dependencies
+# Install system dependencies
 RUN apk add --no-cache \
     python3 \
     py3-pip \
     git \
-    nginx
+    build-base \
+    python3-dev
 
-# Copy files
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    flask \
+    gunicorn \
+    python-dotenv
+
+# Copy application files
 COPY rootfs /
 
-# Set up Python
-RUN pip install --no-cache-dir flask gunicorn
+# Set working directory
+WORKDIR /app
 
-# Configure nginx for ingress
-RUN rm /etc/nginx/http.d/default.conf
-COPY nginx.conf /etc/nginx/http.d/ingress.conf
+# Set environment variables
+ENV FLASK_APP=main.py
+ENV FLASK_ENV=production
 
-# Start script
-CMD [ "/init" ]
+# Run Gunicorn (WSGI server)
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "main:app"]
