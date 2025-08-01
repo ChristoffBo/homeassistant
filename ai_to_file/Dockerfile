@@ -1,15 +1,19 @@
-FROM python:3.9-slim
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
+FROM $BUILD_FROM
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Copy required files
+COPY run.sh /
+COPY app /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN apk add --no-cache python3 py3-pip && \
+    pip install --no-cache-dir -r /app/requirements.txt
 
-COPY . .
+# Set Python path
+ENV PYTHONPATH=/app
 
-CMD [ "python", "./app/main.py" ]
+RUN chmod a+x /run.sh
+
+CMD [ "/run.sh" ]
