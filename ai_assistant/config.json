@@ -1,8 +1,8 @@
 {
-  "name": "AI Assistant",
-  "version": "3.0",
-  "slug": "ai_assistant",
-  "description": "Stable version with PID 1 fix",
+  "name": "AI Assistant Pro",
+  "version": "3.2",
+  "slug": "ai_assistant_pro",
+  "description": "Stable AI Assistant with PID 1 Fix",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
@@ -10,7 +10,10 @@
   "ports": {
     "5000/tcp": 5000
   },
-  "map": ["config:rw"],
+  "ingress": true,
+  "ingress_port": 5000,
+  "panel_icon": "mdi:robot-happy",
+  "panel_title": "AI Assistant",
   "options": {
     "openai_key": "",
     "github_token": ""
@@ -18,10 +21,5 @@
   "schema": {
     "openai_key": "str?",
     "github_token": "str?"
-  },
-  "webui": "http://[HOST]:[PORT:5000]",
-  "ingress": true,
-  "ingress_port": 5000,
-  "panel_icon": "mdi:robot",
-  "panel_title": "AI Assistant"
+  }
 }
