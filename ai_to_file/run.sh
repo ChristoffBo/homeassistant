@@ -3,8 +3,6 @@
 # Activate virtual environment
 source /venv/bin/activate
 
-# Change to app directory
+# Change to app directory and run main.py directly
 cd /app || exit
-
-# Execute main.py
-exec python3 main.py
+exec python3 /app/main.py
