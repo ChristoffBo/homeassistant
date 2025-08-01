@@ -3,22 +3,17 @@ FROM $BUILD_FROM
 
 WORKDIR /app
 
-# Install Python and create virtual environment
-RUN apk add --no-cache python3 py3-pip && \
-    python3 -m venv /venv && \
-    /venv/bin/pip install --no-cache-dir --upgrade pip
+# Install Python only (no pip)
+RUN apk add --no-cache python3
 
-# Install requirements
-COPY requirements.txt .
-RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
-
-# Copy application
+# Copy application files
 COPY app /app
 COPY run.sh /
 
-# Set permissions
+# Critical permissions
 RUN chmod a+x /run.sh && \
     chmod -R 755 /app && \
     chown -R root:root /app
 
+# s6-overlay entrypoint (MUST be /init)
 ENTRYPOINT ["/init"]
