@@ -1,1 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Chat to File (Free-Tier)</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h2>AI Chat to File</h2>
+        <p class="notice">Using free-tier APIs by default</p>
+        
+        {% if error %}
+            <p class="error">{{ error }}</p>
+        {% endif %}
+        {% if saved_file %}
+            <p class="success">✅ Saved to <code>{{ saved_file }}</code></p>
+        {% endif %}
 
+        <form method="POST">
+            <textarea name="user_input" placeholder="Ask the AI something..." required></textarea>
+            
+            <div class="options">
+                <label>AI:</label>
+                <select name="ai_choice">
+                    <option value="chatgpt">ChatGPT (Free Tier)</option>
+                    <option value="deepseek">DeepSeek (Free Tier)</option>
+                </select>
+            </div>
+
+            <div class="actions">
+                <button type="submit" name="action" value="ask">Ask AI</button>
+                <button type="submit" name="action" value="save">Save to File</button>
+                <button type="submit" name="action" value="download">Download</button>
+            </div>
+        </form>
+
+        {% if response %}
+            <pre class="response">{{ response }}</pre>
+        {% endif %}
+    </div>
+</body>
+</html>
