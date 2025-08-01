@@ -1,4 +1,12 @@
 #!/usr/bin/with-contenv sh
 
-# IMPORTANT: Use absolute path to Python
-exec /usr/bin/python3 /app/main.py
+# Activate virtual environment
+. /venv/bin/activate
+
+# Start application as PID 1
+exec gunicorn \
+    --bind 0.0.0.0:5000 \
+    --worker-class sync \
+    --threads 1 \
+    --timeout 120 \
+    app.main:app
