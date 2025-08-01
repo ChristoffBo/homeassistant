@@ -1,8 +1,7 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/with-contenv sh
 
-# Activate virtual environment
-source /venv/bin/activate
+# Activate venv
+. /venv/bin/activate
 
-# Start the application
-cd /app
-exec python3 -m app.main
+# Execute as PID 1 through s6
+exec /venv/bin/python -m app.main
