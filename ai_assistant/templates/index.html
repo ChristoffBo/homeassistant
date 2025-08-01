@@ -1,49 +1,82 @@
-<!DOCTYPE html>  
-<html lang="en">  
-<head>  
-  <meta charset="UTF-8">  
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">  
-  <title>AI Assistant</title>  
-  <link rel="stylesheet" href="/local/styles.css">  
-  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">  
-</head>  
-<body>  
-  <div class="app-container">  
-    <!-- Header -->  
-    <header class="app-header">  
-      <h1>AI Assistant</h1>  
-      <div class="mode-tabs">  
-        <button class="mode-btn active" data-mode="chat">  
-          <i class="material-icons">chat</i>  
-          <span>Chat</span>  
-        </button>  
-        <button class="mode-btn" data-mode="code">  
-          <i class="material-icons">code</i>  
-          <span>Code</span>  
-        </button>  
-        <button class="mode-btn" data-mode="teach">  
-          <i class="material-icons">school</i>  
-          <span>Teach</span>  
-        </button>  
-      </div>  
-    </header>  
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant Pro</title>
+    <link rel="stylesheet" href="/local/styles.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header with mode tabs -->
+        <header class="app-header">
+            <h1>AI Assistant Pro</h1>
+            <div class="mode-tabs">
+                <button class="mode-tab active" data-mode="chat">
+                    <i class="material-icons">chat</i>
+                    <span>Chat</span>
+                </button>
+                <button class="mode-tab" data-mode="code">
+                    <i class="material-icons">code</i>
+                    <span>Code</span>
+                </button>
+                <button class="mode-tab" data-mode="teach">
+                    <i class="material-icons">school</i>
+                    <span>Teach</span>
+                </button>
+            </div>
+        </header>
 
-    <!-- Content Areas -->  
-    <main class="content-area">  
-      <div id="mode-chat" class="mode-content">  
-        <iframe src="/local/templates/chat.html" title="Chat Interface"></iframe>  
-      </div>  
-      
-      <div id="mode-code" class="mode-content" style="display:none">  
-        <iframe src="/local/templates/code.html" title="Code Editor"></iframe>  
-      </div>  
-      
-      <div id="mode-teach" class="mode-content" style="display:none">  
-        <iframe src="/local/templates/teach.html" title="Lesson Planner"></iframe>  
-      </div>  
-    </main>  
-  </div>  
+        <!-- Main content area -->
+        <main class="content-area">
+            <!-- Chat mode -->
+            <div id="mode-chat" class="mode-content">
+                <div class="chat-container">
+                    <div id="chat-history" class="chat-history"></div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chat-input" placeholder="Type your message...">
+                        <button id="chat-send">
+                            <i class="material-icons">send</i>
+                        </button>
+                    </div>
+                </div>
+            </div>
 
-  <script src="/local/app.js"></script>  
-</body>  
-</html>  
+            <!-- Code mode -->
+            <div id="mode-code" class="mode-content" style="display:none">
+                <div class="code-container">
+                    <textarea id="code-editor" spellcheck="false"></textarea>
+                    <div class="code-actions">
+                        <button id="code-push">
+                            <i class="material-icons">publish</i>
+                            Push to Git
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Teaching mode -->
+            <div id="mode-teach" class="mode-content" style="display:none">
+                <div class="teach-container">
+                    <div class="lesson-controls">
+                        <select id="lesson-type">
+                            <option value="grammar">Grammar</option>
+                            <option value="vocabulary">Vocabulary</option>
+                            <option value="conversation">Conversation</option>
+                        </select>
+                        <input type="text" id="lesson-topic" placeholder="Lesson topic">
+                        <button id="lesson-generate">
+                            <i class="material-icons">auto_awesome</i>
+                            Generate
+                        </button>
+                    </div>
+                    <div id="lesson-output" class="lesson-output"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/local/app.js"></script>
+</body>
+</html>
