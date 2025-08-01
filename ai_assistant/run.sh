@@ -1,15 +1,4 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/with-contenv sh
 
-# Activate virtual environment
-source /venv/bin/activate
-
-# Start Gunicorn with ingress support
-exec gunicorn \
-    --bind 0.0.0.0:5000 \
-    --worker-class sync \
-    --workers 1 \
-    --timeout 120 \
-    --access-logfile - \
-    --error-logfile - \
-    --forwarded-allow-ips="*" \
-    app.main:app
+# Start Python directly as PID 1
+exec /usr/bin/python3 /app/main.py
