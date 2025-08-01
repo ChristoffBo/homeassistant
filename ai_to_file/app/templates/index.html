@@ -1,1 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI to File</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <img src="https://brands.home-assistant.io/_/homeassistant/icon.png" alt="Logo" class="logo">
+            <h1>AI to File</h1>
+            
+            <div class="model-selector">
+                <label for="model-selector">Model:</label>
+                <select id="model-selector">
+                    {% for key, value in models.items() %}
+                        <option value="{{ key }}" {% if key == current_model %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </header>
+        
+        <div class="chat-container">
+            <div class="chat-messages" id="chat-messages">
+                <!-- Messages will appear here -->
+            </div>
+            
+            <div class="input-area">
+                <textarea id="user-input" placeholder="Type your message..." rows="1"></textarea>
+                <button id="send-button">Send</button>
+            </div>
+        </div>
+    </div>
 
+    <!-- Config Modal -->
+    <div id="config-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>API Configuration</h2>
+            
+            <div class="form-group">
+                <label>Default Model:</label>
+                <select id="default-model">
+                    {% for key, value in models.items() %}
+                        <option value="{{ key }}" {% if key == current_model %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <h3>ChatGPT API</h3>
+            <div class="form-group">
+                <label>API Type:</label>
+                <select id="chatgpt-api-type">
+                    <option value="free" {% if api_config.chatgpt.type == 'free' %}selected{% endif %}>Free Tier</option>
+                    <option value="pro" {% if api_config.chatgpt.type == 'pro' %}selected{% endif %}>Pro (API Key)</option>
+                    <option value="custom" {% if api_config.chatgpt.type == 'custom' %}selected{% endif %}>Custom Endpoint</option>
+                </select>
+            </div>
+            <div class="form-group" id="chatgpt-api-key-group">
+                <label for="chatgpt-api-key">API Key:</label>
+                <input type="password" id="chatgpt-api-key" value="{{ api_config.chatgpt.api_key }}">
+            </div>
+            
+            <h3>DeepSeek API</h3>
+            <div class="form-group">
+                <label>API Type:</label>
+                <select id="deepseek-api-type">
+                    <option value="free" {% if api_config.deepseek.type == 'free' %}selected{% endif %}>Free Tier</option>
+                    <option value="pro" {% if api_config.deepseek.type == 'pro' %}selected{% endif %}>Pro (API Key)</option>
+                    <option value="custom" {% if api_config.deepseek.type == 'custom' %}selected{% endif %}>Custom Endpoint</option>
+                </select>
+            </div>
+            <div class="form-group" id="deepseek-api-key-group">
+                <label for="deepseek-api-key">API Key:</label>
+                <input type="password" id="deepseek-api-key" value="{{ api_config.deepseek.api_key }}">
+            </div>
+            
+            <button id="save-config">Save Configuration</button>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+    <script>
+        // Config modal functionality
+        const modal = document.getElementById('config-modal');
+        const configBtn = document.createElement('button');
+        configBtn.id = 'config-button';
+        configBtn.innerHTML = '<i class="fas fa-cog"></i> Settings';
+        
+        document.querySelector('header').appendChild(configBtn);
+        
+        configBtn.onclick = function() {
+            modal.style.display = 'block';
+        }
+        
+        document.querySelector('.close').onclick = function() {
+            modal.style.display = 'none';
+        }
+        
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+        
+        // API type change handlers
+        document.getElementById('chatgpt-api-type').addEventListener('change', function() {
+            document.getElementById('chatgpt-api-key-group').style.display = 
+                this.value === 'free' ? 'none' : 'block';
+        });
+        
+        document.getElementById('deepseek-api-type').addEventListener('change', function() {
+            document.getElementById('deepseek-api-key-group').style.display = 
+                this.value === 'free' ? 'none' : 'block';
+        });
+        
+        // Initialize visibility
+        document.getElementById('chatgpt-api-key-group').style.display = 
+            document.getElementById('chatgpt-api-type').value === 'free' ? 'none' : 'block';
+        document.getElementById('deepseek-api-key-group').style.display = 
+            document.getElementById('deepseek-api-type').value === 'free' ? 'none' : 'block';
+        
+        // Save config
+        document.getElementById('save-config').addEventListener('click', async function() {
+            const config = {
+                port: 5000,
+                default_model: document.getElementById('default-model').value,
+                chatgpt_api_type: document.getElementById('chatgpt-api-type').value,
+                chatgpt_api_key: document.getElementById('chatgpt-api-key').value,
+                deepseek_api_type: document.getElementById('deepseek-api-type').value,
+                deepseek_api_key: document.getElementById('deepseek-api-key').value
+            };
+            
+            try {
+                const response = await fetch('/api/update_config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(config)
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    alert('Configuration saved successfully!');
+                    modal.style.display = 'none';
+                    location.reload();
+                } else {
+                    alert('Error saving config: ' + (result.message || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Failed to save configuration: ' + error.message);
+            }
+        });
+    </script>
+</body>
+</html>
