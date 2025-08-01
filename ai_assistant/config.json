@@ -1,14 +1,14 @@
 {
   "name": "AI Assistant Pro",
-  "version": "3.6",
+  "version": "4.1",
   "slug": "ai_assistant_pro",
-  "description": "Fixed 502 Gateway Version",
+  "description": "Complete working version with all features",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
   "init": false,
   "ports": {
-    "5000/tcp": 5000
+    "5000/tcp": null
   },
   "ingress": true,
   "ingress_port": 5000,
@@ -17,11 +17,13 @@
   "options": {
     "openai_key": "",
     "deepseek_key": "",
-    "github_token": ""
+    "github_token": "",
+    "default_model": "chatgpt-free"
   },
   "schema": {
     "openai_key": "str?",
     "deepseek_key": "str?",
-    "github_token": "str?"
+    "github_token": "str?",
+    "default_model": "match(chatgpt-free|chatgpt-paid|deepseek-free|deepseek-paid)"
   }
 }
