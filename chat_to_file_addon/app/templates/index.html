@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI Chat to File</title>
+    <title>Chat to File</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="container">
-        <h2>AI Chat to File</h2>
+        <h2>Chat to File</h2>
         {% if error %}
             <p class="error">{{ error }}</p>
         {% endif %}
@@ -15,30 +15,14 @@
         {% endif %}
 
         <form method="POST">
-            <textarea name="user_input" placeholder="Ask the AI something..." required></textarea>
-            
-            <div class="options">
-                <label>AI:</label>
-                <select name="ai_choice">
-                    <option value="chatgpt">ChatGPT</option>
-                    <option value="deepseek">DeepSeek</option>
-                </select>
-            </div>
-
-            <div class="actions">
-                <button type="submit" name="action" value="ask">Ask AI</button>
-                <button type="submit" name="action" value="save">Save to File</button>
-                <button type="submit" name="action" value="download">Download</button>
-            </div>
-
-            <div id="filename-group">
-                <label>Filename (without extension):</label>
-                <input type="text" name="filename" placeholder="custom_name">
-            </div>
+            <textarea name="user_input" placeholder="Type your message..." required></textarea><br>
+            <button type="submit" name="action" value="ask">Ask AI</button>
+            <button type="submit" name="action" value="save">Save to File</button>
+            <button type="submit" name="action" value="download">Download</button>
         </form>
 
         {% if response %}
-            <pre class="response">{{ response }}</pre>
+            <pre>{{ response }}</pre>
         {% endif %}
     </div>
 </body>
