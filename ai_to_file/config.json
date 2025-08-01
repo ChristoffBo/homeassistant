@@ -9,30 +9,18 @@
   "options": {
     "port": 5000,
     "default_model": "chatgpt",
-    "apis": {
-      "chatgpt": {
-        "type": "free",
-        "api_key": ""
-      },
-      "deepseek": {
-        "type": "free",
-        "api_key": ""
-      }
-    }
+    "chatgpt_type": "free",
+    "chatgpt_api_key": "",
+    "deepseek_type": "free",
+    "deepseek_api_key": ""
   },
   "schema": {
     "port": "int(1,65535)",
     "default_model": "match(chatgpt|deepseek)",
-    "apis": {
-      "chatgpt": {
-        "type": "str",
-        "api_key": "str?"
-      },
-      "deepseek": {
-        "type": "str",
-        "api_key": "str?"
-      }
-    }
+    "chatgpt_type": "match(free|pro|custom)",
+    "chatgpt_api_key": "str?",
+    "deepseek_type": "match(free|pro|custom)",
+    "deepseek_api_key": "str?"
   },
   "ports": {
     "5000/tcp": 5000
