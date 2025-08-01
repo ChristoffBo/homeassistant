@@ -1,7 +1,8 @@
 #!/usr/bin/with-contenv bashio
 
-# Change to app directory
-cd /app || exit
+# Start NGINX in background
+nginx
 
-# Execute main.py directly
-exec python3 main.py
+# Start Python application
+cd /app || exit
+exec python3 -m app.main
