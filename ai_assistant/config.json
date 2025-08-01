@@ -1,50 +1,32 @@
 {
   "name": "AI Assistant",
-  "version": "4.3.1",
+  "version": "1.0.0",
   "slug": "ai_assistant",
-  "description": "AI Assistant with PID-1 compatibility fixes",
+  "description": "Cloud AI Assistant (OpenAI/DeepSeek API)",
   "arch": ["amd64", "armv7", "aarch64"],
-  "startup": "system",
+  "startup": "application",
   "boot": "auto",
-  "init": true,
-  "pid": "host",
-  "host_network": false,
-  "host_pid": false,
-  "host_ipc": false,
-  "host_dbus": false,
-  "privileged": [],
-  "full_access": false,
-  "apparmor": false,
-  "devices": [],
-  "auto_uart": false,
-  "ports": {
-    "5000/tcp": 5000
-  },
-  "ports_description": {
-    "5000/tcp": "Web interface"
-  },
   "ingress": true,
   "ingress_port": 5000,
-  "ingress_entry": "/",
   "panel_icon": "mdi:robot",
   "panel_title": "AI Assistant",
-  "panel_admin": false,
-  "environment": {
-    "S6_CMD_WAIT_FOR_SERVICES": "1",
-    "S6_CMD_WAIT_FOR_SERVICES_MAXTIME": "30000",
-    "S6_SERVICES_GRACETIME": "30000"
-  },
-  "map": ["config:rw"],
   "options": {
-    "openai_key": "",
-    "model": "gpt-3.5-turbo",
-    "api_base": "https://api.openai.com/v1",
-    "temperature": 0.7
+    "provider": "openai",  // "openai" or "deepseek"
+    "api_key": "your-api-key-here",
+    "api_base": "https://api.openai.com/v1",  // For DeepSeek: "https://api.deepseek.com/v1"
+    "model": "gpt-3.5-turbo",  // For DeepSeek: "deepseek-chat"
+    "temperature": 0.7,
+    "max_tokens": 512
   },
   "schema": {
-    "openai_key": "str?",
-    "model": "str?",
-    "api_base": "str?",
-    "temperature": "float(0,2)?"
+    "provider": "match(openai|deepseek)",
+    "api_key": "str",
+    "api_base": "str",
+    "model": "str",
+    "temperature": "float(0,2)?",
+    "max_tokens": "int(128,2048)?"
+  },
+  "environment": {
+    "LOG_LEVEL": "debug"
   }
 }
