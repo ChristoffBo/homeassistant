@@ -1,33 +1,33 @@
-{
-  "name": "AI Assistant Pro",
-  "version": "3.4.0",
-  "slug": "ai_assistant_pro",
-  "description": "Chat, code, and teach assistant with Git push",
-  "arch": ["amd64", "armv7", "aarch64"],
-  "startup": "application",
-  "boot": "auto",
-  "ingress": true,
-  "ingress_port": 5000,
-  "panel_icon": "mdi:robot",
-  "panel_title": "AI Assistant",
-  "options": {
-    "default_mode": "chat",
-    "code": {
-      "git_repo": "your_user/your_repo",
-      "git_branch": "main",
-      "git_token": "your_github_pat"
-    }
-  },
-  "schema": {
-    "default_mode": "match(chat|code|teach)",
-    "code": {
-      "git_repo": "str",
-      "git_branch": "str?",
-      "git_token": "str"
-    }
-  },
-  "map": ["config:rw"],
-  "environment": {
-    "LOG_LEVEL": "info"
-  }
-}
+{  
+  "name": "AI Assistant Pro",  
+  "version": "3.4.0",  
+  "slug": "ai_assistant_pro",  
+  "description": "Chat, code, and teach assistant with Git push",  
+  "arch": ["amd64", "armv7", "aarch64"],  
+  "startup": "application",  
+  "boot": "auto",  
+  "ingress": true,  
+  "ingress_port": 5000,  
+  "panel_icon": "mdi:robot",  
+  "panel_title": "AI Assistant",  
+  "options": {  
+    "default_mode": "chat",  
+    "code": {  
+      "git_repo": "your_user/your_repo",  
+      "git_branch": "main",  
+      "git_token": "your_github_pat"  
+    }  
+  },  
+  "schema": {  
+    "default_mode": "match(chat|code|teach)",  
+    "code": {  
+      "git_repo": "str",  
+      "git_branch": "str?",  
+      "git_token": "password"  
+    }  
+  },  
+  "map": ["config:rw"],  
+  "environment": {  
+    "LOG_LEVEL": "info"  
+  }  
+}  
