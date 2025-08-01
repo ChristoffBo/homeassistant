@@ -1,9 +1,8 @@
-# Changed to absolute import
-from api_clients import APIManager
+from api_clients import APIManager  # Absolute import
 
 def main():
     manager = APIManager()
-    # Your application logic here
+    # Your application logic
     print("Application started successfully!")
 
 if __name__ == "__main__":
