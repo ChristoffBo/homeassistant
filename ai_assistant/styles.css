@@ -1,1 +1,298 @@
 
+/* Base styles */
+:root {
+    --primary-color: #4285f4;
+    --secondary-color: #34a853;
+    --danger-color: #ea4335;
+    --light-bg: #f5f5f5;
+    --dark-bg: #202124;
+    --text-light: #ffffff;
+    --text-dark: #333333;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Roboto', sans-serif;
+    line-height: 1.6;
+    background-color: var(--light-bg);
+    color: var(--text-dark);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header styles */
+.app-header {
+    background-color: var(--primary-color);
+    color: var(--text-light);
+    padding: 1rem;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.app-header h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.mode-tabs {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.mode-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-light);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: background-color 0.2s;
+}
+
+.mode-tab:hover {
+    background-color: rgba(255,255,255,0.1);
+}
+
+.mode-tab.active {
+    background-color: rgba(255,255,255,0.2);
+}
+
+.mode-tab .material-icons {
+    font-size: 1.2rem;
+}
+
+/* Content area */
+.content-area {
+    flex: 1;
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+.mode-content {
+    height: 100%;
+    display: none;
+}
+
+/* Chat mode styles */
+.chat-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-history {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    background-color: white;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.message {
+    margin-bottom: 1rem;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    max-width: 80%;
+}
+
+.message.user {
+    background-color: var(--primary-color);
+    color: white;
+    margin-left: auto;
+}
+
+.message.ai {
+    background-color: #e9e9e9;
+    margin-right: auto;
+}
+
+.message .timestamp {
+    font-size: 0.7rem;
+    opacity: 0.7;
+    margin-bottom: 0.2rem;
+}
+
+.chat-input-area {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.chat-input-area input {
+    flex: 1;
+    padding: 0.8rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+.chat-input-area button {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.chat-input-area button:hover {
+    background-color: #3367d6;
+}
+
+/* Code mode styles */
+.code-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+#code-editor {
+    flex: 1;
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    padding: 1rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    resize: none;
+    background-color: #f8f8f8;
+}
+
+.code-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.code-actions button {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: background-color 0.2s;
+}
+
+.code-actions button:hover {
+    background-color: #2d9249;
+}
+
+/* Teaching mode styles */
+.teach-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.lesson-controls {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.lesson-controls select,
+.lesson-controls input {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.lesson-controls input {
+    flex: 1;
+}
+
+.lesson-controls button {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.lesson-output {
+    flex: 1;
+    padding: 1rem;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    overflow-y: auto;
+}
+
+.lesson-section {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #eee;
+}
+
+.lesson-section h3 {
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+.lesson-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.lesson-actions button {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.lesson-actions button:first-child {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+.lesson-actions button:last-child {
+    background-color: var(--secondary-color);
+    color: white;
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: var(--dark-bg);
+        color: var(--text-light);
+    }
+
+    .chat-history,
+    .lesson-output,
+    #code-editor {
+        background-color: #2d2d2d;
+        color: var(--text-light);
+    }
+
+    .message.ai {
+        background-color: #3d3d3d;
+    }
+
+    .chat-input-area input,
+    .lesson-controls select,
+    .lesson-controls input,
+    #code-editor {
+        background-color: #2d2d2d;
+        color: var(--text-light);
+        border-color: #444;
+    }
+}
