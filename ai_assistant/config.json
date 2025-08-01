@@ -1,15 +1,12 @@
 {
   "name": "AI Assistant Pro",
-  "version": "4.1",
+  "version": "4.2",
   "slug": "ai_assistant_pro",
-  "description": "Complete working version with all features",
+  "description": "Stable version without restart loops",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
   "init": false,
-  "ports": {
-    "5000/tcp": null
-  },
   "ingress": true,
   "ingress_port": 5000,
   "panel_icon": "mdi:robot-happy",
@@ -17,13 +14,11 @@
   "options": {
     "openai_key": "",
     "deepseek_key": "",
-    "github_token": "",
-    "default_model": "chatgpt-free"
+    "github_token": ""
   },
   "schema": {
     "openai_key": "str?",
     "deepseek_key": "str?",
-    "github_token": "str?",
-    "default_model": "match(chatgpt-free|chatgpt-paid|deepseek-free|deepseek-paid)"
+    "github_token": "str?"
   }
 }
