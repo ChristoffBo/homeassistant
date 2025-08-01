@@ -7,11 +7,12 @@ WORKDIR /app
 COPY run.sh /
 COPY app /app
 
-# Install Python dependencies
-RUN apk add --no-cache python3 py3-pip && \
-    pip install --no-cache-dir -r /app/requirements.txt
+# Install Python in a venv to avoid PEP 668 issues
+RUN apk add --no-cache python3 && \
+    python3 -m venv /venv && \
+    /venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-# Set Python path
+ENV PATH="/venv/bin:$PATH"
 ENV PYTHONPATH=/app
 
 RUN chmod a+x /run.sh
