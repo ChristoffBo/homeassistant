@@ -14,7 +14,7 @@ RUN python3 -m venv /venv && \
 COPY requirements.txt .
 RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Copy entire app including web assets
+# Copy application
 COPY app /app
 COPY run.sh /
 
@@ -22,5 +22,9 @@ COPY run.sh /
 RUN chmod a+x /run.sh && \
     chmod -R 755 /app && \
     chown -R root:root /app
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD wget --quiet --tries=1 --spider http://localhost:5000/health || exit 1
 
 ENTRYPOINT ["/init"]
