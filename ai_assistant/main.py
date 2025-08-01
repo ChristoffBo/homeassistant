@@ -56,4 +56,25 @@ def git_push():
 
             # Commit and push  
             subprocess.run(['git', '-C', tmp_dir, 'config', 'user.email', 'ai-assistant@homeassistant'], check=True)  
-            subprocess.run(['git', '-
+            subprocess.run(['git', '-C', tmp_dir, 'config', 'user.name', 'AI Assistant'], check=True)  
+            subprocess.run(['git', '-C', tmp_dir, 'add', '.'], check=True)  
+            subprocess.run([  
+                'git', '-C', tmp_dir,  
+                'commit', '-m', f"Add {data['filename']} via AI Assistant"  
+            ], check=True)  
+            subprocess.run([  
+                'git', '-C', tmp_dir,  
+                'push', 'origin', config['code'].get('git_branch', 'main')  
+            ], check=True)  
+
+        return jsonify({"status": "success"})  
+
+    except subprocess.CalledProcessError as e:  
+        logging.error(f"Git error: {e.stderr}")  
+        return jsonify({"error": f"Git operation failed: {e.stderr}"}), 500  
+    except Exception as e:  
+        logging.error(f"System error: {str(e)}", exc_info=True)  
+        return jsonify({"error": "Internal server error"}), 500  
+
+if __name__ == '__main__':  
+    app.run(host='0.0.0.0', port=5000, threaded=True)  
