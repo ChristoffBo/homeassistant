@@ -33,10 +33,48 @@ class AdvancedAddonUpdater:
             return {}
 
     def _send_notification(self, message, success=True):
-        """Send notification via Home Assistant API"""
+        """Send notification via Gotify or Supervisor API"""
         if not self.config.get('notify', False):
             return
             
+        # Try Gotify first if configured
+        if self._send_gotify_notification(message, success):
+            return
+            
+        # Fall back to Supervisor notifications
+        self._send_supervisor_notification(message, success)
+
+    def _send_gotify_notification(self, message, success):
+        """Send notification via Gotify"""
+        gotify_cfg = self.config.get('gotify', {})
+        if not gotify_cfg.get('url') or not gotify_cfg.get('token'):
+            return False
+            
+        try:
+            title = "Addon Update: Success" if success else "Addon Update: Failed"
+            priority = 2 if success else 5
+            
+            response = requests.post(
+                f"{gotify_cfg['url'].rstrip('/')}/message",
+                headers={
+                    'X-Gotify-Key': gotify_cfg['token'],
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    "title": title,
+                    "message": message,
+                    "priority": priority
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Gotify notification failed: {e}")
+            return False
+
+    def _send_supervisor_notification(self, message, success):
+        """Fallback to Supervisor notifications"""
         try:
             token = os.environ.get('SUPERVISOR_TOKEN')
             if not token:
@@ -61,7 +99,7 @@ class AdvancedAddonUpdater:
             )
             response.raise_for_status()
         except Exception as e:
-            logger.error(f"Notification failed: {e}")
+            logger.error(f"Supervisor notification failed: {e}")
 
     def _check_gitea_health(self):
         """Verify Gitea instance is reachable"""
@@ -109,14 +147,15 @@ class AdvancedAddonUpdater:
         parsed = urlparse(repo_url)
         return f"{parsed.scheme}://{token}@{parsed.netloc}{parsed.path}"
 
-    def _update_addon(self, addon_name, addon_config):
+    def _update_addon(self, addon):
         """Process individual addon update"""
-        repo_url = addon_config['url']
-        branch = addon_config.get('branch', 'main')
+        addon_name = addon['slug']
+        repo_url = addon['url']
+        branch = addon.get('branch', 'main')
         addon_path = self.addons_dir / addon_name
 
         # Version check if enabled
-        if addon_config.get('version_check', False):
+        if addon.get('version_check', False):
             latest_version = self._get_last_version(repo_url)
             if latest_version:
                 logger.info(f"Latest version for {addon_name}: {latest_version}")
@@ -147,8 +186,8 @@ class AdvancedAddonUpdater:
             return False
 
         success = True
-        for addon_name, addon_config in self.config.get('addons', {}).items():
-            if not self._update_addon(addon_name, addon_config):
+        for addon in self.config.get('addons', []):
+            if not self._update_addon(addon):
                 success = False
 
         message = "All addons updated successfully" if success else "Some addons failed to update"
