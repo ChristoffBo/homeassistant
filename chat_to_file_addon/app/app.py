@@ -13,8 +13,13 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Set output directory
+# Hardcoded configuration - no jq dependency
 OUTPUT_DIR = "/share/chat_to_file"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# [Rest of your existing app code remains unchanged]
+@app.route("/")
+def home():
+    return "Chat to File is running!"
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
