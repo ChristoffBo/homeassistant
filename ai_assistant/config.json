@@ -1,8 +1,8 @@
 {
   "name": "AI Assistant",
-  "version": "3.3",
+  "version": "3.4",
   "slug": "ai_assistant",
-  "description": "Fixed Bad Gateway Version",
+  "description": "Stable version with PID 1 and ingress fixes",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
@@ -14,6 +14,12 @@
   "ingress_port": 5000,
   "panel_icon": "mdi:robot",
   "panel_title": "AI Assistant",
-  "options": {},
-  "schema": {}
+  "options": {
+    "openai_key": "",
+    "deepseek_key": ""
+  },
+  "schema": {
+    "openai_key": "str?",
+    "deepseek_key": "str?"
+  }
 }
