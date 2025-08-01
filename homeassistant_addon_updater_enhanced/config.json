@@ -1,0 +1,35 @@
+{
+  "name": "Home Assistant Addon Updater Enhanced",
+  "version": "1.0.2",
+  "slug": "addon_updater_enhanced",
+  "description": "Checks GitHub & Gitea for addon updates with detailed Gotify notifications",
+  "url": "https://github.com/yourusername/hassio-addons",
+  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
+  "startup": "application",
+  "boot": "auto",
+  "map": ["config:rw"],
+  "options": {
+    "gotify_url": "",
+    "gotify_token": "",
+    "check_interval": 3600,
+    "github_repos": [],
+    "gitea_instances": []
+  },
+  "schema": {
+    "gotify_url": "match(^https?://.+|^$)",
+    "gotify_token": "str",
+    "check_interval": "int(1,)",
+    "github_repos": [{
+      "name": "str",
+      "owner": "str",
+      "repo": "str",
+      "token": "str?"
+    }],
+    "gitea_instances": [{
+      "name": "str",
+      "url": "match(^https?://.+|^$)",
+      "owner": "str",
+      "token": "str?"
+    }]
+  }
+}
