@@ -1,8 +1,8 @@
 {
-  "name": "AI Assistant",
-  "version": "3.4",
-  "slug": "ai_assistant",
-  "description": "Stable version with PID 1 and ingress fixes",
+  "name": "AI Assistant Pro",
+  "version": "3.5",
+  "slug": "ai_assistant_pro",
+  "description": "Complete working version with web UI",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
@@ -12,14 +12,16 @@
   },
   "ingress": true,
   "ingress_port": 5000,
-  "panel_icon": "mdi:robot",
+  "panel_icon": "mdi:robot-happy",
   "panel_title": "AI Assistant",
   "options": {
     "openai_key": "",
-    "deepseek_key": ""
+    "deepseek_key": "",
+    "github_token": ""
   },
   "schema": {
     "openai_key": "str?",
-    "deepseek_key": "str?"
+    "deepseek_key": "str?",
+    "github_token": "str?"
   }
 }
