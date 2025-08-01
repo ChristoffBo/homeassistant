@@ -1,6 +1,6 @@
 {
   "name": "Advanced Addon Updater",
-  "version": "3.0.0",
+  "version": "3.0.2",
   "slug": "advanced_addon_updater",
   "description": "Updates addons with Gitea/health checks, branch selection, and version tracking",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/updater",
@@ -9,33 +9,44 @@
   "boot": "manual",
   "map": ["config:rw"],
   "options": {
-    "addons": {
-      "example_addon": {
+    "addons": [
+      {
+        "slug": "example_addon",
         "url": "https://github.com/user/repo.git",
         "branch": "main",
         "version_check": false
       }
-    },
+    ],
     "gitea": {
       "url": "http://gitea.local:3000",
       "token": "",
       "health_check": true
     },
-    "notify": true
+    "notify": true,
+    "gotify": {
+      "url": "http://gotify.local:80",
+      "token": ""
+    }
   },
   "schema": {
-    "addons": {
-      "str": {
+    "addons": [
+      {
+        "slug": "str",
         "url": "str",
         "branch": "str?",
         "version_check": "bool?"
       }
-    },
+    ],
     "gitea": {
       "url": "str?",
       "token": "str?",
       "health_check": "bool?"
     },
-    "notify": "bool?"
-  }
+    "notify": "bool?",
+    "gotify": {
+      "url": "str?",
+      "token": "str?"
+    }
+  },
+  "devices": []
 }
