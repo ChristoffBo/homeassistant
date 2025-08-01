@@ -1,19 +1,22 @@
-ARG BUILD_FROM=python:3.9-alpine
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install system dependencies
+# Install system and Python dependencies
 RUN apk add --no-cache \
     git \
     jq \
     bash \
     openssh-client \
     curl \
+    python3 \
+    py3-pip \
     build-base \
     libffi-dev \
     openssl-dev
 
-# Install Python dependencies
-RUN pip install --no-cache-dir \
+# Install Python packages
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
     requests \
     lastversion
 
@@ -23,4 +26,4 @@ COPY run.sh /run.sh
 RUN chmod a+x /run.sh
 
 WORKDIR /data
-CMD [ "/run.sh" ]
+CMD ["/run.sh"]
