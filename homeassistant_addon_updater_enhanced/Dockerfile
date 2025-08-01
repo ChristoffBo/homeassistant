@@ -7,21 +7,14 @@ ENV LANG=C.UTF-8 \
     S6_SERVICES_GRACETIME=30000 \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
-# Install core dependencies
+# Install all dependencies using Alpine packages
 RUN apk add --no-cache \
     bash \
     jq \
     curl \
-    python3 \
-    tzdata
-
-# Create virtual environment
-RUN python3 -m venv /venv
-ENV PATH="/venv/bin:$PATH"
-
-# Install Python dependencies in virtual environment
-COPY requirements.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+    tzdata \
+    py3-requests \
+    py3-semantic-version
 
 # Copy root filesystem
 COPY rootfs /
