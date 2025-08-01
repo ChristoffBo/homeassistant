@@ -1,8 +1,8 @@
 {
-  "name": "AI Assistant Pro",
-  "version": "3.2",
-  "slug": "ai_assistant_pro",
-  "description": "Stable AI Assistant with PID 1 Fix",
+  "name": "AI Assistant",
+  "version": "3.3",
+  "slug": "ai_assistant",
+  "description": "Fixed Bad Gateway Version",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
@@ -12,14 +12,8 @@
   },
   "ingress": true,
   "ingress_port": 5000,
-  "panel_icon": "mdi:robot-happy",
+  "panel_icon": "mdi:robot",
   "panel_title": "AI Assistant",
-  "options": {
-    "openai_key": "",
-    "github_token": ""
-  },
-  "schema": {
-    "openai_key": "str?",
-    "github_token": "str?"
-  }
+  "options": {},
+  "schema": {}
 }
