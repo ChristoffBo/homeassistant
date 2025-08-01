@@ -2,19 +2,19 @@
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
-# Set environment variables
+# Set environment
 ENV LANG=C.UTF-8 \
     S6_SERVICES_GRACETIME=30000 \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
-# Install base dependencies
+# Install core dependencies
 RUN apk add --no-cache \
-    bash=5.2.15-r5 \
-    jq=1.6-r3 \
-    curl=7.83.1-r4 \
-    python3=3.10.12-r0 \
-    py3-pip=22.3.1-r1 \
-    tzdata=2023c-r0
+    bash \
+    jq \
+    curl \
+    python3 \
+    py3-pip \
+    tzdata
 
 # Install Python dependencies
 COPY requirements.txt /tmp/
