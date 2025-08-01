@@ -1,28 +1,19 @@
-from flask import Flask, jsonify
+from flask import Flask, render_template, jsonify, request
 import os
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return jsonify({
-        "status": "running",
-        "version": "3.4",
-        "service": "AI Assistant"
-    })
+    return render_template('index.html')
 
-@app.route('/health')
-def health():
-    return jsonify({"status": "healthy"}), 200
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    return jsonify({"response": "Sample response from AI"})
 
-@app.route('/api/ready')
-def ready():
-    return jsonify({"ready": True}), 200
+@app.route('/api/export', methods=['POST'])
+def export():
+    return jsonify({"status": "export successful"})
 
 if __name__ == "__main__":
-    app.run(
-        host='0.0.0.0',
-        port=5000,
-        threaded=True,
-        debug=False
-    )
+    app.run(host='0.0.0.0', port=5000)
