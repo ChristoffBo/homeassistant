@@ -12,11 +12,11 @@ RUN apk add --no-cache python3 py3-pip && \
 COPY requirements.txt .
 RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
+# Copy application
 COPY app /app
 COPY run.sh /
 
-# Set proper permissions
+# Set permissions
 RUN chmod a+x /run.sh && \
     chmod -R 755 /app && \
     chown -R root:root /app
