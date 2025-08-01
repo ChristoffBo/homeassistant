@@ -12,7 +12,7 @@ RUN apk add --no-cache python3 py3-pip && \
 COPY requirements.txt .
 RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Copy application
+# Copy application files
 COPY app /app
 COPY run.sh /
 
