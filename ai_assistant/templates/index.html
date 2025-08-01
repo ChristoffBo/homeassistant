@@ -1,1 +1,49 @@
+<!DOCTYPE html>  
+<html lang="en">  
+<head>  
+  <meta charset="UTF-8">  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+  <title>AI Assistant</title>  
+  <link rel="stylesheet" href="/local/styles.css">  
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">  
+</head>  
+<body>  
+  <div class="app-container">  
+    <!-- Header -->  
+    <header class="app-header">  
+      <h1>AI Assistant</h1>  
+      <div class="mode-tabs">  
+        <button class="mode-btn active" data-mode="chat">  
+          <i class="material-icons">chat</i>  
+          <span>Chat</span>  
+        </button>  
+        <button class="mode-btn" data-mode="code">  
+          <i class="material-icons">code</i>  
+          <span>Code</span>  
+        </button>  
+        <button class="mode-btn" data-mode="teach">  
+          <i class="material-icons">school</i>  
+          <span>Teach</span>  
+        </button>  
+      </div>  
+    </header>  
 
+    <!-- Content Areas -->  
+    <main class="content-area">  
+      <div id="mode-chat" class="mode-content">  
+        <iframe src="/local/templates/chat.html" title="Chat Interface"></iframe>  
+      </div>  
+      
+      <div id="mode-code" class="mode-content" style="display:none">  
+        <iframe src="/local/templates/code.html" title="Code Editor"></iframe>  
+      </div>  
+      
+      <div id="mode-teach" class="mode-content" style="display:none">  
+        <iframe src="/local/templates/teach.html" title="Lesson Planner"></iframe>  
+      </div>  
+    </main>  
+  </div>  
+
+  <script src="/local/app.js"></script>  
+</body>  
+</html>  
