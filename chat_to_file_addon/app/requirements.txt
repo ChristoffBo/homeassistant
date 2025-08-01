@@ -1,3 +1,3 @@
 flask==2.0.3
-werkzeug==2.0.3  # Explicit version to fix url_quote
+werkzeug==2.0.3
 requests==2.26.0
