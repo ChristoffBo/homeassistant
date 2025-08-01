@@ -1,26 +1,55 @@
 {
   "name": "AI Assistant Pro",
-  "version": "4.3",
+  "version": "4.3.0",
   "slug": "ai_assistant_pro",
-  "description": "Complete working version with all features",
-  "arch": ["amd64", "armv7", "aarch64"],
+  "description": "Advanced AI assistant supporting multiple providers (OpenAI, DeepSeek, LocalAI) with customizable chat features",
+  "url": "https://github.com/ChristoffBo/homeassistant/tree/main/ai_assistant",
+  "arch": ["amd64", "armv7", "armhf", "aarch64"],
   "startup": "application",
   "boot": "auto",
-  "init": false,
   "ingress": true,
   "ingress_port": 5000,
-  "panel_icon": "mdi:robot-happy",
+  "panel_icon": "mdi:robot",
   "panel_title": "AI Assistant",
+  "panel_admin": false,
+  "ports": {
+    "5000/tcp": 5000
+  },
+  "ports_description": {
+    "5000/tcp": "Web interface"
+  },
+  "map": ["config:rw"],
+  "environment": {
+    "LOG_LEVEL": "info"
+  },
   "options": {
+    "provider": "openai",
     "openai_key": "",
+    "openai_model": "gpt-3.5-turbo",
+    "openai_base_url": "https://api.openai.com/v1",
     "deepseek_key": "",
-    "github_token": "",
-    "default_model": "chatgpt-free"
+    "deepseek_model": "deepseek-chat",
+    "deepseek_base_url": "https://api.deepseek.com/v1",
+    "localai_base_url": "http://localai:8080",
+    "localai_model": "llama2",
+    "temperature": 0.7,
+    "max_tokens": 512,
+    "memory_enabled": true,
+    "memory_path": "/config/ai_assistant/memory.json"
   },
   "schema": {
+    "provider": "match(openai|deepseek|localai)",
     "openai_key": "str?",
+    "openai_model": "str?",
+    "openai_base_url": "str?",
     "deepseek_key": "str?",
-    "github_token": "str?",
-    "default_model": "match(chatgpt-free|chatgpt-paid|deepseek-free|deepseek-paid)"
+    "deepseek_model": "str?",
+    "deepseek_base_url": "str?",
+    "localai_base_url": "str?",
+    "localai_model": "str?",
+    "temperature": "float(0,2)?",
+    "max_tokens": "int(128,2048)?",
+    "memory_enabled": "bool?",
+    "memory_path": "str?"
   }
 }
