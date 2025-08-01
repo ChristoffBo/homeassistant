@@ -1,18 +1,19 @@
-FROM python:3.9-alpine
+FROM python:3.9-slim
 
-# Install system dependencies
-RUN apk add --no-cache jq bash gcc musl-dev
+# Install only essential dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY ./app /app
 
-# Install Python dependencies with version pinning
+# Install pinned versions that work together
 RUN pip install --no-cache-dir \
-    flask==2.1.3 \
-    werkzeug==2.1.2 \
-    requests==2.28.1
+    flask==2.0.3 \
+    werkzeug==2.0.3 \
+    requests==2.26.0
 
-# Create directories and set permissions
+# Create directories with full permissions
 RUN mkdir -p /app/logs /share/chat_to_file \
     && chmod -R 777 /share/chat_to_file
 
