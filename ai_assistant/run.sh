@@ -1,7 +1,7 @@
-#!/usr/bin/with-contenv sh
+#!/usr/bin/with-contenv bashio
 
-# Activate venv
-. /venv/bin/activate
+# Activate virtual environment
+source /venv/bin/activate
 
-# Execute as PID 1 through s6
-exec /venv/bin/python -m app.main
+# Start the application through s6
+exec /venv/bin/python /app/main.py
