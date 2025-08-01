@@ -1,7 +1,7 @@
 #!/usr/bin/with-contenv bashio
 
 # Wait for system to fully initialize
-sleep 20
+sleep 30
 
 # Activate virtual environment
 source /venv/bin/activate
