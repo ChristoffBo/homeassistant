@@ -1,14 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI Chat to File (Free-Tier)</title>
+    <title>AI Chat to File</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="container">
         <h2>AI Chat to File</h2>
-        <p class="notice">Using free-tier APIs by default</p>
-        
         {% if error %}
             <p class="error">{{ error }}</p>
         {% endif %}
@@ -22,8 +20,8 @@
             <div class="options">
                 <label>AI:</label>
                 <select name="ai_choice">
-                    <option value="chatgpt">ChatGPT (Free Tier)</option>
-                    <option value="deepseek">DeepSeek (Free Tier)</option>
+                    <option value="chatgpt">ChatGPT</option>
+                    <option value="deepseek">DeepSeek</option>
                 </select>
             </div>
 
@@ -31,6 +29,11 @@
                 <button type="submit" name="action" value="ask">Ask AI</button>
                 <button type="submit" name="action" value="save">Save to File</button>
                 <button type="submit" name="action" value="download">Download</button>
+            </div>
+
+            <div id="filename-group">
+                <label>Filename (without extension):</label>
+                <input type="text" name="filename" placeholder="custom_name">
             </div>
         </form>
 
