@@ -1,22 +1,21 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
-# Set up Python environment
-RUN apk add --no-cache python3 py3-pip && \
-    python3 -m pip install --upgrade pip
-
 WORKDIR /app
+
+# Install Python and pip
+RUN apk add --no-cache python3 py3-pip
 
 # Copy application files
 COPY app /app
 COPY run.sh /
 
-# Install requirements directly (no venv needed for Home Assistant add-ons)
+# Install requirements if they exist
 RUN if [ -f /app/requirements.txt ]; then pip install --no-cache-dir -r /app/requirements.txt; fi
 
-# Set proper permissions
+# Set executable permissions
 RUN chmod a+x /run.sh
 
-# Use s6-overlay's init system
+# Proper s6-overlay initialization
 ENTRYPOINT ["/init"]
 CMD ["/run.sh"]
