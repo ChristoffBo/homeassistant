@@ -1,8 +1,8 @@
 {
   "name": "Advanced Addon Updater",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "slug": "advanced_addon_updater",
-  "description": "Updates addons with Gitea/health checks, branch selection, and version tracking",
+  "description": "Updates addons from Git repositories with version checking and notifications",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/updater",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
   "startup": "once",
@@ -14,7 +14,7 @@
         "slug": "example_addon",
         "url": "https://github.com/user/repo.git",
         "branch": "main",
-        "version_check": false
+        "version_check": true
       }
     ],
     "gitea": {
@@ -24,8 +24,8 @@
     },
     "notify": true,
     "gotify": {
-      "url": "http://gotify.local:80",
-      "token": ""
+      "url": "http://gotify.example.com",
+      "token": "your_token_here"
     }
   },
   "schema": {
