@@ -1,0 +1,179 @@
+#!/bin/bash
+set -eo pipefail
+
+# Load configuration
+CONFIG="/data/options.json"
+source /etc/cont-init.d/addons-updater
+
+# Initialize variables
+TOTAL_ADDONS=0
+UPDATED_ADDONS=0
+UP_TO_DATE_ADDONS=0
+FAILED_ADDONS=0
+UPDATE_DETAILS=""
+START_TIME=$(date +%s)
+
+# Logging function
+log() {
+    local level=$1
+    local message=$2
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[${timestamp}] [${level^^}] ${message}" | tee -a "/var/log/addons-updater.log"
+    
+    # Send Gotify notification if enabled
+    if [[ "$ENABLE_GOTIFY" == "true" && "$level" =~ ^(error|warning|info)$ ]]; then
+        local priority=5
+        [[ "$level" == "error" ]] && priority=8
+        [[ "$level" == "warning" ]] && priority=5
+        
+        curl -sSf -m 30 -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"title\":\"Addon Updater ${level^^}\", \"message\":\"${message}\", \"priority\":${priority}}" \
+            "${GOTIFY_URL}/message?token=${GOTIFY_TOKEN}" >/dev/null || true
+    fi
+}
+
+# Version comparison
+version_gt() {
+    test "$(printf '%s\n' "$@" | sort -V | head -n 1)" != "$1"
+}
+
+# Get latest version from repository
+get_latest_version() {
+    local repo=$1
+    local version
+    
+    if [[ "$REPO_SOURCE" == "gitea" ]]; then
+        local curl_cmd=("curl" "-sSf" "-m" "30" "-H" "Authorization: token ${GITEA_TOKEN}")
+        [[ "$VALIDATE_SSL" == "false" ]] && curl_cmd+=("-k")
+        version=$("${curl_cmd[@]}" "${GITEA_API_URL}/repos/${repo}/releases/latest" | jq -r '.tag_name')
+    else
+        local curl_cmd=("curl" "-sSf" "-m" "30")
+        [[ "$VALIDATE_SSL" == "false" ]] && curl_cmd+=("-k")
+        version=$("${curl_cmd[@]}" "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name')
+    fi
+    
+    echo "${version#v}"  # Remove 'v' prefix if present
+}
+
+# Process single addon
+process_addon() {
+    local addon_dir=$1
+    local addon_name=$(basename "$addon_dir")
+    local config_file="${addon_dir}/config.json"
+    local version_file="${addon_dir}/VERSION"
+    
+    ((TOTAL_ADDONS++))
+    
+    # Validate config file
+    [[ ! -f "$config_file" ]] && {
+        log "warning" "Skipping ${addon_name}: Missing config.json"
+        UPDATE_DETAILS+="❌ ${addon_name}: Missing config.json\n"
+        ((FAILED_ADDONS++))
+        return 1
+    }
+    
+    local current_version=$(jq -r '.version' "$config_file")
+    local upstream_repo=$(jq -r '.upstream_repo' "$config_file")
+    
+    [[ -z "$upstream_repo" ]] && {
+        log "warning" "Skipping ${addon_name}: No upstream_repo defined"
+        UPDATE_DETAILS+="⚠️ ${addon_name}: No upstream_repo\n"
+        ((FAILED_ADDONS++))
+        return 1
+    }
+    
+    # Get latest version
+    local latest_version
+    if ! latest_version=$(get_latest_version "$upstream_repo"); then
+        log "error" "Failed to fetch version for ${upstream_repo}"
+        UPDATE_DETAILS+="⚠️ ${addon_name}: Version check failed\n"
+        ((FAILED_ADDONS++))
+        return 1
+    fi
+    
+    [[ -z "$latest_version" ]] && {
+        log "warning" "Empty version received for ${upstream_repo}"
+        UPDATE_DETAILS+="⚠️ ${addon_name}: Empty version\n"
+        ((FAILED_ADDONS++))
+        return 1
+    }
+    
+    # Version comparison
+    if version_gt "$latest_version" "$current_version"; then
+        log "info" "Updating ${addon_name} from ${current_version} to ${latest_version}"
+        UPDATE_DETAILS+="🔄 ${addon_name}: ${current_version} → ${latest_version}\n"
+        
+        if [[ "$DRY_RUN" != "true" ]]; then
+            # Update config.json
+            jq --arg ver "$latest_version" '.version = $ver' "$config_file" > "${config_file}.tmp"
+            mv "${config_file}.tmp" "$config_file"
+            
+            # Update VERSION file if exists
+            [[ -f "$version_file" ]] && echo "$latest_version" > "$version_file"
+            
+            # Stage changes
+            git add "$config_file" "$version_file" 2>/dev/null
+        fi
+        ((UPDATED_ADDONS++))
+    else
+        log "debug" "${addon_name} is up-to-date (${current_version})"
+        UPDATE_DETAILS+="✅ ${addon_name}: ${current_version}\n"
+        ((UP_TO_DATE_ADDONS++))
+    fi
+}
+
+# Main execution
+log "info" "Starting addon updates (Source: ${REPO_SOURCE})"
+
+cd "$REPO_PATH" || {
+    log "error" "Cannot access repo path: ${REPO_PATH}"
+    exit 1
+}
+
+# Update local repo
+git fetch origin "$REPO_BRANCH" || {
+    log "error" "Git fetch failed"
+    exit 1
+}
+
+# Process all addon paths
+for path in "${ADDON_PATHS[@]}"; do
+    full_path="${REPO_PATH}/${path}"
+    
+    [[ ! -d "$full_path" ]] && {
+        log "warning" "Addon path not found: ${full_path}"
+        continue
+    }
+    
+    for addon_dir in "$full_path"/*; do
+        [[ -d "$addon_dir" ]] && process_addon "$addon_dir"
+    done
+done
+
+# Commit changes if needed
+if [[ "$DRY_RUN" != "true" && "$UPDATED_ADDONS" -gt 0 ]]; then
+    git commit -m "Auto-update addons $(date '+%Y-%m-%d %H:%M:%S')"
+    
+    if [[ "$UPDATE_MODE" == "push" ]]; then
+        git push origin "$REPO_BRANCH" || {
+            log "error" "Failed to push changes to remote"
+            exit 1
+        }
+    fi
+fi
+
+# Prepare final report
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+SUMMARY="🏁 Update completed in ${DURATION} seconds\n\n"
+SUMMARY+="📊 Summary:\n"
+SUMMARY+="• 🔄 Updated: ${UPDATED_ADDONS}\n"
+SUMMARY+="• ✅ Up-to-date: ${UP_TO_DATE_ADDONS}\n"
+SUMMARY+="• ❌ Failed: ${FAILED_ADDONS}\n"
+SUMMARY+="• 📂 Total processed: ${TOTAL_ADDONS}\n\n"
+SUMMARY+="📝 Details:\n${UPDATE_DETAILS}"
+
+log "info" "$SUMMARY"
+exit 0
