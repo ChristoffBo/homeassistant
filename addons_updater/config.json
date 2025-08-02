@@ -1,6 +1,6 @@
 {
   "name": "Addons Updater Enhanced",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "slug": "addons_updater_enhanced",
   "description": "Automatically update addons with notifications support",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/addons_updater",
