@@ -8,7 +8,6 @@
   "startup": "once",
   "boot": "manual",
   "init": false,
-  "watchdog": null,
   "hassio_api": true,
   "host_network": true,
   "privileged": [],
