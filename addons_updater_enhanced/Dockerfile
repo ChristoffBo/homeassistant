@@ -1,13 +1,13 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install core dependencies with version pinning
+# Install core dependencies without version pinning
 RUN apk add --no-cache \
-    bash=5.2.21-r0 \
-    curl=8.4.0-r0 \
-    git=2.40.1-r0 \
-    jq=1.7.1-r0 \
-    tzdata=2023c-r1
+    bash \
+    curl \
+    git \
+    jq \
+    tzdata
 
 # Create directory structure
 RUN mkdir -p \
