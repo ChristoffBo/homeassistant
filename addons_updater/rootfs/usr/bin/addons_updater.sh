@@ -27,11 +27,27 @@ GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_FILE")
 GOTIFY_TOKEN=$(jq -r '.gotify_token' "$CONFIG_FILE")
 TIMEOUT=$(jq -r '.timeout // 30' "$CONFIG_FILE")  # Default 30 seconds per request
 
+# ================== FIXED URL HANDLING ==================
+# Normalize repository URL
+REPO_URL=""
+case "$REPO_PATH" in
+  http*)
+    # Handle full URLs
+    CLEAN_PATH=$(echo "$REPO_PATH" | sed 's/\.git$//; s/\/$//')
+    REPO_URL="$CLEAN_PATH.git"
+    ;;
+  *)
+    # Handle shorthand notation
+    CLEAN_PATH=$(echo "$REPO_PATH" | sed 's/\.git$//; s/\/$//')
+    REPO_URL="https://github.com/$CLEAN_PATH.git"
+    ;;
+esac
+
 # Show repository source
 echo -e "${CYAN}"
 echo "===== ADDON UPDATER STARTED ====="
 echo -e "${NC}"
-echo -e "${BLUE}[Source]${NC} Repository: https://github.com/$REPO_PATH.git"
+echo -e "${BLUE}[Source]${NC} Repository: $REPO_URL"
 echo -e "${BLUE}[Mode]${NC} Dry Run: $DRY_RUN"
 echo -e "${BLUE}[Timeout]${NC} $TIMEOUT seconds per registry"
 
@@ -43,10 +59,6 @@ git config --global user.name "$GIT_USER"
 git config --global user.email "$GIT_EMAIL"
 git config --global pull.rebase false
 git config --global --add safe.directory /data/repo
-
-# Determine repository URL
-REPO_URL="https://github.com/$REPO_PATH.git"
-echo -e "${BLUE}[Info]${NC} Using repository URL: $REPO_URL"
 
 # Set up repository with shallow clone for speed
 REPO_DIR="/data/repo"
