@@ -108,17 +108,35 @@ get_latest_tag() {
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
-    local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
-    tags=$(curl -s -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
+    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token') || {
+      log "$COLOR_YELLOW" "⚠️ Failed to get GHCR token for $image_name"
+      return
+    }
+    local response=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list") || {
+      log "$COLOR_YELLOW" "⚠️ GHCR tag fetch failed for $image_name"
+      return
+    }
+    tags=$(echo "$response" | jq -r '.tags[]?') || {
+      log "$COLOR_YELLOW" "⚠️ Invalid JSON from GHCR for $image_name"
+      return
+    }
   elif [[ "$image_name" =~ ^(linuxserver|lscr.io)/ ]]; then
     local name="${image_name##*/}"
-    tags=$(curl -s "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
+    local response=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags") || {
+      log "$COLOR_YELLOW" "⚠️ LinuxServer tag fetch failed for $name"
+      return
+    }
+    tags=$(echo "$response" | jq -r '.tags[].name') || {
+      log "$COLOR_YELLOW" "⚠️ Invalid JSON from LinuxServer for $name"
+      return
+    }
   else
     local ns_repo="${image_name/library\//}"
     local page=1
     while :; do
-      local result=$(curl -s "https://hub.docker.com/v2/repositories/${ns_repo}/tags?page=$page&page_size=100")
-      local page_tags=$(echo "$result" | jq -r '.results[].name')
+      local result=$(curl -sf "https://hub.docker.com/v2/repositories/${ns_repo}/tags?page=$page&page_size=100") || break
+      local page_tags=$(echo "$result" | jq -r '.results[].name' 2>/dev/null)
+      [[ -z "$page_tags" ]] && break
       tags+=$'\n'"$page_tags"
       [[ "$(echo "$result" | jq -r '.next')" == "null" ]] && break
       ((page++))
