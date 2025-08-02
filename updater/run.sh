@@ -8,8 +8,6 @@ CONFIG_PATH="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 LOCK_FILE="/data/updater.lock"
-MAX_LOG_FILES=5
-MAX_LOG_LINES=1000
 
 # ======================
 # COLOR DEFINITIONS
@@ -24,293 +22,191 @@ COLOR_PURPLE="\033[0;35m"
 COLOR_CYAN="\033[0;36m"
 
 # ======================
-# NOTIFICATION SETTINGS
-# ======================
-declare -A NOTIFICATION_SETTINGS=(
-    [enabled]=false
-    [service]=""
-    [url]=""
-    [token]=""
-    [to]=""
-    [on_success]=false
-    [on_error]=true
-    [on_updates]=true
-)
-
-# ======================
 # GLOBAL VARIABLES
 # ======================
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
 
-# ======================
-# LOGGING FUNCTIONS
-# ======================
-log() {
-    local color="$1"
-    shift
-    echo -e "${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
+# Read config
+read_config() {
+    DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
+    DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
+    TZ=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
+    export TZ
+
+    GITHUB_REPO=$(jq -r '.github_repo // empty' "$CONFIG_PATH")
+    GITHUB_USERNAME=$(jq -r '.github_username // empty' "$CONFIG_PATH")
+    GITHUB_TOKEN=$(jq -r '.github_token // empty' "$CONFIG_PATH")
+
+    NOTIFY_ENABLED=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
+    NOTIFY_SERVICE=$(jq -r '.notification_service // ""' "$CONFIG_PATH")
+    NOTIFY_URL=$(jq -r '.notification_url // ""' "$CONFIG_PATH")
+    NOTIFY_TOKEN=$(jq -r '.notification_token // ""' "$CONFIG_PATH")
+    NOTIFY_TO=$(jq -r '.notification_to // ""' "$CONFIG_PATH")
+    NOTIFY_SUCCESS=$(jq -r '.notify_on_success // false' "$CONFIG_PATH")
+    NOTIFY_ERROR=$(jq -r '.notify_on_error // true' "$CONFIG_PATH")
+    NOTIFY_UPDATES=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")
+    SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH")
+
+    GIT_AUTH_REPO="$GITHUB_REPO"
+    if [[ -n "$GITHUB_USERNAME" && -n "$GITHUB_TOKEN" ]]; then
+        GIT_AUTH_REPO="${GITHUB_REPO/https:\/\//https:\/\/$GITHUB_USERNAME:$GITHUB_TOKEN@}"
+    fi
 }
 
-log_with_timestamp() {
+log() {
     local color="$1"
     shift
     echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
-log_error() { log_with_timestamp "$COLOR_RED" "❌ $*"; }
-log_warning() { log_with_timestamp "$COLOR_YELLOW" "⚠️ $*"; }
-log_info() { log_with_timestamp "$COLOR_BLUE" "ℹ️ $*"; }
-log_success() { log_with_timestamp "$COLOR_GREEN" "✅ $*"; }
-log_debug() { [ "$DEBUG" = "true" ] && log_with_timestamp "$COLOR_PURPLE" "🐛 $*"; }
-
-# ======================
-# LOCK MANAGEMENT
-# ======================
-acquire_lock() {
-    exec 9>"$LOCK_FILE"
-    if ! flock -n 9; then
-        local pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "unknown")
-        log_error "Another update process (PID $pid) is running. Exiting."
-        exit 1
-    fi
-    echo $$ >&9
-}
-
-release_lock() {
-    flock -u 9
-    exec 9>&-
-    rm -f "$LOCK_FILE"
-}
-
-# ======================
-# CONFIGURATION LOADING
-# ======================
-load_config() {
-    if [ ! -f "$CONFIG_PATH" ]; then
-        log_error "Config file $CONFIG_PATH not found!"
-        exit 1
-    fi
-
-    GITHUB_REPO=$(jq -r '.github_repo // empty' "$CONFIG_PATH")
-    GITHUB_USERNAME=$(jq -r '.github_username // empty' "$CONFIG_PATH")
-    GITHUB_TOKEN=$(jq -r '.github_token // empty' "$CONFIG_PATH")
-    TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
-    DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
-    SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH")
-    DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
-
-    NOTIFICATION_SETTINGS[enabled]=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
-    if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
-        NOTIFICATION_SETTINGS[service]=$(jq -r '.notification_service // ""' "$CONFIG_PATH")
-        NOTIFICATION_SETTINGS[url]=$(jq -r '.notification_url // ""' "$CONFIG_PATH" | sed 's:/*$::')/
-        NOTIFICATION_SETTINGS[token]=$(jq -r '.notification_token // ""' "$CONFIG_PATH")
-        NOTIFICATION_SETTINGS[to]=$(jq -r '.notification_to // ""' "$CONFIG_PATH")
-        NOTIFICATION_SETTINGS[on_success]=$(jq -r '.notify_on_success // false' "$CONFIG_PATH")
-        NOTIFICATION_SETTINGS[on_error]=$(jq -r '.notify_on_error // true' "$CONFIG_PATH")
-        NOTIFICATION_SETTINGS[on_updates]=$(jq -r '.notify_on_updates // true' "$CONFIG_PATH")
-
-        case "${NOTIFICATION_SETTINGS[service]}" in
-            "gotify")
-                if [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[token]}" ]; then
-                    log_error "Gotify configuration incomplete"
-                    NOTIFICATION_SETTINGS[enabled]=false
-                elif ! curl -sf --connect-timeout 5 "${NOTIFICATION_SETTINGS[url]}health" >/dev/null; then
-                    log_error "Gotify server not reachable at ${NOTIFICATION_SETTINGS[url]}health"
-                    NOTIFICATION_SETTINGS[enabled]=false
-                else
-                    log_debug "Gotify health check passed"
-                fi
-                ;;
-            "mailrise"|"ntfy")
-                if [ -z "${NOTIFICATION_SETTINGS[url]}" ] || [ -z "${NOTIFICATION_SETTINGS[to]}" ]; then
-                    log_error "${NOTIFICATION_SETTINGS[service]} configuration incomplete"
-                    NOTIFICATION_SETTINGS[enabled]=false
-                fi
-                ;;
-            "apprise")
-                if [ -z "${NOTIFICATION_SETTINGS[url]}" ]; then
-                    log_error "Apprise configuration incomplete"
-                    NOTIFICATION_SETTINGS[enabled]=false
-                elif ! command -v apprise >/dev/null; then
-                    log_error "Apprise CLI not found"
-                    NOTIFICATION_SETTINGS[enabled]=false
-                fi
-                ;;
-            *)
-                log_error "Unknown notification service: ${NOTIFICATION_SETTINGS[service]}"
-                NOTIFICATION_SETTINGS[enabled]=false
-                ;;
-        esac
-    fi
-
-    export TZ="$TIMEZONE"
-
-    if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-        GIT_AUTH_REPO=$(echo "$GITHUB_REPO" | sed -E "s#(https?://)#\1$GITHUB_USERNAME:$GITHUB_TOKEN@#")
-    else
-        GIT_AUTH_REPO="$GITHUB_REPO"
-    fi
-
-    log_configuration
-}
-
-log_configuration() {
-    log_info "========== CONFIGURATION =========="
-    log_info "GitHub Repo: $GITHUB_REPO"
-    log_info "Dry Run: $DRY_RUN"
-    log_info "Skip Push: $SKIP_PUSH"
-    log_info "Timezone: $TIMEZONE"
-    log_info "Debug Mode: $DEBUG"
-    if [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ]; then
-        log_info "Notifications: Enabled (${NOTIFICATION_SETTINGS[service]})"
-        log_info "Notify on Success: ${NOTIFICATION_SETTINGS[on_success]}"
-        log_info "Notify on Error: ${NOTIFICATION_SETTINGS[on_error]}"
-        log_info "Notify on Updates: ${NOTIFICATION_SETTINGS[on_updates]}"
-    else
-        log_info "Notifications: Disabled"
-    fi
-    log_info "=================================="
-}
-
-# ======================
-# VERSION CHECKING
-# ======================
-get_latest_docker_tag() {
-    local image="$1"
-    local image_name=$(echo "$image" | cut -d: -f1)
-    local version=""
-    local cache_file="/tmp/docker_tags_$(echo "$image_name" | tr '/:' '_').cache"
-    local cache_age=14400
-
-    if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt $cache_age ]; then
-        version=$(cat "$cache_file")
-        log_debug "Using cached version for $image_name: $version"
-        echo "$version"
-        return
-    fi
-
-    version=$(curl -sSf "https://hub.docker.com/v2/repositories/${image_name}/tags" | \
-        jq -r '.results[]?.name' | grep -v latest | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}$' | sort -Vr | head -n1)
-
-    if [[ -z "$version" || "$version" == "latest" ]]; then
-        log_warning "No valid version tag found for $image_name. Skipping update."
-        echo ""
-        return
-    fi
-
-    echo "$version" > "$cache_file"
-    echo "$version"
-}
-
-# ======================
-# ADD-ON CHECKING
-# ======================
-update_addon_if_needed() {
-    local addon_path="$1"
-    local addon_name=$(basename "$addon_path")
-
-    [ "$addon_name" = "updater" ] && return
-
-    local config_file="$addon_path/config.json"
-    local current_version image latest_version
-
-    [ -f "$config_file" ] || return
-
-    image=$(jq -r '.image // empty' "$config_file")
-    current_version=$(jq -r '.version // "unknown"' "$config_file")
-
-    latest_version=$(get_latest_docker_tag "$image")
-
-    if [ -z "$latest_version" ]; then
-        UNCHANGED_ADDONS["$addon_name"]="Only 'latest' tag found or error"
-        return
-    fi
-
-    if [ "$latest_version" != "$current_version" ]; then
-        UPDATED_ADDONS["$addon_name"]="$current_version → $latest_version"
-        jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" &&
-            mv "$config_file.tmp" "$config_file"
-        log_success "$addon_name updated from $current_version to $latest_version"
-    else
-        UNCHANGED_ADDONS["$addon_name"]="Already up to date"
-    fi
-}
-
-# ======================
-# GIT FUNCTIONS
-# ======================
-clone_or_update_repo() {
-    if [ ! -d "$REPO_DIR/.git" ]; then
-        git clone "$GIT_AUTH_REPO" "$REPO_DIR"
-    else
-        cd "$REPO_DIR" && git pull
-    fi
-}
-
-commit_and_push_changes() {
-    cd "$REPO_DIR"
-    if git status --porcelain | grep -q .; then
-        git add .
-        git commit -m "🔄 Updated add-on versions"
-        [ "$SKIP_PUSH" = "false" ] && git push
-    fi
-}
-
-# ======================
-# NOTIFICATION
-# ======================
-send_notification() {
-    [ "${NOTIFICATION_SETTINGS[enabled]}" = "false" ] && return
+notify() {
     local title="$1"
     local message="$2"
-    curl -s -X POST "${NOTIFICATION_SETTINGS[url]}message?token=${NOTIFICATION_SETTINGS[token]}" \
-        -H "Content-Type: application/json" \
-        -d "{\"title\":\"$title\",\"message\":\"$message\",\"priority\":3}" >/dev/null
+    local priority="${3:-0}"
+
+    [[ "$NOTIFY_ENABLED" != "true" ]] && return
+    case "$priority" in
+        0) [[ "$NOTIFY_SUCCESS" != "true" ]] && return ;;
+        3) [[ "$NOTIFY_UPDATES" != "true" ]] && return ;;
+        5) [[ "$NOTIFY_ERROR" != "true" ]] && return ;;
+    esac
+
+    if [[ "$NOTIFY_SERVICE" == "gotify" ]]; then
+        curl -s -X POST "${NOTIFY_URL%/}/message?token=${NOTIFY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\":\"$title\",\"message\":\"$message\",\"priority\":$priority}" \
+            >> "$LOG_FILE" 2>&1 || log "$COLOR_RED" "❌ Gotify notification failed"
+    fi
 }
 
-# ======================
-# MAIN UPDATE FUNCTION
-# ======================
-perform_update_check() {
-    local start_time=$(date +%s)
-    log_info "Starting update check"
+get_latest_tag() {
+    local image="$1"
+    local image_name="${image%%:*}"
+    local cache_file="/tmp/tags_$(echo "$image_name" | tr '/' '_').txt"
 
-    clone_or_update_repo
+    if [[ -f "$cache_file" && $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt 14400 ]]; then
+        cat "$cache_file"
+        return
+    fi
 
-    for addon_path in "$REPO_DIR"/*/; do
-        [ -d "$addon_path" ] && update_addon_if_needed "$addon_path"
-    done
+    local tags=""
+    if [[ "$image_name" =~ ^ghcr.io/ ]]; then
+        local org_repo=$(echo "$image_name" | cut -d/ -f2-3)
+        local package=$(echo "$image_name" | cut -d/ -f4)
+        local token=$(curl -s "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
+        tags=$(curl -s -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]')
+    elif [[ "$image_name" =~ ^(linuxserver|lscr.io)/ ]]; then
+        local name="${image_name##*/}"
+        tags=$(curl -s "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
+    else
+        local ns_repo="${image_name/library\//}"
+        tags=$(curl -s "https://hub.docker.com/v2/repositories/${ns_repo}/tags" | jq -r '.results[].name')
+    fi
 
-    commit_and_push_changes
-
-    local summary="✅ Update Summary:\n"
-    for addon in "${!UPDATED_ADDONS[@]}"; do
-        summary+="$addon: ${UPDATED_ADDONS[$addon]}\n"
-    done
-    for addon in "${!UNCHANGED_ADDONS[@]}"; do
-        summary+="$addon: ${UNCHANGED_ADDONS[$addon]}\n"
-    done
-
-    [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ] && send_notification "Add-on Updater Report" "$summary"
-
-    local end_time=$(date +%s)
-    log_info "Update check completed in $((end_time - start_time)) seconds"
+    echo "$tags" | grep -Ev 'latest|[a-z]' | sort -Vr | head -n1 | tee "$cache_file"
 }
 
-# ======================
-# ENTRY POINT
-# ======================
+update_addon() {
+    local addon_path="$1"
+    local name=$(basename "$addon_path")
+
+    [[ "$name" == "updater" ]] && return
+
+    log "$COLOR_DARK_BLUE" "🔍 Checking $name"
+    local config="$addon_path/config.json"
+    local build="$addon_path/build.json"
+    local image version latest
+
+    image=$(jq -r '.image // empty' "$config" 2>/dev/null)
+    version=$(jq -r '.version // "unknown"' "$config" 2>/dev/null)
+
+    [[ -z "$image" && -f "$build" ]] && {
+        image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build" 2>/dev/null)
+        version=$(jq -r '.version // "unknown"' "$build" 2>/dev/null)
+    }
+
+    [[ -z "$image" ]] && {
+        log "$COLOR_YELLOW" "⚠️ No image defined for $name"
+        UNCHANGED_ADDONS["$name"]="No image"
+        return
+    }
+
+    latest=$(get_latest_tag "$image")
+    [[ -z "$latest" ]] && {
+        log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
+        UNCHANGED_ADDONS["$name"]="No valid tag"
+        return
+    }
+
+    if [[ "$version" != "$latest" ]]; then
+        log "$COLOR_GREEN" "⬆️ $name updated from $version to $latest"
+        UPDATED_ADDONS["$name"]="$version → $latest"
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log "$COLOR_PURPLE" "💡 Dry run active: skipping update of $name"
+            return
+        fi
+
+        jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
+        if [[ -f "$build" && $(jq -e '.version' "$build") ]]; then
+            jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp" && mv "$build.tmp" "$build"
+        fi
+
+        local changelog="$addon_path/CHANGELOG.md"
+        local link=$(echo "$image" | sed 's|^ghcr.io|https://github.com|' | sed 's|/|/pkgs/container/|' | sed 's|$|/tags|')
+        printf "## %s\n- Updated from %s to %s\n- Docker: [%s](%s)\n\n" "$latest" "$version" "$latest" "$image" "$link" | cat - "$changelog" > "$changelog.tmp"
+        mv "$changelog.tmp" "$changelog"
+    else
+        log "$COLOR_CYAN" "✅ $name is up to date"
+        UNCHANGED_ADDONS["$name"]="Up to date ($version)"
+    fi
+}
+
+commit_and_push() {
+    cd "$REPO_DIR"
+    git config user.email "updater@local"
+    git config user.name "Add-on Updater"
+
+    if [[ -n "$(git status --porcelain)" ]]; then
+        git add . && git commit -m "🔄 Updated add-on versions" || return
+        [[ "$SKIP_PUSH" == "true" ]] && return
+        git push "$GIT_AUTH_REPO" main || log "$COLOR_RED" "❌ Git push failed"
+    else
+        log "$COLOR_CYAN" "ℹ️ No changes to commit"
+    fi
+}
+
 main() {
-    acquire_lock
-    load_config
+    echo "" > "$LOG_FILE"
+    read_config
+    log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
+    git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
+        log "$COLOR_RED" "❌ Git clone failed"
+        notify "Updater Error" "Git clone failed" 5
+        exit 1
+    }
 
-    log_info "Starting Home Assistant Add-on Updater"
-    perform_update_check
+    for path in "$REPO_DIR"/*; do
+        [[ -d "$path" ]] && update_addon "$path"
+    done
 
-    release_lock
-    log_info "Update process completed."
-    exit 0
+    commit_and_push
+
+    local summary="Add-on Update Summary\n\n"
+    if [[ ${#UPDATED_ADDONS[@]} -gt 0 ]]; then
+        summary+="✅ ${#UPDATED_ADDONS[@]} updated:\n"
+        for k in "${!UPDATED_ADDONS[@]}"; do summary+="- $k: ${UPDATED_ADDONS[$k]}\n"; done
+    fi
+    summary+="\n"
+    if [[ ${#UNCHANGED_ADDONS[@]} -gt 0 ]]; then
+        summary+="ℹ️ ${#UNCHANGED_ADDONS[@]} unchanged:\n"
+        for k in "${!UNCHANGED_ADDONS[@]}"; do summary+="- $k: ${UNCHANGED_ADDONS[$k]}\n"; done
+    fi
+    [[ "$DRY_RUN" == "true" ]] && summary+="\n🔁 DRY RUN MODE ENABLED"
+
+    notify "Add-on Updater" "$summary" 3
+    log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
 
 main
