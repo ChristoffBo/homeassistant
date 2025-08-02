@@ -9,298 +9,279 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
-# Logging functions with Dry Run flag awareness
-DRY_RUN=false
-VERBOSE=false
-
 log() {
-  level="$1"
-  shift
-  case "$level" in
-    INFO) color=$GREEN ;;
-    WARN) color=$YELLOW ;;
-    ERROR) color=$RED ;;
-    DRYRUN) color=$MAGENTA ;;
-    *) color=$NC ;;
-  esac
-  prefix="[$level]"
-  # Print messages differently if dry run
-  if $DRY_RUN; then
-    echo "${color}[DRYRUN]${prefix} $*${NC}"
-  else
-    echo "${color}${prefix} $*${NC}"
-  fi
+    # $1 = level (INFO, WARN, ERROR)
+    # $2 = message
+    # $3 = dry_run flag (optional)
+
+    DRY_RUN=${3:-false}
+    PREFIX=""
+    COLOR=$NC
+
+    case "$1" in
+        INFO) 
+            COLOR=$GREEN
+            PREFIX="INFO"
+            ;;
+        WARN)
+            COLOR=$YELLOW
+            PREFIX="WARN"
+            ;;
+        ERROR)
+            COLOR=$RED
+            PREFIX="ERROR"
+            ;;
+        DRYRUN)
+            COLOR=$MAGENTA
+            PREFIX="DRYRUN"
+            ;;
+        *)
+            COLOR=$NC
+            PREFIX="$1"
+            ;;
+    esac
+
+    if [ "$DRY_RUN" = true ]; then
+        printf "%b[%s][%s] %s%b\n" "$COLOR" "$PREFIX" "DRYRUN" "$2" "$NC"
+    else
+        printf "%b[%s] %s%b\n" "$COLOR" "$PREFIX" "$2" "$NC"
+    fi
 }
 
-# Load config.json options (assumes options.json in /data/options.json)
-if [ ! -f /data/options.json ]; then
-  log ERROR "Configuration file /data/options.json not found. Exiting."
-  exit 1
-fi
+# Load config.json options
+CONFIG_FILE="/data/options.json"
 
-# Parse options from options.json using jq
-GITUSER=$(jq -r '.gituser // empty' /data/options.json)
-GITMAIL=$(jq -r '.gitmail // empty' /data/options.json)
-GITAPI=$(jq -r '.gitapi // empty' /data/options.json)
-REPOSITORY=$(jq -r '.repository // empty' /data/options.json)
-VERBOSE=$(jq -r '.verbose // false' /data/options.json)
-DRY_RUN=$(jq -r '.dry_run // false' /data/options.json)
-ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications // false' /data/options.json)
-GOTIFY_URL=$(jq -r '.gotify_url // empty' /data/options.json)
-GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' /data/options.json)
-GITEA_API_URL=$(jq -r '.gitea_api_url // empty' /data/options.json)
-GITEA_TOKEN=$(jq -r '.gitea_token // empty' /data/options.json)
+gituser=$(jq -r '.gituser // empty' "$CONFIG_FILE")
+gitmail=$(jq -r '.gitmail // empty' "$CONFIG_FILE")
+gitapi=$(jq -r '.gitapi // empty' "$CONFIG_FILE")
+repository=$(jq -r '.repository // empty' "$CONFIG_FILE")
+verbose=$(jq -r '.verbose // false' "$CONFIG_FILE")
+dry_run=$(jq -r '.dry_run // false' "$CONFIG_FILE")
+enable_notifications=$(jq -r '.enable_notifications // false' "$CONFIG_FILE")
+gotify_url=$(jq -r '.gotify_url // empty' "$CONFIG_FILE")
+gotify_token=$(jq -r '.gotify_token // empty' "$CONFIG_FILE")
+gitea_api_url=$(jq -r '.gitea_api_url // empty' "$CONFIG_FILE")
+gitea_token=$(jq -r '.gitea_token // empty' "$CONFIG_FILE")
 
-if [ -z "$REPOSITORY" ]; then
-  log ERROR "No repository specified in configuration. Exiting."
-  exit 1
-fi
-
-log INFO "===== ADDON UPDATER STARTED ====="
-if $DRY_RUN; then
-  log DRYRUN "Dry run mode enabled. No changes will be pushed."
-else
-  log INFO "Live mode enabled. Changes will be committed and pushed."
-fi
-log INFO "Repository: $REPOSITORY"
-
-# Setup git user/email and token
-export HOME=/tmp
-git config --system http.sslVerify false
-git config --system credential.helper 'cache --timeout=7200'
-git config --system user.name "$GITUSER"
-if [ -n "$GITMAIL" ] && [ "$GITMAIL" != "null" ]; then
-  git config --system user.email "$GITMAIL"
-fi
-
-# Set remote URL with token if token present
-if [ -n "$GITAPI" ] && [ "$GITAPI" != "null" ]; then
-  REMOTE_URL="https://${GITUSER}:${GITAPI}@github.com/${REPOSITORY}.git"
-else
-  REMOTE_URL="https://github.com/${REPOSITORY}.git"
-fi
-
-# Clone or update repo
-BASENAME=$(basename "$REPOSITORY")
-REPO_DIR="/data/${BASENAME}"
-
-if [ ! -d "$REPO_DIR" ]; then
-  log INFO "Cloning repository $REPOSITORY..."
-  if ! git clone --depth=1 "$REMOTE_URL" "$REPO_DIR"; then
-    log ERROR "Failed to clone repository $REPOSITORY"
+if [ -z "$repository" ]; then
+    log ERROR "No repository configured in options.json. Exiting."
     exit 1
-  fi
+fi
+
+# Set HOME if unset (fix git errors)
+export HOME=${HOME:-/tmp}
+
+log DRYRUN "===== ADDON UPDATER STARTED =====" "$dry_run"
+log DRYRUN "Dry run mode enabled. No changes will be pushed." "$dry_run"
+log DRYRUN "Repository: $repository" "$dry_run"
+
+REPO_DIR="/data/$(basename "$repository")"
+REMOTE_URL="https://github.com/$repository"
+
+# Configure git user/email
+if [ -n "$gituser" ]; then
+    git config --global user.name "$gituser"
+fi
+if [ -n "$gitmail" ]; then
+    git config --global user.email "$gitmail"
+fi
+git config --global http.sslVerify false
+git config --global credential.helper 'cache --timeout=7200'
+
+# Clone or update repository
+if [ ! -d "$REPO_DIR/.git" ]; then
+    log DRYRUN "Cloning repository $repository..." "$dry_run"
+    if ! git clone --depth=1 "$REMOTE_URL" "$REPO_DIR"; then
+        log ERROR "Failed to clone repository $repository"
+        exit 1
+    fi
 else
-  log INFO "Repository already exists, pulling latest changes..."
-  cd "$REPO_DIR" || exit 1
-  git reset --hard origin/master
-  git pull origin master
+    log DRYRUN "Repository already exists, updating..." "$dry_run"
+    cd "$REPO_DIR" || exit 1
+
+    # Detect default branch dynamically
+    DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+    if [ -z "$DEFAULT_BRANCH" ]; then
+        DEFAULT_BRANCH="main"
+    fi
+
+    # Fetch and reset hard to remote default branch
+    git fetch origin "$DEFAULT_BRANCH" || { log ERROR "Git fetch failed"; exit 1; }
+    git reset --hard "origin/$DEFAULT_BRANCH" || { log ERROR "Git reset failed"; exit 1; }
+    git pull origin "$DEFAULT_BRANCH" || { log ERROR "Git pull failed"; exit 1; }
 fi
 
 cd "$REPO_DIR" || exit 1
 
-# Iterate over addon directories
-for addon_dir in */ ; do
-  # Check updater.json presence
-  if [ ! -f "${addon_dir}updater.json" ]; then
-    [ "$VERBOSE" = "true" ] && log WARN "Skipping $addon_dir — updater.json not found."
-    continue
-  fi
+# Iterate over all add-on folders with updater.json
+for addon_dir in */; do
+    [ -f "$addon_dir/updater.json" ] || continue
 
-  SLUG=${addon_dir%/}
-  [ "$VERBOSE" = "true" ] && log INFO "Processing addon: $SLUG"
+    SLUG="${addon_dir%/}"
 
-  # Load updater.json data
-  UPSTREAM=$(jq -r '.upstream_repo // empty' "${addon_dir}updater.json")
-  BETA=$(jq -r '.github_beta // false' "${addon_dir}updater.json")
-  FULLTAG=$(jq -r '.github_fulltag // false' "${addon_dir}updater.json")
-  HAVINGASSET=$(jq -r '.github_havingasset // false' "${addon_dir}updater.json")
-  SOURCE=$(jq -r '.source // empty' "${addon_dir}updater.json")
-  FILTER_TEXT=$(jq -r '.github_tagfilter // empty' "${addon_dir}updater.json")
-  EXCLUDE_TEXT=$(jq -r '.github_exclude // empty' "${addon_dir}updater.json")
-  PAUSED=$(jq -r '.paused // false' "${addon_dir}updater.json")
-  DATE=$(date '+%Y-%m-%d')
-  BYDATE=$(jq -r '.dockerhub_by_date // false' "${addon_dir}updater.json")
+    # Load updater.json properties
+    upstream_repo=$(jq -r '.upstream_repo // empty' "$addon_dir/updater.json")
+    github_beta=$(jq -r '.github_beta // false' "$addon_dir/updater.json")
+    github_fulltag=$(jq -r '.github_fulltag // false' "$addon_dir/updater.json")
+    github_havingasset=$(jq -r '.github_havingasset // false' "$addon_dir/updater.json")
+    source=$(jq -r '.source // empty' "$addon_dir/updater.json")
+    github_tagfilter=$(jq -r '.github_tagfilter // empty' "$addon_dir/updater.json")
+    github_exclude=$(jq -r '.github_exclude // "zzzzzzzzzzzzzzzz"' "$addon_dir/updater.json")
+    paused=$(jq -r '.paused // false' "$addon_dir/updater.json")
+    dockerhub_by_date=$(jq -r '.dockerhub_by_date // false' "$addon_dir/updater.json")
+    dockerhub_list_size=$(jq -r '.dockerhub_list_size // 100' "$addon_dir/updater.json")
 
-  # Skip paused addons
-  if [ "$PAUSED" = "true" ]; then
-    log WARN "$SLUG updates are paused, skipping."
-    continue
-  fi
-
-  # Current upstream version
-  CURRENT=$(jq -r '.upstream_version // empty' "${addon_dir}updater.json")
-  if [ -z "$CURRENT" ]; then
-    log WARN "$SLUG upstream_version not found, skipping."
-    continue
-  fi
-
-  LASTVERSION=""
-
-  if [ "$SOURCE" = "dockerhub" ]; then
-    # Docker Hub logic
-    DOCKERHUB_REPO=$(echo "$UPSTREAM" | cut -d '/' -f1)
-    DOCKERHUB_IMAGE=$(echo "$UPSTREAM" | cut -d '/' -f2)
-    LISTSIZE=$(jq -r '.dockerhub_list_size // 100' "${addon_dir}updater.json")
-
-    FILTER_QUERY=""
-    [ -n "$FILTER_TEXT" ] && FILTER_QUERY="&name=$FILTER_TEXT"
-
-    # Get list of tags and pick latest valid
-    LASTVERSION=$(
-      curl -fsSL "https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/${DOCKERHUB_IMAGE}/tags?page_size=$LISTSIZE$FILTER_QUERY" \
-      | jq -r '.results[].name' \
-      | grep -v -E 'latest|dev|nightly|beta' \
-      | grep -v "$EXCLUDE_TEXT" \
-      | sort -V \
-      | tail -n 1
-    )
-
-    if [ "$BETA" = "true" ]; then
-      LASTVERSION=$(
-        curl -fsSL "https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/${DOCKERHUB_IMAGE}/tags?page_size=$LISTSIZE$FILTER_QUERY" \
-        | jq -r '.results[].name' \
-        | grep dev \
-        | grep -v "$EXCLUDE_TEXT" \
-        | sort -V \
-        | tail -n 1
-      )
-    fi
-
-    if [ "$BYDATE" = "true" ]; then
-      LASTVERSION=$(
-        curl -fsSL "https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/${DOCKERHUB_IMAGE}/tags?page_size=$LISTSIZE&ordering=last_updated$FILTER_QUERY" \
-        | jq -r '.results[].name' \
-        | grep -v -E 'latest|dev|nightly|beta' \
-        | grep -v "$EXCLUDE_TEXT" \
-        | sort -V \
-        | tail -n 1
-      )
-      # Get last_updated date
-      LASTDATE=$(
-        curl -fsSL "https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/${DOCKERHUB_IMAGE}/tags/?page_size=$LISTSIZE&ordering=last_updated$FILTER_QUERY" \
-        | jq -r --arg v "$LASTVERSION" '.results[] | select(.name==$v) | .last_updated' \
-        | cut -d 'T' -f1
-      )
-      LASTVERSION="${LASTVERSION}-${LASTDATE}"
-    fi
-
-  else
-    # Use lastversion binary for github, gitea or others
-    ARGS="--at $SOURCE"
-    [ "$FULLTAG" = "true" ] && ARGS="$ARGS --format tag"
-    [ "$HAVINGASSET" = "true" ] && ARGS="$ARGS --having-asset"
-    [ -n "$FILTER_TEXT" ] && ARGS="$ARGS --only $FILTER_TEXT"
-    [ -n "$EXCLUDE_TEXT" ] && ARGS="$ARGS --exclude $EXCLUDE_TEXT"
-    [ "$BETA" = "true" ] && ARGS="$ARGS --pre"
-
-    # Try to get lastversion, fallback to packages if no release found
-    LASTVERSION=$(lastversion "$UPSTREAM" $ARGS 2>/dev/null || true)
-
-    if [ -z "$LASTVERSION" ]; then
-      log WARN "$SLUG: No release found, checking packages fallback."
-      last_packages="$(curl -sL "https://github.com/${UPSTREAM}/packages" | grep -oP '/container/package/\K[^"]+' | head -n 1)"
-      if [ -n "$last_packages" ]; then
-        LASTVERSION=$(curl -sL "https://github.com/${UPSTREAM}/pkgs/container/${last_packages}" \
-          | grep -oP 'tag=\K[^"]+' \
-          | grep -v -E 'latest|dev|nightly|beta' \
-          | sort -V | tail -n 1)
-        if [ -z "$LASTVERSION" ]; then
-          log WARN "$SLUG: No package versions found."
-          continue
-        fi
-      else
-        log WARN "$SLUG: No packages found fallback."
+    if [ "$paused" = true ]; then
+        log INFO "$SLUG: Updates are paused, skipping." "$dry_run"
         continue
-      fi
-    fi
-  fi
-
-  # Clean versions for comparison
-  LASTVERSION_CLEAN=$(echo "$LASTVERSION" | tr -d '"')
-  CURRENT_CLEAN=$(echo "$CURRENT" | tr -d '"')
-
-  if [ "$CURRENT_CLEAN" != "$LASTVERSION_CLEAN" ]; then
-    log INFO "$SLUG: Update available: $CURRENT -> $LASTVERSION_CLEAN"
-
-    # Update versions in files
-    for file in config.json config.yaml Dockerfile build.json build.yaml; do
-      if [ -f "${addon_dir}${file}" ]; then
-        sed -i "s/${CURRENT}/${LASTVERSION}/g" "${addon_dir}${file}" || true
-      fi
-    done
-
-    # Safely update config.json version
-    if [ -f "${addon_dir}config.json" ]; then
-      tmp=$(mktemp)
-      jq --arg ver "$LASTVERSION_CLEAN" '.version = $ver' "${addon_dir}config.json" > "$tmp" && mv "$tmp" "${addon_dir}config.json"
-    elif [ -f "${addon_dir}config.yaml" ]; then
-      sed -i "/version:/c\version: \"$LASTVERSION_CLEAN\"" "${addon_dir}config.yaml"
     fi
 
-    # Update updater.json version and last_update
-    tmp=$(mktemp)
-    jq --arg ver "$LASTVERSION_CLEAN" --arg date "$DATE" \
-      '.upstream_version = $ver | .last_update = $date' "${addon_dir}updater.json" > "$tmp" && mv "$tmp" "${addon_dir}updater.json"
+    # Get current upstream version
+    current_version=$(jq -r '.upstream_version // empty' "$addon_dir/updater.json")
+    if [ -z "$current_version" ]; then
+        log WARN "$SLUG: No current upstream_version found, skipping." "$dry_run"
+        continue
+    fi
 
-    # Update CHANGELOG.md
-    changelog="${addon_dir}CHANGELOG.md"
-    touch "$changelog"
-    if echo "$UPSTREAM" | grep -q "github"; then
-      sed -i "1i - Update to latest version from $UPSTREAM (changelog: https://github.com/${UPSTREAM%/}/releases)" "$changelog"
+    last_version=""
+
+    # Fetch latest version based on source
+    if [ "$source" = "dockerhub" ]; then
+        # Parse dockerhub repo and image
+        repo_name="${upstream_repo%%/*}"
+        image_name="${upstream_repo#*/}"
+
+        filter_param=""
+        if [ -n "$github_tagfilter" ] && [ "$github_tagfilter" != "null" ]; then
+            filter_param="&name=$github_tagfilter"
+        fi
+
+        exclude_filter="$github_exclude"
+        [ -z "$exclude_filter" ] && exclude_filter="zzzzzzzzzzzzzzzz"
+
+        # Compose API URL
+        url="https://hub.docker.com/v2/repositories/${repo_name}/${image_name}/tags?page_size=${dockerhub_list_size}${filter_param}"
+
+        # Fetch tags and filter out undesired ones
+        last_version=$(curl -fsSL "$url" \
+            | jq -r '.results[].name' \
+            | grep -vE "latest|dev|nightly|beta" \
+            | grep -v "$exclude_filter" \
+            | sort -V \
+            | tail -n 1)
+
+        # If beta enabled, pick dev tags
+        if [ "$github_beta" = true ]; then
+            last_version=$(curl -fsSL "$url" \
+                | jq -r '.results[].name' \
+                | grep "dev" \
+                | grep -v "$exclude_filter" \
+                | sort -V \
+                | tail -n 1)
+        fi
+
+        # If by_date enabled, reorder by last_updated
+        if [ "$dockerhub_by_date" = true ]; then
+            url_date="https://hub.docker.com/v2/repositories/${repo_name}/${image_name}/tags/?page_size=${dockerhub_list_size}&ordering=last_updated${filter_param}"
+            last_version=$(curl -fsSL "$url_date" \
+                | jq -r '.results[].name' \
+                | grep -vE "latest|dev|nightly" \
+                | grep -v "$exclude_filter" \
+                | sort -V \
+                | tail -n 1)
+
+            date=$(curl -fsSL "$url_date" \
+                | jq -r --arg ver "$last_version" '.results[] | select(.name==$ver) | .last_updated' \
+                | cut -d'T' -f1)
+
+            last_version="${last_version}-${date}"
+        fi
+
     else
-      sed -i "1i - Update to latest version from $UPSTREAM" "$changelog"
+        # For GitHub or other sources use lastversion tool (assumed installed)
+        args="--at $source"
+
+        [ "$github_fulltag" = true ] && args="$args --format tag"
+        [ "$github_havingasset" = true ] && args="$args --having-asset"
+        [ -n "$github_tagfilter" ] && [ "$github_tagfilter" != "null" ] && args="$args --only $github_tagfilter"
+        [ -n "$github_exclude" ] && [ "$github_exclude" != "null" ] && args="$args --exclude $github_exclude"
+        [ "$github_beta" = true ] && args="$args --pre"
+
+        # Use lastversion to get latest tag
+        last_version=$(lastversion "$upstream_repo" $args || true)
+
+        # Fallback to GitHub packages if no releases
+        if echo "$last_version" | grep -q "No release"; then
+            packages=$(curl -fsSL "https://github.com/${upstream_repo}/packages" | grep -oP '/container/package/\K[^"]+')
+            if [ -n "$packages" ]; then
+                package="${packages%%$'\n'*}"
+                last_version=$(curl -fsSL "https://github.com/${upstream_repo}/pkgs/container/${package}" \
+                    | grep -oP 'tag=\K[^"]+' \
+                    | grep -vE "latest|dev|nightly|beta" \
+                    | sort -V | tail -n 1)
+            fi
+        fi
     fi
-    sed -i "1i ## $LASTVERSION_CLEAN ($DATE)" "$changelog"
-    sed -i "1i " "$changelog"
 
-    log INFO "$SLUG: Files updated."
+    if [ -z "$last_version" ]; then
+        log WARN "$SLUG: No latest version found, skipping." "$dry_run"
+        continue
+    fi
 
-    # Commit and push changes
-    git add -A
-    git commit -m "Updater bot: $SLUG updated to $LASTVERSION_CLEAN" >/dev/null 2>&1 || true
+    # Normalize versions for comparison
+    current_cmp=${current_version//+/-}
+    last_cmp=${last_version//+/-}
 
-    git remote set-url origin "$REMOTE_URL"
+    if [ "$current_cmp" != "$last_cmp" ]; then
+        log INFO "$SLUG: Update available: $current_version -> $last_version" "$dry_run"
 
-    if ! $DRY_RUN; then
-      if git push; then
-        log INFO "$SLUG: Changes pushed to repository."
-      else
-        log ERROR "$SLUG: Failed to push changes."
-      fi
+        if [ "$dry_run" != true ]; then
+            # Update version strings in files (config.json, build.json, updater.json)
+            for file in config.json build.json updater.json; do
+                path="$REPO_DIR/$SLUG/$file"
+                if [ -f "$path" ]; then
+                    # Replace current version with new version safely
+                    tmpfile="${path}.tmp"
+                    jq --arg ver "$last_version" '(.version // .upstream_version) |= $ver' "$path" > "$tmpfile" && mv "$tmpfile" "$path"
+                fi
+            done
+
+            # Update changelog
+            changelog="$REPO_DIR/$SLUG/CHANGELOG.md"
+            date_str=$(date '+%Y-%m-%d')
+            touch "$changelog"
+            echo "" | cat - "$changelog" > "$changelog.tmp" && mv "$changelog.tmp" "$changelog" # blank line
+            echo "## $last_version ($date_str)" | cat - "$changelog" > "$changelog.tmp" && mv "$changelog.tmp" "$changelog"
+            if echo "$source" | grep -q "github"; then
+                echo "- Updated from $upstream_repo (https://github.com/${upstream_repo}/releases)" | cat - "$changelog" > "$changelog.tmp" && mv "$changelog.tmp" "$changelog"
+            else
+                echo "- Updated from $upstream_repo" | cat - "$changelog" > "$changelog.tmp" && mv "$changelog.tmp" "$changelog"
+            fi
+
+            # Git commit and push
+            cd "$REPO_DIR"
+            git add -A
+            git commit -m "Updater bot: $SLUG updated to $last_version" || true
+
+            # Use token for push if dry_run false
+            if [ "$dry_run" != true ]; then
+                # Setup remote with token auth
+                git remote set-url origin "https://${gituser}:${gitapi}@github.com/${repository}" 2>/dev/null || true
+                git push origin "$DEFAULT_BRANCH" || log ERROR "$SLUG: Git push failed"
+            else
+                log DRYRUN "$SLUG: Dry run mode, skipping git push." "$dry_run"
+            fi
+
+            log INFO "$SLUG: Updated successfully to $last_version"
+        else
+            log DRYRUN "$SLUG: Dry run - would update to $last_version" "$dry_run"
+        fi
+
     else
-      log DRYRUN "$SLUG: Dry run active, not pushing changes."
+        log INFO "$SLUG: Up-to-date ($current_version)" "$dry_run"
     fi
-
-    # Optionally send notifications (Gotify or Gitea)
-    if $ENABLE_NOTIFICATIONS; then
-      message="$SLUG updated from $CURRENT_CLEAN to $LASTVERSION_CLEAN"
-      # Gotify notification
-      if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-        curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "{\"title\":\"Addon Updater\", \"message\":\"$message\", \"priority\":5}" >/dev/null 2>&1
-      fi
-      # Gitea notification (example webhook)
-      if [ -n "$GITEA_API_URL" ] && [ -n "$GITEA_TOKEN" ]; then
-        curl -s -X POST "$GITEA_API_URL" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: token $GITEA_TOKEN" \
-          -d "{\"text\":\"$message\"}" >/dev/null 2>&1
-      fi
-    fi
-
-  else
-    log INFO "$SLUG: Already up-to-date ($CURRENT_CLEAN)."
-  fi
 done
 
-log INFO "===== ADDON UPDATER FINISHED ====="
-
-# Cleanup dry run cloned data
-if $DRY_RUN; then
-  rm -rf /data/*
-  log DRYRUN "Dry run cleanup done."
-fi
+log DRYRUN "===== ADDON UPDATER FINISHED =====" "$dry_run"
 
 exit 0
