@@ -1,8 +1,8 @@
 {
   "name": "Addons Updater Enhanced",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "slug": "addons_updater_enhanced",
-  "description": "Complete addon updater with GitHub/Gitea support and Gotify notifications",
+  "description": "Addon updater with optional notifications",
   "url": "https://github.com/your-repo/addons_updater_enhanced",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
   "startup": "application",
@@ -12,34 +12,34 @@
   "map": ["config:rw", "backup:rw"],
   "options": {
     "repo_source": "github",
-    "enable_gotify": false,
+    "enable_notifications": false,
     "gotify_url": null,
     "gotify_token": null,
-    "gitea_api_url": null,
-    "gitea_token": null,
     "repo_path": "/config/addons",
-    "repo_branch": "main",
-    "addon_paths": ["addons", "community"],
-    "update_mode": "commit",
-    "timeout": 300,
-    "log_level": "info",
-    "validate_ssl": true,
-    "dry_run": false
+    "addon_paths": ["addons"],
+    "update_mode": "commit"
   },
   "schema": {
     "repo_source": "list(github|gitea)",
-    "enable_gotify": "bool",
-    "gotify_url": "str?",
-    "gotify_token": "str?",
-    "gitea_api_url": "str?",
-    "gitea_token": "str?",
+    "enable_notifications": {
+      "name": "Enable notifications",
+      "type": "boolean",
+      "default": false
+    },
+    "gotify_url": {
+      "name": "Gotify URL",
+      "type": "string",
+      "required": false,
+      "nullable": true
+    },
+    "gotify_token": {
+      "name": "Gotify Token",
+      "type": "string",
+      "required": false,
+      "nullable": true
+    },
     "repo_path": "str",
-    "repo_branch": "str",
     "addon_paths": ["str"],
-    "update_mode": "list(commit|push)",
-    "timeout": "int(60,3600)",
-    "log_level": "list(debug|info|warning|error)",
-    "validate_ssl": "bool",
-    "dry_run": "bool"
+    "update_mode": "list(commit|push)"
   }
 }
