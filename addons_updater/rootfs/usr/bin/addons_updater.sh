@@ -69,9 +69,11 @@ process_addons() {
   ADDONS_DIR="$REPO_DIR/addons"
   if [ ! -d "$ADDONS_DIR" ]; then
     echo "ERROR: Addons directory not found: $ADDONS_DIR" >&2
-    echo "Directory contents:"
-    ls -la "$REPO_DIR"
-    return
+    echo "Directory contents:" >&2
+    ls -la "$REPO_DIR" >&2
+    # Return safe default values
+    printf "PROCESSED=\nUPDATED=\nUPDATED_COUNT=0\nCHECKED_COUNT=0"
+    return 1
   fi
 
   echo "Starting addon processing..."
@@ -221,13 +223,20 @@ process_addons() {
 
 # Run the processing
 echo "Starting addon update process..."
-results=$(process_addons)
-eval "$results"
+results=$(process_addons) || true
+# Safely evaluate results even if function fails
+eval "$results" 2>/dev/null || {
+  echo "WARNING: Error processing addons - using safe defaults"
+  PROCESSED=""
+  UPDATED=""
+  UPDATED_COUNT=0
+  CHECKED_COUNT=0
+}
 
-echo "Processed $CHECKED_COUNT addons, updated $UPDATED_COUNT"
+echo "Processed ${CHECKED_COUNT:-0} addons, updated ${UPDATED_COUNT:-0}"
 
 # Push changes if updates were made and not in dry run
-if [ "$UPDATED_COUNT" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
+if [ "${UPDATED_COUNT:-0}" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
   echo "Pushing changes to repository..."
   git push origin main
   echo "[Destination] Successfully pushed updates to: $REPO_URL"
@@ -244,8 +253,8 @@ if [ "$UPDATED_COUNT" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
   else
     echo "WARNING: Supervisor token not available, skipping reload"
   fi
-elif [ "$DRY_RUN" = "true" ] && [ "$UPDATED_COUNT" -gt 0 ]; then
-  echo "DRY RUN: Would have pushed $UPDATED_COUNT updates"
+elif [ "$DRY_RUN" = "true" ] && [ "${UPDATED_COUNT:-0}" -gt 0 ]; then
+  echo "DRY RUN: Would have pushed ${UPDATED_COUNT} updates"
 fi
 
 # Send Gotify notification if enabled and configured
@@ -262,52 +271,58 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then
       message="$message (Dry Run)"
     fi
     message="$message\n\n"
-    message="$message\n#### 🔍 Checked Addons ($CHECKED_COUNT):\n"
+    message="$message\n#### 🔍 Checked Addons (${CHECKED_COUNT:-0}):\n"
     
     # Parse processed addons
-    printf "%s" "$PROCESSED" | while IFS='|' read -r name status current latest _; do
-      [ -z "$name" ] && continue
-      case $status in
-        updated)
-          message="$message\n- ✅ **$name**: Updated to $latest"
-          ;;
-        would_update)
-          message="$message\n- ⚡ **$name**: Would update to $latest (Dry Run)"
-          ;;
-        up_to_date)
-          message="$message\n- ✔️ **$name**: Up-to-date ($current)"
-          ;;
-        no_registry_version)
-          message="$message\n- ⚠️ **$name**: No registry version found"
-          ;;
-        missing_config)
-          message="$message\n- ❌ **$name**: Missing config.json"
-          ;;
-        missing_image)
-          message="$message\n- ❌ **$name**: Missing image name"
-          ;;
-        update_failed)
-          message="$message\n- ❌ **$name**: Update failed"
-          ;;
-        *)
-          message="$message\n- ❓ **$name**: $status"
-          ;;
-      esac
-    done
-
-    # Add updated section if any
-    if [ "$UPDATED_COUNT" -gt 0 ]; then
-      message="$message\n\n#### 🔄 Updated Addons ($UPDATED_COUNT):\n"
-      printf "%s" "$UPDATED" | while IFS='|' read -r name old new; do
+    if [ -n "$PROCESSED" ]; then
+      printf "%s" "$PROCESSED" | while IFS='|' read -r name status current latest _; do
         [ -z "$name" ] && continue
-        message="$message\n- ➡️ **$name**: $old → $new"
+        case $status in
+          updated)
+            message="$message\n- ✅ **$name**: Updated to $latest"
+            ;;
+          would_update)
+            message="$message\n- ⚡ **$name**: Would update to $latest (Dry Run)"
+            ;;
+          up_to_date)
+            message="$message\n- ✔️ **$name**: Up-to-date ($current)"
+            ;;
+          no_registry_version)
+            message="$message\n- ⚠️ **$name**: No registry version found"
+            ;;
+          missing_config)
+            message="$message\n- ❌ **$name**: Missing config.json"
+            ;;
+          missing_image)
+            message="$message\n- ❌ **$name**: Missing image name"
+            ;;
+          update_failed)
+            message="$message\n- ❌ **$name**: Update failed"
+            ;;
+          *)
+            message="$message\n- ❓ **$name**: $status"
+            ;;
+        esac
       done
     else
-      message="$message\n\n#### 🔄 Updated Addons: No updates\n"
+      message="$message\nNo addons were processed"
+    fi
+
+    # Add updated section if any
+    if [ "${UPDATED_COUNT:-0}" -gt 0 ]; then
+      message="$message\n\n#### 🔄 Updated Addons ($UPDATED_COUNT):\n"
+      if [ -n "$UPDATED" ]; then
+        printf "%s" "$UPDATED" | while IFS='|' read -r name old new; do
+          [ -z "$name" ] && continue
+          message="$message\n- ➡️ **$name**: $old → $new"
+        done
+      fi
+    else
+      message="$message\n\n#### 🔄 Updated Addons: No updates"
     fi
 
     # Add summary
-    message="$message\n\n📊 **Summary**: $UPDATED_COUNT updated, $CHECKED_COUNT checked"
+    message="$message\n\n📊 **Summary**: ${UPDATED_COUNT:-0} updated, ${CHECKED_COUNT:-0} checked"
     
     # Send notification
     echo "Sending to Gotify: $GOTIFY_URL"
