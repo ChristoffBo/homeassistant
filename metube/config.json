@@ -11,7 +11,7 @@
   "map": [
     "share:rw"
   ],
-  "version": "",
+  "version": "1.0",
   "name": "metube",
   "options": {},
   "ports": {
