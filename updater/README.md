@@ -1,93 +1,101 @@
-===============================================================================
-                        HOME ASSISTANT ADD-ON UPDATER
-===============================================================================
+# 🧩 Home Assistant Add-on Updater
 
-Keep your Home Assistant custom add-ons automatically updated with version checks 
-and optional notifications. This add-on monitors your repository and updates 
-configuration files when new Docker image versions become available.
+Automatically checks for updates to your custom add-ons, compares Docker image versions across registries, updates files, and optionally notifies you.
 
-===============================================================================
-INSTALLATION
-===============================================================================
+---
 
-1. Add this repository to your Home Assistant add-on store.
-2. Install the "Add-on Updater" add-on.
-3. Configure it with your GitHub credentials (see CONFIGURATION section).
-4. Set up the required automation (example below).
+## ✅ Features
 
-===============================================================================
-REQUIRED AUTOMATION (COPY & PASTE INTO AUTOMATIONS)
-===============================================================================
+- 🔍 Checks for new versions using **Docker Hub**, **GitHub Container Registry**, and **LinuxServer.io**
+- 🧠 Detects version from `config.json`, `build.json`, or `updater.json`
+- 📝 Updates `version` fields in config/build files
+- 📦 Automatically commits changes to GitHub
+- 📢 Sends **Gotify** notifications for updates
+- 📜 Color-coded logs and dry-run support
+- 🛑 One-time execution per run (no infinite loops)
+- 🌍 Timezone-aware timestamps
 
-alias: "Add-on Version Check"
-description: "Daily check for add-on updates at 3 AM"
-mode: single
-trigger:
-  - platform: time
-    at: "03:00"
-condition: []
-action:
-  - service: hassio.addon_restart
-    target:
-      addon: a0d7b954_updater
+---
 
-===============================================================================
-CONFIGURATION OPTIONS (IN options.json)
-===============================================================================
+## 📁 File Locations
 
-[REQUIRED]
-github_repo      = "https://github.com/your/repo"
-github_username  = "your_github_username"
-github_token     = "ghp_yourgithubtoken"
+| File | Purpose |
+|------|---------|
+| `/data/options.json` | Add-on settings from Home Assistant UI |
+| `/data/homeassistant` | Cloned GitHub repo with your add-ons |
+| `/data/updater.log` | Output log file |
+| `/data/updater.lock` | Execution lock file |
 
-[RECOMMENDED]
-timezone         = "America/New_York"
-dry_run          = true          # Test mode (no changes will be made)
-debug            = false         # Enable verbose logs for troubleshooting
+---
 
-===============================================================================
-NOTIFICATION SETUP (OPTIONAL)
-===============================================================================
+## ⚙️ Required Configuration (UI or `options.json`)
 
--- GOTIFY --
-notification_service  = "gotify"
-notification_url      = "https://your.gotify.server"
-notification_token    = "your_app_token"
+```json
+{
+  "repository": "https://github.com/ChristoffBo/homeassistant",
+  "gituser": "ChristoffBo",
+  "gittoken": "ghp_YourGitHubTokenHere",
+  "timezone": "Africa/Johannesburg",
+  "dry_run": false,
+  "skip_push": false,
+  "debug": true,
+  "enable_notifications": true,
+  "notification_service": "gotify",
+  "notification_url": "http://your-gotify-url:port",
+  "notification_token": "gotify-app-token",
+  "notification_to": "",
+  "notify_on_success": true,
+  "notify_on_error": true,
+  "notify_on_updates": true,
+  "cron": ""
+}
+```
 
--- NTFY.SH --
-notification_service  = "ntfy"
-notification_url      = "https://ntfy.sh"
-notification_to       = "your_topic_name"
+---
 
-===============================================================================
-TROUBLESHOOTING
-===============================================================================
+## 🔔 Notification Example
 
-AUTOMATION NOT RUNNING?
-  - Ensure the add-on ID matches your actual installation.
-  - Confirm the automation is enabled in Home Assistant.
-  - Check the Home Assistant logs for related errors.
+```text
+📦 Add-on Update Summary
+🕒 2025-08-02 21:55:22 SAST
 
-UPDATES NOT DETECTED?
-  - Review the add-on logs for API or connectivity issues.
-  - Ensure your GitHub token has full repository access.
-  - Make sure your Docker images use proper version tags (avoid "latest").
+2fauth:             ✅ Up to date (5.6.0)
+gitea:              🔄 1.24.3 → 1.25.0
+gotify:             ⚠️ No image defined
+heimdall:           ⏭️ Skipped
+```
 
-NOTIFICATIONS FAILING?
-  - Test your notification service manually outside Home Assistant.
-  - Enable `debug = true` to see detailed log output.
-  - Verify the notification URL, token, and topic formatting.
+---
 
-===============================================================================
-BEST PRACTICES
-===============================================================================
+## 🧪 Optional Modes
 
-1. Start with `dry_run = true` to validate setup without making changes.
-2. Configure and test notifications before enabling automatic updates.
-3. Schedule update checks during off-peak hours (e.g., 3 AM).
-4. Monitor add-on logs regularly, especially after updates or changes.
-5. Keep your GitHub token safe and secure.
-6. Confirm the add-on ID used in automation matches your actual ID.
-7. Manually run the automation once after setup to verify functionality.
+- **Dry Run:** Set `dry_run: true` to simulate updates without changing files
+- **Skip Push:** Prevents `git push` after commit (useful for testing)
 
-===============================================================================
+---
+
+## 🚫 Skipped Add-ons
+
+- `updater` – Prevents self-modification
+- `heimdall` – Skipped due to tag issues
+
+---
+
+## 🚀 How It Works
+
+1. Reads config from `options.json`
+2. Clones your GitHub repo
+3. Loops through each add-on
+4. Detects latest tag
+5. Compares version and updates files if needed
+6. Commits & pushes to GitHub
+7. Sends summary via Gotify
+
+---
+
+## 📎 Notes
+
+- Only explicit versioned tags are used (no `latest`)
+- Add-ons must have an `image` field in `config.json` or valid `build.json`
+- Tags like `dev`, `rc`, or `beta` are ignored
+- Script runs once and exits. Use cron or Home Assistant automation to schedule
