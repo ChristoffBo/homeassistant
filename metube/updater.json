@@ -2,5 +2,7 @@
   "slug": "metube",
   "image": "alexta69/metube:latest",
   "upstream_version": "latest",
-  "last_update": "2025-07-28 09:45:48"
+  "last_update": "2025-07-28 09:45:48",
+  "version": "tags",
+  "last_updated": "2025-08-02 14:39:32 SAST"
 }

@@ -2,5 +2,7 @@
   "slug": "zoraxy",
   "image": "zoraxydocker/zoraxy:latest",
   "upstream_version": "v3.2.5",
-  "last_update": "2025-07-28 09:06:20"
+  "last_update": "2025-07-28 09:06:20",
+  "version": "tags",
+  "last_updated": "2025-08-02 14:39:33 SAST"
 }

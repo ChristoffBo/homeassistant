@@ -2,5 +2,7 @@
   "slug": "gotify",
   "image": "gotify/server:latest",
   "upstream_version": "2.6.3",
-  "last_update": "2025-07-28 09:05:51"
+  "last_update": "2025-07-28 09:05:51",
+  "version": "tags",
+  "last_updated": "2025-08-02 14:39:29 SAST"
 }

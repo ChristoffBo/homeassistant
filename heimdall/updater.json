@@ -2,5 +2,7 @@
   "slug": "heimdall",
   "image": "lscr.io/linuxserver/heimdall:latest",
   "upstream_version": "27.06.24",
-  "last_update": "2025-07-28 09:45:35"
+  "last_update": "2025-07-28 09:45:35",
+  "version": "tags",
+  "last_updated": "2025-08-02 14:39:30 SAST"
 }
