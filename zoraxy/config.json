@@ -1,6 +1,6 @@
 {
   "name": "Zoraxy",
-  "version": "v3.2.5",
+  "version": "[2025-08-02 19:04:10 SAST] \u001b[0;33m⚠️ No valid version tag found for . Skipping update.\u001b[0m",
   "slug": "zoraxy",
   "description": "A reverse proxy and dashboard powered by Docker.",
   "startup": "services",
