@@ -1,7 +1,10 @@
 #!/bin/sh
 set -e
 
-# Color definitions for better readability
+# Start time for performance tracking
+START_TIME=$(date +%s)
+
+# Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -22,23 +25,18 @@ DRY_RUN=$(jq -r '.dry_run' "$CONFIG_FILE")
 ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications' "$CONFIG_FILE")
 GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_FILE")
 GOTIFY_TOKEN=$(jq -r '.gotify_token' "$CONFIG_FILE")
+TIMEOUT=$(jq -r '.timeout // 30' "$CONFIG_FILE")  # Default 30 seconds per request
 
-# Now show repository source after loading config
+# Show repository source
 echo -e "${CYAN}"
 echo "===== ADDON UPDATER STARTED ====="
 echo -e "${NC}"
 echo -e "${BLUE}[Source]${NC} Repository: https://github.com/$REPO_PATH.git"
 echo -e "${BLUE}[Mode]${NC} Dry Run: $DRY_RUN"
+echo -e "${BLUE}[Timeout]${NC} $TIMEOUT seconds per registry"
 
 # Supervisor token from environment
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
-
-# Set log level
-if [ "$VERBOSE" = "true" ]; then
-  LOG_LEVEL="DEBUG"
-else
-  LOG_LEVEL="INFO"
-fi
 
 # Configure Git
 git config --global user.name "$GIT_USER"
@@ -50,57 +48,47 @@ git config --global --add safe.directory /data/repo
 REPO_URL="https://github.com/$REPO_PATH.git"
 echo -e "${BLUE}[Info]${NC} Using repository URL: $REPO_URL"
 
-# Set up repository
+# Set up repository with shallow clone for speed
 REPO_DIR="/data/repo"
 if [ -d "$REPO_DIR/.git" ]; then
   echo -e "${BLUE}[Git]${NC} Updating existing repository..."
   cd "$REPO_DIR"
-  git reset --hard HEAD
-  git pull
-  echo -e "${GREEN}✓ Successfully pulled latest changes${NC}"
+  git fetch --depth 1
+  git reset --hard origin/main
+  echo -e "${GREEN}✓ Repository updated${NC}"
 else
-  echo -e "${BLUE}[Git]${NC} Cloning repository..."
-  git clone "$REPO_URL" "$REPO_DIR"
+  echo -e "${BLUE}[Git]${NC} Shallow cloning repository..."
+  git clone --depth 1 "$REPO_URL" "$REPO_DIR"
   cd "$REPO_DIR"
-  echo -e "${GREEN}✓ Successfully cloned repository${NC}"
+  echo -e "${GREEN}✓ Repository cloned${NC}"
 fi
 
-# Function to check registry versions
-check_registry_version() {
+# Function to get Docker image version
+get_docker_version() {
   local image=$1
-  local registry_url=$2
+  local url=$2
   local auth_header=$3
+  local timeout=$4
   
-  # Try to get version with timeout and error handling
-  response=$(curl --max-time 20 -s -H "$auth_header" "$registry_url" 2>/dev/null)
+  # Try to get version with timeout
+  response=$(curl -s -m $timeout -H "$auth_header" "$url" 2>/dev/null)
   
-  # Check if response is valid
-  if [ -z "$response" ] || [ "$response" = "null" ]; then
-    echo ""
+  # Return if empty response
+  if [ -z "$response" ]; then
     return
   fi
   
-  # Parse version
-  version=$(echo "$response" | jq -r '.tags[]' 2>/dev/null | grep -E '^[v]?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
-  
-  # Return version if found
-  if [ -n "$version" ]; then
-    echo "$version"
-  else
-    echo ""
-  fi
+  # Extract version numbers
+  echo "$response" | jq -r '.tags[]' 2>/dev/null | \
+  grep -E '^[v]?[0-9]+\.[0-9]+\.[0-9]+$' | \
+  sort -V | tail -n1
 }
 
 # Main processing function
 process_addons() {
   ADDONS_DIR="$REPO_DIR"
-  if [ ! -d "$ADDONS_DIR" ]; then
-    echo -e "${RED}✗ ERROR: Repository directory not found${NC}" >&2
-    return 1
-  fi
-
   echo -e "${CYAN}"
-  echo "===== PROCESSING ADDONS ====="
+  echo "===== CHECKING ADDONS ====="
   echo -e "${NC}"
   
   UPDATED_COUNT=0
@@ -109,7 +97,7 @@ process_addons() {
   UPDATED=""
 
   # List of directories to skip
-  SKIP_DIRS=".git addons_updater"
+  SKIP_DIRS=".git addons_updater .github"
 
   for addon in "$ADDONS_DIR"/*; do
     [ -d "$addon" ] || continue
@@ -124,12 +112,12 @@ process_addons() {
     esac
 
     CHECKED_COUNT=$((CHECKED_COUNT + 1))
-    echo -e "${BLUE}[Addon]${NC} Processing ${CYAN}$addon_name${NC}"
+    echo -e "${BLUE}[Addon]${NC} ${CYAN}$addon_name${NC}"
     
     # Get current version
     config_file="$addon/config.json"
     if [ ! -f "$config_file" ]; then
-      echo -e "${YELLOW}⚠ WARNING: Missing config.json${NC}"
+      echo -e "  ${YELLOW}⚠ Missing config.json${NC}"
       PROCESSED="${PROCESSED}${addon_name}|missing_config|||"
       continue
     fi
@@ -139,7 +127,7 @@ process_addons() {
     
     # Handle empty image names
     if [ -z "$image_name" ] || [ "$image_name" = "null" ]; then
-      echo -e "${YELLOW}⚠ WARNING: Missing image name${NC}"
+      echo -e "  ${YELLOW}⚠ Missing image name${NC}"
       PROCESSED="${PROCESSED}${addon_name}|missing_image|||"
       continue
     fi
@@ -148,20 +136,25 @@ process_addons() {
     echo -e "  - Image: ${CYAN}$image_name${NC}"
 
     # Check registries for latest version
-    echo -e "  - Checking registries..."
+    latest_version=""
     
     # Docker Hub
     dockerhub_url="https://registry.hub.docker.com/v2/repositories/$image_name/tags?page_size=100"
-    dockerhub_version=$(check_registry_version "$image_name" "$dockerhub_url" "")
+    dockerhub_version=$(get_docker_version "$image_name" "$dockerhub_url" "" "$TIMEOUT")
+    [ -n "$dockerhub_version" ] && echo -e "    - Docker Hub: ${GREEN}$dockerhub_version${NC}"
     
     # GHCR
-    token=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:$image_name:pull" | jq -r '.token' 2>/dev/null)
-    ghcr_url="https://ghcr.io/v2/$image_name/tags/list"
-    ghcr_version=$(check_registry_version "$image_name" "$ghcr_url" "Authorization: Bearer $token")
+    ghcr_token=$(curl -s -m $TIMEOUT "https://ghcr.io/token?service=ghcr.io&scope=repository:$image_name:pull" | jq -r '.token' 2>/dev/null)
+    if [ -n "$ghcr_token" ]; then
+      ghcr_url="https://ghcr.io/v2/$image_name/tags/list"
+      ghcr_version=$(get_docker_version "$image_name" "$ghcr_url" "Authorization: Bearer $ghcr_token" "$TIMEOUT")
+      [ -n "$ghcr_version" ] && echo -e "    - GHCR: ${GREEN}$ghcr_version${NC}"
+    fi
     
     # Linuxserver.io
     lsi_url="https://registry.hub.docker.com/v2/repositories/linuxserver/$image_name/tags?page_size=100"
-    lsi_version=$(check_registry_version "$image_name" "$lsi_url" "")
+    lsi_version=$(get_docker_version "$image_name" "$lsi_url" "" "$TIMEOUT")
+    [ -n "$lsi_version" ] && echo -e "    - LinuxServer.io: ${GREEN}$lsi_version${NC}"
 
     # Find the latest version
     latest_version=$(printf "%s\n%s\n%s" "$dockerhub_version" "$ghcr_version" "$lsi_version" | 
@@ -169,7 +162,7 @@ process_addons() {
                     sort -V | tail -n1)
 
     if [ -z "$latest_version" ]; then
-      echo -e "${YELLOW}  ⚠ WARNING: No valid version found${NC}"
+      echo -e "  ${YELLOW}⚠ No valid version found${NC}"
       PROCESSED="${PROCESSED}${addon_name}|no_registry_version|$current_version||"
       continue
     fi
@@ -178,29 +171,68 @@ process_addons() {
 
     # Compare versions
     if [ "$current_version" = "$latest_version" ]; then
-      echo -e "${GREEN}  ✓ Up to date${NC}"
+      echo -e "  ${GREEN}✓ Up to date${NC}"
       PROCESSED="${PROCESSED}${addon_name}|up_to_date|$current_version||"
       continue
     fi
 
-    echo -e "${YELLOW}  ⚠ Update available: $current_version → $latest_version${NC}"
+    echo -e "  ${YELLOW}⚠ Update available: $current_version → $latest_version${NC}"
 
     # Skip actual updates in dry run mode
     if [ "$DRY_RUN" = "true" ]; then
-      echo -e "${BLUE}  [DRY RUN] Would update${NC}"
+      echo -e "  ${BLUE}[DRY RUN] Would update${NC}"
       UPDATED="${UPDATED}${addon_name}|$current_version|$latest_version"
       UPDATED_COUNT=$((UPDATED_COUNT + 1))
       PROCESSED="${PROCESSED}${addon_name}|would_update|$current_version|$latest_version|"
       continue
     fi
 
-    # Update files (only in non-dry-run mode)
-    # ... [rest of update code remains the same] ...
+    # Update files
+    updated_files=0
+    
+    # Update config.json
+    if jq --arg version "$latest_version" '.version = $version' "$config_file" > tmp.json && mv tmp.json "$config_file"; then
+      updated_files=$((updated_files+1))
+    fi
+    
+    # Update other files if they exist
+    for file in build.json update.json; do
+      if [ -f "$addon/$file" ]; then
+        if jq --arg version "$latest_version" '.version = $version' "$addon/$file" > tmp.json && mv tmp.json "$addon/$file"; then
+          updated_files=$((updated_files+1))
+        fi
+      fi
+    done
 
+    if [ "$updated_files" -eq 0 ]; then
+      echo -e "  ${RED}✗ Failed to update files${NC}"
+      PROCESSED="${PROCESSED}${addon_name}|update_failed|$current_version|$latest_version|"
+      continue
+    fi
+
+    # Create or update CHANGELOG.md
+    changelog_file="$addon/CHANGELOG.md"
+    today=$(date +%Y-%m-%d)
+    [ ! -f "$changelog_file" ] && echo "# $addon_name Changelog" > "$changelog_file"
+    {
+      echo "## $latest_version - $today"
+      echo "- Updated from $current_version to $latest_version"
+      echo "- [Docker Image](https://hub.docker.com/r/$image_name)"
+      echo ""
+    } >> "$changelog_file"
+
+    # Add changes to Git
+    git add "$config_file" "$changelog_file"
+    [ -f "$addon/build.json" ] && git add "$addon/build.json"
+    [ -f "$addon/update.json" ] && git add "$addon/update.json"
+    
+    # Commit changes
+    git commit -m "Update $addon_name to $latest_version" >/dev/null
+    
     UPDATED="${UPDATED}${addon_name}|$current_version|$latest_version"
     UPDATED_COUNT=$((UPDATED_COUNT + 1))
     PROCESSED="${PROCESSED}${addon_name}|updated|$current_version|$latest_version|"
-    echo -e "${GREEN}  ✓ Successfully updated${NC}"
+    echo -e "  ${GREEN}✓ Updated successfully${NC}"
   done
 
   # Return results
@@ -208,9 +240,6 @@ process_addons() {
 }
 
 # Run the processing
-echo -e "${CYAN}"
-echo "===== CHECKING FOR UPDATES ====="
-echo -e "${NC}"
 results=$(process_addons) || true
 eval "$results" 2>/dev/null || {
   PROCESSED=""
@@ -231,20 +260,20 @@ if [ "${UPDATED_COUNT:-0}" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
   echo "===== PUSHING CHANGES ====="
   echo -e "${NC}"
   git push origin main
-  echo -e "${GREEN}✓ Successfully pushed updates${NC}"
+  echo -e "${GREEN}✓ Changes pushed to repository${NC}"
   echo -e "${BLUE}[Destination]${NC} $REPO_URL"
   
   # Trigger Home Assistant reload
   if [ -n "$SUPERVISOR_TOKEN" ]; then
-    echo -e "${CYAN}===== RELOADING HOME ASSISTANT ====="
+    echo -e "${CYAN}===== RELOADING STORE ====="
     curl -s -o /dev/null \
       -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
       -H "Content-Type: application/json" \
       -X POST \
       http://supervisor/store/reload
-    echo -e "${GREEN}✓ Store reload triggered${NC}"
+    echo -e "${GREEN}✓ Store reloaded${NC}"
   else
-    echo -e "${YELLOW}⚠ WARNING: Supervisor token not available${NC}"
+    echo -e "${YELLOW}⚠ Supervisor token not available${NC}"
   fi
 elif [ "$DRY_RUN" = "true" ] && [ "${UPDATED_COUNT:-0}" -gt 0 ]; then
   echo -e "${BLUE}[DRY RUN] Would have pushed ${UPDATED_COUNT} updates${NC}"
@@ -258,9 +287,7 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY
   
   # Prepare message
   message="### Addon Update Report"
-  if [ "$DRY_RUN" = "true" ]; then
-    message="$message (Dry Run)"
-  fi
+  [ "$DRY_RUN" = "true" ] && message="$message (Dry Run)"
   message="$message\n\n"
   message="$message\n#### 🔍 Checked Addons (${CHECKED_COUNT:-0}):\n"
   
@@ -269,45 +296,27 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY
     printf "%s" "$PROCESSED" | while IFS='|' read -r name status current latest _; do
       [ -z "$name" ] && continue
       case $status in
-        updated)
-          message="$message\n- ✅ **$name**: Updated to $latest"
-          ;;
-        would_update)
-          message="$message\n- ⚡ **$name**: Would update to $latest (Dry Run)"
-          ;;
-        up_to_date)
-          message="$message\n- ✔️ **$name**: Up-to-date ($current)"
-          ;;
-        no_registry_version)
-          message="$message\n- ⚠️ **$name**: No registry version found"
-          ;;
-        missing_config)
-          message="$message\n- ❌ **$name**: Missing config.json"
-          ;;
-        missing_image)
-          message="$message\n- ❌ **$name**: Missing image name"
-          ;;
-        update_failed)
-          message="$message\n- ❌ **$name**: Update failed"
-          ;;
-        *)
-          message="$message\n- ❓ **$name**: $status"
-          ;;
+        updated) message="$message\n- ✅ **$name**: Updated to $latest" ;;
+        would_update) message="$message\n- ⚡ **$name**: Would update to $latest (Dry Run)" ;;
+        up_to_date) message="$message\n- ✔️ **$name**: Up-to-date ($current)" ;;
+        no_registry_version) message="$message\n- ⚠️ **$name**: No registry version found" ;;
+        missing_config) message="$message\n- ❌ **$name**: Missing config.json" ;;
+        missing_image) message="$message\n- ❌ **$name**: Missing image name" ;;
+        update_failed) message="$message\n- ❌ **$name**: Update failed" ;;
+        *) message="$message\n- ❓ **$name**: $status" ;;
       esac
     done
   else
     message="$message\nNo addons were processed"
   fi
 
-  # Add updated section if any
+  # Add updated section
   if [ "${UPDATED_COUNT:-0}" -gt 0 ]; then
     message="$message\n\n#### 🔄 Updated Addons ($UPDATED_COUNT):\n"
-    if [ -n "$UPDATED" ]; then
-      printf "%s" "$UPDATED" | while IFS='|' read -r name old new; do
-        [ -z "$name" ] && continue
-        message="$message\n- ➡️ **$name**: $old → $new"
-      done
-    fi
+    [ -n "$UPDATED" ] && printf "%s" "$UPDATED" | while IFS='|' read -r name old new; do
+      [ -z "$name" ] && continue
+      message="$message\n- ➡️ **$name**: $old → $new"
+    done
   else
     message="$message\n\n#### 🔄 Updated Addons: No updates"
   fi
@@ -329,10 +338,13 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY
         }
       }
     }"
-  echo -e "${GREEN}✓ Notification sent successfully${NC}"
+  echo -e "${GREEN}✓ Notification sent${NC}"
 fi
 
+# Calculate and display execution time
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
 echo -e "${CYAN}"
-echo "===== COMPLETED SUCCESSFULLY ====="
+echo "===== COMPLETED IN ${DURATION}s ====="
 echo -e "${NC}"
 exit 0
