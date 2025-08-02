@@ -2,7 +2,7 @@
   "name": "Add-on Updater",
   "version": "1.0.0",
   "slug": "updater",
-  "description": "Checks and updates your custom Home Assistant add-ons once, then stops. Supports version comparison, changelogs, and notifications.",
+  "description": "Checks and updates your custom Home Assistant add-ons once, then stops. Supports version comparison, changelogs, GitHub syncing, and Gotify notifications.",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "once",
