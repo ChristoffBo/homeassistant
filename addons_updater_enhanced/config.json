@@ -9,6 +9,8 @@
   "boot": "manual",
   "hassio_api": true,
   "hassio_role": "manager",
+  "homeassistant_api": false,
+  "host_network": false,
   "map": ["config:rw", "backup:rw"],
   "options": {
     "repo_source": "github",
@@ -27,33 +29,67 @@
     "dry_run": false
   },
   "schema": {
-    "repo_source": "list(github|gitea)",
+    "repo_source": {
+      "type": "list(github|gitea)",
+      "description": "Select repository source"
+    },
     "enable_notifications": {
-      "name": "Enable notifications",
-      "type": "boolean",
-      "default": false
+      "type": "bool",
+      "default": false,
+      "description": "Enable notification system"
     },
     "gotify_url": {
-      "name": "Gotify URL",
-      "type": "string",
-      "required": false,
-      "nullable": true
+      "type": "str",
+      "nullable": true,
+      "description": "Gotify server URL"
     },
     "gotify_token": {
-      "name": "Gotify Token",
-      "type": "string",
-      "required": false,
-      "nullable": true
+      "type": "str",
+      "nullable": true,
+      "description": "Gotify application token"
     },
-    "gitea_api_url": "str?",
-    "gitea_token": "str?",
-    "repo_path": "str",
-    "repo_branch": "str",
-    "addon_paths": ["str"],
-    "update_mode": "list(commit|push)",
-    "timeout": "int(60,3600)",
-    "log_level": "list(debug|info|warning|error)",
-    "validate_ssl": "bool",
-    "dry_run": "bool"
+    "gitea_api_url": {
+      "type": "str",
+      "nullable": true,
+      "description": "Gitea instance API URL"
+    },
+    "gitea_token": {
+      "type": "str",
+      "nullable": true,
+      "description": "Gitea API access token"
+    },
+    "repo_path": {
+      "type": "str",
+      "description": "Local path to addons repository"
+    },
+    "repo_branch": {
+      "type": "str",
+      "description": "Git branch to monitor"
+    },
+    "addon_paths": {
+      "type": "list(str)",
+      "description": "List of addon paths to monitor"
+    },
+    "update_mode": {
+      "type": "list(commit|push)",
+      "description": "Update strategy to use"
+    },
+    "timeout": {
+      "type": "int",
+      "description": "Operation timeout in seconds",
+      "range": {"min": 60, "max": 3600}
+    },
+    "log_level": {
+      "type": "list(debug|info|warning|error)",
+      "description": "Logging verbosity level"
+    },
+    "validate_ssl": {
+      "type": "bool",
+      "description": "Verify SSL certificates"
+    },
+    "dry_run": {
+      "type": "bool",
+      "description": "Test mode (no changes made)"
+    }
   }
 }
