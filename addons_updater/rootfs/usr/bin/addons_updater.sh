@@ -103,6 +103,9 @@ else
   echo -e "${BLUE}[Structure]${NC} Using addons in repository root"
 fi
 
+# List all addon directories
+echo -e "${BLUE}[Structure]${NC} Addons directory: ${CYAN}$ADDONS_DIR${NC}"
+
 # Function to get Docker image version
 get_docker_version() {
   local image=$1
@@ -124,6 +127,25 @@ get_docker_version() {
   sort -V | tail -n1
 }
 
+# Normalize version string by removing 'v' prefix
+normalize_version() {
+  echo "$1" | sed 's/^v//'
+}
+
+# Compare two version numbers
+compare_versions() {
+  local ver1=$(normalize_version "$1")
+  local ver2=$(normalize_version "$2")
+  
+  if [ "$ver1" = "$ver2" ]; then
+    echo 0
+  elif printf "%s\n%s" "$ver1" "$ver2" | sort -V -C; then
+    echo -1  # ver1 < ver2
+  else
+    echo 1   # ver1 > ver2
+  fi
+}
+
 # Main processing function
 process_addons() {
   echo -e "${CYAN}"
@@ -136,9 +158,12 @@ process_addons() {
   UPDATED=""
 
   # List of directories to skip
-  SKIP_DIRS=".git addons_updater .github"
+  SKIP_DIRS=".git addons_updater .github .DS_Store __MACOSX"
 
+  # Enable nullglob to handle empty directories
+  shopt -s nullglob
   for addon in "$ADDONS_DIR"/*; do
+    # Skip files, only process directories
     [ -d "$addon" ] || continue
     
     addon_name=$(basename "$addon")
@@ -146,33 +171,35 @@ process_addons() {
     # Skip excluded directories
     case " $SKIP_DIRS " in
       *" $addon_name "*)
+        [ "$VERBOSE" = "true" ] && echo -e "${BLUE}[Addon]${NC} ${CYAN}$addon_name${NC} ${YELLOW}(skipped)${NC}"
         continue
         ;;
     esac
 
     CHECKED_COUNT=$((CHECKED_COUNT + 1))
-    echo -e "${BLUE}[Addon]${NC} ${CYAN}$addon_name${NC}"
+    [ "$VERBOSE" = "true" ] && echo -e "${BLUE}[Addon]${NC} ${CYAN}$addon_name${NC}"
     
     # Get current version
     config_file="$addon/config.json"
     if [ ! -f "$config_file" ]; then
-      echo -e "  ${YELLOW}⚠ Missing config.json${NC}"
+      [ "$VERBOSE" = "true" ] && echo -e "  ${YELLOW}⚠ Missing config.json${NC}"
       PROCESSED="${PROCESSED}${addon_name}|missing_config|||"
       continue
     fi
 
-    current_version=$(jq -r '.version' "$config_file")
-    image_name=$(jq -r '.image' "$config_file" | awk -F'/' '{print $NF}')
+    # Safely parse JSON
+    current_version=$(jq -r '.version' "$config_file" 2>/dev/null || echo "")
+    image_name=$(jq -r '.image' "$config_file" 2>/dev/null | awk -F'/' '{print $NF}' 2>/dev/null || echo "")
     
     # Handle empty image names
     if [ -z "$image_name" ] || [ "$image_name" = "null" ]; then
-      echo -e "  ${YELLOW}⚠ Missing image name${NC}"
+      [ "$VERBOSE" = "true" ] && echo -e "  ${YELLOW}⚠ Missing image name${NC}"
       PROCESSED="${PROCESSED}${addon_name}|missing_image|||"
       continue
     fi
 
-    echo -e "  - Current: ${YELLOW}$current_version${NC}"
-    echo -e "  - Image: ${CYAN}$image_name${NC}"
+    [ "$VERBOSE" = "true" ] && echo -e "  - Current: ${YELLOW}$current_version${NC}"
+    [ "$VERBOSE" = "true" ] && echo -e "  - Image: ${CYAN}$image_name${NC}"
 
     # Check registries for latest version
     latest_version=""
@@ -180,20 +207,20 @@ process_addons() {
     # Docker Hub
     dockerhub_url="https://registry.hub.docker.com/v2/repositories/$image_name/tags?page_size=100"
     dockerhub_version=$(get_docker_version "$image_name" "$dockerhub_url" "" "$TIMEOUT")
-    [ -n "$dockerhub_version" ] && echo -e "    - Docker Hub: ${GREEN}$dockerhub_version${NC}"
+    [ -n "$dockerhub_version" ] && [ "$VERBOSE" = "true" ] && echo -e "    - Docker Hub: ${GREEN}$dockerhub_version${NC}"
     
     # GHCR
-    ghcr_token=$(curl -s -m $TIMEOUT "https://ghcr.io/token?service=ghcr.io&scope=repository:$image_name:pull" | jq -r '.token' 2>/dev/null)
+    ghcr_token=$(curl -s -m $TIMEOUT "https://ghcr.io/token?service=ghcr.io&scope=repository:$image_name:pull" | jq -r '.token' 2>/dev/null || echo "")
     if [ -n "$ghcr_token" ]; then
       ghcr_url="https://ghcr.io/v2/$image_name/tags/list"
       ghcr_version=$(get_docker_version "$image_name" "$ghcr_url" "Authorization: Bearer $ghcr_token" "$TIMEOUT")
-      [ -n "$ghcr_version" ] && echo -e "    - GHCR: ${GREEN}$ghcr_version${NC}"
+      [ -n "$ghcr_version" ] && [ "$VERBOSE" = "true" ] && echo -e "    - GHCR: ${GREEN}$ghcr_version${NC}"
     fi
     
     # Linuxserver.io
     lsi_url="https://registry.hub.docker.com/v2/repositories/linuxserver/$image_name/tags?page_size=100"
     lsi_version=$(get_docker_version "$image_name" "$lsi_url" "" "$TIMEOUT")
-    [ -n "$lsi_version" ] && echo -e "    - LinuxServer.io: ${GREEN}$lsi_version${NC}"
+    [ -n "$lsi_version" ] && [ "$VERBOSE" = "true" ] && echo -e "    - LinuxServer.io: ${GREEN}$lsi_version${NC}"
 
     # Find the latest version
     latest_version=$(printf "%s\n%s\n%s" "$dockerhub_version" "$ghcr_version" "$lsi_version" | 
@@ -201,25 +228,30 @@ process_addons() {
                     sort -V | tail -n1)
 
     if [ -z "$latest_version" ]; then
-      echo -e "  ${YELLOW}⚠ No valid version found${NC}"
+      [ "$VERBOSE" = "true" ] && echo -e "  ${YELLOW}⚠ No valid version found${NC}"
       PROCESSED="${PROCESSED}${addon_name}|no_registry_version|$current_version||"
       continue
     fi
 
-    echo -e "  - Latest: ${GREEN}$latest_version${NC}"
+    [ "$VERBOSE" = "true" ] && echo -e "  - Latest: ${GREEN}$latest_version${NC}"
 
     # Compare versions
-    if [ "$current_version" = "$latest_version" ]; then
-      echo -e "  ${GREEN}✓ Up to date${NC}"
+    comparison=$(compare_versions "$current_version" "$latest_version")
+    if [ "$comparison" -eq 0 ]; then
+      [ "$VERBOSE" = "true" ] && echo -e "  ${GREEN}✓ Up to date${NC}"
       PROCESSED="${PROCESSED}${addon_name}|up_to_date|$current_version||"
+      continue
+    elif [ "$comparison" -eq 1 ]; then
+      [ "$VERBOSE" = "true" ] && echo -e "  ${YELLOW}⚠ Current version ($current_version) is newer than registry ($latest_version)${NC}"
+      PROCESSED="${PROCESSED}${addon_name}|newer_than_registry|$current_version|$latest_version|"
       continue
     fi
 
-    echo -e "  ${YELLOW}⚠ Update available: $current_version → $latest_version${NC}"
+    [ "$VERBOSE" = "true" ] && echo -e "  ${YELLOW}⚠ Update available: $current_version → $latest_version${NC}"
 
     # Skip actual updates in dry run mode
     if [ "$DRY_RUN" = "true" ]; then
-      echo -e "  ${BLUE}[DRY RUN] Would update${NC}"
+      [ "$VERBOSE" = "true" ] && echo -e "  ${BLUE}[DRY RUN] Would update${NC}"
       UPDATED="${UPDATED}${addon_name}|$current_version|$latest_version"
       UPDATED_COUNT=$((UPDATED_COUNT + 1))
       PROCESSED="${PROCESSED}${addon_name}|would_update|$current_version|$latest_version|"
@@ -232,6 +264,8 @@ process_addons() {
     # Update config.json
     if jq --arg version "$latest_version" '.version = $version' "$config_file" > tmp.json && mv tmp.json "$config_file"; then
       updated_files=$((updated_files+1))
+    else
+      [ "$VERBOSE" = "true" ] && echo -e "  ${RED}✗ Failed to update config.json${NC}"
     fi
     
     # Update other files if they exist
@@ -239,12 +273,14 @@ process_addons() {
       if [ -f "$addon/$file" ]; then
         if jq --arg version "$latest_version" '.version = $version' "$addon/$file" > tmp.json && mv tmp.json "$addon/$file"; then
           updated_files=$((updated_files+1))
+        else
+          [ "$VERBOSE" = "true" ] && echo -e "  ${RED}✗ Failed to update $file${NC}"
         fi
       fi
     done
 
     if [ "$updated_files" -eq 0 ]; then
-      echo -e "  ${RED}✗ Failed to update files${NC}"
+      [ "$VERBOSE" = "true" ] && echo -e "  ${RED}✗ Failed to update files${NC}"
       PROCESSED="${PROCESSED}${addon_name}|update_failed|$current_version|$latest_version|"
       continue
     fi
@@ -271,8 +307,9 @@ process_addons() {
     UPDATED="${UPDATED}${addon_name}|$current_version|$latest_version"
     UPDATED_COUNT=$((UPDATED_COUNT + 1))
     PROCESSED="${PROCESSED}${addon_name}|updated|$current_version|$latest_version|"
-    echo -e "  ${GREEN}✓ Updated successfully${NC}"
+    [ "$VERBOSE" = "true" ] && echo -e "  ${GREEN}✓ Updated successfully${NC}"
   done
+  shopt -u nullglob
 
   # Return results
   printf "PROCESSED=%s\nUPDATED=%s\nUPDATED_COUNT=%d\nCHECKED_COUNT=%d" "$PROCESSED" "$UPDATED" "$UPDATED_COUNT" "$CHECKED_COUNT"
@@ -342,6 +379,7 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY
         missing_config) message="$message\n- ❌ **$name**: Missing config.json" ;;
         missing_image) message="$message\n- ❌ **$name**: Missing image name" ;;
         update_failed) message="$message\n- ❌ **$name**: Update failed" ;;
+        newer_than_registry) message="$message\n- ⚠️ **$name**: Current ($current) newer than registry ($latest)" ;;
         *) message="$message\n- ❓ **$name**: $status" ;;
       esac
     done
