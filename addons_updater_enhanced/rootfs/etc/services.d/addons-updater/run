@@ -1,2 +1,0 @@
-#!/usr/bin/with-contenv bash
-exec /usr/bin/addons-updater 2>&1
