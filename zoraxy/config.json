@@ -1,6 +1,6 @@
 {
   "name": "Zoraxy",
-  "version": "",
+  "version": "1.0",
   "slug": "zoraxy",
   "description": "A reverse proxy and dashboard powered by Docker.",
   "startup": "services",
