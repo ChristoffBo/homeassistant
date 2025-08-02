@@ -33,11 +33,7 @@ declare -A UNCHANGED_ADDONS
 safe_jq() {
   local expr="$1"
   local file="$2"
-  if jq -e -r "$expr" "$file" 2>/dev/null | grep -Eq '^[[:alnum:]\.\-_]+$'; then
-    jq -e -r "$expr" "$file" 2>/dev/null
-  else
-    echo "unknown"
-  fi
+  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]\.\-_]+$' || echo "unknown"
 }
 
 read_config() {
@@ -123,36 +119,18 @@ get_latest_tag() {
     local package="${path#*/}"
     local token
     token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull") || return
-    if ! echo "$token" | jq -e .token >/dev/null 2>&1; then
-      [[ "$DEBUG" == "true" ]] && echo "Invalid token JSON: $token" >> "$LOG_FILE"
-      return
-    fi
     token=$(echo "$token" | jq -r '.token')
-    local response=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list") || return
-    if ! echo "$response" | jq -e .tags >/dev/null 2>&1; then
-      [[ "$DEBUG" == "true" ]] && echo "Invalid GHCR tag JSON: $response" >> "$LOG_FILE"
-      return
-    fi
-    tags=$(echo "$response" | jq -r '.tags[]?')
+    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
 
   elif [[ "$image_name" =~ ^(linuxserver|lscr.io)/ ]]; then
     local name="${image_name##*/}"
-    local response=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags") || return
-    if ! echo "$response" | jq -e .tags >/dev/null 2>&1; then
-      [[ "$DEBUG" == "true" ]] && echo "Invalid LinuxServer JSON: $response" >> "$LOG_FILE"
-      return
-    fi
-    tags=$(echo "$response" | jq -r '.tags[].name')
+    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
 
   else
     local ns_repo="${image_name/library\//}"
     local page=1
     while :; do
       local result=$(curl -sf "https://hub.docker.com/v2/repositories/${ns_repo}/tags?page=$page&page_size=100") || break
-      if ! echo "$result" | jq -e .results >/dev/null 2>&1; then
-        [[ "$DEBUG" == "true" ]] && echo "Invalid Docker Hub JSON: $result" >> "$LOG_FILE"
-        break
-      fi
       local page_tags=$(echo "$result" | jq -r '.results[].name')
       [[ -z "$page_tags" ]] && break
       tags+=$'\n'"$page_tags"
@@ -161,45 +139,21 @@ get_latest_tag() {
     done
   fi
 
-  [[ "$DEBUG" == "true" ]] && echo -e "Raw tags for $image_name:\n$tags" >> "$LOG_FILE"
-
-  local semver_tags
-  semver_tags=$(echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta')
-  if [[ -n "$semver_tags" ]]; then
-    echo "$semver_tags" | sort -Vr | head -n1 | tee "$cache_file"
-  else
-    echo "$tags" | grep -E '^[0-9]{4}([.-])[0-9]{2}\1[0-9]{2}$' | sort -Vr | head -n1 | tee "$cache_file"
-  fi
+  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1 | tee "$cache_file"
 }
 
 update_addon() {
   local addon_path="$1"
   local name=$(basename "$addon_path")
-  [[ "$name" == "updater" ]] && return
+
+  [[ "$name" == "updater" || "$name" == "heimdall" ]] && return
 
   log "$COLOR_DARK_BLUE" "🔍 Checking $name"
+
   local config="$addon_path/config.json"
   local build="$addon_path/build.json"
-
-  if [[ ! -f "$config" ]]; then
-    log "$COLOR_RED" "❌ Missing config.json for $name"
-    UNCHANGED_ADDONS["$name"]="Missing config.json"
-    return
-  fi
-
-  if ! jq -e . "$config" >/dev/null 2>&1; then
-    log "$COLOR_RED" "❌ Invalid JSON in $name/config.json"
-    UNCHANGED_ADDONS["$name"]="Invalid config.json"
-    return
-  fi
-
-  if [[ -f "$build" && ! $(jq -e . "$build" >/dev/null 2>&1) ]]; then
-    log "$COLOR_RED" "❌ Invalid JSON in $name/build.json"
-    UNCHANGED_ADDONS["$name"]="Invalid build.json"
-    return
-  fi
-
   local image version latest
+
   image=$(jq -r '.image // empty' "$config" 2>/dev/null)
   version=$(safe_jq '.version' "$config")
 
@@ -306,5 +260,4 @@ main() {
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
 
-trap 'notify "Updater Fatal Error" "Script crashed unexpectedly. Check logs." 5; log "$COLOR_RED" "❌ Script crashed unexpectedly."' ERR
 main
