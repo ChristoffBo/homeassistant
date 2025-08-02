@@ -1,141 +1,138 @@
 #!/bin/sh
 set -e
 
-START_TIME=$(date +%s)
-TZ="${TZ:-Africa/Johannesburg}"
-export TZ
-
-# Color definitions
+# ===== COLOR DEFINITIONS =====
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+GRAY='\033[1;30m'
 NC='\033[0m'
 
-# Notification Settings
-NOTIFY_GOTIFY="${GOTIFY_URL:-}"
-GOTIFY_TOKEN="${GOTIFY_TOKEN:-}"
-DRYRUN="${DRYRUN:-true}"
-ADDON_DIR="/addons"
-REPO_URL="https://github.com/ChristoffBo/homeassistant"
+# ===== START TIMER =====
+START_TIME=$(date +%s)
 
-log()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-warn()   { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error()  { echo -e "${RED}[ERROR]${NC} $1"; }
-note()   { echo -e "${CYAN}[DRYRUN]${NC} $1"; }
-success(){ echo -e "${GREEN}[OK]${NC} $1"; }
+# ===== ENV SETUP =====
+TZ=${TZ:-"Africa/Johannesburg"}
+export TZ
+cd /data || exit 1
 
-# Banner
-echo
-[ "$DRYRUN" = "true" ] && note "===== ADDON UPDATER STARTED (Dry Run) =====" || success "===== ADDON UPDATER STARTED (Live Mode) ====="
-echo " Dry run mode: $DRYRUN"
-echo " Notifications: $( [ -n "$NOTIFY_GOTIFY" ] && echo Enabled || echo Disabled )"
-echo "-----------------------------------------------------------"
+# ===== LOGGING UTILS =====
+log_info()   { echo "${BLUE}[INFO]${NC} $1"; }
+log_warn()   { echo "${YELLOW}[WARN]${NC} $1"; }
+log_error()  { echo "${RED}[ERROR]${NC} $1"; }
+log_update() { echo "${GREEN}[UPDATE]${NC} $1"; }
+log_dryrun() { echo "${CYAN}[DRYRUN]${NC} $1"; }
 
-# Git sync
-if [ -d "$ADDON_DIR/.git" ]; then
-    log "Repository exists, updating..."
-    git -C "$ADDON_DIR" pull --quiet
+# ===== LOAD CONFIGURATION =====
+OPTIONS_JSON=/data/options.json
+REPO=$(jq -r '.repo // empty' "$OPTIONS_JSON")
+BRANCH=$(jq -r '.branch // "main"' "$OPTIONS_JSON")
+GOTIFY_URL=$(jq -r '.gotify_url // empty' "$OPTIONS_JSON")
+GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$OPTIONS_JSON")
+DRY_RUN=$(jq -r '.dry_run // true' "$OPTIONS_JSON")
+
+# ===== CLONE OR PULL REPO =====
+if [ ! -d repo ]; then
+  git clone --depth=1 --branch "$BRANCH" "$REPO" repo
 else
-    log "Cloning repository..."
-    git clone --depth=1 "$REPO_URL" "$ADDON_DIR"
+  cd repo || exit 1
+  git pull
+  cd ..
 fi
+cd repo || exit 1
 
-cd "$ADDON_DIR"
+git config user.name "AddonUpdater"
+git config user.email "addon-updater@local"
 
-# Detect latest Docker tag
+[ "$DRY_RUN" = true ] && log_dryrun "===== ADDON UPDATER STARTED (Dry Run) =====" || log_update "===== ADDON UPDATER STARTED (Live Mode) ====="
+
+# ===== FUNCTIONS =====
 get_latest_tag() {
-    IMAGE="$1"
-    PROVIDER="$2"
-    case "$PROVIDER" in
-        dockerhub)
-            curl -s "https://hub.docker.com/v2/repositories/${IMAGE}/tags/?page_size=50" |
-                jq -r '.results[].name' |
-                grep -v latest |
-                sort -Vr | head -n1
-            ;;
-        linuxserver)
-            curl -s "https://hub.docker.com/v2/repositories/linuxserver/${IMAGE}/tags/?page_size=50" |
-                jq -r '.results[].name' |
-                grep -v latest |
-                sort -Vr | head -n1
-            ;;
-        *)
-            echo "unknown"
-            ;;
-    esac
+  local image=$1
+  local registry="docker"
+  case "$image" in
+    lscr.io/*) registry="linuxserver";;
+  esac
+
+  if [ "$registry" = "linuxserver" ]; then
+    local repo_name=${image#lscr.io/}
+    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/linuxserver/${repo_name}/tags?page_size=100" | jq -r '.results[].name') || return 1
+  else
+    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" | jq -r '.results[].name') || return 1
+  fi
+
+  echo "$tags" | grep -Ev 'latest|rc|dev|test' | sort -Vr | head -n 1
 }
 
-# Process add-ons
-UPDATES=""
-for addon in $(ls -1 "$ADDON_DIR" | grep -vE '\.git|README|LICENSE'); do
-    ADDON_PATH="$ADDON_DIR/$addon"
-    CONFIG="$ADDON_PATH/config.json"
-    BUILD="$ADDON_PATH/build.json"
-    META="$ADDON_PATH/updater.json"
+send_gotify() {
+  local title=$1
+  local message=$2
+  local priority=${3:-5}
+  [ -z "$GOTIFY_URL" ] && return
+  curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
+    -F "title=$title" \
+    -F "message=$message" \
+    -F "priority=$priority" >/dev/null || log_warn "Failed to send Gotify notification."
+}
 
-    [ ! -f "$META" ] && warn "$addon: Missing updater.json, skipping" && continue
+# ===== MAIN LOOP =====
+NOTES=""
+for addon in */config.json; do
+  dir=$(dirname "$addon")
+  [ "$dir" = ".git" ] && continue
 
-    IMAGE=$(jq -r .image "$META")
-    PROVIDER=$(jq -r .provider "$META")
-    CURRENT=$(jq -r .version "$BUILD" 2>/dev/null || echo "unknown")
+  name=$(jq -r '.name // empty' "$addon")
+  image=$(jq -r '.image // empty' "$addon")
+  [ -z "$image" ] && image=$(jq -r '.build.image // empty' "$dir/build.json")
+  [ -z "$image" ] && continue
 
-    # Skip if image or provider missing
-    [ "$IMAGE" = "null" ] || [ "$PROVIDER" = "null" ] && warn "$addon: Invalid metadata" && continue
+  latest=$(get_latest_tag "$image")
+  [ -z "$latest" ] && log_warn "$dir: Failed to get latest tag" && continue
 
-    # Get latest version
-    LATEST=$(get_latest_tag "$IMAGE" "$PROVIDER")
+  current=$(jq -r '.version // empty' "$addon")
+  [ -z "$current" ] && current=$(jq -r '.version // empty' "$dir/build.json")
+  [ -z "$current" ] && current=$(jq -r '.version // empty' "$dir/updater.json")
+  [ -z "$current" ] && current="unknown"
 
-    if [ "$LATEST" = "unknown" ]; then
-        warn "$addon: Failed to get latest tag"
-        continue
-    fi
-
-    if [ "$CURRENT" = "$LATEST" ]; then
-        log "$addon: No update needed, version is $CURRENT"
-        continue
-    fi
-
-    # Perform update or simulate
-    if [ "$DRYRUN" = "true" ]; then
-        note "$addon: Update simulated from $CURRENT to $LATEST"
+  if [ "$latest" != "$current" ]; then
+    if [ "$DRY_RUN" = true ]; then
+      log_dryrun "$dir: Simulated update from $current to $latest"
+      NOTES="$NOTES\n🧪 $name: $current → $latest"
     else
-        success "$addon: Updating from $CURRENT to $LATEST"
-        jq --arg v "$LATEST" '.version = $v' "$BUILD" > "$BUILD.tmp" && mv "$BUILD.tmp" "$BUILD"
+      log_update "$dir: Updating from $current to $latest"
+      jq --arg ver "$latest" '.version=$ver' "$addon" > tmp && mv tmp "$addon"
+      jq --arg ver "$latest" '.version=$ver' "$dir/build.json" > tmp && mv tmp "$dir/build.json"
+      jq --arg ver "$latest" '.version=$ver' "$dir/updater.json" > tmp && mv tmp "$dir/updater.json"
 
-        # Update CHANGELOG
-        CHANGELOG="$ADDON_PATH/CHANGELOG.md"
-        [ ! -f "$CHANGELOG" ] && echo "# Changelog for $addon" > "$CHANGELOG"
-        echo "- Updated to **$LATEST** from **$CURRENT** ($(date +'%Y-%m-%d %H:%M'))" >> "$CHANGELOG"
+      [ ! -f "$dir/CHANGELOG.md" ] && echo "# Changelog" > "$dir/CHANGELOG.md"
+      echo -e "\n## $latest - $(date '+%Y-%m-%d')\nUpdated from $current to $latest\nSource: https://hub.docker.com/r/$image/tags" >> "$dir/CHANGELOG.md"
 
-        # Git commit
-        git add "$BUILD" "$CHANGELOG"
-        git commit -m "$addon: Updated from $CURRENT to $LATEST" --quiet
+      git add "$dir/"*
+      git commit -m "$dir: update from $current to $latest"
+      NOTES="$NOTES\n✅ $name: $current → $latest"
     fi
+  else
+    log_info "$dir: No update needed, version is $current"
+    NOTES="$NOTES\nℹ️ $name: $current (up to date)"
+  fi
 
-    # Collect for notification
-    UPDATES="$UPDATES\n$addon: $CURRENT ➜ $LATEST"
 done
 
-# Push changes if not dry run
-if [ "$DRYRUN" != "true" ]; then
-    git push --quiet
+if [ "$DRY_RUN" != true ]; then
+  git push origin "$BRANCH"
 fi
 
-# Gotify Notify
-if [ -n "$NOTIFY_GOTIFY" ]; then
-    if [ -n "$UPDATES" ]; then
-        MSG="🟢 Add-on updates completed:\n$UPDATES"
-    else
-        MSG="ℹ️ No updates were needed."
-    fi
-    curl -s -X POST "$NOTIFY_GOTIFY/message" \
-        -H "X-Gotify-Key: $GOTIFY_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d '{"title": "Add-on Updater", "message": "'"$MSG"'", "priority": 5}' >/dev/null && log "Gotify notification sent."
-fi
+[ -n "$GOTIFY_URL" ] && {
+  TITLE="Addon Updater Report [$(date '+%Y-%m-%d')]"
+  MSG="$(echo -e "$NOTES")"
+  send_gotify "$TITLE" "$MSG"
+}
 
-# Finish
-ELAPSED=$(( $(date +%s) - START_TIME ))
-[ "$DRYRUN" = "true" ] && note "===== ADDON UPDATER FINISHED in ${ELAPSED}s (Dry Run) =====" || success "===== ADDON UPDATER FINISHED in ${ELAPSED}s (Live Mode) ====="
+log_info "===== ADDON UPDATER FINISHED ====="
+
+# ===== END TIMER =====
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+log_info "Completed in ${ELAPSED}s"
