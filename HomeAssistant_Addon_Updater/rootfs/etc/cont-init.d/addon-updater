@@ -1,0 +1,3 @@
+#!/usr/bin/env bash  
+echo "HomeAssistant Addon Updater v4.3.0"  
+echo "Initializing with repo source: $REPO_SOURCE"  
