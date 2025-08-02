@@ -1,7 +1,7 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install core dependencies without version pinning
+# Install core dependencies
 RUN apk add --no-cache \
     bash \
     curl \
@@ -11,8 +11,8 @@ RUN apk add --no-cache \
 
 # Create directory structure
 RUN mkdir -p \
-    /etc/services.d/addons-updater \
     /etc/cont-init.d \
+    /etc/services.d/addons-updater \
     /usr/bin \
     /var/log
 
@@ -22,9 +22,9 @@ COPY rootfs /
 # Set permissions
 RUN chmod a+x \
     /usr/bin/addons-updater \
-    /etc/cont-init.d/00-addons-updater \
-    /etc/services.d/addons-updater/run \
-    && chmod 644 /var/log/addons-updater.log
+    /etc/cont-init.d/addons-updater \
+    /etc/services.d/addons-updater/run && \
+    chmod 644 /var/log/addons-updater.log
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s \
