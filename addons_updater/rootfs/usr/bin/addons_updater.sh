@@ -1,14 +1,27 @@
 #!/bin/sh
 set -e
 
+# ===== CONFIG =====
+LOG_COLORS=true  # Set false if your log output does not support ANSI colors
+
 # ===== COLOR DEFINITIONS =====
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-GRAY='\033[1;30m'
-NC='\033[0m'
+if [ "$LOG_COLORS" = true ]; then
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  YELLOW='\033[1;33m'
+  BLUE='\033[0;34m'
+  CYAN='\033[0;36m'
+  GRAY='\033[1;30m'
+  NC='\033[0m'
+else
+  RED=''
+  GREEN=''
+  YELLOW=''
+  BLUE=''
+  CYAN=''
+  GRAY=''
+  NC=''
+fi
 
 # ===== START TIMER =====
 START_TIME=$(date +%s)
@@ -27,10 +40,7 @@ log_dryrun() { echo "${CYAN}[DRYRUN]${NC} $1"; }
 
 # ===== LOAD CONFIGURATION =====
 OPTIONS_JSON=/data/options.json
-REPO=$(jq -r '.repo // empty' "$OPTIONS_JSON")
-if [ -z "$REPO" ]; then
-  REPO=$(jq -r '.repository // empty' "$OPTIONS_JSON")
-fi
+REPO=$(jq -r '.repo // .repository // empty' "$OPTIONS_JSON")
 BRANCH=$(jq -r '.branch // "main"' "$OPTIONS_JSON")
 GOTIFY_URL=$(jq -r '.gotify_url // empty' "$OPTIONS_JSON")
 GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$OPTIONS_JSON")
@@ -77,26 +87,21 @@ git config user.email "$GIT_MAIL"
 
 # ===== FUNCTIONS =====
 
-# Get latest tag from Docker Hub or LinuxServer.io
 get_latest_tag() {
   local image=$1
   local repo_name
   local tags
 
   if echo "$image" | grep -q '^lscr.io/'; then
-    # LinuxServer.io images
     repo_name=${image#lscr.io/}
     tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/linuxserver/${repo_name}/tags?page_size=100" | jq -r '.results[].name') || return 1
   else
-    # Docker Hub images
     tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" | jq -r '.results[].name') || return 1
   fi
 
-  # Filter out unwanted tags and sort semver descending
   echo "$tags" | grep -Ev 'latest|rc|dev|test' | sort -Vr | head -n 1
 }
 
-# Send notification to Gotify
 send_gotify() {
   local title=$1
   local message=$2
@@ -123,7 +128,6 @@ send_gotify() {
   fi
 }
 
-# Update version in config/build/updater.json and changelog
 update_version_files() {
   local dir=$1
   local latest=$2
@@ -131,7 +135,6 @@ update_version_files() {
   local image=$4
   local changelog_path="$dir/CHANGELOG.md"
 
-  # Update JSON files if they exist
   for file in config.json build.json updater.json; do
     local file_path="$dir/$file"
     if [ -f "$file_path" ]; then
@@ -139,12 +142,10 @@ update_version_files() {
     fi
   done
 
-  # Create changelog if missing
   if [ ! -f "$changelog_path" ]; then
     echo "# Changelog" > "$changelog_path"
   fi
 
-  # Append changelog entry
   echo -e "\n## $latest - $(date '+%Y-%m-%d')\nUpdated from $current to $latest\nSource: https://hub.docker.com/r/$image/tags" >> "$changelog_path"
 }
 
@@ -175,7 +176,6 @@ for addon_config in */config.json; do
     continue
   }
 
-  # Get current version from config, build, or updater.json
   current=$(jq -r '.version // empty' "$addon_config")
   if [ -z "$current" ] && [ -f "$dir/build.json" ]; then
     current=$(jq -r '.version // empty' "$dir/build.json")
@@ -187,11 +187,9 @@ for addon_config in */config.json; do
     current="unknown"
   fi
 
-  # Normalize tags (remove leading v or arch prefixes)
   clean_latest=$(echo "$latest" | sed -E 's/^v//')
   clean_current=$(echo "$current" | sed -E 's/^v//')
 
-  # If latest is 'latest' string or empty, skip update and mark as up to date with current version
   if echo "$clean_latest" | grep -qEi 'latest|^$'; then
     clean_latest=$clean_current
   fi
@@ -219,7 +217,6 @@ if [ "$DRY_RUN" != true ] && [ "$UPDATED" -eq 1 ]; then
   git push origin "$BRANCH"
 fi
 
-# Send notification with all notes, always send regardless of updates
 if [ "$ENABLE_NOTIF" = true ]; then
   TITLE="Addon Updater Report [$(date '+%Y-%m-%d')]"
   MESSAGE="Dry run mode: $DRY_RUN\n\n$(echo -e "$NOTES")"
@@ -228,7 +225,6 @@ fi
 
 log_info "===== ADDON UPDATER FINISHED ====="
 
-# ===== END TIMER =====
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 log_info "Completed in ${ELAPSED}s"
