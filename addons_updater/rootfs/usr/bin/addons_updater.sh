@@ -54,12 +54,30 @@ if [ -d "$REPO_DIR/.git" ]; then
   echo -e "${BLUE}[Git]${NC} Updating existing repository..."
   cd "$REPO_DIR"
   git fetch --depth 1
-  git reset --hard origin/main
+  
+  # Detect default branch
+  DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $3}')
+  if [ -z "$DEFAULT_BRANCH" ]; then
+    echo -e "${YELLOW}⚠ Failed to detect default branch, using 'main' as fallback${NC}"
+    DEFAULT_BRANCH="main"
+  fi
+  echo -e "${BLUE}[Git]${NC} Using detected branch: ${CYAN}$DEFAULT_BRANCH${NC}"
+  
+  git reset --hard origin/$DEFAULT_BRANCH
   echo -e "${GREEN}✓ Repository updated${NC}"
 else
   echo -e "${BLUE}[Git]${NC} Shallow cloning repository..."
   git clone --depth 1 "$REPO_URL" "$REPO_DIR"
   cd "$REPO_DIR"
+  
+  # Detect default branch
+  DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $3}')
+  if [ -z "$DEFAULT_BRANCH" ]; then
+    echo -e "${YELLOW}⚠ Failed to detect default branch, using 'main' as fallback${NC}"
+    DEFAULT_BRANCH="main"
+  fi
+  echo -e "${BLUE}[Git]${NC} Using detected branch: ${CYAN}$DEFAULT_BRANCH${NC}"
+  
   echo -e "${GREEN}✓ Repository cloned${NC}"
 fi
 
@@ -259,9 +277,9 @@ if [ "${UPDATED_COUNT:-0}" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
   echo -e "${CYAN}"
   echo "===== PUSHING CHANGES ====="
   echo -e "${NC}"
-  git push origin main
+  git push origin $DEFAULT_BRANCH
   echo -e "${GREEN}✓ Changes pushed to repository${NC}"
-  echo -e "${BLUE}[Destination]${NC} $REPO_URL"
+  echo -e "${BLUE}[Destination]${NC} $REPO_URL (branch: ${CYAN}$DEFAULT_BRANCH${NC})"
   
   # Trigger Home Assistant reload
   if [ -n "$SUPERVISOR_TOKEN" ]; then
@@ -276,7 +294,7 @@ if [ "${UPDATED_COUNT:-0}" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
     echo -e "${YELLOW}⚠ Supervisor token not available${NC}"
   fi
 elif [ "$DRY_RUN" = "true" ] && [ "${UPDATED_COUNT:-0}" -gt 0 ]; then
-  echo -e "${BLUE}[DRY RUN] Would have pushed ${UPDATED_COUNT} updates${NC}"
+  echo -e "${BLUE}[DRY RUN] Would have pushed ${UPDATED_COUNT} updates to branch: ${CYAN}$DEFAULT_BRANCH${NC}"
 fi
 
 # Send Gotify notification if enabled
