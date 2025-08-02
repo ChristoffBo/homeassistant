@@ -16,7 +16,7 @@ START_TIME=$(date +%s)
 # ===== ENV SETUP =====
 TZ=${TZ:-"Africa/Johannesburg"}
 export TZ
-cd /data || { echo "${RED}Failed to cd /data${NC}"; exit 1; }
+cd /data || exit 1
 
 # ===== LOGGING UTILS =====
 log_info()   { echo "${BLUE}[INFO]${NC} $1"; }
@@ -27,220 +27,208 @@ log_dryrun() { echo "${CYAN}[DRYRUN]${NC} $1"; }
 
 # ===== LOAD CONFIGURATION =====
 OPTIONS_JSON=/data/options.json
-REPO=$(jq -r '.repo // empty' "$OPTIONS_JSON" 2>/dev/null || echo "")
-BRANCH=$(jq -r '.branch // "main"' "$OPTIONS_JSON" 2>/dev/null || echo "main")
-GOTIFY_URL=$(jq -r '.gotify_url // empty' "$OPTIONS_JSON" 2>/dev/null || echo "")
-GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$OPTIONS_JSON" 2>/dev/null || echo "")
-DRY_RUN=$(jq -r '.dry_run // true' "$OPTIONS_JSON" 2>/dev/null || echo "true")
+REPO=$(jq -r '.repo // empty' "$OPTIONS_JSON")
+if [ -z "$REPO" ]; then
+  REPO=$(jq -r '.repository // empty' "$OPTIONS_JSON")
+fi
+BRANCH=$(jq -r '.branch // "main"' "$OPTIONS_JSON")
+GOTIFY_URL=$(jq -r '.gotify_url // empty' "$OPTIONS_JSON")
+GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$OPTIONS_JSON")
+DRY_RUN=$(jq -r '.dry_run // true' "$OPTIONS_JSON")
+ENABLE_NOTIF=$(jq -r '.enable_notifications // false' "$OPTIONS_JSON")
+GIT_USER=$(jq -r '.gituser // "AddonUpdater"' "$OPTIONS_JSON")
+GIT_MAIL=$(jq -r '.gitmail // "addon-updater@local"' "$OPTIONS_JSON")
 
-# DEBUG PARSED VALUES
-echo "Using repo: '$REPO'"
-echo "Using branch: '$BRANCH'"
-echo "Dry run mode: $DRY_RUN"
-echo "Gotify notifications: $( [ -n "$GOTIFY_URL" ] && echo Enabled || echo Disabled )"
-
+# ===== CHECK CONFIG =====
 if [ -z "$REPO" ]; then
   log_error "Git repository URL is empty or missing in options.json! Please fix."
   exit 1
 fi
 
-# ===== CLONE OR UPDATE REPO =====
+log_info "Using repo: $REPO"
+log_info "Using branch: $BRANCH"
+if [ "$DRY_RUN" = true ]; then
+  log_dryrun "Dry run mode: Enabled"
+else
+  log_update "Dry run mode: Disabled (Live)"
+fi
+if [ "$ENABLE_NOTIF" = true ]; then
+  log_info "Gotify notifications: Enabled"
+else
+  log_info "Gotify notifications: Disabled"
+fi
+echo "-----------------------------------------------------------"
+
+# ===== CLONE OR PULL REPO =====
 if [ ! -d repo ]; then
   log_info "Cloning repository..."
-  git clone --depth=1 --branch "$BRANCH" "$REPO" repo || {
-    log_error "Failed to clone repo $REPO"
-    exit 1
-  }
+  git clone --depth=1 --branch "$BRANCH" "$REPO" repo
 else
   log_info "Repository exists, updating..."
   cd repo || exit 1
-  git fetch origin "$BRANCH" || {
-    log_warn "Git fetch failed"
-  }
-  git reset --hard "origin/$BRANCH"
+  git pull origin "$BRANCH"
   cd ..
 fi
 
 cd repo || exit 1
-git config user.name "AddonUpdater"
-git config user.email "addon-updater@local"
 
-# ===== LOG MODE =====
-if [ "$DRY_RUN" = "true" ] || [ "$DRY_RUN" = "True" ]; then
-  DRY_MODE=true
-  log_dryrun "===== ADDON UPDATER STARTED (Dry Run) ====="
-else
-  DRY_MODE=false
-  log_update "===== ADDON UPDATER STARTED (Live Mode) ====="
-fi
+git config user.name "$GIT_USER"
+git config user.email "$GIT_MAIL"
 
-# ===== FUNCTION: Get latest tag from Docker Hub or LinuxServer.io =====
+# ===== FUNCTIONS =====
+
+# Get latest tag from Docker Hub or LinuxServer.io
 get_latest_tag() {
   local image=$1
-  local registry="docker"
   local repo_name
   local tags
-  local latest_tag
 
   if echo "$image" | grep -q '^lscr.io/'; then
-    registry="linuxserver"
+    # LinuxServer.io images
     repo_name=${image#lscr.io/}
+    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/linuxserver/${repo_name}/tags?page_size=100" | jq -r '.results[].name') || return 1
   else
-    repo_name=$image
+    # Docker Hub images
+    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" | jq -r '.results[].name') || return 1
   fi
 
-  if [ "$registry" = "linuxserver" ]; then
-    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/linuxserver/${repo_name}/tags?page_size=100" 2>/dev/null | jq -r '.results[].name') || {
-      log_warn "Failed to fetch tags from LinuxServer.io for $repo_name"
-      echo ""
-      return 1
-    }
-  else
-    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/${repo_name}/tags?page_size=100" 2>/dev/null | jq -r '.results[].name') || {
-      log_warn "Failed to fetch tags from Docker Hub for $repo_name"
-      echo ""
-      return 1
-    }
-  fi
-
-  # Filter out 'latest', pre-releases, architectures, date tags, etc. Only proper semver-like numeric tags.
-  latest_tag=$(echo "$tags" | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -Vr | head -n 1)
-
-  if [ -z "$latest_tag" ]; then
-    # Fallback: try to find any tag not containing "latest" or alphabets (pre-release)
-    latest_tag=$(echo "$tags" | grep -vEi 'latest|rc|alpha|beta|dev|test|[a-z]' | sort -Vr | head -n 1)
-  fi
-
-  echo "$latest_tag"
+  # Filter out unwanted tags and sort semver descending
+  echo "$tags" | grep -Ev 'latest|rc|dev|test' | sort -Vr | head -n 1
 }
 
-# ===== FUNCTION: Send Gotify notification =====
+# Send notification to Gotify
 send_gotify() {
   local title=$1
   local message=$2
   local priority=${3:-5}
-  [ -z "$GOTIFY_URL" ] && return
-  curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
+
+  if [ "$ENABLE_NOTIF" != true ]; then
+    return
+  fi
+
+  if [ -z "$GOTIFY_URL" ] || [ -z "$GOTIFY_TOKEN" ]; then
+    log_warn "Gotify URL or Token missing; skipping notification."
+    return
+  fi
+
+  response=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
     -F "title=$title" \
     -F "message=$message" \
-    -F "priority=$priority" >/dev/null 2>&1
+    -F "priority=$priority")
 
-  if [ $? -eq 0 ]; then
-    log_info "Gotify notification sent."
+  if [ "$response" -ne 200 ]; then
+    log_warn "Failed to send Gotify notification. HTTP status: $response"
   else
-    log_warn "Failed to send Gotify notification."
+    log_info "Gotify notification sent."
   fi
 }
 
+# Update version in config/build/updater.json and changelog
+update_version_files() {
+  local dir=$1
+  local latest=$2
+  local current=$3
+  local image=$4
+  local changelog_path="$dir/CHANGELOG.md"
+
+  # Update JSON files if they exist
+  for file in config.json build.json updater.json; do
+    local file_path="$dir/$file"
+    if [ -f "$file_path" ]; then
+      jq --arg ver "$latest" '.version=$ver' "$file_path" > "$file_path.tmp" && mv "$file_path.tmp" "$file_path"
+    fi
+  done
+
+  # Create changelog if missing
+  if [ ! -f "$changelog_path" ]; then
+    echo "# Changelog" > "$changelog_path"
+  fi
+
+  # Append changelog entry
+  echo -e "\n## $latest - $(date '+%Y-%m-%d')\nUpdated from $current to $latest\nSource: https://hub.docker.com/r/$image/tags" >> "$changelog_path"
+}
+
 # ===== MAIN LOOP =====
+
 NOTES=""
 UPDATED=0
 
-for addon_dir in */; do
-  # Skip if no config.json found
-  if [ ! -f "${addon_dir}config.json" ]; then
-    log_warn "${addon_dir%/}: Missing config.json, skipping."
-    continue
-  fi
+for addon_config in */config.json; do
+  dir=$(dirname "$addon_config")
+  [ "$dir" = ".git" ] && continue
 
-  # Skip .git directory or any hidden
-  if [ "${addon_dir%/}" = ".git" ] || [ "${addon_dir%/}" = "repo" ]; then
-    continue
-  fi
+  name=$(jq -r '.name // empty' "$addon_config")
+  image=$(jq -r '.image // empty' "$addon_config")
 
-  # Read addon name and image from config.json or build.json or updater.json
-  name=$(jq -r '.name // empty' "${addon_dir}config.json")
-  image=$(jq -r '.image // empty' "${addon_dir}config.json")
-
-  if [ -z "$image" ]; then
-    image=$(jq -r '.build.image // empty' "${addon_dir}build.json" 2>/dev/null)
+  # fallback to build.json image
+  if [ -z "$image" ] && [ -f "$dir/build.json" ]; then
+    image=$(jq -r '.image // empty' "$dir/build.json")
   fi
 
   if [ -z "$image" ]; then
-    image=$(jq -r '.version.image // empty' "${addon_dir}updater.json" 2>/dev/null)
-  fi
-
-  if [ -z "$name" ] || [ -z "$image" ]; then
-    log_warn "${addon_dir%/}: Missing name or image, skipping."
+    log_warn "$dir: No image found in config.json or build.json, skipping."
     continue
   fi
 
-  # Get current version from config.json, build.json, or updater.json
-  current_version=$(jq -r '.version // empty' "${addon_dir}config.json")
-  if [ -z "$current_version" ]; then
-    current_version=$(jq -r '.version // empty' "${addon_dir}build.json" 2>/dev/null)
+  latest=$(get_latest_tag "$image") || {
+    log_warn "$dir: Failed to fetch latest tag for image $image"
+    continue
+  }
+
+  # Get current version from config, build, or updater.json
+  current=$(jq -r '.version // empty' "$addon_config")
+  if [ -z "$current" ] && [ -f "$dir/build.json" ]; then
+    current=$(jq -r '.version // empty' "$dir/build.json")
   fi
-  if [ -z "$current_version" ]; then
-    current_version=$(jq -r '.version // empty' "${addon_dir}updater.json" 2>/dev/null)
+  if [ -z "$current" ] && [ -f "$dir/updater.json" ]; then
+    current=$(jq -r '.version // empty' "$dir/updater.json")
   fi
-  if [ -z "$current_version" ]; then
-    current_version="unknown"
+  if [ -z "$current" ]; then
+    current="unknown"
   fi
 
-  # Get latest tag from Docker or LinuxServer.io
-  latest_version=$(get_latest_tag "$image")
-  if [ -z "$latest_version" ]; then
-    log_warn "${name}: Could not determine latest version for image '$image'"
-    latest_version="$current_version"
+  # Normalize tags (remove leading v or arch prefixes)
+  clean_latest=$(echo "$latest" | sed -E 's/^v//')
+  clean_current=$(echo "$current" | sed -E 's/^v//')
+
+  # If latest is 'latest' string or empty, skip update and mark as up to date with current version
+  if echo "$clean_latest" | grep -qEi 'latest|^$'; then
+    clean_latest=$clean_current
   fi
 
-  # Normalize current_version: remove leading 'v' if present for comparison
-  normalized_current=$(echo "$current_version" | sed 's/^v//')
-  normalized_latest=$(echo "$latest_version" | sed 's/^v//')
-
-  if [ "$normalized_latest" != "$normalized_current" ]; then
-    if [ "$DRY_MODE" = true ]; then
-      log_dryrun "$name: Update available: $current_version -> $latest_version"
-      NOTES="${NOTES}\n🧪 $name: $current_version → $latest_version (simulated)"
+  if [ "$clean_latest" != "$clean_current" ]; then
+    if [ "$DRY_RUN" = true ]; then
+      log_dryrun "$dir: Simulated update from $clean_current to $clean_latest"
+      NOTES="$NOTES\n🧪 $name: $clean_current → $clean_latest"
     else
-      log_update "$name: Updating from $current_version to $latest_version"
+      log_update "$dir: Updating from $clean_current to $clean_latest"
+      update_version_files "$dir" "$clean_latest" "$clean_current" "$image"
 
-      # Update version in files if they exist
-      for f in "${addon_dir}"config.json "${addon_dir}"build.json "${addon_dir}"updater.json; do
-        if [ -f "$f" ]; then
-          jq --arg ver "$latest_version" '.version = $ver' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-        fi
-      done
-
-      # Update or create CHANGELOG.md
-      changelog="${addon_dir}CHANGELOG.md"
-      if [ ! -f "$changelog" ]; then
-        echo "# Changelog" > "$changelog"
-      fi
-      echo -e "\n## $latest_version - $(date '+%Y-%m-%d')\nUpdated from $current_version to $latest_version\nSource: https://hub.docker.com/r/$image/tags" >> "$changelog"
-
-      git add "${addon_dir}"*
-      git commit -m "${addon_dir%/}: update version $current_version -> $latest_version"
-      UPDATED=$((UPDATED+1))
-      NOTES="${NOTES}\n✅ $name: $current_version → $latest_version"
+      git add "$dir/"*
+      git commit -m "$dir: update from $clean_current to $clean_latest"
+      UPDATED=1
+      NOTES="$NOTES\n✅ $name: $clean_current → $clean_latest"
     fi
   else
-    log_info "$name: You are running the latest version: $current_version"
-    NOTES="${NOTES}\nℹ️ $name: $current_version (up to date)"
+    log_info "$dir: No update needed, version is $clean_current"
+    NOTES="$NOTES\nℹ️ $name: $clean_current (up to date)"
   fi
 done
 
-# Push changes if live mode and updates were made
-if [ "$DRY_MODE" = false ] && [ $UPDATED -gt 0 ]; then
-  log_info "Pushing updates to branch $BRANCH"
-  git push origin "$BRANCH" || log_warn "Git push failed"
-else
-  log_info "No updates to push or running in dry run mode."
+if [ "$DRY_RUN" != true ] && [ "$UPDATED" -eq 1 ]; then
+  git push origin "$BRANCH"
 fi
 
-# Send Gotify notification with summary (always send)
-if [ -n "$GOTIFY_URL" ]; then
+# Send notification with all notes, always send regardless of updates
+if [ "$ENABLE_NOTIF" = true ]; then
   TITLE="Addon Updater Report [$(date '+%Y-%m-%d')]"
-  # Color code updates green, info gray, simulation cyan for Gotify markdown
-  MSG=$(echo -e "$NOTES" | sed \
-    -e 's/✅ /<font color="green">✅ /g' \
-    -e 's/ℹ️ /<font color="gray">ℹ️ /g' \
-    -e 's/🧪 /<font color="cyan">🧪 /g' | sed 's/$/<\/font>/')
-  send_gotify "$TITLE" "$MSG" 5
+  MESSAGE="Dry run mode: $DRY_RUN\n\n$(echo -e "$NOTES")"
+  send_gotify "$TITLE" "$MESSAGE"
 fi
 
-# ===== END =====
 log_info "===== ADDON UPDATER FINISHED ====="
+
+# ===== END TIMER =====
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 log_info "Completed in ${ELAPSED}s"
