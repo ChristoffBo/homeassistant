@@ -5,14 +5,11 @@ FROM $BUILD_FROM
 RUN apk add --no-cache jq git curl python3 py3-pip
 RUN pip3 install --no-cache-dir requests semver GitPython
 
-# Set working directory
-WORKDIR /app
+# Copy the entire rootfs structure
+COPY rootfs /
 
-# Copy the single script
-COPY run.sh .
+# Set execute permission for the script
+RUN chmod a+x /usr/bin/addons_updater.sh
 
-# Set execute permission
-RUN chmod a+x run.sh
-
-# Run the updater
-CMD [ "./run.sh" ]
+# Run the updater script
+CMD [ "/usr/bin/addons_updater.sh" ]
