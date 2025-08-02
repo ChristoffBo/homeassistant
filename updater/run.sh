@@ -174,7 +174,7 @@ log_configuration() {
 }
 
 # ======================
-# VERSION CHECKING (MODIFIED)
+# VERSION CHECKING
 # ======================
 get_latest_docker_tag() {
     local image="$1"
@@ -190,13 +190,8 @@ get_latest_docker_tag() {
         return
     fi
 
-    if [[ "$image_name" =~ ^linuxserver/|^lscr.io/linuxserver/ ]]; then
-        version=$(get_lsio_tag "$image_name")
-    elif [[ "$image_name" =~ ^ghcr.io/ ]]; then
-        version=$(get_ghcr_tag "$image_name")
-    else
-        version=$(get_dockerhub_tag "$image_name")
-    fi
+    version=$(curl -sSf "https://hub.docker.com/v2/repositories/${image_name}/tags" | \
+        jq -r '.results[]?.name' | grep -v latest | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}$' | sort -Vr | head -n1)
 
     if [[ -z "$version" || "$version" == "latest" ]]; then
         log_warning "No valid version tag found for $image_name. Skipping update."
@@ -208,67 +203,103 @@ get_latest_docker_tag() {
     echo "$version"
 }
 
-# (keep your existing get_lsio_tag, get_ghcr_tag, get_dockerhub_tag functions)
-
 # ======================
-# ADD-ON PROCESSING (MODIFIED)
+# ADD-ON CHECKING
 # ======================
 update_addon_if_needed() {
     local addon_path="$1"
     local addon_name=$(basename "$addon_path")
 
-    [ "$addon_name" = "updater" ] && {
-        log_info "Skipping updater addon (self)"
+    [ "$addon_name" = "updater" ] && return
+
+    local config_file="$addon_path/config.json"
+    local current_version image latest_version
+
+    [ -f "$config_file" ] || return
+
+    image=$(jq -r '.image // empty' "$config_file")
+    current_version=$(jq -r '.version // "unknown"' "$config_file")
+
+    latest_version=$(get_latest_docker_tag "$image")
+
+    if [ -z "$latest_version" ]; then
+        UNCHANGED_ADDONS["$addon_name"]="Only 'latest' tag found or error"
         return
-    }
+    fi
 
-    (
-        log_info "Checking add-on: $addon_name"
-        local image="" current_version="latest"
-        local config_file="$addon_path/config.json"
-        local build_file="$addon_path/build.json"
-
-        [ -f "$config_file" ] && {
-            image=$(jq -r '.image // empty' "$config_file")
-            current_version=$(jq -r '.version // empty' "$config_file")
-        }
-
-        [ -z "$image" ] && [ -f "$build_file" ] && {
-            local arch=$(uname -m)
-            [ "$arch" = "x86_64" ] && arch="amd64"
-            image=$(jq -r --arg arch "$arch" '.build_from[$arch] // .build_from.amd64 // .build_from' "$build_file")
-        }
-
-        [ -z "$image" ] && {
-            log_warning "No Docker image found for $addon_name"
-            UNCHANGED_ADDONS["$addon_name"]="No Docker image found"
-            return
-        }
-
-        local latest_version
-        if ! latest_version=$(get_latest_docker_tag "$image"); then
-            UNCHANGED_ADDONS["$addon_name"]="Could not determine latest version"
-            return
-        fi
-
-        [ -z "$latest_version" ] && {
-            UNCHANGED_ADDONS["$addon_name"]="No version tag found (only 'latest')"
-            return
-        }
-
-        log_info "Current: $current_version | Available: $latest_version"
-
-        if [ "$latest_version" != "$current_version" ]; then
-            handle_addon_update "$addon_path" "$addon_name" "$current_version" "$latest_version" "$image"
-        else
-            log_success "$addon_name is up to date"
-            UNCHANGED_ADDONS["$addon_name"]="Already up to date"
-        fi
-    )
+    if [ "$latest_version" != "$current_version" ]; then
+        UPDATED_ADDONS["$addon_name"]="$current_version → $latest_version"
+        jq --arg v "$latest_version" '.version = $v' "$config_file" > "$config_file.tmp" &&
+            mv "$config_file.tmp" "$config_file"
+        log_success "$addon_name updated from $current_version to $latest_version"
+    else
+        UNCHANGED_ADDONS["$addon_name"]="Already up to date"
+    fi
 }
 
 # ======================
-# MAIN ENTRY
+# GIT FUNCTIONS
+# ======================
+clone_or_update_repo() {
+    if [ ! -d "$REPO_DIR/.git" ]; then
+        git clone "$GIT_AUTH_REPO" "$REPO_DIR"
+    else
+        cd "$REPO_DIR" && git pull
+    fi
+}
+
+commit_and_push_changes() {
+    cd "$REPO_DIR"
+    if git status --porcelain | grep -q .; then
+        git add .
+        git commit -m "🔄 Updated add-on versions"
+        [ "$SKIP_PUSH" = "false" ] && git push
+    fi
+}
+
+# ======================
+# NOTIFICATION
+# ======================
+send_notification() {
+    [ "${NOTIFICATION_SETTINGS[enabled]}" = "false" ] && return
+    local title="$1"
+    local message="$2"
+    curl -s -X POST "${NOTIFICATION_SETTINGS[url]}message?token=${NOTIFICATION_SETTINGS[token]}" \
+        -H "Content-Type: application/json" \
+        -d "{\"title\":\"$title\",\"message\":\"$message\",\"priority\":3}" >/dev/null
+}
+
+# ======================
+# MAIN UPDATE FUNCTION
+# ======================
+perform_update_check() {
+    local start_time=$(date +%s)
+    log_info "Starting update check"
+
+    clone_or_update_repo
+
+    for addon_path in "$REPO_DIR"/*/; do
+        [ -d "$addon_path" ] && update_addon_if_needed "$addon_path"
+    done
+
+    commit_and_push_changes
+
+    local summary="✅ Update Summary:\n"
+    for addon in "${!UPDATED_ADDONS[@]}"; do
+        summary+="$addon: ${UPDATED_ADDONS[$addon]}\n"
+    done
+    for addon in "${!UNCHANGED_ADDONS[@]}"; do
+        summary+="$addon: ${UNCHANGED_ADDONS[$addon]}\n"
+    done
+
+    [ "${NOTIFICATION_SETTINGS[enabled]}" = "true" ] && send_notification "Add-on Updater Report" "$summary"
+
+    local end_time=$(date +%s)
+    log_info "Update check completed in $((end_time - start_time)) seconds"
+}
+
+# ======================
+# ENTRY POINT
 # ======================
 main() {
     acquire_lock
