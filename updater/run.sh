@@ -78,8 +78,8 @@ notify() {
 
   if [ "$NOTIFY_SERVICE" = "gotify" ]; then
     local payload
-    payload=$(jq -n --arg t "$title" --arg m "$message" --argjson p "$priority"       '{title: $t, message: $m, priority: $p}')
-    curl -s -X POST "${NOTIFY_URL%/}/message?token=${NOTIFY_TOKEN}"       -H "Content-Type: application/json"       -d "$payload" > /dev/null || log "$COLOR_RED" "❌ Gotify notification failed"
+    payload=$(jq -n --arg t "$title" --arg m "$message" --argjson p "$priority" '{title: $t, message: $m, priority: $p}')
+    curl -s -X POST "${NOTIFY_URL%/}/message?token=${NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "$payload" > /dev/null || log "$COLOR_RED" "❌ Gotify notification failed"
   fi
 }
 
@@ -151,7 +151,7 @@ update_addon() {
 
   if [ -z "$image" ]; then
     log "$COLOR_YELLOW" "⚠️ No image defined for $name"
-    UNCHANGED_ADDONS["$name"]="No image"
+    UNCHANGED_ADDONS["$name"]="No image defined"
     return
   fi
 
@@ -223,7 +223,7 @@ main() {
   for path in "$REPO_DIR"/*; do
     [ ! -d "$path" ] && continue
     local name=$(basename "$path")
-    local status
+    local status=""
 
     if [ -n "${UPDATED_ADDONS[$name]}" ]; then
       status="🔄 ${UPDATED_ADDONS[$name]}"
@@ -233,10 +233,12 @@ main() {
       status="⏭️ Skipped"
     fi
 
-    summary+="$(printf '%-20s %s\n' "$name:" "$status")"
+    summary+="$name: $status
+"
   done
 
-  [ "$DRY_RUN" = "true" ] && summary+="\n🔁 DRY RUN MODE ENABLED"
+  [ "$DRY_RUN" = "true" ] && summary+="
+🔁 DRY RUN MODE ENABLED"
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
