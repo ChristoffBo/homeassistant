@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# Fix missing HOME variable to prevent git errors
+export HOME=/tmp
+
 # Colors for logging
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -23,7 +26,7 @@ LOG() {
     echo "${COLOR}[$LEVEL]${NC} $MSG"
 }
 
-# Read options.json (replace with your method if needed)
+# Load options.json
 OPTIONS_FILE="/data/options.json"
 GITUSER=$(jq -r '.gituser // empty' "$OPTIONS_FILE")
 GITMAIL=$(jq -r '.gitmail // empty' "$OPTIONS_FILE")
@@ -44,37 +47,39 @@ fi
 LOG INFO "===== ADDON UPDATER STARTED ====="
 LOG INFO "Repository: $REPOSITORY"
 
-# Setup git config
+# Configure git user/email globally
 git config --global user.name "$GITUSER"
-if [ -n "$GITMAIL" ]; then
+if [ -n "$GITMAIL" ] && [ "$GITMAIL" != "null" ]; then
     git config --global user.email "$GITMAIL"
 fi
 
-# Prepare repo local path
 REPO_NAME=$(basename "$REPOSITORY")
 REPO_DIR="/data/$REPO_NAME"
 
-# Clone or update repo
+# Clone or update repository
 if [ ! -d "$REPO_DIR/.git" ]; then
     LOG INFO "Cloning repository $REPOSITORY..."
-    git clone "https://github.com/$REPOSITORY" "$REPO_DIR" || {
+    if ! git clone "https://github.com/$REPOSITORY" "$REPO_DIR"; then
         LOG ERROR "Failed to clone repository."
         exit 1
-    }
+    fi
 else
     LOG INFO "Repository already exists, updating..."
     cd "$REPO_DIR"
-    git fetch origin
-    # Check if branch exists, fallback to main if necessary
-    git branch --list main > /dev/null 2>&1 && BRANCH=main || BRANCH=$(git branch --list | head -n1 | tr -d '* ')
-    git checkout "$BRANCH"
+    git fetch origin || LOG WARN "Git fetch failed"
+    # Detect main branch fallback to master
+    if git show-ref --verify --quiet refs/heads/main; then
+        BRANCH="main"
+    else
+        BRANCH="master"
+    fi
+    git checkout "$BRANCH" || LOG WARN "Git checkout $BRANCH failed"
     git reset --hard "origin/$BRANCH"
-    git pull origin "$BRANCH"
+    git pull origin "$BRANCH" || LOG WARN "Git pull failed"
 fi
 
 cd "$REPO_DIR"
 
-# Function: Get latest release tag from GitHub API
 get_latest_github_release() {
     repo="$1"
     token="$2"
@@ -84,13 +89,10 @@ get_latest_github_release() {
         auth_header="Authorization: token $token"
     fi
 
-    # Query GitHub API for latest release
     release_json=$(curl -sSL -H "Accept: application/vnd.github+json" -H "$auth_header" "https://api.github.com/repos/$repo/releases/latest")
 
-    # Extract tag_name
     tag_name=$(echo "$release_json" | jq -r '.tag_name // empty')
 
-    # Check if tag_name empty or API error
     if [ -z "$tag_name" ]; then
         LOG WARN "$repo: No latest release found or API limit reached."
         echo ""
@@ -100,7 +102,7 @@ get_latest_github_release() {
     echo "$tag_name"
 }
 
-# Process each addon directory that has updater.json
+# Loop through addon folders with updater.json
 for addon_dir in */; do
     if [ -f "$addon_dir/updater.json" ]; then
         SLUG=${addon_dir%/}
@@ -119,13 +121,10 @@ for addon_dir in */; do
             continue
         fi
 
-        # Get latest version based on source
         LATEST_VERSION=""
         if [ "$SOURCE" = "github" ]; then
-            # GitHub source, use API
             LATEST_VERSION=$(get_latest_github_release "$UPSTREAM" "$GITAPI") || true
         elif [ "$SOURCE" = "dockerhub" ]; then
-            # DockerHub source
             DOCKERHUB_REPO="${UPSTREAM%%/*}"
             DOCKERHUB_IMAGE=$(echo "$UPSTREAM" | cut -d "/" -f2)
             LISTSIZE=100
@@ -158,20 +157,21 @@ for addon_dir in */; do
             LOG INFO "$SLUG: Update available: $CURRENT_VERSION -> $LATEST_VERSION"
 
             if [ "$DRY_RUN" != true ]; then
-                # Update version in files
                 for file in "$addon_dir"/config.json "$addon_dir"/build.json "$addon_dir"/updater.json; do
                     if [ -f "$file" ]; then
                         jq --arg v "$LATEST_VERSION" '.version = $v | .upstream_version = $v' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
                     fi
                 done
 
-                # Update changelog
                 CHANGELOG="$addon_dir/CHANGELOG.md"
                 touch "$CHANGELOG"
                 DATE=$(date '+%Y-%m-%d')
-                sed -i "1i\n## $LATEST_VERSION ($DATE)\n- Updated to latest version from $UPSTREAM\n" "$CHANGELOG"
+                # Insert new version header on top (POSIX sed)
+                sed -i "1i\\
+## $LATEST_VERSION ($DATE)\\
+- Updated to latest version from $UPSTREAM\\
+" "$CHANGELOG"
 
-                # Git commit and push
                 git add -A
                 git commit -m "Updater bot: $SLUG updated to $LATEST_VERSION" || true
                 git push origin "$BRANCH" || LOG WARN "$SLUG: git push failed."
@@ -181,7 +181,7 @@ for addon_dir in */; do
                 LOG DRYRUN "$SLUG: Update simulated from $CURRENT_VERSION to $LATEST_VERSION."
             fi
 
-            # TODO: Notification logic (Gotify, Gitea) can be triggered here if ENABLE_NOTIFICATIONS=true
+            # Notifications placeholder (Gotify, Gitea) - Add your calls here if ENABLE_NOTIFICATIONS=true
 
         else
             LOG INFO "$SLUG: Already up to date ($CURRENT_VERSION)."
