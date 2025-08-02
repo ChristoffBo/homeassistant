@@ -1,7 +1,7 @@
 {
   "slug": "technitium-dns-dhcp",
   "image": "technitium/dns-server:latest",
-  "upstream_version": "13.6.0",
+  "upstream_version": "",
   "last_update": "02-08-2025",
   "version": "tags",
   "last_updated": "2025-08-02 14:39:32 SAST"
