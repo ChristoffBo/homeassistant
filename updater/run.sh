@@ -1,332 +1,342 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-CONFIG_PATH="/data/options.json"
+# Fix $HOME for git (important in container)
+export HOME=/tmp
+
+# --------------------
+# Configuration
+# --------------------
+CONFIG_FILE="/data/options.json"
 REPO_DIR="/data/homeassistant"
-LOCK_FILE="/data/updater.lock"
+LOG_FILE="/data/updater.log"
 
-# Color codes for output
-COLOR_RESET="\033[0m"
-COLOR_RED="\033[0;31m"
-COLOR_GREEN="\033[0;32m"
-COLOR_YELLOW="\033[1;33m"
-COLOR_BLUE="\033[0;34m"
-COLOR_CYAN="\033[0;36m"
+# Load config
+github_repo=$(jq -r '.github_repo // empty' "$CONFIG_FILE")
+github_username=$(jq -r '.github_username // empty' "$CONFIG_FILE")
+github_token=$(jq -r '.github_token // empty' "$CONFIG_FILE")
+gitea_repo=$(jq -r '.gitea_repo // empty' "$CONFIG_FILE")
+gitea_username=$(jq -r '.gitea_username // empty' "$CONFIG_FILE")
+gitea_token=$(jq -r '.gitea_token // empty' "$CONFIG_FILE")
 
-# Logging functions
+timezone=$(jq -r '.timezone // "UTC"' "$CONFIG_FILE")
+dry_run=$(jq -r '.dry_run // false' "$CONFIG_FILE")
+skip_push=$(jq -r '.skip_push // false' "$CONFIG_FILE")
+debug=$(jq -r '.debug // false' "$CONFIG_FILE")
+
+notifications_enabled=$(jq -r '.notifications_enabled // false' "$CONFIG_FILE")
+notification_service=$(jq -r '.notification_service // ""' "$CONFIG_FILE")
+notification_url=$(jq -r '.notification_url // ""' "$CONFIG_FILE")
+notification_token=$(jq -r '.notification_token // ""' "$CONFIG_FILE")
+notification_to=$(jq -r '.notification_to // ""' "$CONFIG_FILE")
+notify_on_success=$(jq -r '.notify_on_success // false' "$CONFIG_FILE")
+notify_on_error=$(jq -r '.notify_on_error // false' "$CONFIG_FILE")
+notify_on_updates=$(jq -r '.notify_on_updates // false' "$CONFIG_FILE")
+
+# Set TZ for logs
+export TZ="$timezone"
+
+# --------------------
+# Colors for logs
+# --------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
 log() {
-  local level="$1"
-  local color="$2"
-  local message="$3"
+  local type="$1"
+  local msg="$2"
+  local color="$3"
   local timestamp
   timestamp=$(date +"[%Y-%m-%d %H:%M:%S %Z]")
-  echo -e "${timestamp} ${color}${level}${COLOR_RESET} ${message}"
+  echo -e "${timestamp} ${color}${type}${NC} $msg"
 }
 
-info()    { log "ℹ️" "$COLOR_BLUE" "$1"; }
-success() { log "✅" "$COLOR_GREEN" "$1"; }
-warn()    { log "⚠️" "$COLOR_YELLOW" "$1"; }
-error()   { log "❌" "$COLOR_RED" "$1" >&2; }
-debug() {
-  if [ "$DEBUG" = true ]; then
-    log "🐛" "$COLOR_CYAN" "$1"
+info() { log "ℹ️" "$1" "$CYAN"; }
+warn() { log "⚠️" "$1" "$YELLOW"; }
+error() { log "❌" "$1" "$RED"; }
+success() { log "✅" "$1" "$GREEN"; }
+debug_log() {
+  if [ "$debug" = "true" ]; then
+    log "🐛" "$1" "$YELLOW"
   fi
 }
 
-# Load configuration
-if ! command -v jq >/dev/null 2>&1; then
-  error "jq not installed"
-  exit 1
-fi
+# --------------------
+# Git functions
+# --------------------
 
-GITHUB_REPO=$(jq -r '.github_repo // empty' "$CONFIG_PATH")
-GITHUB_USERNAME=$(jq -r '.github_username // empty' "$CONFIG_PATH")
-GITHUB_TOKEN=$(jq -r '.github_token // empty' "$CONFIG_PATH")
-GITEA_REPO=$(jq -r '.gitea_repo // empty' "$CONFIG_PATH")
-GITEA_TOKEN=$(jq -r '.gitea_token // empty' "$CONFIG_PATH")
-TIMEZONE=$(jq -r '.timezone // "UTC"' "$CONFIG_PATH")
-DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
-SKIP_PUSH=$(jq -r '.skip_push // false' "$CONFIG_PATH")
-DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
-NOTIFICATIONS_ENABLED=$(jq -r '.notifications_enabled // false' "$CONFIG_PATH")
-NOTIFICATION_SERVICE=$(jq -r '.notification_service // empty' "$CONFIG_PATH")
-NOTIFICATION_URL=$(jq -r '.notification_url // empty' "$CONFIG_PATH")
-NOTIFICATION_TOKEN=$(jq -r '.notification_token // empty' "$CONFIG_PATH")
-NOTIFY_ON_SUCCESS=$(jq -r '.notify_on_success // false' "$CONFIG_PATH")
-NOTIFY_ON_ERROR=$(jq -r '.notify_on_error // false' "$CONFIG_PATH")
-NOTIFY_ON_UPDATES=$(jq -r '.notify_on_updates // false' "$CONFIG_PATH")
-
-export TZ="$TIMEZONE"
-
-info "========== CONFIGURATION =========="
-info "GitHub Repo: $GITHUB_REPO"
-info "Gitea Repo: $GITEA_REPO"
-info "Dry Run: $DRY_RUN"
-info "Skip Push: $SKIP_PUSH"
-info "Timezone: $TIMEZONE"
-info "Debug Mode: $DEBUG"
-info "Notifications Enabled: $NOTIFICATIONS_ENABLED"
-info "Notification Service: $NOTIFICATION_SERVICE"
-info "Notify on Success: $NOTIFY_ON_SUCCESS"
-info "Notify on Error: $NOTIFY_ON_ERROR"
-info "Notify on Updates: $NOTIFY_ON_UPDATES"
-info "==================================="
-
-cd "$REPO_DIR" || { error "Repo directory $REPO_DIR does not exist"; exit 1; }
-
-# Clone or pull repo
-if [ ! -d ".git" ]; then
-  if [ -n "$GITHUB_REPO" ]; then
-    info "Cloning GitHub repo..."
-    git clone "https://$GITHUB_USERNAME:$GITHUB_TOKEN@${GITHUB_REPO#https://}" "$REPO_DIR"
-  elif [ -n "$GITEA_REPO" ]; then
-    info "Cloning Gitea repo..."
-    git clone "https://$GITHUB_USERNAME:$GITEA_TOKEN@${GITEA_REPO#https://}" "$REPO_DIR"
+git_clone_or_pull() {
+  if [ ! -d "$REPO_DIR/.git" ]; then
+    info "Cloning repository..."
+    if [ -n "$github_token" ] && [ -n "$github_username" ] && [ -n "$github_repo" ]; then
+      git clone "https://${github_username}:${github_token}@${github_repo#https://}" "$REPO_DIR"
+    elif [ -n "$gitea_token" ] && [ -n "$gitea_username" ] && [ -n "$gitea_repo" ]; then
+      git clone "https://${gitea_username}:${gitea_token}@${gitea_repo#https://}" "$REPO_DIR"
+    else
+      git clone "$github_repo" "$REPO_DIR"
+    fi
   else
-    error "No repository URL provided."
-    exit 1
-  fi
-else
-  info "Using existing repo at $REPO_DIR"
-fi
-
-git config user.name "$GITHUB_USERNAME"
-git config user.email "$GITHUB_USERNAME@users.noreply.github.com"
-
-info "Pulling latest changes from repository..."
-if ! git pull --rebase; then
-  error "Git pull failed"
-  [ "$NOTIFY_ON_ERROR" = true ] && send_notification "Add-on Updater Error" "Git pull failed"
-  exit 1
-fi
-info "Git pull completed."
-
-normalize_tag() {
-  local tag="$1"
-  tag="${tag#amd64-}"
-  tag="${tag#armhf-}"
-  tag="${tag#arm64-}"
-  tag="${tag#aarch64-}"
-  tag="${tag#x86_64-}"
-  if [ "$tag" = "latest" ] || [ -z "$tag" ]; then
-    echo ""
-  else
-    echo "$tag"
+    info "Using existing repo at $REPO_DIR"
+    cd "$REPO_DIR"
+    info "Pulling latest changes from repository..."
+    git pull --ff-only || true
   fi
 }
 
+# --------------------
+# Docker tag fetching helpers
+# --------------------
+
+# Normalize version for comparison, remove arch prefixes like amd64-, armhf-, etc
+normalize_version() {
+  echo "$1" | sed -E 's/^(amd64-|armhf-|armv7-|arm64v8-)//' | sed 's/^v//'
+}
+
+# Compare semantic versions (returns 0 if $1 < $2, else 1)
 version_lt() {
-  [ "$(printf '%s\n%s' "$1" "$2" | sort -V | head -n1)" != "$2" ]
+  [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" != "$2" ]
 }
 
-extract_current_version() {
-  local addon_dir="$1"
-  jq -r '.version // empty' "$addon_dir/config.json" 2>/dev/null || echo ""
-}
+# Fetch tags for a Docker image based on registry
+fetch_tags() {
+  local docker_image="$1"
+  local tags_json
+  local available_tags
 
-update_changelog() {
-  local addon_dir="$1"
-  local new_version="$2"
-  local changelog_file="$addon_dir/CHANGELOG.md"
-
-  if [ ! -f "$changelog_file" ]; then
-    echo "# Changelog" >"$changelog_file"
+  if [[ "$docker_image" =~ ^ghcr.io/ ]]; then
+    # GHCR
+    local repo_path="${docker_image#ghcr.io/}"
+    repo_path="${repo_path%-amd64}"
+    local tags_url="https://ghcr.io/v2/${repo_path}/tags/list"
+    debug_log "Fetching tags from GHCR: $tags_url"
+    tags_json=$(curl -s "$tags_url" || echo "")
+    if [ -z "$tags_json" ]; then
+      warn "Failed to fetch tags from GHCR for $docker_image"
+      echo ""
+      return
+    fi
+    available_tags=$(echo "$tags_json" | jq -r '.tags[]?' || echo "")
+  elif [[ "$docker_image" =~ ^lscr.io/ ]]; then
+    # LinuxServer.io
+    local repo_path="${docker_image#lscr.io/}"
+    repo_path="${repo_path%:*}"
+    local tags_url="https://registry.hub.docker.com/v2/repositories/linuxserver/${repo_path}/tags?page_size=100"
+    debug_log "Fetching tags from LinuxServer.io: $tags_url"
+    tags_json=$(curl -s "$tags_url" || echo "")
+    if [ -z "$tags_json" ]; then
+      warn "Failed to fetch tags from LinuxServer.io for $docker_image"
+      echo ""
+      return
+    fi
+    available_tags=$(echo "$tags_json" | jq -r '.results[].name' || echo "")
+  else
+    # Docker Hub (default for all other images including those with slashes)
+    local image_path="${docker_image#docker.io/}"
+    if [[ "$image_path" != */* ]]; then
+      image_path="library/$image_path"
+    fi
+    local tags_url="https://registry.hub.docker.com/v2/repositories/${image_path}/tags?page_size=100"
+    debug_log "Fetching tags from Docker Hub: $tags_url"
+    tags_json=$(curl -s "$tags_url" || echo "")
+    if [ -z "$tags_json" ]; then
+      warn "Failed to fetch tags from Docker Hub for $docker_image"
+      echo ""
+      return
+    fi
+    available_tags=$(echo "$tags_json" | jq -r '.results[].name' || echo "")
   fi
 
-  echo -e "\n## $new_version - $(date +"%Y-%m-%d")" >>"$changelog_file"
-  echo "- Updated to version $new_version" >>"$changelog_file"
+  echo "$available_tags"
+}
+
+# --------------------
+# Notification functions
+# --------------------
+
+send_gotify_notification() {
+  local title="$1"
+  local message="$2"
+  if [ "$notifications_enabled" != "true" ] || [ "$notification_service" != "gotify" ]; then
+    debug_log "Skipping Gotify notification - disabled or not configured"
+    return
+  fi
+  local payload
+  payload=$(jq -n \
+    --arg title "$title" \
+    --arg message "$message" \
+    --arg priority "0" \
+    '{title: $title, message: $message, priority: ($priority|tonumber)}')
+  debug_log "Sending Gotify notification to $notification_url"
+  curl -s -X POST \
+    -H "X-Gotify-Key: $notification_token" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    "$notification_url/message?token=$notification_token" >/dev/null 2>&1 && success "Gotify notification sent" || warn "Gotify notification failed"
 }
 
 send_notification() {
   local title="$1"
   local message="$2"
-  if [ "$NOTIFICATIONS_ENABLED" != true ]; then return 0; fi
-
-  case "$NOTIFICATION_SERVICE" in
-    gotify)
-      if [ -z "$NOTIFICATION_URL" ] || [ -z "$NOTIFICATION_TOKEN" ]; then
-        warn "Gotify notification settings incomplete; skipping notification."
-        return 1
-      fi
-      debug "Sending Gotify notification to $NOTIFICATION_URL"
-      curl -s -X POST "$NOTIFICATION_URL/message?token=$NOTIFICATION_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":0}" >/dev/null
-      if [ $? -eq 0 ]; then
-        success "Gotify notification sent"
-      else
-        error "Failed to send Gotify notification"
-      fi
-      ;;
-    *)
-      warn "Unsupported notification service: $NOTIFICATION_SERVICE"
-      ;;
-  esac
+  # Can be expanded later for Apprise, Mailrise, etc.
+  if [ "$notification_service" = "gotify" ]; then
+    send_gotify_notification "$title" "$message"
+  else
+    debug_log "Notification service $notification_service not implemented"
+  fi
 }
 
-updates_summary=""
-updates_found=false
+# --------------------
+# Main processing
+# --------------------
 
-# Iterate only directories with config.json (add-ons)
-for addon_dir in "$REPO_DIR"/*/; do
-  addon_dir=${addon_dir%/}
-  addon=$(basename "$addon_dir")
+info "🔁 Home Assistant Add-on Updater Starting"
 
-  # Skip hidden dirs
-  if [[ "$addon" == .* ]]; then
-    debug "Skipping hidden directory $addon"
-    continue
-  fi
+info "========= CONFIGURATION =========="
+info "GitHub Repo: $github_repo"
+info "Gitea Repo: $gitea_repo"
+info "Dry Run: $dry_run"
+info "Skip Push: $skip_push"
+info "Timezone: $timezone"
+info "Debug Mode: $debug"
+info "Notifications Enabled: $notifications_enabled"
+info "Notification Service: $notification_service"
+info "Notify on Success: $notify_on_success"
+info "Notify on Error: $notify_on_error"
+info "Notify on Updates: $notify_on_updates"
+info "=================================="
 
-  # Check config.json presence
+git_clone_or_pull
+
+info "Git pull completed."
+
+cd "$REPO_DIR"
+
+if [ ! -d addons ]; then
+  error "Addons directory not found at $REPO_DIR/addons"
+  exit 1
+fi
+
+updates_found=0
+updates_msg="Add-on Update Summary\n"
+
+# Loop all addons folders (ignore hidden and files)
+for addon_dir in addons/*/; do
+  addon_name=$(basename "$addon_dir")
+  info "Checking add-on: $addon_name"
+
   config_file="$addon_dir/config.json"
-  if [ ! -f "$config_file" ]; then
-    warn "Add-on $addon missing config.json, skipping."
-    continue
-  fi
-
-  # Read current version
-  current_version=$(extract_current_version "$addon_dir")
-
-  # Read build.json if present (keep for later if needed)
   build_file="$addon_dir/build.json"
   updater_file="$addon_dir/updater.json"
 
+  if [ ! -f "$config_file" ]; then
+    warn "Add-on $addon_name missing config.json, skipping."
+    continue
+  fi
+
+  # Load Docker image from config.json or build.json or updater.json
   docker_image=$(jq -r '.image // empty' "$config_file")
+  if [ -z "$docker_image" ] && [ -f "$build_file" ]; then
+    docker_image=$(jq -r '.image // empty' "$build_file")
+  fi
+  if [ -z "$docker_image" ] && [ -f "$updater_file" ]; then
+    docker_image=$(jq -r '.image // empty' "$updater_file")
+  fi
 
   if [ -z "$docker_image" ]; then
-    warn "Add-on $addon has no Docker image defined, skipping."
+    warn "Add-on $addon_name has no Docker image defined, skipping."
     continue
   fi
 
-  docker_image="${docker_image//\{arch\}/amd64}"
-
-  debug "Checking add-on: $addon"
-  debug "Current version: $current_version"
-  debug "Docker image: $docker_image"
-
-  # Fetch available tags based on registry
-  available_tags=""
-  if [[ "$docker_image" =~ ^ghcr.io/ ]]; then
-    repo_path="${docker_image#ghcr.io/}"
-    repo_path="${repo_path%"-amd64"}"
-    tags_url="https://ghcr.io/v2/$repo_path/tags/list"
-    debug "Fetching tags from GHCR: $tags_url"
-    tags_json=$(curl -s "$tags_url" || echo "")
-    if [ -z "$tags_json" ]; then
-      warn "Failed to fetch tags from GHCR for $docker_image"
-      continue
-    fi
-    available_tags=$(echo "$tags_json" | jq -r '.tags[]?' || echo "")
-
-  elif [[ "$docker_image" =~ ^docker.io/ ]] || [[ ! "$docker_image" =~ / ]]; then
-    if [[ "$docker_image" =~ ^docker.io/ ]]; then
-      image_path="${docker_image#docker.io/}"
-    else
-      image_path="$docker_image"
-    fi
-    if [[ "$image_path" != */* ]]; then
-      user_repo="library/$image_path"
-    else
-      user_repo="$image_path"
-    fi
-    tags_url="https://registry.hub.docker.com/v2/repositories/$user_repo/tags?page_size=100"
-    debug "Fetching tags from Docker Hub: $tags_url"
-    tags_json=$(curl -s "$tags_url" || echo "")
-    if [ -z "$tags_json" ]; then
-      warn "Failed to fetch tags from Docker Hub for $docker_image"
-      continue
-    fi
-    available_tags=$(echo "$tags_json" | jq -r '.results[].name' || echo "")
-
-  elif [[ "$docker_image" =~ ^lscr.io/ ]]; then
-    repo_path="${docker_image#lscr.io/}"
-    repo_path="${repo_path%":*"}"
-    tags_url="https://registry.hub.docker.com/v2/repositories/linuxserver/$repo_path/tags?page_size=100"
-    debug "Fetching tags from LinuxServer.io: $tags_url"
-    tags_json=$(curl -s "$tags_url" || echo "")
-    if [ -z "$tags_json" ]; then
-      warn "Failed to fetch tags from LinuxServer.io for $docker_image"
-      continue
-    fi
-    available_tags=$(echo "$tags_json" | jq -r '.results[].name' || echo "")
-
-  else
-    warn "Unsupported Docker registry for $docker_image. Skipping."
-    continue
+  # Read current version from updater.json or fallback to config.json version or 'latest'
+  current_version=""
+  if [ -f "$updater_file" ]; then
+    current_version=$(jq -r '.version // empty' "$updater_file")
   fi
-
-  # Normalize tags and exclude empty, latest, arch prefixes
-  filtered_tags=$(echo "$available_tags" | while read -r tag; do normalize_tag "$tag"; done | grep -v '^$' | sort -Vr)
-
-  if [ -z "$filtered_tags" ]; then
-    warn "No valid version tags found for $docker_image"
-    continue
+  if [ -z "$current_version" ] && [ -f "$config_file" ]; then
+    current_version=$(jq -r '.version // empty' "$config_file")
   fi
-
-  latest_version=$(echo "$filtered_tags" | head -n1)
-  debug "Latest available version: $latest_version"
-
-  update_needed=false
   if [ -z "$current_version" ]; then
-    update_needed=true
-  else
-    if version_lt "$current_version" "$latest_version"; then
-      update_needed=true
-    fi
+    current_version="latest"
   fi
 
-  if $update_needed; then
-    info "Add-on $addon update available: $current_version -> $latest_version"
-    if [ "$DRY_RUN" = false ]; then
-      # Update version in config.json
-      jq --arg ver "$latest_version" '.version=$ver' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+  debug_log "Current version: $current_version"
+  debug_log "Docker image: $docker_image"
 
-      # Update or create updater.json
-      echo "{\"version\":\"$latest_version\"}" > "$updater_file"
+  # Fetch tags for docker image
+  available_tags=$(fetch_tags "$docker_image")
 
-      # Update changelog
-      update_changelog "$addon_dir" "$latest_version"
+  if [ -z "$available_tags" ]; then
+    warn "Could not retrieve tags for $docker_image"
+    continue
+  fi
 
-      updates_summary+="\n✅ Updated $addon to version $latest_version"
-      updates_found=true
+  # Filter tags: remove 'latest' and others that don't look like semver (simple)
+  filtered_tags=$(echo "$available_tags" | grep -vE '^latest$' | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-z0-9]+)?$' || true)
+  if [ -z "$filtered_tags" ]; then
+    filtered_tags="$available_tags" # fallback to all if none filtered
+  fi
+
+  # Find latest tag by semantic version sort
+  latest_version=""
+  for tag in $filtered_tags; do
+    norm_tag=$(normalize_version "$tag")
+    if [ -z "$latest_version" ] || version_lt "$latest_version" "$norm_tag"; then
+      latest_version="$norm_tag"
+      latest_tag="$tag"
+    fi
+  done
+
+  if [ -z "$latest_version" ]; then
+    warn "Could not determine latest version tag for $docker_image"
+    continue
+  fi
+
+  # Compare current with latest
+  norm_current=$(normalize_version "$current_version")
+  debug_log "Latest available version: $latest_tag (normalized: $latest_version)"
+  debug_log "Normalized current version: $norm_current"
+
+  if version_lt "$norm_current" "$latest_version"; then
+    info "Add-on $addon_name update available: $current_version -> $latest_tag"
+
+    if [ "$dry_run" = "true" ]; then
+      info "Dry run enabled, skipping update for $addon_name"
     else
-      updates_summary+="\n📝 Dry run: update available for $addon from $current_version to $latest_version"
-      updates_found=true
+      # Update updater.json with new version and timestamp
+      now_ts=$(date +"%Y-%m-%d %H:%M:%S %Z")
+      jq --arg v "$latest_tag" --arg t "$now_ts" '.version = $v | .last_updated = $t' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+
+      # Also update config.json version if exists
+      if [ -f "$config_file" ]; then
+        jq --arg v "$latest_tag" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+      fi
+
+      info "Updated $addon_name to version $latest_tag"
+      updates_found=$((updates_found + 1))
+      updates_msg+="✅ $addon_name: $current_version -> $latest_tag\n"
     fi
   else
-    info "Add-on $addon is up to date ($current_version)"
-    updates_summary+="\nℹ️ $addon checked - no update needed"
+    info "Add-on $addon_name already up to date ($current_version)"
+    updates_msg+="✅ $addon_name: no update (current: $current_version)\n"
   fi
 done
 
-# Commit and push if changes
-if [ "$DRY_RUN" = false ] && [ "$updates_found" = true ]; then
-  if [ "$SKIP_PUSH" = false ]; then
-    git add .
-    if git commit -m "chore: update add-on versions"; then
-      git push
-    else
-      info "No changes to commit"
-    fi
-  else
-    info "Skipping git push due to skip_push=true"
-  fi
+# Push changes if updates found and not skipping push or dry run
+if [ "$updates_found" -gt 0 ] && [ "$skip_push" != "true" ] && [ "$dry_run" != "true" ]; then
+  cd "$REPO_DIR"
+  git add .
+  git commit -m "Update add-on versions: $updates_found updates" || info "No changes to commit"
+  git push || warn "Failed to push changes"
+else
+  debug_log "No updates to push or skipping push/dry run"
 fi
 
-# Send notification regardless of updates
-if [ "$NOTIFICATIONS_ENABLED" = true ]; then
-  notification_title="Add-on Update Summary"
-  notification_message="Add-on Update Summary\n$updates_summary\nLast run: $(date)"
-
-  if $updates_found && [ "$NOTIFY_ON_UPDATES" = true ]; then
-    send_notification "$notification_title" "$notification_message"
-  elif ! $updates_found && [ "$NOTIFY_ON_SUCCESS" = true ]; then
-    send_notification "$notification_title" "$notification_message"
-  fi
+# Send notification always with summary
+if [ "$notifications_enabled" = "true" ]; then
+  send_notification "Add-on Update Summary" "$updates_msg"
 fi
 
 success "Add-on update check complete."
-
-# Keep running for cron style timing (or replace with actual cron schedule)
-while true; do sleep 3600; done
