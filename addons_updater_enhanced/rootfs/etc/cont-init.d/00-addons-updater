@@ -1,87 +1,38 @@
 #!/usr/bin/with-contenv bash
-# ==============================================
-# Initialization script for Addons Updater Enhanced
-# Enhanced from alexbelgium's original version
-# ==============================================
 
-CONFIG_FILE="/data/options.json"
-LOG_FILE="/var/log/addons-updater.log"
+# Validate configuration
+CONFIG="/data/options.json"
+[[ ! -f "$CONFIG" ]] && { echo "ERROR: Missing config.json"; exit 1; }
 
-# Verify configuration exists
-[[ ! -f "$CONFIG_FILE" ]] && {
-  echo "ERROR: Missing configuration file at ${CONFIG_FILE}" >&2
-  exit 1
-}
-
-# Parse configuration with validation
-REPO_SOURCE=$(jq -r '.repo_source' "$CONFIG_FILE")
-ENABLE_GOTIFY=$(jq -r '.enable_gotify // false' "$CONFIG_FILE")
-REPO_PATH=$(jq -r '.repo_path' "$CONFIG_FILE")
-REPO_BRANCH=$(jq -r '.repo_branch' "$CONFIG_FILE")
-UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG_FILE")
-DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_FILE")
-LOG_LEVEL=$(jq -r '.log_level // "info"' "$CONFIG_FILE")
-VALIDATE_SSL=$(jq -r '.validate_ssl // true' "$CONFIG_FILE")
-TIMEOUT=$(jq -r '.timeout // 300' "$CONFIG_FILE")
+# Parse configuration
+export REPO_SOURCE=$(jq -r '.repo_source' "$CONFIG")
+export ENABLE_GOTIFY=$(jq -r '.enable_gotify' "$CONFIG")
+export GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG")
+export GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG")
+export GITEA_API_URL=$(jq -r '.gitea_api_url // empty' "$CONFIG")
+export GITEA_TOKEN=$(jq -r '.gitea_token // empty' "$CONFIG")
+export REPO_PATH=$(jq -r '.repo_path' "$CONFIG")
+export REPO_BRANCH=$(jq -r '.repo_branch' "$CONFIG")
+export UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG")
+export DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG")
+export LOG_LEVEL=$(jq -r '.log_level' "$CONFIG")
+export VALIDATE_SSL=$(jq -r '.validate_ssl // true' "$CONFIG")
 
 # Validate required parameters
-case "$REPO_SOURCE" in
-  github|gitea) ;;
-  *)
-    echo "ERROR: Invalid repo_source '${REPO_SOURCE}'. Must be 'github' or 'gitea'" >&2
-    exit 1
-    ;;
-esac
-
-# Validate Gitea configuration if needed
-if [[ "$REPO_SOURCE" == "gitea" ]]; then
-  GITEA_API_URL=$(jq -r '.gitea_api_url' "$CONFIG_FILE")
-  GITEA_TOKEN=$(jq -r '.gitea_token' "$CONFIG_FILE")
-  
-  [[ -z "$GITEA_API_URL" ]] && {
-    echo "ERROR: gitea_api_url required when repo_source=gitea" >&2
-    exit 1
-  }
-  
-  [[ -z "$GITEA_TOKEN" ]] && {
-    echo "ERROR: gitea_token required when repo_source=gitea" >&2
-    exit 1
-  }
-fi
-
-# Validate Gotify configuration if enabled
-if [[ "$ENABLE_GOTIFY" == "true" ]]; then
-  GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_FILE")
-  GOTIFY_TOKEN=$(jq -r '.gotify_token' "$CONFIG_FILE")
-  
-  [[ -z "$GOTIFY_URL" ]] && {
-    echo "ERROR: gotify_url required when enable_gotify=true" >&2
-    exit 1
-  }
-  
-  [[ -z "$GOTIFY_TOKEN" ]] && {
-    echo "ERROR: gotify_token required when enable_gotify=true" >&2
-    exit 1
-  }
-fi
-
-# Parse array parameters
-ADDON_PATHS=()
-while IFS= read -r path; do
-  ADDON_PATHS+=("$path")
-done < <(jq -r '.addon_paths[]' "$CONFIG_FILE")
-
-[[ ${#ADDON_PATHS[@]} -eq 0 ]] && {
-  echo "ERROR: No addon_paths specified" >&2
-  exit 1
+[[ ! "$REPO_SOURCE" =~ ^(github|gitea)$ ]] && {
+  echo "ERROR: Invalid repo_source"; exit 1;
 }
 
-# Export all variables
-export REPO_SOURCE ENABLE_GOTIFY REPO_PATH REPO_BRANCH UPDATE_MODE
-export DRY_RUN LOG_LEVEL VALIDATE_SSL TIMEOUT
-export GITEA_API_URL GITEA_TOKEN GOTIFY_URL GOTIFY_TOKEN
-export ADDON_PATHS
+[[ "$REPO_SOURCE" == "gitea" ]] && {
+  [[ -z "$GITEA_API_URL" ]] && { echo "ERROR: gitea_api_url required"; exit 1; }
+  [[ -z "$GITEA_TOKEN" ]] && { echo "ERROR: gitea_token required"; exit 1; }
+}
+
+[[ "$ENABLE_GOTIFY" == "true" ]] && {
+  [[ -z "$GOTIFY_URL" ]] && { echo "ERROR: gotify_url required"; exit 1; }
+  [[ -z "$GOTIFY_TOKEN" ]] && { echo "ERROR: gotify_token required"; exit 1; }
+}
 
 # Initialize log file
-touch "$LOG_FILE"
-chmod 644 "$LOG_FILE"
+touch /var/log/addons-updater.log
+chmod 644 /var/log/addons-updater.log
