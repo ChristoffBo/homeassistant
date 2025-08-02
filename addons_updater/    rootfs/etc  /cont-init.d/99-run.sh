@@ -1,163 +1,173 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# ======================
+# ========================================
 # CONFIGURATION
-# ======================
+# ========================================
 CONFIG_PATH="/data/options.json"
+ADDONS_PATH="/data/addons"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
+CHANGELOG_FILE="CHANGELOG.md"
 
-# ======================
-# COLOR DEFINITIONS
-# ======================
-COLOR_RESET="\033[0m"
-COLOR_GREEN="\033[0;32m"
-COLOR_RED="\033[0;31m"
-COLOR_YELLOW="\033[1;33m"
-COLOR_CYAN="\033[0;36m"
+# Load options from GUI
+repository=$(jq -r '.repository' "$CONFIG_PATH")
+gituser=$(jq -r '.gituser' "$CONFIG_PATH")
+gitmail=$(jq -r '.gitmail // "updater@local"' "$CONFIG_PATH")
+gitapi=$(jq -r '.gitapi' "$CONFIG_PATH")
+dry_run=$(jq -r '.dry_run // false' "$CONFIG_PATH")
+verbose=$(jq -r '.verbose // false' "$CONFIG_PATH")
 
-# ======================
-# LOAD CONFIG
-# ======================
-GH_REPO=$(jq -r '.repo' "$CONFIG_PATH")
-GH_USERNAME=$(jq -r '.username' "$CONFIG_PATH")
-GH_TOKEN=$(jq -r '.token' "$CONFIG_PATH")
-NOTIFY_ENABLED=$(jq -r '.notifications_enabled' "$CONFIG_PATH")
-NOTIFY_SERVICE=$(jq -r '.notification_service' "$CONFIG_PATH")
-NOTIFY_URL=$(jq -r '.notification_url' "$CONFIG_PATH")
-NOTIFY_TOKEN=$(jq -r '.notification_token' "$CONFIG_PATH")
+# Notifications
+notifications_enabled=$(jq -r '.notifications_enabled // true' "$CONFIG_PATH")
+notification_service="gotify"
+notification_url=$(jq -r '.notification_url // empty' "$CONFIG_PATH")
+notification_token=$(jq -r '.notification_token // empty' "$CONFIG_PATH")
+notify_on_updates=true
 
-# ======================
-# GOTIFY FUNCTION
-# ======================
-send_gotify() {
-    TITLE="$1"
-    MESSAGE="$2"
-    curl -s -X POST "$NOTIFY_URL/message" \
-        -F "token=$NOTIFY_TOKEN" \
-        -F "title=$TITLE" \
-        -F "message=$MESSAGE" \
-        -F "priority=5" > /dev/null
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Arrays to collect status
+UPDATED_ADDONS=()
+NOT_UPDATED_ADDONS=()
+
+# ========================================
+# FUNCTIONS
+# ========================================
+
+log() {
+    echo -e "$1" | tee -a "$LOG_FILE"
 }
 
-# ======================
-# LOG START
-# ======================
-echo -e "${COLOR_CYAN}Starting Home Assistant Add-on Updater...${COLOR_RESET}"
-START_TIME=$(date +%s)
+get_latest_tag() {
+    local image="$1"
+    local tags
+    tags=$(curl -s "https://registry.hub.docker.com/v2/repositories/${image}/tags?page_size=100" | jq -r '.results[].name' | grep -v latest)
+    echo "$tags" | sort -V | tail -1
+}
 
-# ======================
-# CLONE OR UPDATE REPO
-# ======================
-if [ ! -d "$REPO_DIR/.git" ]; then
-    echo -e "${COLOR_YELLOW}Cloning repository...${COLOR_RESET}"
-    git clone --depth 1 "https://$GH_USERNAME:$GH_TOKEN@${GH_REPO#https://}" "$REPO_DIR"
-else
-    echo -e "${COLOR_YELLOW}Pulling latest changes...${COLOR_RESET}"
-    cd "$REPO_DIR" && git pull
-fi
+compare_versions() {
+    [ "$1" != "$2" ]
+}
 
+send_notification() {
+    local title="$1"
+    local message="$2"
+    if [ "$notifications_enabled" = "true" ]; then
+        curl -s -X POST "${notification_url}/message" \
+            -F "token=${notification_token}" \
+            -F "title=${title}" \
+            -F "message=${message}" \
+            -F "priority=5" > /dev/null || true
+    fi
+}
+
+# ========================================
+# GIT SETUP
+# ========================================
+
+log "${CYAN}🔧 Initializing Git config...${NC}"
 cd "$REPO_DIR"
+git config --global user.email "$gitmail"
+git config --global user.name "$gituser"
 
-# ======================
-# INITIALIZE SUMMARY
-# ======================
-UPDATED_ADDONS=""
-UNCHANGED_ADDONS=""
+# Pull latest
+git pull --quiet || true
 
-# ======================
-# MAIN UPDATE LOOP
-# ======================
-for ADDON in */; do
-    ADDON="${ADDON%/}"
-    ADDON_DIR="$REPO_DIR/$ADDON"
+# ========================================
+# PROCESS EACH ADDON
+# ========================================
 
-    if [ ! -f "$ADDON_DIR/updater.json" ]; then
-        echo -e "${COLOR_RED}Skipping $ADDON – missing updater.json${COLOR_RESET}"
+log "${CYAN}🔍 Checking for updates in $REPO_DIR...${NC}"
+
+for addon_dir in "$REPO_DIR"/*/; do
+    [ -d "$addon_dir" ] || continue
+
+    ADDON_NAME=$(basename "$addon_dir")
+    CONFIG_JSON="${addon_dir}config.json"
+    BUILD_JSON="${addon_dir}build.json"
+
+    # Get image
+    if [ -f "$CONFIG_JSON" ]; then
+        image=$(jq -r '.image // empty' "$CONFIG_JSON")
+    elif [ -f "$BUILD_JSON" ]; then
+        image=$(jq -r '.build.image // empty' "$BUILD_JSON")
+    else
         continue
     fi
 
-    IMAGE=$(jq -r '.image' "$ADDON_DIR/updater.json")
-    LASTVERSION=$(jq -r '.last_version' "$ADDON_DIR/updater.json")
-    SLUG=$(jq -r '.slug' "$ADDON_DIR/config.json")
+    [ -z "$image" ] && continue
 
-    if [[ "$IMAGE" == *"docker.io"* || "$IMAGE" == *"ghcr.io"* || "$IMAGE" == *"lscr.io"* ]]; then
-        IMAGE_NO_REG="${IMAGE#*/}"
-    else
-        IMAGE_NO_REG="$IMAGE"
-    fi
+    # Clean architecture prefix from image
+    cleaned_image="${image/\{arch\}/amd64}"
+    cleaned_image="${cleaned_image/#ghcr.io\//}"
+    cleaned_image="${cleaned_image/#docker.io\//}"
 
-    # ======================
-    # GET LATEST VERSION
-    # ======================
-    echo -e "${COLOR_CYAN}Checking $SLUG ($IMAGE)...${COLOR_RESET}"
+    # Get current version
+    current_version=$(jq -r '.version' "$CONFIG_JSON")
 
-    if [[ "$IMAGE" == *"ghcr.io"* ]]; then
-        TAGS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://ghcr.io/v2/${IMAGE_NO_REG}/tags/list" | jq -r '.tags[]')
-    else
-        TAGS=$(curl -s "https://registry.hub.docker.com/v2/repositories/${IMAGE_NO_REG}/tags?page_size=100" | jq -r '.results[].name')
-    fi
+    # Get latest tag from registry
+    latest_version=$(get_latest_tag "$cleaned_image")
 
-    # Filter versions (exclude latest, architecture tags)
-    LATEST_TAG=$(echo "$TAGS" | grep -E '^[v]?[0-9]+(\.[0-9]+)*([-._]?[a-zA-Z0-9]*)?$' | grep -v 'latest' | sort -V | tail -1)
-
-    if [ -z "$LATEST_TAG" ]; then
-        echo -e "${COLOR_RED}No valid version tags found for $SLUG${COLOR_RESET}"
+    if [ -z "$latest_version" ]; then
+        log "${YELLOW}⚠️  Could not fetch tags for $cleaned_image${NC}"
+        NOT_UPDATED_ADDONS+=("$ADDON_NAME")
         continue
     fi
 
-    if [ "$LASTVERSION" != "$LATEST_TAG" ]; then
-        echo -e "${COLOR_GREEN}Update found: $LASTVERSION → $LATEST_TAG${COLOR_RESET}"
+    if compare_versions "$current_version" "$latest_version"; then
+        log "${GREEN}✅ $ADDON_NAME needs update: $current_version → $latest_version${NC}"
+        UPDATED_ADDONS+=("$ADDON_NAME: $current_version → $latest_version")
 
-        # Replace in all files
-        for FILE in "updater.json" "config.json" "build.json"; do
-            FILE_PATH="$ADDON_DIR/$FILE"
-            if [ -f "$FILE_PATH" ]; then
-                sed -i "s/$LASTVERSION/$LATEST_TAG/g" "$FILE_PATH"
-            fi
-        done
-
-        # Git commit
-        cd "$REPO_DIR"
-        git add "$ADDON_DIR"
-        git commit -m "$SLUG updated: $LASTVERSION → $LATEST_TAG" > /dev/null || true
-
-        UPDATED_ADDONS+="$SLUG: $LASTVERSION → $LATEST_TAG\n"
+        if [ "$dry_run" != "true" ]; then
+            jq --arg v "$latest_version" '.version = $v' "$CONFIG_JSON" > "${CONFIG_JSON}.tmp" && mv "${CONFIG_JSON}.tmp" "$CONFIG_JSON"
+            echo "- $latest_version: Updated to match upstream tag" >> "${addon_dir}${CHANGELOG_FILE}"
+            git add "$CONFIG_JSON" "${addon_dir}${CHANGELOG_FILE}" || true
+        fi
     else
-        echo -e "${COLOR_YELLOW}No update for $SLUG ($LASTVERSION)${COLOR_RESET}"
-        UNCHANGED_ADDONS+="$SLUG (current: $LASTVERSION)\n"
+        log "${CYAN}⏩ $ADDON_NAME is already up to date ($current_version)${NC}"
+        NOT_UPDATED_ADDONS+=("$ADDON_NAME")
     fi
 done
 
-# ======================
-# GIT PUSH
-# ======================
-if [ -n "$(git status --porcelain)" ]; then
-    git push
+# ========================================
+# COMMIT & PUSH
+# ========================================
+
+if [ "$dry_run" != "true" ] && [ "${#UPDATED_ADDONS[@]}" -gt 0 ]; then
+    COMMIT_MSG="🔄 Updated: ${UPDATED_ADDONS[*]}"
+    git commit -am "$COMMIT_MSG" || true
+    git push || true
+    log "${GREEN}🚀 Changes pushed to GitHub.${NC}"
 fi
 
-# ======================
-# SEND NOTIFICATION
-# ======================
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
-SUMMARY_MSG="Home Assistant Add-on Update Summary\n\n"
+# ========================================
+# NOTIFY
+# ========================================
 
-if [ -n "$UPDATED_ADDONS" ]; then
-    SUMMARY_MSG+="✅ Updated Add-ons:\n$UPDATED_ADDONS\n"
-else
-    SUMMARY_MSG+="✅ No updates were necessary.\n"
+summary_title="Add-on Update Report"
+summary_msg=""
+
+if [ "${#UPDATED_ADDONS[@]}" -gt 0 ]; then
+    summary_msg+="✅ *Updated:*\n"
+    for item in "${UPDATED_ADDONS[@]}"; do
+        summary_msg+="• $item\n"
+    done
 fi
 
-if [ -n "$UNCHANGED_ADDONS" ]; then
-    SUMMARY_MSG+="📦 Unchanged Add-ons:\n$UNCHANGED_ADDONS\n"
+if [ "${#NOT_UPDATED_ADDONS[@]}" -gt 0 ]; then
+    summary_msg+="\n⏹️ *Not Updated:*\n"
+    for item in "${NOT_UPDATED_ADDONS[@]}"; do
+        summary_msg+="• $item\n"
+    done
 fi
 
-SUMMARY_MSG+="⏱️ Duration: ${DURATION}s"
+send_notification "$summary_title" "$summary_msg"
 
-if [ "$NOTIFY_ENABLED" = "true" ] && [ "$NOTIFY_SERVICE" = "gotify" ]; then
-    send_gotify "Add-on Updater Finished" "$SUMMARY_MSG"
-fi
-
-echo -e "${COLOR_CYAN}Update completed in $DURATION seconds.${COLOR_RESET}"
+log "${CYAN}🛑 Script completed. Exiting.${NC}"
+exit 0
