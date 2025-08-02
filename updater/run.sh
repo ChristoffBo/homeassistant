@@ -117,22 +117,39 @@ get_latest_tag() {
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
-    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token' 2>/dev/null) || return
+    local token
+    token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull") || return
+    if ! echo "$token" | jq -e .token >/dev/null 2>&1; then
+      [[ "$DEBUG" == "true" ]] && echo "Invalid token JSON: $token" >> "$LOG_FILE"
+      return
+    fi
+    token=$(echo "$token" | jq -r '.token')
     local response=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list") || return
-    echo "$response" | jq empty 2>/dev/null || { [[ "$DEBUG" == "true" ]] && echo "$response" >> "$LOG_FILE"; return; }
+    if ! echo "$response" | jq -e .tags >/dev/null 2>&1; then
+      [[ "$DEBUG" == "true" ]] && echo "Invalid GHCR tag JSON: $response" >> "$LOG_FILE"
+      return
+    fi
     tags=$(echo "$response" | jq -r '.tags[]?')
+
   elif [[ "$image_name" =~ ^(linuxserver|lscr.io)/ ]]; then
     local name="${image_name##*/}"
     local response=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags") || return
-    echo "$response" | jq empty 2>/dev/null || { [[ "$DEBUG" == "true" ]] && echo "$response" >> "$LOG_FILE"; return; }
+    if ! echo "$response" | jq -e .tags >/dev/null 2>&1; then
+      [[ "$DEBUG" == "true" ]] && echo "Invalid LinuxServer JSON: $response" >> "$LOG_FILE"
+      return
+    fi
     tags=$(echo "$response" | jq -r '.tags[].name')
+
   else
     local ns_repo="${image_name/library\//}"
     local page=1
     while :; do
       local result=$(curl -sf "https://hub.docker.com/v2/repositories/${ns_repo}/tags?page=$page&page_size=100") || break
-      echo "$result" | jq empty 2>/dev/null || { [[ "$DEBUG" == "true" ]] && echo "$result" >> "$LOG_FILE"; break; }
-      local page_tags=$(echo "$result" | jq -r '.results[].name' 2>/dev/null)
+      if ! echo "$result" | jq -e .results >/dev/null 2>&1; then
+        [[ "$DEBUG" == "true" ]] && echo "Invalid Docker Hub JSON: $result" >> "$LOG_FILE"
+        break
+      fi
+      local page_tags=$(echo "$result" | jq -r '.results[].name')
       [[ -z "$page_tags" ]] && break
       tags+=$'\n'"$page_tags"
       [[ "$(echo "$result" | jq -r '.next')" == "null" ]] && break
@@ -140,7 +157,7 @@ get_latest_tag() {
     done
   fi
 
-  [[ "$DEBUG" == "true" ]] && echo "$tags" >> "$LOG_FILE"
+  [[ "$DEBUG" == "true" ]] && echo -e "Raw tags for $image_name:\n$tags" >> "$LOG_FILE"
 
   local semver_tags
   semver_tags=$(echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta')
@@ -151,5 +168,120 @@ get_latest_tag() {
   fi
 }
 
-# (no changes below here)
-# The rest of the script remains the same...
+update_addon() {
+  local addon_path="$1"
+  local name=$(basename "$addon_path")
+  [[ "$name" == "updater" ]] && return
+
+  log "$COLOR_DARK_BLUE" "🔍 Checking $name"
+  local config="$addon_path/config.json"
+  local build="$addon_path/build.json"
+  local image version latest
+
+  image=$(jq -r '.image // empty' "$config" 2>/dev/null)
+  version=$(safe_jq '.version' "$config")
+
+  if [[ -z "$image" && -f "$build" ]]; then
+    image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build" 2>/dev/null)
+    version=$(safe_jq '.version' "$build")
+  fi
+
+  [[ -z "$image" ]] && {
+    log "$COLOR_YELLOW" "⚠️ No image defined for $name"
+    UNCHANGED_ADDONS["$name"]="No image"
+    return
+  }
+
+  latest=$(get_latest_tag "$image")
+  [[ -z "$latest" ]] && {
+    log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
+    UNCHANGED_ADDONS["$name"]="No valid tag"
+    return
+  }
+
+  if [[ "$version" != "$latest" ]]; then
+    log "$COLOR_GREEN" "⬆️ $name updated from $version to $latest"
+    UPDATED_ADDONS["$name"]="$version → $latest"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "$COLOR_PURPLE" "💡 Dry run active: skipping update of $name"
+      return
+    fi
+
+    jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
+    [[ -f "$build" && $(jq -e '.version' "$build" 2>/dev/null) ]] && \
+      jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp" && mv "$build.tmp" "$build"
+
+    local changelog="$addon_path/CHANGELOG.md"
+    touch "$changelog"
+    local link="https://hub.docker.com/r/${image%%:*}/tags"
+    [[ "$image" =~ ^ghcr.io/ ]] && link="https://github.com/${image#ghcr.io/}/pkgs/container/${image##*/}/tags"
+
+    printf "## %s\n- Updated from %s to %s\n- Docker: [%s](%s)\n\n" "$latest" "$version" "$latest" "$image" "$link" | cat - "$changelog" > "$changelog.tmp"
+    mv "$changelog.tmp" "$changelog"
+  else
+    log "$COLOR_CYAN" "✅ $name is up to date"
+    UNCHANGED_ADDONS["$name"]="Up to date ($version)"
+  fi
+}
+
+commit_and_push() {
+  cd "$REPO_DIR"
+  git config user.email "updater@local"
+  git config user.name "Add-on Updater"
+
+  if [[ -n "$(git status --porcelain)" ]]; then
+    git add . && git commit -m "🔄 Updated add-on versions" || return
+    [[ "$SKIP_PUSH" == "true" ]] && return
+    git push "$GIT_AUTH_REPO" main || log "$COLOR_RED" "❌ Git push failed"
+  else
+    log "$COLOR_CYAN" "ℹ️ No changes to commit"
+  fi
+}
+
+main() {
+  echo "" > "$LOG_FILE"
+  read_config
+  log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
+
+  [[ -d "$REPO_DIR" ]] && rm -rf "$REPO_DIR"
+
+  git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
+    log "$COLOR_RED" "❌ Git clone failed"
+    notify "Updater Error" "Git clone failed" 5
+    exit 1
+  }
+
+  for path in "$REPO_DIR"/*; do
+    [[ -d "$path" ]] && update_addon "$path"
+  done
+
+  commit_and_push
+
+  local summary="📦 Home Assistant Add-on Update Summary\n"
+  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')\n\n"
+  summary+="🧩 Add-on Results:\n"
+
+  for path in "$REPO_DIR"/*; do
+    [[ ! -d "$path" ]] && continue
+    local name=$(basename "$path")
+    local status
+
+    if [[ -n "${UPDATED_ADDONS[$name]}" ]]; then
+      status="🔄 ${UPDATED_ADDONS[$name]}"
+    elif [[ -n "${UNCHANGED_ADDONS[$name]}" ]]; then
+      status="⚠️ ${UNCHANGED_ADDONS[$name]}"
+    else
+      status="❓ Unknown"
+    fi
+
+    summary+="• $name: $status\n"
+  done
+
+  [[ "$DRY_RUN" == "true" ]] && summary+="\n🔁 DRY RUN MODE ENABLED"
+
+  notify "Add-on Updater" "$summary" 3
+  log "$COLOR_BLUE" "ℹ️ Update process complete."
+}
+
+main
