@@ -93,6 +93,16 @@ else
   echo -e "${GREEN}✓ Repository cloned${NC}"
 fi
 
+# ================== ADDONS DIRECTORY DETECTION ==================
+# Check if addons are in a subdirectory named 'homeassistant'
+if [ -d "$REPO_DIR/homeassistant" ]; then
+  ADDONS_DIR="$REPO_DIR/homeassistant"
+  echo -e "${BLUE}[Structure]${NC} Using addons in ${CYAN}homeassistant/${NC} subdirectory"
+else
+  ADDONS_DIR="$REPO_DIR"
+  echo -e "${BLUE}[Structure]${NC} Using addons in repository root"
+fi
+
 # Function to get Docker image version
 get_docker_version() {
   local image=$1
@@ -116,7 +126,6 @@ get_docker_version() {
 
 # Main processing function
 process_addons() {
-  ADDONS_DIR="$REPO_DIR"
   echo -e "${CYAN}"
   echo "===== CHECKING ADDONS ====="
   echo -e "${NC}"
