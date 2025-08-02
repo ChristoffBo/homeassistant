@@ -145,7 +145,13 @@ get_latest_tag() {
 
   [[ "$DEBUG" == "true" ]] && echo "$tags" | tee -a "$LOG_FILE"
 
-  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1 | tee "$cache_file"
+  local semver_tags
+  semver_tags=$(echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta')
+  if [[ -n "$semver_tags" ]]; then
+    echo "$semver_tags" | sort -Vr | head -n1 | tee "$cache_file"
+  else
+    echo "$tags" | grep -E '^[0-9]{4}([.-])[0-9]{2}\1[0-9]{2}$' | sort -Vr | head -n1 | tee "$cache_file"
+  fi
 }
 
 update_addon() {
@@ -238,17 +244,25 @@ main() {
 
   commit_and_push
 
-  local summary="Add-on Update Summary\n\n"
+  local summary="📦 *Home Assistant Add-on Update Summary*\n"
+  summary+="$(date '+🕒 %Y-%m-%d %H:%M:%S %Z')\n\n"
+
   [[ ${#UPDATED_ADDONS[@]} -gt 0 ]] && {
-    summary+="✅ ${#UPDATED_ADDONS[@]} updated:\n"
-    for k in "${!UPDATED_ADDONS[@]}"; do summary+="- $k: ${UPDATED_ADDONS[$k]}\n"; done
+    summary+="✅ ${#UPDATED_ADDONS[@]} updated add-on(s):\n"
+    for k in "${!UPDATED_ADDONS[@]}"; do
+      summary+="• ${k}: ${UPDATED_ADDONS[$k]}\n"
+    done
     summary+="\n"
   }
+
   [[ ${#UNCHANGED_ADDONS[@]} -gt 0 ]] && {
-    summary+="ℹ️ ${#UNCHANGED_ADDONS[@]} unchanged:\n"
-    for k in "${!UNCHANGED_ADDONS[@]}"; do summary+="- $k: ${UNCHANGED_ADDONS[$k]}\n"; done
+    summary+="ℹ️ ${#UNCHANGED_ADDONS[@]} unchanged add-on(s):\n"
+    for k in "${!UNCHANGED_ADDONS[@]}"; do
+      summary+="• ${k}: ${UNCHANGED_ADDONS[$k]}\n"
+    done
   }
-  [[ "$DRY_RUN" == "true" ]] && summary+="\n🔁 DRY RUN MODE ENABLED"
+
+  [[ "$DRY_RUN" == "true" ]] && summary+="\n🔁 *DRY RUN MODE ENABLED*"
 
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
