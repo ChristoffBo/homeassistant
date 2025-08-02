@@ -24,7 +24,7 @@ sed -i "s/level=info/level=$LOG_LEVEL/g" /root/.logging
 # Configure Git
 git config --global user.name "$GIT_USER"
 git config --global user.email "$GIT_EMAIL"
-git config --global pull.rebase false  # Avoid rebase issues
+git config --global pull.rebase false
 
 # Determine repository URL
 REPO_URL="https://github.com/$REPO_PATH.git"
@@ -46,7 +46,7 @@ fi
 process_addons() {
   ADDONS_DIR="$REPO_DIR/addons"
   if [ ! -d "$ADDONS_DIR" ]; then
-    echo "ERROR: Addons directory not found: $ADDONS_DIR"
+    echo "ERROR: Addons directory not found: $ADDONS_DIR" >&2
     return
   fi
 
@@ -65,7 +65,7 @@ process_addons() {
     # Get current version
     config_file="$addon/config.json"
     if [ ! -f "$config_file" ]; then
-      echo "WARNING: Missing config.json for $addon_name"
+      echo "WARNING: Missing config.json for $addon_name" >&2
       PROCESSED="$PROCESSED\n$addon_name|missing_config|||"
       continue
     fi
@@ -73,7 +73,7 @@ process_addons() {
     current_version=$(jq -r '.version' "$config_file")
     image_name=$(jq -r '.image' "$config_file" | awk -F'/' '{print $NF}')
     if [ -z "$image_name" ]; then
-      echo "WARNING: Missing image name for $addon_name"
+      echo "WARNING: Missing image name for $addon_name" >&2
       PROCESSED="$PROCESSED\n$addon_name|missing_image|||"
       continue
     fi
@@ -109,7 +109,7 @@ process_addons() {
                     sort -V | tail -n1)
 
     if [ -z "$latest_version" ]; then
-      echo "WARNING: No valid version found for $image_name"
+      echo "WARNING: No valid version found for $image_name" >&2
       PROCESSED="$PROCESSED\n$addon_name|no_registry_version|$current_version||"
       continue
     fi
@@ -148,7 +148,7 @@ process_addons() {
     fi
 
     if [ "$updated_files" -eq 0 ]; then
-      echo "ERROR: Failed to update files for $addon_name"
+      echo "ERROR: Failed to update files for $addon_name" >&2
       PROCESSED="$PROCESSED\n$addon_name|update_failed|$current_version|$latest_version|"
       continue
     fi
@@ -268,4 +268,4 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY
 fi
 
 echo "Addon update process completed successfully"
-exit 0  # Explicitly exit the script
+exit 0
