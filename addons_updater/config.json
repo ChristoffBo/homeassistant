@@ -1,16 +1,23 @@
 {
   "name": "Addons Updater Enhanced",
-  "version": "3.0.1",
+  "version": "10.1.1",
   "slug": "addons_updater_enhanced",
   "description": "Automatically update addons with notifications support",
   "url": "https://github.com/ChristoffBo/homeassistant/tree/main/addons_updater",
-  "arch": ["aarch64", "amd64", "armv7"],
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7"
+  ],
   "startup": "application",
   "boot": "manual",
   "init": false,
   "hassio_api": true,
   "hassio_role": "manager",
-  "map": ["config:rw", "backup:rw"],
+  "map": [
+    "config:rw",
+    "backup:rw"
+  ],
   "options": {
     "gituser": "Your Name",
     "gitmail": "your@email.com",
