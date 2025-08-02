@@ -1,32 +1,35 @@
 {
   "name": "Addons Updater Enhanced",
-  "version": "2.3.0",
+  "version": "3.0.0",
   "slug": "addons_updater_enhanced",
-  "description": "Enhanced version with GitHub/Gitea choice and optional Gotify",
+  "description": "GitHub/Gitea updater with optional Gotify",
   "url": "https://github.com/your-repo/addons_updater_enhanced",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
-  "startup": "once",
+  "startup": "application",
   "boot": "manual",
   "hassio_api": true,
   "hassio_role": "manager",
   "map": ["config:rw", "backup:rw"],
   "options": {
     "repo_source": "github",
-    "enable_notifications": false,
+    "enable_gotify": false,
     "gotify_url": null,
     "gotify_token": null,
     "gitea_api_url": null,
     "gitea_token": null,
     "repo_path": "/config/addons",
     "repo_branch": "main",
-    "addon_paths": ["addons", "community-addons"],
+    "addon_paths": ["addons", "community"],
     "update_mode": "commit",
-    "timeout": 300,
-    "log_level": "info"
+    "timeout": 300
   },
   "schema": {
-    "repo_source": "list(github|gitea)",
-    "enable_notifications": "bool?",
+    "repo_source": {
+      "type": "list",
+      "options": ["github", "gitea"],
+      "required": true
+    },
+    "enable_gotify": "bool",
     "gotify_url": "str?",
     "gotify_token": "str?",
     "gitea_api_url": "str?",
@@ -34,8 +37,10 @@
     "repo_path": "str",
     "repo_branch": "str",
     "addon_paths": ["str"],
-    "update_mode": "list(commit|push)",
-    "timeout": "int?",
-    "log_level": "list(info|debug|warning|error)?"
+    "update_mode": {
+      "type": "list",
+      "options": ["commit", "push"]
+    },
+    "timeout": "int?"
   }
 }
