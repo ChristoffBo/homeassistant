@@ -3,5 +3,6 @@
     "armhf": "lscr.io/linuxserver/heimdall:latest",
     "aarch64": "lscr.io/linuxserver/heimdall:latest",
     "amd64": "lscr.io/linuxserver/heimdall:latest"
-  }
+  },
+  "version": "[2025-08-02 19:42:26 SAST] \u001b[0;33m⚠️ Invalid JSON from LinuxServer for heimdall\u001b[0m"
 }
