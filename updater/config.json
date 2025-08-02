@@ -1,20 +1,16 @@
 {
-  "name": "Add-on Updater",
+  "name": "Home Assistant Add-on Updater",
   "version": "1.0.0",
   "slug": "updater",
-  "description": "Checks and updates your custom Home Assistant add-ons once, then stops. Supports version comparison, changelogs, GitHub syncing, and Gotify notifications.",
+  "description": "Automatically checks and updates Home Assistant add-ons based on Docker image versions.",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "arch": ["amd64", "armv7", "aarch64"],
-  "startup": "once",
-  "boot": "manual",
-  "init": false,
-  "hassio_api": true,
-  "host_network": true,
-  "privileged": [],
+  "startup": "application",
+  "boot": "auto",
   "options": {
     "repository": "https://github.com/ChristoffBo/homeassistant",
     "gituser": "ChristoffBo",
-    "gittoken": "",
+    "gittoken": "ghp_your_actual_token_here",
     "timezone": "Africa/Johannesburg",
     "dry_run": false,
     "skip_push": false,
@@ -40,11 +36,14 @@
     "enable_notifications": "bool",
     "notification_service": "str",
     "notification_url": "str",
-    "notification_token": "str",
-    "notification_to": "str",
+    "notification_token": "str?",
+    "notification_to": "str?",
     "notify_on_success": "bool",
     "notify_on_error": "bool",
     "notify_on_updates": "bool",
     "cron": "str"
-  }
+  },
+  "image": "ghcr.io/your/image:tag",
+  "panel_icon": "mdi:update",
+  "init": false
 }
