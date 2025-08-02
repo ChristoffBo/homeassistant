@@ -238,4 +238,4 @@ main() {
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
 
-main1
+main
