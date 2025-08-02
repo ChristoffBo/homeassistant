@@ -1,3 +1,7 @@
+## v3.2.5 (2025-08-02 17:32:23)
+- Update from 1.0 to v3.2.5
+- Docker Image: [zoraxydocker/zoraxy:latest](https://hub.docker.com/r/zoraxydocker/zoraxy)
+
 
 ##  (02-08-2025)
 - Update to latest version from null
