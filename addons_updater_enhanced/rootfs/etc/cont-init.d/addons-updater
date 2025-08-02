@@ -1,0 +1,73 @@
+#!/usr/bin/with-contenv bash
+
+# Validate configuration exists
+CONFIG="/data/options.json"
+[[ ! -f "$CONFIG" ]] && {
+    echo "ERROR: Missing configuration file at ${CONFIG}" >&2
+    exit 1
+}
+
+# Parse configuration
+export REPO_SOURCE=$(jq -r '.repo_source' "$CONFIG")
+export ENABLE_GOTIFY=$(jq -r '.enable_gotify' "$CONFIG")
+export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG")
+export GOTIFY_TOKEN=$(jq -r '.gotify_token' "$CONFIG")
+export GITEA_API_URL=$(jq -r '.gitea_api_url' "$CONFIG")
+export GITEA_TOKEN=$(jq -r '.gitea_token' "$CONFIG")
+export REPO_PATH=$(jq -r '.repo_path' "$CONFIG")
+export REPO_BRANCH=$(jq -r '.repo_branch' "$CONFIG")
+export UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG")
+export DRY_RUN=$(jq -r '.dry_run' "$CONFIG")
+export LOG_LEVEL=$(jq -r '.log_level' "$CONFIG")
+export VALIDATE_SSL=$(jq -r '.validate_ssl' "$CONFIG")
+export TIMEOUT=$(jq -r '.timeout' "$CONFIG")
+
+# Validate required parameters
+case "$REPO_SOURCE" in
+    github|gitea) ;;
+    *)
+        echo "ERROR: Invalid repo_source '${REPO_SOURCE}'. Must be 'github' or 'gitea'" >&2
+        exit 1
+        ;;
+esac
+
+# Validate Gitea configuration if needed
+if [[ "$REPO_SOURCE" == "gitea" ]]; then
+    [[ -z "$GITEA_API_URL" ]] && {
+        echo "ERROR: gitea_api_url required when repo_source=gitea" >&2
+        exit 1
+    }
+    
+    [[ -z "$GITEA_TOKEN" ]] && {
+        echo "ERROR: gitea_token required when repo_source=gitea" >&2
+        exit 1
+    }
+fi
+
+# Validate Gotify configuration if enabled
+if [[ "$ENABLE_GOTIFY" == "true" ]]; then
+    [[ -z "$GOTIFY_URL" ]] && {
+        echo "ERROR: gotify_url required when enable_gotify=true" >&2
+        exit 1
+    }
+    
+    [[ -z "$GOTIFY_TOKEN" ]] && {
+        echo "ERROR: gotify_token required when enable_gotify=true" >&2
+        exit 1
+    }
+fi
+
+# Parse array parameters
+ADDON_PATHS=()
+while IFS= read -r path; do
+    ADDON_PATHS+=("$path")
+done < <(jq -r '.addon_paths[]' "$CONFIG")
+
+[[ ${#ADDON_PATHS[@]} -eq 0 ]] && {
+    echo "ERROR: No addon_paths specified" >&2
+    exit 1
+}
+
+# Initialize log file
+touch /var/log/addons-updater.log
+chmod 644 /var/log/addons-updater.log
