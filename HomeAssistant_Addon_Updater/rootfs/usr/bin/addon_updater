@@ -1,0 +1,98 @@
+#!/usr/bin/env bash  
+# Enhanced with Gitea & Gotify support  
+
+# Load configuration  
+CONFIG_PATH=/data/options.json  
+source /usr/bin/run.sh  
+
+# Initialize variables  
+UPDATED_ADDONS=()  
+FAILED_ADDONS=()  
+
+# Gitea API function  
+update_gitea() {  
+    local repo_owner=$1  
+    local repo_name=$2  
+    local addon_path=$3  
+    local addon_name=$(basename $addon_path)  
+    local temp_repo_path="/tmp/${repo_name}_${RANDOM}"  
+
+    # Extract domain from API URL  
+    local gitea_domain=$(echo "$GITEA_API_URL" | awk -F/ '{print $3}')  
+    local api_url="$GITEA_API_URL/repos/$repo_owner/$repo_name/commits?path=$addon_path&limit=1"  
+    [ "$log_level" != "debug" ] || echo "Gitea API: $api_url"  
+
+    # Get latest commit  
+    local latest_commit=$(curl -s -H "Authorization: token $GITEA_TOKEN" -H "Accept: application/json" "$api_url" | jq -r '.[0].sha')  
+    [ "$log_level" != "debug" ] || echo "Latest commit: $latest_commit"  
+
+    # Clone repo  
+    local repo_url="https://$repo_owner:$GITEA_TOKEN@$gitea_domain/$repo_owner/$repo_name.git"  
+    git clone --branch "$repo_branch" --depth 1 --quiet "$repo_url" "$temp_repo_path"  
+
+    # Compare and update  
+    if [ -d "$repo_path/$addon_path" ]; then  
+        local current_commit=$(git -C "$repo_path/$addon_path" rev-parse HEAD)  
+        if [ "$current_commit" != "$latest_commit" ]; then  
+            echo "Updating $addon_name..."  
+            rsync -a "$temp_repo_path/$addon_path/" "$repo_path/$addon_path/"  
+            UPDATED_ADDONS+=("$addon_name (Gitea)")  
+        else  
+            echo "$addon_name is up-to-date"  
+        fi  
+    else  
+        echo "Addon $addon_name not found!"  
+        FAILED_ADDONS+=("$addon_name (Missing)")  
+    fi  
+
+    rm -rf "$temp_repo_path"  
+}  
+
+# Gotify notification function  
+send_gotify() {  
+    local title=$1  
+    local message=$2  
+    if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ] && [ "$enable_notifications" = "true" ]; then  
+        curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \  
+            -F "title=$title" \  
+            -F "message=$message" \  
+            -F "priority=5" \  
+            --insecure > /dev/null  
+        echo "Sent Gotify notification"  
+    fi  
+}  
+
+# Main update loop  
+for addon_path in "${addon_paths[@]}"; do  
+    case $repo_source in  
+        gitea)  
+            update_gitea "$repo_owner" "$repo_name" "$addon_path"  
+            ;;  
+        # ... (original github/gitlab functions here) ...  
+    esac  
+done  
+
+# Send summary notification  
+if [ "$enable_notifications" = "true" ]; then  
+    local message="Update Summary:\n"  
+    message+="✅ Updated: ${#UPDATED_ADDONS[@]} addons\n"  
+    message+="❌ Failed: ${#FAILED_ADDONS[@]} addons\n\n"  
+    
+    if [ ${#UPDATED_ADDONS[@]} -gt 0 ]; then  
+        message+="Updated Addons:\n"  
+        for addon in "${UPDATED_ADDONS[@]}"; do  
+            message+="- $addon\n"  
+        done  
+    fi  
+
+    if [ ${#FAILED_ADDONS[@]} -gt 0 ]; then  
+        message+="\nFailed Addons:\n"  
+        for addon in "${FAILED_ADDONS[@]}"; do  
+            message+="- $addon\n"  
+        done  
+    fi  
+
+    send_gotify "Addon Update Report" "$message"  
+fi  
+
+echo "Update process completed"  
