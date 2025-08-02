@@ -1,21 +1,8 @@
 #!/bin/bash
-# ==============================================
-# Enhanced version of alexbelgium's original script
-# Major changes:
-# 1. Added GitHub/Gitea source selection
-# 2. Optional Gotify notifications
-# 3. Improved error handling
-# ==============================================
-
 set -eo pipefail
 
-# Configuration
-CONFIG_FILE="/data/options.json"
-LOG_FILE="/var/log/addons-updater.log"
-LOCK_FILE="/tmp/addons-updater.lock"
-CURL_TIMEOUT=30
-
-# Load environment
+# Load configuration
+CONFIG="/data/options.json"
 source /etc/cont-init.d/00-addons-updater
 
 # Initialize logging
@@ -25,162 +12,90 @@ log() {
   local message="$*"
   local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
   
-  # Log to file and stdout
-  echo "[${timestamp}] [${level^^}] ${message}" | tee -a "$LOG_FILE"
+  echo "[${timestamp}] [${level^^}] ${message}" | tee -a "/var/log/addons-updater.log"
   
-  # Send Gotify notification for important events
+  # Send Gotify notification if enabled
   if [[ "$ENABLE_GOTIFY" == "true" && "$level" =~ ^(error|warning|info)$ ]]; then
-    local priority
-    case "$level" in
-      error) priority=8 ;;
-      warning) priority=5 ;;
-      *) priority=3 ;;
-    esac
-    
-    curl -s -m "$CURL_TIMEOUT" -X POST \
+    curl -sSf -m 30 -X POST \
       -H "Content-Type: application/json" \
-      -d "{\"title\":\"Addon Updater ${level^^}\", \"message\":\"${message}\", \"priority\":$priority}" \
-      "${GOTIFY_URL}/message?token=${GOTIFY_TOKEN}" || \
-      echo "[${timestamp}] [ERROR] Failed to send Gotify notification" >> "$LOG_FILE"
-  fi
-}
-
-# Lock management
-acquire_lock() {
-  exec 200>"$LOCK_FILE"
-  flock -n 200 || {
-    local pid=$(cat "$LOCK_FILE")
-    log error "Another instance is running (PID: $pid)"
-    exit 1
-  }
-  echo $$ > "$LOCK_FILE"
-}
-
-release_lock() {
-  flock -u 200
-  rm -f "$LOCK_FILE"
-}
-
-# Version comparison
-version_gt() {
-  test "$(printf '%s\n' "$@" | sort -V | head -n 1)" != "$1"
-}
-
-# Fetch latest version
-get_latest_version() {
-  local repo=$1
-  local version
-  
-  if [[ "$REPO_SOURCE" == "gitea" ]]; then
-    local curl_cmd=("curl" "-s" "-m" "$CURL_TIMEOUT" "-H" "Authorization: token ${GITEA_TOKEN}")
-    [[ "$VALIDATE_SSL" == "false" ]] && curl_cmd+=("-k")
-    version=$("${curl_cmd[@]}" "${GITEA_API_URL}/repos/${repo}/releases/latest" | jq -r '.tag_name')
-  else
-    local curl_cmd=("curl" "-s" "-m" "$CURL_TIMEOUT")
-    [[ "$VALIDATE_SSL" == "false" ]] && curl_cmd+=("-k")
-    version=$("${curl_cmd[@]}" "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name')
-  fi
-  
-  echo "$version" | sed 's/^v//'
-}
-
-# Process single addon
-process_addon() {
-  local addon_dir=$1
-  local addon_name=$(basename "$addon_dir")
-  local config_file="${addon_dir}/config.json"
-  local version_file="${addon_dir}/VERSION"
-  
-  # Validate config
-  [[ ! -f "$config_file" ]] && {
-    log warning "Skipping ${addon_name}: Missing config.json"
-    return 1
-  }
-  
-  local current_version=$(jq -r '.version' "$config_file")
-  local upstream_repo=$(jq -r '.upstream_repo' "$config_file")
-  
-  [[ -z "$upstream_repo" ]] && {
-    log warning "Skipping ${addon_name}: No upstream_repo defined"
-    return 1
-  }
-  
-  # Get latest version
-  local latest_version
-  if ! latest_version=$(get_latest_version "$upstream_repo"); then
-    log error "Failed to fetch version for ${upstream_repo}"
-    return 1
-  fi
-  
-  [[ -z "$latest_version" ]] && {
-    log warning "Empty version received for ${upstream_repo}"
-    return 1
-  }
-  
-  # Version comparison
-  if version_gt "$latest_version" "$current_version"; then
-    log info "Updating ${addon_name} from ${current_version} to ${latest_version}"
-    
-    if [[ "$DRY_RUN" != "true" ]]; then
-      # Update config.json
-      jq --arg ver "$latest_version" '.version = $ver' "$config_file" > "${config_file}.tmp"
-      mv "${config_file}.tmp" "$config_file"
-      
-      # Update VERSION file if exists
-      [[ -f "$version_file" ]] && echo "$latest_version" > "$version_file"
-      
-      # Stage changes
-      git add "$config_file" "$version_file" 2>/dev/null
-    fi
-  else
-    log debug "${addon_name} is up-to-date (${current_version})"
+      -d "{\"title\":\"Addon Updater ${level^^}\", \"message\":\"${message}\", \"priority\":5}" \
+      "${GOTIFY_URL}/message?token=${GOTIFY_TOKEN}" >/dev/null || true
   fi
 }
 
 # Main execution
-acquire_lock
-trap 'release_lock; exit' EXIT INT TERM
-
 log info "Starting addon updates (Source: ${REPO_SOURCE})"
 
-# Verify repo directory
 cd "$REPO_PATH" || {
-  log error "Cannot access repo path: ${REPO_PATH}"
+  log error "Failed to access repo path: ${REPO_PATH}"
   exit 1
 }
 
-# Update local repo
+# Git operations
 git fetch origin "$REPO_BRANCH" || {
   log error "Git fetch failed"
   exit 1
 }
 
-# Process all addon paths
+# Process addons
 for path in "${ADDON_PATHS[@]}"; do
   full_path="${REPO_PATH}/${path}"
-  
   [[ ! -d "$full_path" ]] && {
     log warning "Addon path not found: ${full_path}"
     continue
   }
-  
+
   for addon_dir in "$full_path"/*; do
     [[ -d "$addon_dir" ]] || continue
-    process_addon "$addon_dir" || continue
+    
+    addon_name=$(basename "$addon_dir")
+    config_file="${addon_dir}/config.json"
+    
+    [[ ! -f "$config_file" ]] && {
+      log warning "Skipping ${addon_name}: Missing config.json"
+      continue
+    }
+    
+    upstream_repo=$(jq -r '.upstream_repo' "$config_file")
+    [[ -z "$upstream_repo" ]] && {
+      log warning "Skipping ${addon_name}: No upstream_repo"
+      continue
+    }
+    
+    # Get latest version
+    if [[ "$REPO_SOURCE" == "gitea" ]]; then
+      latest_version=$(curl -sSf -m 30 -H "Authorization: token ${GITEA_TOKEN}" \
+        "${GITEA_API_URL}/repos/${upstream_repo}/releases/latest" | \
+        jq -r '.tag_name')
+    else
+      latest_version=$(curl -sSf -m 30 \
+        "https://api.github.com/repos/${upstream_repo}/releases/latest" | \
+        jq -r '.tag_name')
+    fi
+    
+    [[ -z "$latest_version" ]] && {
+      log warning "Failed to get version for ${upstream_repo}"
+      continue
+    }
+    
+    current_version=$(jq -r '.version' "$config_file")
+    if [[ "$current_version" != "$latest_version" ]]; then
+      log info "Updating ${addon_name} from ${current_version} to ${latest_version}"
+      
+      if [[ "$DRY_RUN" != "true" ]]; then
+        jq --arg ver "$latest_version" '.version = $ver' "$config_file" > "${config_file}.tmp"
+        mv "${config_file}.tmp" "$config_file"
+        git add "$config_file"
+      fi
+    fi
   done
 done
 
-# Commit changes if needed
+# Commit changes
 if [[ "$DRY_RUN" != "true" && -n "$(git status --porcelain)" ]]; then
   git commit -m "Auto-update addons $(date '+%Y-%m-%d %H:%M:%S')"
-  
-  if [[ "$UPDATE_MODE" == "push" ]]; then
-    git push origin "$REPO_BRANCH" || {
-      log error "Failed to push changes to remote"
-      exit 1
-    }
-  fi
+  [[ "$UPDATE_MODE" == "push" ]] && git push origin "$REPO_BRANCH"
 fi
 
-log info "Update process completed successfully"
+log info "Update process completed"
 exit 0
