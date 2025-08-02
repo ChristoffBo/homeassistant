@@ -19,7 +19,14 @@
   "options": {
     "gitapi": "gitapi",
     "gituser": "gituser",
-    "repository": "alexbelgium/hassio-addons"
+    "repository": "alexbelgium/hassio-addons",
+    "dry_run": false,
+    "verbose": false,
+
+    "notifications_enabled": true,
+    "notification_service": "gotify",
+    "notification_url": "http://your.gotify.server:port",
+    "notification_token": "YOUR_GOTIFY_APP_TOKEN"
   },
   "schema": {
     "dry_run": "bool?",
@@ -27,7 +34,12 @@
     "gitmail": "str?",
     "gituser": "str",
     "repository": "str",
-    "verbose": "bool?"
+    "verbose": "bool?",
+
+    "notifications_enabled": "bool?",
+    "notification_service": "str?",
+    "notification_url": "str?",
+    "notification_token": "str?"
   },
   "slug": "updater",
   "udev": true,
