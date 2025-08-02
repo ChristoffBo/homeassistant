@@ -5,6 +5,6 @@
   "source": "github",
   "upstream_repo": "go-gitea/gitea",
   "upstream_version": "1.24.3",
-  "version": "tags",
+  "version": "1.24.3",
   "last_updated": "2025-08-02 14:39:28 SAST"
 }
