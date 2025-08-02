@@ -24,6 +24,7 @@ sed -i "s/level=info/level=$LOG_LEVEL/g" /root/.logging
 # Configure Git
 git config --global user.name "$GIT_USER"
 git config --global user.email "$GIT_EMAIL"
+git config --global pull.rebase false  # Avoid rebase issues
 
 # Determine repository URL
 REPO_URL="https://github.com/$REPO_PATH.git"
@@ -82,19 +83,22 @@ process_addons() {
     # Check registries for latest version
     latest_version=""
     # Docker Hub
-    dockerhub_version=$(curl -s "https://registry.hub.docker.com/v2/repositories/$image_name/tags?page_size=100" | 
+    echo "Checking Docker Hub..."
+    dockerhub_version=$(curl --max-time 30 -s "https://registry.hub.docker.com/v2/repositories/$image_name/tags?page_size=100" | 
                         jq -r '.results[].name' | 
                         grep -E '^[v]?[0-9]+\.[0-9]+\.[0-9]+$' | 
                         sort -V | tail -n1)
     
     # GHCR
-    ghcr_version=$(curl -s "https://ghcr.io/v2/$image_name/tags/list" | 
+    echo "Checking GHCR..."
+    ghcr_version=$(curl --max-time 30 -s "https://ghcr.io/v2/$image_name/tags/list" | 
                   jq -r '.tags[]' | 
                   grep -E '^[v]?[0-9]+\.[0-9]+\.[0-9]+$' | 
                   sort -V | tail -n1)
     
     # Linuxserver.io
-    lsi_version=$(curl -s "https://registry.hub.docker.com/v2/repositories/linuxserver/$image_name/tags?page_size=100" | 
+    echo "Checking LinuxServer.io..."
+    lsi_version=$(curl --max-time 30 -s "https://registry.hub.docker.com/v2/repositories/linuxserver/$image_name/tags?page_size=100" | 
                  jq -r '.results[].name' | 
                  grep -E '^[v]?[0-9]+\.[0-9]+\.[0-9]+$' | 
                  sort -V | tail -n1)
@@ -123,18 +127,24 @@ process_addons() {
     updated_files=0
     
     # Update config.json
-    jq --arg version "$latest_version" '.version = $version' "$config_file" > tmp.json && mv tmp.json "$config_file" && updated_files=$((updated_files+1))
+    if jq --arg version "$latest_version" '.version = $version' "$config_file" > tmp.json && mv tmp.json "$config_file"; then
+      updated_files=$((updated_files+1))
+    fi
     
     # Update build.json if exists
     build_file="$addon/build.json"
     if [ -f "$build_file" ]; then
-      jq --arg version "$latest_version" '.version = $version' "$build_file" > tmp.json && mv tmp.json "$build_file" && updated_files=$((updated_files+1))
+      if jq --arg version "$latest_version" '.version = $version' "$build_file" > tmp.json && mv tmp.json "$build_file"; then
+        updated_files=$((updated_files+1))
+      fi
     fi
     
     # Update update.json if exists
     update_file="$addon/update.json"
     if [ -f "$update_file" ]; then
-      jq --arg version "$latest_version" '.version = $version' "$update_file" > tmp.json && mv tmp.json "$update_file" && updated_files=$((updated_files+1))
+      if jq --arg version "$latest_version" '.version = $version' "$update_file" > tmp.json && mv tmp.json "$update_file"; then
+        updated_files=$((updated_files+1))
+      fi
     fi
 
     if [ "$updated_files" -eq 0 ]; then
@@ -257,4 +267,5 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY
     }"
 fi
 
-echo "Addon update process completed"
+echo "Addon update process completed successfully"
+exit 0  # Explicitly exit the script
