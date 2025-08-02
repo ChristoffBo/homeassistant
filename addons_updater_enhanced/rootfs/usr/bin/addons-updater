@@ -1,0 +1,101 @@
+#!/bin/bash
+set -eo pipefail
+
+# Load configuration
+CONFIG="/data/options.json"
+source /etc/cont-init.d/00-addons-updater
+
+# Initialize logging
+log() {
+  local level=$1
+  shift
+  local message="$*"
+  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  
+  echo "[${timestamp}] [${level^^}] ${message}" | tee -a "/var/log/addons-updater.log"
+  
+  # Send Gotify notification if enabled
+  if [[ "$ENABLE_GOTIFY" == "true" && "$level" =~ ^(error|warning|info)$ ]]; then
+    curl -sSf -m 30 -X POST \
+      -H "Content-Type: application/json" \
+      -d "{\"title\":\"Addon Updater ${level^^}\", \"message\":\"${message}\", \"priority\":5}" \
+      "${GOTIFY_URL}/message?token=${GOTIFY_TOKEN}" >/dev/null || true
+  fi
+}
+
+# Main execution
+log info "Starting addon updates (Source: ${REPO_SOURCE})"
+
+cd "$REPO_PATH" || {
+  log error "Failed to access repo path: ${REPO_PATH}"
+  exit 1
+}
+
+# Git operations
+git fetch origin "$REPO_BRANCH" || {
+  log error "Git fetch failed"
+  exit 1
+}
+
+# Process addons
+for path in "${ADDON_PATHS[@]}"; do
+  full_path="${REPO_PATH}/${path}"
+  [[ ! -d "$full_path" ]] && {
+    log warning "Addon path not found: ${full_path}"
+    continue
+  }
+
+  for addon_dir in "$full_path"/*; do
+    [[ -d "$addon_dir" ]] || continue
+    
+    addon_name=$(basename "$addon_dir")
+    config_file="${addon_dir}/config.json"
+    
+    [[ ! -f "$config_file" ]] && {
+      log warning "Skipping ${addon_name}: Missing config.json"
+      continue
+    }
+    
+    upstream_repo=$(jq -r '.upstream_repo' "$config_file")
+    [[ -z "$upstream_repo" ]] && {
+      log warning "Skipping ${addon_name}: No upstream_repo"
+      continue
+    }
+    
+    # Get latest version
+    if [[ "$REPO_SOURCE" == "gitea" ]]; then
+      latest_version=$(curl -sSf -m 30 -H "Authorization: token ${GITEA_TOKEN}" \
+        "${GITEA_API_URL}/repos/${upstream_repo}/releases/latest" | \
+        jq -r '.tag_name')
+    else
+      latest_version=$(curl -sSf -m 30 \
+        "https://api.github.com/repos/${upstream_repo}/releases/latest" | \
+        jq -r '.tag_name')
+    fi
+    
+    [[ -z "$latest_version" ]] && {
+      log warning "Failed to get version for ${upstream_repo}"
+      continue
+    }
+    
+    current_version=$(jq -r '.version' "$config_file")
+    if [[ "$current_version" != "$latest_version" ]]; then
+      log info "Updating ${addon_name} from ${current_version} to ${latest_version}"
+      
+      if [[ "$DRY_RUN" != "true" ]]; then
+        jq --arg ver "$latest_version" '.version = $ver' "$config_file" > "${config_file}.tmp"
+        mv "${config_file}.tmp" "$config_file"
+        git add "$config_file"
+      fi
+    fi
+  done
+done
+
+# Commit changes
+if [[ "$DRY_RUN" != "true" && -n "$(git status --porcelain)" ]]; then
+  git commit -m "Auto-update addons $(date '+%Y-%m-%d %H:%M:%S')"
+  [[ "$UPDATE_MODE" == "push" ]] && git push origin "$REPO_BRANCH"
+fi
+
+log info "Update process completed"
+exit 0
