@@ -57,19 +57,9 @@ fi
 # ===== FUNCTIONS =====
 get_latest_tag() {
   local image=$1
-  local registry="docker"
-  case "$image" in
-    lscr.io/*) registry="linuxserver";;
-  esac
 
-  if [ "$registry" = "linuxserver" ]; then
-    local repo_name=${image#lscr.io/}
-    # Fetch tags from LinuxServer repo
-    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/linuxserver/${repo_name}/tags?page_size=100" | jq -r '.results[].name') || return 1
-  else
-    # Fetch tags from Docker Hub repo
-    tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" | jq -r '.results[].name') || return 1
-  fi
+  # Fetch tags from Docker Hub repo
+  tags=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" | jq -r '.results[].name') || return 1
 
   # Filter out unwanted tags and sort descending semantic versions
   echo "$tags" | grep -Ev 'latest|rc|dev|test' | sort -Vr | head -n 1
