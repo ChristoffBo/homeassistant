@@ -9,200 +9,194 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+# Log function with dry-run awareness
 LOG() {
-    level="$1"
-    msg="$2"
-    now=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+    level=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+    shift
+    message="$*"
 
-    # Different color for dry run logs
     if [ "$DRY_RUN" = "true" ]; then
-        # Dry run uses MAGENTA for info, YELLOW for warnings, RED for errors
         case "$level" in
-            INFO) color="$MAGENTA" ;;
-            WARN) color="$YELLOW" ;;
-            ERROR) color="$RED" ;;
-            *) color="$NC" ;;
+            INFO) printf "%b[DRY RUN INFO]%b %s\n" "$MAGENTA" "$NC" "$message" ;;
+            WARN) printf "%b[DRY RUN WARN]%b %s\n" "$MAGENTA" "$NC" "$message" ;;
+            ERROR) printf "%b[DRY RUN ERROR]%b %s\n" "$MAGENTA" "$NC" "$message" ;;
+            *) printf "%b[DRY RUN]%b %s\n" "$MAGENTA" "$NC" "$message" ;;
         esac
-        prefix="[DRY RUN]"
     else
-        # Live run uses CYAN for info, YELLOW for warnings, RED for errors
         case "$level" in
-            INFO) color="$CYAN" ;;
-            WARN) color="$YELLOW" ;;
-            ERROR) color="$RED" ;;
-            *) color="$NC" ;;
+            INFO) printf "%b[INFO]%b %s\n" "$GREEN" "$NC" "$message" ;;
+            WARN) printf "%b[WARN]%b %s\n" "$YELLOW" "$NC" "$message" ;;
+            ERROR) printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$message" ;;
+            *) printf "%b[INFO]%b %s\n" "$CYAN" "$NC" "$message" ;;
         esac
-        prefix=""
-    fi
-
-    printf "%b[%s] %s%s: %s%b\n" "$color" "$now" "$prefix" "$level" "$msg" "$NC"
-}
-
-# Load config
-CONFIG_FILE="/data/options.json"
-
-GITHUB_USERNAME=$(jq -r '.gituser // empty' "$CONFIG_FILE")
-GITHUB_EMAIL=$(jq -r '.gitmail // empty' "$CONFIG_FILE")
-GITHUB_TOKEN=$(jq -r '.gitapi // empty' "$CONFIG_FILE")
-GITHUB_REPO=$(jq -r '.repository // empty' "$CONFIG_FILE")
-
-VERBOSE=$(jq -r '.verbose // false' "$CONFIG_FILE")
-DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_FILE")
-ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications // false' "$CONFIG_FILE")
-
-GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_FILE")
-GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG_FILE")
-
-if [ -z "$GITHUB_REPO" ]; then
-    LOG ERROR "GitHub repository not configured in options.json"
-    exit 1
-fi
-
-[ "$VERBOSE" = "true" ] && LOG INFO "Config loaded: repo=$GITHUB_REPO, dry_run=$DRY_RUN, notifications=$ENABLE_NOTIFICATIONS"
-
-REPO_DIR="/data/repo"
-
-git_clone_or_pull() {
-    if [ ! -d "$REPO_DIR/.git" ]; then
-        LOG INFO "Cloning repo $GITHUB_REPO (shallow)..."
-        if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-            git clone --depth 1 "https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git" "$REPO_DIR"
-        else
-            git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$REPO_DIR"
-        fi
-        LOG INFO "Repository cloned."
-    else
-        LOG INFO "Updating repo $GITHUB_REPO..."
-        cd "$REPO_DIR"
-        git fetch --depth 1 origin
-        git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
-        cd -
-        LOG INFO "Repository updated."
     fi
 }
 
-# Normalize Docker tag by stripping arch prefixes (amd64-, armhf-, etc)
-normalize_tag() {
-    echo "$1" | sed -E 's/^(amd64|armhf|armv7|aarch64|arm64|x86_64|ppc64le|s390x)-//'
-}
+# Load config from secure source or environment variables here:
+GITUSER="your-git-username"
+GITMAIL="your-email@example.com"
+GITAPI="your-github-token"  # Use GitHub token securely (e.g., secrets, env vars)
+REPOSITORY="yourusername/yourrepo"
+VERBOSE=true
+DRY_RUN=true
+NOTIFICATIONS_ENABLED=true
 
-# Compare semantic versions: return 0 if v1 < v2, else 1
-ver_lt() {
-    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" != "$2" ]
-}
-
-# Dummy fetch_latest_tag function: Replace with real Docker Hub / GHCR / LinuxServer API calls
-fetch_latest_tag() {
-    image="$1"
-    registry="$2"
-    # Placeholder - always return 1.0.0 for demonstration
-    echo "1.0.0"
-}
-
-send_gotify() {
-    title="$1"
-    message="$2"
-    if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-        curl -s -X POST "$GOTIFY_URL/message" \
-             -H "X-Gotify-Key: $GOTIFY_TOKEN" \
-             -d "title=$title" \
-             -d "message=$message" \
-             -d "priority=5"
-        LOG INFO "Gotify notification sent: $title"
-    else
-        LOG WARN "Gotify URL or token missing; cannot send notification."
-    fi
-}
-
-update_addon() {
-    addon_path="$1"
-    addon_name=$(basename "$addon_path")
-
-    current_version=$(jq -r '.version // empty' "$addon_path/config.json")
-    image=$(jq -r '.image // empty' "$addon_path/config.json")
-
-    if [ -z "$image" ]; then
-        LOG WARN "Addon $addon_name missing image field, skipping."
-        return
-    fi
-
-    # Determine registry type
-    if echo "$image" | grep -q "^ghcr.io/"; then
-        registry="ghcr"
-        image_name=$(echo "$image" | sed 's/^ghcr.io\///')
-    elif echo "$image" | grep -q "^linuxserver/"; then
-        registry="linuxserver"
-        image_name="$image"
-    else
-        registry="dockerhub"
-        image_name="$image"
-    fi
-
-    latest_version=$(fetch_latest_tag "$image_name" "$registry")
-
-    if [ "$latest_version" = "latest" ] || [ -z "$latest_version" ]; then
-        LOG WARN "Addon $addon_name: Could not fetch latest version, skipping."
-        return
-    fi
-
-    norm_current=$(normalize_tag "$current_version")
-    norm_latest=$(normalize_tag "$latest_version")
-
-    if ver_lt "$norm_current" "$norm_latest"; then
-        LOG INFO "Addon $addon_name: Update available $current_version -> $latest_version"
-        if [ "$DRY_RUN" = "true" ]; then
-            LOG INFO "Dry run: Simulated update for $addon_name - would update version to $latest_version"
-            # Simulate changelog append
-            LOG INFO "Dry run: Would append to CHANGELOG.md with update info"
-            return
-        fi
-
-        # Perform real update
-        jq ".version = \"$latest_version\"" "$addon_path/config.json" > "$addon_path/config.json.tmp" && mv "$addon_path/config.json.tmp" "$addon_path/config.json"
-
-        changelog="$addon_path/CHANGELOG.md"
-        date_now=$(date -u +"%Y-%m-%d")
-        echo "## [$latest_version] - $date_now" >> "$changelog"
-        echo "- Updated from $current_version to $latest_version" >> "$changelog"
-
-        # Commit changes
-        cd "$REPO_DIR"
-        git add "$addon_name/config.json" "$addon_name/CHANGELOG.md"
-        git commit -m "Update $addon_name to version $latest_version" || true
-        cd -
-
-        # Send notifications if enabled
-        if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then
-            send_gotify "Addon Update" "$addon_name updated to $latest_version"
-        fi
-
-    else
-        LOG INFO "Addon $addon_name: Already at latest version ($current_version)"
-    fi
-}
-
-# Main execution
+# Export GitHub token for git usage
+export GITHUB_API_TOKEN="$GITAPI"
 
 LOG INFO "===== ADDON UPDATER STARTED ====="
-if [ "$DRY_RUN" = "true" ]; then
-    LOG INFO "Running in DRY RUN mode. No changes will be made."
-else
-    LOG INFO "Running in LIVE mode. Updates will be applied."
-fi
+LOG INFO "Dry run mode: $DRY_RUN"
+LOG INFO "Repository: $REPOSITORY"
 
-git_clone_or_pull
+# Prepare repo directory
+REPO_DIR="/data/$(basename "$REPOSITORY")"
 
 if [ ! -d "$REPO_DIR" ]; then
-    LOG ERROR "Repository directory missing after clone/pull."
-    exit 1
+    LOG INFO "Cloning repository $REPOSITORY (shallow)..."
+    git clone --depth=1 "https://github.com/$REPOSITORY.git" "$REPO_DIR" || {
+        LOG ERROR "Failed to clone repository"
+        exit 1
+    }
+else
+    LOG INFO "Repository exists, pulling latest changes..."
+    cd "$REPO_DIR" || exit 1
+    git pull --rebase origin main || {
+        LOG WARN "Git pull failed, attempting hard reset..."
+        git reset --hard origin/main || {
+            LOG ERROR "Reset failed. Removing repo and recloning..."
+            cd /data || exit 1
+            rm -rf "$REPO_DIR"
+            git clone --depth=1 "https://github.com/$REPOSITORY.git" "$REPO_DIR" || {
+                LOG ERROR "Failed to clone repository"
+                exit 1
+            }
+        }
+    }
 fi
 
-for addon_dir in "$REPO_DIR"/*; do
-    if [ -d "$addon_dir" ] && [ -f "$addon_dir/config.json" ]; then
-        update_addon "$addon_dir"
+cd "$REPO_DIR" || exit 1
+
+# Iterate over addon directories (folders with updater.json)
+for addon_dir in */ ; do
+    addon=${addon_dir%/}
+
+    if [ ! -f "$addon_dir/updater.json" ]; then
+        LOG WARN "Addon $addon missing updater.json, skipping."
+        continue
+    fi
+
+    UPSTREAM=$(jq -r '.upstream_repo // empty' "$addon_dir/updater.json")
+    BETA=$(jq -r '.github_beta // false' "$addon_dir/updater.json")
+    FULLTAG=$(jq -r '.github_fulltag // false' "$addon_dir/updater.json")
+    HAVINGASSET=$(jq -r '.github_havingasset // false' "$addon_dir/updater.json")
+    SOURCE=$(jq -r '.source // empty' "$addon_dir/updater.json")
+    FILTER_TEXT=$(jq -r '.github_tagfilter // empty' "$addon_dir/updater.json")
+    EXCLUDE_TEXT=$(jq -r '.github_exclude // ""' "$addon_dir/updater.json")
+    PAUSED=$(jq -r '.paused // false' "$addon_dir/updater.json")
+    CURRENT=$(jq -r '.upstream_version // empty' "$addon_dir/updater.json")
+    LISTSIZE=$(jq -r '.dockerhub_list_size // 100' "$addon_dir/updater.json")
+    BYDATE=$(jq -r '.dockerhub_by_date // false' "$addon_dir/updater.json")
+
+    if [ "$PAUSED" = "true" ]; then
+        LOG INFO "$addon updates are paused, skipping."
+        continue
+    fi
+
+    if [ -z "$UPSTREAM" ] || [ -z "$SOURCE" ]; then
+        LOG WARN "$addon missing upstream_repo or source in updater.json, skipping."
+        continue
+    fi
+
+    LOG INFO "Checking updates for addon $addon (current version: $CURRENT)..."
+
+    LASTVERSION=""
+
+    if [ "$SOURCE" = "dockerhub" ]; then
+        REPO_NAME=$(echo "$UPSTREAM" | cut -d '/' -f1)
+        IMAGE_NAME=$(echo "$UPSTREAM" | cut -d '/' -f2)
+
+        FILTER_PARAM=""
+        if [ -n "$FILTER_TEXT" ] && [ "$FILTER_TEXT" != "null" ]; then
+            FILTER_PARAM="&name=$FILTER_TEXT"
+        fi
+
+        EXCLUDE_PATTERN="zzzzzzzzzzzzzzzzzz"
+        if [ -n "$EXCLUDE_TEXT" ] && [ "$EXCLUDE_TEXT" != "null" ]; then
+            EXCLUDE_PATTERN="$EXCLUDE_TEXT"
+        fi
+
+        LASTVERSION=$(curl -s "https://hub.docker.com/v2/repositories/$REPO_NAME/$IMAGE_NAME/tags?page_size=$LISTSIZE$FILTER_PARAM" | \
+            jq -r '.results[].name' | \
+            grep -v -E "latest|dev|nightly|beta|$EXCLUDE_PATTERN" | \
+            sort -V | tail -n1)
+
+        if [ "$BETA" = "true" ]; then
+            LASTVERSION=$(curl -s "https://hub.docker.com/v2/repositories/$REPO_NAME/$IMAGE_NAME/tags?page_size=$LISTSIZE$FILTER_PARAM" | \
+                jq -r '.results[].name' | \
+                grep -E "dev" | \
+                grep -v "$EXCLUDE_PATTERN" | \
+                sort -V | tail -n1)
+        fi
+
+        if [ "$BYDATE" = "true" ]; then
+            LASTVERSION=$(curl -s "https://hub.docker.com/v2/repositories/$REPO_NAME/$IMAGE_NAME/tags?page_size=$LISTSIZE&ordering=last_updated$FILTER_PARAM" | \
+                jq -r '.results[].name' | \
+                grep -v -E "latest|dev|nightly|beta|$EXCLUDE_PATTERN" | \
+                sort -V | tail -n1)
+        fi
+
+    else
+        ARGUMENTS="--at $SOURCE"
+        [ "$FULLTAG" = "true" ] && ARGUMENTS="$ARGUMENTS --format tag"
+        [ "$HAVINGASSET" = "true" ] && ARGUMENTS="$ARGUMENTS --having-asset"
+        [ -n "$FILTER_TEXT" ] && [ "$FILTER_TEXT" != "null" ] && ARGUMENTS="$ARGUMENTS --only $FILTER_TEXT"
+        [ -n "$EXCLUDE_TEXT" ] && [ "$EXCLUDE_TEXT" != "null" ] && ARGUMENTS="$ARGUMENTS --exclude $EXCLUDE_TEXT"
+        [ "$BETA" = "true" ] && ARGUMENTS="$ARGUMENTS --pre"
+
+        LASTVERSION=$(lastversion "$UPSTREAM" $ARGUMENTS || true)
+    fi
+
+    CLEAN_LAST=$(echo "$LASTVERSION" | tr -d '"')
+    CLEAN_CURR=$(echo "$CURRENT" | tr -d '"')
+
+    if [ "$CLEAN_LAST" != "" ] && [ "$CLEAN_LAST" != "$CLEAN_CURR" ]; then
+        LOG INFO "Addon $addon: update available from $CURRENT to $LASTVERSION"
+
+        if [ "$DRY_RUN" = "true" ]; then
+            LOG INFO "[DRY RUN] Would update $addon from $CURRENT to $LASTVERSION"
+        else
+            for file in config.json build.json updater.json; do
+                if [ -f "$addon_dir/$file" ]; then
+                    sed -i "s/$CURRENT/$LASTVERSION/g" "$addon_dir/$file"
+                fi
+            done
+
+            if [ -f "$addon_dir/config.json" ]; then
+                jq --arg ver "$CLEAN_LAST" '.version = $ver' "$addon_dir/config.json" > "$addon_dir/config.tmp.json" && mv "$addon_dir/config.tmp.json" "$addon_dir/config.json"
+            fi
+
+            DATE=$(date '+%Y-%m-%d')
+            jq --arg ver "$CLEAN_LAST" --arg date "$DATE" \
+                '.upstream_version = $ver | .last_update = $date' \
+                "$addon_dir/updater.json" > "$addon_dir/updater.tmp.json" && mv "$addon_dir/updater.tmp.json" "$addon_dir/updater.json"
+
+            CHANGELOG="$addon_dir/CHANGELOG.md"
+            [ ! -f "$CHANGELOG" ] && touch "$CHANGELOG"
+            printf "## %s (%s)\n- Update to version %s from %s\n\n" "$CLEAN_LAST" "$DATE" "$CLEAN_LAST" "$UPSTREAM" | cat - "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+
+            cd "$REPO_DIR" || exit 1
+            git add "$addon_dir"
+            git commit -m "Updater bot: $addon updated to $CLEAN_LAST"
+            if [ "$DRY_RUN" = "true" ]; then
+                LOG INFO "[DRY RUN] Would push changes to remote repository."
+            else
+                git push origin main
+                LOG INFO "Changes pushed to remote repository."
+            fi
+        fi
+    else
+        LOG INFO "Addon $addon is up to date ($CURRENT)."
     fi
 done
 
 LOG INFO "===== ADDON UPDATER FINISHED ====="
-
-exit 0
