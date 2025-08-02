@@ -66,11 +66,11 @@ fi
 
 # Main processing function
 process_addons() {
-  ADDONS_DIR="$REPO_DIR/addons"
+  ADDONS_DIR="$REPO_DIR"
   if [ ! -d "$ADDONS_DIR" ]; then
-    echo "ERROR: Addons directory not found: $ADDONS_DIR" >&2
+    echo "ERROR: Repository directory not found: $ADDONS_DIR" >&2
     echo "Directory contents:" >&2
-    ls -la "$REPO_DIR" >&2
+    ls -la "$(dirname "$ADDONS_DIR")" >&2
     # Return safe default values
     printf "PROCESSED=\nUPDATED=\nUPDATED_COUNT=0\nCHECKED_COUNT=0"
     return 1
@@ -82,9 +82,22 @@ process_addons() {
   PROCESSED=""
   UPDATED=""
 
+  # List of directories to skip
+  SKIP_DIRS=".git addons_updater"
+
   for addon in "$ADDONS_DIR"/*; do
     [ -d "$addon" ] || continue
+    
     addon_name=$(basename "$addon")
+    
+    # Skip excluded directories
+    case " $SKIP_DIRS " in
+      *" $addon_name "*)
+        echo "Skipping directory: $addon_name"
+        continue
+        ;;
+    esac
+
     CHECKED_COUNT=$((CHECKED_COUNT + 1))
     echo "Processing $addon_name..."
     
