@@ -1,7 +1,7 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install core dependencies
+# Install dependencies
 RUN apk add --no-cache \
     bash \
     curl \
@@ -9,7 +9,7 @@ RUN apk add --no-cache \
     jq \
     tzdata
 
-# Create directory structure
+# Create directories
 RUN mkdir -p \
     /etc/cont-init.d \
     /etc/services.d/addons-updater \
@@ -18,6 +18,11 @@ RUN mkdir -p \
 
 # Copy root filesystem
 COPY rootfs /
+
+# Verify files exist before chmod
+RUN [ -f /usr/bin/addons-updater ] && \
+    [ -f /etc/cont-init.d/addons-updater ] && \
+    [ -f /etc/services.d/addons-updater/run ]
 
 # Set permissions
 RUN chmod a+x \
