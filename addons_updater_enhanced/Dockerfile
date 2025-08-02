@@ -1,19 +1,13 @@
-# ==============================================
-# Enhanced version of alexbelgium's addon-updater
-# Now with GitHub/Gitea choice + Gotify support
-# ==============================================
-
 ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 FROM ${BUILD_FROM}
 
-# Set core dependencies with explicit versions
-RUN apk add --no-cache --update \
+# Install core dependencies with version pinning
+RUN apk add --no-cache \
     bash=5.2.21-r0 \
     curl=8.4.0-r0 \
     git=2.40.1-r0 \
     jq=1.7.1-r0 \
-    tzdata=2023c-r1 \
-    && rm -rf /var/cache/apk/*
+    tzdata=2023c-r1
 
 # Create directory structure
 RUN mkdir -p \
@@ -22,19 +16,20 @@ RUN mkdir -p \
     /usr/bin \
     /var/log
 
-# Copy entire rootfs
+# Copy root filesystem
 COPY rootfs /
 
-# Set strict permissions
-RUN find /usr/bin -type f -exec chmod 755 {} \; \
-    && chmod 644 /var/log/addons-updater.log \
-    && chown root:root \
-        /etc/cont-init.d/00-addons-updater \
-        /etc/services.d/addons-updater/run
+# Set permissions
+RUN chmod a+x \
+    /usr/bin/addons-updater \
+    /etc/cont-init.d/00-addons-updater \
+    /etc/services.d/addons-updater/run \
+    && chmod 644 /var/log/addons-updater.log
 
-# Health check configuration
-HEALTHCHECK --interval=60s --timeout=10s --start-period=60s \
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s \
     CMD pgrep -f addons-updater || exit 1
 
 WORKDIR /data
 ENTRYPOINT ["/init"]
+CMD []
