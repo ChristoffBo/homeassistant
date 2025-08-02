@@ -1,0 +1,114 @@
+#!/bin/bash
+set -eo pipefail
+
+CONFIG_PATH="/data/options.json"
+REPO_SOURCE=$(jq -r '.repo_source' "$CONFIG_PATH")
+GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_PATH")
+GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG_PATH")
+GITEA_API_URL=$(jq -r '.gitea_api_url // empty' "$CONFIG_PATH")
+GITEA_TOKEN=$(jq -r '.gitea_token // empty' "$CONFIG_PATH")
+REPO_PATH=$(jq -r '.repo_path' "$CONFIG_PATH")
+REPO_BRANCH=$(jq -r '.repo_branch' "$CONFIG_PATH")
+ADDON_PATHS=$(jq -r '.addon_paths[]' "$CONFIG_PATH")
+UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG_PATH")
+DRY_RUN=$(jq -r '.dry_run' "$CONFIG_PATH")
+
+# Variables
+TOTAL_ADDONS=0
+UPDATED_ADDONS=0
+UP_TO_DATE_ADDONS=0
+FAILED_ADDONS=0
+UPDATE_DETAILS=""
+START_TIME=$(date +%s)
+
+send_notification() {
+    local message="🏁 **Addon Update Report**\n\n"
+    message+="🔹 **Source:** ${REPO_SOURCE}\n"
+    message+="📊 **Summary:**\n"
+    message+="🔄 Updated: ${UPDATED_ADDONS}\n"
+    message+="✅ Up-to-date: ${UP_TO_DATE_ADDONS}\n"
+    message+="❌ Failed: ${FAILED_ADDONS}\n\n"
+    message+="📝 **Details:**\n${UPDATE_DETAILS}"
+
+    [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ] && \
+        curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"title\":\"Addons Updater\", \"message\":\"${message}\", \"priority\":5}" \
+        "${GOTIFY_URL}/message?token=${GOTIFY_TOKEN}"
+}
+
+get_latest_version() {
+    local repo="$1"
+    if [ "$REPO_SOURCE" = "gitea" ]; then
+        curl -s -H "Authorization: token ${GITEA_TOKEN}" \
+            "${GITEA_API_URL}/repos/${repo}/releases/latest" | \
+            jq -r '.tag_name'
+    else
+        curl -s "https://api.github.com/repos/${repo}/releases/latest" | \
+            jq -r '.tag_name'
+    fi
+}
+
+update_addon() {
+    local addon_path="$1"
+    local addon_name=$(basename "$addon_path")
+    local config_file="${addon_path}/config.json"
+    
+    ((TOTAL_ADDONS++))
+    
+    if [ ! -f "$config_file" ]; then
+        UPDATE_DETAILS+="❌ ${addon_name}: Missing config.json\n"
+        ((FAILED_ADDONS++))
+        return 1
+    fi
+    
+    local current_version=$(jq -r '.version' "$config_file")
+    local upstream_repo=$(jq -r '.upstream_repo' "$config_file")
+    
+    if [ -z "$upstream_repo" ]; then
+        UPDATE_DETAILS+="⚠️ ${addon_name}: No upstream_repo\n"
+        ((FAILED_ADDONS++))
+        return 1
+    fi
+    
+    local latest_version=$(get_latest_version "$upstream_repo")
+    
+    if [ -z "$latest_version" ]; then
+        UPDATE_DETAILS+="⚠️ ${addon_name}: Failed to fetch version\n"
+        ((FAILED_ADDONS++))
+        return 1
+    fi
+    
+    if [ "$current_version" = "$latest_version" ]; then
+        UPDATE_DETAILS+="✅ ${addon_name}: ${current_version}\n"
+        ((UP_TO_DATE_ADDONS++))
+        return 0
+    fi
+    
+    UPDATE_DETAILS+="🔄 ${addon_name}: ${current_version} → ${latest_version}\n"
+    
+    [ "$DRY_RUN" = "true" ] && { ((UPDATED_ADDONS++)); return 0; }
+    
+    jq --arg v "$latest_version" '.version = $v' "$config_file" > "${config_file}.tmp"
+    mv "${config_file}.tmp" "$config_file"
+    [ -f "${addon_path}/VERSION" ] && echo "$latest_version" > "${addon_path}/VERSION"
+    ((UPDATED_ADDONS++))
+}
+
+cd "$REPO_PATH" || exit 1
+git checkout "$REPO_BRANCH"
+git pull origin "$REPO_BRANCH"
+
+for path in $ADDON_PATHS; do
+    for addon_dir in "${REPO_PATH}/${path}"/*; do
+        [ -d "$addon_dir" ] && update_addon "$addon_dir"
+    done
+done
+
+if [ "$UPDATED_ADDONS" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
+    git add .
+    git commit -m "Updated ${UPDATED_ADDONS} addons"
+    [ "$UPDATE_MODE" = "push" ] && git push origin "$REPO_BRANCH"
+fi
+
+send_notification
