@@ -1,3 +1,7 @@
+## 2.6.3
+- Updated from unknown to 2.6.3
+- Docker: [gotify/server:latest](gotify/pkgs/container/server:latest/tags)
+
 
 ##  (02-08-2025)
 - Update to latest version from null

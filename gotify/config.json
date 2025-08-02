@@ -1,6 +1,6 @@
 {
   "name": "Gotify",
-  "version": "[2025-08-02 19:04:06 SAST] \u001b[0;33m⚠️ No valid version tag found for . Skipping update.\u001b[0m",
+  "version": "2.6.3",
   "slug": "gotify",
   "description": "A simple server for sending and receiving messages",
   "startup": "services",

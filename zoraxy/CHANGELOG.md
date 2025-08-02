@@ -1,3 +1,7 @@
+## 2.3.0
+- Updated from unknown to 2.3.0
+- Docker: [zoraxydocker/zoraxy:latest](zoraxydocker/pkgs/container/zoraxy:latest/tags)
+
 ## v3.2.5 (2025-08-02 17:32:23)
 - Update from 1.0 to v3.2.5
 - Docker Image: [zoraxydocker/zoraxy:latest](https://hub.docker.com/r/zoraxydocker/zoraxy)
