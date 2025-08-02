@@ -46,7 +46,11 @@ cd repo || exit 1
 git config user.name "AddonUpdater"
 git config user.email "addon-updater@local"
 
-[ "$DRY_RUN" = true ] && log_dryrun "===== ADDON UPDATER STARTED (Dry Run) =====" || log_update "===== ADDON UPDATER STARTED (Live Mode) ====="
+if [ "$DRY_RUN" = true ]; then
+  log_dryrun "===== ADDON UPDATER STARTED (Dry Run) ====="
+else
+  log_update "===== ADDON UPDATER STARTED (Live Mode) ====="
+fi
 
 # ===== FUNCTIONS =====
 get_latest_tag() {
@@ -124,11 +128,11 @@ if [ "$DRY_RUN" != true ]; then
   git push origin "$BRANCH"
 fi
 
-[ -n "$GOTIFY_URL" ] && {
+if [ -n "$GOTIFY_URL" ]; then
   TITLE="Addon Updater Report [$(date '+%Y-%m-%d')]"
   MSG="$(echo -e "$NOTES")"
   send_gotify "$TITLE" "$MSG"
-}
+fi
 
 log_info "===== ADDON UPDATER FINISHED ====="
 
