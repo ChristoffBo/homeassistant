@@ -108,28 +108,12 @@ get_latest_tag() {
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
-    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token') || {
-      log "$COLOR_YELLOW" "⚠️ Failed to get GHCR token for $image_name"
-      return
-    }
-    local response=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list") || {
-      log "$COLOR_YELLOW" "⚠️ GHCR tag fetch failed for $image_name"
-      return
-    }
-    tags=$(echo "$response" | jq -r '.tags[]?') || {
-      log "$COLOR_YELLOW" "⚠️ Invalid JSON from GHCR for $image_name"
-      return
-    }
+    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token') || return
+    local response=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list") || return
+    tags=$(echo "$response" | jq -r '.tags[]?')
   elif [[ "$image_name" =~ ^(linuxserver|lscr.io)/ ]]; then
     local name="${image_name##*/}"
-    local response=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags") || {
-      log "$COLOR_YELLOW" "⚠️ LinuxServer tag fetch failed for $name"
-      return
-    }
-    tags=$(echo "$response" | jq -r '.tags[].name') || {
-      log "$COLOR_YELLOW" "⚠️ Invalid JSON from LinuxServer for $name"
-      return
-    }
+    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
   else
     local ns_repo="${image_name/library\//}"
     local page=1
@@ -165,11 +149,11 @@ update_addon() {
   local image version latest
 
   image=$(jq -r '.image // empty' "$config" 2>/dev/null)
-  version=$(jq -r '.version // "unknown"' "$config" 2>/dev/null)
+  version=$(jq -r '.version' "$config" 2>/dev/null | grep -E '^[[:alnum:]\.\-_]+$' || echo "unknown")
 
   if [[ -z "$image" && -f "$build" ]]; then
     image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build" 2>/dev/null)
-    version=$(jq -r '.version // "unknown"' "$build" 2>/dev/null)
+    version=$(jq -r '.version' "$build" 2>/dev/null | grep -E '^[[:alnum:]\.\-_]+$' || echo "unknown")
   fi
 
   [[ -z "$image" ]] && {
@@ -244,25 +228,28 @@ main() {
 
   commit_and_push
 
-  local summary="📦 *Home Assistant Add-on Update Summary*\n"
-  summary+="$(date '+🕒 %Y-%m-%d %H:%M:%S %Z')\n\n"
+  local summary="📦 Home Assistant Add-on Update Summary\n"
+  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')\n\n"
+  summary+="🧩 Add-on Results:\n"
 
-  [[ ${#UPDATED_ADDONS[@]} -gt 0 ]] && {
-    summary+="✅ ${#UPDATED_ADDONS[@]} updated add-on(s):\n"
-    for k in "${!UPDATED_ADDONS[@]}"; do
-      summary+="• ${k}: ${UPDATED_ADDONS[$k]}\n"
-    done
-    summary+="\n"
-  }
+  for path in "$REPO_DIR"/*; do
+    [[ ! -d "$path" ]] && continue
+    local name=$(basename "$path")
+    local status
 
-  [[ ${#UNCHANGED_ADDONS[@]} -gt 0 ]] && {
-    summary+="ℹ️ ${#UNCHANGED_ADDONS[@]} unchanged add-on(s):\n"
-    for k in "${!UNCHANGED_ADDONS[@]}"; do
-      summary+="• ${k}: ${UNCHANGED_ADDONS[$k]}\n"
-    done
-  }
+    if [[ -n "${UPDATED_ADDONS[$name]}" ]]; then
+      status="🔄 ${UPDATED_ADDONS[$name]}"
+    elif [[ -n "${UNCHANGED_ADDONS[$name]}" ]]; then
+      status="⚠️ ${UNCHANGED_ADDONS[$name]}"
+    else
+      status="❓ Unknown"
+    fi
 
-  [[ "$DRY_RUN" == "true" ]] && summary+="\n🔁 *DRY RUN MODE ENABLED*"
+    clean_status=$(echo "$status" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/\[[^][]*\]//g')
+    summary+="• $name: $clean_status\n"
+  done
+
+  [[ "$DRY_RUN" == "true" ]] && summary+="\n🔁 DRY RUN MODE ENABLED"
 
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
