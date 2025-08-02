@@ -9,20 +9,22 @@ RUN apk add --no-cache \
     jq \
     tzdata
 
-# Create directories
+# Create directories first
 RUN mkdir -p \
     /etc/cont-init.d \
     /etc/services.d/addons-updater \
     /usr/bin \
     /var/log
 
-# Copy root filesystem
-COPY rootfs /
+# Copy files individually to ensure proper placement
+COPY rootfs/usr/bin/addons-updater /usr/bin/addons-updater
+COPY rootfs/etc/cont-init.d/addons-updater /etc/cont-init.d/
+COPY rootfs/etc/services.d/addons-updater/run /etc/services.d/addons-updater/
 
-# Verify files exist before chmod
-RUN [ -f /usr/bin/addons-updater ] && \
-    [ -f /etc/cont-init.d/addons-updater ] && \
-    [ -f /etc/services.d/addons-updater/run ]
+# Verify files were copied
+RUN ls -la /usr/bin/addons-updater && \
+    ls -la /etc/cont-init.d/addons-updater && \
+    ls -la /etc/services.d/addons-updater/run
 
 # Set permissions
 RUN chmod a+x \
