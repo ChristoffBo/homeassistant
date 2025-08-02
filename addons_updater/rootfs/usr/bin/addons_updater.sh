@@ -9,7 +9,6 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
-# Log function with color and levels
 LOG() {
   level=$1
   shift
@@ -23,34 +22,38 @@ LOG() {
   printf "%b[%s]%b %s\n" "$color" "$level" "$NC" "$*"
 }
 
-# Load options.json
 OPTIONS_FILE="/data/options.json"
-if [ ! -f "$OPTIONS_FILE" ]; then
-  LOG ERROR "Options file $OPTIONS_FILE not found. Exiting."
+
+# Check jq availability
+if ! command -v jq >/dev/null 2>&1; then
+  LOG ERROR "jq is required but not installed."
   exit 1
 fi
 
-# Parse options using jq (must be installed in your container)
+# Read options
 DRY_RUN=$(jq -r '.dry_run // "true"' "$OPTIONS_FILE")
 GIT_USER=$(jq -r '.gituser // empty' "$OPTIONS_FILE")
 GIT_EMAIL=$(jq -r '.gitmail // empty' "$OPTIONS_FILE")
 REPOSITORY=$(jq -r '.repository // empty' "$OPTIONS_FILE")
+GIT_PROVIDER=$(jq -r '.git_provider // "github"' "$OPTIONS_FILE" | tr '[:upper:]' '[:lower:]') # github or gitea
 ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications // false' "$OPTIONS_FILE")
 GOTIFY_URL=$(jq -r '.gotify_url // empty' "$OPTIONS_FILE")
 GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$OPTIONS_FILE")
-GITEA_API_URL=$(jq -r '.gitea_api_url // empty' "$OPTIONS_FILE")
-GITEA_TOKEN=$(jq -r '.gitea_token // empty' "$OPTIONS_FILE")
 
-# Basic checks
 if [ -z "$REPOSITORY" ]; then
   LOG ERROR "No repository specified in options.json."
   exit 1
 fi
 
-# Directory where repo will be cloned
 CLONE_DIR="/data/$(basename "$REPOSITORY")"
 
-# Function to send notification (Gotify & Gitea supported)
+# Compose git clone URL based on provider
+if [ "$GIT_PROVIDER" = "gitea" ]; then
+  GIT_CLONE_URL="https://gitea.example.com/$REPOSITORY.git"
+else
+  GIT_CLONE_URL="https://github.com/$REPOSITORY.git"
+fi
+
 notify() {
   local title=$1
   local message=$2
@@ -60,106 +63,110 @@ notify() {
     return 0
   fi
 
-  # Gotify notification
   if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-    curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
+    response=$(curl -s -w "%{http_code}" -o /dev/null -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
       -H "Content-Type: application/json" \
-      -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":5}" > /dev/null 2>&1 && \
-    LOG INFO "Gotify notification sent."
-  fi
-
-  # Gitea notification - example: create an issue or comment (simplified)
-  if [ -n "$GITEA_API_URL" ] && [ -n "$GITEA_TOKEN" ]; then
-    # Here you should customize your Gitea notification API calls accordingly
-    # This is a placeholder example:
-    curl -s -X POST "$GITEA_API_URL/repos/$REPOSITORY/issues" \
-      -H "Authorization: token $GITEA_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "{\"title\":\"$title\", \"body\":\"$message\"}" > /dev/null 2>&1 && \
-    LOG INFO "Gitea notification sent."
-  fi
-}
-
-# Version comparison function (returns true if $1 > $2)
-version_gt() {
-  # Use sort -V if available, else fallback to string comparison
-  if command -v sort > /dev/null 2>&1; then
-    test "$(printf '%s\n%s' "$1" "$2" | sort -V | head -n1)" != "$1"
+      -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":5}")
+    if [ "$response" -eq 200 ]; then
+      LOG INFO "Gotify notification sent."
+    else
+      LOG WARN "Failed to send Gotify notification. HTTP status: $response"
+    fi
   else
-    [ "$1" != "$2" ] && [ "$1" \> "$2" ]
+    LOG WARN "Gotify URL or token not set. Notification skipped."
   fi
 }
 
-# Determine current version from a given file
+version_gt() {
+  # Compare semantic versions, ignoring "latest"
+  # Returns 0 if $1 > $2, 1 otherwise
+  # If either is "latest" treat as lowest possible version
+
+  v1=$1
+  v2=$2
+
+  [ "$v1" = "latest" ] && return 1
+  [ "$v2" = "latest" ] && return 0
+
+  highest=$(printf '%s\n%s\n' "$v1" "$v2" | sort -V | tail -n1)
+  [ "$highest" = "$v1" ] && [ "$v1" != "$v2" ]
+}
+
+# Fetch latest Docker tag skipping 'latest'
+fetch_latest_tag() {
+  local image=$1
+  # TODO: Replace with actual DockerHub or GHCR API calls
+
+  if [ "$image" = "gitea/gitea" ]; then
+    echo "v1.24.3"
+    return
+  fi
+  # Fallback:
+  echo "latest"
+}
+
 get_version_from_file() {
   local file=$1
   if [ ! -f "$file" ]; then
     echo ""
     return
   fi
-  # Try to extract version field from JSON file
   jq -r '.version // empty' "$file" 2>/dev/null || echo ""
 }
 
-# Update version in JSON file (config.json, build.json, updater.json)
 update_version_in_file() {
   local file=$1
   local new_version=$2
 
   if [ ! -f "$file" ]; then
-    LOG WARN "File $file does not exist, cannot update version."
+    LOG WARN "File $file does not exist."
     return 1
   fi
 
-  # Backup original file
   cp "$file" "$file.bak"
 
-  # Update the version field using jq
   if jq --arg v "$new_version" '.version = $v' "$file.bak" > "$file.tmp"; then
     mv "$file.tmp" "$file"
   else
-    LOG ERROR "Failed to update version in $file"
+    LOG ERROR "Failed updating version in $file"
     mv "$file.bak" "$file"
     return 1
   fi
 
-  # Check if file changed
   if cmp -s "$file" "$file.bak"; then
-    LOG INFO "$file: version already up to date."
     rm "$file.bak"
-    return 2
+    return 2 # no change
   else
-    LOG INFO "$file: version updated to $new_version."
     rm "$file.bak"
+    LOG INFO "$file updated to version $new_version"
     return 0
   fi
 }
 
-# Clone or update repo
 prepare_repo() {
   if [ ! -d "$CLONE_DIR/.git" ]; then
     LOG INFO "Cloning repository $REPOSITORY..."
-    git clone --depth 1 "https://github.com/$REPOSITORY.git" "$CLONE_DIR"
+    git clone --depth 1 "$GIT_CLONE_URL" "$CLONE_DIR"
   else
-    LOG INFO "Repository already exists, updating..."
+    LOG INFO "Repository exists, updating..."
     cd "$CLONE_DIR"
     git fetch origin main
     git reset --hard origin/main
   fi
 }
 
-# Main process
 process_addons() {
   cd "$CLONE_DIR" || {
-    LOG ERROR "Failed to enter repo directory $CLONE_DIR"
+    LOG ERROR "Cannot enter directory $CLONE_DIR"
     exit 1
   }
 
+  MESSAGE_BODY="Addon Update Summary:\n\n"
+  
   for addon in */; do
     addon=${addon%/}
     LOG INFO "Processing addon $addon..."
 
-    # Detect which JSON file to check/update
     addon_dir="$CLONE_DIR/$addon"
     config_json="$addon_dir/config.json"
     build_json="$addon_dir/build.json"
@@ -168,70 +175,78 @@ process_addons() {
     current_version=""
     version_file=""
 
-    # Check for version in config.json
     current_version=$(get_version_from_file "$config_json")
     if [ -n "$current_version" ]; then
       version_file="$config_json"
     else
-      # fallback to build.json
       current_version=$(get_version_from_file "$build_json")
       if [ -n "$current_version" ]; then
         version_file="$build_json"
       else
-        # fallback to updater.json
         current_version=$(get_version_from_file "$updater_json")
         if [ -n "$current_version" ]; then
           version_file="$updater_json"
         else
-          LOG WARN "$addon: No version found in config.json, build.json or updater.json. Skipping."
+          LOG WARN "$addon: No version found, skipping."
+          MESSAGE_BODY="${MESSAGE_BODY}${addon}: No version found, skipped.\n"
           continue
         fi
       fi
     fi
 
-    # Simulate fetching latest version for demonstration:
-    # In your real script replace this logic with API calls or tag fetch from DockerHub/GHCR/LinuxServer.io
-    latest_version="$current_version"
-    if [ "$addon" = "gitea" ]; then
-      latest_version="v1.24.3"
+    # Map addon to image (replace with your actual mapping)
+    image=""
+    case "$addon" in
+      gitea) image="gitea/gitea" ;;
+      heimdall) image="linuxserver/heimdall" ;;
+      metube) image="linuxserver/metube" ;;
+      *) image="library/$addon" ;;
+    esac
+
+    latest_version=$(fetch_latest_tag "$image")
+    if [ "$latest_version" = "latest" ]; then
+      latest_version="$current_version"
     fi
 
     if version_gt "$latest_version" "$current_version"; then
       LOG INFO "$addon: Update available: $current_version -> $latest_version"
-
       if [ "$DRY_RUN" = "true" ]; then
-        LOG DRYRUN "$addon: Update simulated from $current_version to $latest_version."
+        LOG DRYRUN "$addon: Update simulated from $current_version to $latest_version"
+        MESSAGE_BODY="${MESSAGE_BODY}${addon}: Update simulated from $current_version to $latest_version\n"
       else
-        # Update the version in the correct JSON file
         update_version_in_file "$version_file" "$latest_version"
         ret=$?
-
         if [ $ret -eq 0 ]; then
-          # Commit and push changes
           git config user.name "$GIT_USER"
           git config user.email "$GIT_EMAIL"
           git add "$addon"
 
           if git diff --cached --quiet; then
             LOG INFO "$addon: No changes to commit."
+            MESSAGE_BODY="${MESSAGE_BODY}${addon}: No changes to commit.\n"
           else
             git commit -m "Update $addon version to $latest_version"
             git push origin main
             LOG INFO "$addon: Changes pushed to remote."
-
-            # Send notifications
-            notify "Addon Update" "$addon updated from $current_version to $latest_version"
+            MESSAGE_BODY="${MESSAGE_BODY}${addon}: Updated from $current_version to $latest_version\n"
           fi
         elif [ $ret -eq 2 ]; then
-          LOG INFO "$addon: Version file already up to date, no changes."
+          LOG INFO "$addon: Version file already up to date."
+          MESSAGE_BODY="${MESSAGE_BODY}${addon}: Version file already up to date ($latest_version)\n"
         else
           LOG WARN "$addon: Failed to update version."
+          MESSAGE_BODY="${MESSAGE_BODY}${addon}: Failed to update version.\n"
         fi
       fi
     else
       LOG INFO "$addon: You are running the latest version: $current_version"
+      MESSAGE_BODY="${MESSAGE_BODY}${addon}: You are running the latest version: $current_version\n"
     fi
   done
+
+  # Send final notification with summary
+  MODE_MSG="Mode: $( [ "$DRY_RUN" = "true" ] && echo "Dry Run (no changes pushed)" || echo "Live (changes pushed)")"
+  notify "Addon Updater Result" "$MODE_MSG\n\n$MESSAGE_BODY"
 }
 
 main() {
