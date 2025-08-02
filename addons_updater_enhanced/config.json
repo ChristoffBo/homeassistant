@@ -1,15 +1,15 @@
 {
   "name": "Addons Updater Enhanced",
-  "version": "4.0.0",
+  "version": "4.0.2",
   "slug": "addons_updater_enhanced",
-  "description": "Enhanced version of alexbelgium's addon-updater with GitHub/Gitea support and optional Gotify notifications",
+  "description": "Enhanced version with GitHub/Gitea support and optional Gotify notifications",
   "url": "https://github.com/your-repo/addons_updater_enhanced",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
   "startup": "application",
   "boot": "manual",
   "hassio_api": true,
   "hassio_role": "manager",
-  "map": ["config:rw", "backup:rw", "ssl:rw"],
+  "map": ["config:rw", "backup:rw"],
   "options": {
     "repo_source": "github",
     "enable_gotify": false,
@@ -26,75 +26,18 @@
     "validate_ssl": true
   },
   "schema": {
-    "repo_source": {
-      "type": "list",
-      "options": ["github", "gitea"],
-      "default": "github",
-      "required": true
-    },
-    "enable_gotify": {
-      "type": "boolean",
-      "default": false,
-      "required": false
-    },
-    "gotify_url": {
-      "type": "string",
-      "required": false,
-      "pattern": "^(https?://.+)|$"
-    },
-    "gotify_token": {
-      "type": "string",
-      "required": false,
-      "pattern": "^[a-zA-Z0-9-]*$"
-    },
-    "gitea_api_url": {
-      "type": "string",
-      "required": false,
-      "pattern": "^(https?://.+)|$"
-    },
-    "gitea_token": {
-      "type": "string",
-      "required": false,
-      "pattern": "^[a-zA-Z0--]*$"
-    },
-    "repo_path": {
-      "type": "string",
-      "required": true,
-      "pattern": "^/.*"
-    },
-    "repo_branch": {
-      "type": "string",
-      "required": true,
-      "pattern": "^[a-zA-Z0-9-_./]+$"
-    },
-    "addon_paths": {
-      "type": "list",
-      "required": true,
-      "items": {
-        "type": "string",
-        "pattern": "^[a-zA-Z0-9-_]+$"
-      }
-    },
-    "update_mode": {
-      "type": "list",
-      "options": ["commit", "push"],
-      "default": "commit",
-      "required": true
-    },
-    "timeout": {
-      "type": "integer",
-      "min": 60,
-      "max": 3600,
-      "default": 300
-    },
-    "log_level": {
-      "type": "list",
-      "options": ["debug", "info", "warning", "error"],
-      "default": "info"
-    },
-    "validate_ssl": {
-      "type": "boolean",
-      "default": true
-    }
+    "repo_source": "list(github|gitea)",
+    "enable_gotify": "bool",
+    "gotify_url": "str?",
+    "gotify_token": "str?",
+    "gitea_api_url": "str?",
+    "gitea_token": "str?",
+    "repo_path": "str",
+    "repo_branch": "str",
+    "addon_paths": ["str"],
+    "update_mode": "list(commit|push)",
+    "timeout": "int(60,3600)",
+    "log_level": "list(debug|info|warning|error)",
+    "validate_ssl": "bool"
   }
 }
