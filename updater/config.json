@@ -5,7 +5,7 @@
   "description": "Automatically checks and updates Home Assistant add-ons based on Docker image versions.",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "arch": ["amd64", "armv7", "aarch64"],
-  "startup": "application",
+  "startup": "services",
   "boot": "auto",
   "options": {
     "repository": "https://github.com/ChristoffBo/homeassistant",
