@@ -80,6 +80,7 @@ fi
 
 cd "$REPO_DIR"
 
+# Function to get latest GitHub release tag
 get_latest_github_release() {
     repo="$1"
     token="$2"
@@ -102,7 +103,44 @@ get_latest_github_release() {
     echo "$tag_name"
 }
 
-# Loop through addon folders with updater.json
+# Function to send Gotify notification
+send_gotify() {
+    if [ "$ENABLE_NOTIFICATIONS" = true ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
+        TITLE="$1"
+        MESSAGE="$2"
+        PRIORITY="${3:-5}"
+
+        curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\":\"$TITLE\", \"message\":\"$MESSAGE\", \"priority\":$PRIORITY}" >/dev/null 2>&1
+    fi
+}
+
+# Function to send Gitea notification (example placeholder)
+send_gitea() {
+    if [ "$ENABLE_NOTIFICATIONS" = true ] && [ -n "$GITEA_API_URL" ] && [ -n "$GITEA_TOKEN" ]; then
+        # Example: POST a comment or notification to Gitea API here
+        # This is a placeholder — implement as needed
+        :
+    fi
+}
+
+# Function to update changelog file (prepend new version section)
+update_changelog() {
+    local changelog_file=$1
+    local version=$2
+    local url=$3
+
+    DATE=$(date '+%Y-%m-%d')
+
+    # Use sed to prepend (POSIX compatible)
+    sed -i "1i\\
+## $version ($DATE)\\
+- Updated to latest version ($version) from $url\\
+" "$changelog_file"
+}
+
+# Main update loop
 for addon_dir in */; do
     if [ -f "$addon_dir/updater.json" ]; then
         SLUG=${addon_dir%/}
@@ -125,8 +163,9 @@ for addon_dir in */; do
         if [ "$SOURCE" = "github" ]; then
             LATEST_VERSION=$(get_latest_github_release "$UPSTREAM" "$GITAPI") || true
         elif [ "$SOURCE" = "dockerhub" ]; then
-            DOCKERHUB_REPO="${UPSTREAM%%/*}"
-            DOCKERHUB_IMAGE=$(echo "$UPSTREAM" | cut -d "/" -f2)
+            # Docker Hub tags retrieval, with filters
+            DOCKERHUB_REPO=$(echo "$UPSTREAM" | cut -d "/" -f1)
+            DOCKERHUB_IMAGE=$(echo "$UPSTREAM" | cut -d "/" -f2-)
             LISTSIZE=100
             FILTER_QUERY=""
             EXCLUDE_PATTERN="${EXCLUDE_TEXT:-zzzzzzzzzzzzzzzzzz}"
@@ -157,32 +196,36 @@ for addon_dir in */; do
             LOG INFO "$SLUG: Update available: $CURRENT_VERSION -> $LATEST_VERSION"
 
             if [ "$DRY_RUN" != true ]; then
+                # Update config files
                 for file in "$addon_dir"/config.json "$addon_dir"/build.json "$addon_dir"/updater.json; do
                     if [ -f "$file" ]; then
                         jq --arg v "$LATEST_VERSION" '.version = $v | .upstream_version = $v' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
                     fi
                 done
 
+                # Update changelog
                 CHANGELOG="$addon_dir/CHANGELOG.md"
-                touch "$CHANGELOG"
-                DATE=$(date '+%Y-%m-%d')
-                # Insert new version header on top (POSIX sed)
-                sed -i "1i\\
-## $LATEST_VERSION ($DATE)\\
-- Updated to latest version from $UPSTREAM\\
-" "$CHANGELOG"
+                if [ ! -f "$CHANGELOG" ]; then
+                    touch "$CHANGELOG"
+                fi
+                update_changelog "$CHANGELOG" "$LATEST_VERSION" "$UPSTREAM"
 
+                # Commit and push changes
                 git add -A
                 git commit -m "Updater bot: $SLUG updated to $LATEST_VERSION" || true
                 git push origin "$BRANCH" || LOG WARN "$SLUG: git push failed."
 
                 LOG INFO "$SLUG: Updated to $LATEST_VERSION and pushed changes."
+
+                # Send notifications if enabled
+                if [ "$ENABLE_NOTIFICATIONS" = true ]; then
+                    MSG="Addon $SLUG updated to version $LATEST_VERSION."
+                    send_gotify "Addon Update" "$MSG"
+                    send_gitea "$MSG"
+                fi
             else
                 LOG DRYRUN "$SLUG: Update simulated from $CURRENT_VERSION to $LATEST_VERSION."
             fi
-
-            # Notifications placeholder (Gotify, Gitea) - Add your calls here if ENABLE_NOTIFICATIONS=true
-
         else
             LOG INFO "$SLUG: Already up to date ($CURRENT_VERSION)."
         fi
