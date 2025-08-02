@@ -1,10 +1,7 @@
 #!/bin/sh
 set -e
 
-# Fix HOME if not set (important for git)
-export HOME=${HOME:-/root}
-
-# Color definitions
+# Colors for logging
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -12,157 +9,189 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+# Log function with color and levels
 LOG() {
-  # Usage: LOG LEVEL MESSAGE
   level=$1
   shift
-  msg=$*
-  case $level in
+  case "$level" in
     INFO) color=$GREEN ;;
     WARN) color=$YELLOW ;;
     ERROR) color=$RED ;;
     DRYRUN) color=$MAGENTA ;;
     *) color=$NC ;;
   esac
-  echo "${color}[$level]${NC} $msg"
+  printf "%b[%s]%b %s\n" "$color" "$level" "$NC" "$*"
 }
 
-# Read options from JSON file
+# Load options.json
 OPTIONS_FILE="/data/options.json"
+if [ ! -f "$OPTIONS_FILE" ]; then
+  LOG ERROR "Options file $OPTIONS_FILE not found. Exiting."
+  exit 1
+fi
 
-get_option() {
-  # POSIX safe JSON parsing for simple string values
-  # usage: get_option key
-  key=$1
-  grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$OPTIONS_FILE" 2>/dev/null | head -1 | cut -d'"' -f4
-}
+# Parse options using jq (must be installed in your container)
+DRY_RUN=$(jq -r '.dry_run // "true"' "$OPTIONS_FILE")
+GIT_USER=$(jq -r '.gituser // empty' "$OPTIONS_FILE")
+GIT_EMAIL=$(jq -r '.gitmail // empty' "$OPTIONS_FILE")
+REPOSITORY=$(jq -r '.repository // empty' "$OPTIONS_FILE")
+ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications // false' "$OPTIONS_FILE")
+GOTIFY_URL=$(jq -r '.gotify_url // empty' "$OPTIONS_FILE")
+GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$OPTIONS_FILE")
+GITEA_API_URL=$(jq -r '.gitea_api_url // empty' "$OPTIONS_FILE")
+GITEA_TOKEN=$(jq -r '.gitea_token // empty' "$OPTIONS_FILE")
 
-# Load options
-GIT_USER=$(get_option "gituser")
-GIT_EMAIL=$(get_option "gitmail")
-GIT_API_TOKEN=$(get_option "gitapi")
-REPOSITORY=$(get_option "repository")
-VERBOSE=$(get_option "verbose")
-DRY_RUN=$(get_option "dry_run")
-ENABLE_NOTIFICATIONS=$(get_option "enable_notifications")
-GOTIFY_URL=$(get_option "gotify_url")
-GOTIFY_TOKEN=$(get_option "gotify_token")
-GITEA_API_URL=$(get_option "gitea_api_url")
-GITEA_TOKEN=$(get_option "gitea_token")
+# Basic checks
+if [ -z "$REPOSITORY" ]; then
+  LOG ERROR "No repository specified in options.json."
+  exit 1
+fi
 
-# Convert true/false strings to lowercase
-VERBOSE=$(echo "$VERBOSE" | tr '[:upper:]' '[:lower:]')
-DRY_RUN=$(echo "$DRY_RUN" | tr '[:upper:]' '[:lower:]')
-ENABLE_NOTIFICATIONS=$(echo "$ENABLE_NOTIFICATIONS" | tr '[:upper:]' '[:lower:]')
+# Directory where repo will be cloned
+CLONE_DIR="/data/$(basename "$REPOSITORY")"
 
-[ "$VERBOSE" = "true" ] && LOG INFO "Verbose mode enabled"
-[ "$DRY_RUN" = "true" ] && LOG DRYRUN "Dry run mode enabled. No changes will be pushed."
-
-# Setup git repository path
-REPO_NAME=$(basename "$REPOSITORY")
-CLONE_DIR="/data/$REPO_NAME"
-
-# Notification function
+# Function to send notification (Gotify & Gitea supported)
 notify() {
-  title="$1"
-  message="$2"
+  local title=$1
+  local message=$2
 
   if [ "$ENABLE_NOTIFICATIONS" != "true" ]; then
-    [ "$VERBOSE" = "true" ] && LOG WARN "Notifications disabled."
-    return
+    LOG INFO "Notifications disabled."
+    return 0
   fi
 
+  # Gotify notification
   if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-    [ "$VERBOSE" = "true" ] && LOG INFO "Sending Gotify notification..."
-
-    # Compose JSON payload safely
-    payload=$(printf '{"title":"%s","message":"%s","priority":5}' "$title" "$message")
-
     curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
       -H "Content-Type: application/json" \
-      -d "$payload" >/dev/null 2>&1
+      -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":5}" > /dev/null 2>&1 && \
+    LOG INFO "Gotify notification sent."
+  fi
 
-    if [ $? -eq 0 ]; then
-      [ "$VERBOSE" = "true" ] && LOG INFO "Gotify notification sent successfully."
-    else
-      LOG ERROR "Failed to send Gotify notification."
-    fi
-  else
-    [ "$VERBOSE" = "true" ] && LOG WARN "Gotify URL or token missing, skipping notification."
+  # Gitea notification - example: create an issue or comment (simplified)
+  if [ -n "$GITEA_API_URL" ] && [ -n "$GITEA_TOKEN" ]; then
+    # Here you should customize your Gitea notification API calls accordingly
+    # This is a placeholder example:
+    curl -s -X POST "$GITEA_API_URL/repos/$REPOSITORY/issues" \
+      -H "Authorization: token $GITEA_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"title\":\"$title\", \"body\":\"$message\"}" > /dev/null 2>&1 && \
+    LOG INFO "Gitea notification sent."
   fi
 }
 
-# Clone or update git repository
-update_repo() {
+# Version comparison function (returns true if $1 > $2)
+version_gt() {
+  # Use sort -V if available, else fallback to string comparison
+  if command -v sort > /dev/null 2>&1; then
+    test "$(printf '%s\n%s' "$1" "$2" | sort -V | head -n1)" != "$1"
+  else
+    [ "$1" != "$2" ] && [ "$1" \> "$2" ]
+  fi
+}
+
+# Determine current version from a given file
+get_version_from_file() {
+  local file=$1
+  if [ ! -f "$file" ]; then
+    echo ""
+    return
+  fi
+  # Try to extract version field from JSON file
+  jq -r '.version // empty' "$file" 2>/dev/null || echo ""
+}
+
+# Update version in JSON file (config.json, build.json, updater.json)
+update_version_in_file() {
+  local file=$1
+  local new_version=$2
+
+  if [ ! -f "$file" ]; then
+    LOG WARN "File $file does not exist, cannot update version."
+    return 1
+  fi
+
+  # Backup original file
+  cp "$file" "$file.bak"
+
+  # Update the version field using jq
+  if jq --arg v "$new_version" '.version = $v' "$file.bak" > "$file.tmp"; then
+    mv "$file.tmp" "$file"
+  else
+    LOG ERROR "Failed to update version in $file"
+    mv "$file.bak" "$file"
+    return 1
+  fi
+
+  # Check if file changed
+  if cmp -s "$file" "$file.bak"; then
+    LOG INFO "$file: version already up to date."
+    rm "$file.bak"
+    return 2
+  else
+    LOG INFO "$file: version updated to $new_version."
+    rm "$file.bak"
+    return 0
+  fi
+}
+
+# Clone or update repo
+prepare_repo() {
   if [ ! -d "$CLONE_DIR/.git" ]; then
     LOG INFO "Cloning repository $REPOSITORY..."
-    if [ -n "$GIT_USER" ] && [ -n "$GIT_API_TOKEN" ]; then
-      # Use token authentication for clone
-      GIT_URL="https://$GIT_USER:$GIT_API_TOKEN@github.com/$REPOSITORY.git"
-    else
-      GIT_URL="https://github.com/$REPOSITORY.git"
-    fi
-    git clone --depth 1 "$GIT_URL" "$CLONE_DIR" || {
-      LOG ERROR "Failed to clone repository."
-      exit 1
-    }
+    git clone --depth 1 "https://github.com/$REPOSITORY.git" "$CLONE_DIR"
   else
     LOG INFO "Repository already exists, updating..."
     cd "$CLONE_DIR"
-    git fetch origin || {
-      LOG ERROR "Failed to fetch updates."
-      exit 1
-    }
-    # Reset to remote branch main (or detect default branch)
-    git reset --hard origin/main || {
-      LOG ERROR "Failed to reset repository."
-      exit 1
-    }
+    git fetch origin main
+    git reset --hard origin/main
   fi
 }
 
-# Parse version from addon JSON files (try config.json, then updater.json, then build.json)
-get_current_version() {
-  addon_dir="$1"
-  version=""
-
-  for jsonfile in config.json updater.json build.json; do
-    if [ -f "$addon_dir/$jsonfile" ]; then
-      version=$(grep -m1 '"version"' "$addon_dir/$jsonfile" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
-      [ -n "$version" ] && break
-    fi
-  done
-  echo "$version"
-}
-
-# Compare semantic versions (simple)
-version_gt() {
-  # returns 0 if $1 > $2 else 1
-  # naive lex comparison for demo
-  [ "$1" = "$2" ] && return 1
-  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" != "$1" ]
-}
-
-# Process each addon directory inside repo
+# Main process
 process_addons() {
-  cd "$CLONE_DIR"
+  cd "$CLONE_DIR" || {
+    LOG ERROR "Failed to enter repo directory $CLONE_DIR"
+    exit 1
+  }
 
   for addon in */; do
     addon=${addon%/}
     LOG INFO "Processing addon $addon..."
 
-    addon_path="$CLONE_DIR/$addon"
-    current_version=$(get_current_version "$addon_path")
-    if [ -z "$current_version" ]; then
-      LOG WARN "$addon: Could not determine current version from config/updater/build.json. Skipping."
-      continue
+    # Detect which JSON file to check/update
+    addon_dir="$CLONE_DIR/$addon"
+    config_json="$addon_dir/config.json"
+    build_json="$addon_dir/build.json"
+    updater_json="$addon_dir/updater.json"
+
+    current_version=""
+    version_file=""
+
+    # Check for version in config.json
+    current_version=$(get_version_from_file "$config_json")
+    if [ -n "$current_version" ]; then
+      version_file="$config_json"
+    else
+      # fallback to build.json
+      current_version=$(get_version_from_file "$build_json")
+      if [ -n "$current_version" ]; then
+        version_file="$build_json"
+      else
+        # fallback to updater.json
+        current_version=$(get_version_from_file "$updater_json")
+        if [ -n "$current_version" ]; then
+          version_file="$updater_json"
+        else
+          LOG WARN "$addon: No version found in config.json, build.json or updater.json. Skipping."
+          continue
+        fi
+      fi
     fi
 
-    # Fake: simulate fetching latest version from registry or GitHub API
-    # TODO: Replace this logic with real Docker tag or GitHub release fetch
-    latest_version="$current_version" # Placeholder, no update detected
-
-    # For demo, let's pretend there's an update for "gitea" addon only
+    # Simulate fetching latest version for demonstration:
+    # In your real script replace this logic with API calls or tag fetch from DockerHub/GHCR/LinuxServer.io
+    latest_version="$current_version"
     if [ "$addon" = "gitea" ]; then
       latest_version="v1.24.3"
     fi
@@ -173,28 +202,31 @@ process_addons() {
       if [ "$DRY_RUN" = "true" ]; then
         LOG DRYRUN "$addon: Update simulated from $current_version to $latest_version."
       else
-        # Update the version in the config/updater/build.json file (here just updater.json)
-        updater_file="$addon_path/updater.json"
-        if [ -f "$updater_file" ]; then
-          # Use sed to replace version string safely
-          sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")[^\"]+\"/\1$latest_version\"/" "$updater_file"
-          LOG INFO "$addon: updater.json version updated to $latest_version."
+        # Update the version in the correct JSON file
+        update_version_in_file "$version_file" "$latest_version"
+        ret=$?
+
+        if [ $ret -eq 0 ]; then
+          # Commit and push changes
+          git config user.name "$GIT_USER"
+          git config user.email "$GIT_EMAIL"
+          git add "$addon"
+
+          if git diff --cached --quiet; then
+            LOG INFO "$addon: No changes to commit."
+          else
+            git commit -m "Update $addon version to $latest_version"
+            git push origin main
+            LOG INFO "$addon: Changes pushed to remote."
+
+            # Send notifications
+            notify "Addon Update" "$addon updated from $current_version to $latest_version"
+          fi
+        elif [ $ret -eq 2 ]; then
+          LOG INFO "$addon: Version file already up to date, no changes."
         else
-          LOG WARN "$addon: updater.json not found, cannot update version."
+          LOG WARN "$addon: Failed to update version."
         fi
-
-        # Commit changes
-        cd "$CLONE_DIR"
-        git config user.name "$GIT_USER"
-        git config user.email "$GIT_EMAIL"
-        git add "$addon/updater.json"
-        git commit -m "Update $addon version to $latest_version"
-        if [ "$DRY_RUN" != "true" ]; then
-          git push origin main
-        fi
-
-        # Send notification
-        notify "Addon Update" "$addon updated from $current_version to $latest_version"
       fi
     else
       LOG INFO "$addon: You are running the latest version: $current_version"
@@ -204,13 +236,13 @@ process_addons() {
 
 main() {
   LOG INFO "===== ADDON UPDATER STARTED ====="
-
-  if [ -z "$REPOSITORY" ]; then
-    LOG ERROR "No repository configured in options.json"
-    exit 1
+  if [ "$DRY_RUN" = "true" ]; then
+    LOG DRYRUN "Dry run mode enabled. No changes will be pushed."
+  else
+    LOG INFO "Live mode enabled. Changes will be pushed."
   fi
 
-  update_repo
+  prepare_repo
   process_addons
 
   LOG INFO "===== ADDON UPDATER FINISHED ====="
