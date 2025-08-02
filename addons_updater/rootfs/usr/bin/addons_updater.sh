@@ -1,176 +1,316 @@
-#!/usr/bin/with-contenv bashio
-# shellcheck shell=bash
-set -e
+#!/usr/bin/env python3
+import os
+import json
+import logging
+import requests
+import semver
+import time
+import re
+from datetime import datetime
+from git import Repo, GitCommandError
 
-##########
-# UPDATE #
-##########
+# Configure logging
+logger = logging.getLogger(__name__)
 
-# New Gotify notification function
-send_gotify() {
-    local message="$1"
-    if bashio::config.true 'enable_notifications'; then
-        gotify_url=$(bashio::config 'gotify_url')
-        gotify_token=$(bashio::config 'gotify_token')
+class AddonUpdater:
+    def __init__(self):
+        self.config = self.load_config()
+        self.repo_path = "/data/repo"
+        self.token = os.environ.get("SUPERVISOR_TOKEN", "")
+        self.headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        self.registries = ["dockerhub", "ghcr", "linuxserver"]
+        self.repo = None
+        self.start_time = time.time()
+        self.dry_run = self.config.get("dry_run", False)
         
-        if [ -n "$gotify_url" ] && [ -n "$gotify_token" ]; then
-            curl -s -X POST "${gotify_url}/message?token=${gotify_token}" \
-                -F "title=Addons Updater" \
-                -F "message=${message}" \
-                -F "priority=5" \
-                --insecure > /dev/null
-            bashio::log.info "Sent Gotify notification"
-        fi
-    fi
-}
+        # Configure logging
+        log_level = logging.DEBUG if self.config.get("verbose", False) else logging.INFO
+        logging.basicConfig(level=log_level)
+        logger.info("Addon Updater initialized")
 
-# Send start notification
-send_gotify "Addon update process started"
+    def load_config(self):
+        try:
+            with open("/data/options.json") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading config: {str(e)}")
+            return {}
 
-bashio::log.info "Starting $(lastversion --version)"
-
-if bashio::config.true "dry_run"; then
-    bashio::log.warning "Dry run mode : on"
-fi
-
-bashio::log.info "Checking status of referenced repositoriess..."
-VERBOSE=$(bashio::config 'verbose')
-
-#Defining github value
-LOGINFO="... github authentification" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-
-GITUSER=$(bashio::config 'gituser')
-GITMAIL=$(bashio::config 'gitmail')
-git config --system http.sslVerify false
-git config --system credential.helper 'cache --timeout 7200'
-git config --system user.name "${GITUSER}"
-if [[ "$GITMAIL" != "null" ]]; then git config --system user.email "${GITMAIL}"; fi
-
-if bashio::config.has_value 'gitapi'; then
-    LOGINFO="... setting github API" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-    GITHUB_API_TOKEN=$(bashio::config 'gitapi')
-    export GITHUB_API_TOKEN
-fi
-
-#Create or update local version
-REPOSITORY=$(bashio::config 'repository')
-BASENAME=$(basename "https://github.com/$REPOSITORY")
-
-if [ ! -d "/data/$BASENAME" ]; then
-    LOGINFO="... cloning ${REPOSITORY}" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-    cd /data/ || exit
-    git clone "https://github.com/${REPOSITORY}"
-else
-    LOGINFO="... updating ${REPOSITORY}" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-    cd "/data/$BASENAME" || exit
-    git pull --rebase origin > /dev/null || git reset --hard origin/master > /dev/null
-    git pull --rebase origin > /dev/null || (rm -r "/data/$BASENAME" && git clone "https://github.com/${REPOSITORY}")
-fi
-
-LOGINFO="... parse addons" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-
-# Go through all folders, add to filters if not existing
-
-cd /data/"$BASENAME" || exit
-for f in */; do
-
-    if [ -f /data/"$BASENAME"/"$f"/updater.json ]; then
-        SLUG=${f//\//}
-
-        # Rebase
-        LOGINFO="... updating ${REPOSITORY}" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-        cd "/data/$BASENAME" || exit
-        git pull --rebase &> /dev/null || git reset --hard &> /dev/null
-        git pull --rebase &> /dev/null
-
-        #Define the folder addon
-        LOGINFO="... $SLUG : checking slug exists in repo" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-        cd /data/"${BASENAME}"/"${SLUG}" || {
-            bashio::log.error "$SLUG addon not found in this repository. Exiting."
-            continue
-        }
-
-        # Get variables
-        UPSTREAM=$(jq -r .upstream_repo updater.json)
-        BETA=$(jq -r .github_beta updater.json)
-        FULLTAG=$(jq -r .github_fulltag updater.json)
-        HAVINGASSET=$(jq -r .github_havingasset updater.json)
-        SOURCE=$(jq -r .source updater.json)
-        FILTER_TEXT=$(jq -r .github_tagfilter updater.json)
-        EXCLUDE_TEXT=$(jq -r .github_exclude updater.json)
-        EXCLUDE_TEXT="${EXCLUDE_TEXT:-zzzzzzzzzzzzzzzz}"
-        PAUSED=$(jq -r .paused updater.json)
-        DATE="$(date '+%d-%m-%Y')"
-        BYDATE=$(jq -r .dockerhub_by_date updater.json)
-
-        # Number of elements to check in dockerhub
-        if grep -q "dockerhub_list_size" updater.json; then
-            LISTSIZE=$(jq -r .dockerhub_list_size updater.json)
-        else
-            LISTSIZE=100
-        fi
-
-        #Skip if paused
-        if [[ "$PAUSED" = true ]]; then
-            bashio::log.magenta "... $SLUG addon updates are paused, skipping"
-            continue
-        fi
-
-        #Find current version
-        LOGINFO="... $SLUG : get current version" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-        CURRENT=$(jq .upstream_version updater.json) \
-            || {
-                bashio::log.error "$SLUG addon upstream tag not found in updater.json. Exiting."
-                continue
-            }
-
-        # ================== GITEA SUPPORT ADDITION ==================
-        if [[ "$SOURCE" = gitea ]]; then
-            LOGINFO="... $SLUG : source is gitea" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
-            GITEA_API_URL=$(bashio::config 'gitea_api_url')
-            GITEA_TOKEN=$(bashio::config 'gitea_token')
+    def setup_git(self):
+        try:
+            repo_url = f"https://github.com/{self.config['repository']}.git"
+            logger.info(f"Using repository URL: {repo_url}")
             
-            # Get latest release
-            api_url="${GITEA_API_URL}/repos/${UPSTREAM}/releases/latest"
-            release=$(curl -s -H "Authorization: token ${GITEA_TOKEN}" \
-                -H "Accept: application/json" "${api_url}")
-            LASTVERSION=$(echo "$release" | jq -r .tag_name)
+            if os.path.exists(self.repo_path):
+                self.repo = Repo(self.repo_path)
+                self.repo.remotes.origin.pull()
+            else:
+                self.repo = Repo.clone_from(repo_url, self.repo_path, branch="main")
             
-            # Add brackets
-            LASTVERSION='"'${LASTVERSION}'"'
-        # ================== END GITEA ADDITION ==================
+            with self.repo.config_writer() as config:
+                config.set_value("user", "name", self.config.get("gituser", "Addon Updater"))
+                config.set_value("user", "email", self.config.get("gitmail", "updater@home-assistant"))
+            
+            logger.info("Git repository initialized")
+            return True
+        except GitCommandError as e:
+            logger.error(f"Git command error: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Git setup error: {str(e)}")
+            return False
+
+    def get_latest_tag(self, image):
+        latest_version = None
         
-        elif [[ "$SOURCE" = dockerhub ]]; then
-            # ... [ORIGINAL DOCKERHUB CODE UNCHANGED] ...
-        else
-            # ... [ORIGINAL GITHUB CODE UNCHANGED] ...
-        fi
+        for registry in self.registries:
+            try:
+                if registry == "dockerhub":
+                    url = f"https://registry.hub.docker.com/v2/repositories/{image}/tags"
+                    response = requests.get(url, timeout=15)
+                    tags = [tag['name'] for tag in response.json().get('results', [])]
+                elif registry == "ghcr":
+                    url = f"https://ghcr.io/v2/{image}/tags/list"
+                    response = requests.get(url, timeout=15)
+                    tags = response.json().get('tags', [])
+                elif registry == "linuxserver":
+                    url = f"https://registry.hub.docker.com/v2/repositories/linuxserver/{image}/tags"
+                    response = requests.get(url, timeout=15)
+                    tags = [tag['name'] for tag in response.json().get('results', [])]
+                
+                for tag in tags:
+                    try:
+                        clean_tag = re.sub(r'^v', '', tag).split('-')[0]
+                        if semver.VersionInfo.isvalid(clean_tag):
+                            ver = semver.VersionInfo.parse(clean_tag)
+                            if not latest_version or ver > latest_version:
+                                latest_version = ver
+                    except ValueError:
+                        continue
+            except Exception as e:
+                logger.error(f"Registry {registry} error: {str(e)}")
+        
+        return str(latest_version) if latest_version else None
 
-        # Avoid characters incompatible with HomeAssistant version name
-        LASTVERSION2=${LASTVERSION//+/-}
-        CURRENT2=${CURRENT//+/-}
+    def get_current_version(self, addon_dir):
+        versions = {}
+        for file in ["config.json", "build.json", "update.json"]:
+            path = os.path.join(addon_dir, file)
+            if os.path.exists(path):
+                try:
+                    with open(path) as f:
+                        data = json.load(f)
+                        version = data.get("version") or data.get("tag")
+                        if version: versions[file] = version
+                except Exception as e:
+                    logger.error(f"Error reading {path}: {str(e)}")
+        return versions
 
-        # Update if needed
-        if [ "${CURRENT2}" != "${LASTVERSION2}" ]; then
-            LOGINFO="... $SLUG : update from ${CURRENT} to ${LASTVERSION}" && if [ "$VERBOSE" = true ]; then bashio::log.info "$LOGINFO"; fi
+    def update_file_version(self, path, new_version):
+        try:
+            with open(path, "r+") as f:
+                data = json.load(f)
+                filename = os.path.basename(path)
+                if filename == "update.json":
+                    if "version" in data: data["version"] = new_version
+                    elif "tag" in data: data["tag"] = new_version
+                elif filename == "build.json":
+                    if "version" in data: data["version"] = new_version
+                    elif "tag" in data: data["tag"] = new_version
+                else:  # config.json
+                    if "version" in data: data["version"] = new_version
+                f.seek(0)
+                json.dump(data, f, indent=2)
+                f.truncate()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating {path}: {str(e)}")
+            return False
 
-            # ... [ORIGINAL UPDATE CODE UNCHANGED] ...
+    def update_changelog(self, addon_dir, addon_name, old_version, new_version):
+        changelog_path = os.path.join(addon_dir, "CHANGELOG.md")
+        today = datetime.today().strftime('%Y-%m-%d')
+        entry = f"## {new_version} - {today}\n- Updated from {old_version} to {new_version}\n- [Docker Image](https://hub.docker.com/r/{addon_name})\n\n"
+        
+        try:
+            if os.path.exists(changelog_path):
+                with open(changelog_path, "r+") as f:
+                    content = f.read()
+                    f.seek(0)
+                    f.write(entry + content)
+            else:
+                with open(changelog_path, "w") as f:
+                    f.write(f"# {addon_name} Changelog\n\n{entry}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating changelog: {str(e)}")
+            return False
 
-            # GOTIFY NOTIFICATION
-            if bashio::config.true 'enable_notifications'; then
-                send_gotify "Updated $SLUG from ${CURRENT} to ${LASTVERSION}"
-            fi
-        else
-            bashio::log.green "... $SLUG is up-to-date ${CURRENT}"
-        fi
-    fi
-done || true # Continue even if issue
+    def process_addons(self):
+        if not self.repo: return [], []
+        addons_path = os.path.join(self.repo_path, "addons")
+        if not os.path.exists(addons_path):
+            logger.error("Addons directory not found")
+            return [], []
+            
+        processed = []; updated = []
+        
+        for addon_slug in os.listdir(addons_path):
+            addon_dir = os.path.join(addons_path, addon_slug)
+            if not os.path.isdir(addon_dir): continue
+            
+            addon_data = {"name": addon_slug}
+            try:
+                # Get current versions
+                current_versions = self.get_current_version(addon_dir)
+                if not current_versions:
+                    addon_data["status"] = "no_versions"
+                    processed.append(addon_data)
+                    continue
+                
+                current_version = list(current_versions.values())[0]
+                addon_data["current_version"] = current_version
+                
+                # Get image name
+                config_path = os.path.join(addon_dir, "config.json")
+                if not os.path.exists(config_path):
+                    addon_data["status"] = "missing_config"
+                    processed.append(addon_data)
+                    continue
+                
+                with open(config_path) as f:
+                    image = json.load(f).get("image", "").split("/")[-1]
+                if not image:
+                    addon_data["status"] = "missing_image"
+                    processed.append(addon_data)
+                    continue
+                
+                # Get latest version
+                latest_version = self.get_latest_tag(image)
+                if not latest_version:
+                    addon_data["status"] = "no_registry_version"
+                    processed.append(addon_data)
+                    continue
+                
+                addon_data["latest_version"] = latest_version
+                
+                # Compare versions
+                clean_current = re.sub(r'^v', '', current_version).split('-')[0]
+                clean_latest = re.sub(r'^v', '', latest_version).split('-')[0]
+                
+                if semver.compare(clean_latest, clean_current) <= 0:
+                    addon_data["status"] = "up_to_date"
+                    processed.append(addon_data)
+                    continue
+                
+                # Update files
+                files_updated = 0
+                for file in current_versions.keys():
+                    if self.update_file_version(os.path.join(addon_dir, file), latest_version):
+                        files_updated += 1
+                        self.repo.git.add(os.path.join(addon_dir, file))
+                
+                if files_updated == 0:
+                    addon_data["status"] = "update_failed"
+                    processed.append(addon_data)
+                    continue
+                
+                # Update changelog
+                if self.update_changelog(addon_dir, addon_slug, current_version, latest_version):
+                    self.repo.git.add(os.path.join(addon_dir, "CHANGELOG.md"))
+                
+                # Commit changes
+                if not self.dry_run:
+                    self.repo.index.commit(f"Update {addon_slug} to {latest_version}")
+                
+                addon_data.update({
+                    "status": "updated",
+                    "old_version": current_version,
+                    "new_version": latest_version
+                })
+                updated.append(addon_data)
+                processed.append(addon_data)
+                
+                logger.info(f"Updated {addon_slug} from {current_version} to {latest_version}")
+                
+            except Exception as e:
+                addon_data["status"] = "error"
+                addon_data["error"] = str(e)
+                processed.append(addon_data)
+                logger.error(f"Error processing {addon_slug}: {str(e)}")
+        
+        return processed, updated
 
-# Clean dry run
-if bashio::config.true "dry_run"; then
-    rm -r /data/*
-fi
+    def push_changes(self):
+        if self.dry_run or not self.repo: return False
+        try:
+            self.repo.remotes.origin.push()
+            logger.info("Changes pushed to remote")
+            return True
+        except GitCommandError as e:
+            logger.error(f"Git push failed: {str(e)}")
+            return False
 
-# FINAL GOTIFY NOTIFICATION
-send_gotify "Addons update completed"
-bashio::log.info "Addons update completed"
+    def trigger_reload(self):
+        if self.dry_run or not self.token: return False
+        try:
+            requests.post("http://supervisor/store/reload", headers=self.headers, timeout=10)
+            logger.info("Triggered store reload")
+            return True
+        except Exception as e:
+            logger.error(f"Error triggering reload: {str(e)}")
+            return False
+
+    def send_notification(self, processed, updated):
+        if not self.config.get("enable_notifications", False): return
+        
+        gotify_url = self.config.get("gotify_url", "").strip()
+        gotify_token = self.config.get("gotify_token", "").strip()
+        if not gotify_url or not gotify_token: return
+        
+        # Build notification message
+        message = "### 🚀 Addon Update Report\n\n"
+        message += f"**Total Addons Processed:** {len(processed)}\n"
+        message += f"**Addons Updated:** {len(updated)}\n\n"
+        
+        if updated:
+            message += "#### 🔄 Updated Addons:\n"
+            for addon in updated:
+                message += f"- **{addon['name']}**: {addon['old_version']} → {addon['new_version']}\n"
+            message += "\n"
+        
+        message += "#### 🔍 Detailed Status:\n"
+        for addon in processed:
+            status_icon = "🟢" if addon["status"] == "updated" else "🔵" if addon["status"] == "up_to_date" else "🔴"
+            version_info = f"{addon.get('current_version', '')}"
+            if "latest_version" in addon: version_info += f" → {addon['latest_version']}"
+            message += f"- {status_icon} **{addon['name']}**: {addon['status'].replace('_', ' ').title()} - {version_info}\n"
+        
+        try:
+            requests.post(
+                f"{gotify_url}/message?token={gotify_token}",
+                json={
+                    "title": "Home Assistant Addon Updates",
+                    "message": message,
+                    "priority": 5,
+                    "extras": {"client::display": {"contentType": "text/markdown"}}
+                }
+            )
+            logger.info("Sent Gotify notification")
+        except Exception as e:
+            logger.error(f"Error sending notification: {str(e)}")
+
+    def run(self):
+        try:
+            if not self.setup_git(): return
+            processed, updated = self.process_addons()
+            if updated: 
+                self.push_changes()
+                self.trigger_reload()
+            self.send_notification(processed, updated)
+            logger.info("Update process completed")
+        except Exception as e:
+            logger.error(f"Critical error: {str(e)}")
+
+if __name__ == "__main__":
+    AddonUpdater().run()
