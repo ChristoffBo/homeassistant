@@ -1,6 +1,6 @@
 {
   "name": "Gotify",
-  "version": "",
+  "version": "1.0",
   "slug": "gotify",
   "description": "A simple server for sending and receiving messages",
   "startup": "services",
