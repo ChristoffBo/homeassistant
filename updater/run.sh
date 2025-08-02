@@ -34,24 +34,24 @@ safe_jq() {
 }
 
 read_config() {
-  DRY_RUN=$(jq -er \'.dry_run // false\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  DEBUG=$(jq -er \'.debug // false\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  TZ=$(jq -er \'.timezone // "UTC"\' "$CONFIG_PATH" 2>/dev/null || echo "")
+  DRY_RUN=$(jq -er '.dry_run // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  DEBUG=$(jq -er '.debug // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH" 2>/dev/null || echo "")
   export TZ
 
-  GITHUB_REPO=$(jq -er \'.repository // .github_repo // empty\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  GITHUB_USERNAME=$(jq -er \'.gituser // .github_username // empty\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  GITHUB_TOKEN=$(jq -er \'.gittoken // .github_token // empty\' "$CONFIG_PATH" 2>/dev/null || echo "")
+  GITHUB_REPO=$(jq -er '.repository // .github_repo // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
+  GITHUB_USERNAME=$(jq -er '.gituser // .github_username // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
+  GITHUB_TOKEN=$(jq -er '.gittoken // .github_token // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
 
-  NOTIFY_ENABLED=$(jq -er \'.enable_notifications // .notifications_enabled // false\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_SERVICE=$(jq -er \'.notification_service // ""\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_URL=$(jq -er \'.notification_url // ""\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_TOKEN=$(jq -er \'.notification_token // ""\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_TO=$(jq -er \'.notification_to // ""\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_SUCCESS=$(jq -er \'.notify_on_success // false\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_ERROR=$(jq -er \'.notify_on_error // true\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_UPDATES=$(jq -er \'.notify_on_updates // true\' "$CONFIG_PATH" 2>/dev/null || echo "")
-  SKIP_PUSH=$(jq -er \'.skip_push // false\' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_ENABLED=$(jq -er '.enable_notifications // .notifications_enabled // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_SERVICE=$(jq -er '.notification_service // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_URL=$(jq -er '.notification_url // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_TOKEN=$(jq -er '.notification_token // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_TO=$(jq -er '.notification_to // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_SUCCESS=$(jq -er '.notify_on_success // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" 2>/dev/null || echo "")
+  SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || echo "")
 
   GIT_AUTH_REPO="$GITHUB_REPO"
   if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
@@ -214,8 +214,11 @@ main() {
 
   commit_and_push
 
-  local summary="📦 Add-on Update Summary\n"
-  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')\n\n"
+  local summary="📦 Add-on Update Summary
+"
+  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
+
+"
 
   for path in "$REPO_DIR"/*; do
     [ ! -d "$path" ] && continue
