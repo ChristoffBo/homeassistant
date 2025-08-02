@@ -1,11 +1,11 @@
 ARG BUILD_FROM=ghcr.io/hassio-addons/base-python:stable
 FROM ${BUILD_FROM}
 
-# Install requirements with correct versions
+# Install requirements
 RUN apk add --no-cache \
-    git=2.45.1-r0 \
-    jq=1.7.1-r0 \
-    curl=8.7.1-r0
+    git \
+    jq \
+    curl
 
 # Copy root filesystem
 COPY rootfs/ /
