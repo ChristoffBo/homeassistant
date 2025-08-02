@@ -139,7 +139,7 @@ compare_versions() {
   
   if [ "$ver1" = "$ver2" ]; then
     echo 0
-  elif printf "%s\n%s" "$ver1" "$ver2" | sort -V -C; then
+  elif [ "$(printf "%s\n%s" "$ver1" "$ver2" | sort -V | head -n1)" = "$ver1" ]; then
     echo -1  # ver1 < ver2
   else
     echo 1   # ver1 > ver2
@@ -160,10 +160,9 @@ process_addons() {
   # List of directories to skip
   SKIP_DIRS=".git addons_updater .github .DS_Store __MACOSX"
 
-  # Enable nullglob to handle empty directories
-  shopt -s nullglob
+  # Loop through each directory in the addons directory
   for addon in "$ADDONS_DIR"/*; do
-    # Skip files, only process directories
+    # Skip if not a directory
     [ -d "$addon" ] || continue
     
     addon_name=$(basename "$addon")
@@ -309,7 +308,11 @@ process_addons() {
     PROCESSED="${PROCESSED}${addon_name}|updated|$current_version|$latest_version|"
     [ "$VERBOSE" = "true" ] && echo -e "  ${GREEN}✓ Updated successfully${NC}"
   done
-  shopt -u nullglob
+
+  # Check if no addons were found
+  if [ "$CHECKED_COUNT" -eq 0 ]; then
+    echo -e "${YELLOW}No addons found in $ADDONS_DIR${NC}"
+  fi
 
   # Return results
   printf "PROCESSED=%s\nUPDATED=%s\nUPDATED_COUNT=%d\nCHECKED_COUNT=%d" "$PROCESSED" "$UPDATED" "$UPDATED_COUNT" "$CHECKED_COUNT"
