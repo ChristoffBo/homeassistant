@@ -7,10 +7,12 @@
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "services",
   "boot": "auto",
+  "init": false,
+  "panel_icon": "mdi:update",
   "options": {
     "repository": "https://github.com/ChristoffBo/homeassistant",
     "gituser": "ChristoffBo",
-    "gittoken": "ghp_your_actual_token_here",
+    "gittoken": "",
     "timezone": "Africa/Johannesburg",
     "dry_run": false,
     "skip_push": false,
@@ -42,8 +44,5 @@
     "notify_on_error": "bool",
     "notify_on_updates": "bool",
     "cron": "str"
-  },
-  "image": "ghcr.io/your/image:tag",
-  "panel_icon": "mdi:update",
-  "init": false
+  }
 }
