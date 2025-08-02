@@ -1,6 +1,13 @@
 #!/bin/sh
 set -e
 
+# Fix critical $HOME not set error
+export HOME=/config
+
+# Show repository source
+echo "===== ADDON UPDATER STARTED ====="
+echo "[Source] Repository: https://github.com/$REPO_PATH.git"
+
 # Load configuration
 CONFIG_FILE="/data/options.json"
 GIT_USER=$(jq -r '.gituser' "$CONFIG_FILE")
@@ -22,19 +29,20 @@ else
   LOG_LEVEL="INFO"
 fi
 
-# Handle logging configuration
-LOG_FILE="/root/.logging"
+# Handle logging configuration - moved to persistent storage
+LOG_FILE="/data/.addons_updater_logging"  # Changed to persistent location
 if [ ! -f "$LOG_FILE" ]; then
-  echo "Creating logging configuration..."
+  echo "Creating logging configuration in persistent storage..."
   echo "level=$LOG_LEVEL" > "$LOG_FILE"
 else
   sed -i "s/level=.*/level=$LOG_LEVEL/g" "$LOG_FILE"
 fi
 
-# Configure Git
+# Configure Git with safe directory
 git config --global user.name "$GIT_USER"
 git config --global user.email "$GIT_EMAIL"
 git config --global pull.rebase false
+git config --global --add safe.directory /data/repo  # Critical for container security
 
 # Determine repository URL
 REPO_URL="https://github.com/$REPO_PATH.git"
@@ -42,14 +50,17 @@ echo "Using repository URL: $REPO_URL"
 
 # Set up repository
 REPO_DIR="/data/repo"
-if [ -d "$REPO_DIR" ]; then
+if [ -d "$REPO_DIR/.git" ]; then
   echo "Updating existing repository..."
   cd "$REPO_DIR"
+  git reset --hard HEAD  # Clean working directory
   git pull
+  echo "Successfully pulled latest changes from $REPO_URL"
 else
   echo "Cloning repository..."
   git clone "$REPO_URL" "$REPO_DIR"
   cd "$REPO_DIR"
+  echo "Successfully cloned repository from $REPO_URL"
 fi
 
 # Main processing function
@@ -101,7 +112,8 @@ process_addons() {
     
     # GHCR
     echo "Checking GHCR..."
-    ghcr_version=$(curl --max-time 30 -s "https://ghcr.io/v2/$image_name/tags/list" | 
+    ghcr_version=$(curl --max-time 30 -s -H "Authorization: Bearer $(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:$image_name:pull" | jq -r '.token')" \
+                  "https://ghcr.io/v2/$image_name/tags/list" | 
                   jq -r '.tags[]' | 
                   grep -E '^[v]?[0-9]+\.[0-9]+\.[0-9]+$' | 
                   sort -V | tail -n1)
@@ -206,6 +218,7 @@ echo "Processed $CHECKED_COUNT addons, updated $UPDATED_COUNT"
 if [ "$UPDATED_COUNT" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
   echo "Pushing changes to repository..."
   git push origin main
+  echo "[Destination] Successfully pushed updates to: $REPO_URL"
   
   # Trigger Home Assistant reload
   if [ -n "$SUPERVISOR_TOKEN" ]; then
@@ -285,4 +298,5 @@ if [ "$ENABLE_NOTIFICATIONS" = "true" ] && [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY
 fi
 
 echo "Addon update process completed successfully"
+echo "===== ADDON UPDATER FINISHED ====="
 exit 0
