@@ -6,7 +6,7 @@ set -e
 # Automatically update addons with notifications support
 # ------------------------------
 
-# Colors for logging (avoid purple, distinct dry run/live)
+# Colors for logging (avoid purple)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -29,19 +29,19 @@ log_dryrun() {
   printf "${DRYRUN_COLOR}[DRYRUN]${NC} %s\n" "$1"
 }
 
-# Version comparison function using sort
+# Version comparison (returns true if $1 > $2)
 ver_gt() {
   [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" != "$1" ]
 }
 
-# Read options.json for configuration
+# Read config options
 CONFIG_FILE="/data/options.json"
 if [ ! -f "$CONFIG_FILE" ]; then
   log_warn "options.json not found!"
   exit 1
 fi
 
-# Load JSON config using jq
+# Load JSON config
 GIT_USER=$(jq -r '.gituser // empty' "$CONFIG_FILE")
 GIT_MAIL=$(jq -r '.gitmail // empty' "$CONFIG_FILE")
 GIT_API_TOKEN=$(jq -r '.gitapi // empty' "$CONFIG_FILE")
@@ -57,7 +57,7 @@ GITEA_TOKEN=$(jq -r '.gitea_token // empty' "$CONFIG_FILE")
 
 REPO_PATH="/data/$(basename "$REPOSITORY")"
 
-# Start header
+# Print header info
 printf "\n-----------------------------------------------------------\n"
 printf " Add-on: Addons Updater Enhanced\n Automatically update addons with notifications support\n"
 printf "-----------------------------------------------------------\n"
@@ -68,6 +68,7 @@ printf " Dry run mode: %s\n" "$( [ "$DRY_RUN" = "true" ] && echo "Enabled" || ec
 printf " Notifications: %s\n" "$( [ "$ENABLE_NOTIFICATIONS" = "true" ] && echo "Enabled" || echo "Disabled" )"
 printf "-----------------------------------------------------------\n\n"
 
+# Setup Git config
 export HOME=/tmp
 git config --global user.name "$GIT_USER"
 git config --global user.email "$GIT_MAIL"
@@ -88,7 +89,7 @@ fi
 CHANGELOG=""
 UPDATES_OCCURRED=false
 
-# Function to update JSON version field
+# Update version in JSON file helper
 update_json_version() {
   local addon_dir=$1
   local version=$2
@@ -104,17 +105,16 @@ update_json_version() {
   fi
 }
 
-# Get current version from json files
+# Get current addon version by checking config.json, build.json, updater.json (priority order)
 get_current_version() {
   local addon_dir=$1
-
-  for jsonfile in config.json build.json updater.json; do
-    local jf="$REPO_PATH/$addon_dir/$jsonfile"
+  for file in config.json build.json updater.json; do
+    local jf="$REPO_PATH/$addon_dir/$file"
     if [ -f "$jf" ]; then
-      local version
-      version=$(jq -r '.version // empty' "$jf")
-      if [ -n "$version" ]; then
-        echo "$version"
+      local ver
+      ver=$(jq -r '.version // empty' "$jf")
+      if [ -n "$ver" ] && [ "$ver" != "null" ]; then
+        echo "$ver"
         return
       fi
     fi
@@ -122,23 +122,36 @@ get_current_version() {
   echo "unknown"
 }
 
-# Placeholder function for getting latest version from APIs
+# Fetch latest version depending on source (GitHub or Gitea) or DockerHub fallback
 get_latest_version() {
   local addon=$1
 
-  # Here, for live mode, you'd add real API calls to get latest tag/version
-  # For now, just return "latest" to show no real update info
+  if [ "$USE_GITEA" = "true" ]; then
+    # Gitea API version fetching
+    # Example call: curl -s -H "Authorization: token $GITEA_TOKEN" "$GITEA_API_URL/repos/youruser/$addon/releases/latest"
+    latest=$(curl -s -H "Authorization: token $GITEA_TOKEN" "$GITEA_API_URL/repos/$GIT_USER/$addon/releases/latest" | jq -r '.tag_name // empty')
+  else
+    # GitHub API version fetching
+    latest=$(curl -s -H "Authorization: token $GIT_API_TOKEN" "https://api.github.com/repos/$GIT_USER/$addon/releases/latest" | jq -r '.tag_name // empty')
+  fi
 
-  echo "latest"
+  # If no tag_name found, fallback to DockerHub or default 'latest'
+  if [ -z "$latest" ]; then
+    # Here you could implement DockerHub tag fetch fallback if needed
+    latest="latest"
+  fi
+
+  # Strip any leading 'v' to standardize version format
+  latest="${latest#v}"
+  echo "$latest"
 }
 
-# Loop addons
-for addon_dir in $(find "$REPO_PATH" -mindepth 1 -maxdepth 1 -type d | xargs -n1 basename); do
+# Iterate addons excluding .git folder
+for addon_dir in $(find "$REPO_PATH" -mindepth 1 -maxdepth 1 -type d ! -name ".git" | xargs -n1 basename); do
 
   current_version=$(get_current_version "$addon_dir")
   latest_version=$(get_latest_version "$addon_dir")
 
-  # If latest version is "latest" or empty, treat as no new version
   if [ "$latest_version" = "latest" ] || [ -z "$latest_version" ]; then
     latest_version="$current_version"
   fi
@@ -148,6 +161,7 @@ for addon_dir in $(find "$REPO_PATH" -mindepth 1 -maxdepth 1 -type d | xargs -n1
     if [ "$DRY_RUN" = "true" ]; then
       log_dryrun "$addon_dir: Update simulated from $current_version to $latest_version"
     else
+      # Update all JSON version files if present
       update_json_version "$addon_dir" "$latest_version" "config.json"
       update_json_version "$addon_dir" "$latest_version" "build.json"
       update_json_version "$addon_dir" "$latest_version" "updater.json"
@@ -167,14 +181,30 @@ for addon_dir in $(find "$REPO_PATH" -mindepth 1 -maxdepth 1 -type d | xargs -n1
   fi
 done
 
-# Notification building
+# Prepare notification message
 NOTIFY_MSG="Addons Updater Report:\n\n$CHANGELOG"
 
 if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then
   TITLE="Addon Updater - $( [ "$DRY_RUN" = "true" ] && echo "Dry Run" || echo "Live Run" )"
-  COLOR=$( [ "$DRY_RUN" = "true" ] && echo "#FFA500" || echo "#008000") # orange or green
+  # Green for live run, Orange for dry run
+  COLOR=$( [ "$DRY_RUN" = "true" ] && echo "#FFA500" || echo "#008000")
 
-  PAYLOAD="{\"title\":\"$TITLE\",\"message\":\"$(echo "$NOTIFY_MSG" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')\",\"priority\":5,\"extras\":{\"notification\":{\"color\":\"$COLOR\"}}}"
+  # Prepare Gotify message with colored lines for updated addons
+  # Highlight updated lines in green
+  GOTIFY_MSG=""
+  while IFS= read -r line; do
+    if echo "$line" | grep -q "Updated from"; then
+      # Green color for updates
+      GOTIFY_MSG="${GOTIFY_MSG}<font color=\"green\">${line}</font><br>"
+    else
+      GOTIFY_MSG="${GOTIFY_MSG}${line}<br>"
+    fi
+  done <<EOF
+$(echo "$NOTIFY_MSG" | sed 's/^/ /')
+EOF
+
+  # Build JSON payload for Gotify
+  PAYLOAD="{\"title\":\"$TITLE\",\"message\":\"$GOTIFY_MSG\",\"priority\":5,\"extras\":{\"notification\":{\"color\":\"$COLOR\"}}}"
 
   GOTIFY_ENDPOINT="$GOTIFY_URL/message?token=$GOTIFY_TOKEN"
 
