@@ -1,87 +1,74 @@
-text
+This is an enhanced version of alexbelgium's Home Assistant addon updater with support for both GitHub and Gitea repositories, plus optional Gotify notifications.
 
-# Addons Updater Enhanced
+BASIC CONFIGURATION
 
-Enhanced version of alexbelgium's Home Assistant Addon Updater with GitHub/Gitea support and optional Gotify notifications.
-
-## How It Works
-
-1. Scans specified directories for addons
-2. Compares local versions against GitHub/Gitea releases
-3. Updates config.json and VERSION files when newer versions are found
-4. Optionally sends notifications via Gotify
-
-## Basic Configuration (options.json)
-
-```json
+Add these required options to your options.json:
 {
-  "repo_source": "github",
-  "repo_path": "/config/addons",
-  "addon_paths": ["addons", "community"],
-  "update_mode": "commit"
+"repo_source": "github",
+"repo_path": "/config/addons",
+"addon_paths": ["addons"],
+"update_mode": "commit"
 }
 
-Full Configuration Options
+FULL CONFIGURATION OPTIONS
 
-Required:
+{
+"repo_source": "github",
+"enable_gotify": false,
+"gotify_url": null,
+"gotify_token": null,
+"gitea_api_url": null,
+"gitea_token": null,
+"repo_path": "/config/addons",
+"repo_branch": "main",
+"addon_paths": ["addons", "community"],
+"update_mode": "commit",
+"timeout": 300,
+"log_level": "info",
+"validate_ssl": true
+}
 
-    repo_source: "github" or "gitea"
+REQUIREMENTS
 
-    repo_path: Path to your addons repository (e.g. "/config/addons")
+    Each addon must have:
 
-    addon_paths: List of directories to scan (e.g. ["addons", "community"])
+        A config.json file
 
-Optional:
+        An upstream_repo defined (e.g. "user/repo")
 
-    enable_gotify: true/false (default: false)
+    For Gitea support:
 
-    gotify_url: Your Gotify server URL
-
-    gotify_token: Your Gotify app token
-
-    gitea_api_url: Required if using Gitea (e.g. "https://your-gitea.com/api/v1")
-
-    gitea_token: Required if using Gitea
-
-    update_mode: "commit" (default) or "push"
-
-    timeout: API timeout in seconds (default: 300)
-
-    log_level: "debug", "info", "warning", or "error" (default: "info")
-
-    validate_ssl: true/false (default: true)
-
-Setup Instructions
-
-    Install via Home Assistant Supervisor
-
-    Configure options.json (see examples above)
-
-    For Gitea:
+        Set repo_source to "gitea"
 
         Provide gitea_api_url and gitea_token
 
-    For Gotify:
+    For Gotify notifications:
 
-        Set enable_gotify: true
+        Set enable_gotify to true
 
         Provide gotify_url and gotify_token
 
-    Run manually or set up automation
+HOW IT WORKS
 
-Key Features
+    Scans your specified addon directories
 
-    Supports both GitHub and self-hosted Gitea
+    Checks the latest version from GitHub/Gitea
 
-    Optional Gotify notifications
+    Updates config.json if newer version exists
 
-    Dry-run mode available
+    Commits changes (can optionally push)
 
-    Detailed logging to /var/log/addons-updater.log
+    Sends notifications if enabled
 
-    Health checks and error handling
+LOGGING
 
-Credits
+    Console output
 
-Based on the original work by alexbelgium:
-https://github.com/alexbelgium/hassio-addons/tree/master/addons_updater
+    /var/log/addons-updater.log
+
+    Gotify notifications (if enabled)
+
+CREDITS
+
+Based on the original by alexbelgium:
+https://github.com/alexbelgium/hassio-addons
