@@ -33,7 +33,11 @@ declare -A UNCHANGED_ADDONS
 safe_jq() {
   local expr="$1"
   local file="$2"
-  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]\.\-_]+$' || echo "unknown"
+  if jq -e -r "$expr" "$file" 2>/dev/null | grep -Eq '^[[:alnum:]\.\-_]+$'; then
+    jq -e -r "$expr" "$file" 2>/dev/null
+  else
+    echo "unknown"
+  fi
 }
 
 read_config() {
@@ -176,8 +180,26 @@ update_addon() {
   log "$COLOR_DARK_BLUE" "🔍 Checking $name"
   local config="$addon_path/config.json"
   local build="$addon_path/build.json"
-  local image version latest
 
+  if [[ ! -f "$config" ]]; then
+    log "$COLOR_RED" "❌ Missing config.json for $name"
+    UNCHANGED_ADDONS["$name"]="Missing config.json"
+    return
+  fi
+
+  if ! jq -e . "$config" >/dev/null 2>&1; then
+    log "$COLOR_RED" "❌ Invalid JSON in $name/config.json"
+    UNCHANGED_ADDONS["$name"]="Invalid config.json"
+    return
+  fi
+
+  if [[ -f "$build" && ! $(jq -e . "$build" >/dev/null 2>&1) ]]; then
+    log "$COLOR_RED" "❌ Invalid JSON in $name/build.json"
+    UNCHANGED_ADDONS["$name"]="Invalid build.json"
+    return
+  fi
+
+  local image version latest
   image=$(jq -r '.image // empty' "$config" 2>/dev/null)
   version=$(safe_jq '.version' "$config")
 
@@ -284,4 +306,5 @@ main() {
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
 
+trap 'notify "Updater Fatal Error" "Script crashed unexpectedly. Check logs." 5; log "$COLOR_RED" "❌ Script crashed unexpectedly."' ERR
 main
