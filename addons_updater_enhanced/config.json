@@ -1,8 +1,8 @@
 {
   "name": "Addons Updater Enhanced",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "slug": "addons_updater_enhanced",
-  "description": "Addon updater with optional notifications",
+  "description": "Complete addon updater with optional notifications",
   "url": "https://github.com/your-repo/addons_updater_enhanced",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
   "startup": "application",
@@ -15,9 +15,16 @@
     "enable_notifications": false,
     "gotify_url": null,
     "gotify_token": null,
+    "gitea_api_url": null,
+    "gitea_token": null,
     "repo_path": "/config/addons",
-    "addon_paths": ["addons"],
-    "update_mode": "commit"
+    "repo_branch": "main",
+    "addon_paths": ["addons", "community"],
+    "update_mode": "commit",
+    "timeout": 300,
+    "log_level": "info",
+    "validate_ssl": true,
+    "dry_run": false
   },
   "schema": {
     "repo_source": "list(github|gitea)",
@@ -38,8 +45,15 @@
       "required": false,
       "nullable": true
     },
+    "gitea_api_url": "str?",
+    "gitea_token": "str?",
     "repo_path": "str",
+    "repo_branch": "str",
     "addon_paths": ["str"],
-    "update_mode": "list(commit|push)"
+    "update_mode": "list(commit|push)",
+    "timeout": "int(60,3600)",
+    "log_level": "list(debug|info|warning|error)",
+    "validate_ssl": "bool",
+    "dry_run": "bool"
   }
 }
