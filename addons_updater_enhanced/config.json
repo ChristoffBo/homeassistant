@@ -14,82 +14,34 @@
   "map": ["config:rw", "backup:rw"],
   "options": {
     "repo_source": "github",
-    "enable_notifications": false,
-    "gotify_url": null,
-    "gotify_token": null,
-    "gitea_api_url": null,
-    "gitea_token": null,
+    "enable_notifications": "false",
+    "gotify_url": "",
+    "gotify_token": "",
+    "gitea_api_url": "",
+    "gitea_token": "",
     "repo_path": "/config/addons",
     "repo_branch": "main",
     "addon_paths": ["addons", "community"],
     "update_mode": "commit",
-    "timeout": 300,
+    "timeout": "300",
     "log_level": "info",
-    "validate_ssl": true,
-    "dry_run": false
+    "validate_ssl": "true",
+    "dry_run": "false"
   },
   "schema": {
-    "repo_source": {
-      "type": "list(github|gitea)",
-      "description": "Select repository source"
-    },
-    "enable_notifications": {
-      "type": "bool",
-      "default": false,
-      "description": "Enable notification system"
-    },
-    "gotify_url": {
-      "type": "str",
-      "nullable": true,
-      "description": "Gotify server URL"
-    },
-    "gotify_token": {
-      "type": "str",
-      "nullable": true,
-      "description": "Gotify application token"
-    },
-    "gitea_api_url": {
-      "type": "str",
-      "nullable": true,
-      "description": "Gitea instance API URL"
-    },
-    "gitea_token": {
-      "type": "str",
-      "nullable": true,
-      "description": "Gitea API access token"
-    },
-    "repo_path": {
-      "type": "str",
-      "description": "Local path to addons repository"
-    },
-    "repo_branch": {
-      "type": "str",
-      "description": "Git branch to monitor"
-    },
-    "addon_paths": {
-      "type": "list(str)",
-      "description": "List of addon paths to monitor"
-    },
-    "update_mode": {
-      "type": "list(commit|push)",
-      "description": "Update strategy to use"
-    },
-    "timeout": {
-      "type": "int",
-      "description": "Operation timeout in seconds",
-      "range": {"min": 60, "max": 3600}
-    },
-    "log_level": {
-      "type": "list(debug|info|warning|error)",
-      "description": "Logging verbosity level"
-    },
-    "validate_ssl": {
-      "type": "bool",
-      "description": "Verify SSL certificates"
-    },
-    "dry_run": {
-      "type": "bool",
-      "description": "Test mode (no changes made)"
-    }
+    "repo_source": "list(github|gitea)",
+    "enable_notifications": "bool",
+    "gotify_url": "str?",
+    "gotify_token": "str?",
+    "gitea_api_url": "str?",
+    "gitea_token": "str?",
+    "repo_path": "str",
+    "repo_branch": "str",
+    "addon_paths": ["str"],
+    "update_mode": "list(commit|push)",
+    "timeout": "int(60,3600)",
+    "log_level": "list(debug|info|warning|error)",
+    "validate_ssl": "bool",
+    "dry_run": "bool"
   }
 }
