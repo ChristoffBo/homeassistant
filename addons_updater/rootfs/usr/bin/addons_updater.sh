@@ -7,6 +7,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 LOG() {
@@ -17,6 +18,7 @@ LOG() {
     WARN) color=$YELLOW ;;
     ERROR) color=$RED ;;
     DRYRUN) color=$MAGENTA ;;
+    LIVE) color=$CYAN ;;
     *) color=$NC ;;
   esac
   printf "%b[%s]%b %s\n" "$color" "$level" "$NC" "$*"
@@ -35,7 +37,7 @@ DRY_RUN=$(jq -r '.dry_run // "true"' "$OPTIONS_FILE")
 GIT_USER=$(jq -r '.gituser // empty' "$OPTIONS_FILE")
 GIT_EMAIL=$(jq -r '.gitmail // empty' "$OPTIONS_FILE")
 REPOSITORY=$(jq -r '.repository // empty' "$OPTIONS_FILE")
-GIT_PROVIDER=$(jq -r '.git_provider // "github"' "$OPTIONS_FILE" | tr '[:upper:]' '[:lower:]') # github or gitea
+GIT_PROVIDER=$(jq -r '.git_provider // "github"' "$OPTIONS_FILE" | tr '[:upper:]' '[:lower:]')
 ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications // false' "$OPTIONS_FILE")
 GOTIFY_URL=$(jq -r '.gotify_url // empty' "$OPTIONS_FILE")
 GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$OPTIONS_FILE")
@@ -77,11 +79,8 @@ notify() {
   fi
 }
 
+# Simple semantic version compare (ignores "latest" as lowest)
 version_gt() {
-  # Compare semantic versions, ignoring "latest"
-  # Returns 0 if $1 > $2, 1 otherwise
-  # If either is "latest" treat as lowest possible version
-
   v1=$1
   v2=$2
 
@@ -92,17 +91,16 @@ version_gt() {
   [ "$highest" = "$v1" ] && [ "$v1" != "$v2" ]
 }
 
-# Fetch latest Docker tag skipping 'latest'
+# Fetch latest Docker tag (replace with real API)
 fetch_latest_tag() {
   local image=$1
-  # TODO: Replace with actual DockerHub or GHCR API calls
-
-  if [ "$image" = "gitea/gitea" ]; then
-    echo "v1.24.3"
-    return
-  fi
-  # Fallback:
-  echo "latest"
+  # Example hardcoded tags - replace with real API calls
+  case "$image" in
+    gitea/gitea) echo "1.24.3" ;;
+    linuxserver/heimdall) echo "2.4.0" ;;
+    linuxserver/metube) echo "1.5.2" ;;
+    *) echo "latest" ;;
+  esac
 }
 
 get_version_from_file() {
@@ -194,7 +192,7 @@ process_addons() {
       fi
     fi
 
-    # Map addon to image (replace with your actual mapping)
+    # Map addon to image (replace with your real mappings)
     image=""
     case "$addon" in
       gitea) image="gitea/gitea" ;;
@@ -204,15 +202,18 @@ process_addons() {
     esac
 
     latest_version=$(fetch_latest_tag "$image")
+
+    # If latest is "latest" fallback to current_version for display
+    display_latest_version="$latest_version"
     if [ "$latest_version" = "latest" ]; then
-      latest_version="$current_version"
+      display_latest_version="$current_version"
     fi
 
     if version_gt "$latest_version" "$current_version"; then
-      LOG INFO "$addon: Update available: $current_version -> $latest_version"
+      LOG INFO "$addon: Update available: $current_version -> $display_latest_version"
       if [ "$DRY_RUN" = "true" ]; then
-        LOG DRYRUN "$addon: Update simulated from $current_version to $latest_version"
-        MESSAGE_BODY="${MESSAGE_BODY}${addon}: Update simulated from $current_version to $latest_version\n"
+        LOG DRYRUN "$addon: Update simulated from $current_version to $display_latest_version"
+        MESSAGE_BODY="${MESSAGE_BODY}${addon}: Update simulated from $current_version to $display_latest_version\n"
       else
         update_version_in_file "$version_file" "$latest_version"
         ret=$?
@@ -228,24 +229,29 @@ process_addons() {
             git commit -m "Update $addon version to $latest_version"
             git push origin main
             LOG INFO "$addon: Changes pushed to remote."
-            MESSAGE_BODY="${MESSAGE_BODY}${addon}: Updated from $current_version to $latest_version\n"
+            MESSAGE_BODY="${MESSAGE_BODY}${addon}: Updated from $current_version to $display_latest_version\n"
           fi
         elif [ $ret -eq 2 ]; then
           LOG INFO "$addon: Version file already up to date."
-          MESSAGE_BODY="${MESSAGE_BODY}${addon}: Version file already up to date ($latest_version)\n"
+          MESSAGE_BODY="${MESSAGE_BODY}${addon}: Version file already up to date ($display_latest_version)\n"
         else
           LOG WARN "$addon: Failed to update version."
           MESSAGE_BODY="${MESSAGE_BODY}${addon}: Failed to update version.\n"
         fi
       fi
     else
-      LOG INFO "$addon: You are running the latest version: $current_version"
-      MESSAGE_BODY="${MESSAGE_BODY}${addon}: You are running the latest version: $current_version\n"
+      LOG INFO "$addon: You are running the latest version: $display_latest_version"
+      MESSAGE_BODY="${MESSAGE_BODY}${addon}: You are running the latest version: $display_latest_version\n"
     fi
   done
 
   # Send final notification with summary
-  MODE_MSG="Mode: $( [ "$DRY_RUN" = "true" ] && echo "Dry Run (no changes pushed)" || echo "Live (changes pushed)")"
+  if [ "$DRY_RUN" = "true" ]; then
+    MODE_MSG="${MAGENTA}Mode: Dry Run (no changes pushed)${NC}"
+  else
+    MODE_MSG="${CYAN}Mode: Live (changes pushed)${NC}"
+  fi
+
   notify "Addon Updater Result" "$MODE_MSG\n\n$MESSAGE_BODY"
 }
 
@@ -254,7 +260,7 @@ main() {
   if [ "$DRY_RUN" = "true" ]; then
     LOG DRYRUN "Dry run mode enabled. No changes will be pushed."
   else
-    LOG INFO "Live mode enabled. Changes will be pushed."
+    LOG LIVE "Live mode enabled. Changes will be pushed."
   fi
 
   prepare_repo
