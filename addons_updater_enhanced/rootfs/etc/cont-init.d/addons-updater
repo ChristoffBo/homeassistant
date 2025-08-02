@@ -1,19 +1,14 @@
 #!/usr/bin/with-contenv bash
 
-# Validate configuration exists
 CONFIG="/data/options.json"
-[[ ! -f "$CONFIG" ]] && {
-    echo "ERROR: Missing configuration file at ${CONFIG}" >&2
-    exit 1
-}
 
-# Parse configuration
+# Load config
 export REPO_SOURCE=$(jq -r '.repo_source' "$CONFIG")
-export ENABLE_GOTIFY=$(jq -r '.enable_gotify' "$CONFIG")
-export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG")
-export GOTIFY_TOKEN=$(jq -r '.gotify_token' "$CONFIG")
-export GITEA_API_URL=$(jq -r '.gitea_api_url' "$CONFIG")
-export GITEA_TOKEN=$(jq -r '.gitea_token' "$CONFIG")
+export ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications' "$CONFIG")
+export GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG")
+export GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' "$CONFIG")
+export GITEA_API_URL=$(jq -r '.gitea_api_url // empty' "$CONFIG")
+export GITEA_TOKEN=$(jq -r '.gitea_token // empty' "$CONFIG")
 export REPO_PATH=$(jq -r '.repo_path' "$CONFIG")
 export REPO_BRANCH=$(jq -r '.repo_branch' "$CONFIG")
 export UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG")
@@ -22,51 +17,29 @@ export LOG_LEVEL=$(jq -r '.log_level' "$CONFIG")
 export VALIDATE_SSL=$(jq -r '.validate_ssl' "$CONFIG")
 export TIMEOUT=$(jq -r '.timeout' "$CONFIG")
 
-# Validate required parameters
+# Validate repo source
 case "$REPO_SOURCE" in
-    github|gitea) ;;
-    *)
-        echo "ERROR: Invalid repo_source '${REPO_SOURCE}'. Must be 'github' or 'gitea'" >&2
-        exit 1
-        ;;
+  github|gitea) ;;
+  *)
+    echo "ERROR: Invalid repo_source '$REPO_SOURCE'" >&2
+    exit 1
+    ;;
 esac
 
-# Validate Gitea configuration if needed
-if [[ "$REPO_SOURCE" == "gitea" ]]; then
-    [[ -z "$GITEA_API_URL" ]] && {
-        echo "ERROR: gitea_api_url required when repo_source=gitea" >&2
-        exit 1
-    }
-    
-    [[ -z "$GITEA_TOKEN" ]] && {
-        echo "ERROR: gitea_token required when repo_source=gitea" >&2
-        exit 1
-    }
-fi
-
-# Validate Gotify configuration if enabled
-if [[ "$ENABLE_GOTIFY" == "true" ]]; then
-    [[ -z "$GOTIFY_URL" ]] && {
-        echo "ERROR: gotify_url required when enable_gotify=true" >&2
-        exit 1
-    }
-    
-    [[ -z "$GOTIFY_TOKEN" ]] && {
-        echo "ERROR: gotify_token required when enable_gotify=true" >&2
-        exit 1
-    }
-fi
-
-# Parse array parameters
-ADDON_PATHS=()
-while IFS= read -r path; do
-    ADDON_PATHS+=("$path")
-done < <(jq -r '.addon_paths[]' "$CONFIG")
-
-[[ ${#ADDON_PATHS[@]} -eq 0 ]] && {
-    echo "ERROR: No addon_paths specified" >&2
+# Validate Gitea if selected
+if [ "$REPO_SOURCE" = "gitea" ]; then
+  if [ -z "$GITEA_API_URL" ] || [ -z "$GITEA_TOKEN" ]; then
+    echo "ERROR: Gitea requires api_url and token" >&2
     exit 1
-}
+  fi
+fi
+
+# Only validate Gotify if enabled
+if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then
+  if [ -z "$GOTIFY_URL" ] || [ -z "$GOTIFY_TOKEN" ]; then
+    echo "WARNING: Notifications enabled but missing Gotify config" >&2
+  fi
+fi
 
 # Initialize log file
 touch /var/log/addons-updater.log
