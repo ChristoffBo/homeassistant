@@ -74,10 +74,25 @@ git_clone_or_pull() {
 }
 
 normalize_version() {
+  # Strip arch prefixes and leading 'v'
   echo "$1" | sed -E 's/^(amd64-|armhf-|armv7-|arm64v8-)//' | sed 's/^v//'
 }
 
+is_semver() {
+  # Returns 0 (true) if version matches semver-ish, else 1
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}(-[a-z0-9]+)?$ ]]
+}
+
 version_lt() {
+  # If either version is not semver, treat current < latest only if current is empty or not semver
+  if ! is_semver "$1" || ! is_semver "$2"; then
+    # Consider non-semver current version always less (force update)
+    if ! is_semver "$1"; then
+      return 0
+    else
+      return 1
+    fi
+  fi
   [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" != "$2" ]
 }
 
@@ -86,14 +101,18 @@ fetch_tags() {
   local tags_json
   local available_tags
 
+  # Replace {arch} placeholders with amd64 for tag fetch
+  docker_image="${docker_image//\{arch\}/amd64}"
+
   if [[ "$docker_image" =~ ^ghcr.io/ ]]; then
     local repo_path="${docker_image#ghcr.io/}"
+    # Remove arch suffix if present
     repo_path="${repo_path%-amd64}"
     local tags_url="https://ghcr.io/v2/${repo_path}/tags/list"
     debug_log "Fetching tags from GHCR: $tags_url"
     tags_json=$(curl -s "$tags_url" || echo "")
-    if [ -z "$tags_json" ]; then
-      warn "Failed to fetch tags from GHCR for $docker_image"
+    if [ -z "$tags_json" ] || ! echo "$tags_json" | jq -e '.' >/dev/null 2>&1; then
+      warn "Failed to fetch or parse tags from GHCR for $docker_image"
       echo ""
       return
     fi
@@ -104,8 +123,8 @@ fetch_tags() {
     local tags_url="https://registry.hub.docker.com/v2/repositories/linuxserver/${repo_path}/tags?page_size=100"
     debug_log "Fetching tags from LinuxServer.io: $tags_url"
     tags_json=$(curl -s "$tags_url" || echo "")
-    if [ -z "$tags_json" ]; then
-      warn "Failed to fetch tags from LinuxServer.io for $docker_image"
+    if [ -z "$tags_json" ] || ! echo "$tags_json" | jq -e '.' >/dev/null 2>&1; then
+      warn "Failed to fetch or parse tags from LinuxServer.io for $docker_image"
       echo ""
       return
     fi
@@ -118,8 +137,8 @@ fetch_tags() {
     local tags_url="https://registry.hub.docker.com/v2/repositories/${image_path}/tags?page_size=100"
     debug_log "Fetching tags from Docker Hub: $tags_url"
     tags_json=$(curl -s "$tags_url" || echo "")
-    if [ -z "$tags_json" ]; then
-      warn "Failed to fetch tags from Docker Hub for $docker_image"
+    if [ -z "$tags_json" ] || ! echo "$tags_json" | jq -e '.' >/dev/null 2>&1; then
+      warn "Failed to fetch or parse tags from Docker Hub for $docker_image"
       echo ""
       return
     fi
@@ -187,7 +206,6 @@ updates_msg="Add-on Update Summary\n"
 
 # Scan all top-level folders (ignore hidden and files)
 for addon_dir in */; do
-  # Ensure it is directory, ignore hidden
   [[ "$addon_dir" =~ ^\..* ]] && continue
   [ ! -d "$addon_dir" ] && continue
 
@@ -203,7 +221,6 @@ for addon_dir in */; do
     continue
   fi
 
-  # Find docker image from config/build/updater
   docker_image=$(jq -r '.image // empty' "$config_file")
   if [ -z "$docker_image" ] && [ -f "$build_file" ]; then
     docker_image=$(jq -r '.image // empty' "$build_file")
@@ -238,12 +255,14 @@ for addon_dir in */; do
     continue
   fi
 
+  # Filter tags to only semantic version-like tags, fallback to all tags
   filtered_tags=$(echo "$available_tags" | grep -vE '^latest$' | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-z0-9]+)?$' || true)
   if [ -z "$filtered_tags" ]; then
     filtered_tags="$available_tags"
   fi
 
   latest_version=""
+  latest_tag=""
   for tag in $filtered_tags; do
     norm_tag=$(normalize_version "$tag")
     if [ -z "$latest_version" ] || version_lt "$latest_version" "$norm_tag"; then
@@ -252,7 +271,7 @@ for addon_dir in */; do
     fi
   done
 
-  if [ -z "$latest_version" ]; then
+  if [ -z "$latest_tag" ]; then
     warn "Could not determine latest version tag for $docker_image"
     continue
   fi
@@ -268,11 +287,15 @@ for addon_dir in */; do
       info "Dry run enabled, skipping update for $addon_name"
     else
       now_ts=$(date +"%Y-%m-%d %H:%M:%S %Z")
-      jq --arg v "$latest_tag" --arg t "$now_ts" '.version = $v | .last_updated = $t' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
-
-      if [ -f "$config_file" ]; then
-        jq --arg v "$latest_tag" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+      # Update updater.json (create if missing)
+      if [ -f "$updater_file" ]; then
+        jq --arg v "$latest_tag" --arg t "$now_ts" '.version = $v | .last_updated = $t' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
+      else
+        echo "{\"version\":\"$latest_tag\",\"last_updated\":\"$now_ts\"}" > "$updater_file"
       fi
+
+      # Update config.json version field
+      jq --arg v "$latest_tag" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 
       info "Updated $addon_name to version $latest_tag"
       updates_found=$((updates_found + 1))
@@ -280,21 +303,4 @@ for addon_dir in */; do
     fi
   else
     info "Add-on $addon_name already up to date ($current_version)"
-    updates_msg+="✅ $addon_name: no update (current: $current_version)\n"
-  fi
-done
-
-if [ "$updates_found" -gt 0 ] && [ "$skip_push" != "true" ] && [ "$dry_run" != "true" ]; then
-  cd "$REPO_DIR"
-  git add .
-  git commit -m "Update add-on versions: $updates_found updates" || info "No changes to commit"
-  git push || warn "Failed to push changes"
-else
-  debug_log "No updates to push or skipping push/dry run"
-fi
-
-if [ "$notifications_enabled" = "true" ]; then
-  send_notification "Add-on Update Summary" "$updates_msg"
-fi
-
-success "Add-on update check complete."
+    updates_msg+="✅
