@@ -1,13 +1,12 @@
 #!/bin/sh
 set -e
 
-# Colors for logging
+# Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
-BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 LOG() {
@@ -26,13 +25,13 @@ LOG() {
 
 OPTIONS_FILE="/data/options.json"
 
-# Check jq availability
+# Check jq presence
 if ! command -v jq >/dev/null 2>&1; then
   LOG ERROR "jq is required but not installed."
   exit 1
 fi
 
-# Read options
+# Load options
 DRY_RUN=$(jq -r '.dry_run // "true"' "$OPTIONS_FILE")
 GIT_USER=$(jq -r '.gituser // empty' "$OPTIONS_FILE")
 GIT_EMAIL=$(jq -r '.gitmail // empty' "$OPTIONS_FILE")
@@ -49,7 +48,6 @@ fi
 
 CLONE_DIR="/data/$(basename "$REPOSITORY")"
 
-# Compose git clone URL based on provider
 if [ "$GIT_PROVIDER" = "gitea" ]; then
   GIT_CLONE_URL="https://gitea.example.com/$REPOSITORY.git"
 else
@@ -66,24 +64,25 @@ notify() {
   fi
 
   if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-    response=$(curl -s -w "%{http_code}" -o /dev/null -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
       -H "Content-Type: application/json" \
       -d "{\"title\":\"$title\", \"message\":\"$message\", \"priority\":5}")
-    if [ "$response" -eq 200 ]; then
+
+    if [ "$http_code" -eq 200 ]; then
       LOG INFO "Gotify notification sent."
     else
-      LOG WARN "Failed to send Gotify notification. HTTP status: $response"
+      LOG WARN "Failed to send Gotify notification. HTTP status: $http_code"
     fi
   else
-    LOG WARN "Gotify URL or token not set. Notification skipped."
+    LOG WARN "Gotify URL or token missing, skipping notification."
   fi
 }
 
-# Simple semantic version compare (ignores "latest" as lowest)
 version_gt() {
   v1=$1
   v2=$2
 
+  # Treat 'latest' as lowest version
   [ "$v1" = "latest" ] && return 1
   [ "$v2" = "latest" ] && return 0
 
@@ -91,14 +90,14 @@ version_gt() {
   [ "$highest" = "$v1" ] && [ "$v1" != "$v2" ]
 }
 
-# Fetch latest Docker tag (replace with real API)
 fetch_latest_tag() {
   local image=$1
-  # Example hardcoded tags - replace with real API calls
+  # Placeholder for actual tag fetching logic, update this for real API calls
   case "$image" in
     gitea/gitea) echo "1.24.3" ;;
     linuxserver/heimdall) echo "2.4.0" ;;
     linuxserver/metube) echo "1.5.2" ;;
+    linuxserver/gotify) echo "2.6.3" ;;
     *) echo "latest" ;;
   esac
 }
@@ -192,10 +191,10 @@ process_addons() {
       fi
     fi
 
-    # Map addon to image (replace with your real mappings)
     image=""
     case "$addon" in
       gitea) image="gitea/gitea" ;;
+      gotify) image="linuxserver/gotify" ;;
       heimdall) image="linuxserver/heimdall" ;;
       metube) image="linuxserver/metube" ;;
       *) image="library/$addon" ;;
@@ -203,10 +202,19 @@ process_addons() {
 
     latest_version=$(fetch_latest_tag "$image")
 
-    # If latest is "latest" fallback to current_version for display
+    # If latest is 'latest' fallback to current_version or 'unknown'
     display_latest_version="$latest_version"
-    if [ "$latest_version" = "latest" ]; then
-      display_latest_version="$current_version"
+    if [ "$latest_version" = "latest" ] || [ -z "$latest_version" ]; then
+      if [ -n "$current_version" ]; then
+        display_latest_version="$current_version"
+      else
+        display_latest_version="unknown"
+      fi
+    fi
+
+    # Fix current_version display fallback
+    if [ -z "$current_version" ]; then
+      current_version="unknown"
     fi
 
     if version_gt "$latest_version" "$current_version"; then
@@ -245,11 +253,10 @@ process_addons() {
     fi
   done
 
-  # Send final notification with summary
   if [ "$DRY_RUN" = "true" ]; then
-    MODE_MSG="${MAGENTA}Mode: Dry Run (no changes pushed)${NC}"
+    MODE_MSG="[DRYRUN] Mode: Dry Run (no changes pushed)"
   else
-    MODE_MSG="${CYAN}Mode: Live (changes pushed)${NC}"
+    MODE_MSG="[LIVE] Mode: Live (changes pushed)"
   fi
 
   notify "Addon Updater Result" "$MODE_MSG\n\n$MESSAGE_BODY"
