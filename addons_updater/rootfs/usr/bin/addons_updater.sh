@@ -11,7 +11,9 @@ DRY_RUN=$(jq -r '.dry_run' "$CONFIG_FILE")
 ENABLE_NOTIFICATIONS=$(jq -r '.enable_notifications' "$CONFIG_FILE")
 GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_FILE")
 GOTIFY_TOKEN=$(jq -r '.gotify_token' "$CONFIG_FILE")
-SUPERVISOR_TOKEN=$(jq -r '.SUPERVISOR_TOKEN' "$CONFIG_FILE" || echo $SUPERVISOR_TOKEN)
+
+# Supervisor token from environment (automatically injected by Home Assistant)
+SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 
 # Set log level
 if [ "$VERBOSE" = "true" ]; then
@@ -19,7 +21,15 @@ if [ "$VERBOSE" = "true" ]; then
 else
   LOG_LEVEL="INFO"
 fi
-sed -i "s/level=info/level=$LOG_LEVEL/g" /root/.logging
+
+# Handle logging configuration
+LOG_FILE="/root/.logging"
+if [ ! -f "$LOG_FILE" ]; then
+  echo "Creating logging configuration..."
+  echo "level=$LOG_LEVEL" > "$LOG_FILE"
+else
+  sed -i "s/level=.*/level=$LOG_LEVEL/g" "$LOG_FILE"
+fi
 
 # Configure Git
 git config --global user.name "$GIT_USER"
@@ -200,7 +210,14 @@ if [ "$UPDATED_COUNT" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
   # Trigger Home Assistant reload
   if [ -n "$SUPERVISOR_TOKEN" ]; then
     echo "Triggering Home Assistant reload..."
-    curl -s -o /dev/null -H "Authorization: Bearer $SUPERVISOR_TOKEN" -X POST http://supervisor/store/reload
+    curl -s -o /dev/null \
+      -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
+      -H "Content-Type: application/json" \
+      -X POST \
+      http://supervisor/store/reload
+    echo "Store reload triggered successfully"
+  else
+    echo "WARNING: Supervisor token not available, skipping reload"
   fi
 fi
 
