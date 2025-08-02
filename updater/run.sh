@@ -27,6 +27,15 @@ COLOR_CYAN="\033[0;36m"
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
 
+# ================
+# HELPERS
+# ================
+safe_jq() {
+  local expr="$1"
+  local file="$2"
+  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]\.\-_]+$' || echo "unknown"
+}
+
 read_config() {
   DRY_RUN=$(jq -r '.dry_run // false' "$CONFIG_PATH")
   DEBUG=$(jq -r '.debug // false' "$CONFIG_PATH")
@@ -149,11 +158,11 @@ update_addon() {
   local image version latest
 
   image=$(jq -r '.image // empty' "$config" 2>/dev/null)
-  version=$(jq -r '.version' "$config" 2>/dev/null | grep -E '^[[:alnum:]\.\-_]+$' || echo "unknown")
+  version=$(safe_jq '.version' "$config")
 
   if [[ -z "$image" && -f "$build" ]]; then
     image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build" 2>/dev/null)
-    version=$(jq -r '.version' "$build" 2>/dev/null | grep -E '^[[:alnum:]\.\-_]+$' || echo "unknown")
+    version=$(safe_jq '.version' "$build")
   fi
 
   [[ -z "$image" ]] && {
@@ -245,8 +254,7 @@ main() {
       status="❓ Unknown"
     fi
 
-    clean_status=$(echo "$status" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/\[[^][]*\]//g')
-    summary+="• $name: $clean_status\n"
+    summary+="• $name: $status\n"
   done
 
   [[ "$DRY_RUN" == "true" ]] && summary+="\n🔁 DRY RUN MODE ENABLED"
