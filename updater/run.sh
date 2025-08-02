@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# Fix $HOME for git (important in container)
 export HOME=/tmp
 
-# --------------------
-# Configuration
-# --------------------
 CONFIG_FILE="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 
-# Load config
 github_repo=$(jq -r '.github_repo // empty' "$CONFIG_FILE")
 github_username=$(jq -r '.github_username // empty' "$CONFIG_FILE")
 github_token=$(jq -r '.github_token // empty' "$CONFIG_FILE")
@@ -33,17 +28,13 @@ notify_on_success=$(jq -r '.notify_on_success // false' "$CONFIG_FILE")
 notify_on_error=$(jq -r '.notify_on_error // false' "$CONFIG_FILE")
 notify_on_updates=$(jq -r '.notify_on_updates // false' "$CONFIG_FILE")
 
-# Set TZ for logs
 export TZ="$timezone"
 
-# --------------------
-# Colors for logs
-# --------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 log() {
   local type="$1"
@@ -64,10 +55,6 @@ debug_log() {
   fi
 }
 
-# --------------------
-# Git functions
-# --------------------
-
 git_clone_or_pull() {
   if [ ! -d "$REPO_DIR/.git" ]; then
     info "Cloning repository..."
@@ -86,28 +73,20 @@ git_clone_or_pull() {
   fi
 }
 
-# --------------------
-# Docker tag fetching helpers
-# --------------------
-
-# Normalize version for comparison, remove arch prefixes like amd64-, armhf-, etc
 normalize_version() {
   echo "$1" | sed -E 's/^(amd64-|armhf-|armv7-|arm64v8-)//' | sed 's/^v//'
 }
 
-# Compare semantic versions (returns 0 if $1 < $2, else 1)
 version_lt() {
   [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" != "$2" ]
 }
 
-# Fetch tags for a Docker image based on registry
 fetch_tags() {
   local docker_image="$1"
   local tags_json
   local available_tags
 
   if [[ "$docker_image" =~ ^ghcr.io/ ]]; then
-    # GHCR
     local repo_path="${docker_image#ghcr.io/}"
     repo_path="${repo_path%-amd64}"
     local tags_url="https://ghcr.io/v2/${repo_path}/tags/list"
@@ -120,7 +99,6 @@ fetch_tags() {
     fi
     available_tags=$(echo "$tags_json" | jq -r '.tags[]?' || echo "")
   elif [[ "$docker_image" =~ ^lscr.io/ ]]; then
-    # LinuxServer.io
     local repo_path="${docker_image#lscr.io/}"
     repo_path="${repo_path%:*}"
     local tags_url="https://registry.hub.docker.com/v2/repositories/linuxserver/${repo_path}/tags?page_size=100"
@@ -133,7 +111,6 @@ fetch_tags() {
     fi
     available_tags=$(echo "$tags_json" | jq -r '.results[].name' || echo "")
   else
-    # Docker Hub (default for all other images including those with slashes)
     local image_path="${docker_image#docker.io/}"
     if [[ "$image_path" != */* ]]; then
       image_path="library/$image_path"
@@ -151,10 +128,6 @@ fetch_tags() {
 
   echo "$available_tags"
 }
-
-# --------------------
-# Notification functions
-# --------------------
 
 send_gotify_notification() {
   local title="$1"
@@ -180,17 +153,12 @@ send_gotify_notification() {
 send_notification() {
   local title="$1"
   local message="$2"
-  # Can be expanded later for Apprise, Mailrise, etc.
   if [ "$notification_service" = "gotify" ]; then
     send_gotify_notification "$title" "$message"
   else
     debug_log "Notification service $notification_service not implemented"
   fi
 }
-
-# --------------------
-# Main processing
-# --------------------
 
 info "🔁 Home Assistant Add-on Updater Starting"
 
@@ -214,29 +182,28 @@ info "Git pull completed."
 
 cd "$REPO_DIR"
 
-if [ ! -d addons ]; then
-  error "Addons directory not found at $REPO_DIR/addons"
-  exit 1
-fi
-
 updates_found=0
 updates_msg="Add-on Update Summary\n"
 
-# Loop all addons folders (ignore hidden and files)
-for addon_dir in addons/*/; do
-  addon_name=$(basename "$addon_dir")
+# Scan all top-level folders (ignore hidden and files)
+for addon_dir in */; do
+  # Ensure it is directory, ignore hidden
+  [[ "$addon_dir" =~ ^\..* ]] && continue
+  [ ! -d "$addon_dir" ] && continue
+
+  addon_name="${addon_dir%/}"
   info "Checking add-on: $addon_name"
 
-  config_file="$addon_dir/config.json"
-  build_file="$addon_dir/build.json"
-  updater_file="$addon_dir/updater.json"
+  config_file="$REPO_DIR/$addon_dir/config.json"
+  build_file="$REPO_DIR/$addon_dir/build.json"
+  updater_file="$REPO_DIR/$addon_dir/updater.json"
 
   if [ ! -f "$config_file" ]; then
     warn "Add-on $addon_name missing config.json, skipping."
     continue
   fi
 
-  # Load Docker image from config.json or build.json or updater.json
+  # Find docker image from config/build/updater
   docker_image=$(jq -r '.image // empty' "$config_file")
   if [ -z "$docker_image" ] && [ -f "$build_file" ]; then
     docker_image=$(jq -r '.image // empty' "$build_file")
@@ -250,7 +217,6 @@ for addon_dir in addons/*/; do
     continue
   fi
 
-  # Read current version from updater.json or fallback to config.json version or 'latest'
   current_version=""
   if [ -f "$updater_file" ]; then
     current_version=$(jq -r '.version // empty' "$updater_file")
@@ -265,7 +231,6 @@ for addon_dir in addons/*/; do
   debug_log "Current version: $current_version"
   debug_log "Docker image: $docker_image"
 
-  # Fetch tags for docker image
   available_tags=$(fetch_tags "$docker_image")
 
   if [ -z "$available_tags" ]; then
@@ -273,13 +238,11 @@ for addon_dir in addons/*/; do
     continue
   fi
 
-  # Filter tags: remove 'latest' and others that don't look like semver (simple)
   filtered_tags=$(echo "$available_tags" | grep -vE '^latest$' | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-z0-9]+)?$' || true)
   if [ -z "$filtered_tags" ]; then
-    filtered_tags="$available_tags" # fallback to all if none filtered
+    filtered_tags="$available_tags"
   fi
 
-  # Find latest tag by semantic version sort
   latest_version=""
   for tag in $filtered_tags; do
     norm_tag=$(normalize_version "$tag")
@@ -294,7 +257,6 @@ for addon_dir in addons/*/; do
     continue
   fi
 
-  # Compare current with latest
   norm_current=$(normalize_version "$current_version")
   debug_log "Latest available version: $latest_tag (normalized: $latest_version)"
   debug_log "Normalized current version: $norm_current"
@@ -305,11 +267,9 @@ for addon_dir in addons/*/; do
     if [ "$dry_run" = "true" ]; then
       info "Dry run enabled, skipping update for $addon_name"
     else
-      # Update updater.json with new version and timestamp
       now_ts=$(date +"%Y-%m-%d %H:%M:%S %Z")
       jq --arg v "$latest_tag" --arg t "$now_ts" '.version = $v | .last_updated = $t' "$updater_file" > "$updater_file.tmp" && mv "$updater_file.tmp" "$updater_file"
 
-      # Also update config.json version if exists
       if [ -f "$config_file" ]; then
         jq --arg v "$latest_tag" '.version = $v' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
       fi
@@ -324,7 +284,6 @@ for addon_dir in addons/*/; do
   fi
 done
 
-# Push changes if updates found and not skipping push or dry run
 if [ "$updates_found" -gt 0 ] && [ "$skip_push" != "true" ] && [ "$dry_run" != "true" ]; then
   cd "$REPO_DIR"
   git add .
@@ -334,7 +293,6 @@ else
   debug_log "No updates to push or skipping push/dry run"
 fi
 
-# Send notification always with summary
 if [ "$notifications_enabled" = "true" ]; then
   send_notification "Add-on Update Summary" "$updates_msg"
 fi
