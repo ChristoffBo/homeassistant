@@ -3,5 +3,5 @@
   "repository": "Christoffbo/homeassistant",
   "slug": "technitium-dns-dhcp",
   "upstream_repo": "technitium/dns-server",
-  "upstream_version": "13.6.0"
+  "upstream_version": ""
 }
