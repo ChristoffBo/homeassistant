@@ -26,6 +26,7 @@ COLOR_CYAN="\033[0;36m"
 # ======================
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
+declare -a SKIPPED_ADDONS
 
 safe_jq() {
   local expr="$1"
@@ -52,6 +53,8 @@ read_config() {
   NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" 2>/dev/null || echo "")
   NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" 2>/dev/null || echo "")
   SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+
+  SKIP_ADDONS=$(jq -r '.skip_addons // [] | join(",")' "$CONFIG_PATH" 2>/dev/null || echo "")
 
   GIT_AUTH_REPO="$GITHUB_REPO"
   if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
@@ -130,10 +133,19 @@ update_addon() {
   local addon_path="$1"
   local name=$(basename "$addon_path")
 
-  if [ "$name" = "updater" ] || [ "$name" = "heimdall" ]; then
-    log "$COLOR_YELLOW" "⏭️ Skipping $name (excluded)"
+  if [ "$name" = "updater" ]; then
+    log "$COLOR_YELLOW" "⏭️ Skipping updater (self)"
     return
   fi
+
+  IFS=',' read -ra SKIP_LIST <<< "$SKIP_ADDONS"
+  for skip in "${SKIP_LIST[@]}"; do
+    if [ "$name" = "$skip" ]; then
+      log "$COLOR_YELLOW" "⏭️ Skipping $name (in skip_addons)"
+      SKIPPED_ADDONS+=("$name")
+      return
+    fi
+  done
 
   log "$COLOR_DARK_BLUE" "🔍 Checking $name"
 
@@ -229,8 +241,10 @@ main() {
       status="🔄 ${UPDATED_ADDONS[$name]}"
     elif [ -n "${UNCHANGED_ADDONS[$name]}" ]; then
       status="✅ ${UNCHANGED_ADDONS[$name]}"
-    else
+    elif [[ " ${SKIPPED_ADDONS[*]} " =~ " $name " ]]; then
       status="⏭️ Skipped"
+    else
+      status="⏭️ Skipped (Unknown)"
     fi
 
     summary+="$name: $status
