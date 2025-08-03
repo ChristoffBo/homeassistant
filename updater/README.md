@@ -6,35 +6,33 @@ Automatically checks for updates to your custom add-ons, compares Docker image v
 
 ## ✅ Features
 
-- 🔍 Checks for new versions using **Docker Hub**, **GitHub Container Registry**, and **LinuxServer.io**
+- 🔍 Checks for new versions using Docker Hub, GitHub Container Registry (GHCR), and LinuxServer.io
 - 🧠 Detects version from `config.json`, `build.json`, or `updater.json`
-- 📝 Updates `version` fields in config/build files
-- 📦 Automatically commits changes to GitHub
-- 📢 Sends **Gotify** notifications for updates
+- 📝 Updates version fields in config/build files
+- 📦 Automatically commits changes to GitHub or Gitea
+- 📢 Sends Gotify notifications for updates
 - 📜 Color-coded logs and dry-run support
 - 🛑 One-time execution per run (no infinite loops)
 - 🌍 Timezone-aware timestamps
+- 🔁 Supports skipping specific add-ons via UI (`skip_addons`)
+- 🔀 Supports GitHub and Gitea as repo providers
 
 ---
 
 ## 📁 File Locations
 
-| File | Purpose |
-|------|---------|
-| `/data/options.json` | Add-on settings from Home Assistant UI |
-| `/data/homeassistant` | Cloned GitHub repo with your add-ons |
-| `/data/updater.log` | Output log file |
-| `/data/updater.lock` | Execution lock file |
+| File                     | Purpose                                |
+|--------------------------|----------------------------------------|
+| `/data/options.json`     | Add-on settings from Home Assistant UI |
+| `/data/homeassistant`    | Cloned repo with your add-ons          |
+| `/data/updater.log`      | Output log file                        |
 
 ---
 
-## ⚙️ Required Configuration (UI or `options.json`)
+## ⚙️ Configuration (`options.json` or UI)
 
-```json
+```
 {
-  "repository": "https://github.com/ChristoffBo/homeassistant",
-  "gituser": "ChristoffBo",
-  "gittoken": "ghp_YourGitHubTokenHere",
   "timezone": "Africa/Johannesburg",
   "dry_run": false,
   "skip_push": false,
@@ -47,7 +45,14 @@ Automatically checks for updates to your custom add-ons, compares Docker image v
   "notify_on_success": true,
   "notify_on_error": true,
   "notify_on_updates": true,
-  "cron": ""
+  "skip_addons": ["heimdall"],
+  "git_provider": "github",
+  "github_repository": "https://github.com/YourUser/homeassistant",
+  "github_username": "YourUser",
+  "github_token": "ghp_xxx",
+  "gitea_repository": "",
+  "gitea_username": "",
+  "gitea_token": ""
 }
 ```
 
@@ -55,7 +60,7 @@ Automatically checks for updates to your custom add-ons, compares Docker image v
 
 ## 🔔 Notification Example
 
-```text
+```
 📦 Add-on Update Summary
 🕒 2025-08-02 21:55:22 SAST
 
@@ -69,33 +74,35 @@ heimdall:           ⏭️ Skipped
 
 ## 🧪 Optional Modes
 
-- **Dry Run:** Set `dry_run: true` to simulate updates without changing files
-- **Skip Push:** Prevents `git push` after commit (useful for testing)
+- `dry_run: true` → Simulate updates, no file changes
+- `skip_push: true` → Skip pushing changes to remote Git
 
 ---
 
 ## 🚫 Skipped Add-ons
 
 - `updater` – Prevents self-modification
-- `heimdall` – Skipped due to tag issues
+- Add any add-on name to `skip_addons` in options to exclude
 
 ---
 
 ## 🚀 How It Works
 
 1. Reads config from `options.json`
-2. Clones your GitHub repo
-3. Loops through each add-on
-4. Detects latest tag
-5. Compares version and updates files if needed
-6. Commits & pushes to GitHub
-7. Sends summary via Gotify
+2. Clones the GitHub or Gitea repo
+3. Loops through each add-on directory
+4. Detects latest Docker tag
+5. Compares with current version
+6. If needed, updates version in `config.json` / `build.json`
+7. Commits and optionally pushes changes
+8. Sends update summary via Gotify
 
 ---
 
 ## 📎 Notes
 
-- Only explicit versioned tags are used (no `latest`)
-- Add-ons must have an `image` field in `config.json` or valid `build.json`
+- Only **versioned tags** are used (e.g. `v1.2.3`, no `latest`)
 - Tags like `dev`, `rc`, or `beta` are ignored
-- Script runs once and exits. Use cron or Home Assistant automation to schedule
+- Add-ons **must** have a valid image or build config
+- This add-on **runs once and exits**
+  - Use Home Assistant automation or cron to schedule it
