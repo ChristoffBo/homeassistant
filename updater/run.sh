@@ -26,41 +26,43 @@ safe_jq() {
 }
 
 read_config() {
-  DRY_RUN=$(jq -er '.dry_run // false' "$CONFIG_PATH" 2>/dev/null || echo "")
-  DEBUG=$(jq -er '.debug // false' "$CONFIG_PATH" 2>/dev/null || echo "")
-  TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH" 2>/dev/null || echo "")
+  DRY_RUN=$(jq -er '.dry_run // false' "$CONFIG_PATH" || echo "")
+  DEBUG=$(jq -er '.debug // false' "$CONFIG_PATH" || echo "")
+  TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH" || echo "")
   export TZ
 
-  NOTIFY_ENABLED=$(jq -er '.enable_notifications // false' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_SERVICE=$(jq -er '.notification_service // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_URL=$(jq -er '.notification_url // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_TOKEN=$(jq -er '.notification_token // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_TO=$(jq -er '.notification_to // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_SUCCESS=$(jq -er '.notify_on_success // false' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" 2>/dev/null || echo "")
-  NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" 2>/dev/null || echo "")
-  SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || echo "")
-  SKIP_ADDONS=$(jq -r '.skip_addons // [] | join(",")' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_ENABLED=$(jq -er '.enable_notifications // false' "$CONFIG_PATH" || echo "")
+  NOTIFY_SERVICE=$(jq -er '.notification_service // ""' "$CONFIG_PATH" || echo "")
+  NOTIFY_URL=$(jq -er '.notification_url // ""' "$CONFIG_PATH" || echo "")
+  NOTIFY_TOKEN=$(jq -er '.notification_token // ""' "$CONFIG_PATH" || echo "")
+  NOTIFY_TO=$(jq -er '.notification_to // ""' "$CONFIG_PATH" || echo "")
+  NOTIFY_SUCCESS=$(jq -er '.notify_on_success // false' "$CONFIG_PATH" || echo "")
+  NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" || echo "")
+  NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" || echo "")
+  SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" || echo "")
+  SKIP_ADDONS=$(jq -r '.skip_addons // [] | join(",")' "$CONFIG_PATH" || echo "")
 
-  # GitHub or Gitea selection
-  GH_ENABLED=$(jq -er '.git_sources.github.enabled // false' "$CONFIG_PATH")
-  GH_REPO=$(jq -er '.git_sources.github.repository // ""' "$CONFIG_PATH")
-  GH_USER=$(jq -er '.git_sources.github.username // ""' "$CONFIG_PATH")
-  GH_TOKEN=$(jq -er '.git_sources.github.token // ""' "$CONFIG_PATH")
+  GIT_PROVIDER=$(jq -er '.git_provider // "github"' "$CONFIG_PATH" || echo "")
 
-  GITEA_ENABLED=$(jq -er '.git_sources.gitea.enabled // false' "$CONFIG_PATH")
-  GITEA_REPO=$(jq -er '.git_sources.gitea.repository // ""' "$CONFIG_PATH")
-  GITEA_USER=$(jq -er '.git_sources.gitea.username // ""' "$CONFIG_PATH")
-  GITEA_TOKEN=$(jq -er '.git_sources.gitea.token // ""' "$CONFIG_PATH")
-
-  if [ "$GH_ENABLED" = "true" ]; then
-    GIT_REPO="${GH_REPO/https:\/\//https://$GH_USER:$GH_TOKEN@}"
-  elif [ "$GITEA_ENABLED" = "true" ]; then
-    GIT_REPO="${GITEA_REPO/https:\/\//https://$GITEA_USER:$GITEA_TOKEN@}"
+  if [ "$GIT_PROVIDER" = "github" ]; then
+    REPO=$(jq -er '.github_repository // ""' "$CONFIG_PATH" || echo "")
+    USER=$(jq -er '.github_username // ""' "$CONFIG_PATH" || echo "")
+    TOKEN=$(jq -er '.github_token // ""' "$CONFIG_PATH" || echo "")
+  elif [ "$GIT_PROVIDER" = "gitea" ]; then
+    REPO=$(jq -er '.gitea_repository // ""' "$CONFIG_PATH" || echo "")
+    USER=$(jq -er '.gitea_username // ""' "$CONFIG_PATH" || echo "")
+    TOKEN=$(jq -er '.gitea_token // ""' "$CONFIG_PATH" || echo "")
   else
-    echo "❌ No Git source enabled in options.json" >&2
+    echo "❌ Invalid git_provider value: $GIT_PROVIDER"
     exit 1
   fi
+
+  if [ -z "$REPO" ] || [ -z "$USER" ] || [ -z "$TOKEN" ]; then
+    echo "❌ Missing Git configuration for $GIT_PROVIDER"
+    exit 1
+  fi
+
+  GIT_REPO="${REPO/https:\/\//https://$USER:$TOKEN@}"
 }
 
 log() {
@@ -227,11 +229,8 @@ main() {
 
   commit_and_push
 
-  local summary="📦 Add-on Update Summary
-"
-  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
-
-"
+  local summary="📦 Add-on Update Summary\n"
+  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')\n\n"
 
   for path in "$REPO_DIR"/*; do
     [ ! -d "$path" ] && continue
@@ -248,12 +247,10 @@ main() {
       status="⏭️ Skipped (Unknown)"
     fi
 
-    summary+="$name: $status
-"
+    summary+="$name: $status\n"
   done
 
-  [ "$DRY_RUN" = "true" ] && summary+="
-🔁 DRY RUN MODE ENABLED"
+  [ "$DRY_RUN" = "true" ] && summary+="\n🔁 DRY RUN MODE ENABLED"
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
