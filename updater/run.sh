@@ -1,17 +1,11 @@
 #!/bin/bash
 set -eo pipefail
 
-# ======================
-# CONFIGURATION
-# ======================
 CONFIG_PATH="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 LOCK_FILE="/data/updater.lock"
 
-# ======================
-# COLOR DEFINITIONS
-# ======================
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
@@ -21,9 +15,6 @@ COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
 COLOR_CYAN="\033[0;36m"
 
-# ======================
-# GLOBAL VARIABLES
-# ======================
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
 declare -a SKIPPED_ADDONS
@@ -40,11 +31,7 @@ read_config() {
   TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH" 2>/dev/null || echo "")
   export TZ
 
-  GITHUB_REPO=$(jq -er '.repository // .github_repo // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
-  GITHUB_USERNAME=$(jq -er '.gituser // .github_username // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
-  GITHUB_TOKEN=$(jq -er '.gittoken // .github_token // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
-
-  NOTIFY_ENABLED=$(jq -er '.enable_notifications // .notifications_enabled // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_ENABLED=$(jq -er '.enable_notifications // false' "$CONFIG_PATH" 2>/dev/null || echo "")
   NOTIFY_SERVICE=$(jq -er '.notification_service // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
   NOTIFY_URL=$(jq -er '.notification_url // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
   NOTIFY_TOKEN=$(jq -er '.notification_token // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
@@ -53,12 +40,26 @@ read_config() {
   NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" 2>/dev/null || echo "")
   NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" 2>/dev/null || echo "")
   SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || echo "")
-
   SKIP_ADDONS=$(jq -r '.skip_addons // [] | join(",")' "$CONFIG_PATH" 2>/dev/null || echo "")
 
-  GIT_AUTH_REPO="$GITHUB_REPO"
-  if [ -n "$GITHUB_USERNAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    GIT_AUTH_REPO="${GITHUB_REPO/https:\/\//https://$GITHUB_USERNAME:$GITHUB_TOKEN@}"
+  # GitHub or Gitea selection
+  GH_ENABLED=$(jq -er '.git_sources.github.enabled // false' "$CONFIG_PATH")
+  GH_REPO=$(jq -er '.git_sources.github.repository // ""' "$CONFIG_PATH")
+  GH_USER=$(jq -er '.git_sources.github.username // ""' "$CONFIG_PATH")
+  GH_TOKEN=$(jq -er '.git_sources.github.token // ""' "$CONFIG_PATH")
+
+  GITEA_ENABLED=$(jq -er '.git_sources.gitea.enabled // false' "$CONFIG_PATH")
+  GITEA_REPO=$(jq -er '.git_sources.gitea.repository // ""' "$CONFIG_PATH")
+  GITEA_USER=$(jq -er '.git_sources.gitea.username // ""' "$CONFIG_PATH")
+  GITEA_TOKEN=$(jq -er '.git_sources.gitea.token // ""' "$CONFIG_PATH")
+
+  if [ "$GH_ENABLED" = "true" ]; then
+    GIT_REPO="${GH_REPO/https:\/\//https://$GH_USER:$GH_TOKEN@}"
+  elif [ "$GITEA_ENABLED" = "true" ]; then
+    GIT_REPO="${GITEA_REPO/https:\/\//https://$GITEA_USER:$GITEA_TOKEN@}"
+  else
+    echo "❌ No Git source enabled in options.json" >&2
+    exit 1
   fi
 }
 
@@ -201,7 +202,7 @@ commit_and_push() {
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
-    git push "$GIT_AUTH_REPO" main || log "$COLOR_RED" "❌ Git push failed"
+    git push "$GIT_REPO" main || log "$COLOR_RED" "❌ Git push failed"
   else
     log "$COLOR_CYAN" "ℹ️ No changes to commit"
   fi
@@ -214,7 +215,7 @@ main() {
 
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
 
-  git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
+  git clone --depth 1 "$GIT_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
     notify "Updater Error" "Git clone failed" 5
     exit 1
