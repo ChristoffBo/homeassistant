@@ -23,7 +23,7 @@
     "notify_on_success": true,
     "notify_on_error": true,
     "notify_on_updates": true,
-    "cron": ""
+    "skip_addons": ["heimdall"]
   },
   "schema": {
     "repository": "str",
@@ -41,7 +41,7 @@
     "notify_on_success": "bool",
     "notify_on_error": "bool",
     "notify_on_updates": "bool",
-    "cron": "str"
+    "skip_addons": ["str"]
   },
   "panel_icon": "mdi:update",
   "init": false
