@@ -50,20 +50,14 @@
     "notify_on_error": "bool",
     "notify_on_updates": "bool",
     "skip_addons": ["str"],
-    "git_sources": {
-      "github": {
-        "enabled": "bool",
-        "repository": "str",
-        "username": "str",
-        "token": "str"
-      },
-      "gitea": {
-        "enabled": "bool",
-        "repository": "str",
-        "username": "str",
-        "token": "str"
-      }
-    }
+    "git_sources.github.enabled": "bool",
+    "git_sources.github.repository": "str",
+    "git_sources.github.username": "str",
+    "git_sources.github.token": "str",
+    "git_sources.gitea.enabled": "bool",
+    "git_sources.gitea.repository": "str",
+    "git_sources.gitea.username": "str",
+    "git_sources.gitea.token": "str"
   },
   "panel_icon": "mdi:update",
   "init": false
