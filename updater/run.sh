@@ -1,11 +1,16 @@
 #!/bin/bash
 set -eo pipefail
 
+# ======================
+# CONFIGURATION
+# ======================
 CONFIG_PATH="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
-LOCK_FILE="/data/updater.lock"
 
+# ======================
+# COLOR DEFINITIONS
+# ======================
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
@@ -15,9 +20,12 @@ COLOR_RED="\033[0;31m"
 COLOR_PURPLE="\033[0;35m"
 COLOR_CYAN="\033[0;36m"
 
+# ======================
+# GLOBAL VARIABLES
+# ======================
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
-declare -a SKIPPED_ADDONS
+declare -a SKIP_LIST=()
 
 safe_jq() {
   local expr="$1"
@@ -26,43 +34,39 @@ safe_jq() {
 }
 
 read_config() {
-  DRY_RUN=$(jq -er '.dry_run // false' "$CONFIG_PATH" || echo "")
-  DEBUG=$(jq -er '.debug // false' "$CONFIG_PATH" || echo "")
-  TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH" || echo "")
+  TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH" 2>/dev/null || echo "")
   export TZ
 
-  NOTIFY_ENABLED=$(jq -er '.enable_notifications // false' "$CONFIG_PATH" || echo "")
-  NOTIFY_SERVICE=$(jq -er '.notification_service // ""' "$CONFIG_PATH" || echo "")
-  NOTIFY_URL=$(jq -er '.notification_url // ""' "$CONFIG_PATH" || echo "")
-  NOTIFY_TOKEN=$(jq -er '.notification_token // ""' "$CONFIG_PATH" || echo "")
-  NOTIFY_TO=$(jq -er '.notification_to // ""' "$CONFIG_PATH" || echo "")
-  NOTIFY_SUCCESS=$(jq -er '.notify_on_success // false' "$CONFIG_PATH" || echo "")
-  NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" || echo "")
-  NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" || echo "")
-  SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" || echo "")
-  SKIP_ADDONS=$(jq -r '.skip_addons // [] | join(",")' "$CONFIG_PATH" || echo "")
+  DRY_RUN=$(jq -er '.dry_run // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  DEBUG=$(jq -er '.debug // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  SKIP_LIST=($(jq -er '.skip_addons[]?' "$CONFIG_PATH" 2>/dev/null || echo ""))
 
-  GIT_PROVIDER=$(jq -er '.git_provider // "github"' "$CONFIG_PATH" || echo "")
+  NOTIFY_ENABLED=$(jq -er '.enable_notifications // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_SERVICE=$(jq -er '.notification_service // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_URL=$(jq -er '.notification_url // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_TOKEN=$(jq -er '.notification_token // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_TO=$(jq -er '.notification_to // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_SUCCESS=$(jq -er '.notify_on_success // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" 2>/dev/null || echo "")
 
-  if [ "$GIT_PROVIDER" = "github" ]; then
-    REPO=$(jq -er '.github_repository // ""' "$CONFIG_PATH" || echo "")
-    USER=$(jq -er '.github_username // ""' "$CONFIG_PATH" || echo "")
-    TOKEN=$(jq -er '.github_token // ""' "$CONFIG_PATH" || echo "")
-  elif [ "$GIT_PROVIDER" = "gitea" ]; then
-    REPO=$(jq -er '.gitea_repository // ""' "$CONFIG_PATH" || echo "")
-    USER=$(jq -er '.gitea_username // ""' "$CONFIG_PATH" || echo "")
-    TOKEN=$(jq -er '.gitea_token // ""' "$CONFIG_PATH" || echo "")
+  GIT_PROVIDER=$(jq -er '.git_provider // "github"' "$CONFIG_PATH" 2>/dev/null || echo "github")
+
+  if [ "$GIT_PROVIDER" = "gitea" ]; then
+    GIT_REPO=$(jq -er '.gitea_repository' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_USER=$(jq -er '.gitea_username' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_TOKEN=$(jq -er '.gitea_token' "$CONFIG_PATH" 2>/dev/null || echo "")
   else
-    echo "❌ Invalid git_provider value: $GIT_PROVIDER"
-    exit 1
+    GIT_REPO=$(jq -er '.github_repository' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_USER=$(jq -er '.github_username' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_TOKEN=$(jq -er '.github_token' "$CONFIG_PATH" 2>/dev/null || echo "")
   fi
 
-  if [ -z "$REPO" ] || [ -z "$USER" ] || [ -z "$TOKEN" ]; then
-    echo "❌ Missing Git configuration for $GIT_PROVIDER"
-    exit 1
+  GIT_AUTH_REPO="$GIT_REPO"
+  if [ -n "$GIT_USER" ] && [ -n "$GIT_TOKEN" ]; then
+    GIT_AUTH_REPO="${GIT_REPO/https:\/\//https://$GIT_USER:$GIT_TOKEN@}"
   fi
-
-  GIT_REPO="${REPO/https:\/\//https://$USER:$TOKEN@}"
 }
 
 log() {
@@ -136,18 +140,8 @@ update_addon() {
   local addon_path="$1"
   local name=$(basename "$addon_path")
 
-  if [ "$name" = "updater" ]; then
-    log "$COLOR_YELLOW" "⏭️ Skipping updater (self)"
-    return
-  fi
-
-  IFS=',' read -ra SKIP_LIST <<< "$SKIP_ADDONS"
   for skip in "${SKIP_LIST[@]}"; do
-    if [ "$name" = "$skip" ]; then
-      log "$COLOR_YELLOW" "⏭️ Skipping $name (in skip_addons)"
-      SKIPPED_ADDONS+=("$name")
-      return
-    fi
+    [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "⏭️ Skipping $name (listed)" && return
   done
 
   log "$COLOR_DARK_BLUE" "🔍 Checking $name"
@@ -204,7 +198,7 @@ commit_and_push() {
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
-    git push "$GIT_REPO" main || log "$COLOR_RED" "❌ Git push failed"
+    git push "$GIT_AUTH_REPO" main || log "$COLOR_RED" "❌ Git push failed"
   else
     log "$COLOR_CYAN" "ℹ️ No changes to commit"
   fi
@@ -217,7 +211,7 @@ main() {
 
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
 
-  git clone --depth 1 "$GIT_REPO" "$REPO_DIR" || {
+  git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
     notify "Updater Error" "Git clone failed" 5
     exit 1
@@ -229,8 +223,11 @@ main() {
 
   commit_and_push
 
-  local summary="📦 Add-on Update Summary\n"
-  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')\n\n"
+  local summary="📦 Add-on Update Summary
+"
+  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
+
+"
 
   for path in "$REPO_DIR"/*; do
     [ ! -d "$path" ] && continue
@@ -241,16 +238,16 @@ main() {
       status="🔄 ${UPDATED_ADDONS[$name]}"
     elif [ -n "${UNCHANGED_ADDONS[$name]}" ]; then
       status="✅ ${UNCHANGED_ADDONS[$name]}"
-    elif [[ " ${SKIPPED_ADDONS[*]} " =~ " $name " ]]; then
-      status="⏭️ Skipped"
     else
-      status="⏭️ Skipped (Unknown)"
+      status="⏭️ Skipped"
     fi
 
-    summary+="$name: $status\n"
+    summary+="$name: $status
+"
   done
 
-  [ "$DRY_RUN" = "true" ] && summary+="\n🔁 DRY RUN MODE ENABLED"
+  [ "$DRY_RUN" = "true" ] && summary+="
+🔁 DRY RUN MODE ENABLED"
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
