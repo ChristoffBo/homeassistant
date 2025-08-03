@@ -54,13 +54,13 @@ read_config() {
   GIT_PROVIDER=$(jq -er '.git_provider // "github"' "$CONFIG_PATH" 2>/dev/null || echo "github")
 
   if [ "$GIT_PROVIDER" = "gitea" ]; then
-    GIT_REPO=$(jq -er '.git_provider_gitea_repo' "$CONFIG_PATH" 2>/dev/null || echo "")
-    GIT_USER=$(jq -er '.git_provider_gitea_user' "$CONFIG_PATH" 2>/dev/null || echo "")
-    GIT_TOKEN=$(jq -er '.git_provider_gitea_token' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_REPO=$(jq -er '.gitea_repository' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_USER=$(jq -er '.gitea_username' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_TOKEN=$(jq -er '.gitea_token' "$CONFIG_PATH" 2>/dev/null || echo "")
   else
-    GIT_REPO=$(jq -er '.git_provider_github_repo' "$CONFIG_PATH" 2>/dev/null || echo "")
-    GIT_USER=$(jq -er '.git_provider_github_user' "$CONFIG_PATH" 2>/dev/null || echo "")
-    GIT_TOKEN=$(jq -er '.git_provider_github_token' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_REPO=$(jq -er '.github_repository' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_USER=$(jq -er '.github_username' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_TOKEN=$(jq -er '.github_token' "$CONFIG_PATH" 2>/dev/null || echo "")
   fi
 
   GIT_AUTH_REPO="$GIT_REPO"
