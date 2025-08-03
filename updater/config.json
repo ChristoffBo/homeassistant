@@ -8,6 +8,13 @@
   "startup": "services",
   "boot": "auto",
   "options": {
+    "git_provider": "github",
+    "github_repository": "https://github.com/ChristoffBo/homeassistant",
+    "github_username": "ChristoffBo",
+    "github_token": "",
+    "gitea_repository": "http://10.0.0.100:3001/youruser/homeassistant.git",
+    "gitea_username": "youruser",
+    "gitea_token": "",
     "timezone": "Africa/Johannesburg",
     "dry_run": false,
     "skip_push": false,
@@ -20,23 +27,16 @@
     "notify_on_success": true,
     "notify_on_error": true,
     "notify_on_updates": true,
-    "skip_addons": ["heimdall"],
-    "git_sources": {
-      "github": {
-        "enabled": true,
-        "repository": "https://github.com/ChristoffBo/homeassistant",
-        "username": "ChristoffBo",
-        "token": ""
-      },
-      "gitea": {
-        "enabled": false,
-        "repository": "http://10.0.0.100:3001/youruser/homeassistant.git",
-        "username": "youruser",
-        "token": ""
-      }
-    }
+    "skip_addons": ["heimdall"]
   },
   "schema": {
+    "git_provider": "str",
+    "github_repository": "str",
+    "github_username": "str",
+    "github_token": "str",
+    "gitea_repository": "str",
+    "gitea_username": "str",
+    "gitea_token": "str",
     "timezone": "str",
     "dry_run": "bool",
     "skip_push": "bool",
@@ -49,15 +49,7 @@
     "notify_on_success": "bool",
     "notify_on_error": "bool",
     "notify_on_updates": "bool",
-    "skip_addons": ["str"],
-    "git_sources.github.enabled": "bool",
-    "git_sources.github.repository": "str",
-    "git_sources.github.username": "str",
-    "git_sources.github.token": "str",
-    "git_sources.gitea.enabled": "bool",
-    "git_sources.gitea.repository": "str",
-    "git_sources.gitea.username": "str",
-    "git_sources.gitea.token": "str"
+    "skip_addons": ["str"]
   },
   "panel_icon": "mdi:update",
   "init": false
