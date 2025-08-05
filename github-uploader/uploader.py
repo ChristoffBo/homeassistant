@@ -1,6 +1,7 @@
 import os
 import json
 import zipfile
+import traceback
 from flask import Flask, request, send_from_directory, jsonify
 from github import Github
 from werkzeug.utils import secure_filename
@@ -94,12 +95,12 @@ def upload():
         return jsonify({"status": "success", "results": results}), 200
 
     except Exception as e:
-        import traceback
-        traceback_str = traceback.format_exc()
+        error_trace = traceback.format_exc()
+        print("EXCEPTION:", error_trace)
         return jsonify({
             "status": "error",
             "message": str(e),
-            "traceback": traceback_str
+            "traceback": error_trace
         }), 500
 
 if __name__ == "__main__":
