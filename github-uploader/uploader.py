@@ -42,7 +42,6 @@ def upload():
     zip_path = os.path.join(UPLOAD_FOLDER, filename)
     file.save(zip_path)
 
-    # Default folder = ZIP filename without .zip
     target_folder = request.form.get("folder") or os.path.splitext(filename)[0]
 
     if not token or not repo_name or not commit_msg or not filename:
