@@ -199,14 +199,21 @@ commit_and_push() {
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
     git push "$GIT_AUTH_REPO" main || log "$COLOR_RED" "❌ Git push failed"
+if [ "$SKIP_PUSH" = "true" ]; then
+      log "$COLOR_YELLOW" "🚫 Git push skipped (SKIP_PUSH=true)"
+    else
+      log "$COLOR_GREEN" "✅ Git push successful"
+    fi
   else
     log "$COLOR_CYAN" "ℹ️ No changes to commit"
   fi
 }
 
 # INSERTED FUNCTION: write_changelog
+  log "$COLOR_GREEN" "📝 CHANGELOG.md updated successfully"
 
-write_changelog() {
+write_changelog
+  log "$COLOR_GREEN" "📝 CHANGELOG.md updated successfully"() {
   local changelog="$REPO_DIR/CHANGELOG.md"
   local timestamp
   timestamp=$(date '+%Y-%m-%d %H:%M:%S %Z')
@@ -292,6 +299,7 @@ main() {
   [ "$DRY_RUN" = "true" ] && summary+="\n🔁 DRY RUN MODE ENABLED"
   notify "Add-on Updater" "$summary" 3
   write_changelog
+  log "$COLOR_GREEN" "📝 CHANGELOG.md updated successfully"
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
 
