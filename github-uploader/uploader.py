@@ -31,48 +31,52 @@ def js():
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    config = read_config()
+    try:
+        config = read_config()
 
-    token = request.form.get("token") or config.get("github_token", "")
-    repo_name = request.form.get("repo") or config.get("github_repo", "")
-    commit_msg = request.form.get("message")
+        token = request.form.get("token") or config.get("github_token", "")
+        repo_name = request.form.get("repo") or config.get("github_repo", "")
+        commit_msg = request.form.get("message")
 
-    file = request.files["zipfile"]
-    filename = secure_filename(file.filename)
-    zip_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(zip_path)
+        file = request.files["zipfile"]
+        filename = secure_filename(file.filename)
+        zip_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(zip_path)
 
-    target_folder = request.form.get("folder") or os.path.splitext(filename)[0]
+        target_folder = request.form.get("folder") or os.path.splitext(filename)[0]
 
-    if not token or not repo_name or not commit_msg or not filename:
-        return jsonify({"status": "error", "message": "Missing required fields"}), 400
+        if not token or not repo_name or not commit_msg or not filename:
+            return jsonify({"status": "error", "message": "Missing required fields"}), 400
 
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(UPLOAD_FOLDER)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(UPLOAD_FOLDER)
 
-    g = Github(token)
-    repo = g.get_repo(repo_name)
+        g = Github(token)
+        repo = g.get_repo(repo_name)
 
-    results = []
+        results = []
 
-    for root, _, files in os.walk(UPLOAD_FOLDER):
-        for name in files:
-            if name == filename:
-                continue
-            path = os.path.join(root, name)
-            rel_path = os.path.relpath(path, UPLOAD_FOLDER)
-            github_path = f"{target_folder}/{rel_path}".replace("\\", "/")
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            try:
-                contents = repo.get_contents(github_path)
-                repo.update_file(github_path, commit_msg, content, contents.sha)
-                results.append(f"✅ Updated: {github_path}")
-            except:
-                repo.create_file(github_path, commit_msg, content)
-                results.append(f"➕ Created: {github_path}")
+        for root, _, files in os.walk(UPLOAD_FOLDER):
+            for name in files:
+                if name == filename:
+                    continue
+                path = os.path.join(root, name)
+                rel_path = os.path.relpath(path, UPLOAD_FOLDER)
+                github_path = f"{target_folder}/{rel_path}".replace("\\", "/")
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                try:
+                    contents = repo.get_contents(github_path)
+                    repo.update_file(github_path, commit_msg, content, contents.sha)
+                    results.append(f"✅ Updated: {github_path}")
+                except:
+                    repo.create_file(github_path, commit_msg, content)
+                    results.append(f"➕ Created: {github_path}")
 
-    return jsonify({"status": "success", "results": results})
+        return jsonify({"status": "success", "results": results})
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.errorhandler(Exception)
 def handle_error(e):
