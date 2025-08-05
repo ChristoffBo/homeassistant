@@ -1,24 +1,33 @@
-document.getElementById("uploadForm").onsubmit = async function(event) {
-  event.preventDefault();
-
+window.addEventListener("DOMContentLoaded", function () {
   const form = document.getElementById("uploadForm");
-  const formData = new FormData(form);
+  const statusDiv = document.getElementById("status");
 
-  try {
-    const res = await fetch("/upload", {
-      method: "POST",
-      body: formData
-    });
-
-    const json = await res.json();
-
-    if (json.status === "success") {
-      const lines = json.results.join("\n");
-      document.getElementById("status").innerText = "✅ Upload complete:\n" + lines;
-    } else {
-      document.getElementById("status").innerText = "❌ Upload failed: " + json.message;
-    }
-  } catch (e) {
-    document.getElementById("status").innerText = "❌ Upload error: " + e.message;
+  if (!form) {
+    console.error("Upload form not found.");
+    return;
   }
-};
+
+  form.onsubmit = async function (event) {
+    event.preventDefault();
+
+    const formData = new FormData(form);
+    statusDiv.innerText = "⏳ Uploading...";
+
+    try {
+      const response = await fetch("/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      const result = await response.json();
+      if (result.status === "success") {
+        statusDiv.innerText = result.results.join("\n");
+      } else {
+        statusDiv.innerText = "❌ Upload failed: " + result.message;
+      }
+    } catch (err) {
+      console.error("Upload error:", err);
+      statusDiv.innerText = "❌ Upload error: " + err.message;
+    }
+  };
+});
