@@ -1,106 +1,77 @@
-/* ==== Base Reset ==== */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-/* ==== Background & Typography ==== */
 body {
-  background: linear-gradient(to right, #1a1f2b, #151922);
+  background-color: #121212;
   color: #e0e0e0;
-  font-family: "Segoe UI", Roboto, sans-serif;
-  font-size: 16px;
-  line-height: 1.6;
-  min-height: 100vh;
+  font-family: "Segoe UI", sans-serif;
   display: flex;
   justify-content: center;
-  align-items: start;
-  padding-top: 50px;
+  align-items: center;
+  height: 100vh;
+  margin: 0;
 }
 
-/* ==== Container ==== */
 .container {
-  background-color: #2a2f3c;
+  background-color: #1e1e1e;
+  border: 1px solid #333;
   border-radius: 12px;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
-  padding: 30px 40px;
-  width: 100%;
-  max-width: 600px;
+  padding: 30px;
+  width: 90%;
+  max-width: 480px;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.7);
 }
 
-/* ==== Heading ==== */
-.container h1 {
-  font-size: 1.8rem;
-  margin-bottom: 20px;
+h1 {
   text-align: center;
-  color: #ffffff;
+  margin-bottom: 24px;
+  color: #00bcd4;
 }
 
-/* ==== Labels ==== */
-label {
+form label {
   display: block;
-  margin-bottom: 8px;
+  margin-top: 16px;
   font-weight: bold;
-  color: #cccccc;
 }
 
-/* ==== Inputs ==== */
-input[type="file"],
-input[type="text"],
-input[type="password"],
-button {
+form input[type="text"],
+form input[type="password"],
+form input[type="file"] {
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid #444;
-  margin-bottom: 20px;
-  background-color: #1f2330;
-  color: #e0e0e0;
-  transition: border-color 0.3s ease, box-shadow 0.3s ease;
-}
-
-input:focus,
-button:focus {
-  outline: none;
-  border-color: #3a3af3;
-  box-shadow: 0 0 5px #3a3af3;
-}
-
-/* ==== Button ==== */
-button {
-  background-color: #3a3af3;
-  color: #ffffff;
-  font-weight: bold;
+  padding: 10px;
+  margin-top: 6px;
   border: none;
-  transition: background-color 0.3s ease;
+  border-radius: 6px;
+  background-color: #2e2e2e;
+  color: #e0e0e0;
+}
+
+form input[type="file"] {
+  padding: 4px;
+}
+
+button {
+  margin-top: 20px;
+  padding: 12px;
+  width: 100%;
+  background-color: #00bcd4;
+  border: none;
+  border-radius: 6px;
+  color: #121212;
+  font-size: 16px;
+  font-weight: bold;
   cursor: pointer;
+  transition: background-color 0.3s ease;
 }
 
 button:hover {
-  background-color: #2b2bdf;
+  background-color: #0097a7;
 }
 
-/* ==== Status Box ==== */
 #status {
-  margin-top: 15px;
-  padding: 15px;
-  background-color: #12151c;
-  border-left: 5px solid #3a3af3;
-  border-radius: 8px;
-  font-family: monospace;
+  margin-top: 24px;
   white-space: pre-wrap;
+  background-color: #212121;
+  padding: 12px;
+  border-radius: 6px;
   font-size: 14px;
-  color: #cccccc;
-}
-
-/* ==== Responsive ==== */
-@media (max-width: 600px) {
-  .container {
-    padding: 20px;
-  }
-
-  .container h1 {
-    font-size: 1.5rem;
-  }
+  max-height: 200px;
+  overflow-y: auto;
 }
