@@ -1,15 +1,106 @@
+/* ==== Base Reset ==== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ==== Background & Typography ==== */
 body {
-  background-color: #1e1e2f;
-  color: white;
-  font-family: sans-serif;
+  background: linear-gradient(to right, #1a1f2b, #151922);
+  color: #e0e0e0;
+  font-family: "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: start;
+  padding-top: 50px;
 }
+
+/* ==== Container ==== */
 .container {
-  max-width: 700px;
-  margin: auto;
-  padding: 2rem;
-}
-input, button {
+  background-color: #2a2f3c;
+  border-radius: 12px;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+  padding: 30px 40px;
   width: 100%;
-  margin-bottom: 1rem;
-  padding: 0.5rem;
-  background-color: #333
+  max-width: 600px;
+}
+
+/* ==== Heading ==== */
+.container h1 {
+  font-size: 1.8rem;
+  margin-bottom: 20px;
+  text-align: center;
+  color: #ffffff;
+}
+
+/* ==== Labels ==== */
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #cccccc;
+}
+
+/* ==== Inputs ==== */
+input[type="file"],
+input[type="text"],
+input[type="password"],
+button {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #444;
+  margin-bottom: 20px;
+  background-color: #1f2330;
+  color: #e0e0e0;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+input:focus,
+button:focus {
+  outline: none;
+  border-color: #3a3af3;
+  box-shadow: 0 0 5px #3a3af3;
+}
+
+/* ==== Button ==== */
+button {
+  background-color: #3a3af3;
+  color: #ffffff;
+  font-weight: bold;
+  border: none;
+  transition: background-color 0.3s ease;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #2b2bdf;
+}
+
+/* ==== Status Box ==== */
+#status {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: #12151c;
+  border-left: 5px solid #3a3af3;
+  border-radius: 8px;
+  font-family: monospace;
+  white-space: pre-wrap;
+  font-size: 14px;
+  color: #cccccc;
+}
+
+/* ==== Responsive ==== */
+@media (max-width: 600px) {
+  .container {
+    padding: 20px;
+  }
+
+  .container h1 {
+    font-size: 1.5rem;
+  }
+}
