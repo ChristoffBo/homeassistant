@@ -1,0 +1,26 @@
+{
+  "name": "GitHub Uploader",
+  "version": "1.0.0",
+  "slug": "github_uploader",
+  "description": "Upload ZIP files to GitHub with GUI",
+  "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+  "startup": "application",
+  "boot": "auto",
+  "ingress": true,
+  "ingress_port": 8080,
+  "panel_icon": "mdi:upload",
+  "panel_title": "GitHub Uploader",
+  "webui": "http://[HOST]:[PORT:8080]",
+  "options": {
+    "repo": "ChristoffBo/homeassistant",
+    "token": "ghp_yourtokenhere",
+    "folder": "",
+    "message": "Add files via GitHub Uploader"
+  },
+  "schema": {
+    "repo": "str",
+    "token": "str",
+    "folder": "str?",
+    "message": "str"
+  }
+}
