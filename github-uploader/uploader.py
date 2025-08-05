@@ -1,107 +1,91 @@
 import os
-import json
 import zipfile
-import traceback
-from flask import Flask, request, send_from_directory, jsonify
-from github import Github
-from werkzeug.utils import secure_filename
+import tempfile
+import requests
+from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__)
-UPLOAD_FOLDER = "/tmp/upload"
-OPTIONS_PATH = "/data/options.json"
+CONFIG_FILE = "/data/options.json"
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+def get_config_value(key, default=""):
+    try:
+        import json
+        with open(CONFIG_FILE, "r") as f:
+            config = json.load(f)
+        return config.get(key, default)
+    except Exception:
+        return default
 
-def read_config():
-    if os.path.exists(OPTIONS_PATH):
-        with open(OPTIONS_PATH) as f:
-            return json.load(f)
-    return {}
-
-@app.route('/')
+@app.route("/")
 def index():
-    return send_from_directory(os.getcwd(), 'index.html')
+    return send_from_directory(".", "index.html")
 
-@app.route('/style.css')
+@app.route("/style.css")
 def style():
-    return send_from_directory(os.getcwd(), 'style.css')
+    return send_from_directory(".", "style.css")
 
-@app.route('/app.js')
-def appjs():
-    return send_from_directory(os.getcwd(), 'app.js')
+@app.route("/app.js")
+def js():
+    return send_from_directory(".", "app.js")
 
-@app.route('/upload', methods=['POST'])
+@app.route("/upload", methods=["POST"])
 def upload():
     try:
-        config = read_config()
-        token = request.form.get("token") or config.get("github_token", "")
-        repo_name = request.form.get("repo") or config.get("github_repo", "")
-        commit_msg = request.form.get("message")
-        folder_override = request.form.get("folder")
+        token = request.form.get("token") or get_config_value("token")
+        repo = request.form.get("repo") or get_config_value("repo")
+        target_folder = request.form.get("folder", "").strip()
+        commit_message = request.form.get("message", "Add files")
 
-        if "zipfile" not in request.files:
-            return jsonify({"status": "error", "message": "No file uploaded"}), 400
+        if not token or not repo:
+            return jsonify({"status": "error", "message": "Token and repo required"}), 400
 
-        file = request.files["zipfile"]
-        filename = secure_filename(file.filename)
+        zip_file = request.files.get("zipfile")
+        if not zip_file:
+            return jsonify({"status": "error", "message": "No zip file uploaded"}), 400
 
-        if filename == "":
-            return jsonify({"status": "error", "message": "Filename is empty"}), 400
-        if not filename.lower().endswith(".zip"):
-            return jsonify({"status": "error", "message": "Only .zip files allowed"}), 400
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, "uploaded.zip")
+            zip_file.save(zip_path)
 
-        zip_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(zip_path)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(tmpdir)
 
-        target_folder = folder_override or os.path.splitext(filename)[0]
+            root_folder = os.path.splitext(zip_file.filename)[0]
+            upload_path = os.path.join(tmpdir, root_folder)
 
-        if not token or not repo_name or not commit_msg:
-            return jsonify({"status": "error", "message": "Missing token, repo or commit message"}), 400
+            if not os.path.exists(upload_path):
+                os.makedirs(upload_path)
 
-        extract_path = os.path.join(UPLOAD_FOLDER, "extract")
-        if os.path.exists(extract_path):
-            for root, dirs, files in os.walk(extract_path, topdown=False):
-                for name in files:
-                    os.remove(os.path.join(root, name))
-                for name in dirs:
-                    os.rmdir(os.path.join(root, name))
-        os.makedirs(extract_path, exist_ok=True)
+            results = []
 
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_path)
+            for root, _, files in os.walk(tmpdir):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    if full_path == zip_path:
+                        continue
+                    rel_path = os.path.relpath(full_path, tmpdir)
+                    github_path = f"{target_folder}/{rel_path}".replace("\\", "/").lstrip("/")
+                    with open(full_path, "rb") as f:
+                        content = f.read()
+                    res = requests.put(
+                        f"https://api.github.com/repos/{repo}/contents/{github_path}",
+                        headers={
+                            "Authorization": f"token {token}",
+                            "Accept": "application/vnd.github+json",
+                        },
+                        json={
+                            "message": commit_message,
+                            "content": content.encode("base64") if isinstance(content, str) else content.decode("latin1").encode("base64"),
+                        },
+                    )
+                    if res.status_code in (200, 201):
+                        results.append(f"Uploaded {github_path}")
+                    else:
+                        results.append(f"Failed {github_path}: {res.text}")
 
-        g = Github(token)
-        repo = g.get_repo(repo_name)
-
-        results = []
-
-        for root, _, files in os.walk(extract_path):
-            for name in files:
-                full_path = os.path.join(root, name)
-                rel_path = os.path.relpath(full_path, extract_path)
-                github_path = f"{target_folder}/{rel_path}".replace("\\", "/")
-
-                with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-
-                try:
-                    existing = repo.get_contents(github_path)
-                    repo.update_file(github_path, commit_msg, content, existing.sha)
-                    results.append(f"✅ Updated: {github_path}")
-                except Exception:
-                    repo.create_file(github_path, commit_msg, content)
-                    results.append(f"➕ Created: {github_path}")
-
-        return jsonify({"status": "success", "results": results}), 200
-
+        return jsonify({"status": "success", "results": results})
     except Exception as e:
-        error_trace = traceback.format_exc()
-        print("EXCEPTION:", error_trace)
-        return jsonify({
-            "status": "error",
-            "message": str(e),
-            "traceback": error_trace
-        }), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
