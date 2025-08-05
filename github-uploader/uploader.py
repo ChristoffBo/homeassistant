@@ -1,4 +1,5 @@
 import os
+import json
 from flask import Flask, request, send_from_directory, jsonify
 from github import Github
 from werkzeug.utils import secure_filename
@@ -6,7 +7,15 @@ import zipfile
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "/tmp/upload"
+OPTIONS_PATH = "/data/options.json"
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def read_config():
+    if os.path.exists(OPTIONS_PATH):
+        with open(OPTIONS_PATH) as f:
+            return json.load(f)
+    return {}
 
 @app.route('/')
 def index():
@@ -22,10 +31,15 @@ def js():
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    token = request.form.get("token")
-    repo_name = request.form.get("repo")
+    config = read_config()
+
+    token = request.form.get("token") or config.get("github_token", "")
+    repo_name = request.form.get("repo") or config.get("github_repo", "")
     target_folder = request.form.get("folder")
     commit_msg = request.form.get("message")
+
+    if not token or not repo_name or not target_folder or not commit_msg:
+        return jsonify({"status": "error", "message": "Missing required fields"}), 400
 
     file = request.files["zipfile"]
     filename = secure_filename(file.filename)
