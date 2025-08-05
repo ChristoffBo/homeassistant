@@ -87,13 +87,20 @@ def upload():
                     existing = repo.get_contents(github_path)
                     repo.update_file(github_path, commit_msg, content, existing.sha)
                     results.append(f"✅ Updated: {github_path}")
-                except:
+                except Exception:
                     repo.create_file(github_path, commit_msg, content)
                     results.append(f"➕ Created: {github_path}")
 
-        return jsonify({"status": "success", "results": results})
+        return jsonify({"status": "success", "results": results}), 200
+
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Exception: {str(e)}"}), 500
+        import traceback
+        traceback_str = traceback.format_exc()
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "traceback": traceback_str
+        }), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
