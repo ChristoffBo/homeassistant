@@ -10,11 +10,21 @@
   <div class="container">
     <h1>GitHub Uploader</h1>
     <form id="uploadForm" method="POST" enctype="multipart/form-data">
+      <label>ZIP File:</label>
       <input type="file" name="zipfile" accept=".zip" required /><br/>
-      <input type="password" name="token" placeholder="GitHub Token" required /><br/>
-      <input type="text" name="repo" placeholder="Repo (e.g. user/repo)" required /><br/>
-      <input type="text" name="folder" placeholder="Target Folder" required /><br/>
-      <input type="text" name="message" placeholder="Commit Message" required /><br/>
+
+      <label>GitHub Token:</label>
+      <input type="password" name="token" placeholder="GitHub Token" /><br/>
+
+      <label>Repository Name:</label>
+      <input type="text" name="repo" placeholder="e.g. ChristoffBo/homeassistant" /><br/>
+
+      <label>Target Folder:</label>
+      <input type="text" name="folder" placeholder="Optional (defaults to ZIP name)" /><br/>
+
+      <label>Commit Message:</label>
+      <input type="text" name="message" placeholder="Commit message" required /><br/>
+
       <button type="submit">Upload</button>
     </form>
     <div id="status"></div>
