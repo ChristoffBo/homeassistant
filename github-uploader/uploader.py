@@ -35,22 +35,26 @@ def upload():
 
     token = request.form.get("token") or config.get("github_token", "")
     repo_name = request.form.get("repo") or config.get("github_repo", "")
-    target_folder = request.form.get("folder")
     commit_msg = request.form.get("message")
-
-    if not token or not repo_name or not target_folder or not commit_msg:
-        return jsonify({"status": "error", "message": "Missing required fields"}), 400
 
     file = request.files["zipfile"]
     filename = secure_filename(file.filename)
     zip_path = os.path.join(UPLOAD_FOLDER, filename)
     file.save(zip_path)
 
+    # Default folder = ZIP filename without .zip
+    target_folder = request.form.get("folder") or os.path.splitext(filename)[0]
+
+    if not token or not repo_name or not commit_msg or not filename:
+        return jsonify({"status": "error", "message": "Missing required fields"}), 400
+
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(UPLOAD_FOLDER)
 
     g = Github(token)
     repo = g.get_repo(repo_name)
+
+    results = []
 
     for root, _, files in os.walk(UPLOAD_FOLDER):
         for name in files:
@@ -64,10 +68,12 @@ def upload():
             try:
                 contents = repo.get_contents(github_path)
                 repo.update_file(github_path, commit_msg, content, contents.sha)
+                results.append(f"✅ Updated: {github_path}")
             except:
                 repo.create_file(github_path, commit_msg, content)
+                results.append(f"➕ Created: {github_path}")
 
-    return jsonify({"status": "success"})
+    return jsonify({"status": "success", "results": results})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
