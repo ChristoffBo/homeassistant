@@ -44,7 +44,7 @@ def upload():
                 continue
             path = os.path.join(root, name)
             rel_path = os.path.relpath(path, UPLOAD_FOLDER)
-            github_path = f"{target_folder}/{rel_path}".replace("\", "/")
+            github_path = f"{target_folder}/{rel_path}".replace("\\", "/")
             with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             try:
