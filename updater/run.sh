@@ -65,19 +65,19 @@ read_config() {
 
   GIT_AUTH_REPO="$GIT_REPO"
   if [ -n "$GIT_USER" ] && [ -n "$GIT_TOKEN" ]; then
-    GIT_AUTH_REPO="${GIT_REPO/https:\/\//https://$GIT_USER:$GIT_TOKEN@}"
+    GIT_AUTH_REPO="{GIT_REPO/https:// /https://$GIT_USER:$GIT_TOKEN@}"
   fi
 }
 
 log() {
   local color="$1"; shift
-  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
+  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') {color}$*{COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
 notify() {
   local title="$1"
   local message="$2"
-  local priority="${3:-0}"
+  local priority="{3:-0}"
 
   [ "$NOTIFY_ENABLED" != "true" ] && return
   case "$priority" in
@@ -89,7 +89,7 @@ notify() {
   if [ "$NOTIFY_SERVICE" = "gotify" ]; then
     local payload
     payload=$(jq -n --arg t "$title" --arg m "$message" --argjson p "$priority" '{title: $t, message: $m, priority: $p}')
-    curl -s -X POST "${NOTIFY_URL%/}/message?token=${NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "$payload" > /dev/null || log "$COLOR_RED" "❌ Gotify notification failed"
+    curl -s -X POST "{NOTIFY_URL%/}/message?token={NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "$payload" > /dev/null || log "$COLOR_RED" "❌ Gotify notification failed"
   fi
 }
 
@@ -98,10 +98,10 @@ get_latest_tag() {
   [ -z "$image" ] && return
 
   local arch=$(uname -m)
-  arch=${arch//x86_64/amd64}
-  arch=${arch//aarch64/arm64}
-  image="${image//\{arch\}/$arch}"
-  local image_name="${image%%:*}"
+  arch={arch//x86_64/amd64}
+  arch={arch//aarch64/arm64}
+  image="{image//\{arch\}/$arch}"
+  local image_name="{image%%:*}"
   local cache_file="/tmp/tags_$(echo "$image_name" | tr '/' '_').txt"
 
   if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt 14400 ]; then
@@ -111,16 +111,16 @@ get_latest_tag() {
 
   local tags=""
   if echo "$image_name" | grep -q "^ghcr.io/"; then
-    local path="${image_name#ghcr.io/}"
-    local org_repo="${path%%/*}"
-    local package="${path#*/}"
+    local path="{image_name#ghcr.io/}"
+    local org_repo="{path%%/*}"
+    local package="{path#*/}"
     local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
     tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
   elif echo "$image_name" | grep -qE "^(linuxserver|lscr.io)/"; then
-    local name="${image_name##*/}"
+    local name="{image_name##*/}"
     tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
   else
-    local ns_repo="${image_name/library\//}"
+    local ns_repo="{image_name/library\//}"
     local page=1
     while :; do
       local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
@@ -204,6 +204,53 @@ commit_and_push() {
   fi
 }
 
+# INSERTED FUNCTION: write_changelog
+
+write_changelog() {
+  local changelog="$REPO_DIR/CHANGELOG.md"
+  local timestamp
+  timestamp=$(date '+%Y-%m-%d %H:%M:%S %Z')
+  local temp_log="/tmp/changelog_entries.tmp"
+
+  > "$temp_log"
+
+  for name in "${!UPDATED_ADDONS[@]}"; do
+    local path="$REPO_DIR/$name"
+    local config="$path/config.json"
+    local build="$path/build.json"
+    local image=""
+
+    if [ -f "$config" ]; then
+      image=$(jq -r '.image // empty' "$config")
+    fi
+    if [ -z "$image" ] && [ -f "$build" ]; then
+      image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build")
+    fi
+
+    local version_info="${UPDATED_ADDONS[$name]}"
+    {
+      echo "## $name"
+      echo "- Updated: $version_info"
+      echo "- Time: $timestamp"
+      echo "- Image: \`$image\`"
+      echo ""
+    } >> "$temp_log"
+  done
+
+  awk '/^## /{i++; if (i > 10) exit} {print}' "$temp_log" > "$temp_log.10"
+
+  {
+    echo "# 🔄 Home Assistant Add-on Changelog"
+    echo ""
+    echo "Generated: $timestamp"
+    echo ""
+    cat "$temp_log.10"
+  } > "$changelog"
+
+  rm -f "$temp_log" "$temp_log.10"
+}
+
+
 main() {
   echo "" > "$LOG_FILE"
   read_config
@@ -223,32 +270,28 @@ main() {
 
   commit_and_push
 
-  local summary="📦 Add-on Update Summary
-"
-  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
-
-"
+  local summary="📦 Add-on Update Summary\n"
+  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')\n\n"
 
   for path in "$REPO_DIR"/*; do
     [ ! -d "$path" ] && continue
     local name=$(basename "$path")
     local status=""
 
-    if [ -n "${UPDATED_ADDONS[$name]}" ]; then
-      status="🔄 ${UPDATED_ADDONS[$name]}"
-    elif [ -n "${UNCHANGED_ADDONS[$name]}" ]; then
-      status="✅ ${UNCHANGED_ADDONS[$name]}"
+    if [ -n "{UPDATED_ADDONS[$name]}" ]; then
+      status="🔄 {UPDATED_ADDONS[$name]}"
+    elif [ -n "{UNCHANGED_ADDONS[$name]}" ]; then
+      status="✅ {UNCHANGED_ADDONS[$name]}"
     else
       status="⏭️ Skipped"
     fi
 
-    summary+="$name: $status
-"
+    summary+="$name: $status\n"
   done
 
-  [ "$DRY_RUN" = "true" ] && summary+="
-🔁 DRY RUN MODE ENABLED"
+  [ "$DRY_RUN" = "true" ] && summary+="\n🔁 DRY RUN MODE ENABLED"
   notify "Add-on Updater" "$summary" 3
+  write_changelog
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
 
