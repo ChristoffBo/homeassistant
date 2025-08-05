@@ -3,84 +3,84 @@ import zipfile
 import tempfile
 import shutil
 import requests
-import json
 from flask import Flask, request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+UPLOAD_FOLDER = "/tmp/uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-CONFIG_PATH = "/data/options.json"
+@app.route("/", methods=["GET"])
+def serve_index():
+    return send_from_directory(".", "index.html")
 
-def read_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    return {}
+@app.route("/style.css", methods=["GET"])
+def serve_css():
+    return send_from_directory(".", "style.css")
 
-@app.route("/")
-def index():
-    return send_from_directory('.', 'index.html')
-
-@app.route("/style.css")
-def style():
-    return send_from_directory('.', 'style.css')
-
-@app.route("/app.js")
-def js():
-    return send_from_directory('.', 'app.js')
+@app.route("/app.js", methods=["GET"])
+def serve_js():
+    return send_from_directory(".", "app.js")
 
 @app.route("/upload", methods=["POST"])
-def upload():
-    config = read_config()
-    repo = request.form.get("repo") or config.get("repo")
-    token = request.form.get("token") or config.get("token")
-    commit_msg = request.form.get("message", "Upload via Web UI")
-    folder = request.form.get("folder")
-
+def upload_zip():
     zip_file = request.files.get("zipfile")
-    if not zip_file or not repo or not token:
-        return jsonify({"status": "error", "message": "Missing zip, repo, or token"}), 400
+    repo = request.form.get("repo", "").strip()
+    token = request.form.get("token", "").strip()
+    folder = request.form.get("folder", "").strip()
+    message = request.form.get("message", "Add files via uploader")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        zip_path = os.path.join(tmpdir, "upload.zip")
-        zip_file.save(zip_path)
+    if not all([zip_file, repo, token]):
+        return jsonify({"status": "error", "message": "Missing required fields"}), 400
 
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            extract_dir = os.path.join(tmpdir, os.path.splitext(zip_file.filename)[0])
-            zip_ref.extractall(extract_dir)
+    filename = secure_filename(zip_file.filename)
+    folder_name = os.path.splitext(filename)[0] if not folder else folder
+    extract_path = os.path.join(UPLOAD_FOLDER, folder_name)
 
-        created_files = []
-        for root, dirs, files in os.walk(extract_dir):
-            for file in files:
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, extract_dir)
-                github_path = os.path.join(folder or os.path.splitext(zip_file.filename)[0], rel_path).replace("\\", "/")
+    if os.path.exists(extract_path):
+        shutil.rmtree(extract_path)
+    os.makedirs(extract_path)
 
-                with open(full_path, "rb") as f:
-                    content = f.read()
-                encoded = content.encode("base64") if isinstance(content, str) else content.encode("base64") if hasattr(content, "encode") else content
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        zip_file.save(tmp.name)
+        with zipfile.ZipFile(tmp.name, 'r') as zip_ref:
+            zip_ref.extractall(extract_path)
 
-                url = f"https://api.github.com/repos/{repo}/contents/{github_path}"
-                headers = {
-                    "Authorization": f"token {token}",
-                    "Accept": "application/vnd.github+json"
-                }
-                get_resp = requests.get(url, headers=headers)
-                sha = get_resp.json().get("sha") if get_resp.status_code == 200 else None
+    results = []
+    for root, dirs, files in os.walk(extract_path):
+        for file in files:
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(full_path, extract_path)
+            github_path = f"{folder_name}/{rel_path}".replace("\\", "/")
+            with open(full_path, "rb") as f:
+                content = f.read()
+            res = upload_to_github(repo, token, github_path, content, message)
+            results.append(f"{github_path}: {res}")
 
-                data = {
-                    "message": commit_msg,
-                    "content": encoded.decode("utf-8"),
-                }
-                if sha:
-                    data["sha"] = sha
+    return jsonify({"status": "success", "results": results})
 
-                put_resp = requests.put(url, headers=headers, data=json.dumps(data))
-                if put_resp.status_code in [200, 201]:
-                    created_files.append(github_path)
-                else:
-                    return jsonify({"status": "error", "message": f"GitHub error on {github_path}: {put_resp.text}"}), 500
+def upload_to_github(repo, token, path, content, message):
+    api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    get_res = requests.get(api_url, headers=headers)
+    if get_res.status_code == 200:
+        sha = get_res.json()["sha"]
+    else:
+        sha = None
 
-    return jsonify({"status": "success", "results": created_files})
+    data = {
+        "message": message,
+        "content": content.encode("base64") if isinstance(content, str) else content.decode("latin1").encode("base64"),
+        "branch": "main",
+    }
+    if sha:
+        data["sha"] = sha
+
+    res = requests.put(api_url, headers=headers, json=data)
+    return "OK" if res.status_code in [200, 201] else f"Failed ({res.status_code})"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8085)
