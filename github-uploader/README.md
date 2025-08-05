@@ -1,58 +1,28 @@
 # GitHub Uploader Add-on for Home Assistant
 
-This Home Assistant add-on provides a secure, dark-mode web interface to upload `.zip` files directly to a GitHub repository.
+This Home Assistant add-on provides a secure, dark-mode web interface to upload `.zip` files directly into your GitHub repository — with automatic folder creation, overwrite support, and detailed results.
 
 ---
 
 ## 🧰 Features
 
-- Upload `.zip` files from browser (mobile or desktop)
-- Extracts and commits files to any GitHub repository
-- Customizable:
-  - GitHub Token
-  - Repository name (e.g., `ChristoffBo/homeassistant`)
-  - Target folder (e.g., `zerotier-controller-ui`)
-  - Commit message
-- Works via Home Assistant Ingress (no open ports needed)
-- 100% local and private
+- Upload `.zip` files via web GUI
+- Automatically extracts and uploads all contents
+- If a file exists, it is **updated**
+- If a file is new, it is **created**
+- Auto-generates folder name from ZIP filename if left blank
+- GitHub token and repository can be saved permanently
+- Real-time results shown after upload
+- Works over Ingress — secure and internal
 
 ---
 
-## 📦 Options (config.json schema)
+## 🧾 Options (Supervisor UI → Configuration)
 
-No user-configurable options via Supervisor UI. All settings are provided in the web form at runtime.
+You can store your token and repo for reuse:
 
----
-
-## 🌐 Web Interface Fields
-
-| Field             | Description                             |
-|------------------|-----------------------------------------|
-| ZIP File         | Upload `.zip` containing add-on files   |
-| GitHub Token     | PAT with `repo` scope                   |
-| Repository Name  | e.g., `ChristoffBo/homeassistant`       |
-| Target Folder    | Subfolder to commit files into          |
-| Commit Message   | Description for GitHub commit           |
-
----
-
-## 🔒 Security
-
-- GitHub token is never logged or stored on disk
-- File uploads are processed in memory and deleted after commit
-- HTTPS is enforced via Home Assistant ingress proxy
-
----
-
-## 🚀 How to Use
-
-1. Install the add-on via Supervisor
-2. Start it and open via Ingress
-3. Fill in the form and upload your `.zip`
-4. Click **Upload** — files are pushed to your GitHub repo
-
----
-
-## 📁 Repo Structure After Commit
-
-If you upload `zerotier-controller-ui.zip`, and set folder to `zerotier-controller-ui`, your GitHub repo will receive:
+```json
+{
+  "github_token": "ghp_xxx",
+  "github_repo": "ChristoffBo/homeassistant"
+}
