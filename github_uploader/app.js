@@ -14,7 +14,6 @@ form.addEventListener("submit", async (e) => {
     });
 
     const text = await res.text();
-
     try {
       const json = JSON.parse(text);
       if (json.status === "success") {
@@ -22,7 +21,7 @@ form.addEventListener("submit", async (e) => {
       } else {
         status.textContent = "Error:\n" + json.message;
       }
-    } catch {
+    } catch (parseErr) {
       status.textContent = "Invalid response format:\n" + text;
     }
   } catch (err) {
