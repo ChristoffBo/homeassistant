@@ -1,14 +1,14 @@
-FROM python:3.10-alpine
+FROM python:3.11-slim
 
-RUN apk add --no-cache bash git && \
-    pip install flask PyGithub
+WORKDIR /
 
-COPY run.sh /run.sh
-COPY uploader.py /uploader.py
-COPY index.html /index.html
-COPY style.css /style.css
-COPY app.js /app.js
+RUN pip install flask PyGithub
 
-RUN chmod +x /run.sh
+COPY uploader.py /
+COPY index.html /
+COPY style.css /
+COPY app.js /
 
-CMD ["/run.sh"]
+EXPOSE 8080
+
+CMD ["python3", "/uploader.py"]
