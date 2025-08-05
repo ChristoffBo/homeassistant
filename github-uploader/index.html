@@ -1,34 +1,64 @@
-<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html><html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GitHub Uploader</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div class="container">
     <h1>GitHub Uploader</h1>
     <form id="uploadForm" method="POST" enctype="multipart/form-data" action="/upload">
-      <label>ZIP File:</label>
-      <input type="file" name="zipfile" accept=".zip" required /><br/>
+      <label for="zipfile">Zip File</label>
+      <input type="file" name="zipfile" required /><label for="repo">GitHub Repo (e.g., ChristoffBo/homeassistant)</label>
+  <input type="text" name="repo" placeholder="ChristoffBo/homeassistant" />
 
-      <label>GitHub Token (optional):</label>
-      <input type="password" name="token" placeholder="GitHub Token" /><br/>
+  <label for="token">GitHub Token</label>
+  <input type="password" name="token" placeholder="ghp_xxx" />
 
-      <label>Repository Name (optional):</label>
-      <input type="text" name="repo" placeholder="e.g. ChristoffBo/homeassistant" /><br/>
+  <label for="folder">Target Folder (optional)</label>
+  <input type="text" name="folder" placeholder="zerotier-controller-ui" />
 
-      <label>Target Folder:</label>
-      <input type="text" name="folder" placeholder="Optional (defaults to ZIP name)" /><br/>
+  <label for="message">Commit Message</label>
+  <input type="text" name="message" placeholder="Update files" required />
 
-      <label>Commit Message:</label>
-      <input type="text" name="message" placeholder="Commit message" required /><br/>
+  <button type="submit">Upload</button>
+</form>
+<div id="status"></div>
 
-      <button type="submit">Upload</button>
-    </form>
-    <div id="status"></div>
   </div>
-  <script src="app.js"></script>
+  <script>
+    const form = document.getElementById("uploadForm");
+    const status = document.getElementById("status");form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  status.textContent = "Uploading...";
+
+  const data = new FormData(form);
+
+  try {
+    const res = await fetch("/upload", {
+      method: "POST",
+      body: data,
+    });
+
+    const text = await res.text();
+    console.log("Raw response:", text);
+
+    try {
+      const json = JSON.parse(text);
+      if (json.status === "success") {
+        status.textContent = "Upload complete:\n" + json.results.join("\n");
+      } else {
+        status.textContent = "Error:\n" + json.message;
+      }
+    } catch (parseErr) {
+      status.textContent = "Invalid response format:\n" + text;
+    }
+  } catch (err) {
+    status.textContent = "Upload failed:\n" + err.message;
+  }
+});
+
+  </script>
 </body>
 </html>
