@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en">
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,58 +8,60 @@
 </head>
 <body>
   <div class="container">
-    <h1>GitHub Uploader</h1>
+    <h1>📤 GitHub Uploader</h1>
     <form id="uploadForm" method="POST" enctype="multipart/form-data" action="/upload">
-      <label for="zipfile">Zip File</label>
-      <input type="file" name="zipfile" required /><label for="repo">GitHub Repo (e.g., ChristoffBo/homeassistant)</label>
-  <input type="text" name="repo" placeholder="ChristoffBo/homeassistant" />
+      <label for="zipfile">📦 Select Zip File</label>
+      <input type="file" name="zipfile" required />
 
-  <label for="token">GitHub Token</label>
-  <input type="password" name="token" placeholder="ghp_xxx" />
+      <label for="repo">📁 GitHub Repo <span class="hint">(e.g., ChristoffBo/homeassistant)</span></label>
+      <input type="text" name="repo" placeholder="ChristoffBo/homeassistant" />
 
-  <label for="folder">Target Folder (optional)</label>
-  <input type="text" name="folder" placeholder="zerotier-controller-ui" />
+      <label for="token">🔐 GitHub Token</label>
+      <input type="password" name="token" placeholder="ghp_xxx" />
 
-  <label for="message">Commit Message</label>
-  <input type="text" name="message" placeholder="Update files" required />
+      <label for="folder">📂 Target Folder (optional)</label>
+      <input type="text" name="folder" placeholder="zerotier-controller-ui" />
 
-  <button type="submit">Upload</button>
-</form>
-<div id="status"></div>
+      <label for="message">📝 Commit Message</label>
+      <input type="text" name="message" placeholder="Update files" required />
 
+      <button type="submit">🚀 Upload Now</button>
+    </form>
+    <div id="status"></div>
   </div>
   <script>
     const form = document.getElementById("uploadForm");
-    const status = document.getElementById("status");form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  status.textContent = "Uploading...";
+    const status = document.getElementById("status");
 
-  const data = new FormData(form);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      status.textContent = "⏳ Uploading...";
 
-  try {
-    const res = await fetch("/upload", {
-      method: "POST",
-      body: data,
-    });
+      const data = new FormData(form);
 
-    const text = await res.text();
-    console.log("Raw response:", text);
+      try {
+        const res = await fetch("/upload", {
+          method: "POST",
+          body: data,
+        });
 
-    try {
-      const json = JSON.parse(text);
-      if (json.status === "success") {
-        status.textContent = "Upload complete:\n" + json.results.join("\n");
-      } else {
-        status.textContent = "Error:\n" + json.message;
+        const text = await res.text();
+        console.log("Raw response:", text);
+
+        try {
+          const json = JSON.parse(text);
+          if (json.status === "success") {
+            status.textContent = "✅ Upload complete:\n" + json.results.join("\n");
+          } else {
+            status.textContent = "❌ Error:\n" + json.message;
+          }
+        } catch (parseErr) {
+          status.textContent = "⚠️ Invalid response format:\n" + text;
+        }
+      } catch (err) {
+        status.textContent = "❌ Upload failed:\n" + err.message;
       }
-    } catch (parseErr) {
-      status.textContent = "Invalid response format:\n" + text;
-    }
-  } catch (err) {
-    status.textContent = "Upload failed:\n" + err.message;
-  }
-});
-
+    });
   </script>
 </body>
 </html>
