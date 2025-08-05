@@ -37,16 +37,23 @@ def upload():
         token = request.form.get("token") or config.get("github_token", "")
         repo_name = request.form.get("repo") or config.get("github_repo", "")
         commit_msg = request.form.get("message")
+        folder_override = request.form.get("folder")
+
+        if "zipfile" not in request.files:
+            return jsonify({"status": "error", "message": "No file uploaded"}), 400
 
         file = request.files["zipfile"]
         filename = secure_filename(file.filename)
+        if not filename.lower().endswith(".zip"):
+            return jsonify({"status": "error", "message": "Only ZIP files are supported"}), 400
+
         zip_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(zip_path)
 
-        target_folder = request.form.get("folder") or os.path.splitext(filename)[0]
+        target_folder = folder_override or os.path.splitext(filename)[0]
 
-        if not token or not repo_name or not commit_msg or not filename:
-            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+        if not token or not repo_name or not commit_msg:
+            return jsonify({"status": "error", "message": "Missing token, repo or commit message"}), 400
 
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(UPLOAD_FOLDER)
@@ -63,8 +70,10 @@ def upload():
                 path = os.path.join(root, name)
                 rel_path = os.path.relpath(path, UPLOAD_FOLDER)
                 github_path = f"{target_folder}/{rel_path}".replace("\\", "/")
+
                 with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
+
                 try:
                     contents = repo.get_contents(github_path)
                     repo.update_file(github_path, commit_msg, content, contents.sha)
@@ -76,7 +85,7 @@ def upload():
         return jsonify({"status": "success", "results": results})
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": f"Unhandled exception: {str(e)}"}), 500
 
 @app.errorhandler(Exception)
 def handle_error(e):
