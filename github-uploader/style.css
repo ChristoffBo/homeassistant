@@ -4,19 +4,12 @@ body {
   font-family: sans-serif;
 }
 .container {
-  max-width: 600px;
+  max-width: 700px;
   margin: auto;
   padding: 2rem;
 }
 input, button {
   width: 100%;
-  margin: 0.5rem 0;
+  margin-bottom: 1rem;
   padding: 0.5rem;
-  border: none;
-  background: #333;
-  color: white;
-}
-button {
-  background: #3a3af3;
-  cursor: pointer;
-}
+  background-color: #333
