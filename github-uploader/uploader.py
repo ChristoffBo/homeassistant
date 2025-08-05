@@ -7,6 +7,7 @@ import zipfile
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "/tmp/upload"
+STATIC_FOLDER = "/"
 OPTIONS_PATH = "/data/options.json"
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -19,15 +20,15 @@ def read_config():
 
 @app.route('/')
 def index():
-    return send_from_directory('/', 'index.html')
+    return send_from_directory(STATIC_FOLDER, 'index.html')
 
 @app.route('/style.css')
 def css():
-    return send_from_directory('/', 'style.css')
+    return send_from_directory(STATIC_FOLDER, 'style.css')
 
 @app.route('/app.js')
 def js():
-    return send_from_directory('/', 'app.js')
+    return send_from_directory(STATIC_FOLDER, 'app.js')
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -86,13 +87,6 @@ def upload():
 
     except Exception as e:
         return jsonify({"status": "error", "message": f"Unhandled exception: {str(e)}"}), 500
-
-@app.errorhandler(Exception)
-def handle_error(e):
-    return jsonify({
-        "status": "error",
-        "message": str(e)
-    }), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
