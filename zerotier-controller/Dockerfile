@@ -1,34 +1,18 @@
 FROM ghcr.io/home-assistant/amd64-base:latest
 
-# Install build dependencies
-RUN apk add --no-cache \
-    nodejs \
-    npm \
-    git \
-    curl \
-    build-base \
-    linux-headers \
-    clang \
-    clang-dev \
-    libstdc++-dev \
-    openssl-dev
+# Install dependencies
+RUN apk add --no-cache nodejs npm git curl tar
 
-# Install Rust and Cargo
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && \
-    . $HOME/.cargo/env && \
-    rustc --version
+# Install ZeroTier One using pre-built binary
+RUN curl -sL https://github.com/zerotier/ZeroTierOne/releases/download/1.14.0/zerotier-one_1.14.0_x86_64.tar.gz -o /tmp/zerotier-one.tar.gz && \
+    tar -xzf /tmp/zerotier-one.tar.gz -C /usr/bin/ && \
+    mv /usr/bin/zerotier-one /usr/bin/zerotier-cli && \
+    ln -s /usr/bin/zerotier-cli /usr/bin/zerotier-one && \
+    rm /tmp/zerotier-one.tar.gz
 
 # Enable TUN module
 RUN echo "tun" >> /etc/modules && \
     modprobe tun || true
-
-# Compile ZeroTier One from source
-RUN git clone https://github.com/zerotier/ZeroTierOne.git /tmp/ZeroTierOne && \
-    cd /tmp/ZeroTierOne && \
-    make && \
-    make install && \
-    mv /usr/sbin/zerotier-* /usr/bin/ && \
-    rm -rf /tmp/ZeroTierOne
 
 # Install ZeroUI
 RUN git clone https://github.com/dec0dOS/zero-ui.git /app/zero-ui && \
