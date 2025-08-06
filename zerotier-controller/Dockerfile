@@ -11,16 +11,18 @@ RUN apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/v3.17/c
 RUN echo "tun" >> /etc/modules && \
     modprobe tun || true
 
-# Install ZeroUI
+# Install ZeroUI with legacy peer dependencies
 RUN git clone https://github.com/dec0dOS/zero-ui.git /app/zero-ui && \
     cd /app/zero-ui && \
-    npm install && \
+    npm install --legacy-peer-deps && \
     npm run build
 
 # Copy add-on files
 COPY run.sh /app/
 COPY init.sh /app/
 COPY zero-ui-config.yaml /app/zero-ui/config.yaml
+
+
 COPY www /app/zero-ui/www/
 
 # Set permissions
