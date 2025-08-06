@@ -9,4 +9,4 @@ zerotier-one -d
 
 # Serve static UI
 cd /app/www
-python3 -m http.server 80
+python3 -m http.server 8099
