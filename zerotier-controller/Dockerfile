@@ -1,32 +1,29 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+FROM debian:bullseye-slim
 
-# Add labels
 LABEL maintainer="ChristoffBo"
 LABEL org.opencontainers.image.source="https://github.com/ChristoffBo/homeassistant"
 
-# Set environment variables
-ENV LANG C.UTF-8
+ENV LANG=C.UTF-8
 
 # Install dependencies
 RUN apt-get update && \
-    apt-get install -y curl gnupg iproute2 iptables ca-certificates && \
+    apt-get install -y curl gnupg iproute2 iptables ca-certificates nodejs npm git && \
     curl -s https://install.zerotier.com | bash && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Expose common ZeroTier ports
+# Create working dir
+RUN mkdir -p /app
+
+# Copy all your source files
+COPY rootfs/ /
+
+# Permissions
+RUN chmod +x /run.sh /app/init.sh
+
+# Expose ZeroTier
 EXPOSE 9993/udp
 
-# Copy run script and set permissions
-COPY run.sh /run.sh
-RUN chmod a+x /run.sh
-
-# Use bash as shell
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-# Run as root
+# Run as root (ZeroTier needs net perms)
 USER root
 
-# Set default command
-CMD [ "/run.sh" ]
+CMD ["/run.sh"]
