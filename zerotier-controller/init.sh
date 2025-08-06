@@ -22,3 +22,8 @@ fi
 
 # Ensure ZeroUI config uses the token
 sed -i "s|ZT_TOKEN:.*|ZT_TOKEN: $CONTROLLER_TOKEN|" /app/zero-ui/config.yaml
+
+# Ensure ZeroTier CLI is accessible
+if [ ! -f /usr/bin/zerotier-cli ]; then
+    ln -s /usr/sbin/zerotier-one /usr/bin/zerotier-cli
+fi
