@@ -1,33 +1,23 @@
-FROM debian:bullseye-slim
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
 
-LABEL maintainer="ChristoffBo"
-LABEL org.opencontainers.image.source="https://github.com/ChristoffBo/homeassistant"
+# Install ZeroTier and Python
+RUN apk add --no-cache zerotier-one python3 py3-pip bash curl
 
-ENV LANG=C.UTF-8
+# Copy source files
+COPY run.sh /run.sh
+COPY app /app
+COPY www /www
 
-# Install dependencies and ZeroTier
-RUN apt-get update && \
-    apt-get install -y \
-        curl \
-        gnupg \
-        iproute2 \
-        iptables \
-        ca-certificates \
-        nodejs \
-        npm \
-        git \
-        jq \
-        openssl \
-        kmod \
-        python3 \
-    && curl -s https://install.zerotier.com | bash \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Permissions
+RUN chmod a+x /run.sh && \
+    mkdir -p /var/lib/zerotier-one && \
+    chown -R root:root /app /www
 
-# Set up workdir
-RUN mkdir -p /app
-COPY . /app/
-RUN chmod +x /app/run.sh /app/init.sh
+# Install Python backend dependencies
+RUN pip3 install flask flask_cors
 
-EXPOSE 9993/udp
-USER root
-CMD ["/app/run.sh"]
+# Expose ports
+EXPOSE 9993 8080
+
+CMD [ "/run.sh" ]
