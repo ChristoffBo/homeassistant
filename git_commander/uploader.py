@@ -67,46 +67,6 @@ def upload_zip():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/git', methods=['POST'])
-def run_git_command():
-    data = request.get_json()
-    if not data or 'command' not in data:
-        return jsonify({'error': 'Missing command'}), 400
-    command = data['command']
-    if not command.strip().startswith("git "):
-        return jsonify({'error': 'Only git commands allowed'}), 400
-    try:
-        result = subprocess.run(command.split(), cwd=REPO_CLONE_PATH, capture_output=True, text=True)
-        return jsonify({'stdout': result.stdout, 'stderr': result.stderr, 'returncode': result.returncode})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/backup', methods=['GET'])
-def backup_data():
-    try:
-        os.makedirs(os.path.dirname(BACKUP_PATH), exist_ok=True)
-        with tarfile.open(BACKUP_PATH, "w:gz") as tar:
-            tar.add(REPO_CLONE_PATH, arcname=os.path.basename(REPO_CLONE_PATH))
-        return send_file(BACKUP_PATH, as_attachment=True)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/restore', methods=['POST'])
-def restore_data():
-    if 'backupfile' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-    uploaded_file = request.files['backupfile']
-    temp_path = '/tmp/restore.tar.gz'
-    uploaded_file.save(temp_path)
-    try:
-        if os.path.exists(REPO_CLONE_PATH):
-            shutil.rmtree(REPO_CLONE_PATH)
-        with tarfile.open(temp_path, "r:gz") as tar:
-            tar.extractall(path=os.path.dirname(REPO_CLONE_PATH))
-        return jsonify({'success': 'Backup restored'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/config', methods=['GET'])
 def get_config():
     return jsonify({
