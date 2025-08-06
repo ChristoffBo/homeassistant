@@ -1,26 +1,27 @@
 {
-  "name": "ZeroTier Controller",
+  "name": "ZeroTier Controller UI",
   "version": "1.0.0",
-  "slug": "zerotier_controller",
-  "description": "Self-hosted ZeroTier controller with a professional dark-mode GUI",
-  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
+  "slug": "zerotier_controller_ui",
+  "description": "Self-hosted ZeroTier controller with a dark-mode web UI",
+  "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
   "boot": "auto",
   "ingress": true,
-  "ingress_port": 8099,
+  "ingress_port": 8080,
+  "ingress_stream": false,
+  "panel_icon": "mdi:lan",
+  "panel_title": "ZeroTier",
+  "map": ["config:rw", "ssl", "share:rw", "addons:rw", "backup:rw"],
   "host_network": true,
-  "privileged": ["NET_ADMIN", "SYS_MODULE"],
-  "panel_icon": "mdi:network",
+  "privileged": ["NET_ADMIN", "SYS_ADMIN"],
+  "full_access": false,
   "options": {
-    "admin_username": "admin",
-    "admin_password": "changeme123",
-    "controller_token": "",
-    "zerotier_port": 9993
+    "controller_port": 9993,
+    "webui_port": 8080
   },
   "schema": {
-    "admin_username": "str",
-    "admin_password": "str",
-    "controller_token": "str",
-    "zerotier_port": "int"
-  }
+    "controller_port": "int(1,65535)",
+    "webui_port": "int(1,65535)"
+  },
+  "image": "ghcr.io/christoffbo/zerotier-controller-ui-{arch}"
 }
