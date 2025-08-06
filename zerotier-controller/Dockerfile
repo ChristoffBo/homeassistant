@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Install base packages and tools
+# Install core utilities and Python
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
@@ -9,12 +9,16 @@ RUN apt-get update && \
         ca-certificates \
         python3 \
         python3-pip \
+        python3-flask \
+        python3-flask-cors \
         jq \
         bash
 
-# Add ZeroTier official APT repo
-RUN curl -s https://download.zerotier.com/contact%40zerotier.com.gpg | gpg --dearmor -o /usr/share/keyrings/zerotier-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/zerotier-archive-keyring.gpg] https://download.zerotier.com/debian/bookworm bookworm main" > /etc/apt/sources.list.d/zerotier.list
+# Add ZeroTier GPG key and repository
+RUN curl -s https://download.zerotier.com/contact%40zerotier.com.gpg | \
+    gpg --dearmor -o /usr/share/keyrings/zerotier-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/zerotier-archive-keyring.gpg] https://download.zerotier.com/debian/bookworm bookworm main" > \
+    /etc/apt/sources.list.d/zerotier.list
 
 # Install zerotier-one
 RUN apt-get update && \
@@ -22,19 +26,18 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy source files
+# Copy application files
 COPY run.sh /run.sh
 COPY app /app
 COPY www /www
 
-# Set permissions
+# Permissions and setup
 RUN chmod +x /run.sh && \
     mkdir -p /var/lib/zerotier-one && \
     chown -R root:root /app /www
 
-# Install Python dependencies
-RUN pip3 install flask flask_cors
-
+# Expose required ports
 EXPOSE 9993 8080
 
+# Start command
 CMD [ "/run.sh" ]
