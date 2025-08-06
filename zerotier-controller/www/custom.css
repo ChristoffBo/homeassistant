@@ -1,0 +1,43 @@
+body {
+    background-color: #121212;
+    color: #ffffff;
+    font-family: 'Arial', sans-serif;
+}
+
+.navbar {
+    background-color: #1e1e1e;
+    border-bottom: 1px solid #333;
+}
+
+.card, .modal-content {
+    background-color: #1e1e1e;
+    border: 1px solid #333;
+    color: #ffffff;
+}
+
+.btn-primary {
+    background-color: #6200ea;
+    border-color: #6200ea;
+}
+
+.btn-primary:hover {
+    background-color: #3700b3;
+    border-color: #3700b3;
+}
+
+.table {
+    background-color: #1e1e1e;
+    color: #ffffff;
+}
+
+.table th, .table td {
+    border-color: #333;
+}
+
+a {
+    color: #bb86fc;
+}
+
+a:hover {
+    color: #3700b3;
+}
