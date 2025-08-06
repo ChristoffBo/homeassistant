@@ -1,43 +1,32 @@
-FROM debian:bullseye-slim
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
+
+# Add labels
+LABEL maintainer="ChristoffBo"
+LABEL org.opencontainers.image.source="https://github.com/ChristoffBo/homeassistant"
+
+# Set environment variables
+ENV LANG C.UTF-8
 
 # Install dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        curl \
-        git \
-        tar \
-        bash \
-        jq \
-        ca-certificates \
-        nodejs \
-        npm && \
-    npm install -g yarn && \
+    apt-get install -y curl gnupg iproute2 iptables ca-certificates && \
+    curl -s https://install.zerotier.com | bash && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install ZeroTier One
-RUN curl -s https://install.zerotier.com | bash
+# Expose common ZeroTier ports
+EXPOSE 9993/udp
 
-# Enable TUN module
-RUN echo "tun" >> /etc/modules && \
-    modprobe tun || true
+# Copy run script and set permissions
+COPY run.sh /run.sh
+RUN chmod a+x /run.sh
 
-# Install ZeroUI with legacy peer dependencies
-RUN git clone https://github.com/dec0dOS/zero-ui.git /app/zero-ui && \
-    cd /app/zero-ui && \
-    npm install --legacy-peer-deps && \
-    npm run build
+# Use bash as shell
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Copy add-on files
-COPY run.sh /app/
-COPY init.sh /app/
-COPY zero-ui-config.yaml /app/zero-ui/config.yaml
-COPY www /app/zero-ui/www/
+# Run as root
+USER root
 
-# Set permissions
-RUN chmod a+x /app/run.sh /app/init.sh
-
-# Set working directory
-WORKDIR /app
-
-CMD ["/app/run.sh"]
+# Set default command
+CMD [ "/run.sh" ]
