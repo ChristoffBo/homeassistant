@@ -1,26 +1,48 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Git Commander</title>
-  <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <title>Git Commander</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="app">
-    <h1>Git Commander</h1>
-    <div id="tabs">
-      <button onclick="showTab('uploader')">Uploader</button>
-      <button onclick="showTab('toolkit')">Toolkit</button>
-      <button onclick="showTab('backup')">Backup</button>
-      <button onclick="showTab('settings')">Settings</button>
+    <div class="tabs">
+        <button class="tab-button" onclick="showTab('uploader')">Uploader</button>
+        <button class="tab-button" onclick="showTab('toolkit')">Git Toolkit</button>
+        <button class="tab-button" onclick="showTab('backup')">Backup/Restore</button>
     </div>
-    <div id="uploader" class="tab">Uploader tab here</div>
-    <div id="toolkit" class="tab">Toolkit tab here</div>
-    <div id="backup" class="tab">Backup tab here</div>
-    <div id="settings" class="tab">
-      <pre id="configOutput">Loading...</pre>
+
+    <div id="uploader" class="tab">
+        <h2>ZIP Upload</h2>
+        <input type="file" id="zipFile">
+        <button onclick="uploadZip()">Upload</button>
+
+        <h3>GitHub/Gitea Settings</h3>
+        <label>Token: <input id="git_token"></label>
+        <label>Remote URL: <input id="git_remote"></label>
+        <label>Author Name: <input id="git_author"></label>
+        <label>Email: <input id="git_email"></label>
+        <button onclick="pushToGit()">Push</button>
     </div>
-  </div>
-  <script src="app.js"></script>
+
+    <div id="toolkit" class="tab" style="display:none">
+        <h2>Git Commands</h2>
+        <button onclick="runCommand('status')">Status</button>
+        <button onclick="runCommand('pull')">Pull</button>
+        <button onclick="runCommand('reset')">Reset</button>
+        <button onclick="runCommand('stash')">Stash</button>
+        <input placeholder="Commit message" id="commitMsg">
+        <button onclick="commit()">Commit</button>
+        <pre id="gitOutput"></pre>
+    </div>
+
+    <div id="backup" class="tab" style="display:none">
+        <h2>Backup & Restore</h2>
+        <button onclick="downloadBackup()">Download Backup</button>
+        <input type="file" id="restoreFile">
+        <button onclick="uploadBackup()">Restore</button>
+    </div>
+
+    <script src="app.js"></script>
 </body>
 </html>
