@@ -8,42 +8,46 @@
 </head>
 <body>
   <div class="container">
-    <h1>Git Commander</h1>
+    <header>
+      <h1>Git Commander</h1>
+    </header>
 
-    <section class="config">
-      <h2>Git Configuration</h2>
-      <label>GitHub URL: <input type="text" id="github_url" /></label>
-      <label>GitHub Token: <input type="password" id="github_token" /></label>
-      <label>Gitea URL: <input type="text" id="gitea_url" /></label>
-      <label>Gitea Token: <input type="password" id="gitea_token" /></label>
-      <label>Repository Folder: <input type="text" id="repository" /></label>
-      <label>Commit Message: <input type="text" id="commit_message" value="Uploaded via Git Commander" /></label>
+    <section class="panel">
+      <h2>🛠 Git Configuration</h2>
+      <div class="grid">
+        <label>GitHub URL:<input type="text" id="github_url" /></label>
+        <label>GitHub Token:<input type="password" id="github_token" /></label>
+        <label>Gitea URL:<input type="text" id="gitea_url" /></label>
+        <label>Gitea Token:<input type="password" id="gitea_token" /></label>
+        <label>Repository Folder:<input type="text" id="repository" /></label>
+        <label>Commit Message:<input type="text" id="commit_message" value="Uploaded via Git Commander" /></label>
+      </div>
     </section>
 
-    <section class="upload">
-      <h2>Upload ZIP to Git</h2>
+    <section class="panel">
+      <h2>📦 Upload ZIP</h2>
       <input type="file" id="zipfile" />
-      <button onclick="uploadZip()">Upload ZIP</button>
+      <button onclick="uploadZip()">Upload ZIP to Repo</button>
     </section>
 
-    <section class="git-commands">
-      <h2>Git Commands</h2>
+    <section class="panel">
+      <h2>🔧 Git Commands</h2>
       <div class="buttons">
-        <button onclick="runGit('status')">🔍 Git Status</button>
-        <button onclick="runGit('pull')">⬇️ Git Pull</button>
-        <button onclick="runGit('push')">⬆️ Git Push</button>
-        <button onclick="runGit('stash')">📦 Git Stash</button>
-        <button onclick="runGit('reset --hard')">🧹 Reset (Hard)</button>
-        <button onclick="runGit('log --oneline')">📄 Git Log</button>
+        <button onclick="runGit('status')">🔍 Status</button>
+        <button onclick="runGit('pull')">⬇️ Pull</button>
+        <button onclick="runGit('push')">⬆️ Push</button>
+        <button onclick="runGit('stash')">📦 Stash</button>
+        <button onclick="runGit('reset --hard')">🧹 Reset Hard</button>
+        <button onclick="runGit('log --oneline')">📄 Log</button>
       </div>
       <pre id="git_output"></pre>
     </section>
 
-    <section class="backup">
-      <h2>Backup / Restore</h2>
-      <button onclick="downloadBackup()">⬇️ Download Backup</button><br><br>
+    <section class="panel">
+      <h2>🗂 Backup & Restore</h2>
+      <button onclick="downloadBackup()">⬇️ Download Backup</button>
       <input type="file" id="restore_file" />
-      <button onclick="uploadBackup()">♻️ Restore Backup</button>
+      <button onclick="uploadBackup()">♻️ Restore</button>
     </section>
   </div>
 
