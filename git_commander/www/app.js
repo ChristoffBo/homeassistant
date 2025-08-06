@@ -1,6 +1,6 @@
 async function uploadZip() {
   const file = document.getElementById("zipfile").files[0];
-  if (!file) return alert("Select a ZIP file.");
+  if (!file) return alert("Select a ZIP file to upload.");
 
   const formData = new FormData();
   formData.append("zipfile", file);
