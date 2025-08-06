@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:slim
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm
 FROM ${BUILD_FROM}
 
 # Install required packages
@@ -18,7 +18,7 @@ COPY run.sh /run.sh
 COPY app /app
 COPY www /www
 
-# Permissions
+# Set permissions
 RUN chmod +x /run.sh && \
     mkdir -p /var/lib/zerotier-one && \
     chown -R root:root /app /www
@@ -26,8 +26,8 @@ RUN chmod +x /run.sh && \
 # Install Python dependencies
 RUN pip3 install flask flask_cors
 
-# Expose controller and web ports
+# Expose controller and UI ports
 EXPOSE 9993 8080
 
-# Start script
+# Entrypoint
 CMD [ "/run.sh" ]
