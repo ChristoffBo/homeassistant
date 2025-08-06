@@ -1,11 +1,46 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Git Commander</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h1>Git Commander UI</h1>
+  <div class="container">
+    <h1>Git Commander</h1>
+
+    <section class="config">
+      <h2>Git Config</h2>
+      <label>GitHub URL: <input type="text" id="github_url" /></label>
+      <label>GitHub Token: <input type="password" id="github_token" /></label>
+      <label>Gitea URL: <input type="text" id="gitea_url" /></label>
+      <label>Gitea Token: <input type="password" id="gitea_token" /></label>
+      <label>Repository Folder: <input type="text" id="repository" /></label>
+      <label>Commit Message: <input type="text" id="commit_message" value="Uploaded via Git Commander" /></label>
+    </section>
+
+    <section class="upload">
+      <h2>Upload ZIP</h2>
+      <input type="file" id="zipfile" />
+      <button onclick="uploadZip()">Upload</button>
+    </section>
+
+    <section class="git-commands">
+      <h2>Git Commands</h2>
+      <input type="text" id="git_cmd" placeholder="e.g., git pull" />
+      <button onclick="runGitCommand()">Run</button>
+      <pre id="git_output"></pre>
+    </section>
+
+    <section class="backup">
+      <h2>Backup / Restore</h2>
+      <button onclick="downloadBackup()">Download Backup</button><br><br>
+      <input type="file" id="restore_file" />
+      <button onclick="uploadBackup()">Restore</button>
+    </section>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
