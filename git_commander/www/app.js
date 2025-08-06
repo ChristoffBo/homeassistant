@@ -1,25 +1,24 @@
 async function uploadZip() {
   const file = document.getElementById("zipfile").files[0];
-  if (!file) return alert("Select a ZIP file first.");
+  if (!file) return alert("Select a ZIP file.");
 
   const formData = new FormData();
   formData.append("zipfile", file);
 
   const res = await fetch("/upload", {
     method: "POST",
-    body: formData,
+    body: formData
   });
 
   const data = await res.json();
   alert(data.success || data.error);
 }
 
-async function runGitCommand() {
-  const cmd = document.getElementById("git_cmd").value;
+async function runGit(command) {
   const res = await fetch("/git", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: cmd }),
+    body: JSON.stringify({ command })
   });
 
   const data = await res.json();
@@ -40,14 +39,14 @@ async function downloadBackup() {
 
 async function uploadBackup() {
   const file = document.getElementById("restore_file").files[0];
-  if (!file) return alert("Choose a backup file first.");
+  if (!file) return alert("Choose a backup file.");
 
   const formData = new FormData();
   formData.append("backupfile", file);
 
   const res = await fetch("/restore", {
     method: "POST",
-    body: formData,
+    body: formData
   });
 
   const data = await res.json();
