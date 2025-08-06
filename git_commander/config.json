@@ -1,6 +1,6 @@
 {
   "name": "Git Commander",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "git_commander",
   "description": "Upload ZIPs, run git commands, and manage backups to GitHub/Gitea.",
   "startup": "application",
