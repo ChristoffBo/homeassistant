@@ -4,9 +4,15 @@ import tarfile
 import json
 from flask import Flask, request, send_from_directory, jsonify
 
-CONFIG_PATH = "/data/options.json"  # Home Assistant location
+CONFIG_PATH = "/data/options.json"
 
 app = Flask(__name__, static_folder='www', static_url_path='')
+
+
+@app.after_request
+def add_header(response):
+    response.cache_control.no_store = True
+    return response
 
 
 @app.route("/")
@@ -51,7 +57,6 @@ def upload_zip():
 
     subprocess.run(["unzip", "-o", zip_path, "-d", extract_dir], check=True)
 
-    # Git push logic would go here — not included for brevity
     return jsonify({"success": f"{file.filename} uploaded and extracted"})
 
 
@@ -77,7 +82,9 @@ def run_git():
             "stderr": result.stderr
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": f"Git error: {e.stderr if hasattr(e, 'stderr') else str(e)}"
+        }), 500
 
 
 @app.route("/backup", methods=["GET"])
