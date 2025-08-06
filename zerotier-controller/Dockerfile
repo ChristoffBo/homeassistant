@@ -1,14 +1,11 @@
 FROM ghcr.io/home-assistant/amd64-base:latest
 
 # Install dependencies
-RUN apk add --no-cache nodejs npm git curl tar
+RUN apk add --no-cache nodejs npm git curl tar bash
 
-# Install ZeroTier One using pre-built binary
-RUN curl -sL https://github.com/zerotier/ZeroTierOne/releases/download/1.14.0/zerotier-one_1.14.0_x86_64.tar.gz -o /tmp/zerotier-one.tar.gz && \
-    tar -xzf /tmp/zerotier-one.tar.gz -C /usr/bin/ && \
-    mv /usr/bin/zerotier-one /usr/bin/zerotier-cli && \
-    ln -s /usr/bin/zerotier-cli /usr/bin/zerotier-one && \
-    rm /tmp/zerotier-one.tar.gz
+# Install ZeroTier One
+RUN apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/v3.17/community zerotier-one && \
+    ln -s /usr/sbin/zerotier-one /usr/bin/zerotier-cli
 
 # Enable TUN module
 RUN echo "tun" >> /etc/modules && \
