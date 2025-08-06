@@ -10,6 +10,9 @@ mkdir -p "$ZT_DIR"
 # Symlink ZeroTier data to persistent storage
 ln -sf "$ZT_DIR" /var/lib/zerotier-one
 
+# Ensure TUN module is loaded
+modprobe tun || echo "TUN module not available, may require host configuration"
+
 # Generate controller token if not provided
 if [ -z "$CONTROLLER_TOKEN" ] || [ "$CONTROLLER_TOKEN" = "!secret zerotier_token" ]; then
     CONTROLLER_TOKEN=$(cat /var/lib/zerotier-one/authtoken.secret 2>/dev/null || echo "generated_token_$(openssl rand -hex 16)")
