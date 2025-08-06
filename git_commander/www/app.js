@@ -1,3 +1,15 @@
+window.onload = async () => {
+  const res = await fetch("/config");
+  const config = await res.json();
+
+  document.getElementById("github_url").value = config.github_url || "";
+  document.getElementById("github_token").value = config.github_token || "";
+  document.getElementById("gitea_url").value = config.gitea_url || "";
+  document.getElementById("gitea_token").value = config.gitea_token || "";
+  document.getElementById("repository").value = config.repository || "";
+  document.getElementById("commit_message").value = config.commit_message || "";
+};
+
 async function uploadZip() {
   const file = document.getElementById("zipfile").files[0];
   if (!file) return alert("Select a ZIP file to upload.");
@@ -52,12 +64,3 @@ async function uploadBackup() {
   const data = await res.json();
   alert(data.success || data.error);
 }
-
-window.onload = async () => {
-  const res = await fetch("/config");
-  const config = await res.json();
-
-  document.getElementById("github_url").value = config.github_url || "";
-  document.getElementById("gitea_url").value = config.gitea_url || "";
-  document.getElementById("repository").value = config.repository || "";
-};
