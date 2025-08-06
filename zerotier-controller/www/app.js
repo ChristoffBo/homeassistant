@@ -46,7 +46,7 @@ function leaveNetwork() {
     });
 }
 
-// Initial fetch
+// Initial fetch on load
 fetchAndDisplay("identity", "identity");
 fetchAndDisplay("status", "status");
 fetchAndDisplay("networks", "networks");
