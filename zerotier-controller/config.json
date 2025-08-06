@@ -1,0 +1,16 @@
+{
+  "name": "ZeroTier Controller",
+  "version": "1.0.0",
+  "slug": "zerotier_controller",
+  "description": "Self-hosted ZeroTier controller with a professional dark-mode GUI",
+  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
+  "startup": "application",
+  "boot": "auto",
+  "ingress": true,
+  "panel_icon": "mdi:network",
+  "port": "3000",
+  "admin_username": "admin",
+  "admin_password": "!secret zerotier_admin_password",
+  "controller_token": "!secret zerotier_token",
+  "zerotier_port": "9993"
+}
