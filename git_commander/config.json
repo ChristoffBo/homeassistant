@@ -1,0 +1,26 @@
+{
+  "name": "Git Commander",
+  "version": "1.0.0",
+  "slug": "git_commander",
+  "description": "Upload ZIPs to GitHub/Gitea, run Git commands, and back up your repo — all in one.",
+  "startup": "services",
+  "boot": "auto",
+  "panel_title": "Git Commander",
+  "panel_icon": "mdi:git",
+  "ingress": true,
+  "ingress_port": 8080,
+  "host_network": true,
+  "arch": ["aarch64", "amd64", "armv7", "i386"],
+  "options": {
+    "github_url": "",
+    "github_token": "",
+    "gitea_url": "",
+    "gitea_token": ""
+  },
+  "schema": {
+    "github_url": "str?",
+    "github_token": "str?",
+    "gitea_url": "str?",
+    "gitea_token": "str?"
+  }
+}
