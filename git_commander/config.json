@@ -1,6 +1,6 @@
 {
   "name": "Git Commander",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "slug": "git_commander",
   "description": "Upload ZIPs, run git commands, and manage backups to GitHub/Gitea.",
   "startup": "application",
@@ -10,6 +10,12 @@
   "ingress": true,
   "ingress_port": 8099,
   "host_network": true,
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7",
+    "i386"
+  ],
   "options": {
     "github_url": "",
     "github_token": "",
