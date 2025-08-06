@@ -1,0 +1,49 @@
+name: Git Commander
+version: 1.0.0
+slug: git_commander
+description: A Home Assistant add-on to upload ZIP files, manage Git repositories, and handle backups/restores with GitHub/Gitea integration.
+url: https://github.com/youruser/git-commander-addon
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: application
+boot: auto
+ports:
+  5000/tcp: 5000
+ports_description:
+  5000/tcp: Web UI for Git Commander
+options:
+  github_url: ""
+  github_token: ""
+  gitea_url: ""
+  gitea_token: ""
+  repository: "Uploads"
+  commit_message: "Uploaded via Git Commander"
+  branch_name: "main"
+  author_name: "Git Commander"
+  author_email: "git@example.com"
+  git_target: "github"
+  use_https: true
+schema:
+  github_url: str?
+  github_token: str?
+  gitea_url: str?
+  gitea_token: str?
+  repository: str
+  commit_message: str
+  branch_name: str
+  author_name: str
+  author_email: str
+  git_target: list(github|gitea)
+  use_https: bool
+map:
+  - share:rw
+  - ssl:ro
+homeassistant_api: false
+auth_api: false
+ingress: true
+panel_icon: mdi:git
+panel_title: Git Commander
