@@ -11,7 +11,7 @@ mkdir -p "$ZT_DIR"
 ln -sf "$ZT_DIR" /var/lib/zerotier-one
 
 # Ensure TUN module is loaded
-modprobe tun || echo "TUN module not available, may require host configuration"
+modprobe tun || echo "Warning: TUN module not loaded. Ensure it is enabled on the host."
 
 # Generate controller token if not provided
 if [ -z "$CONTROLLER_TOKEN" ] || [ "$CONTROLLER_TOKEN" = "!secret zerotier_token" ]; then
