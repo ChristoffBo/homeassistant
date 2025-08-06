@@ -1,12 +1,12 @@
 FROM python:3.11-slim
 
-WORKDIR /data
+WORKDIR /app
 
-COPY uploader.py /data/uploader.py
-COPY www /data/www
+COPY uploader.py /app/uploader.py
+COPY www /app/www
 
 RUN pip install flask
 
 EXPOSE 8099
 
-CMD ["python3", "/data/uploader.py"]
+CMD ["python3", "/app/uploader.py"]
