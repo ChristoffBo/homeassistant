@@ -3,6 +3,9 @@ FROM ghcr.io/home-assistant/amd64-base:latest
 # Install dependencies
 RUN apk add --no-cache nodejs npm git curl tar bash
 
+# Install yarn
+RUN npm install -g yarn
+
 # Install ZeroTier One
 RUN apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/v3.17/community zerotier-one && \
     ln -s /usr/sbin/zerotier-one /usr/bin/zerotier-cli
@@ -21,8 +24,6 @@ RUN git clone https://github.com/dec0dOS/zero-ui.git /app/zero-ui && \
 COPY run.sh /app/
 COPY init.sh /app/
 COPY zero-ui-config.yaml /app/zero-ui/config.yaml
-
-
 COPY www /app/zero-ui/www/
 
 # Set permissions
