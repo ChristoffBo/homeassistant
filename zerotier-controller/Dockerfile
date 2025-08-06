@@ -5,7 +5,7 @@ LABEL org.opencontainers.image.source="https://github.com/ChristoffBo/homeassist
 
 ENV LANG=C.UTF-8
 
-# Install required packages and ZeroTier
+# Install required tools and ZeroTier
 RUN apt-get update && \
     apt-get install -y \
         curl \
@@ -22,20 +22,20 @@ RUN apt-get update && \
     && curl -s https://install.zerotier.com | bash \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Create working dir
+# Create application directory
 RUN mkdir -p /app
 
-# Copy all files from local context to container
+# Copy all local files into container
 COPY . /app/
 
-# Set permission on scripts
-RUN chmod +x /app/init.sh /app/run.sh
+# Set script permissions
+RUN chmod +x /app/run.sh /app/init.sh
 
 # Expose ZeroTier UDP port
 EXPOSE 9993/udp
 
-# Use root (ZeroTier requires NET_ADMIN and module loading)
+# Run as root
 USER root
 
-# Entry point
+# Start command
 CMD ["/app/run.sh"]
