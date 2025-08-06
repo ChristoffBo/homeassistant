@@ -11,3 +11,4 @@ RUN pip install flask
 EXPOSE 8099
 
 CMD ["python3", "/app/uploader.py"]
+
