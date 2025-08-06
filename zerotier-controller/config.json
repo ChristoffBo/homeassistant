@@ -7,7 +7,7 @@
   "startup": "application",
   "boot": "auto",
   "ingress": true,
-  "ingress_port": 80,
+  "ingress_port": 8099,
   "host_network": true,
   "privileged": ["NET_ADMIN", "SYS_MODULE"],
   "panel_icon": "mdi:network",
