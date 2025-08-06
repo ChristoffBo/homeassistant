@@ -19,23 +19,24 @@ RUN apt-get update && \
         jq \
         openssl \
         kmod \
+        python3 \
     && curl -s https://install.zerotier.com | bash \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create application directory
 RUN mkdir -p /app
 
-# Copy all local files into container
+# Copy everything into container
 COPY . /app/
 
-# Set script permissions
+# Make scripts executable
 RUN chmod +x /app/run.sh /app/init.sh
 
 # Expose ZeroTier UDP port
 EXPOSE 9993/udp
 
-# Run as root
+# Run as root (HA requires this for NET_ADMIN, etc.)
 USER root
 
-# Start command
+# Start script
 CMD ["/app/run.sh"]
