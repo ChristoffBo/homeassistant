@@ -1,0 +1,7 @@
+{
+  "build_from": {
+    "amd64": "ghcr.io/hassio-addons/debian-base:slim",
+    "aarch64": "ghcr.io/hassio-addons/debian-base:slim",
+    "armv7": "ghcr.io/hassio-addons/debian-base:slim"
+  }
+}
