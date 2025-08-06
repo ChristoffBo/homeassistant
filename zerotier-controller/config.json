@@ -7,10 +7,19 @@
   "startup": "application",
   "boot": "auto",
   "ingress": true,
+  "host_network": true,
+  "privileged": ["NET_ADMIN", "SYS_MODULE"],
   "panel_icon": "mdi:network",
-  "port": "3000",
-  "admin_username": "admin",
-  "admin_password": "!secret zerotier_admin_password",
-  "controller_token": "!secret zerotier_token",
-  "zerotier_port": "9993"
+  "options": {
+    "admin_username": "admin",
+    "admin_password": "!secret zerotier_admin_password",
+    "controller_token": "!secret zerotier_token",
+    "zerotier_port": 9993
+  },
+  "schema": {
+    "admin_username": "str",
+    "admin_password": "str",
+    "controller_token": "str",
+    "zerotier_port": "int"
+  }
 }
