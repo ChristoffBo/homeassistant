@@ -10,23 +10,25 @@
   <div class="container">
     <h1>Git Commander</h1>
 
-    <section>
-      <h2>GitHub / Gitea Configuration</h2>
-      <label>GitHub URL: <input type="text" id="github_url" /></label>
-      <label>GitHub Token: <input type="password" id="github_token" /></label>
-      <label>Gitea URL: <input type="text" id="gitea_url" /></label>
-      <label>Gitea Token: <input type="password" id="gitea_token" /></label>
-      <label>Repository Folder Name: <input type="text" id="repository" /></label>
-      <label>Commit Message: <input type="text" id="commit_message" /></label>
+    <section class="panel">
+      <h2>GitHub / Gitea Settings</h2>
+      <div class="grid">
+        <label>GitHub URL: <input type="text" id="github_url" /></label>
+        <label>GitHub Token: <input type="password" id="github_token" /></label>
+        <label>Gitea URL: <input type="text" id="gitea_url" /></label>
+        <label>Gitea Token: <input type="password" id="gitea_token" /></label>
+        <label>Repository Folder: <input type="text" id="repository" /></label>
+        <label>Commit Message: <input type="text" id="commit_message" /></label>
+      </div>
     </section>
 
-    <section>
+    <section class="panel">
       <h2>Upload ZIP to Repo</h2>
       <input type="file" id="zipfile" accept=".zip" />
       <button onclick="uploadZip()">Upload ZIP</button>
     </section>
 
-    <section>
+    <section class="panel">
       <h2>Git Commands</h2>
       <div class="button-row">
         <button onclick="runGit('status')">Git Status</button>
@@ -40,11 +42,13 @@
       <pre id="git_output"></pre>
     </section>
 
-    <section>
+    <section class="panel">
       <h2>Backup & Restore</h2>
-      <button onclick="downloadBackup()">Download Backup</button>
-      <input type="file" id="restore_file" />
-      <button onclick="uploadBackup()">Upload & Restore</button>
+      <div class="backup-row">
+        <button onclick="downloadBackup()">Download Backup</button>
+        <input type="file" id="restore_file" />
+        <button onclick="uploadBackup()">Upload & Restore</button>
+      </div>
     </section>
   </div>
 
