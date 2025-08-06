@@ -1,10 +1,12 @@
 #!/bin/bash
-# Run initialization script
+set -e
+
+# Run setup
 /app/init.sh
 
-# Start ZeroTier controller
+# Start ZeroTier in controller mode
 zerotier-one -d
 
-# Start ZeroUI
-cd /app/zero-ui
-npm start
+# Serve UI from static frontend
+cd /app/www
+python3 -m http.server 3000
