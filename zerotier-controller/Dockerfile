@@ -1,11 +1,22 @@
-FROM node:18-alpine
+FROM debian:bullseye-slim
 
 # Install dependencies
-RUN apk add --no-cache git curl tar bash jq
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        tar \
+        bash \
+        jq \
+        ca-certificates \
+        nodejs \
+        npm && \
+    npm install -g yarn && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install ZeroTier One
-RUN apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/v3.17/community zerotier-one && \
-    ln -s /usr/sbin/zerotier-one /usr/bin/zerotier-cli
+RUN curl -s https://install.zerotier.com | bash
 
 # Enable TUN module
 RUN echo "tun" >> /etc/modules && \
