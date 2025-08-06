@@ -1,11 +1,10 @@
-ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM ghcr.io/home-assistant/amd64-base:latest
 
 # Install dependencies
 RUN apk add --no-cache nodejs npm git curl
 
-# Install ZeroTier
-RUN curl -s https://install.zerotier.com/ | bash
+# Install ZeroTier for Alpine Linux
+RUN apk add --no-cache zerotier-one
 
 # Install ZeroUI
 RUN git clone https://github.com/dec0dOS/zero-ui.git /app/zero-ui && \
@@ -25,4 +24,5 @@ RUN chmod a+x /app/run.sh /app/init.sh
 # Set working directory
 WORKDIR /app
 
+# Add required capabilities for ZeroTier
 CMD ["/app/run.sh"]
