@@ -3,10 +3,9 @@ FROM debian:bullseye-slim
 LABEL maintainer="ChristoffBo"
 LABEL org.opencontainers.image.source="https://github.com/ChristoffBo/homeassistant"
 
-# Set environment
 ENV LANG=C.UTF-8
 
-# Install dependencies and ZeroTier
+# Install required packages and ZeroTier
 RUN apt-get update && \
     apt-get install -y \
         curl \
@@ -16,23 +15,27 @@ RUN apt-get update && \
         ca-certificates \
         nodejs \
         npm \
-        git && \
-    curl -s https://install.zerotier.com | bash && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+        git \
+        jq \
+        openssl \
+        kmod \
+    && curl -s https://install.zerotier.com | bash \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Create app working dir
+# Create working dir
 RUN mkdir -p /app
 
-# Copy all local files into /app
+# Copy all files from local context to container
 COPY . /app/
 
-# Make startup scripts executable
-RUN chmod +x /app/run.sh /app/init.sh
+# Set permission on scripts
+RUN chmod +x /app/init.sh /app/run.sh
 
-# Expose ZeroTier port
+# Expose ZeroTier UDP port
 EXPOSE 9993/udp
 
-# Use root user (required for network privileges)
+# Use root (ZeroTier requires NET_ADMIN and module loading)
 USER root
 
-# Set the default command
+# Entry point
+CMD ["/app/run.sh"]
