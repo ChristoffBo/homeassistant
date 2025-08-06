@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Git Commander</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <h1>Git Commander</h1>
+    <div id="tabs">
+      <button onclick="showTab('uploader')">Uploader</button>
+      <button onclick="showTab('toolkit')">Toolkit</button>
+      <button onclick="showTab('backup')">Backup</button>
+      <button onclick="showTab('settings')">Settings</button>
+    </div>
+    <div id="uploader" class="tab">Uploader tab here</div>
+    <div id="toolkit" class="tab">Toolkit tab here</div>
+    <div id="backup" class="tab">Backup tab here</div>
+    <div id="settings" class="tab">
+      <pre id="configOutput">Loading...</pre>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

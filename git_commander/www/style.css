@@ -1,0 +1,7 @@
+body {
+  background-color: #121212;
+  color: white;
+  font-family: sans-serif;
+}
+.tab { display: none; padding: 1em; }
+#tabs button { margin: 0.5em; }
