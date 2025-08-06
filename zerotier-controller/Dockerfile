@@ -1,4 +1,4 @@
-FROM node:18-alpin
+FROM node:18-alpine
 
 # Install dependencies
 RUN apk add --no-cache git curl tar bash jq
