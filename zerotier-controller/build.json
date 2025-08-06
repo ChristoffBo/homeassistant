@@ -1,7 +1,7 @@
 {
   "build_from": {
-    "amd64": "ghcr.io/hassio-addons/debian-base:slim",
-    "aarch64": "ghcr.io/hassio-addons/debian-base:slim",
-    "armv7": "ghcr.io/hassio-addons/debian-base:slim"
+    "amd64": "ghcr.io/home-assistant/amd64-base-debian:bookworm",
+    "aarch64": "ghcr.io/home-assistant/aarch64-base-debian:bookworm",
+    "armv7": "ghcr.io/home-assistant/armv7-base-debian:bookworm"
   }
 }
