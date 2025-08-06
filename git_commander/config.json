@@ -1,0 +1,28 @@
+{
+  "name": "Git Commander",
+  "version": "1.0.0",
+  "slug": "git_commander",
+  "description": "Full Git and GitHub/Gitea toolkit with dark UI",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "startup": "application",
+  "boot": "auto",
+  "ingress": true,
+  "ingress_port": 8099,
+  "panel_icon": "mdi:git",
+  "options": {
+    "git_target": "github",
+    "github_token": "",
+    "github_repo": "",
+    "gitea_token": "",
+    "gitea_repo": "",
+    "commit_message": "Update from Git Commander"
+  },
+  "schema": {
+    "git_target": "str",
+    "github_token": "str",
+    "github_repo": "str",
+    "gitea_token": "str",
+    "gitea_repo": "str",
+    "commit_message": "str"
+  }
+}
