@@ -1,6 +1,6 @@
 ZT_ADDR: 'localhost:9993'
 ZT_TOKEN: 'replace_in_init'
-PORT: 3000
+PORT: 80
 ZU_DEFAULT_USERNAME: 'admin'
 ZU_DEFAULT_PASSWORD: 'changeme123'
 HTTPS_ENABLED: false
