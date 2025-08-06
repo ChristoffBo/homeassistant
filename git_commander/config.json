@@ -11,7 +11,7 @@
   "panel_icon": "mdi:git",
   "panel_title": "Git Commander",
   "ingress_port": 8099,
-  "host_network": true,
+  "host_network": false,
   "options": {
     "github_url": "",
     "github_token": "",
