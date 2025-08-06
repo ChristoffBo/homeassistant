@@ -12,8 +12,8 @@
   "panel_icon": "mdi:network",
   "options": {
     "admin_username": "admin",
-    "admin_password": "!secret zerotier_admin_password",
-    "controller_token": "!secret zerotier_token",
+    "admin_password": "changeme123",
+    "controller_token": "",
     "zerotier_port": 9993
   },
   "schema": {
