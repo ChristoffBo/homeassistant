@@ -1,7 +1,7 @@
 {
   "name": "ZeroTier Controller UI",
   "version": "1.0.0",
-  "slug": "zero-contoller",
+  "slug": "zero-controller",
   "description": "Self-hosted ZeroTier controller with a dark-mode web UI",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
@@ -22,6 +22,5 @@
   "schema": {
     "controller_port": "int(1,65535)",
     "webui_port": "int(1,65535)"
-  },
-  "image": "ghcr.io/christoffbo/zerotier-controller-ui-{arch}"
+  }
 }
