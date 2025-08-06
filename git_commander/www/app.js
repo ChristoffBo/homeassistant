@@ -1,66 +1,15 @@
 window.onload = async () => {
-  const res = await fetch("/config");
-  const config = await res.json();
+  try {
+    const res = await fetch("/config");
+    const config = await res.json();
 
-  document.getElementById("github_url").value = config.github_url || "";
-  document.getElementById("github_token").value = config.github_token || "";
-  document.getElementById("gitea_url").value = config.gitea_url || "";
-  document.getElementById("gitea_token").value = config.gitea_token || "";
-  document.getElementById("repository").value = config.repository || "";
-  document.getElementById("commit_message").value = config.commit_message || "";
+    document.getElementById("github_url").value = config.github_url || "";
+    document.getElementById("github_token").value = config.github_token || "";
+    document.getElementById("gitea_url").value = config.gitea_url || "";
+    document.getElementById("gitea_token").value = config.gitea_token || "";
+    document.getElementById("repository").value = config.repository || "";
+    document.getElementById("commit_message").value = config.commit_message || "";
+  } catch (err) {
+    console.error("Failed to load config:", err);
+  }
 };
-
-async function uploadZip() {
-  const file = document.getElementById("zipfile").files[0];
-  if (!file) return alert("Select a ZIP file to upload.");
-
-  const formData = new FormData();
-  formData.append("zipfile", file);
-
-  const res = await fetch("/upload", {
-    method: "POST",
-    body: formData
-  });
-
-  const data = await res.json();
-  alert(data.success || data.error);
-}
-
-async function runGit(command) {
-  const res = await fetch("/git", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command })
-  });
-
-  const data = await res.json();
-  document.getElementById("git_output").innerText = data.stdout || data.stderr || data.error;
-}
-
-async function downloadBackup() {
-  const res = await fetch("/backup");
-  const blob = await res.blob();
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "git_commander_backup.tar.gz";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
-async function uploadBackup() {
-  const file = document.getElementById("restore_file").files[0];
-  if (!file) return alert("Choose a backup file.");
-
-  const formData = new FormData();
-  formData.append("backupfile", file);
-
-  const res = await fetch("/restore", {
-    method: "POST",
-    body: formData
-  });
-
-  const data = await res.json();
-  alert(data.success || data.error);
-}
