@@ -3,9 +3,6 @@ FROM node:18-alpine
 # Install dependencies
 RUN apk add --no-cache git curl tar bash jq
 
-# Install yarn
-RUN npm install -g yarn
-
 # Install ZeroTier One
 RUN apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/v3.17/community zerotier-one && \
     ln -s /usr/sbin/zerotier-one /usr/bin/zerotier-cli
