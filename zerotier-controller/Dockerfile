@@ -1,7 +1,7 @@
-FROM ghcr.io/home-assistant/amd64-base:latest
+FROM node:18-alpine
 
 # Install dependencies
-RUN apk add --no-cache nodejs npm git curl tar bash
+RUN apk add --no-cache git curl tar bash jq
 
 # Install yarn
 RUN npm install -g yarn
