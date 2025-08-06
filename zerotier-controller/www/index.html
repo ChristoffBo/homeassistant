@@ -1,15 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>ZeroTier Controller UI</title>
-  <link rel="stylesheet" href="custom.css">
+    <meta charset="UTF-8">
+    <title>ZeroTier Controller UI</title>
+    <link rel="stylesheet" href="custom.css">
 </head>
 <body>
-  <div class="navbar">ZeroTier Controller</div>
-  <div class="card">
-    <h2>Welcome to ZeroTier</h2>
-    <p>Custom dark-mode UI loaded successfully.</p>
-  </div>
+    <div class="navbar">
+        <h1 style="padding: 1rem;">ZeroTier Controller</h1>
+    </div>
+    <div class="card" style="margin: 2rem; padding: 1.5rem;">
+        <h2>Networks</h2>
+        <table class="table" id="networks">
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Members</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                <!-- Networks will be populated here -->
+            </tbody>
+        </table>
+        <button class="btn-primary" onclick="loadNetworks()">Refresh Networks</button>
+    </div>
+
+    <script src="app.js"></script>
 </body>
 </html>
