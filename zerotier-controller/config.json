@@ -1,7 +1,7 @@
 {
   "name": "ZeroTier Controller UI",
   "version": "1.0.0",
-  "slug": "zerotier_controller_ui",
+  "slug": "zero-contoller",
   "description": "Self-hosted ZeroTier controller with a dark-mode web UI",
   "arch": ["amd64", "armv7", "aarch64"],
   "startup": "application",
