@@ -2,23 +2,31 @@
   "name": "GitHub Uploader",
   "version": "1.0.0",
   "slug": "github_uploader",
-  "description": "Upload files to GitHub via a drag-and-drop Web UI",
-  "startup": "application",
+  "description": "Upload files to a GitHub repository via web UI (ZIP drag & drop, token-based).",
+  "url": "https://github.com/ChristoffBo/homeassistant",
+  "startup": "system",
   "boot": "auto",
-  "webui": "http://[HOST]:[PORT:7860]",
   "ingress": true,
-  "ingress_port": 7860,
+  "ingress_port": 8080,
   "panel_icon": "mdi:github",
+  "panel_title": "GitHub Uploader",
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7",
+    "i386"
+  ],
   "options": {
     "github_token": "",
-    "repository_url": "",
-    "target_path": "",
-    "commit_message": "Add files via uploader"
+    "github_repo_url": "",
+    "target_folder": "",
+    "commit_message": "Upload via GitHub Uploader"
   },
   "schema": {
     "github_token": "str",
-    "repository_url": "str",
-    "target_path": "str",
-    "commit_message": "str"
-  }
+    "github_repo_url": "str",
+    "target_folder": "str",
+    "commit_message": "str?"
+  },
+  "image": "ghcr.io/christoffbo/github-uploader-{arch}"
 }
