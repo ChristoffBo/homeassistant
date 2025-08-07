@@ -1,0 +1,29 @@
+{
+  "name": "Apprise Notification Gateway",
+  "version": "latest",
+  "slug": "apprise",
+  "description": "Self-hosted notification gateway using Apprise API with official web UI.",
+  "startup": "services",
+  "boot": "auto",
+  "image": "linuxserver/apprise-api",
+  "webui": "http://[HOST]:[PORT:8000]",
+  "ingress": true,
+  "ingress_port": 8000,
+  "panel_icon": "mdi:bullhorn",
+  "arch": ["aarch64", "amd64", "armv7", "i386"],
+  "map": ["config:rw"],
+  "init": false,
+  "options": {
+    "port": 8000,
+    "cli_args": "",
+    "image_override": "linuxserver/apprise-api"
+  },
+  "schema": {
+    "port": "int",
+    "cli_args": "str",
+    "image_override": "str"
+  },
+  "ports": {
+    "8000/tcp": 8000
+  }
+}
