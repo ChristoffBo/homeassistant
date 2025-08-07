@@ -93,7 +93,68 @@ notify() {
   fi
 }
 
-# [ ... rest of your unchanged code here including get_latest_tag, update_addon ... ]
+update_addon() {
+  local addon_path="$1"
+  local name=$(basename "$addon_path")
+
+  for skip in "${SKIP_LIST[@]}"; do
+    [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "⏭️ Skipping $name (listed)" && return
+  done
+
+  log "$COLOR_DARK_BLUE" "🔍 Checking $name"
+
+  local config="$addon_path/config.json"
+  local build="$addon_path/build.json"
+  local image version latest
+
+  image=$(jq -r '.image // empty' "$config" 2>/dev/null || echo "")
+  version=$(safe_jq '.version' "$config")
+
+  if [ -z "$image" ] && [ -f "$build" ]; then
+    image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build" 2>/dev/null || echo "")
+    version=$(safe_jq '.version' "$build")
+  fi
+
+  if [ -z "$image" ]; then
+    log "$COLOR_YELLOW" "⚠️ No image defined for $name"
+    UNCHANGED_ADDONS["$name"]="No image defined"
+    return
+  fi
+
+  latest=$(curl -sf "https://hub.docker.com/v2/repositories/${image%:*}/tags?page_size=100" | jq -r '.results[].name' | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1)
+  if [ -z "$latest" ]; then
+    log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
+    UNCHANGED_ADDONS["$name"]="No valid tag"
+    return
+  fi
+
+  if [ "$version" != "$latest" ]; then
+    log "$COLOR_GREEN" "⬆️ $name updated from $version to $latest"
+    UPDATED_ADDONS["$name"]="$version → $latest"
+
+    if [ "$DRY_RUN" = "true" ]; then
+      log "$COLOR_PURPLE" "💡 Dry run active: skipping update of $name"
+      return
+    fi
+
+    jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
+    if [ -f "$build" ]; then
+      jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp" && mv "$build.tmp" "$build"
+    fi
+
+    local changelog="$addon_path/CHANGELOG.md"
+    local date_str
+    date_str=$(date '+%Y-%m-%d')
+    if [ -f "$changelog" ]; then
+      sed -i "1i## $latest - $date_str" "$changelog"
+    else
+      echo -e "## $latest - $date_str\n" > "$changelog"
+    fi
+  else
+    log "$COLOR_CYAN" "✅ $name is up to date ($version)"
+    UNCHANGED_ADDONS["$name"]="Up to date ($version)"
+  fi
+}
 
 commit_and_push() {
   cd "$REPO_DIR"
