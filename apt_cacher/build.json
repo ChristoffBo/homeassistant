@@ -3,5 +3,6 @@
     "amd64": "sameersbn/apt-cacher-ng:latest",
     "aarch64": "sameersbn/apt-cacher-ng:latest",
     "armv7": "sameersbn/apt-cacher-ng:latest"
-  }
+  },
+  "version": "3.7.4-20220421"
 }
