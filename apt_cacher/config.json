@@ -1,6 +1,6 @@
 {
   "name": "APT Cacher",
-  "version": "1.0.0",
+  "version": "3.7.4-20220421",
   "slug": "apt_cacher",
   "description": "APT-Cacher NG - Debian/Ubuntu package cache proxy server",
   "url": "https://www.unix-ag.uni-kl.de/~bloch/acng/",
