@@ -1,0 +1,27 @@
+{
+  "name": "Apprise API",
+  "version": "1.0.0",
+  "slug": "apprise",
+  "description": "Self-hosted Apprise Notification API Server",
+  "url": "https://github.com/caronc/apprise-api",
+  "arch": ["amd64", "aarch64", "armv7"],
+  "startup": "services",
+  "boot": "auto",
+  "ingress": false,
+  "host_network": true,
+  "webui": "http://[HOST]:[PORT:8000]/notify",
+  "panel_icon": "mdi:bell",
+  "ports": {
+    "8000/tcp": 8000
+  },
+  "ports_description": {
+    "8000/tcp": "Apprise API server port"
+  },
+  "map": ["config:rw"],
+  "options": {
+    "port": 8000
+  },
+  "schema": {
+    "port": "int"
+  }
+}
