@@ -5,17 +5,27 @@ import zipfile
 import tempfile
 import shutil
 import requests
-from flask import Flask, request, jsonify
-from werkzeug.utils import secure_filename
 import re
 import base64
+from flask import Flask, request, send_from_directory, jsonify
+from werkzeug.utils import secure_filename
 
 CONFIG_PATH = "/data/options.json"
 UPLOAD_DIR = "/data/uploads"
+WWW_DIR = "/www"
 
-app = Flask(__name__)
-app.config["UPLOAD_FOLDER"] = UPLOAD_DIR
+app = Flask(__name__, static_folder=WWW_DIR)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Serve index.html
+@app.route("/", methods=["GET"])
+def index():
+    return send_from_directory(WWW_DIR, "index.html")
+
+# Serve style.css and upload.js
+@app.route("/<path:filename>", methods=["GET"])
+def static_files(filename):
+    return send_from_directory(WWW_DIR, filename)
 
 def load_config():
     with open(CONFIG_PATH, "r") as f:
@@ -38,7 +48,6 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
         "Accept": "application/vnd.github+json"
     }
 
-    # Check if file already exists (to include sha for updates)
     get_response = requests.get(api_url, headers=headers)
     if get_response.status_code == 200:
         sha = get_response.json().get("sha", "")
@@ -50,7 +59,6 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
         "content": encoded_content,
         "branch": "main"
     }
-
     if sha:
         data["sha"] = sha
 
@@ -59,10 +67,6 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
         print(f"[ERROR] GitHub upload failed for {path_in_repo}: {response.status_code} - {response.text}")
         return False
     return True
-
-@app.route("/", methods=["GET"])
-def index():
-    return "GitHub Uploader backend is running.", 200
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -86,7 +90,7 @@ def upload():
     zip_filename = secure_filename(file.filename)
     base_folder_name = os.path.splitext(zip_filename)[0]
 
-    upload_path = os.path.join(app.config["UPLOAD_FOLDER"], zip_filename)
+    upload_path = os.path.join(UPLOAD_DIR, zip_filename)
     file.save(upload_path)
 
     extract_dir = tempfile.mkdtemp()
