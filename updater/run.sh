@@ -9,6 +9,31 @@ REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 
 # ======================
+# EARLY GIT PULL/REBASE
+# ======================
+if [ -d "$REPO_DIR/.git" ]; then
+  cd "$REPO_DIR"
+  git config user.email "updater@local"
+  git config user.name "Add-on Updater"
+
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "[INFO] 📦 Unstaged changes detected — stashing before rebase"
+    git stash
+    STASHED=true
+  fi
+
+  echo "[INFO] 🔄 Pulling latest changes (rebase)..."
+  git pull --rebase || {
+    echo "[ERROR] ❌ Git pull --rebase failed"
+    exit 1
+  }
+
+  if [ "$STASHED" = "true" ]; then
+    git stash pop || echo "[WARN] ⚠️ Failed to apply stashed changes after rebase"
+  fi
+fi
+
+# ======================
 # COLOR DEFINITIONS
 # ======================
 COLOR_RESET="\033[0m"
@@ -161,19 +186,6 @@ commit_and_push() {
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
 
-  # Handle unstaged changes before rebase
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    log "$COLOR_YELLOW" "📦 Unstaged changes detected — stashing before rebase"
-    git stash
-    STASHED=true
-  fi
-
-  git pull --rebase
-
-  if [ "$STASHED" = "true" ]; then
-    git stash pop || log "$COLOR_RED" "⚠️ Failed to apply stashed changes after rebase"
-  fi
-
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
@@ -189,7 +201,6 @@ main() {
   log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
 
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
-
   git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
     notify "Updater Error" "Git clone failed" 5
@@ -205,7 +216,8 @@ main() {
   local summary="📦 Add-on Update Summary
 "
   summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
-
+"
+  summary+="🔄 Git pull --rebase was executed
 "
 
   for path in "$REPO_DIR"/*; do
