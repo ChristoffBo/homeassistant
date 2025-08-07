@@ -1,7 +1,0 @@
-{
-  "build_from": {
-    "amd64": "binwiederhier/ntfy:latest",
-    "aarch64": "binwiederhier/ntfy:latest",
-    "armv7": "binwiederhier/ntfy:latest"
-  }
-}
