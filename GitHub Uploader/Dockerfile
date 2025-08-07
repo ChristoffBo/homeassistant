@@ -1,6 +1,15 @@
-FROM python:3.10-slim
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.18
+FROM ${BUILD_FROM}
+
+ENV LANG C.UTF-8
+
+RUN apk add --no-cache python3 py3-pip git curl
+
 WORKDIR /app
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["python3", "uploader.py"]
+
+COPY uploader.py /app/
+COPY options.json /data/options.json
+
+EXPOSE 7860
+
+CMD [ "python3", "/app/uploader.py" ]
