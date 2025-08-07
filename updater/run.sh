@@ -26,7 +26,6 @@ COLOR_CYAN="\033[0;36m"
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
 declare -a SKIP_LIST=()
-PUSH_STATUS=""
 
 safe_jq() {
   local expr="$1"
@@ -205,25 +204,25 @@ commit_and_push() {
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
 
-  log "$COLOR_PURPLE" "🔄 Pulling latest changes with rebase..."
-  if git pull --rebase; then
-    log "$COLOR_GREEN" "✅ Git pull --rebase succeeded"
-  else
+  log "$COLOR_BLUE" "🔄 Pulling latest changes with rebase..."
+  git pull --rebase && log "$COLOR_GREEN" "✅ Git pull --rebase succeeded" && notify "Git Pull" "Git pull with rebase succeeded." 0 || {
     log "$COLOR_RED" "❌ Git pull --rebase failed"
-    notify "Updater Error" "Git pull --rebase failed" 5
-  fi
+    notify "Git Pull Failed" "Git pull --rebase failed." 5
+  }
 
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
     if git push "$GIT_AUTH_REPO" main; then
-      PUSH_STATUS="✅ Git push succeeded"
+      log "$COLOR_GREEN" "✅ Git push succeeded"
+      notify "Git Push" "Git push to remote succeeded." 0
     else
       log "$COLOR_RED" "❌ Git push failed"
-      PUSH_STATUS="❌ Git push failed"
+      notify "Git Push Failed" "Git push to remote failed." 5
     fi
   else
     log "$COLOR_CYAN" "ℹ️ No changes to commit"
+    notify "Git Push" "No changes to commit or push." 0
   fi
 }
 
@@ -273,13 +272,8 @@ main() {
 "
   done
 
-  [ -n "$PUSH_STATUS" ] && summary+="
-$PUSH_STATUS"
-
   [ "$DRY_RUN" = "true" ] && summary+="
-
 🔁 DRY RUN MODE ENABLED"
-
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
