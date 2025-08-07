@@ -1,0 +1,29 @@
+{
+  "name": "GitHub Uploader",
+  "version": "1.0.0",
+  "slug": "github_uploader",
+  "description": "Upload ZIP files to a GitHub repository with drag-and-drop or file picker. Supports GitHub token, repo, path, and commit message.",
+  "startup": "application",
+  "boot": "auto",
+  "webui": "http://[HOST]:[PORT:8080]",
+  "ingress": true,
+  "ingress_port": 8080,
+  "panel_icon": "mdi:upload",
+  "arch": ["aarch64", "amd64", "armv7", "i386"],
+  "init": false,
+  "options": {
+    "github_token": "",
+    "github_repo": "",
+    "github_path": "",
+    "commit_message": "Uploaded via GitHub Uploader"
+  },
+  "schema": {
+    "github_token": "str",
+    "github_repo": "str",
+    "github_path": "str",
+    "commit_message": "str"
+  },
+  "ports": {
+    "8080/tcp": 8080
+  }
+}
