@@ -4,8 +4,7 @@ Self-hosted notification gateway powered by Apprise. Supports over 50+ services 
 
 ✅ Uses the official Docker image: caronc/apprise  
 ✅ Works offline once started  
-✅ Full REST API and Web UI on port 8000  
-✅ Ingress compatible  
+✅ Full REST API and Web UI on port 8000    
 ✅ Persistent storage enabled  
 ✅ All settings exposed in options.json  
 ✅ No build needed
