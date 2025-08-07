@@ -9,11 +9,10 @@
   "boot": "auto",
   "ingress": false,
   "host_network": true,
+  "webui": "http://[HOST]:[PORT:3142]/acng-report.html",
   "panel_icon": "mdi:server-network",
   "panel_title": "APT Cache UI",
   "panel_admin": false,
-  "panel_path": "aptcache",
-  "webui": "http://[HOST]:[PORT:3142]/acng-report.html",
   "ports": {
     "3142/tcp": 3142
   },
