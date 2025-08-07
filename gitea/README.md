@@ -1,40 +1,22 @@
+This Home Assistant add-on runs a self-hosted instance of Gitea, a lightweight, all-in-one Git server alternative to GitHub, Bitbucket, or GitLab. Gitea provides source control, code review, CI/CD, package registry, and more in a simple web interface. This add-on uses the official gitea/gitea Docker image. It was originally created by Alex Belgium. This version is hosted and maintained on my own Git repository for integration with my environment. Source: https://github.com/alexbelgium/hassio-addons
 
-## About
+The web interface can be accessed at http://<your-ip>:<port> unless HTTPS is enabled. If SSL is enabled, access via https://<your-domain>:<port>.
 
-This Addon Was Created by Alex Belgium, I just prefer to host it on my Git Aswell.
+Configuration options available via options.json:
 
-https://github.com/alexbelgium/hassio-addons
+certfile - SSL certificate file (default: fullchain.pem). Must be located in /ssl  
+keyfile - SSL key file (default: privkey.pem). Must be located in /ssl  
+ssl - true or false. Enables or disables HTTPS  
+APP_NAME - Custom name for the Gitea instance  
+DOMAIN - Public domain to access the instance (default: homeassistant.local)  
+ROOT_URL - Optional override for root URL, used only for advanced setups  
 
+Installation instructions:
 
-[Gitea](https://about.gitea.com/) is a painless self-hosted all-in-one software development service, it includes Git hosting, code review, team collaboration, package registry and CI/CD. It is similar to GitHub, Bitbucket and GitLab.
-
-Various tweaks and configuration options addition.
-This addon is based on the [docker image](https://hub.docker.com/r/gitea/gitea).
-
-## Configuration
-
-```yaml
-certfile: fullchain.pem #ssl certificate, must be located in /ssl
-keyfile: privkey.pem #sslkeyfile, must be located in /ssl
-ssl: should the app use https or not
-APP_NAME: name of the app
-DOMAIN: domain to be reached # default : homeassistant.local
-ROOT_URL: customize root_url, should not be needed unless specific needs
-```
-
-Webui can be found at `<your-ip>:port`.
-
-## Installation
-
-The installation of this add-on is pretty straightforward and not different in
-comparison to installing any other Hass.io add-on.
-
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
-1. Install this add-on.
-1. Click the `Save` button to store your configuration.
-1. Start the add-on.
-1. Check the logs of the add-on to see if everything went well.
-1. Go to the webui, where you will initialize the app
-1. Restart the addon, to apply any option that should be applied
-
-
+1. Add my Home Assistant add-ons repository to your instance.  
+2. Install the Gitea add-on.  
+3. Configure options as needed.  
+4. Click Save to store your configuration.  
+5. Start the add-on.  
+6. Access the web UI and complete the Gitea setup.  
+7. Restart the add-on to apply configuration changes (especially ROOT_URL and APP_NAME).
