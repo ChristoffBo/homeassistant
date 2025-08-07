@@ -1,0 +1,6 @@
+{
+  "github_token": "ghp_your_actual_token_here",
+  "github_repo": "https://github.com/ChristoffBo/homeassistant",
+  "github_path": "uploads/from-addon",
+  "commit_message": "Automated upload from GitHub Uploader add-on"
+}
