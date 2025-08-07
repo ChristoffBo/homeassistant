@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PiZip</title>
+  <style>
+    body {
+      background-color: #1a1a1a;
+      color: #ffffff;
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      background-color: #2a2a2a;
+      border-radius: 8px;
+    }
+    h1 {
+      text-align: center;
+      color: #00bcd4;
+    }
+    .drop-zone {
+      border: 2px dashed #00bcd4;
+      padding: 20px;
+      text-align: center;
+      margin-bottom: 20px;
+      cursor: pointer;
+    }
+    .drop-zone.dragover {
+      background-color: #3a3a3a;
+    }
+    button {
+      background-color: #00bcd4;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0097a7;
+    }
+    #status {
+      margin-top: 20px;
+      color: #00bcd4;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PiZip Add-on</h1>
+    <div class="drop-zone" id="dropZone">
+      Drag and drop a zip file here or click to select
+      <input type="file" id="fileInput" accept=".zip" style="display: none;">
+    </div>
+    <button onclick="downloadRepo()">Download Repository as Zip</button>
+    <div id="status"></div>
+  </div>
+  <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('dragover');
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith('.zip')) {
+        uploadFile(file);
+      } else {
+        status.textContent = 'Please drop a .zip file';
+      }
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) {
+        uploadFile(fileInput.files[0]);
+      }
+    });
+
+    async function uploadFile(file) {
+      const formData = new FormData();
+      formData.append('zipfile', file);
+      status.textContent = 'Uploading...';
+      try {
+        const response = await fetch('/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const result = await response.json();
+        status.textContent = result.message || result.error;
+      } catch (error) {
+        status.textContent = 'Error uploading file';
+      }
+    }
+
+    async function downloadRepo() {
+      status.textContent = 'Fetching download URL...';
+      try {
+        const response = await fetch('/download');
+        const result = await response.json();
+        status.textContent = `Download URL: ${result.downloadUrl}`;
+        window.open(result.downloadUrl, '_blank');
+      } catch (error) {
+        status.textContent = 'Error fetching download URL';
+      }
+    }
+  </script>
+</body>
+</html>
