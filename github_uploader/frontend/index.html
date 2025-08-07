@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GitHub Uploader</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>GitHub Uploader</h1>
+
+    <form id="upload-form">
+      <div class="input-group">
+        <label for="file-input">Select ZIP File</label>
+        <input type="file" id="file-input" name="zipfile" accept=".zip">
+      </div>
+
+      <div id="drop-zone">Or drag and drop ZIP here</div>
+
+      <button type="submit" class="btn">Upload</button>
+    </form>
+
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById("upload-form");
+    const fileInput = document.getElementById("file-input");
+    const dropZone = document.getElementById("drop-zone");
+    const status = document.getElementById("status");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const file = fileInput.files[0];
+      if (!file || !file.name.endsWith(".zip")) {
+        status.textContent = "Please select a valid .zip file.";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("zipfile", file);
+
+      status.textContent = "Uploading...";
+
+      const res = await fetch("/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      if (res.ok) {
+        status.textContent = "✅ Upload successful.";
+      } else {
+        const err = await res.text();
+        status.textContent = `❌ Upload failed: ${err}`;
+      }
+    });
+
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("dragover");
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("dragover");
+      const file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith(".zip")) {
+        fileInput.files = e.dataTransfer.files;
+        status.textContent = `Selected: ${file.name}`;
+      } else {
+        status.textContent = "Only .zip files allowed.";
+      }
+    });
+  </script>
+</body>
+</html>
