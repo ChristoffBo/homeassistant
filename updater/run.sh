@@ -184,6 +184,15 @@ update_addon() {
     if [ -f "$build" ]; then
       jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp" && mv "$build.tmp" "$build"
     fi
+
+    local changelog="$addon_path/CHANGELOG.md"
+    local date_str
+    date_str=$(date '+%Y-%m-%d')
+    if [ -f "$changelog" ]; then
+      sed -i "1i## $latest - $date_str" "$changelog"
+    else
+      echo -e "## $latest - $date_str\n" > "$changelog"
+    fi
   else
     log "$COLOR_CYAN" "✅ $name is up to date ($version)"
     UNCHANGED_ADDONS["$name"]="Up to date ($version)"
@@ -194,6 +203,8 @@ commit_and_push() {
   cd "$REPO_DIR"
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
+
+  git pull --rebase
 
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
