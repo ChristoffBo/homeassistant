@@ -13,12 +13,14 @@
     "github_token": "",
     "repository_url": "",
     "target_path": "",
-    "commit_message": "Add files via uploader"
+    "commit_message": "Add files via uploader",
+    "repository": ""
   },
   "schema": {
     "github_token": "str",
     "repository_url": "str",
     "target_path": "str",
-    "commit_message": "str"
+    "commit_message": "str",
+    "repository": "str"
   }
 }
