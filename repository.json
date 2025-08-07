@@ -8,6 +8,7 @@
     "gitea",
     "gotify",
     "heimdall",
+    "github_uploader",
     "mailrise",
     "metube",
     "technitium-dns-DHCP",
