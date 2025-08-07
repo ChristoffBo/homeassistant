@@ -36,7 +36,18 @@ def extract_owner_repo(github_url):
         raise ValueError("Invalid GitHub repo URL format. Must be like: https://github.com/owner/repo")
     return match.group(1), match.group(2)
 
-def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_message):
+def get_default_branch(token, owner, repo):
+    url = f"https://api.github.com/repos/{owner}/{repo}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json().get("default_branch", "main")
+    return "main"
+
+def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_message, branch):
     with open(file_path, "rb") as f:
         content = f.read()
     encoded_content = base64.b64encode(content).decode("utf-8")
@@ -53,7 +64,7 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
     data = {
         "message": commit_message,
         "content": encoded_content,
-        "branch": "main"
+        "branch": branch
     }
 
     if sha:
@@ -75,11 +86,14 @@ def upload():
     token = config.get("github_token", "").strip()
     repo_url = config.get("github_repo", "").strip()
     commit_message = config.get("commit_message", "Uploaded via GitHub Uploader").strip()
+    override_branch = config.get("github_branch", "").strip()
 
     try:
         owner, repo = extract_owner_repo(repo_url)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+
+    branch = override_branch or get_default_branch(token, owner, repo)
 
     zip_filename = secure_filename(file.filename)
     base_folder_name = os.path.splitext(zip_filename)[0]
@@ -100,7 +114,7 @@ def upload():
             rel_path = os.path.relpath(abs_path, extract_dir)
             github_path = f"{base_folder_name}/{rel_path}".replace("\\", "/")
 
-            if upload_file_to_github(token, owner, repo, github_path, abs_path, commit_message):
+            if upload_file_to_github(token, owner, repo, github_path, abs_path, commit_message, branch):
                 success_count += 1
             else:
                 failure_count += 1
@@ -110,6 +124,7 @@ def upload():
 
     return jsonify({
         "status": "complete",
+        "branch": branch,
         "uploaded": success_count,
         "failed": failure_count
     }), 200
