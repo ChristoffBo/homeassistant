@@ -1,8 +1,5 @@
 #!/usr/bin/env bashio
 
-# Start the Node.js server for the UI
+# Navigate to the app directory and start the Node.js server as the main process
 cd /app
-npm start &
-
-# Keep the container running
-wait
+exec npm start
