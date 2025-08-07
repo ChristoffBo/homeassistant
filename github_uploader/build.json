@@ -1,0 +1,8 @@
+{
+  "build_from": {
+    "aarch64": "debian:bookworm",
+    "amd64": "debian:bookworm",
+    "armv7": "debian:bookworm",
+    "i386": "debian:bookworm"
+  }
+}
