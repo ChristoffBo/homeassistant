@@ -1,4 +1,4 @@
-FROM caronc/apprise:latest
+FROM caronc/apprise-api:latest
 
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
