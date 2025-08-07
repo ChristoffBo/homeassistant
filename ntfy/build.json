@@ -1,7 +1,7 @@
 {
   "build_from": {
-    "amd64": "ghcr.io/binwiederhier/ntfy:latest",
-    "aarch64": "ghcr.io/binwiederhier/ntfy:latest",
-    "armv7": "ghcr.io/binwiederhier/ntfy:latest"
+    "amd64": "binwiederhier/ntfy:latest",
+    "aarch64": "binwiederhier/ntfy:latest",
+    "armv7": "binwiederhier/ntfy:latest"
   }
 }
