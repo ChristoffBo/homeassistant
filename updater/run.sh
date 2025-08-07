@@ -26,6 +26,7 @@ COLOR_CYAN="\033[0;36m"
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
 declare -a SKIP_LIST=()
+PUSH_STATUS=""
 
 safe_jq() {
   local expr="$1"
@@ -204,6 +205,14 @@ commit_and_push() {
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
 
+  log "$COLOR_PURPLE" "🔄 Pulling latest changes with rebase..."
+  if git pull --rebase; then
+    log "$COLOR_GREEN" "✅ Git pull --rebase succeeded"
+  else
+    log "$COLOR_RED" "❌ Git pull --rebase failed"
+    notify "Updater Error" "Git pull --rebase failed" 5
+  fi
+
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
@@ -221,33 +230,13 @@ commit_and_push() {
 main() {
   echo "" > "$LOG_FILE"
   read_config
-
-  if [ -d "$REPO_DIR/.git" ]; then
-    cd "$REPO_DIR"
-    git config user.email "updater@local"
-    git config user.name "Add-on Updater"
-
-    if ! git diff --quiet || ! git diff --cached --quiet; then
-      log "$COLOR_YELLOW" "📦 Unstaged changes detected — stashing before rebase"
-      git stash
-      STASHED=true
-    fi
-
-    log "$COLOR_BLUE" "🔄 Pulling latest changes with rebase..."
-    if git pull --rebase; then
-      log "$COLOR_GREEN" "✅ Git pull --rebase succeeded"
-    else
-      log "$COLOR_RED" "❌ Git pull --rebase failed — continuing anyway"
-    fi
-
-    if [ "$STASHED" = "true" ]; then
-      git stash pop || log "$COLOR_RED" "⚠️ Failed to re-apply stashed changes"
-    fi
-  fi
-
   log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
 
-  [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
+  if [ -d "$REPO_DIR" ]; then
+    log "$COLOR_YELLOW" "📁 Switching out of $REPO_DIR before deleting..."
+    cd / || cd /tmp
+    rm -rf "$REPO_DIR"
+  fi
 
   git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
@@ -264,8 +253,7 @@ main() {
   local summary="📦 Add-on Update Summary
 "
   summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
-"
-  summary+="🔄 Git pull --rebase was executed
+
 "
 
   for path in "$REPO_DIR"/*; do
@@ -285,12 +273,12 @@ main() {
 "
   done
 
-  [ "$DRY_RUN" = "true" ] && summary+="
-🔁 DRY RUN MODE ENABLED"
-  [ "$STASHED" = "true" ] && summary+="
-📦 Unstaged changes were stashed and reapplied"
   [ -n "$PUSH_STATUS" ] && summary+="
 $PUSH_STATUS"
+
+  [ "$DRY_RUN" = "true" ] && summary+="
+
+🔁 DRY RUN MODE ENABLED"
 
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
