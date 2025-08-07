@@ -204,25 +204,16 @@ commit_and_push() {
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
 
-  log "$COLOR_BLUE" "🔄 Pulling latest changes with rebase..."
-  git pull --rebase && log "$COLOR_GREEN" "✅ Git pull --rebase succeeded" && notify "Git Pull" "Git pull with rebase succeeded." 0 || {
-    log "$COLOR_RED" "❌ Git pull --rebase failed"
-    notify "Git Pull Failed" "Git pull --rebase failed." 5
-  }
+  git pull --rebase || PULL_STATUS="❌ Git pull failed" && return || PULL_STATUS="✅ Git pull succeeded"
 
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
-    if git push "$GIT_AUTH_REPO" main; then
-      log "$COLOR_GREEN" "✅ Git push succeeded"
-      notify "Git Push" "Git push to remote succeeded." 0
-    else
-      log "$COLOR_RED" "❌ Git push failed"
-      notify "Git Push Failed" "Git push to remote failed." 5
+    if git push "$GIT_AUTH_REPO" main; then PUSH_STATUS="✅ Git push succeeded"
+    else log "$COLOR_RED" "❌ Git push failed"; PUSH_STATUS="❌ Git push failed"
     fi
   else
-    log "$COLOR_CYAN" "ℹ️ No changes to commit"
-    notify "Git Push" "No changes to commit or push." 0
+    log "$COLOR_CYAN" "ℹ️ No changes to commit"; PUSH_STATUS="ℹ️ No changes to commit or push"
   fi
 }
 
@@ -231,16 +222,13 @@ main() {
   read_config
   log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
 
-  if [ -d "$REPO_DIR" ]; then
-    log "$COLOR_YELLOW" "📁 Switching out of $REPO_DIR before deleting..."
-    cd / || cd /tmp
-    rm -rf "$REPO_DIR"
-  fi
+  cd / || cd /tmp
+  [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
 
   git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
     notify "Updater Error" "Git clone failed" 5
-    return
+    exit 1
   }
 
   for path in "$REPO_DIR"/*; do
@@ -272,6 +260,10 @@ main() {
 "
   done
 
+  [ -n "$PULL_STATUS" ] && summary+="
+$PULL_STATUS"
+  [ -n "$PUSH_STATUS" ] && summary+="
+$PUSH_STATUS"
   [ "$DRY_RUN" = "true" ] && summary+="
 🔁 DRY RUN MODE ENABLED"
   notify "Add-on Updater" "$summary" 3
