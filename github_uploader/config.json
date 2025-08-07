@@ -1,1 +1,24 @@
-
+{
+  "name": "GitHub Uploader",
+  "version": "1.0.0",
+  "slug": "github_uploader",
+  "description": "Upload files to GitHub via a drag-and-drop Web UI",
+  "startup": "application",
+  "boot": "auto",
+  "webui": "http://[HOST]:[PORT:7860]",
+  "ingress": true,
+  "ingress_port": 7860,
+  "panel_icon": "mdi:github",
+  "options": {
+    "github_token": "",
+    "repository_url": "",
+    "target_path": "",
+    "commit_message": "Add files via uploader"
+  },
+  "schema": {
+    "github_token": "str",
+    "repository_url": "str",
+    "target_path": "str",
+    "commit_message": "str"
+  }
+}
