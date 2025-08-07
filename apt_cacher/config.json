@@ -1,24 +1,25 @@
 {
   "name": "APT Cacher",
-  "version": "3.7.4-20220421",
+  "version": "1.0.0",
   "slug": "apt_cacher",
   "description": "APT-Cacher NG - Debian/Ubuntu package cache proxy server",
   "url": "https://www.unix-ag.uni-kl.de/~bloch/acng/",
-  "arch": [
-    "amd64",
-    "aarch64",
-    "armv7"
-  ],
+  "arch": ["amd64", "aarch64", "armv7"],
   "startup": "services",
   "boot": "auto",
   "ingress": false,
-  "panel_icon": "mdi:server-network",
-  "panel_title": "APT Cacher",
   "host_network": true,
-  "privileged": [],
-  "map": [
-    "config:rw"
-  ],
+  "panel_icon": "mdi:server-network",
+  "panel_title": "APT Cache UI",
+  "panel_admin": false,
+  "panel_path": "aptcache",
+  "ports": {
+    "3142/tcp": 3142
+  },
+  "ports_description": {
+    "3142/tcp": "APT-Cacher NG Web UI and proxy port"
+  },
+  "map": ["config:rw"],
   "options": {
     "port": 3142
   },
