@@ -1,22 +1,22 @@
-This Home Assistant add-on runs a self-hosted instance of Gitea, a lightweight, all-in-one Git server alternative to GitHub, Bitbucket, or GitLab. Gitea provides source control, code review, CI/CD, package registry, and more in a simple web interface. This add-on uses the official gitea/gitea Docker image. It was originally created by Alex Belgium. This version is hosted and maintained on my own Git repository for integration with my environment. Source: https://github.com/alexbelgium/hassio-addons
+This Home Assistant add-on provides a self-hosted Gitea Git server with a web UI. It is based on the official gitea/gitea Docker image. Gitea is a lightweight alternative to GitHub, GitLab, and Bitbucket offering Git hosting, code review, issue tracking, CI/CD, and more. This version was originally created by Alex Belgium. I maintain it in my own Git repository for personal use and availability.
 
-The web interface can be accessed at http://<your-ip>:<port> unless HTTPS is enabled. If SSL is enabled, access via https://<your-domain>:<port>.
+🌐 Web UI: http://<your-ip>:<port> or https://<your-domain>:<port> if ssl is enabled
 
-Configuration options available via options.json:
+⚙️ Configuration options available in options.json:
 
-certfile - SSL certificate file (default: fullchain.pem). Must be located in /ssl  
-keyfile - SSL key file (default: privkey.pem). Must be located in /ssl  
+certfile - default: fullchain.pem. SSL cert file (must be located in /ssl)  
+keyfile - default: privkey.pem. SSL key file (must be located in /ssl)  
 ssl - true or false. Enables or disables HTTPS  
-APP_NAME - Custom name for the Gitea instance  
-DOMAIN - Public domain to access the instance (default: homeassistant.local)  
-ROOT_URL - Optional override for root URL, used only for advanced setups  
+APP_NAME - Sets a custom app title  
+DOMAIN - Public domain name (default: homeassistant.local)  
+ROOT_URL - Optional override for the root URL (advanced use only)
 
-Installation instructions:
+📦 Installation steps:
 
-1. Add my Home Assistant add-ons repository to your instance.  
-2. Install the Gitea add-on.  
-3. Configure options as needed.  
-4. Click Save to store your configuration.  
-5. Start the add-on.  
-6. Access the web UI and complete the Gitea setup.  
-7. Restart the add-on to apply configuration changes (especially ROOT_URL and APP_NAME).
+1. Add my Home Assistant add-ons repository  
+2. Install the add-on  
+3. Edit configuration if needed  
+4. Click Save  
+5. Start the add-on  
+6. Open the Web UI and complete Gitea’s setup  
+7. Restart the add-on to apply any config such as ROOT_URL
