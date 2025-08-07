@@ -1,0 +1,8 @@
+{
+  "build_from": {
+    "amd64": "linuxserver/apprise-api",
+    "armv7": "linuxserver/apprise-api",
+    "aarch64": "linuxserver/apprise-api",
+    "i386": "linuxserver/apprise-api"
+  }
+}
