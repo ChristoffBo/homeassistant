@@ -31,7 +31,7 @@ def load_config():
         return json.load(f)
 
 def extract_owner_repo(github_url):
-    match = re.match(r"https?://github\\.com/([^/]+)/([^/]+)", github_url)
+    match = re.match(r"https?://github\.com/([^/]+)/([^/]+)", github_url)
     if not match:
         raise ValueError("Invalid GitHub repo URL format. Must be like: https://github.com/owner/repo")
     return match.group(1), match.group(2)
