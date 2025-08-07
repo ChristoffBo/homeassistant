@@ -1,0 +1,7 @@
+{
+  "build_from": {
+    "amd64": "caronc/apprise:latest",
+    "aarch64": "caronc/apprise:latest",
+    "armv7": "caronc/apprise:latest"
+  }
+}
