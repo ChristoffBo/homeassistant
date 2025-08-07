@@ -26,6 +26,8 @@ COLOR_CYAN="\033[0;36m"
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
 declare -a SKIP_LIST=()
+PULL_STATUS=""
+PUSH_STATUS=""
 
 safe_jq() {
   local expr="$1"
@@ -204,16 +206,26 @@ commit_and_push() {
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
 
-  git pull --rebase || PULL_STATUS="❌ Git pull failed" && return || PULL_STATUS="✅ Git pull succeeded"
+  if git pull --rebase; then
+    PULL_STATUS="✅ Git pull succeeded"
+  else
+    PULL_STATUS="❌ Git pull failed"
+    return
+  fi
 
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
-    [ "$SKIP_PUSH" = "true" ] && return
-    if git push "$GIT_AUTH_REPO" main; then PUSH_STATUS="✅ Git push succeeded"
-    else log "$COLOR_RED" "❌ Git push failed"; PUSH_STATUS="❌ Git push failed"
+    if [ "$SKIP_PUSH" = "true" ]; then
+      PUSH_STATUS="⏭️ Git push skipped (skip_push enabled)"
+    elif git push "$GIT_AUTH_REPO" main; then
+      PUSH_STATUS="✅ Git push succeeded"
+    else
+      log "$COLOR_RED" "❌ Git push failed"
+      PUSH_STATUS="❌ Git push failed"
     fi
   else
-    log "$COLOR_CYAN" "ℹ️ No changes to commit"; PUSH_STATUS="ℹ️ No changes to commit or push"
+    PUSH_STATUS="ℹ️ No changes to commit or push"
+    log "$COLOR_CYAN" "$PUSH_STATUS"
   fi
 }
 
@@ -238,8 +250,7 @@ main() {
   commit_and_push
 
   local summary="📦 Add-on Update Summary
-"
-  summary+="🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
+🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
 
 "
 
@@ -266,6 +277,7 @@ $PULL_STATUS"
 $PUSH_STATUS"
   [ "$DRY_RUN" = "true" ] && summary+="
 🔁 DRY RUN MODE ENABLED"
+
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
 }
