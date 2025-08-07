@@ -13,6 +13,7 @@
   "panel_title": "APT Cache UI",
   "panel_admin": false,
   "panel_path": "aptcache",
+  "webui": "http://[HOST]:[PORT:3142]/acng-report.html",
   "ports": {
     "3142/tcp": 3142
   },
