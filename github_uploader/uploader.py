@@ -1,94 +1,118 @@
 #!/usr/bin/env python3
 import os
+import json
 import zipfile
 import tempfile
 import shutil
-import json
 import requests
-from flask import Flask, request, send_from_directory, jsonify
+from flask import Flask, request, jsonify
+from werkzeug.utils import secure_filename
+import re
+import base64
 
-app = Flask(__name__, static_url_path='', static_folder='/www')
 CONFIG_PATH = "/data/options.json"
+UPLOAD_DIR = "/data/uploads"
+
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = UPLOAD_DIR
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return {}
     with open(CONFIG_PATH, "r") as f:
         return json.load(f)
 
-@app.route("/")
-def index():
-    return send_from_directory('/www', 'index.html')
+def extract_owner_repo(github_url):
+    match = re.match(r"https?://github\\.com/([^/]+)/([^/]+)", github_url)
+    if not match:
+        raise ValueError("Invalid GitHub repo URL format. Must be like: https://github.com/owner/repo")
+    return match.group(1), match.group(2)
 
-@app.route("/upload", methods=["POST"])
-def upload_zip():
-    config = load_config()
-    github_token = config.get("github_token", "").strip()
-    github_repo = config.get("github_repo", "").strip()
-    github_path = config.get("github_path", "").strip().strip("/")
-    commit_message = config.get("commit_message", "Uploaded via GitHub Uploader").strip()
-
-    if "zipfile" not in request.files:
-        return "No file part", 400
-
-    file = request.files["zipfile"]
-    if file.filename == '':
-        return "No selected file", 400
-
-    if not github_token or not github_repo.startswith("https://github.com"):
-        return "Invalid GitHub token or repository URL", 400
-
-    tmpdir = tempfile.mkdtemp()
-    zip_path = os.path.join(tmpdir, file.filename)
-    file.save(zip_path)
-
-    extract_dir = os.path.join(tmpdir, os.path.splitext(file.filename)[0])
-    os.makedirs(extract_dir, exist_ok=True)
-
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_dir)
-    except zipfile.BadZipFile:
-        shutil.rmtree(tmpdir)
-        return "Invalid ZIP file", 400
-
-    for root, dirs, files in os.walk(extract_dir):
-        for filename in files:
-            full_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(full_path, extract_dir)
-            repo_path = f"{github_path}/{rel_path}".lstrip("/")
-            upload_file_to_github(github_token, github_repo, repo_path, full_path, commit_message)
-
-    shutil.rmtree(tmpdir)
-    return "Upload complete", 200
-
-def upload_file_to_github(token, repo_url, path, file_path, commit_msg):
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-
-    owner_repo = repo_url.rstrip("/").replace("https://github.com/", "")
-    api_url = f"https://api.github.com/repos/{owner_repo}/contents/{path}"
-
+def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_message):
     with open(file_path, "rb") as f:
         content = f.read()
-    content_b64 = content.encode("base64") if isinstance(content, str) else base64.b64encode(content).decode("utf-8")
+    encoded_content = base64.b64encode(content).decode("utf-8")
 
-    get_resp = requests.get(api_url, headers=headers)
-    sha = get_resp.json().get("sha") if get_resp.status_code == 200 else None
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path_in_repo}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    # Check if file already exists
+    get_response = requests.get(api_url, headers=headers)
+    if get_response.status_code == 200:
+        sha = get_response.json().get("sha", "")
+    else:
+        sha = None
 
     data = {
-        "message": commit_msg,
-        "content": content_b64,
+        "message": commit_message,
+        "content": encoded_content,
         "branch": "main"
     }
+
     if sha:
         data["sha"] = sha
 
-    resp = requests.put(api_url, headers=headers, json=data)
-    if resp.status_code not in [200, 201]:
-        print(f"[ERROR] Upload to {api_url} failed: {resp.status_code} - {resp.text}")
+    response = requests.put(api_url, headers=headers, json=data)
+    if response.status_code not in [200, 201]:
+        print(f"[ERROR] GitHub upload failed for {path_in_repo}: {response.status_code} - {response.text}")
+        return False
+    return True
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+
+    config = load_config()
+    token = config.get("github_token", "").strip()
+    repo_url = config.get("github_repo", "").strip()
+    commit_message = config.get("commit_message", "Uploaded via GitHub Uploader").strip()
+
+    try:
+        owner, repo = extract_owner_repo(repo_url)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    zip_filename = secure_filename(file.filename)
+    base_folder_name = os.path.splitext(zip_filename)[0]
+
+    upload_path = os.path.join(app.config["UPLOAD_FOLDER"], zip_filename)
+    file.save(upload_path)
+
+    extract_dir = tempfile.mkdtemp()
+    with zipfile.ZipFile(upload_path, "r") as zip_ref:
+        zip_ref.extractall(extract_dir)
+
+    success_count = 0
+    failure_count = 0
+
+    for root, _, files in os.walk(extract_dir):
+        for f in files:
+            abs_path = os.path.join(root, f)
+            rel_path = os.path.relpath(abs_path, extract_dir)
+            github_path = f"{base_folder_name}/{rel_path}".replace("\\", "/")
+
+            print(f"[INFO] Uploading {rel_path} to GitHub path: {github_path}")
+            ok = upload_file_to_github(token, owner, repo, github_path, abs_path, commit_message)
+            if ok:
+                success_count += 1
+            else:
+                failure_count += 1
+
+    shutil.rmtree(extract_dir)
+    os.remove(upload_path)
+
+    return jsonify({
+        "status": "complete",
+        "uploaded": success_count,
+        "failed": failure_count
+    }), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8080, debug=False)
