@@ -70,16 +70,7 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
     if sha:
         data["sha"] = sha
 
-    # DEBUG LOGGING
-    print(f"[DEBUG] Uploading to URL: {api_url}")
-    print(f"[DEBUG] Branch: {branch}")
-    print(f"[DEBUG] Path in repo: {path_in_repo}")
-    print(f"[DEBUG] SHA: {sha}")
-    print(f"[DEBUG] Payload (truncated): {json.dumps(data)[:200]}...")
-
     response = requests.put(api_url, headers=headers, json=data)
-    print(f"[DEBUG] GitHub response: {response.status_code} - {response.text}")
-
     return response.status_code in [200, 201]
 
 @app.route("/upload", methods=["POST"])
@@ -121,7 +112,7 @@ def upload():
         for f in files:
             abs_path = os.path.join(root, f)
             rel_path = os.path.relpath(abs_path, extract_dir)
-            github_path = f"{base_folder_name}/{rel_path}".replace("\", "/")
+            github_path = f"{base_folder_name}/{rel_path}".replace("\\", "/")
 
             if upload_file_to_github(token, owner, repo, github_path, abs_path, commit_message, branch):
                 success_count += 1
