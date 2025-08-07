@@ -13,7 +13,7 @@
     <form id="upload-form">
       <div class="input-group">
         <label for="file-input">Select ZIP File</label>
-        <input type="file" id="file-input" name="zipfile" accept=".zip">
+        <input type="file" id="file-input" name="file" accept=".zip">
       </div>
 
       <div id="drop-zone">Or drag and drop ZIP here</div>
@@ -39,20 +39,25 @@
       }
 
       const formData = new FormData();
-      formData.append("zipfile", file);
+      formData.append("file", file); // ✅ FIXED NAME — must match backend
 
       status.textContent = "Uploading...";
 
-      const res = await fetch("/upload", {
-        method: "POST",
-        body: formData
-      });
+      try {
+        const res = await fetch("/upload", {
+          method: "POST",
+          body: formData
+        });
 
-      if (res.ok) {
-        status.textContent = "✅ Upload successful.";
-      } else {
-        const err = await res.text();
-        status.textContent = `❌ Upload failed: ${err}`;
+        if (res.ok) {
+          const json = await res.json();
+          status.textContent = `✅ Upload complete: ${json.uploaded} file(s), ${json.failed} failed.`;
+        } else {
+          const err = await res.text();
+          status.textContent = `❌ Upload failed: ${err}`;
+        }
+      } catch (err) {
+        status.textContent = `❌ Upload error: ${err.message}`;
       }
     });
 
