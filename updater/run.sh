@@ -9,31 +9,6 @@ REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 
 # ======================
-# EARLY GIT PULL/REBASE
-# ======================
-if [ -d "$REPO_DIR/.git" ]; then
-  cd "$REPO_DIR"
-  git config user.email "updater@local"
-  git config user.name "Add-on Updater"
-
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "[INFO] 📦 Unstaged changes detected — stashing before rebase"
-    git stash
-    STASHED=true
-  fi
-
-  echo "[INFO] 🔄 Pulling latest changes (rebase)..."
-  git pull --rebase || {
-    echo "[ERROR] ❌ Git pull --rebase failed"
-    exit 1
-  }
-
-  if [ "$STASHED" = "true" ]; then
-    git stash pop || echo "[WARN] ⚠️ Failed to apply stashed changes after rebase"
-  fi
-fi
-
-# ======================
 # COLOR DEFINITIONS
 # ======================
 COLOR_RESET="\033[0m"
@@ -118,6 +93,49 @@ notify() {
   fi
 }
 
+get_latest_tag() {
+  local image="$1"
+  [ -z "$image" ] && return
+
+  local arch=$(uname -m)
+  arch=${arch//x86_64/amd64}
+  arch=${arch//aarch64/arm64}
+  image="${image//\{arch\}/$arch}"
+  local image_name="${image%%:*}"
+  local cache_file="/tmp/tags_$(echo "$image_name" | tr '/' '_').txt"
+
+  if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt 14400 ]; then
+    cat "$cache_file"
+    return
+  fi
+
+  local tags=""
+  if echo "$image_name" | grep -q "^ghcr.io/"; then
+    local path="${image_name#ghcr.io/}"
+    local org_repo="${path%%/*}"
+    local package="${path#*/}"
+    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
+    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
+  elif echo "$image_name" | grep -qE "^(linuxserver|lscr.io)/"; then
+    local name="${image_name##*/}"
+    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
+  else
+    local ns_repo="${image_name/library\//}"
+    local page=1
+    while :; do
+      local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
+      local page_tags=$(echo "$result" | jq -r '.results[].name')
+      [ -z "$page_tags" ] && break
+      tags="$tags
+$page_tags"
+      [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
+      page=$((page + 1))
+    done
+  fi
+
+  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1 | tee "$cache_file"
+}
+
 update_addon() {
   local addon_path="$1"
   local name=$(basename "$addon_path")
@@ -146,7 +164,7 @@ update_addon() {
     return
   fi
 
-  latest=$(curl -sf "https://hub.docker.com/v2/repositories/${image%:*}/tags?page_size=100" | jq -r '.results[].name' | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1)
+  latest=$(get_latest_tag "$image")
   if [ -z "$latest" ]; then
     log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
     UNCHANGED_ADDONS["$name"]="No valid tag"
@@ -189,7 +207,12 @@ commit_and_push() {
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     [ "$SKIP_PUSH" = "true" ] && return
-    git push "$GIT_AUTH_REPO" main || log "$COLOR_RED" "❌ Git push failed"
+    if git push "$GIT_AUTH_REPO" main; then
+      PUSH_STATUS="✅ Git push succeeded"
+    else
+      log "$COLOR_RED" "❌ Git push failed"
+      PUSH_STATUS="❌ Git push failed"
+    fi
   else
     log "$COLOR_CYAN" "ℹ️ No changes to commit"
   fi
@@ -198,13 +221,38 @@ commit_and_push() {
 main() {
   echo "" > "$LOG_FILE"
   read_config
+
+  if [ -d "$REPO_DIR/.git" ]; then
+    cd "$REPO_DIR"
+    git config user.email "updater@local"
+    git config user.name "Add-on Updater"
+
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+      log "$COLOR_YELLOW" "📦 Unstaged changes detected — stashing before rebase"
+      git stash
+      STASHED=true
+    fi
+
+    log "$COLOR_BLUE" "🔄 Pulling latest changes with rebase..."
+    if git pull --rebase; then
+      log "$COLOR_GREEN" "✅ Git pull --rebase succeeded"
+    else
+      log "$COLOR_RED" "❌ Git pull --rebase failed — continuing anyway"
+    fi
+
+    if [ "$STASHED" = "true" ]; then
+      git stash pop || log "$COLOR_RED" "⚠️ Failed to re-apply stashed changes"
+    fi
+  fi
+
   log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
 
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
+
   git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
     notify "Updater Error" "Git clone failed" 5
-    exit 1
+    return
   }
 
   for path in "$REPO_DIR"/*; do
@@ -241,6 +289,8 @@ main() {
 🔁 DRY RUN MODE ENABLED"
   [ "$STASHED" = "true" ] && summary+="
 📦 Unstaged changes were stashed and reapplied"
+  [ -n "$PUSH_STATUS" ] && summary+="
+$PUSH_STATUS"
 
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
