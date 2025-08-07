@@ -4,6 +4,7 @@
   "maintainer": "Christoff Bo",
   "addons": [
     "2fauth",
+    "apt_cacher",
     "gitea",
     "gotify",
     "heimdall",
