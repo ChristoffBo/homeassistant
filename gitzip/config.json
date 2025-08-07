@@ -1,0 +1,26 @@
+{
+  "name": "gitzip",
+  "version": "1.0.0",
+  "slug": "git_zip",
+  "description": "A Home Assistant add-on to upload and download zip files to/from a GitHub repository with a dark mode UI.",
+  "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+  "startup": "application",
+  "boot": "auto",
+  "options": {
+    "github_url": "",
+    "github_token": "",
+    "github_username": ""
+  },
+  "schema": {
+    "github_url": "str",
+    "github_token": "str",
+    "github_username": "str"
+  },
+  "ports": {
+    "80/tcp": 8099
+  },
+  "ingress": true,
+  "panel_icon": "mdi:github",
+  "panel_title": "PiZip",
+  "homeassistant_api": true
+}
