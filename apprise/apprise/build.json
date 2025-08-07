@@ -1,8 +1,0 @@
-{
-  "build_from": {
-    "amd64": "caronc/apprise-api",
-    "armv7": "caronc/apprise-api",
-    "aarch64": "caronc/apprise-api",
-    "i386": "caronc/apprise-api"
-  }
-}
