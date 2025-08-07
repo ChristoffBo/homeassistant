@@ -1,22 +1,27 @@
-This Home Assistant add-on provides a self-hosted Gitea Git server with a web UI. It is based on the official gitea/gitea Docker image. Gitea is a lightweight alternative to GitHub, GitLab, and Bitbucket offering Git hosting, code review, issue tracking, CI/CD, and more. This version was originally created by Alex Belgium. I maintain it in my own Git repository for personal use and availability.
+# 🧩 Gitea Home Assistant Add-on
+Self-hosted lightweight Git server powered by Gitea. Manage repositories, issues, teams, and more in a sleek web interface.
 
-🌐 Web UI: http://<your-ip>:<port> or https://<your-domain>:<port> if ssl is enabled
+✅ Uses the official Docker image: gitea/gitea
+✅ Full web-based Git interface
+✅ Built-in user, team, and org management
+✅ Persistent storage enabled
+✅ All settings exposed in options.json
+✅ No build needed
 
-⚙️ Configuration options available in options.json:
+📁 Files:
+- /data/options.json — stores add-on settings
+- /ssl — where certfile and keyfile must be stored
 
-certfile - default: fullchain.pem. SSL cert file (must be located in /ssl)  
-keyfile - default: privkey.pem. SSL key file (must be located in /ssl)  
-ssl - true or false. Enables or disables HTTPS  
-APP_NAME - Sets a custom app title  
-DOMAIN - Public domain name (default: homeassistant.local)  
-ROOT_URL - Optional override for the root URL (advanced use only)
+⚙️ Configuration: { "ssl": false, "certfile": "fullchain.pem", "keyfile": "privkey.pem", "APP_NAME": "", "DOMAIN": "homeassistant.local", "ROOT_URL": "" }
 
-📦 Installation steps:
+🧪 Options:
+ssl — enables HTTPS if true  
+certfile — SSL certificate (must exist in /ssl)  
+keyfile — SSL private key (must exist in /ssl)  
+APP_NAME — sets a custom name for the instance  
+DOMAIN — sets the accessible domain name  
+ROOT_URL — optional full URL override for advanced use
 
-1. Add my Home Assistant add-ons repository  
-2. Install the add-on  
-3. Edit configuration if needed  
-4. Click Save  
-5. Start the add-on  
-6. Open the Web UI and complete Gitea’s setup  
-7. Restart the add-on to apply any config such as ROOT_URL
+🌍 The Web UI is available via Home Assistant Ingress or at http://<your-ip>:<port> (or HTTPS if enabled).
+
+🧠 Fully self-hosted. No external GitHub or GitLab account required.
