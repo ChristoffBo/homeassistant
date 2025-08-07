@@ -1,0 +1,7 @@
+{
+  "build_from": {
+    "amd64": "sameersbn/apt-cacher-ng:latest",
+    "aarch64": "sameersbn/apt-cacher-ng:latest",
+    "armv7": "sameersbn/apt-cacher-ng:latest"
+  }
+}
