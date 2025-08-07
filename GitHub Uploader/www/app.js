@@ -1,0 +1,1 @@
+console.log('Uploader frontend active');
