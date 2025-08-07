@@ -70,7 +70,16 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
     if sha:
         data["sha"] = sha
 
+    # DEBUG LOGGING
+    print(f"[DEBUG] Uploading to URL: {api_url}")
+    print(f"[DEBUG] Branch: {branch}")
+    print(f"[DEBUG] Path in repo: {path_in_repo}")
+    print(f"[DEBUG] SHA: {sha}")
+    print(f"[DEBUG] Payload (truncated): {json.dumps(data)[:200]}...")
+
     response = requests.put(api_url, headers=headers, json=data)
+    print(f"[DEBUG] GitHub response: {response.status_code} - {response.text}")
+
     return response.status_code in [200, 201]
 
 @app.route("/upload", methods=["POST"])
