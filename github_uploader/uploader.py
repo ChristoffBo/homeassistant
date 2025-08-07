@@ -38,7 +38,7 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
         "Accept": "application/vnd.github+json"
     }
 
-    # Check if file already exists
+    # Check if file already exists (to include sha for updates)
     get_response = requests.get(api_url, headers=headers)
     if get_response.status_code == 200:
         sha = get_response.json().get("sha", "")
@@ -59,6 +59,10 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
         print(f"[ERROR] GitHub upload failed for {path_in_repo}: {response.status_code} - {response.text}")
         return False
     return True
+
+@app.route("/", methods=["GET"])
+def index():
+    return "GitHub Uploader backend is running.", 200
 
 @app.route("/upload", methods=["POST"])
 def upload():
