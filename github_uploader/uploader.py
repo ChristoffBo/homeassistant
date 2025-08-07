@@ -14,17 +14,16 @@ CONFIG_PATH = "/data/options.json"
 UPLOAD_DIR = "/data/uploads"
 WWW_DIR = "/www"
 
-app = Flask(__name__, static_folder=WWW_DIR)
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = UPLOAD_DIR
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Serve index.html
 @app.route("/", methods=["GET"])
-def index():
+def serve_index():
     return send_from_directory(WWW_DIR, "index.html")
 
-# Serve style.css and upload.js
 @app.route("/<path:filename>", methods=["GET"])
-def static_files(filename):
+def serve_static(filename):
     return send_from_directory(WWW_DIR, filename)
 
 def load_config():
@@ -49,24 +48,19 @@ def upload_file_to_github(token, owner, repo, path_in_repo, file_path, commit_me
     }
 
     get_response = requests.get(api_url, headers=headers)
-    if get_response.status_code == 200:
-        sha = get_response.json().get("sha", "")
-    else:
-        sha = None
+    sha = get_response.json().get("sha") if get_response.status_code == 200 else None
 
     data = {
         "message": commit_message,
         "content": encoded_content,
         "branch": "main"
     }
+
     if sha:
         data["sha"] = sha
 
     response = requests.put(api_url, headers=headers, json=data)
-    if response.status_code not in [200, 201]:
-        print(f"[ERROR] GitHub upload failed for {path_in_repo}: {response.status_code} - {response.text}")
-        return False
-    return True
+    return response.status_code in [200, 201]
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -106,9 +100,7 @@ def upload():
             rel_path = os.path.relpath(abs_path, extract_dir)
             github_path = f"{base_folder_name}/{rel_path}".replace("\\", "/")
 
-            print(f"[INFO] Uploading {rel_path} to GitHub path: {github_path}")
-            ok = upload_file_to_github(token, owner, repo, github_path, abs_path, commit_message)
-            if ok:
+            if upload_file_to_github(token, owner, repo, github_path, abs_path, commit_message):
                 success_count += 1
             else:
                 failure_count += 1
