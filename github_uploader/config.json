@@ -27,6 +27,5 @@
     "github_repo_url": "str",
     "target_folder": "str",
     "commit_message": "str?"
-  },
-  "image": "ghcr.io/christoffbo/github-uploader-{arch}"
+  }
 }
