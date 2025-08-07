@@ -1,15 +1,28 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.18
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-ENV LANG C.UTF-8
+# Set shell options
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN apk add --no-cache python3 py3-pip git curl
-
+# Set working directory
 WORKDIR /app
 
-COPY uploader.py /app/
-COPY options.json /data/options.json
+# Install required packages (adjust if needed)
+RUN apk add --no-cache python3 py3-pip curl git
 
-EXPOSE 7860
+# Copy all local files
+COPY run.sh /run.sh
+RUN chmod +x /run.sh
 
-CMD [ "python3", "/app/uploader.py" ]
+# Copy frontend files
+COPY www/ /www/
+
+# Optional: Copy any backend or API scripts
+COPY uploader.py /app/uploader.py
+COPY app/ /app/
+
+# Expose web UI port (optional if Ingress is used)
+EXPOSE 8080
+
+# Default startup script
+CMD [ "/run.sh" ]
