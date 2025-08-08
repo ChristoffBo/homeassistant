@@ -1,8 +1,8 @@
 {
   "build_from": {
-    "armhf": "linuxserver/heimdall:latest",
-    "aarch64": "docker pull linuxserver/heimdall:latest",
-    "amd64": "docker pull linuxserver/heimdall:latest"
+    "armhf": "linuxserver/heimdall",
+    "aarch64": "linuxserver/heimdall",
+    "amd64": "linuxserver/heimdall"
   },
   "version": "2.7.4"
 }
