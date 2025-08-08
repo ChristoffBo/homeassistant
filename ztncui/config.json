@@ -1,10 +1,10 @@
 {
   "name": "ZeroTier Network Controller UI",
-  "version": "v1.1",
+  "version": "1.2.18",
   "slug": "ztncui",
   "description": "Self-hosted ZeroTier Controller with web UI using ztncui.",
   "url": "https://github.com/keynetworks/ztncui",
-  "image": "keynetworks/ztncui:1.2.18",
+  "image": "keynetworks/ztncui",
   "arch": [
     "amd64",
     "aarch64",
