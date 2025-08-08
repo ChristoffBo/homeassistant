@@ -1,28 +1,25 @@
-# Home assistant add-on: Technitium-DNS 
+# 🧩 Technitium DNS Home Assistant Add-on
 
+Self-hosted DNS server powered by Technitium. Offers DNS-over-HTTPS, DNS-over-TLS, logging, and blocklist support.
 
-## About
+✅ Uses the official Docker image: technitium/dns-server  
+✅ Works offline once started  
+✅ Full Web UI on configurable port  
+✅ Persistent storage enabled  
+✅ All settings exposed in options.json  
+✅ No build needed
 
-This addon is based on the Technitium-DNS docker image.
+📁 Files:  
+- /data/options.json — stores add-on settings  
+- /config — persistent volume for DNS data
 
-## Installation
+⚙️ Configuration:  
+{ "port": 5380 }
 
-The installation of this add-on is pretty straightforward and not different in
-comparison to installing any other Hass.io add-on.
+🧪 Options:  
+  port — sets the Technitium web interface port (default: 5380)
 
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
-1. Install this add-on.
-1. Click the `Save` button to store your configuration.
-1. Start the add-on.
-1. Check the logs of the add-on to see if everything went well.
+🌍 Web UI access:  
+Accessible at `http://<your-ip>:<port>` (e.g., `http://192.168.1.10:5380`)
 
-
-## Configuration
-
-```
-port : 5380 #port you want to run on.
-```
-
-Webui can be found at `<your-ip>:port`.
-
-[repository]: https://github.com/ChristoffBo/homeassistant/
+🧠 Fully self-hosted. No external account required.
