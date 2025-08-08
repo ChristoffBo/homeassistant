@@ -24,21 +24,12 @@ A curated collection of custom Home Assistant add-ons designed to extend your se
 3. Add: https://github.com/ChristoffBo/homeassistant  
 4. All add-ons will now appear for installation  
 
-🧪 Features:  
-- Automatic update script (run.sh) checks tags and pushes commits  
-- Full GitHub and Gitea support  
-- Notification integration via Gotify, Apprise, Mailrise  
-- Color-coded logs with full status indicators  
-- Works offline after first setup (for self-hosted stacks)  
 
 🧠 Configuration:  
 Each add-on uses a flat `options.json` file for all settings  
 All ports, tokens, and CLI args are configurable per add-on  
 
-📦 Supported Docker Registries:  
-- Docker Hub (default)  
-- lscr.io (LinuxServer.io)  
-- ghcr.io (GitHub Container Registry)  
+
 
 🔐 Security:  
 - Add-ons are sandboxed using HA container framework  
