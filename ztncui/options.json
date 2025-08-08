@@ -1,0 +1,9 @@
+{
+  "admin_user": "admin",
+  "admin_password": "changeme123",
+  "port": 3443,
+  "zt_home": "/config/ztncui",
+  "hostname": "localhost",
+  "email": "admin@example.com",
+  "controller_network_id": ""
+}
