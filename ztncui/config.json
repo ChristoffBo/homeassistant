@@ -1,0 +1,42 @@
+{
+  "name": "ZTNCUI",
+  "version": "1.0.0",
+  "slug": "ztncui",
+  "description": "ZeroTier Controller with built-in Web UI (ZTNCUI) for managing networks securely via HTTPS.",
+  "url": "https://github.com/key-networks/ztncui-containerized",
+  "arch": ["aarch64", "amd64", "armv7", "i386"],
+  "startup": "services",
+  "boot": "auto",
+  "ingress": false,
+  "host_network": true,
+  "panel_icon": "mdi:lan",
+  "panel_title": "ZTNCUI",
+  "panel_admin": false,
+  "ports": {
+    "3443/tcp": 3443,
+    "9993/udp": 9993
+  },
+  "ports_description": {
+    "3443/tcp": "ZTNCUI Web UI (HTTPS)",
+    "9993/udp": "ZeroTier Controller Traffic"
+  },
+  "map": ["config:rw"],
+  "options": {
+    "admin_user": "admin",
+    "admin_password": "changeme123",
+    "port": 3443,
+    "zt_home": "/config/ztncui",
+    "hostname": "localhost",
+    "email": "admin@example.com",
+    "controller_network_id": ""
+  },
+  "schema": {
+    "admin_user": "str",
+    "admin_password": "str",
+    "port": "int",
+    "zt_home": "str",
+    "hostname": "str",
+    "email": "str",
+    "controller_network_id": "str"
+  }
+}
