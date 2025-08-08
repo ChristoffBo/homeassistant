@@ -23,7 +23,7 @@
   "options": {
     "port": 8000,
     "cli_args": "",
-    "image_override": "linuxserver/apprise-api"
+    "image": "linuxserver/apprise-api"
   },
   "schema": {
     "port": "int",
