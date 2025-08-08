@@ -29,7 +29,7 @@
   ],
   "options": {
     "port": 3443,
-    "image": "keynetworks/ztncui:1.2.18"
+    "image": "keynetworks/ztncui"
   },
   "schema": {
     "port": "int",
