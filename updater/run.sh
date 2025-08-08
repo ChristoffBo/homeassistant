@@ -120,7 +120,9 @@ get_latest_tag() {
     tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -er '.tags[]?' 2>/dev/null || echo "")
   elif echo "$image_name" | grep -qE "^lscr.io/"; then
     local name="${image_name##*/}"
-    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -er '.tags[]?.name' 2>/dev/null || echo "")
+    local response
+    response=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" 2>/dev/null || echo "")
+    tags=$(echo "$response" | jq -er '.tags[]?.name' 2>/dev/null || echo "")
   else
     local ns_repo="${image_name/library\//}"
     local page=1
