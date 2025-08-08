@@ -1,29 +1,27 @@
-![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/heimdall/logo.png)
-# Home assistant add-on: Heimdall
 
 
-## About
+# 🧩 Heimdall Home Assistant Add-on
 
-This addon is based on the Heimdall docker image.
+Self-hosted application dashboard and web bookmark manager with a sleek interface.
 
-## Installation
+✅ Uses the official Docker image: linuxserver/heimdall  
+✅ Works offline once started  
+✅ Full Web UI on configurable port  
+✅ Persistent storage enabled  
+✅ All settings exposed in options.json  
+✅ No build needed
 
-The installation of this add-on is pretty straightforward and not different in
-comparison to installing any other Hass.io add-on.
+📁 Files:  
+- /data/options.json — stores add-on settings  
+- /config — persistent volume for Heimdall data
 
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
-1. Install this add-on.
-1. Click the `Save` button to store your configuration.
-1. Start the add-on.
-1. Check the logs of the add-on to see if everything went well.
+⚙️ Configuration:  
+{ "port": 82 }
 
+🧪 Options:  
+  port — sets the Heimdall web interface port (default: 82)
 
-## Configuration
+🌍 Web UI access:  
+Accessible at `http://<your-ip>:<port>` (e.g., `http://192.168.1.10:82`)
 
-```
-port : 82 #port you want to run on.
-```
-
-Webui can be found at `<your-ip>:port`.
-
-[repository]: https://github.com/ChristoffBo/homeassistant/
+🧠 Fully self-hosted. No external account required.
