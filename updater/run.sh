@@ -7,7 +7,6 @@ set -eo pipefail
 CONFIG_PATH="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
-CHANGELOG_FILE="CHANGELOG.md"
 
 # ======================
 # COLOR DEFINITIONS
@@ -15,8 +14,10 @@ CHANGELOG_FILE="CHANGELOG.md"
 COLOR_RESET="\033[0m"
 COLOR_GREEN="\033[0;32m"
 COLOR_BLUE="\033[0;34m"
+COLOR_DARK_BLUE="\033[0;94m"
 COLOR_YELLOW="\033[0;33m"
 COLOR_RED="\033[0;31m"
+COLOR_PURPLE="\033[0;35m"
 COLOR_CYAN="\033[0;36m"
 
 # ======================
@@ -24,156 +25,167 @@ COLOR_CYAN="\033[0;36m"
 # ======================
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
-declare -A SKIPPED_ADDONS
 declare -a SKIP_LIST=()
-declare -a BYPASS_LIST=()
+PULL_STATUS=""
+PUSH_STATUS=""
 
 safe_jq() {
   local expr="$1"
   local file="$2"
-  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]][[:alnum:].:_/-]*$' || echo "unknown"
+  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]][[:alnum:].:_-]*$' || echo "unknown"
 }
 
 read_config() {
-  TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH")
-  SKIP_LIST=($(jq -r '.skip_list[]? // empty' "$CONFIG_PATH"))
-  BYPASS_LIST=($(jq -r '.bypass_list[]? // empty' "$CONFIG_PATH"))
-  GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_PATH")
-  APPRISE_URL=$(jq -r '.apprise_url // empty' "$CONFIG_PATH")
-  MAILRISE_URL=$(jq -r '.mailrise_url // empty' "$CONFIG_PATH")
+  TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH" 2>/dev/null || echo "")
+  export TZ
+
+  DRY_RUN=$(jq -er '.dry_run // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  DEBUG=$(jq -er '.debug // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  SKIP_LIST=($(jq -er '.skip_addons[]?' "$CONFIG_PATH" 2>/dev/null || echo ""))
+
+  NOTIFY_ENABLED=$(jq -er '.enable_notifications // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_SERVICE=$(jq -er '.notification_service // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_URL=$(jq -er '.notification_url // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_TOKEN=$(jq -er '.notification_token // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_TO=$(jq -er '.notification_to // ""' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_SUCCESS=$(jq -er '.notify_on_success // false' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_ERROR=$(jq -er '.notify_on_error // true' "$CONFIG_PATH" 2>/dev/null || echo "")
+  NOTIFY_UPDATES=$(jq -er '.notify_on_updates // true' "$CONFIG_PATH" 2>/dev/null || echo "")
+
+  GIT_PROVIDER=$(jq -er '.git_provider // "github"' "$CONFIG_PATH" 2>/dev/null || echo "github")
+
+  if [ "$GIT_PROVIDER" = "gitea" ]; then
+    GIT_REPO=$(jq -er '.gitea_repository' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_USER=$(jq -er '.gitea_username' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_TOKEN=$(jq -er '.gitea_token' "$CONFIG_PATH" 2>/dev/null || echo "")
+  else
+    GIT_REPO=$(jq -er '.github_repository' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_USER=$(jq -er '.github_username' "$CONFIG_PATH" 2>/dev/null || echo "")
+    GIT_TOKEN=$(jq -er '.github_token' "$CONFIG_PATH" 2>/dev/null || echo "")
+  fi
+
+  GIT_AUTH_REPO="$GIT_REPO"
+  if [ -n "$GIT_USER" ] && [ -n "$GIT_TOKEN" ]; then
+    GIT_AUTH_REPO="${GIT_REPO/https:\/\//https://$GIT_USER:$GIT_TOKEN@}"
+  fi
+}
+
+log() {
+  local color="$1"; shift
+  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
 notify() {
-  local message="$1"
-  echo -e "$message" | tee -a "$LOG_FILE"
-  [ -n "$GOTIFY_URL" ] && curl -s -X POST "$GOTIFY_URL" -F "title=Add-on Updater" -F "message=$message" >/dev/null
-  [ -n "$APPRISE_URL" ] && curl -s -X POST "$APPRISE_URL" -d "$message" >/dev/null
-  [ -n "$MAILRISE_URL" ] && curl -s -X POST "$MAILRISE_URL" -d "$message" >/dev/null
+  local title="$1"
+  local message="$2"
+  local priority="${3:-0}"
+
+  [ "$NOTIFY_ENABLED" != "true" ] && return
+  case "$priority" in
+    0) [ "$NOTIFY_SUCCESS" != "true" ] && return ;;
+    3) [ "$NOTIFY_UPDATES" != "true" ] && return ;;
+    5) [ "$NOTIFY_ERROR" != "true" ] && return ;;
+  esac
+
+  if [ "$NOTIFY_SERVICE" = "gotify" ]; then
+    local payload
+    payload=$(jq -n --arg t "$title" --arg m "$message" --argjson p "$priority" '{title: $t, message: $m, priority: $p}')
+    curl -s -X POST "${NOTIFY_URL%/}/message?token=${NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "$payload" > /dev/null || log "$COLOR_RED" "❌ Gotify notification failed"
+  fi
 }
 
-fetch_latest_tag() {
+get_latest_tag() {
   local image="$1"
-  local latest_tag=""
+  [ -z "$image" ] && return
 
-  # 1. Try Docker Hub
-  latest_tag=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" 2>/dev/null \
-    | jq -er '.results[].name' 2>/dev/null \
-    | grep -E '^[0-9]+(\.[0-9]+)*' \
-    | sort -V \
-    | tail -1 || echo "")
+  local arch=$(uname -m)
+  arch=${arch//x86_64/amd64}
+  arch=${arch//aarch64/arm64}
+  image="${image//\{arch\}/$arch}"
+  local image_name="${image%%:*}"
+  local cache_file="/tmp/tags_$(echo "$image_name" | tr '/' '_').txt"
 
-  # 2. If failed and image starts with lscr.io, try LinuxServer.io Fleet API
-  if [[ -z "$latest_tag" && "$image" == lscr.io/* ]]; then
-    local repo_name
-    repo_name=$(echo "$image" | cut -d/ -f3)
-    latest_tag=$(curl -fsSL "https://fleet.linuxserver.io/api/v1/images/$repo_name" 2>/dev/null \
-      | jq -er '.image.tags[]?.name' 2>/dev/null \
-      | grep -E '^[0-9]+(\.[0-9]+)*' \
-      | sort -V \
-      | tail -1 || echo "")
+  if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt 14400 ]; then
+    cat "$cache_file"
+    return
   fi
 
-  echo "${latest_tag:-unknown}"
+  local tags=""
+
+  # 1. Docker Hub check first
+  local ns_repo="${image_name/library\//}"
+  local page=1
+  while :; do
+    local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
+    local page_tags=$(echo "$result" | jq -r '.results[].name')
+    [ -z "$page_tags" ] && break
+    tags="$tags
+$page_tags"
+    [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
+    page=$((page + 1))
+  done
+
+  # 2. LinuxServer fallback only for lscr.io/*
+  if [[ -z "$tags" && "$image_name" == lscr.io/* ]]; then
+    local name="${image_name##*/}"
+    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
+  fi
+
+  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' \
+    | grep -viE 'latest|dev|rc|beta' \
+    | sort -Vr | head -n1 | tee "$cache_file"
 }
 
 update_addon() {
   local addon_path="$1"
-  local config="$addon_path/config.json"
-  local name=$(safe_jq '.name' "$config")
-  local image=$(safe_jq '.image_override // .image' "$config")
-  local current_tag=$(safe_jq '.version' "$config")
+  local name=$(basename "$addon_path")
 
-  # Check skip unless bypassed
-  if [[ " ${SKIP_LIST[*]} " == *" $name "* && " ${BYPASS_LIST[*]} " != *" $name "* ]]; then
-    echo -e "${COLOR_CYAN}[SKIP] $name skipped via config${COLOR_RESET}"
-    SKIPPED_ADDONS["$name"]="$current_tag"
-    return
-  fi
-
-  local latest_tag
-  latest_tag=$(fetch_latest_tag "$image")
-
-  if [[ "$latest_tag" == "$current_tag" || "$latest_tag" == "unknown" ]]; then
-    echo -e "${COLOR_GREEN}[OK] $name is up to date ($current_tag)${COLOR_RESET}"
-    UNCHANGED_ADDONS["$name"]="$current_tag"
-    return
-  fi
-
-  echo -e "${COLOR_YELLOW}[UPDATE] $name: $current_tag → $latest_tag${COLOR_RESET}"
-  jq --arg v "$latest_tag" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
-  UPDATED_ADDONS["$name"]="$latest_tag"
-
-  # Write or update CHANGELOG.md
-  if [[ -f "$addon_path/$CHANGELOG_FILE" ]]; then
-    echo -e "## $latest_tag - $(date +'%Y-%m-%d')\n- Updated automatically to $latest_tag\n" | cat - "$addon_path/$CHANGELOG_FILE" > temp && mv temp "$addon_path/$CHANGELOG_FILE"
-  else
-    echo -e "## $latest_tag - $(date +'%Y-%m-%d')\n- Updated automatically to $latest_tag\n" > "$addon_path/$CHANGELOG_FILE"
-  fi
-}
-
-commit_and_push() {
-  cd "$REPO_DIR"
-  git pull || notify "[GIT] ❌ Pull failed. Manual resolution may be required."
-
-  if git diff --quiet && git diff --cached --quiet; then
-    notify "[GIT] No changes to commit."
-  else
-    git add .
-    git commit -m "🔄 Updated add-ons: ${!UPDATED_ADDONS[*]}"
-    if git push; then
-      notify "[GIT] ✅ Push succeeded."
-    else
-      notify "[GIT] ❌ Push failed."
-    fi
-  fi
-}
-
-main() {
-  echo -e "${COLOR_BLUE}Starting Home Assistant Add-on Updater${COLOR_RESET}"
-  read_config
-  export TZ="$TZ"
-  date
-
-  if [ ! -d "$REPO_DIR/.git" ]; then
-    git clone https://github.com/ChristoffBo/homeassistant "$REPO_DIR" || {
-      notify "[GIT] ❌ Failed to clone repository."
-      exit 1
-    }
-    notify "[GIT] ✅ Repository cloned successfully."
-  else
-    echo -e "${COLOR_BLUE}[GIT] Repo already cloned, continuing...${COLOR_RESET}"
-  fi
-
-  for addon_path in "$REPO_DIR"/*; do
-    [[ -d "$addon_path" && -f "$addon_path/config.json" ]] || continue
-    update_addon "$addon_path"
+  for skip in "${SKIP_LIST[@]}"; do
+    [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "⏭️ Skipping $name (listed)" && return
   done
 
-  commit_and_push
+  log "$COLOR_DARK_BLUE" "🔍 Checking $name"
 
-  notify_summary="🧩 Add-on Updater Summary\n\n"
-  if [ "${#UPDATED_ADDONS[@]}" -gt 0 ]; then
-    notify_summary+="✅ Updated:\n"
-    for name in "${!UPDATED_ADDONS[@]}"; do
-      notify_summary+="• $name → ${UPDATED_ADDONS[$name]}\n"
-    done
+  local config="$addon_path/config.json"
+  local build="$addon_path/build.json"
+  local image version latest
+
+  image=$(jq -r '.image // empty' "$config" 2>/dev/null || echo "")
+  version=$(safe_jq '.version' "$config")
+
+  if [ -z "$image" ] && [ -f "$build" ]; then
+    image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build" 2>/dev/null || echo "")
+    version=$(safe_jq '.version' "$build")
   fi
 
-  if [ "${#UNCHANGED_ADDONS[@]}" -gt 0 ]; then
-    notify_summary+="\n🆗 Unchanged:\n"
-    for name in "${!UNCHANGED_ADDONS[@]}"; do
-      notify_summary+="• $name (${UNCHANGED_ADDONS[$name]})\n"
-    done
+  if [ -z "$image" ]; then
+    log "$COLOR_YELLOW" "⚠️ No image defined for $name"
+    UNCHANGED_ADDONS["$name"]="No image defined"
+    return
   fi
 
-  if [ "${#SKIPPED_ADDONS[@]}" -gt 0 ]; then
-    notify_summary+="\n⏩ Skipped:\n"
-    for name in "${!SKIPPED_ADDONS[@]}"; do
-      notify_summary+="• $name (${SKIPPED_ADDONS[$name]})\n"
-    done
+  latest=$(get_latest_tag "$image")
+  if [ -z "$latest" ]; then
+    log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
+    UNCHANGED_ADDONS["$name"]="No valid tag"
+    return
   fi
 
-  notify "$notify_summary"
-}
+  if [ "$version" != "$latest" ]; then
+    log "$COLOR_GREEN" "⬆️ $name updated from $version to $latest"
+    UPDATED_ADDONS["$name"]="$version → $latest"
 
-main
+    if [ "$DRY_RUN" = "true" ]; then
+      log "$COLOR_PURPLE" "💡 Dry run active: skipping update of $name"
+      return
+    fi
+
+    jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
+    if [ -f "$build" ]; then
+      jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp" && mv "$build.tmp" "$build"
+    fi
+
+    local changelog="$addon_path/CHANGELOG.md"
+    local date_str
+    date_str=$(date '+
