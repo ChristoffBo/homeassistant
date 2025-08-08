@@ -33,7 +33,7 @@ GIT_CLEAN_STATUS=""
 safe_jq() {
   local expr="$1"
   local file="$2"
-  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]][[:alnum:].:_-]*$' || echo "unknown"
+  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]][[:alnum:].:_\-]*$' || echo "unknown"
 }
 
 read_config() {
@@ -116,204 +116,149 @@ get_latest_tag() {
   fi
 
   local tags=""
-  if echo "$image_name" | grep -q "^ghcr.io/"; then
+  local ns_repo="${image_name/library\//}"
+  local page=1
+  while :; do
+    local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || {
+      log "$COLOR_YELLOW" "⚠️ Docker Hub fetch failed for $ns_repo (page $page)"
+      break
+    }
+    local page_tags=$(echo "$result" | jq -r '.results[].name')
+    [ -z "$page_tags" ] && break
+    tags="$tags
+$page_tags"
+    [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
+    page=$((page + 1))
+  done
+
+  if [ -z "$tags" ] && echo "$image_name" | grep -q "^ghcr.io/"; then
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
-    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token') || {
-      log "$COLOR_YELLOW" "⚠️ Failed to get GHCR token for $image_name"
-      return
-    }
-    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?') || {
-      log "$COLOR_YELLOW" "⚠️ Failed to fetch GHCR tags for $image_name"
-      return
-    }
-  elif echo "$image_name" | grep -q "^lscr.io/"; then
+    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token') || return
+    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?') || return
+  elif [ -z "$tags" ] && echo "$image_name" | grep -q "^lscr.io/"; then
     local name="${image_name##*/}"
-    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name') || {
-      log "$COLOR_YELLOW" "⚠️ Failed to fetch lscr.io tags for $image_name"
-      return
-    }
-  else
-    local ns_repo="${image_name/library\//}"
-    local page=1
-    while :; do
-      local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || {
-        log "$COLOR_YELLOW" "⚠️ Docker Hub fetch failed for $ns_repo (page $page)"
-        break
-      }
-      local page_tags=$(echo "$result" | jq -r '.results[].name')
-      [ -z "$page_tags" ] && break
-      tags="$tags
-$page_tags"
-      [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
-      page=$((page + 1))
-    done
+    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name') || return
   fi
 
   local filtered=$(echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1)
-  if [ -z "$filtered" ]; then
-    log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image_name"
-    return
-  fi
+  [ -z "$filtered" ] && return
 
   echo "$filtered" | tee "$cache_file"
 }
 
 update_addon() {
-  local addon_path="$1"
-  local name=$(basename "$addon_path")
+  local addon="$1"
+  local config="$REPO_DIR/$addon/config.json"
 
-  for skip in "${SKIP_LIST[@]}"; do
-    [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "⏭️ Skipping $name (listed)" && return
-  done
-
-  log "$COLOR_DARK_BLUE" "🔍 Checking $name"
-
-  local config="$addon_path/config.json"
-  local build="$addon_path/build.json"
-  local image version latest
-
-  image=$(jq -r '.image // empty' "$config" 2>/dev/null || echo "")
-  version=$(safe_jq '.version' "$config")
-
-  if [ -z "$image" ] && [ -f "$build" ]; then
-    image=$(jq -r '.build_from.amd64 // .build_from | strings' "$build" 2>/dev/null || echo "")
-    version=$(safe_jq '.version' "$build")
-  fi
-
-  if [ -z "$image" ]; then
-    log "$COLOR_YELLOW" "⚠️ No image defined for $name"
-    UNCHANGED_ADDONS["$name"]="No image defined"
+  if [[ " ${SKIP_LIST[*]} " == *" $addon "* ]]; then
+    log "$COLOR_CYAN" "⏭️  Skipping $addon"
     return
   fi
 
-  latest=$(get_latest_tag "$image")
-  if [ -z "$latest" ]; then
-    log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
-    UNCHANGED_ADDONS["$name"]="No valid tag"
+  log "$COLOR_BLUE" "🔍 Checking $addon"
+
+  if [ ! -f "$config" ]; then
+    log "$COLOR_YELLOW" "⚠️  config.json not found for $addon"
     return
   fi
 
-  if [ "$version" != "$latest" ]; then
-    log "$COLOR_GREEN" "⬆️ $name updated from $version to $latest"
-    UPDATED_ADDONS["$name"]="$version → $latest"
+  local current_image=$(safe_jq '.image' "$config")
+  local current_version=$(safe_jq '.version' "$config")
+  local latest_tag=$(get_latest_tag "$current_image")
 
-    if [ "$DRY_RUN" = "true" ]; then
-      log "$COLOR_PURPLE" "💡 Dry run active: skipping update of $name"
-      return
-    fi
+  if [ -z "$latest_tag" ] || [ "$latest_tag" == "unknown" ]; then
+    log "$COLOR_YELLOW" "⚠️  Could not determine latest version for $addon"
+    return
+  fi
 
-    jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
-    if [ -f "$build" ]; then
-      jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp" && mv "$build.tmp" "$build"
-    fi
-
-    local changelog="$addon_path/CHANGELOG.md"
-    local date_str
-    date_str=$(date '+%Y-%m-%d')
-    if [ -f "$changelog" ]; then
-      sed -i "1i## $latest - $date_str" "$changelog"
-    else
-      echo -e "## $latest - $date_str\n" > "$changelog"
-    fi
+  if [[ "$current_version" == "$latest_tag" ]]; then
+    UNCHANGED_ADDONS["$addon"]="$current_version"
+    log "$COLOR_GREEN" "✅ $addon is up to date ($current_version)"
   else
-    log "$COLOR_CYAN" "✅ $name is up to date ($version)"
-    UNCHANGED_ADDONS["$name"]="Up to date ($version)"
+    if [ "$DRY_RUN" = "true" ]; then
+      log "$COLOR_PURPLE" "🧪 $addon would be updated from $current_version to $latest_tag (dry run)"
+    else
+      jq --arg version "$latest_tag" '.version = $version' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
+      UPDATED_ADDONS["$addon"]="$current_version → $latest_tag"
+      log "$COLOR_YELLOW" "⬆️  $addon updated from $current_version to $latest_tag"
+    fi
   fi
 }
 
 commit_and_push() {
   cd "$REPO_DIR"
-  git config user.email "updater@local"
-  git config user.name "Add-on Updater"
 
-  if [ -n "$(git status --porcelain)" ]; then
-    git reset --hard
-    git clean -fd
-    GIT_CLEAN_STATUS="🔧 Git workspace was reset before pull"
-  else
-    GIT_CLEAN_STATUS="🔍 Git workspace was already clean"
-  fi
-
-  if git pull --rebase; then
-    PULL_STATUS="✅ Git pull succeeded"
-  else
-    PULL_STATUS="❌ Git pull failed"
-    notify "Updater Error" "Git pull failed for $GIT_AUTH_REPO" 5
+  if [ "$DRY_RUN" = "true" ]; then
+    log "$COLOR_PURPLE" "🧪 Dry run enabled: skipping Git commit and push"
+    PUSH_STATUS="🔁 Dry run: Git push skipped"
     return
   fi
 
-  if [ -n "$(git status --porcelain)" ]; then
-    git add . && git commit -m "🔄 Updated add-on versions" || return
-    if [ "$SKIP_PUSH" = "true" ]; then
-      PUSH_STATUS="⏭️ Git push skipped (skip_push enabled)"
-    elif git push "$GIT_AUTH_REPO" main; then
-      PUSH_STATUS="✅ Git push succeeded"
+  git add .
+  if ! git diff --cached --quiet; then
+    git commit -m "🔄 Updated addons on $(date '+%Y-%m-%d %H:%M:%S')" || {
+      log "$COLOR_YELLOW" "⚠️  Nothing to commit"
+    }
+    if git push origin HEAD; then
+      log "$COLOR_GREEN" "📤 Git push successful"
+      PUSH_STATUS="✅ Git push successful"
     else
       log "$COLOR_RED" "❌ Git push failed"
       PUSH_STATUS="❌ Git push failed"
-      notify "Updater Error" "Git push failed to $GIT_AUTH_REPO" 5
     fi
   else
-    PUSH_STATUS="ℹ️ No changes to commit or push"
-    log "$COLOR_CYAN" "$PUSH_STATUS"
+    log "$COLOR_GREEN" "✅ No changes to commit"
+    PUSH_STATUS="✅ No changes to commit"
   fi
 }
 
 main() {
-  echo "" > "$LOG_FILE"
+  log "$COLOR_DARK_BLUE" "🚀 Starting Home Assistant Add-on Updater"
+
   read_config
-  log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
 
-  cd / || cd /tmp
-  [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
-
-  git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
-    log "$COLOR_RED" "❌ Git clone failed"
-    notify "Updater Error" "Git clone failed" 5
+  rm -rf "$REPO_DIR"
+  if git clone "$GIT_AUTH_REPO" "$REPO_DIR"; then
+    cd "$REPO_DIR"
+    git reset --hard HEAD && git clean -fd
+    GIT_CLEAN_STATUS="🔧 Git workspace was reset before pull"
+    git pull || log "$COLOR_YELLOW" "⚠️  Git pull failed"
+    cd /
+  else
+    log "$COLOR_RED" "❌ Failed to clone repository"
+    notify "Addon Updater" "❌ Failed to clone $GIT_REPO" 5
     exit 1
-  }
+  fi
 
-  for path in "$REPO_DIR"/*; do
-    [ -d "$path" ] && update_addon "$path"
+  for addon_path in "$REPO_DIR"/*/; do
+    addon=$(basename "$addon_path")
+    update_addon "$addon" || true
   done
 
   commit_and_push
 
-  local summary="📦 Add-on Update Summary
-🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
+  summary=""
 
-"
+  if [ "${#UPDATED_ADDONS[@]}" -gt 0 ]; then
+    summary+="🆕 Updated:\n"
+    for addon in "${!UPDATED_ADDONS[@]}"; do
+      summary+="$addon: ${UPDATED_ADDONS[$addon]}\n"
+    done
+  fi
 
-  for path in "$REPO_DIR"/*; do
-    [ ! -d "$path" ] && continue
-    local name=$(basename "$path")
-    local status=""
+  if [ "${#UNCHANGED_ADDONS[@]}" -gt 0 ]; then
+    summary+="\n✅ Unchanged:\n"
+    for addon in "${!UNCHANGED_ADDONS[@]}"; do
+      summary+="$addon: ${UNCHANGED_ADDONS[$addon]}\n"
+    done
+  fi
 
-    if [ -n "${UPDATED_ADDONS[$name]}" ]; then
-      status="🔄 ${UPDATED_ADDONS[$name]}"
-    elif [ -n "${UNCHANGED_ADDONS[$name]}" ]; then
-      status="✅ ${UNCHANGED_ADDONS[$name]}"
-    else
-      status="⏭️ Skipped"
-    fi
+  summary+="\n$PUSH_STATUS"
+  summary+="\n$GIT_CLEAN_STATUS"
 
-    summary+="$name: $status
-"
-  done
-
-  [ -n "$PULL_STATUS" ] && summary+="
-$PULL_STATUS"
-  [ -n "$PUSH_STATUS" ] && summary+="
-$PUSH_STATUS"
-  [ "$DRY_RUN" = "true" ] && summary+="
-🔁 DRY RUN MODE ENABLED"
-  summary+="
-$GIT_CLEAN_STATUS"
-
-  notify "Add-on Updater" "$summary" 3
-  log "$COLOR_BLUE" "ℹ️ Update process complete."
+  notify "Addon Updater Summary" "$summary" 3
 }
 
 main
