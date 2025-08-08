@@ -4,6 +4,7 @@
   "slug": "ztncui",
   "description": "ZeroTier Controller with built-in Web UI (ZTNCUI) for managing networks securely via HTTPS.",
   "url": "https://github.com/key-networks/ztncui-containerized",
+  "image": "keynetworks/ztncui-containerized",
   "arch": ["aarch64", "amd64", "armv7", "i386"],
   "startup": "services",
   "boot": "auto",
