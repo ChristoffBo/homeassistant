@@ -1,99 +1,52 @@
-Home Assistant Addons Repository
+# 🧩 Home Assistant Add-ons Repository by ChristoffBo
 
-Welcome to the ChristoffBo Home Assistant Addons repository! 🎉
+A curated collection of custom Home Assistant add-ons designed to extend your setup with powerful tools, dashboards, proxies, and automation utilities.
 
-This repository contains a curated collection of custom Home Assistant addons designed to enhance and extend your Home Assistant experience. These addons are containerized and can be managed easily with this repo.
+✅ All add-ons run official or hardened Docker images  
+✅ Flat config with full `options.json` support  
+✅ Persistent storage and port mapping on every add-on  
+✅ Supports Docker Hub, lscr.io, and GHCR registries  
+✅ Includes scripts to automate update checks and changelogs  
 
-    Note: This repository was originally created for private use but is shared here for reference and community benefit.
+📁 Contents:  
+- Fully working add-ons like:  
+  - Gotify — Push notifications server  
+  - Heimdall — App dashboard UI  
+  - Mailrise — Mail-to-notification bridge  
+  - Technitium DNS — DNS server with GUI + ingress  
+  - Update Checker — Auto Docker tag puller + changelog  
+- Automation scripts and update helpers  
+- All add-ons include full UI, readme, and icon/logo assets  
 
-What’s Inside
+⚙️ Installation:  
+1. Go to Home Assistant ➜ Settings ➜ Add-ons ➜ Add-on Store  
+2. Click "Repositories"  
+3. Add: https://github.com/ChristoffBo/homeassistant  
+4. All add-ons will now appear for installation  
 
-    🚀 Custom Home Assistant addons, including:
+🧪 Features:  
+- Automatic update script (run.sh) checks tags and pushes commits  
+- Full GitHub and Gitea support  
+- Notification integration via Gotify, Apprise, Mailrise  
+- Color-coded logs with full status indicators  
+- Works offline after first setup (for self-hosted stacks)  
 
-        Mailrise — Mail server notification addon
+🧠 Configuration:  
+Each add-on uses a flat `options.json` file for all settings  
+All ports, tokens, and CLI args are configurable per add-on  
 
-        Gotify — Push notification server addon
+📦 Supported Docker Registries:  
+- Docker Hub (default)  
+- lscr.io (LinuxServer.io)  
+- ghcr.io (GitHub Container Registry)  
 
-        Heimdall — Application dashboard addon
+🔐 Security:  
+- Add-ons are sandboxed using HA container framework  
+- Secure token storage via Supervisor options  
+- No external tracking or cloud dependencies  
 
-        Technitium DNS — The best DNS and DHCP server with ingress!
+📄 License:  
+MIT License — © 2026 Christoff Bothma  
+https://github.com/ChristoffBo/homeassistant/blob/main/LICENSE  
 
-        Update Checker — Automated addon update management
-
-    Scripts and helpers to automate addon updates and management.
-
-    Configuration and Docker-related files for building and deploying addons.
-
-Features & Benefits
-
-    Easy to add to your Home Assistant instance via the addon store or manual installation.
-
-    Automated update checks that keep your addons running the latest Docker images.
-
-    Support for multiple registries like Docker Hub, LinuxServer.io, and GHCR.
-
-    Secure with support for private GitHub repositories and authenticated DockerHub API calls.
-
-    Detailed changelogs and version tracking for each addon.
-
-    Clear logs with color coding and emojis to improve readability.
-
-Getting Started
-Installation
-
-    Add the repository to Home Assistant
-
-        Go to Supervisor > Add-on Store > Repositories
-
-        Enter the URL: https://github.com/ChristoffBo/homeassistant
-
-        Add the repository and wait for addons to appear.
-
-    Install an addon
-
-        Choose an addon from the list and click Install
-
-        Configure addon options as needed (refer to each addon’s documentation).
-
-    Run and configure
-
-        Start the addon and check logs for proper startup.
-
-        Customize your addon settings via the Home Assistant UI.
-
-Configuration & Usage
-
-    Each addon contains its own config.json and optionally build.json files.
-
-    Update scheduling and Docker image version management are handled by the updater script included in the repo.
-
-    You can customize update intervals and authentication tokens in the updater’s options.
-
-Supported Docker Registries
-
-    Docker Hub (including LinuxServer.io)
-
-    GitHub Container Registry (GHCR)
-
-
-
-License
-
-This repository is licensed under the MIT License.
-© 2026 Christoff Bothma
-
-See the LICENSE file for details.
-Support & Contact
-
-If you need help or have questions, feel free to open an issue or contact me through GitHub.
-Roadmap (Planned Features)
-
-    Add more custom addons for popular Home Assistant integrations.
-
-    Implement more robust CI/CD pipelines for automated testing and publishing.
-
-    Enhance documentation with examples and tutorials.
-
-    Add GitHub Pages or wiki for expanded user guides.
-
-Thanks for checking out the repo — happy automating! 🤖✨
+🚫 No support is provided. Use as-is. Issues, pull requests, and help are not guaranteed to be addressed.
