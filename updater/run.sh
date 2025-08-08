@@ -117,12 +117,10 @@ get_latest_tag() {
     local org_repo="${path%%/*}"
     local package="${path#*/}"
     local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
-    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -er '.tags[]?' 2>/dev/null || echo "")
-  elif echo "$image_name" | grep -qE "^lscr.io/"; then
+    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
+  elif echo "$image_name" | grep -q "^lscr.io/"; then
     local name="${image_name##*/}"
-    local response
-    response=$(curl --connect-timeout 5 --max-time 10 -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" 2>/dev/null || echo "")
-    tags=$(echo "$response" | jq -er '.tags[]?.name' 2>/dev/null || echo "")
+    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
   else
     local ns_repo="${image_name/library\//}"
     local page=1
@@ -205,6 +203,16 @@ update_addon() {
 
 commit_and_push() {
   cd "$REPO_DIR"
+  git config user.email "updater@local"
+  git config user.name "Add-on Updater"
+
+  if git pull --rebase; then
+    PULL_STATUS="✅ Git pull succeeded"
+  else
+    PULL_STATUS="❌ Git pull failed"
+    return
+  fi
+
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     if [ "$SKIP_PUSH" = "true" ]; then
@@ -229,24 +237,11 @@ main() {
   cd / || cd /tmp
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
 
-  git clone "$GIT_AUTH_REPO" "$REPO_DIR" || {
+  git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
     notify "Updater Error" "Git clone failed" 5
     exit 1
   }
-
-  cd "$REPO_DIR"
-  git config user.email "updater@local"
-  git config user.name "Add-on Updater"
-
-  if git pull --rebase; then
-    PULL_STATUS="✅ Git pull succeeded"
-  else
-    log "$COLOR_RED" "❌ Git pull failed"
-    notify "Updater Error" "Git pull failed: working tree not clean?" 5
-    PULL_STATUS="❌ Git pull failed"
-    exit 1
-  fi
 
   for path in "$REPO_DIR"/*; do
     [ -d "$path" ] && update_addon "$path"
