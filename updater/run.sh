@@ -97,7 +97,10 @@ notify() {
 
 get_latest_tag() {
   local image="$1"
-  [ -z "$image" ] && return
+  if [ -z "$image" ]; then
+    log "$COLOR_YELLOW" "⚠️ No image provided to get_latest_tag"
+    return
+  fi
 
   local arch=$(uname -m)
   arch=${arch//x86_64/amd64}
@@ -116,16 +119,28 @@ get_latest_tag() {
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
-    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
-    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
-  elif echo "$image_name" | grep -qE "^lscr.io/"; then
+    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token') || {
+      log "$COLOR_YELLOW" "⚠️ Failed to get GHCR token for $image_name"
+      return
+    }
+    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?') || {
+      log "$COLOR_YELLOW" "⚠️ Failed to fetch GHCR tags for $image_name"
+      return
+    }
+  elif echo "$image_name" | grep -q "^lscr.io/"; then
     local name="${image_name##*/}"
-    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
+    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name') || {
+      log "$COLOR_YELLOW" "⚠️ Failed to fetch lscr.io tags for $image_name"
+      return
+    }
   else
     local ns_repo="${image_name/library\//}"
     local page=1
     while :; do
-      local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
+      local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || {
+        log "$COLOR_YELLOW" "⚠️ Docker Hub fetch failed for $ns_repo (page $page)"
+        break
+      }
       local page_tags=$(echo "$result" | jq -r '.results[].name')
       [ -z "$page_tags" ] && break
       tags="$tags
@@ -135,7 +150,13 @@ $page_tags"
     done
   fi
 
-  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1 | tee "$cache_file"
+  local filtered=$(echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1)
+  if [ -z "$filtered" ]; then
+    log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image_name"
+    return
+  fi
+
+  echo "$filtered" | tee "$cache_file"
 }
 
 update_addon() {
