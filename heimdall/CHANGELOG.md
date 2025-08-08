@@ -1,16 +1,4 @@
 ## v2.7.4-ls317 - 2025-08-08
-## [2025-08-02 19:50:34 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m
-- Updated from [2025-08-02 19:45:36 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m to [2025-08-02 19:50:34 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m
-- Docker: [lscr.io/linuxserver/heimdall:latest](https://hub.docker.com/r/lscr.io/linuxserver/heimdall/tags)
-
-## [2025-08-02 19:45:36 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m
-- Updated from [2025-08-02 19:42:26 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m to [2025-08-02 19:45:36 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m
-- Docker: [lscr.io/linuxserver/heimdall:latest](https://hub.docker.com/r/lscr.io/linuxserver/heimdall/tags)
-
-## [2025-08-02 19:42:26 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m
-- Updated from unknown to [2025-08-02 19:42:26 SAST] [0;33m⚠️ Invalid JSON from LinuxServer for heimdall[0m
-- Docker: [lscr.io/linuxserver/heimdall:latest](https://hub.docker.com/r/lscr.io/linuxserver/heimdall/tags)
-
 
 ##  (02-08-2025)
 - Update to latest version from null
