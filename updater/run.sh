@@ -112,9 +112,10 @@ get_latest_tag() {
   fi
 
   local tags=""
+  local success=false
 
-  # Docker Hub
-  if echo "$image_name" | grep -q -vE "^ghcr.io/|^lscr.io/|^linuxserver/"; then
+  # --- Docker Hub ---
+  if [ "$success" = false ]; then
     local ns_repo="${image_name/library\//}"
     local page=1
     while :; do
@@ -126,21 +127,27 @@ $page_tags"
       [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
       page=$((page + 1))
     done
+    [ -n "$tags" ] && success=true
   fi
 
-  # LinuxServer.io (lscr.io or linuxserver)
-  if [ -z "$tags" ] && echo "$image_name" | grep -qE "^(linuxserver|lscr.io)/"; then
-    local name="${image_name##*/}"
-    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
+  # --- LinuxServer Fleet API ---
+  if [ "$success" = false ]; then
+    local repo_name="${image_name##*/}"
+    local ls_result=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$repo_name/tags") || true
+    if echo "$ls_result" | jq -e . >/dev/null 2>&1; then
+      tags=$(echo "$ls_result" | jq -r '.tags[]?.name')
+      [ -n "$tags" ] && success=true
+    fi
   fi
 
-  # GitHub Container Registry (ghcr.io)
-  if [ -z "$tags" ] && echo "$image_name" | grep -q "^ghcr.io/"; then
+  # --- GitHub Container Registry ---
+  if [ "$success" = false ] && echo "$image_name" | grep -q "^ghcr.io/"; then
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
     local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
     tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
+    [ -n "$tags" ] && success=true
   fi
 
   echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' |
@@ -150,7 +157,8 @@ $page_tags"
 
 update_addon() {
   local addon_path="$1"
-  local name=$(basename "$addon_path")
+  local name
+  name=$(basename "$addon_path")
 
   for skip in "${SKIP_LIST[@]}"; do
     [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "⏭️ Skipping $name (listed)" && return
@@ -266,7 +274,8 @@ main() {
 
   for path in "$REPO_DIR"/*; do
     [ ! -d "$path" ] && continue
-    local name=$(basename "$path")
+    local name
+    name=$(basename "$path")
     local status=""
 
     if [ -n "${UPDATED_ADDONS[$name]}" ]; then
