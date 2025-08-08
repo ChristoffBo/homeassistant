@@ -1,33 +1,33 @@
-FROM debian:bullseye-slim
+ARG BUILD_FROM=debian:bullseye-slim
+FROM ${BUILD_FROM}
 
-# Install required tools
-RUN apt-get update && apt-get install -y \
-    curl \
-    ca-certificates \
-    bash \
-    skopeo \
-    python3 \
-    python3-pip \
-    git \
-    && apt-get clean
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y \
+      jq \
+      python3 \
+      python3-pip \
+      skopeo \
+      curl \
+      ca-certificates \
+      git \
+      dumb-init && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install registry binary
-RUN curl -L https://github.com/distribution/distribution/releases/download/v2.8.2/registry_2.8.2_linux_amd64.tar.gz \
-    | tar -xz -C /usr/bin --strip-components=1 registry
-
-# Install Flask
+# Install Flask for backend API
 RUN pip3 install flask
 
-# Copy app files and www content
+# Add registry binary (copied from official registry container)
+ADD https://github.com/distribution/distribution/releases/download/v2.8.2/registry_2.8.2_linux_amd64.tar.gz /tmp/registry.tar.gz
+RUN mkdir -p /registry && tar -xzf /tmp/registry.tar.gz -C /registry && chmod +x /registry/registry
+
+# Copy add-on files
 COPY run.sh /run.sh
 COPY app /app
 COPY www /www
-COPY registry/config.yml /etc/docker/registry/config.yml
 
-# Make sure scripts are executable
-RUN chmod +x /run.sh
+# Expose ports
+EXPOSE 8080 5000
 
-# Expose registry and UI ports
-EXPOSE 5000 8080
-
-CMD ["/run.sh"]
+# Entrypoint
+ENTRYPOINT ["/bin/bash", "/run.sh"]
