@@ -113,28 +113,39 @@ get_latest_tag() {
 
   local tags=""
 
-  # 1. Docker Hub check first
-  local ns_repo="${image_name/library\//}"
-  local page=1
-  while :; do
-    local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
-    local page_tags=$(echo "$result" | jq -r '.results[].name')
-    [ -z "$page_tags" ] && break
-    tags="$tags
+  # Docker Hub
+  if echo "$image_name" | grep -q -vE "^ghcr.io/|^lscr.io/|^linuxserver/"; then
+    local ns_repo="${image_name/library\//}"
+    local page=1
+    while :; do
+      local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
+      local page_tags=$(echo "$result" | jq -r '.results[].name')
+      [ -z "$page_tags" ] && break
+      tags="$tags
 $page_tags"
-    [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
-    page=$((page + 1))
-  done
+      [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
+      page=$((page + 1))
+    done
+  fi
 
-  # 2. LinuxServer fallback only for lscr.io/*
-  if [[ -z "$tags" && "$image_name" == lscr.io/* ]]; then
+  # LinuxServer.io (lscr.io or linuxserver)
+  if [ -z "$tags" ] && echo "$image_name" | grep -qE "^(linuxserver|lscr.io)/"; then
     local name="${image_name##*/}"
     tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
   fi
 
-  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' \
-    | grep -viE 'latest|dev|rc|beta' \
-    | sort -Vr | head -n1 | tee "$cache_file"
+  # GitHub Container Registry (ghcr.io)
+  if [ -z "$tags" ] && echo "$image_name" | grep -q "^ghcr.io/"; then
+    local path="${image_name#ghcr.io/}"
+    local org_repo="${path%%/*}"
+    local package="${path#*/}"
+    local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
+    tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
+  fi
+
+  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' |
+    grep -viE 'latest|dev|rc|beta' |
+    sort -Vr | head -n1 | tee "$cache_file"
 }
 
 update_addon() {
