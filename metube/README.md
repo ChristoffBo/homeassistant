@@ -1,31 +1,28 @@
-![Logo ](https://github.com/ChristoffBo/homeassistant/blob/main/metube/icon.png)
-
-# Home assistant add-on: MeTube
 
 
-## About
+# 🧩 MeTube Home Assistant Add-on
 
-This addon is based on the [docker image](https://github.com/alexta69/metube).
+Self-hosted web GUI for downloading videos from YouTube and many other platforms using yt-dlp.
 
-## Installation
+✅ Uses the official Docker image: alexta69/metube  
+✅ Works offline once started  
+✅ Full Web UI on configurable port  
+✅ Persistent storage enabled  
+✅ All settings exposed in options.json  
+✅ No build needed
 
-The installation of this add-on is pretty straightforward and not different in
-comparison to installing any other Hass.io add-on.
+📁 Files:  
+- /data/options.json — stores add-on settings  
+- /share/metube — output directory for downloaded media  
+- /config — persistent volume (if needed)
 
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
-1. Install this add-on.
-1. Click the `Save` button to store your configuration.
-1. Make the directory /share/metube to store your downloaded files
-1. Start the add-on.
-1. Check the logs of the add-on to see if everything went well.
-1. Open WebUI should work via ingress or <your-ip>:port.
+⚙️ Configuration:  
+{ "port": 8081 }
 
-## Configuration
+🧪 Options:  
+  port — sets the MeTube web interface port (default: 8081)
 
-```
-port : 8081 #port you want to run on.
-```
+🌍 Web UI access:  
+Accessible via Home Assistant Ingress or at `http://<your-ip>:<port>` (e.g., `http://192.168.1.10:8081`)
 
-Webui can be found at `<your-ip>:port`.
-
-[repository]: https://github.com/jdeath/homeassistant-addons
+🧠 Fully self-hosted. No external account required.
