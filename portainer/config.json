@@ -31,5 +31,6 @@
     "cli_args": "str",
     "image_override": "str"
   },
-  "image": "portainer/portainer-ce"
+  "image": "portainer/portainer-ce",
+  "arch": ["aarch64", "amd64", "armv7", "i386"]
 }
