@@ -22,7 +22,7 @@
     "8090/tcp": 8090
   },
   "map": [
-    "ssl"
+    "config:rw"
   ],
   "options": {},
   "schema": {}
