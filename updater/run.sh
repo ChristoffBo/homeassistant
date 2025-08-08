@@ -203,16 +203,6 @@ update_addon() {
 
 commit_and_push() {
   cd "$REPO_DIR"
-  git config user.email "updater@local"
-  git config user.name "Add-on Updater"
-
-  if git pull --rebase; then
-    PULL_STATUS="✅ Git pull succeeded"
-  else
-    PULL_STATUS="❌ Git pull failed"
-    return
-  fi
-
   if [ -n "$(git status --porcelain)" ]; then
     git add . && git commit -m "🔄 Updated add-on versions" || return
     if [ "$SKIP_PUSH" = "true" ]; then
@@ -237,11 +227,24 @@ main() {
   cd / || cd /tmp
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
 
-  git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
+  git clone "$GIT_AUTH_REPO" "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Git clone failed"
     notify "Updater Error" "Git clone failed" 5
     exit 1
   }
+
+  cd "$REPO_DIR"
+  git config user.email "updater@local"
+  git config user.name "Add-on Updater"
+
+  if git pull --rebase; then
+    PULL_STATUS="✅ Git pull succeeded"
+  else
+    log "$COLOR_RED" "❌ Git pull failed"
+    notify "Updater Error" "Git pull failed: working tree not clean?" 5
+    PULL_STATUS="❌ Git pull failed"
+    exit 1
+  fi
 
   for path in "$REPO_DIR"/*; do
     [ -d "$path" ] && update_addon "$path"
