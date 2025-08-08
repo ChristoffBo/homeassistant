@@ -1,0 +1,9 @@
+{
+  "registry_port": 5000,
+  "webui_port": 8080,
+  "initial_pull_images": [
+    "linuxserver/sonarr:latest",
+    "nginx:latest"
+  ],
+  "auto_compare_digest": true
+}
