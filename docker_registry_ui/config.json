@@ -1,0 +1,40 @@
+{
+  "name": "Docker Registry UI",
+  "version": "1.0.0",
+  "slug": "docker_registry_ui",
+  "description": "Self-hosted Docker registry with pull UI, update checks, and full management.",
+  "arch": ["aarch64", "amd64", "armv7"],
+  "startup": "services",
+  "boot": "auto",
+  "ingress": true,
+  "ingress_port": 8080,
+  "panel_icon": "mdi:docker",
+  "panel_title": "Docker Registry UI",
+  "panel_admin": true,
+  "webui": "http://[HOST]:[PORT:8080]",
+  "host_network": true,
+  "options": {
+    "registry_port": 5000,
+    "webui_port": 8080,
+    "initial_pull_images": [
+      "linuxserver/sonarr:latest",
+      "nginx:latest"
+    ],
+    "auto_compare_digest": true
+  },
+  "schema": {
+    "registry_port": "int",
+    "webui_port": "int",
+    "initial_pull_images": ["str"],
+    "auto_compare_digest": "bool"
+  },
+  "ports": {
+    "5000/tcp": 5000,
+    "8080/tcp": 8080
+  },
+  "ports_description": {
+    "5000/tcp": "Docker Registry Port",
+    "8080/tcp": "Web UI Port"
+  },
+  "map": ["config:rw"]
+}
