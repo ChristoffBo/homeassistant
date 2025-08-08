@@ -1,0 +1,5 @@
+{
+  "port": 9000,
+  "cli_args": "",
+  "image_override": "portainer/portainer-ce"
+}
