@@ -1,27 +1,25 @@
-# Home assistant add-on: Gotify
+# 🧩 Gotify Home Assistant Add-on
 
+Self-hosted push notification server for sending messages to your devices. Great for scripts, automations, and alerts.
 
-## About
+✅ Uses the official Docker image: gotify/server  
+✅ Works offline once started  
+✅ Full Web UI on configurable port  
+✅ Persistent storage enabled  
+✅ All settings exposed in options.json  
+✅ No build needed
 
-This addon is based on the [docker image](https://gotify.net).
+📁 Files:  
+- /data/options.json — stores add-on settings  
+- /config — persistent volume for Gotify data
 
-## Installation
+⚙️ Configuration:  
+{ "port": 8091 }
 
-The installation of this add-on is pretty straightforward and not different in
-comparison to installing any other Hass.io add-on.
+🧪 Options:  
+  port — sets the Gotify web interface port (default: 8091)
 
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
-1. Install this add-on.
-1. Click the `Save` button to store your configuration.
-1. Start the add-on.
-1. Check the logs of the add-on to see if everything went well.
-1. Open WebUI should work via ingress or <your-ip>:port.
+🌍 Web UI access:  
+Accessible via Home Assistant Ingress or at `http://<your-ip>:<port>` (e.g., `http://192.168.1.10:8091`)
 
-## Configuration
-
-```
-port : 8091 #port you want to run on.
-```
-
-Webui can be found at `<your-ip>:port`.
-
+🧠 Fully self-hosted. No external account required.
