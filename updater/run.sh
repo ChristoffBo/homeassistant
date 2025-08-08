@@ -188,4 +188,97 @@ update_addon() {
 
     local changelog="$addon_path/CHANGELOG.md"
     local date_str
-    date_str=$(date '+
+    date_str=$(date '+%Y-%m-%d')
+    if [ -f "$changelog" ]; then
+      sed -i "1i## $latest - $date_str" "$changelog"
+    else
+      echo -e "## $latest - $date_str\n" > "$changelog"
+    fi
+  else
+    log "$COLOR_CYAN" "✅ $name is up to date ($version)"
+    UNCHANGED_ADDONS["$name"]="Up to date ($version)"
+  fi
+}
+
+commit_and_push() {
+  cd "$REPO_DIR"
+  git config user.email "updater@local"
+  git config user.name "Add-on Updater"
+
+  if git pull --rebase; then
+    PULL_STATUS="✅ Git pull succeeded"
+  else
+    PULL_STATUS="❌ Git pull failed"
+    return
+  fi
+
+  if [ -n "$(git status --porcelain)" ]; then
+    git add . && git commit -m "🔄 Updated add-on versions" || return
+    if [ "$SKIP_PUSH" = "true" ]; then
+      PUSH_STATUS="⏭️ Git push skipped (skip_push enabled)"
+    elif git push "$GIT_AUTH_REPO" main; then
+      PUSH_STATUS="✅ Git push succeeded"
+    else
+      log "$COLOR_RED" "❌ Git push failed"
+      PUSH_STATUS="❌ Git push failed"
+    fi
+  else
+    PUSH_STATUS="ℹ️ No changes to commit or push"
+    log "$COLOR_CYAN" "$PUSH_STATUS"
+  fi
+}
+
+main() {
+  echo "" > "$LOG_FILE"
+  read_config
+  log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
+
+  cd / || cd /tmp
+  [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
+
+  git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR" || {
+    log "$COLOR_RED" "❌ Git clone failed"
+    notify "Updater Error" "Git clone failed" 5
+    exit 1
+  }
+
+  for path in "$REPO_DIR"/*; do
+    [ -d "$path" ] && update_addon "$path"
+  done
+
+  commit_and_push
+
+  local summary="📦 Add-on Update Summary
+🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
+
+"
+
+  for path in "$REPO_DIR"/*; do
+    [ ! -d "$path" ] && continue
+    local name=$(basename "$path")
+    local status=""
+
+    if [ -n "${UPDATED_ADDONS[$name]}" ]; then
+      status="🔄 ${UPDATED_ADDONS[$name]}"
+    elif [ -n "${UNCHANGED_ADDONS[$name]}" ]; then
+      status="✅ ${UNCHANGED_ADDONS[$name]}"
+    else
+      status="⏭️ Skipped"
+    fi
+
+    summary+="$name: $status
+"
+  done
+
+  [ -n "$PULL_STATUS" ] && summary+="
+$PULL_STATUS"
+  [ -n "$PUSH_STATUS" ] && summary+="
+$PUSH_STATUS"
+  [ "$DRY_RUN" = "true" ] && summary+="
+🔁 DRY RUN MODE ENABLED"
+
+  notify "Add-on Updater" "$summary" 3
+  log "$COLOR_BLUE" "ℹ️ Update process complete."
+}
+
+main
