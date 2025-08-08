@@ -4,6 +4,7 @@
   "slug": "ztncui",
   "description": "Self-hosted ZeroTier Controller with web UI using ztncui.",
   "url": "https://github.com/keynetworks/ztncui",
+  "image": "keynetworks/ztncui:1.2.18",
   "arch": [
     "amd64",
     "aarch64",
@@ -21,18 +22,12 @@
     "3443/tcp": "Ztncui Web UI Port"
   },
   "map": [
-    "config:rw",
-    "ssl",
-    "addons:rw",
-    "backup:rw",
-    "share:rw"
+    "config:rw"
   ],
   "options": {
-    "port": 3443,
-    "image": "keynetworks/ztncui"
+    "port": 3443
   },
   "schema": {
-    "port": "int",
-    "image": "str"
+    "port": "int"
   }
 }
