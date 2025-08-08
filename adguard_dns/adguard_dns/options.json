@@ -1,5 +1,0 @@
-{
-  "dns_port": 53,
-  "setup_port": 3000,
-  "web_port": 80
-}
