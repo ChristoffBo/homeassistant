@@ -24,17 +24,20 @@ COLOR_CYAN="\033[0;36m"
 # ======================
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
+declare -A SKIPPED_ADDONS
 declare -a SKIP_LIST=()
+declare -a BYPASS_LIST=()
 
 safe_jq() {
   local expr="$1"
   local file="$2"
-  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]][[:alnum:].:_-]*$' || echo "unknown"
+  jq -e -r "$expr" "$file" 2>/dev/null | grep -E '^[[:alnum:]][[:alnum:].:_/-]*$' || echo "unknown"
 }
 
 read_config() {
   TZ=$(jq -er '.timezone // "UTC"' "$CONFIG_PATH")
   SKIP_LIST=($(jq -r '.skip_list[]? // empty' "$CONFIG_PATH"))
+  BYPASS_LIST=($(jq -r '.bypass_list[]? // empty' "$CONFIG_PATH"))
   GOTIFY_URL=$(jq -r '.gotify_url // empty' "$CONFIG_PATH")
   APPRISE_URL=$(jq -r '.apprise_url // empty' "$CONFIG_PATH")
   MAILRISE_URL=$(jq -r '.mailrise_url // empty' "$CONFIG_PATH")
@@ -53,18 +56,19 @@ fetch_latest_tag() {
   local latest_tag=""
 
   # 1. Try Docker Hub
-  local repo=$(echo "$image" | cut -d/ -f2)
-  latest_tag=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" \
-    | jq -er '.results[].name' \
-    | grep -E '^[0-9]+\.[0-9]+' \
+  latest_tag=$(curl -fsSL "https://hub.docker.com/v2/repositories/${image}/tags?page_size=100" 2>/dev/null \
+    | jq -er '.results[].name' 2>/dev/null \
+    | grep -E '^[0-9]+(\.[0-9]+)*' \
     | sort -V \
     | tail -1 || echo "")
 
-  # 2. If empty and is lscr.io, try LinuxServer Fleet API
+  # 2. If failed and image starts with lscr.io, try LinuxServer.io Fleet API
   if [[ -z "$latest_tag" && "$image" == lscr.io/* ]]; then
-    local repo_name=$(echo "$image" | cut -d/ -f3)
-    latest_tag=$(curl -fsSL "https://fleet.linuxserver.io/api/v1/images/$repo_name" \
-      | jq -er '.image.tags[] | select(.name | test("^\\d+(\\.\\d+)*$")) | .name' \
+    local repo_name
+    repo_name=$(echo "$image" | cut -d/ -f3)
+    latest_tag=$(curl -fsSL "https://fleet.linuxserver.io/api/v1/images/$repo_name" 2>/dev/null \
+      | jq -er '.image.tags[]?.name' 2>/dev/null \
+      | grep -E '^[0-9]+(\.[0-9]+)*' \
       | sort -V \
       | tail -1 || echo "")
   fi
@@ -79,9 +83,12 @@ update_addon() {
   local image=$(safe_jq '.image_override // .image' "$config")
   local current_tag=$(safe_jq '.version' "$config")
 
-  for skip in "${SKIP_LIST[@]}"; do
-    [[ "$name" == "$skip" ]] && echo -e "${COLOR_CYAN}[SKIP] $name skipped${COLOR_RESET}" && return
-  done
+  # Check skip unless bypassed
+  if [[ " ${SKIP_LIST[*]} " == *" $name "* && " ${BYPASS_LIST[*]} " != *" $name "* ]]; then
+    echo -e "${COLOR_CYAN}[SKIP] $name skipped via config${COLOR_RESET}"
+    SKIPPED_ADDONS["$name"]="$current_tag"
+    return
+  fi
 
   local latest_tag
   latest_tag=$(fetch_latest_tag "$image")
@@ -96,6 +103,7 @@ update_addon() {
   jq --arg v "$latest_tag" '.version = $v' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
   UPDATED_ADDONS["$name"]="$latest_tag"
 
+  # Write or update CHANGELOG.md
   if [[ -f "$addon_path/$CHANGELOG_FILE" ]]; then
     echo -e "## $latest_tag - $(date +'%Y-%m-%d')\n- Updated automatically to $latest_tag\n" | cat - "$addon_path/$CHANGELOG_FILE" > temp && mv temp "$addon_path/$CHANGELOG_FILE"
   else
@@ -155,6 +163,13 @@ main() {
     notify_summary+="\n🆗 Unchanged:\n"
     for name in "${!UNCHANGED_ADDONS[@]}"; do
       notify_summary+="• $name (${UNCHANGED_ADDONS[$name]})\n"
+    done
+  fi
+
+  if [ "${#SKIPPED_ADDONS[@]}" -gt 0 ]; then
+    notify_summary+="\n⏩ Skipped:\n"
+    for name in "${!SKIPPED_ADDONS[@]}"; do
+      notify_summary+="• $name (${SKIPPED_ADDONS[$name]})\n"
     done
   fi
 
