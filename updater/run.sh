@@ -28,6 +28,7 @@ declare -A UNCHANGED_ADDONS
 declare -a SKIP_LIST=()
 PULL_STATUS=""
 PUSH_STATUS=""
+GIT_CLEAN_STATUS=""
 
 safe_jq() {
   local expr="$1"
@@ -227,10 +228,19 @@ commit_and_push() {
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
 
+  if [ -n "$(git status --porcelain)" ]; then
+    git reset --hard
+    git clean -fd
+    GIT_CLEAN_STATUS="🔧 Git workspace was reset before pull"
+  else
+    GIT_CLEAN_STATUS="🔍 Git workspace was already clean"
+  fi
+
   if git pull --rebase; then
     PULL_STATUS="✅ Git pull succeeded"
   else
     PULL_STATUS="❌ Git pull failed"
+    notify "Updater Error" "Git pull failed for $GIT_AUTH_REPO" 5
     return
   fi
 
@@ -243,6 +253,7 @@ commit_and_push() {
     else
       log "$COLOR_RED" "❌ Git push failed"
       PUSH_STATUS="❌ Git push failed"
+      notify "Updater Error" "Git push failed to $GIT_AUTH_REPO" 5
     fi
   else
     PUSH_STATUS="ℹ️ No changes to commit or push"
@@ -298,6 +309,8 @@ $PULL_STATUS"
 $PUSH_STATUS"
   [ "$DRY_RUN" = "true" ] && summary+="
 🔁 DRY RUN MODE ENABLED"
+  summary+="
+$GIT_CLEAN_STATUS"
 
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
