@@ -121,7 +121,7 @@ get_latest_tag() {
   elif echo "$image_name" | grep -qE "^lscr.io/"; then
     local name="${image_name##*/}"
     local response
-    response=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" 2>/dev/null || echo "")
+    response=$(curl --connect-timeout 5 --max-time 10 -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" 2>/dev/null || echo "")
     tags=$(echo "$response" | jq -er '.tags[]?.name' 2>/dev/null || echo "")
   else
     local ns_repo="${image_name/library\//}"
