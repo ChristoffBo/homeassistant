@@ -28,7 +28,6 @@ declare -A UNCHANGED_ADDONS
 declare -a SKIP_LIST=()
 PULL_STATUS=""
 PUSH_STATUS=""
-WORKSPACE_STATUS=""
 
 safe_jq() {
   local expr="$1"
@@ -115,7 +114,7 @@ get_latest_tag() {
   local tags=""
   local ns_repo="${image_name/library\//}"
 
-  # Docker Hub first
+  # Docker Hub
   local page=1
   while :; do
     local result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
@@ -127,16 +126,19 @@ $page_tags"
     page=$((page + 1))
   done
 
-  # If not found in Docker Hub, try others
+  # lscr.io
+  if [ -z "$tags" ]; then
+    tags=$(curl -sf "https://fleet.linuxserver.io/image?name=${image_name##*/}" |
+      jq -r '.platforms."linux/amd64".lastUpdated.tag' 2>/dev/null || true)
+  fi
+
+  # ghcr.io
   if [ -z "$tags" ] && echo "$image_name" | grep -q "^ghcr.io/"; then
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
     local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
     tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
-  elif [ -z "$tags" ] && echo "$image_name" | grep -qE "^(linuxserver|lscr.io)/"; then
-    local name="${image_name##*/}"
-    tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
   fi
 
   echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1 | tee "$cache_file"
@@ -192,13 +194,26 @@ update_addon() {
     fi
 
     local changelog="$addon_path/CHANGELOG.md"
-    local now=$(date '+%Y-%m-%d %H:%M:%S')
-    local entry="## $latest ($now)\n- Update from $version to $latest\n- Docker Image: [$image](https://fleet.linuxserver.io/image?name=$(basename "$image"))"
-    if [ -f "$changelog" ]; then
-      sed -i "1i$entry\n" "$changelog"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local docker_img="${image%%:*}:$latest"
+    local image_url
+
+    if [[ "$image" == ghcr.io/* ]]; then
+      image_url="https://github.com/orgs/${image#ghcr.io/}/packages"
+    elif [[ "$image" == *"lscr.io"* || "$image" == *"linuxserver"* ]]; then
+      image_name="${image_name##*/}"
+      image_url="https://fleet.linuxserver.io/image?name=${image_name}"
     else
-      echo -e "$entry\n" > "$changelog"
+      image_url="https://hub.docker.com/r/${image%%:*}/tags"
     fi
+
+    {
+      echo "## $latest ($timestamp)"
+      echo "- Update from $version to $latest"
+      echo "- Docker Image: [$docker_img]($image_url)"
+      echo
+    } | cat - "$changelog" > "$changelog.tmp" && mv "$changelog.tmp" "$changelog"
   else
     log "$COLOR_CYAN" "✅ $name is up to date ($version)"
     UNCHANGED_ADDONS["$name"]="Up to date ($version)"
@@ -209,15 +224,11 @@ commit_and_push() {
   cd "$REPO_DIR"
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
-  git reset --hard
-  git clean -fd
-  WORKSPACE_STATUS="🧼 Git workspace cleaned before pull"
 
   if git pull --rebase; then
-    PULL_STATUS="✅ Git pull succeeded"
+    PULL_STATUS="✅ Git pull (rebase) succeeded"
   else
-    PULL_STATUS="❌ Git pull failed"
-    return
+    PULL_STATUS="❌ Git pull (rebase) failed"
   fi
 
   if [ -n "$(git status --porcelain)" ]; then
@@ -251,12 +262,15 @@ main() {
   }
 
   for path in "$REPO_DIR"/*; do
-    [ -d "$path" ] && update_addon "$path"
+    [ -d "$path" ] && update_addon "$path" || true
   done
 
   commit_and_push
 
-  local summary="📦 Add-on Update Summary\n🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')\n"
+  local summary="📦 Add-on Update Summary
+🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
+
+"
 
   for path in "$REPO_DIR"/*; do
     [ ! -d "$path" ] && continue
@@ -271,13 +285,16 @@ main() {
       status="⏭️ Skipped"
     fi
 
-    summary+="$name: $status\n"
+    summary+="$name: $status
+"
   done
 
-  [ -n "$WORKSPACE_STATUS" ] && summary+="\n$WORKSPACE_STATUS"
-  [ -n "$PULL_STATUS" ] && summary+="\n$PULL_STATUS"
-  [ -n "$PUSH_STATUS" ] && summary+="\n$PUSH_STATUS"
-  [ "$DRY_RUN" = "true" ] && summary+="\n🔁 DRY RUN MODE ENABLED"
+  [ -n "$PULL_STATUS" ] && summary+="
+$PULL_STATUS"
+  [ -n "$PUSH_STATUS" ] && summary+="
+$PUSH_STATUS"
+  [ "$DRY_RUN" = "true" ] && summary+="
+🔁 DRY RUN MODE ENABLED"
 
   notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
