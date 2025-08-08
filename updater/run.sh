@@ -118,7 +118,7 @@ get_latest_tag() {
     local package="${path#*/}"
     local token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
     tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
-  elif echo "$image_name" | grep -qE "^(linuxserver|lscr.io)/"; then
+  elif echo "$image_name" | grep -q "^lscr.io/"; then
     local name="${image_name##*/}"
     tags=$(curl -sf "https://fleet.linuxserver.io/api/v1/images/$name/tags" | jq -r '.tags[].name')
   else
