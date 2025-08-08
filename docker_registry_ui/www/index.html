@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Docker Registry UI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>🧩 Local Docker Registry Manager</h1>
+
+    <div class="section">
+      <h2>📥 Pull Image</h2>
+      <input type="text" id="image" placeholder="e.g. linuxserver/sonarr" />
+      <input type="text" id="tag" placeholder="e.g. latest" value="latest" />
+      <button onclick="pullImage()">Pull</button>
+    </div>
+
+    <div class="section">
+      <h2>📂 Hosted Images</h2>
+      <table id="images-table">
+        <thead>
+          <tr><th>Image</th><th>Tag</th><th>Actions</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    async function fetchImages() {
+      const res = await fetch("/api/images");
+      const data = await res.json();
+      const tbody = document.querySelector("#images-table tbody");
+      tbody.innerHTML = "";
+      data.forEach(entry => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${entry.image}</td>
+          <td>${entry.tag}</td>
+          <td>
+            <button onclick="pullSpecific('${entry.image}', '${entry.tag}')">🔁 Update</button>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    async function pullImage() {
+      const image = document.getElementById("image").value;
+      const tag = document.getElementById("tag").value || "latest";
+      const res = await fetch("/api/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image, tag })
+      });
+      const result = await res.json();
+      if (result.success) {
+        alert("Image pulled successfully");
+        fetchImages();
+      } else {
+        alert("Failed: " + result.error);
+      }
+    }
+
+    function pullSpecific(image, tag) {
+      fetch("/api/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image, tag })
+      }).then(fetchImages);
+    }
+
+    fetchImages();
+  </script>
+</body>
+</html>
