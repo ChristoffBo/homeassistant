@@ -1,356 +1,399 @@
-/* small helper */
-async function api(path, opts={}) {
-  const headers = opts.headers || {};
-  if (!headers["Content-Type"] && opts.body) headers["Content-Type"] = "application/json";
-  const r = await fetch(path, {...opts, headers});
-  let text = await r.text();
-  let json; try { json = text ? JSON.parse(text) : {}; } catch { json = {ok:false, raw:text}; }
-  if (!r.ok) return Promise.resolve(json || {ok:false});
-  return json || {ok:true};
-}
-const $ = s => document.querySelector(s);
-const $id = s => document.getElementById(s);
+(() => {
+  'use strict';
 
-/* tabs */
-function showTab(name){
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('is-active'));
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('is-active'));
-  $(`#panel-${name}`).classList.add('is-active');
-  document.querySelector(`.tab[data-target="${name}"]`).classList.add('is-active');
-}
-document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>showTab(t.dataset.target)));
+  // ------- Config -------
+  const API_BASE = './api';   // relative for HA Ingress
+  const $ = (q, ctx=document) => ctx.querySelector(q);
+  const $$ = (q, ctx=document) => Array.from(ctx.querySelectorAll(q));
+  const fmt = (d)=> new Date(d).toLocaleString();
 
-/* Show/hide dd/rsync specific fields */
-function applyMethodVisibility(prefix){
-  const method = $id(`${prefix}_method`).value;
-  document.querySelectorAll(`#panel-${prefix} [data-show]`).forEach(el=>{
-    el.style.display = (el.getAttribute('data-show')===method) ? '' : 'none';
-  });
-}
-['b','r'].forEach(p=>{
-  $id(`${p}_method`)?.addEventListener('change',()=>applyMethodVisibility(p));
-  applyMethodVisibility(p);
-});
-
-/* Status box helper */
-function setStatus(obj) {
-  $id('status_box').value = (typeof obj === 'string') ? obj : JSON.stringify(obj,null,2);
-}
-
-/* ---------- Settings ---------- */
-async function loadOptions(){
-  const j = await api('/api/options');
-  $id("s_gurl").value = j.gotify_url || "";
-  $id("s_gtoken").value = j.gotify_token || "";
-  $id("s_gen").value = String(!!j.gotify_enabled);
-  $id("s_dben").value = String(!!j.dropbox_enabled);
-  $id("s_dropremote").value = j.dropbox_remote || "dropbox:HA-Backups";
-  $id("s_uiport").value = j.ui_port || 8066;
-}
-$id("btnSaveSettings").onclick = async ()=>{
-  const body = {
-    gotify_url:$id("s_gurl").value.trim(),
-    gotify_token:$id("s_gtoken").value.trim(),
-    gotify_enabled:($id("s_gen").value==="true"),
-    dropbox_enabled:($id("s_dben").value==="true"),
-    dropbox_remote:$id("s_dropremote").value.trim(),
-    ui_port:parseInt($id("s_uiport").value||"8066",10)
+  // ------- State -------
+  const state = {
+    hosts: [],
+    backups: [],
+    jobs: [],
+    settings: {},
   };
-  const j = await api('/api/options',{method:'POST',body:JSON.stringify(body)});
-  setStatus(j);
-};
-$id("btnTestGotify").onclick = async ()=>{
-  const body = { url:$id("s_gurl").value.trim(), token:$id("s_gtoken").value.trim(), insecure:true };
-  const j = await api('/api/gotify_test',{method:'POST',body:JSON.stringify(body)});
-  setStatus(j);
-};
 
-/* ---------- Mounts ---------- */
-let mounts = [];
-async function refreshMounts(){
-  const j = await api('/api/mounts');
-  mounts = j.mounts || j.items || [];
-  const tb = $id('mountTable'); tb.innerHTML = '';
-  mounts.forEach(m=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${m.name||""}</td><td>${m.proto}</td><td>${m.server}</td><td>${m.share}</td>
-      <td>${m.mount}</td><td>${m.auto_mount?'Yes':'No'}</td>
-      <td></td>`;
-    const td = tr.lastChild;
-    const btnM = document.createElement('button'); btnM.className='btn'; btnM.textContent='Mount';
-    btnM.onclick = async ()=>{ setStatus(await api('/api/mount_now',{method:'POST',body:JSON.stringify(m)})); refreshMounts(); fillStoreTargets(); };
-    const btnU = document.createElement('button'); btnU.className='btn'; btnU.style.marginLeft='6px'; btnU.textContent='Unmount';
-    btnU.onclick = async ()=>{ setStatus(await api('/api/unmount_now',{method:'POST',body:JSON.stringify({mount:m.mount})})); refreshMounts(); fillStoreTargets(); };
-    const btnD = document.createElement('button'); btnD.className='btn'; btnD.style.marginLeft='6px'; btnD.textContent='Delete';
-    btnD.onclick = async ()=>{ setStatus(await api('/api/mount_delete',{method:'POST',body:JSON.stringify({name:m.name})})); refreshMounts(); fillStoreTargets(); };
-    const btnF = document.createElement('button'); btnF.className='btn'; btnF.style.marginLeft='6px'; btnF.textContent='Fill form';
-    btnF.onclick = ()=>{ $id('m_name').value=m.name||''; $id('m_proto').value=m.proto||'cifs'; $id('m_server').value=m.server||''; 
-      $id('m_user').value=m.username||''; $id('m_pass').value=m.password||''; $id('m_share').value=m.share||''; 
-      $id('m_mount').value=m.mount||''; $id('m_opts').value=m.options||''; $id('m_auto').value=String(!!m.auto_mount); };
-    td.append(btnM,btnU,btnD,btnF);
-    tb.appendChild(tr);
-  });
-  fillStoreTargets();
-}
-function fillStoreTargets(){
-  const sel = $id('b_store'); const current = sel.value;
-  sel.innerHTML = '';
-  const optLocal = document.createElement('option'); optLocal.value = '/backup'; optLocal.textContent='/backup (local)';
-  sel.appendChild(optLocal);
-  mounts.forEach(m=>{
-    if (m.mounted || m.mount) {
-      const o = document.createElement('option'); o.value = m.mount; o.textContent = `${m.name || m.mount} (${m.mount})`;
-      sel.appendChild(o);
-    }
-  });
-  if (current) sel.value = current;
-}
-$id('btnAddMount').onclick = async ()=>{
-  const body = {
-    name:$id('m_name').value.trim(),
-    proto:$id('m_proto').value,
-    server:$id('m_server').value.trim(),
-    username:$id('m_user').value.trim(),
-    password:$id('m_pass').value,
-    share:$id('m_share').value.trim(),
-    mount:$id('m_mount').value.trim(),
-    options:$id('m_opts').value.trim(),
-    auto_mount:($id('m_auto').value==='true')
-  };
-  if (!body.name || !body.server || !body.share) { alert('Name, server, share/export are required.'); return; }
-  setStatus(await api('/api/mount_add_update',{method:'POST',body:JSON.stringify(body)}));
-  refreshMounts();
-};
-$id('btnList').onclick = async ()=>{
-  const server = $id('m_server').value.trim(); const proto = $id('m_proto').value;
-  if (!server) { alert('Enter server first'); return; }
-  const r = await api(`/api/mount_list?proto=${encodeURIComponent(proto)}&server=${encodeURIComponent(server)}`);
-  // Fill dropdown
-  const sel = $id('m_share_select'); sel.innerHTML = '';
-  (r.items||[]).filter(it=>it.name && (it.type==='share' || it.type==='export')).forEach(it=>{
-    const o=document.createElement('option'); o.value=it.name || it.path; o.textContent=it.name || it.path; sel.appendChild(o);
-  });
-  // Show JSON in status box too
-  setStatus(r);
-};
-$id('m_share_select').addEventListener('change', ()=>{
-  const v = $id('m_share_select').value;
-  if (v) $id('m_share').value = v;
-});
-
-/* ---------- Browse (SMB/NFS & SSH) ---------- */
-const modal = $id('browse_modal');
-const browsePath = $id('browse_path');
-const browseList = $id('browse_list');
-const browseTitle = $id('browse_title');
-let browseCtx = null; // {mode:'smb'|'nfs'|'ssh', ...}
-
-function openModal(){ modal.setAttribute('aria-hidden','false'); }
-function closeModal(){ modal.setAttribute('aria-hidden','true'); browseList.innerHTML=''; browsePath.textContent=''; browseCtx=null; }
-$id('browse_close').onclick = closeModal;
-
-async function doBrowse(){
-  if (!browseCtx) return;
-  if (browseCtx.mode==='ssh'){
-    const payload = { host:browseCtx.host, username:browseCtx.user, password:browseCtx.pass, port:browseCtx.port, path:browseCtx.path||'/' };
-    const r = await api('/api/ssh_ls',{method:'POST',body:JSON.stringify(payload)});
-    if (!r || r.error || r.ok===false){
-      browseList.innerHTML = `<div class="hint">Remote browse not available on this build. Enter paths manually in the field.</div>`;
-      return;
-    }
-    renderList((r.items||[]).map(it=>({name:it.name, type:it.is_dir?'dir':'file'})));
-    browsePath.textContent = `${browseCtx.host}:${browseCtx.path||'/'}`;
-  } else {
-    const body = {
-      proto:browseCtx.mode==='smb'?'cifs':'nfs',
-      server:browseCtx.server, username:browseCtx.user, password:browseCtx.pass,
-      share:browseCtx.share, path:browseCtx.path||''
-    };
-    const r = await api('/api/mount_browse',{method:'POST',body:JSON.stringify(body)});
-    renderList(r.items||[]);
-    const prefix = (browseCtx.mode==='smb')
-      ? `//${browseCtx.server}/${browseCtx.share||''}/${browseCtx.path||''}`.replace(/\/+/g,'/')
-      : `${browseCtx.server} ${browseCtx.share||''} ${browseCtx.path||''}`.trim();
-    browsePath.textContent = prefix;
+  // ------- Helpers -------
+  function toast(msg, type='info'){
+    console.log(`[${type}]`, msg);
   }
-}
-function renderList(items){
-  browseList.innerHTML='';
-  items.forEach(it=>{
-    const row = document.createElement('div'); row.className='row';
-    const type = document.createElement('div'); type.className='type'; type.textContent = it.type?.toUpperCase() || '';
-    const name = document.createElement('div'); name.textContent = it.name || it.path || '';
-    row.append(type,name); browseList.appendChild(row);
-    row.onclick = async ()=>{
-      if (browseCtx.mode==='smb' || browseCtx.mode==='nfs'){
-        if(!browseCtx.share && it.type==='share'){ $id('m_share').value = it.name; closeModal(); return; }
-        if (it.type==='dir'){ browseCtx.path = (browseCtx.path? `${browseCtx.path}/${it.name}`:it.name); await doBrowse(); }
-        if (it.type==='file'){ /* ignore files when mounting */ }
-      } else if (browseCtx.mode==='ssh'){
-        if (it.type==='dir'){ browseCtx.path = (browseCtx.path? `${browseCtx.path}/${it.name}`:it.name); await doBrowse(); }
+
+  function setApiStatus(ok){ 
+    const el = $('#apiStatus'); 
+    el.classList.toggle('online', !!ok);
+    el.classList.toggle('offline', !ok);
+    el.title = ok ? 'API online' : 'API offline';
+  }
+
+  async function fetchJSON(path, opts={}){
+    const controller = new AbortController();
+    const t = setTimeout(()=>controller.abort(), 20000);
+    try{
+      const res = await fetch(`${API_BASE}${path}`, {headers: {'Content-Type':'application/json'}, signal: controller.signal, ...opts});
+      if(!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = await res.json().catch(()=> ({}));
+      setApiStatus(true);
+      return data;
+    }catch(err){
+      setApiStatus(false);
+      toast(err.message, 'error');
+      throw err;
+    }finally{
+      clearTimeout(t);
+    }
+  }
+
+  function table(container, columns, rows){
+    const tpl = $('#tpl-table').content.cloneNode(true);
+    const thead = tpl.querySelector('thead'); const tbody = tpl.querySelector('tbody');
+    const tr = document.createElement('tr');
+    columns.forEach(c => {
+      const th = document.createElement('th'); th.textContent = c.label; tr.appendChild(th);
+    });
+    thead.appendChild(tr);
+    rows.forEach(r => {
+      const trb = document.createElement('tr');
+      columns.forEach(c => {
+        const td = document.createElement('td');
+        const v = typeof c.value === 'function' ? c.value(r) : r[c.value];
+        if(v instanceof Node) td.appendChild(v); else td.textContent = v ?? '';
+        trb.appendChild(td);
+      });
+      tbody.appendChild(trb);
+    });
+    container.innerHTML = ''; container.appendChild(tpl);
+  }
+
+  function modalConfirm({title='Confirm', body, okText='OK', onOk}){
+    const dlg = $('#modal');
+    $('#modalTitle').textContent = title;
+    $('#modalBody').innerHTML = '';
+    if(typeof body === 'string'){ $('#modalBody').textContent = body; } else { $('#modalBody').appendChild(body); }
+    $('#modalOk').textContent = okText;
+    const close = ()=> dlg.close();
+    $('#modalClose').onclick = close;
+    $('#modalCancel').onclick = close;
+    $('#modalOk').onclick = async() => { try{ await onOk?.(); close(); } catch(e){ toast(e.message,'error'); } };
+    dlg.showModal();
+  }
+
+  function fillSelect(sel, items, {value='value', label='label', empty='-- select --'}={}){
+    sel.innerHTML = '';
+    const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent = empty; sel.appendChild(opt0);
+    for(const it of items){
+      const o = document.createElement('option');
+      o.value = it[value]; o.textContent = it[label]; sel.appendChild(o);
+    }
+  }
+
+  function persistLocal(key, val){ localStorage.setItem(`rlb:${key}`, JSON.stringify(val)); }
+  function loadLocal(key, def){ try{ return JSON.parse(localStorage.getItem(`rlb:${key}`)) ?? def; } catch{ return def; } }
+
+  // ------- Loaders -------
+  async function loadHosts(){
+    try{
+      const data = await fetchJSON('/hosts');
+      state.hosts = data.hosts || [];
+      persistLocal('hosts', state.hosts);
+    }catch{
+      state.hosts = loadLocal('hosts', []);
+    }
+    // populate selects
+    const hostOpts = state.hosts.map(h => ({ value: h.id || h.address, label: `${h.label || h.address} (${h.user || 'user'}@${h.address})` }));
+    [$('#bkSrcHost'), $('#rsTargetHost'), $('#scSrcHost')].forEach(sel => fillSelect(sel, hostOpts));
+    renderHostsTable();
+  }
+
+  async function loadBackups(){
+    try{
+      const data = await fetchJSON('/backups');
+      state.backups = data.backups || [];
+    }catch{
+      state.backups = [];
+    }
+    renderBackups();
+    fillSelect($('#rsBackupSelect'), state.backups.map(b => ({value: b.id, label: `${b.name} • ${b.size || ''} • ${b.created ? fmt(b.created): ''}`})));
+  }
+
+  async function loadJobs(){
+    try{
+      const data = await fetchJSON('/scheduler/jobs');
+      state.jobs = data.jobs || [];
+    }catch{ state.jobs = []; }
+    renderJobs();
+  }
+
+  async function loadSettings(){
+    try{
+      const data = await fetchJSON('/settings');
+      state.settings = data || {};
+      $('#setDropboxToken').value = data.dropbox_token || '';
+      $('#setDropboxFolder').value = data.dropbox_folder || '';
+      $('#setGotifyUrl').value = data.gotify_url || '';
+      $('#setGotifyToken').value = data.gotify_token || '';
+    }catch{}
+  }
+
+  // ------- Renderers -------
+  function renderHostsTable(){
+    const rows = state.hosts.map(h => ({
+      label: h.label || '',
+      addr: h.address,
+      user: h.user || 'root',
+      path: h.default_path || '',
+      actions: (()=>{
+        const w = document.createElement('div');
+        const e = document.createElement('button'); e.textContent='Edit'; e.className='btn ghost'; e.onclick=()=>{
+          $('#hLabel').value = h.label || '';
+          $('#hAddr').value = h.address || '';
+          $('#hUser').value = h.user || 'root';
+          $('#hPath').value = h.default_path || '';
+        };
+        const d = document.createElement('button'); d.textContent='Delete'; d.className='btn ghost'; d.onclick=()=>{
+          modalConfirm({title:'Delete host', body:`Remove ${h.label || h.address}?`, onOk: async()=>{
+            await fetchJSON('/hosts', {method:'DELETE', body: JSON.stringify({address: h.address})});
+            await loadHosts();
+          }});
+        };
+        w.appendChild(e); w.appendChild(d);
+        return w;
+      })()
+    }));
+    table($('#hostsTable'),
+      [{label:'Label',value:'label'},{label:'Address',value:'addr'},{label:'User',value:'user'},{label:'Default path',value:'path'},{label:'',value:'actions'}],
+      rows);
+  }
+
+  function renderBackups(){
+    const rows = state.backups.map(b => ({
+      name: b.name || b.id,
+      type: b.type,
+      size: b.size || '',
+      created: b.created ? fmt(b.created) : '',
+      location: b.location || '',
+      actions: (()=>{
+        const a = document.createElement('button'); a.textContent='Restore…'; a.className='btn';
+        a.onclick = () => promptRestore(b);
+        return a;
+      })()
+    }));
+    table($('#backupsTable'),
+      [{label:'Name',value:'name'},{label:'Type',value:(r)=> r.type==='dd'?'Full image':'Folder/Files'},{label:'Size',value:'size'},{label:'Created',value:'created'},{label:'Stored at',value:'location'},{label:'',value:'actions'}],
+      rows);
+  }
+
+  function renderJobs(){
+    const rows = state.jobs.map(j => ({
+      name: j.name,
+      src: `${j.source?.host_label || j.source?.host} • ${j.source?.path}`,
+      dest: j.destination?.type === 'dropbox' ? `Dropbox ${j.destination?.folder}` : j.destination?.path,
+      schedule: j.cron || j.human || '',
+      actions: (()=>{
+        const w = document.createElement('div');
+        const run = document.createElement('button'); run.textContent='Run now'; run.className='btn';
+        run.onclick = async()=>{ await fetchJSON(`/scheduler/run`, {method:'POST', body: JSON.stringify({name:j.name})}); };
+        const del = document.createElement('button'); del.textContent='Delete'; del.className='btn ghost';
+        del.onclick = ()=> modalConfirm({title:'Delete job', body:j.name, onOk: async()=>{ await fetchJSON('/scheduler/jobs', {method:'DELETE', body: JSON.stringify({name:j.name})}); await loadJobs(); }});
+        w.appendChild(run); w.appendChild(del);
+        return w;
+      })()
+    }));
+    table($('#jobsTable'),
+      [{label:'Name',value:'name'},{label:'Source',value:'src'},{label:'Destination',value:'dest'},{label:'Schedule',value:'schedule'},{label:'',value:'actions'}],
+      rows);
+  }
+
+  // ------- Actions -------
+  function currentSourceFromUI(prefix){
+    const type = $(prefix+'Type')?.value || $('#bkType').value;
+    const host = $(prefix+'SrcHost')?.value || $('#bkSrcHost').value;
+    const path = $(prefix+'SrcPath')?.value || $('#bkSrcPath').value;
+    return { type, host, path };
+  }
+
+  function currentDestinationFromUI(prefix){
+    const destType = $(prefix+'DestType')?.value || $('#bkDestType').value;
+    if(destType === 'dropbox'){
+      const folder = $(prefix+'DropboxFolder')?.value || $('#bkDropboxFolder').value;
+      return { type: 'dropbox', folder };
+    }
+    const path = $(prefix+'DestPath')?.value || $('#bkDestPath').value;
+    return { type: 'path', path };
+  }
+
+  async function startBackup(){
+    const source = currentSourceFromUI('#bk');
+    const destination = currentDestinationFromUI('#bk');
+    const compression = $('#bkCompression').value;
+    const name = $('#bkName').value || undefined;
+    if(!source.host || !source.path){ return toast('Source host and path are required','error'); }
+    if(destination.type==='path' && !destination.path){ return toast('Destination path required','error'); }
+    if(destination.type==='dropbox' && !destination.folder){ return toast('Dropbox folder required','error'); }
+    const body = {source, destination, compression, name};
+    modalConfirm({
+      title:'Start backup',
+      body:`${source.type==='dd'?'Full image':'Folder/files'} from ${source.host}:${source.path}`,
+      okText:'Start',
+      onOk: async()=>{
+        await fetchJSON('/backup', {method:'POST', body: JSON.stringify(body)});
+        await loadBackups();
       }
+    });
+  }
+
+  function promptRestore(backup){
+    const body = document.createElement('div');
+    body.innerHTML = `
+      <div class="form-grid two">
+        <label>Restore to host
+          <select id="mdlHost"></select>
+        </label>
+        <label>Restore path / device
+          <input id="mdlPath" type="text" placeholder="/restore/path or /dev/sda" />
+        </label>
+      </div>
+    `;
+    const sel = body.querySelector('#mdlHost');
+    fillSelect(sel, state.hosts.map(h=>({value:h.id||h.address,label:h.label||h.address})));
+    modalConfirm({
+      title:`Restore: ${backup.name}`,
+      body,
+      okText:'Restore',
+      onOk: async()=>{
+        const host = body.querySelector('#mdlHost').value;
+        const path = body.querySelector('#mdlPath').value;
+        if(!host || !path) throw new Error('Host and path required');
+        await fetchJSON('/restore', {method:'POST', body: JSON.stringify({backup_id: backup.id, target: {host, path}})});
+      }
+    });
+  }
+
+  async function startRestore(){
+    const id = $('#rsBackupSelect').value;
+    const host = $('#rsTargetHost').value;
+    const path = $('#rsTargetPath').value;
+    if(!id || !host || !path){ return toast('Select backup, host and path','error'); }
+    await fetchJSON('/restore', {method:'POST', body: JSON.stringify({backup_id: id, target: {host, path}})});
+  }
+
+  function buildSchedule(){
+    const mode = $('#scMode').value;
+    if(mode==='weekly'){
+      const wd = $('#scWeekday').value; const t = $('#scTime').value;
+      const [hh,mm] = t.split(':');
+      return { human:`Weekly ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][+wd]} at ${t}`, cron:`${mm} ${hh} * * ${wd}` };
+    }
+    if(mode==='monthly'){
+      const d = $('#scMonthday').value; const t = $('#scTime').value;
+      const [hh,mm] = t.split(':');
+      return { human:`Monthly day ${d} at ${t}`, cron:`${mm} ${hh} ${d} * *` };
+    }
+    if(mode==='once'){
+      const dt = $('#scOnceDateTime').value;
+      return { human:`Once at ${dt}`, once_at: dt };
+    }
+    const cron = $('#scCron').value;
+    return { human:`Cron ${cron}`, cron };
+  }
+
+  async function createJob(){
+    const name = $('#scName').value;
+    const source = { type: $('#scType').value, host: $('#scSrcHost').value, path: $('#scSrcPath').value };
+    const destination = ( ()=> {
+      if($('#scDestType').value === 'dropbox') return { type:'dropbox', folder: $('#scDropboxFolder').value };
+      return { type:'path', path: $('#scDestPath').value };
+    })();
+    const sched = buildSchedule();
+    if(!name || !source.host || !source.path) return toast('Missing required fields','error');
+    const body = { name, source, destination, schedule: sched };
+    await fetchJSON('/scheduler/jobs', {method:'POST', body: JSON.stringify(body)});
+    await loadJobs();
+  }
+
+  async function saveSettings(){
+    const body = {
+      dropbox_token: $('#setDropboxToken').value || undefined,
+      dropbox_folder: $('#setDropboxFolder').value || undefined,
+      gotify_url: $('#setGotifyUrl').value || undefined,
+      gotify_token: $('#setGotifyToken').value || undefined,
     };
-  });
-}
-$id('browse_up').onclick = async ()=>{
-  if (!browseCtx) return;
-  if (browseCtx.path){
-    const parts = browseCtx.path.replace(/\/+$/,'').split('/'); parts.pop();
-    browseCtx.path = parts.join('/');
-    await doBrowse();
-  } else if ((browseCtx.mode==='smb'||browseCtx.mode==='nfs') && browseCtx.share){
-    browseCtx.share = ''; await doBrowse();
+    await fetchJSON('/settings', {method:'POST', body: JSON.stringify(body)});
+    await loadSettings();
   }
-};
-$id('browse_select').onclick = ()=>{
-  if (!browseCtx) return;
-  if (browseCtx.mode==='ssh'){
-    // append selected remote folder to rsync list
-    const current = $id('b_files').value.trim();
-    const add = (browseCtx.path ? `/${browseCtx.path.replace(/^\/?/,'')}` : '/');
-    $id('b_files').value = current ? (current + ',' + add) : add;
-    closeModal();
-  } else {
-    // fill share with subdir if present
-    const sub = browseCtx.path ? `${browseCtx.share}/${browseCtx.path}` : browseCtx.share;
-    if (sub) $id('m_share').value = sub;
-    closeModal();
+
+  async function addHost(){
+    const host = {
+      label: $('#hLabel').value,
+      address: $('#hAddr').value,
+      user: $('#hUser').value || 'root',
+      password: $('#hPass').value || undefined,
+      default_path: $('#hPath').value || undefined,
+    };
+    if(!host.address) return toast('Address required','error');
+    await fetchJSON('/hosts', {method:'POST', body: JSON.stringify(host)});
+    await loadHosts();
   }
-};
-$id('btnBrowse').onclick = async ()=>{
-  const proto = $id('m_proto').value; const server=$id('m_server').value.trim();
-  if(!server){ alert('Enter server first'); return; }
-  browseCtx = { mode:(proto==='cifs'?'smb':'nfs'), server, user:$id('m_user').value, pass:$id('m_pass').value, share:$id('m_share').value.trim(), path:'' };
-  browseTitle.textContent = (proto==='cifs'?'Browse SMB':'Browse NFS');
-  openModal(); doBrowse();
-};
-$id('btn_browse_remote').onclick = async (e)=>{
-  e.preventDefault();
-  const host=$id('b_host').value.trim(); if(!host){ alert('Enter Host/IP first.'); return; }
-  browseCtx = { mode:'ssh', host, user:$id('b_user').value.trim()||'root', pass:$id('b_pass').value, port:parseInt($id('b_port').value||'22',10), path:'/' };
-  browseTitle.textContent = 'Browse remote (SSH)';
-  openModal(); doBrowse();
-};
 
-/* Quick pick from backups (for Restore input) */
-$id('btn_browse_local').onclick = (e)=>{ e.preventDefault(); showTab('backups'); };
-
-/* Store-to mount/unmount shortcuts */
-$id('btn_store_mount').onclick = async (e)=>{
-  e.preventDefault();
-  const m = mounts.find(x=>x.mount===$id('b_store').value);
-  if (!m) { $id('b_store_status').textContent='Not a preset'; return; }
-  const r = await api('/api/mount_now',{method:'POST',body:JSON.stringify(m)}); $id('b_store_status').textContent=r.ok?'Mounted':'Failed';
-  refreshMounts();
-};
-$id('btn_store_unmount').onclick = async (e)=>{
-  e.preventDefault();
-  const path = $id('b_store').value;
-  const r = await api('/api/unmount_now',{method:'POST',body:JSON.stringify({mount:path})}); $id('b_store_status').textContent=r.ok?'Unmounted':'Failed';
-  refreshMounts();
-};
-
-/* ---------- Backups list ---------- */
-async function backupsRefresh(){
-  const data = await api('/api/backups');
-  const body = $id('backups_rows'); body.innerHTML="";
-  (data.items||[]).sort((a,b)=> (b.created||0)-(a.created||0)).forEach(x=>{
-    const tr=document.createElement('tr');
-    const size = (x.size>=1073741824) ? `${(x.size/1073741824).toFixed(1)} GB` :
-                 (x.size>=1048576) ? `${(x.size/1048576).toFixed(1)} MB` :
-                 (x.size>=1024) ? `${(x.size/1024).toFixed(1)} KB` : (x.size||0)+' B';
-    const date = x.created ? new Date(x.created*1000).toISOString().replace('T',' ').slice(0,19) : (x.mtime||'');
-    tr.innerHTML = `<td>${x.path}</td><td>${x.kind||x.type||'unknown'}</td><td>${x.location||'Local'}</td><td>${size}</td><td>${date}</td><td></td>`;
-    const td = tr.lastChild;
-    const dl = document.createElement('a'); dl.className='btn'; dl.textContent='Download'; dl.href=`/api/download?path=${encodeURIComponent(x.path)}`; dl.target="_blank";
-    const use = document.createElement('button'); use.className='btn'; use.style.marginLeft='6px'; use.textContent='Use for restore';
-    use.onclick = ()=>{ showTab('restore'); $id('r_image').value = x.path; };
-    const del = document.createElement('button'); del.className='btn btn--danger'; del.style.marginLeft='6px'; del.textContent='Delete';
-    del.onclick = async ()=>{ if(confirm(`Delete ${x.path}?`)){ await api('/api/backups/delete',{method:'POST',body:JSON.stringify({path:x.path})}); backupsRefresh(); }};
-    td.append(dl,use,del);
-    body.appendChild(tr);
-  });
-}
-
-/* ---------- Backup/Restore actions ---------- */
-$id("btnEstimate").onclick = async ()=>{
-  const body = {
-    method:$id("b_method").value, username:$id("b_user").value, host:$id("b_host").value,
-    password:$id("b_pass").value, port:parseInt($id("b_port").value||"22",10),
-    disk:$id("b_disk").value, files:$id("b_files").value, bwlimit_kbps:parseInt($id("b_bw").value||"0",10)
-  };
-  setStatus(await api("/api/estimate_backup",{method:"POST",body:JSON.stringify(body)}));
-};
-$id("btnBackup").onclick = async ()=>{
-  const body = {
-    method:$id("b_method").value, username:$id("b_user").value, host:$id("b_host").value,
-    password:$id("b_pass").value, port:parseInt($id("b_port").value||"22",10),
-    disk:$id("b_disk").value, files:$id("b_files").value, store_to:$id("b_store").value,
-    verify:($id("b_verify").value==="true"), excludes:$id("b_excludes").value,
-    retention_days:parseInt($id("b_retention").value||"0",10),
-    backup_name:$id("b_name").value, bwlimit_kbps:parseInt($id("b_bw").value||"0",10),
-    cloud_upload:$id("b_cloud").value.trim()
-  };
-  setStatus(await api("/api/run_backup",{method:"POST",body:JSON.stringify(body)}));
-  backupsRefresh();
-};
-$id("btnRestore").onclick = async ()=>{
-  if (!confirm("Are you sure you want to restore? This will overwrite data.")) return;
-  if (!confirm("Last warning. Proceed with restore?")) return;
-  const body = {
-    method:$id("r_method").value, username:$id("r_user").value, host:$id("r_host").value,
-    password:$id("r_pass").value, port:parseInt($id("r_port").value||"22",10),
-    disk:$id("r_disk").value, image_path:$id("r_image").value,
-    local_src:$id("r_image").value, remote_dest:$id("r_dest").value,
-    excludes:$id("r_ex").value, bwlimit_kbps:parseInt($id("r_bw").value||"0",10)
-  };
-  setStatus(await api("/api/run_restore",{method:"POST",body:JSON.stringify(body)}));
-};
-
-/* ---------- Scheduler ---------- */
-async function schRefresh(){
-  const r = await api('/api/schedules'); // expected {items:[...]}  (name, cron, method, host, source, store)
-  const hint = $id('sch_hint');
-  const body = $id('sch_rows'); body.innerHTML='';
-  if (!r || r.error || (!r.items && !Array.isArray(r))) {
-    hint.textContent = "Scheduler endpoints not found. Backend should implement /api/schedules, /api/schedule_add, /api/schedule_delete.";
-    return;
+  async function testDropbox(){
+    await fetchJSON('/dropbox/test', {method:'POST'});
+    toast('Dropbox OK', 'ok');
   }
-  hint.textContent = "";
-  (r.items || r).forEach(j=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${j.name||''}</td><td>${j.cron||''}</td><td>${j.method||''}</td>
-      <td>${j.host||''}</td><td>${j.source||''}</td><td>${j.store||''}</td><td></td>`;
-    const td = tr.lastChild;
-    const btnDel = document.createElement('button'); btnDel.className='btn btn--danger'; btnDel.textContent='Delete';
-    btnDel.onclick = async()=>{ await api('/api/schedule_delete',{method:'POST',body:JSON.stringify({name:j.name})}); schRefresh(); };
-    const btnRun = document.createElement('button'); btnRun.className='btn'; btnRun.style.marginLeft='6px'; btnRun.textContent='Run now';
-    btnRun.onclick = async()=>{ await api('/api/schedule_run_now',{method:'POST',body:JSON.stringify({name:j.name})}); };
-    td.append(btnRun,btnDel); body.appendChild(tr);
-  });
-}
-$id('btnSchRefresh').onclick = schRefresh;
-$id('btnSchAdd').onclick = async ()=>{
-  const body = {
-    name:$id('sch_name').value.trim(),
-    cron:$id('sch_cron').value.trim(),
-    method:$id('sch_method').value,
-    host:$id('sch_host').value.trim(),
-    username:$id('sch_user').value.trim(),
-    port:parseInt($id('sch_port').value||'22',10),
-    password:$id('sch_pass').value,
-    source:$id('sch_source').value.trim(),
-    store:$id('sch_store').value.trim()
-  };
-  if (!body.name || !body.cron) { alert('Name and CRON are required.'); return; }
-  setStatus(await api('/api/schedule_add',{method:'POST',body:JSON.stringify(body)}));
-  schRefresh();
-};
 
-/* ---------- Init ---------- */
-(async function init(){
-  await loadOptions();
-  await refreshMounts();
-  await backupsRefresh();
-  applyMethodVisibility('b'); applyMethodVisibility('r');
+  // ------- Events -------
+  function bind(){
+    // tabs
+    $$('.tab').forEach(btn => btn.addEventListener('click', () => {
+      $$('.tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active');
+      $$('.tabpanel').forEach(p=>p.classList.remove('active'));
+      $(`#tab-${btn.dataset.tab}`).classList.add('active');
+    }));
+    // dynamic UI show/hide
+    $('#bkType').addEventListener('change', e => {
+      $('#bkPathLabel').firstChild.textContent = (e.target.value==='dd'?'Device (e.g., /dev/sda)':'Path (folder or file)');
+    });
+    $('#bkDestType').addEventListener('change', e => {
+      const drop = e.target.value==='dropbox';
+      $('#bkDestPathWrap').classList.toggle('hidden', drop);
+      $('#bkDropboxWrap').classList.toggle('hidden', !drop);
+    });
+    $('#scDestType').addEventListener('change', e => {
+      const drop = e.target.value==='dropbox';
+      $('#scDestPathLabel').classList.toggle('hidden', drop);
+      $('#scDropboxWrap').classList.toggle('hidden', !drop);
+    });
+    $('#scMode').addEventListener('change', e => {
+      const m = e.target.value;
+      $('#scWeeklyWrap').classList.toggle('hidden', m!=='weekly');
+      $('#scMonthlyWrap').classList.toggle('hidden', m!=='monthly');
+      $('#scTimeWrap').classList.toggle('hidden', m==='once' || m==='cron');
+      $('#scOnceWrap').classList.toggle('hidden', m!=='once');
+      $('#scCronWrap').classList.toggle('hidden', m!=='cron');
+    });
+
+    // actions
+    $('#startBackup').onclick = startBackup;
+    $('#startRestore').onclick = startRestore;
+    $('#scCreate').onclick = createJob;
+    $('#saveSettings').onclick = saveSettings;
+    $('#hAdd').onclick = addHost;
+    $('#hTest').onclick = async()=>{ await fetchJSON('/hosts/test', {method:'POST', body: JSON.stringify({address: $('#hAddr').value, user: $('#hUser').value})}); };
+    $('#testDropbox').onclick = testDropbox;
+    $('#refreshBtn').onclick = init;
+  }
+
+  async function init(){
+    bind();
+    await Promise.all([loadHosts(), loadBackups(), loadJobs(), loadSettings()]).catch(()=>{});
+    // Logs
+    try{
+      const log = await fetchJSON('/logs');
+      $('#logView').textContent = (log?.text || '').trim();
+    }catch{
+      $('#logView').textContent = 'No logs yet.';
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
 })();
