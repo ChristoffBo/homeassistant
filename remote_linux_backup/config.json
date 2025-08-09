@@ -1,7 +1,7 @@
 {
   "arch": ["aarch64", "amd64", "armv7", "i386"],
   "name": "Remote Linux Backup",
-  "version": "1.1.0",
+  "version": "1.0.15",
   "slug": "remote_linux_backup",
   "description": "Backup and restore remote Linux systems via password-only SSH. dd, rsync, ZFS; NAS + Dropbox; per-job paths; Gotify; scheduler; dark UI.",
   "startup": "services",
@@ -29,7 +29,7 @@
     "jobs": []
   },
   "schema": {
-    "known_hosts": ["str"],
+    "known_hosts": "list(str)?",
     "ui_port": "int(1,65535)?",
     "gotify_enabled": "bool?",
     "gotify_url": "str?",
@@ -37,9 +37,9 @@
     "auto_install_tools": "bool?",
     "dropbox_enabled": "bool?",
     "dropbox_remote": "str?",
-    "nas_mounts": ["str"],
-    "server_presets": ["str"],
-    "jobs": ["str"]
+    "nas_mounts": "list(str)?",
+    "server_presets": "list(str)?",
+    "jobs": "list(str)?"
   },
   "ports": { "8066/tcp": 8066 },
   "ports_description": { "8066/tcp": "Web UI (non-Ingress)" }

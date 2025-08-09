@@ -1,32 +1,18 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.3.2
-FROM $BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
+FROM ${BUILD_FROM}
 
-# Install required packages
-RUN apk add --no-cache \
-    python3 py3-pip \
-    openssh-client rsync \
-    curl bash jq \
-    pigz gzip tar \
-    rclone coreutils util-linux \
-    zfs \
-    tzdata \
-    dropbear \
-    samba-client \
-    && pip3 install --no-cache-dir --upgrade pip
+# Install runtime deps
+RUN apk add --no-cache     bash curl jq coreutils pigz pv openssh-client sshpass rsync rclone cron gzip
 
-# Copy add-on files
-COPY requirements.txt /app/requirements.txt
+# Copy app
+WORKDIR /app
+COPY requirements.txt /app/
 RUN pip3 install --no-cache-dir -r /app/requirements.txt
+COPY api.py scheduler.py job_runner.py run.sh /app/
+COPY www /app/www
 
-COPY run.sh /run.sh
-COPY api.py /app/api.py
-COPY job_runner.py /app/job_runner.py
-COPY scheduler.py /app/scheduler.py
-COPY index.html /app/index.html
-COPY style.css /app/style.css
-
-# Ensure scripts are executable
-RUN chmod a+x /run.sh /app/*.py
+# Cron log file
+RUN touch /var/log/remote_linux_backup.log
 
 # Entrypoint
-CMD [ "/run.sh" ]
+CMD ["/app/run.sh"]
