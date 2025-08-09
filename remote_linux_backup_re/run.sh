@@ -6,7 +6,7 @@ APP_CFG="/config/remote_linux_backup.json"
 
 mkdir -p /backup /mnt
 
-# Always update OS packages on container start (non-fatal if offline)
+# Update OS packages (non-fatal if offline)
 if command -v apt-get >/dev/null 2>&1; then
   {
     echo "[INFO] Updating container OS packages..."
@@ -15,7 +15,7 @@ if command -v apt-get >/dev/null 2>&1; then
   } || echo "[WARN] OS update skipped (likely offline). Continuing startup..."
 fi
 
-# Ensure app config exists (persistent across restarts)
+# Ensure app config (persisted in /config)
 if [ ! -f "$APP_CFG" ]; then
   cat > "$APP_CFG" <<'JSON'
 {
@@ -33,7 +33,7 @@ if [ ! -f "$APP_CFG" ]; then
 JSON
 fi
 
-# Ensure HA options default exists (Supervisor may overwrite; used for UI port)
+# Ensure HA options file (used for UI port if Supervisor doesn't supply it)
 if [ ! -f "$CONFIG_PATH" ]; then
   cat > "$CONFIG_PATH" <<'JSON'
 {
@@ -55,7 +55,7 @@ fi
 # Read UI port
 UI_PORT=$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)
 
-# Auto-mount presets marked auto_mount: true from APP_CFG
+# Auto-mount presets (APP_CFG)
 if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
   mapfile -t MOUNTS < <(jq -c '.mounts[] | select(.auto_mount==true)' "$APP_CFG")
   for m in "${MOUNTS[@]}"; do
@@ -70,8 +70,8 @@ if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
     [ -z "$proto" ] || [ -z "$server" ] || [ -z "$share" ] || [ -z "$mountp" ] && continue
     mkdir -p "$mountp"
     if ! mountpoint -q "$mountp"; then
-      if [ "$proto" = "cifs" ] || [ "$proto" = "smb" ]; then
-        mopts="rw,vers=3.0,iocharset=utf8"
+      if [[ "$proto" == "cifs" || "$proto" == "smb" ]]; then
+        mopts="rw,vers=3.1.1,iocharset=utf8"
         [ -n "$user" ] && mopts="$mopts,username=$user"
         [ -n "$pass" ] && mopts="$mopts,password=$pass"
         [ -n "$opts_extra" ] && mopts="$mopts,$opts_extra"
