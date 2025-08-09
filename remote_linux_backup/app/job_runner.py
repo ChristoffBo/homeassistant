@@ -1,73 +1,82 @@
-import os, json, time, shlex, subprocess, sys
+#!/usr/bin/env python3
+import os
+import time
+import json
+import subprocess
+import argparse
 
-OPTIONS_PATH = "/data/options.json"
-
-def run(cmd):
-    p = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out,_ = p.communicate()
-    return out
-
-def gotify(title, message, priority=5):
+def send_gotify(title, message, cfg):
+    if not cfg.get("gotify_enabled"):
+        return
+    url = cfg.get("gotify_url")
+    token = cfg.get("gotify_token")
+    if not url or not token:
+        return
     try:
-        opts = json.load(open(OPTIONS_PATH))
-        if not opts.get("gotify_enabled"): return
-        url = opts.get("gotify_url"); token = opts.get("gotify_token")
-        if not url or not token: return
-        cmd = f"curl -s -X POST {shlex.quote(url)}/message -F token={shlex.quote(token)} -F title={shlex.quote(title)} -F message={shlex.quote(message)} -F priority={priority}"
-        run(cmd)
+        subprocess.run(
+            [
+                "curl", "-s", "-X", "POST", f"{url}/message",
+                "-F", f"token={token}",
+                "-F", f"title={title}",
+                "-F", f"message={message}",
+                "-F", "priority=5"
+            ],
+            check=False
+        )
+    except Exception as e:
+        print(f"[Gotify Error] {e}")
+
+def run_single(job, cfg):
+    start = time.time()
+    dest = job["destination"]
+    os.makedirs(dest, exist_ok=True)
+
+    mode = job.get("mode", "rsync")
+    ssh_host = job.get("ssh_host")
+    ssh_user = job.get("ssh_user")
+    ssh_port = int(job.get("ssh_port", cfg.get("ssh_port", 22)))
+    bandwidth = int(job.get("bandwidth_limit", 0) or cfg.get("bandwidth_limit", 0) or 0)
+    excludes = (job.get("excludes") or cfg.get("rsync_excludes") or "").strip()
+
+    name = job.get("name") or f"backup_{time.strftime('%Y%m%d_%H%M%S')}"
+    if mode == "rsync":
+        exclude_args = " ".join([f"--exclude '{p.strip()}'" for p in excludes.split(",") if p.strip()])
+        bw = f"--bwlimit={bandwidth}" if bandwidth > 0 else ""
+        cmd = f"rsync -aAX -e 'ssh -p {ssh_port}' {exclude_args} {bw} {ssh_user}@{ssh_host}:{job['source']} {dest.rstrip('/') + '/'}"
+    elif mode == "dd":
+        archive = os.path.join(dest, f"{name}.img.gz")
+        comp = "pigz -c" if subprocess.call("command -v pigz >/dev/null 2>&1", shell=True)==0 else "gzip -c"
+        device = job.get("source", "/dev/sda")
+        cmd = f"ssh -p {ssh_port} {ssh_user}@{ssh_host} 'dd if={device} bs=64K status=progress' | {comp} > {archive}"
+    else:
+        return 2, f"Unsupported mode: {mode}"
+
+    print(f"[JobRunner] Running: {cmd}")
+    rc = subprocess.call(cmd, shell=True)
+
+    elapsed = round(time.time() - start, 2)
+    try:
+        size = subprocess.check_output(["du", "-sh", dest]).split()[0].decode()
     except Exception:
-        pass
+        size = "unknown"
+
+    title = "Backup Success" if rc == 0 else "Backup Failed"
+    msg = f"Job: {name}\nMode: {mode}\nDest: {dest}\nTime: {elapsed}s\nSize: {size}"
+    send_gotify(title, msg, cfg)
+    return rc, msg
 
 def main():
-    jtxt = os.environ.get("JOB_JSON", "")
-    if not jtxt:
-        print("No JOB_JSON provided")
-        return 2
-    try:
-        j = json.loads(jtxt)
-    except Exception as e:
-        print(f"Invalid JOB_JSON: {e}")
-        return 2
-
-    host = j.get("host"); user=j.get("username","root"); pwd=j.get("password","")
-    method = j.get("method"); store=j.get("store_to","/backup"); cloud=j.get("cloud_upload","")
-    if not host or not method:
-        print("Missing host/method"); return 2
-
-    t0=time.time()
-    if method == "dd":
-        disk=j.get("disk","/dev/sda")
-        ts=time.strftime("%Y%m%d-%H%M%S")
-        out_path = os.path.join(store, f"{host.replace('.','_')}-{ts}.img.gz")
-        os.makedirs(store, exist_ok=True)
-        cmd = f"sshpass -p {shlex.quote(pwd)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {shlex.quote(user)}@{shlex.quote(host)} 'dd if={shlex.quote(disk)} bs=64K status=progress | gzip -c' > {shlex.quote(out_path)}"
-        out = run(cmd)
-        if cloud:
-            out += "\n[RCLONE]\n" + run(f"rclone copy {shlex.quote(out_path)} {shlex.quote(cloud)} --progress")
-        gotify("Scheduled Backup (dd)", f"Host: {host}\nSaved: {out_path}\nTook: {round(time.time()-t0,2)}s")
-        print(out); return 0
-
-    elif method == "rsync":
-        outs = []
-        os.makedirs(store, exist_ok=True)
-        for src in [s.strip() for s in j.get("files","/etc").split(",") if s.strip()]:
-            outs.append(run(f"sshpass -p {shlex.quote(pwd)} rsync -aAX --numeric-ids -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(src)} {shlex.quote(store.rstrip('/') + '/')}"))
-        if cloud:
-            outs.append('\n[RCLONE]\n' + run(f"rclone copy {shlex.quote(store)} {shlex.quote(cloud)} --progress"))
-        gotify("Scheduled Backup (rsync)", f"Host: {host}\nSaved to: {store}\nTook: {round(time.time()-t0,2)}s")
-        print("\n".join(outs)); return 0
-
-    elif method == "zfs":
-        dataset = j.get("zfs_dataset")
-        if not dataset:
-            print("Missing zfs_dataset"); return 2
-        snap = j.get("snapshot_name", time.strftime("backup-%Y%m%d-%H%M%S"))
-        out = run(f"sshpass -p {shlex.quote(pwd)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {shlex.quote(user)}@{shlex.quote(host)} 'zfs snapshot {shlex.quote(dataset)}@{shlex.quote(snap)}'")
-        gotify("Scheduled Backup (zfs)", f"Host: {host}\nSnapshot: {dataset}@{snap}")
-        print(out); return 0
-
-    else:
-        print("Unknown method"); return 2
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--job", required=True, help="Path to JSON job file")
+    args = parser.parse_args()
+    with open(args.config, "r") as f:
+        cfg = json.load(f)
+    with open(args.job, "r") as f:
+        job = json.load(f)
+    rc, msg = run_single(job, cfg)
+    print(msg)
+    exit(rc)
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
