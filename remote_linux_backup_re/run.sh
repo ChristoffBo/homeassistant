@@ -36,21 +36,12 @@ if [ ! -f "$APP_CONFIG" ]; then
 JSON
 fi
 
-# Auto-install tools if requested
-if jq -e '.auto_install_tools == true' "$CONFIG_PATH" >/dev/null 2>&1; then
-  if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache cifs-utils nfs-utils jq curl python3 py3-pip cronie || true
-  elif command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      cifs-utils nfs-common jq curl python3-pip cron || true
-  fi
-fi
+# NOTE: Do NOT install packages at runtime. They are baked into the image via Dockerfile.
 
 # Resolve UI port safely
 UI_PORT="$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)"
 
-# Mount NAS entries (proto=cifs|nfs;server=...;share=...;mount=/mnt/nas/name;username=...;password=...;options=...)
+# Mount NAS entries
 if jq -e '.nas_mounts | length > 0' "$CONFIG_PATH" >/dev/null 2>&1; then
   mapfile -t NAS_ITEMS < <(jq -r '.nas_mounts[]' "$CONFIG_PATH")
   for row in "${NAS_ITEMS[@]}"; do
@@ -83,7 +74,7 @@ fi
 # Apply schedules (best-effort)
 python3 /app/scheduler.py apply || true
 
-# Start cron (Alpine BusyBox crond has no -l/-L; it daemonizes by default)
+# Start cron (BusyBox crond daemonizes; no -l/-L)
 if command -v crond >/dev/null 2>&1; then
   crond || true
 elif command -v cron >/dev/null 2>&1; then
