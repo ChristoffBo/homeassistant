@@ -24,13 +24,14 @@ if [ ! -f "$CONFIG_PATH" ]; then
 JSON
 fi
 
-# Ensure app config file exists (for UI saves)
+# Ensure app config file exists (UI saves here)
 if [ ! -f "$APP_CONFIG" ]; then
   cat > "$APP_CONFIG" <<'JSON'
 {
   "known_hosts": [],
   "server_presets": [],
-  "jobs": []
+  "jobs": [],
+  "nas_mounts": []
 }
 JSON
 fi
@@ -49,7 +50,7 @@ fi
 # Resolve UI port safely
 UI_PORT="$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)"
 
-# Mount NAS entries
+# Mount NAS entries (proto=cifs|nfs;server=...;share=...;mount=/mnt/nas/name;username=...;password=...;options=...)
 if jq -e '.nas_mounts | length > 0' "$CONFIG_PATH" >/dev/null 2>&1; then
   mapfile -t NAS_ITEMS < <(jq -r '.nas_mounts[]' "$CONFIG_PATH")
   for row in "${NAS_ITEMS[@]}"; do
@@ -82,9 +83,9 @@ fi
 # Apply schedules (best-effort)
 python3 /app/scheduler.py apply || true
 
-# Start cron (Alpine BusyBox compatible)
+# Start cron (Alpine BusyBox crond has no -l/-L; it daemonizes by default)
 if command -v crond >/dev/null 2>&1; then
-  crond -l 8 -L /var/log/remote_linux_backup.log || true
+  crond || true
 elif command -v cron >/dev/null 2>&1; then
   service cron start || true
 fi
