@@ -1,154 +1,330 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8"/>
-<title>Remote Linux Backup</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="stylesheet" href="style.css"/>
+  <meta charset="utf-8" />
+  <title>Remote Linux Backup</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="page">
-  <div class="card">
-    <div class="card__header">
-      <div class="brand__logo"></div>
-      <div>
-        <h1 class="brand__title">Remote Linux Backup</h1>
-        <p class="brand__subtitle">Simple backups & mounts</p>
+  <main class="wrap">
+    <header class="hero">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <h1>Remote Linux Backup</h1>
+          <p class="sub">Simple backups &amp; mounts</p>
+        </div>
       </div>
-    </div>
-
-    <div class="tabs">
-      <button class="tab is-active" data-target="backup">Backup</button>
-      <button class="tab" data-target="restore">Restore</button>
-      <button class="tab" data-target="mounts">Mounts</button>
-      <button class="tab" data-target="backups">Backups</button>
-      <button class="tab" data-target="settings">Settings</button>
-      <button class="tab" data-target="help">Help</button>
-    </div>
+      <nav class="tabs">
+        <button data-tab="backup" class="tab is-active">Backup</button>
+        <button data-tab="restore" class="tab">Restore</button>
+        <button data-tab="mounts" class="tab">Mounts</button>
+        <button data-tab="backups" class="tab">Backups</button>
+        <button data-tab="settings" class="tab">Settings</button>
+        <button data-tab="help" class="tab">Help</button>
+      </nav>
+      <div class="alpha">Alpha software. Use at your own risk. Restores can destroy data. Always have verified backups.</div>
+    </header>
 
     <!-- Backup -->
-    <section class="panel is-active" id="panel-backup">
-      <form class="form">
-        <div class="field"><label>Host/IP<input id="b_host" placeholder="10.0.0.10"/></label></div>
-        <div class="field"><label>User<input id="b_user" value="root"/></label></div>
-        <div class="field"><label>Port<input id="b_port" value="22"/></label></div>
-        <div class="field"><label>Password<input id="b_pass" type="password"/></label></div>
-        <div class="field"><label>Method
+    <section id="panel-backup" class="panel is-active">
+      <form class="grid">
+        <div class="field">
+          <label>Host/IP</label>
+          <input id="b_host" placeholder="10.0.0.10">
+        </div>
+        <div class="field">
+          <label>User</label>
+          <input id="b_user" value="root">
+        </div>
+        <div class="field">
+          <label>Port</label>
+          <input id="b_port" value="22">
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input id="b_pass" type="password">
+        </div>
+
+        <div class="field">
+          <label>Method</label>
           <select id="b_method">
             <option value="dd">Full Disk (dd)</option>
             <option value="rsync">Files (rsync)</option>
             <option value="zfs">ZFS snapshot</option>
-          </select></label>
+          </select>
         </div>
-        <div class="field"><label>Disk device (dd)<input id="b_disk" value="/dev/sda"/></label></div>
-        <div class="field"><label>Store to<input id="b_store" value="/backup"/></label></div>
-        <div class="field"><label>Verify (dd)
-          <select id="b_verify"><option value="false">No</option><option value="true">Yes</option></select>
-        </label></div>
-        <div class="field"><label>Backup name<label><input id="b_name" placeholder="OPNsense-01"/></label></label></div>
+        <div class="field">
+          <label>Disk device (dd)</label>
+          <input id="b_disk" value="/dev/sda">
+        </div>
+        <div class="field">
+          <label>Store to (local folder or mounted share)</label>
+          <select id="b_store"></select>
+          <div class="tiny muted">Use Mounts tab to add NAS shares. “/backup” is always available locally.</div>
+        </div>
+        <div class="field">
+          <label>Backup name (label)</label>
+          <input id="b_name" placeholder="OPNsense-01">
+        </div>
+
+        <div class="field">
+          <label>Files (rsync, comma separated)</label>
+          <input id="b_files" value="/etc,/home">
+        </div>
+        <div class="field">
+          <label>Excludes (rsync, comma separated)</label>
+          <input id="b_excludes" placeholder="*.tmp,*.cache">
+        </div>
+        <div class="field">
+          <label>Bandwidth limit (KB/s)</label>
+          <input id="b_bw" value="">
+        </div>
+        <div class="field">
+          <label>Verify (dd)</label>
+          <select id="b_verify">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Retention days (prune old)</label>
+          <input id="b_retention" value="">
+        </div>
+        <div class="field">
+          <label>Cloud upload (rclone remote:path)</label>
+          <input id="b_cloud" placeholder="dropbox:HA-Backups">
+        </div>
       </form>
+
       <div class="actions">
-        <button class="btn" id="btn_estimate">Estimate</button>
-        <button class="btn btn--primary" id="btn_run_backup">Run Backup</button>
+        <button id="btnEstimate" class="btn">Estimate</button>
+        <button id="btnBackup" class="btn primary">Run backup</button>
       </div>
-      <div class="log-wrap"><div class="log-title">Status / Output</div><pre class="log" id="status_box"></pre></div>
     </section>
 
     <!-- Restore -->
-    <section class="panel" id="panel-restore">
-      <form class="form">
-        <div class="field"><label>Host/IP<input id="r_host" placeholder="10.0.0.10"/></label></div>
-        <div class="field"><label>User<input id="r_user" value="root"/></label></div>
-        <div class="field"><label>Port<input id="r_port" value="22"/></label></div>
-        <div class="field"><label>Password<input id="r_pass" type="password"/></label></div>
-        <div class="field"><label>Method
-          <select id="r_method"><option value="dd">Full Disk (dd)</option><option value="rsync">Files (rsync)</option></select>
-        </label></div>
-        <div class="field"><label>Disk device (dd)<input id="r_disk" value="/dev/sda"/></label></div>
-        <div class="field"><label>Image path (dd)<input id="r_image" placeholder="/backup/..." /></label></div>
+    <section id="panel-restore" class="panel">
+      <form class="grid">
+        <div class="field">
+          <label>Host/IP</label>
+          <input id="r_host" placeholder="10.0.0.10">
+        </div>
+        <div class="field">
+          <label>User</label>
+          <input id="r_user" value="root">
+        </div>
+        <div class="field">
+          <label>Port</label>
+          <input id="r_port" value="22">
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input id="r_pass" type="password">
+        </div>
+
+        <div class="field">
+          <label>Method</label>
+          <select id="r_method">
+            <option value="dd">Full Disk (dd)</option>
+            <option value="rsync">Files (rsync)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Disk device (dd)</label>
+          <input id="r_disk" value="/dev/sda">
+        </div>
+        <div class="field wide">
+          <label>Image path (dd) or local source (rsync)</label>
+          <input id="r_src" placeholder="/backup/myhost-2025-01-01.img.gz">
+          <div class="tiny muted">
+            Tip: use Backups tab to pick a file (Restore button there asks twice before running).
+          </div>
+        </div>
+        <div class="field">
+          <label>Remote dest (rsync)</label>
+          <input id="r_dest" value="/">
+        </div>
+        <div class="field">
+          <label>Excludes (rsync)</label>
+          <input id="r_ex" placeholder="*.tmp,*.cache">
+        </div>
+        <div class="field">
+          <label>Bandwidth limit (KB/s)</label>
+          <input id="r_bw" value="">
+        </div>
       </form>
+
       <div class="actions">
-        <button class="btn btn--danger" id="btn_run_restore">Restore (double confirm)</button>
+        <button id="btnRestore" class="btn danger">Run restore</button>
       </div>
-      <div class="log-wrap"><div class="log-title">Status / Output</div><pre class="log" id="restore_box"></pre></div>
     </section>
 
     <!-- Mounts -->
-    <section class="panel" id="panel-mounts">
-      <form class="form">
-        <div class="field"><label>Preset name<input id="m_name" placeholder="NAS-Backups"/></label></div>
-        <div class="field"><label>Protocol
-          <select id="m_proto"><option value="cifs">SMB/CIFS</option><option value="nfs">NFS</option></select>
-        </label></div>
-        <div class="field"><label>Server / host<input id="m_server" placeholder="10.0.0.21"/></label></div>
-        <div class="field"><label>Username (SMB)<input id="m_user" /></label></div>
-        <div class="field"><label>Password (SMB)<input id="m_pass" type="password"/></label></div>
-        <div class="field"><label>Share / Export<input id="m_share" placeholder="Backups  OR  /export/backups"/></label></div>
-        <div class="field"><label>Share / export results
-          <select id="m_share_select"></select>
-        </label></div>
-        <div class="field"><label>Mount point<input id="m_mount" value="/mnt/Backups"/></label></div>
-        <div class="field"><label>Extra options<input id="m_opts" placeholder="iocharset=utf8,uid=0,gid=0"/></label></div>
-        <div class="field"><label>Auto-mount on start
-          <select id="m_auto"><option value="false">No</option><option value="true">Yes</option></select>
-        </label></div>
+    <section id="panel-mounts" class="panel">
+      <form class="grid">
+        <div class="field">
+          <label>Preset name</label>
+          <input id="m_name" placeholder="NAS-Backups">
+        </div>
+        <div class="field">
+          <label>Protocol</label>
+          <select id="m_proto">
+            <option value="cifs">SMB/CIFS</option>
+            <option value="nfs">NFS</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Server / host</label>
+          <input id="m_server" placeholder="10.0.0.21">
+        </div>
+
+        <div class="field">
+          <label>Username (SMB)</label>
+          <input id="m_user" placeholder="user">
+        </div>
+        <div class="field">
+          <label>Password (SMB)</label>
+          <input id="m_pass" type="password" placeholder="pass">
+        </div>
+        <div class="field">
+          <label>Share (SMB) / Export (NFS)</label>
+
+          <div class="share-picker">
+            <input id="m_share" placeholder="Backups  OR  /export/backups">
+            <select id="m_share_list" class="inline"></select>
+          </div>
+          <div class="tiny muted">Click “List shares/exports” to populate the dropdown.</div>
+        </div>
+
+        <div class="field">
+          <label>Mount point</label>
+          <input id="m_mount" value="/mnt/Backups">
+        </div>
+        <div class="field">
+          <label>Extra options</label>
+          <input id="m_opts" placeholder="iocharset=utf8,uid=0,gid=0">
+        </div>
+        <div class="field">
+          <label>Auto-mount on start</label>
+          <select id="m_auto">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
       </form>
+
       <div class="actions">
-        <button class="btn" id="btn_list_shares">List shares/exports</button>
-        <button class="btn" id="btn_use_selected">Use selected</button>
-        <button class="btn" id="btn_mount_selected">Mount selected</button>
-        <button class="btn" id="btn_add_mount">Add / Update</button>
+        <button id="btnList" class="btn">List shares/exports</button>
+        <button id="btnBrowse" class="btn">Browse</button>
+        <button id="btnAddMount" class="btn primary">Add / Update</button>
       </div>
 
-      <h3 style="margin-top:12px">Mount presets</h3>
-      <div class="details">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr><th>Name</th><th>Proto</th><th>Server</th><th>Share/Export</th><th>Mount</th><th>Auto</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody id="mount_rows"></tbody>
+      <h3>Mount presets</h3>
+      <div class="table-wrap">
+        <table id="mountTable" class="table">
+          <thead>
+            <tr>
+              <th>Name</th><th>Proto</th><th>Server</th><th>Share/Export</th>
+              <th>Mount</th><th>Auto</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
         </table>
       </div>
     </section>
 
-    <!-- Backups list -->
-    <section class="panel" id="panel-backups">
-      <div class="details">
-        <table style="width:100%;border-collapse:collapse">
+    <!-- Backups -->
+    <section id="panel-backups" class="panel">
+      <div class="table-wrap">
+        <table id="backupsTable" class="table">
           <thead>
-            <tr><th>Path</th><th>Type</th><th>Location</th><th>Size</th><th>Date</th><th>Actions</th></tr>
+            <tr>
+              <th>Path</th><th>Type</th><th>Location</th><th>Size</th><th>Date</th><th>Actions</th>
+            </tr>
           </thead>
-          <tbody id="backups_rows"></tbody>
+          <tbody></tbody>
         </table>
       </div>
     </section>
 
     <!-- Settings -->
-    <section class="panel" id="panel-settings">
-      <form class="form">
-        <div class="field"><label>Gotify URL<input id="s_gotify_url" placeholder="https://gotify.example"/></label></div>
-        <div class="field"><label>Gotify token<input id="s_gotify_token"/></label></div>
-        <div class="field"><label>Enable Gotify
-          <select id="s_gotify_enabled"><option value="false">No</option><option value="true">Yes</option></select>
-        </label></div>
-        <div class="field"><label>Dropbox enabled
-          <select id="s_dropbox_enabled"><option value="false">No</option><option value="true">Yes</option></select>
-        </label></div>
-        <div class="field"><label>Dropbox remote<input id="s_dropbox_remote" value="dropbox:HA-Backups"/></label></div>
-        <div class="field"><label>UI Port<input id="s_ui_port" value="8066"/></label></div>
+    <section id="panel-settings" class="panel">
+      <form class="grid">
+        <div class="field wide">
+          <label>Gotify URL</label>
+          <input id="s_gurl" placeholder="https://gotify.your.tld">
+        </div>
+        <div class="field wide">
+          <label>Gotify token</label>
+          <input id="s_gtoken" placeholder="App token">
+        </div>
+        <div class="field">
+          <label>Enable Gotify</label>
+          <select id="s_gen">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Enable Dropbox (rclone)</label>
+          <select id="s_dben">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+        <div class="field wide">
+          <label>Dropbox remote</label>
+          <input id="s_dropremote" value="dropbox:HA-Backups">
+        </div>
+        <div class="field">
+          <label>UI Port</label>
+          <input id="s_uiport" value="8066">
+        </div>
       </form>
+
       <div class="actions">
-        <button class="btn" id="btn_save_settings">Save Settings</button>
-        <button class="btn" id="btn_test_gotify">Test Gotify</button>
+        <button id="btnSaveSettings" class="btn primary">Save settings</button>
+        <button id="btnTestGotify" class="btn">Test Gotify</button>
       </div>
-      <div class="log-wrap"><div class="log-title">Status</div><pre class="log" id="s_status"></pre></div>
     </section>
 
     <!-- Help -->
-    <section class="panel" id="panel-help">
-      <p class="hint">Alpha software. Use at your own risk. Restores can destroy data. Always have verified backups.</p>
+    <section id="panel-help" class="panel">
+      <div class="help">
+        <h3>Quick tips</h3>
+        <ul>
+          <li>Use <strong>Mounts</strong> to add your NAS share. Click <em>List shares/exports</em> then pick from the dropdown.</li>
+          <li><strong>Backup</strong> → choose “Store to” (local /backup or a mounted share) and hit <em>Run backup</em>.</li>
+          <li><strong>Backups</strong> lists all files it finds under /backup and any mounted points. Use <em>Restore</em> there to prefill Restore and confirm twice.</li>
+          <li>Configure optional <strong>Gotify</strong> notifications on the Settings tab and <em>Test</em> them here first.</li>
+        </ul>
+      </div>
     </section>
-  </div>
-</div>
 
-<script src="app.js"></script>
+    <!-- Output / status -->
+    <section class="panel">
+      <label class="muted">Status / Output</label>
+      <textarea id="status_box" class="log" spellcheck="false"></textarea>
+    </section>
+  </main>
+
+  <!-- Browse modal -->
+  <div id="browse_modal" class="modal">
+    <div class="modal-card">
+      <h3>Browse</h3>
+      <div id="browse_path" class="muted tiny"></div>
+      <div id="browse_list" class="list"></div>
+      <div class="actions right">
+        <button id="browse_up" class="btn">Up</button>
+        <button id="browse_close" class="btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
