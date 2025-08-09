@@ -17,15 +17,10 @@
     .tab { padding:8px 12px; border-radius:10px; background:#0f1c2a; border:1px solid #213246; cursor:pointer; }
     .tab.active { background:#0ea5e9; color:#002338; border-color:#0ea5e9; font-weight:700; }
     .muted { color:#9fb6cc; font-size:13px; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .help code { background:#0b1520; padding:2px 6px; border-radius:8px; border:1px solid #213246; }
-    .help h3 { margin-top:22px; }
-    .flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .crumbs { margin-bottom:10px; }
-    .crumbs span { cursor:pointer; margin-right:6px; background:#0f1c2a; border:1px solid #213246; padding:4px 8px; border-radius:8px; }
     table { width:100%; border-collapse:collapse; }
     th, td { border-bottom:1px solid #213246; padding:8px; text-align:left; }
     tr:hover { background:#0b1724; }
+    .flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   </style>
 </head>
 <body>
@@ -33,8 +28,8 @@
     <div class="tab active" data-target="tab-backup">Backup</div>
     <div class="tab" data-target="tab-restore">Restore</div>
     <div class="tab" data-target="tab-backups">Backups</div>
-    <div class="tab" data-target="tab-explorer">Explorer</div>
-    <div class="tab" data-target="tab-jobs">Jobs</div>
+    <div class="tab" data-target="tab-mounts">Mounts</div>
+    <div class="tab" data-target="tab-servers">Servers</div>
     <div class="tab" data-target="tab-settings">Settings</div>
     <div class="tab" data-target="tab-help">Help</div>
   </div>
@@ -42,22 +37,24 @@
   <!-- BACKUP -->
   <div id="tab-backup" class="card">
     <div class="row">
-      <div><label>Host/IP <span class="muted">Remote server to back up</span></label><input id="b_host" placeholder="10.0.0.21"></div>
-      <div><label>Backup name <span class="muted">Optional label</span></label><input id="b_name" placeholder="proxmox-node1"></div>
+      <div><label>Server preset</label><select id="b_server"></select></div>
+      <div><label>Backup name</label><input id="b_name" placeholder="proxmox-node1"></div>
+      <div><label>Host/IP</label><input id="b_host" placeholder="10.0.0.21"></div>
       <div><label>User</label><input id="b_user" value="root"></div>
       <div><label>Password</label><input id="b_pass" type="password"></div>
       <div><label>Port</label><input id="b_port" value="22"></div>
       <div><label>Method</label>
         <select id="b_method"><option value="dd">Full Disk (dd)</option><option value="rsync">Files (rsync)</option><option value="zfs">ZFS snapshot</option></select>
       </div>
-      <div><label>Disk device <span class="muted">For dd, e.g. <span class="mono">/dev/sda</span></span></label><input id="b_disk" value="/dev/sda"></div>
-      <div><label>Store to <span class="muted">Path inside add-on</span></label><input id="b_store" value="/backup"></div>
+      <div><label>Disk device <span class="muted">dd only (e.g. /dev/sda)</span></label><input id="b_disk" value="/dev/sda"></div>
+      <div><label>Store to</label><select id="b_store"></select></div>
       <div><label>Dropbox remote</label><input id="b_cloud" placeholder="dropbox:HA-Backups"></div>
       <div><label>Exclude patterns <span class="muted">rsync only</span></label><input id="b_excl" placeholder="*.iso,*.img"></div>
       <div><label>Bandwidth limit (KB/s) <span class="muted">0=unlimited</span></label><input id="b_bw" value="0"></div>
       <div><label>Retention (days)</label><input id="b_ret" value="0"></div>
+      <div><label><input type="checkbox" id="b_verify"> Verify image checksum (dd)</label></div>
+      <div><label><input type="checkbox" id="b_save_pw"> Save password in preset</label></div>
     </div>
-    <div class="flex" style="margin-top:12px;"><label style="display:flex;align-items:center; gap:8px;"><input type="checkbox" id="b_verify"> Verify image checksum (dd)</label></div>
     <div class="flex" style="margin-top:14px;">
       <button class="btn secondary" id="btn_probe">Probe host</button>
       <button class="btn secondary" id="btn_install">Auto-install tools</button>
@@ -70,90 +67,90 @@
   <!-- RESTORE -->
   <div id="tab-restore" class="card" style="display:none;">
     <div class="row">
-      <div><label>Host/IP</label><input id="r_host" placeholder="10.0.0.21"></div>
+      <div><label>Server preset</label><select id="r_server"></select></div>
+      <div><label>Host/IP</label><input id="r_host"></div>
       <div><label>User</label><input id="r_user" value="root"></div>
       <div><label>Password</label><input id="r_pass" type="password"></div>
       <div><label>Port</label><input id="r_port" value="22"></div>
       <div><label>Method</label><select id="r_method"><option value="dd">Restore Disk (dd)</option><option value="rsync">Restore Files (rsync)</option></select></div>
-      <div><label>Image path (.img.gz)</label><input id="r_image"></div>
+      <div><label>Image path (.img.gz)</label><div class="flex"><input id="r_image"><button class="btn secondary" id="btn_browse_image">Browse</button></div></div>
       <div><label>Disk device</label><input id="r_disk" value="/dev/sda"></div>
       <div><label>Exclude patterns</label><input id="r_excl"></div>
       <div><label>Bandwidth limit (KB/s)</label><input id="r_bw" value="0"></div>
-      <div><label>Local source (rsync restore)</label><input id="r_local_src" placeholder="/backup/etc/"></div>
-      <div><label>Remote destination (rsync restore)</label><input id="r_remote_dest" placeholder="/"></div>
+      <div><label>Local source (rsync)</label><input id="r_local_src" placeholder="/backup/etc/"></div>
+      <div><label>Remote destination</label><input id="r_remote_dest" placeholder="/"></div>
     </div>
     <div class="flex" style="margin-top:14px;"><button class="btn" id="btn_run_restore">Run restore</button></div>
     <div style="margin-top:14px;"><label>Result</label><textarea id="r_result" readonly></textarea></div>
   </div>
 
-  <!-- BACKUPS (persistent index) -->
+  <!-- BACKUPS -->
   <div id="tab-backups" class="card" style="display:none;">
     <div class="flex" style="margin-bottom:10px;">
       <button class="btn" id="btn_backups_refresh">Refresh</button>
       <button class="btn secondary" id="btn_backups_rescan">Full rescan</button>
     </div>
     <div style="overflow:auto;">
-      <table>
-        <thead><tr><th>Path</th><th>Kind</th><th>Host</th><th>Size</th><th>Created</th><th>Action</th></tr></thead>
-        <tbody id="backups_rows"></tbody>
-      </table>
+      <table><thead><tr><th>Path</th><th>Kind</th><th>Host</th><th>Size</th><th>Created</th><th>Action</th></tr></thead><tbody id="backups_rows"></tbody></table>
     </div>
   </div>
 
-  <!-- EXPLORER -->
-  <div id="tab-explorer" class="card" style="display:none;">
-    <div class="flex crumbs" id="crumbs"></div>
-    <div class="flex"><button class="btn secondary" id="jump_backup">/backup</button><button class="btn secondary" id="jump_mnt">/mnt</button></div>
+  <!-- MOUNTS -->
+  <div id="tab-mounts" class="card" style="display:none;">
+    <p class="muted">Define NAS mounts (CIFS/NFS). Toggle <b>auto-mount</b> to mount on add-on start.</p>
+    <div><textarea id="mounts_json" placeholder='[{"name":"NAS","proto":"cifs","server":"10.0.0.10","share":"Backups","mount":"/mnt/nas/Backups","username":"user","password":"pass","options":"","auto_mount":true}]'></textarea></div>
+    <div class="flex" style="margin-top:10px;">
+      <button class="btn" id="btn_save_mounts">Save mounts</button>
+      <button class="btn secondary" id="btn_refresh_mounts">Refresh status</button>
+    </div>
     <div style="overflow:auto; margin-top:10px;">
-      <table>
-        <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Action</th></tr></thead>
-        <tbody id="explorer_rows"></tbody>
-      </table>
+      <table><thead><tr><th>Name</th><th>Proto</th><th>Server/share</th><th>Mount</th><th>Status</th><th>Action</th></tr></thead><tbody id="mount_rows"></tbody></table>
     </div>
   </div>
 
-  <!-- JOBS -->
-  <div id="tab-jobs" class="card" style="display:none;">
-    <p class="muted">One job per line. Use JSON or simple <span class="mono">key=value;key=value</span>. Required: <span class="mono">host, username, password, method, schedule</span>.</p>
-    <textarea id="jobs_text" placeholder='{"host":"10.0.0.21","username":"root","password":"***","method":"dd","schedule":"0 3 * * *"}'></textarea>
-    <div class="flex" style="margin-top:14px;">
-      <button class="btn" id="btn_save_jobs">Save jobs</button>
-      <button class="btn secondary" id="btn_apply_schedule">Apply schedule</button>
+  <!-- SERVERS -->
+  <div id="tab-servers" class="card" style="display:none;">
+    <p class="muted">Saved servers (host/user/port). Password is stored only if you tick “Save password”.</p>
+    <div><textarea id="servers_json" placeholder='[{"name":"Proxmox","host":"10.0.0.21","username":"root","port":22,"save_password":false,"password":""}]'></textarea></div>
+    <div class="flex" style="margin-top:10px;">
+      <button class="btn" id="btn_save_servers">Save servers</button>
+      <button class="btn secondary" id="btn_refresh_servers">Reload</button>
     </div>
-    <div style="margin-top:14px;"><label>Scheduler</label><textarea id="jobs_status" readonly></textarea></div>
   </div>
 
   <!-- SETTINGS -->
   <div id="tab-settings" class="card" style="display:none;">
     <div class="row">
-      <div><label>UI Port <span class="muted">Non-Ingress (read-only)</span></label><input id="s_ui_port" disabled></div>
+      <div><label>UI Port (read-only)</label><input id="s_ui_port" disabled></div>
       <div><label>Gotify URL</label><input id="s_gotify_url" placeholder="http://host:port"></div>
       <div><label>Gotify Token</label><input id="s_gotify_token"></div>
       <div><label>Dropbox enabled</label><select id="s_dropbox_enabled"><option value="false">false</option><option value="true">true</option></select></div>
       <div><label>Dropbox remote</label><input id="s_dropbox_remote" placeholder="dropbox:HA-Backups"></div>
     </div>
-    <div class="flex" style="margin-top:14px;"><button class="btn" id="btn_save_settings">Save settings</button><button class="btn secondary" id="btn_list_backups">List local backups</button></div>
+    <div class="flex" style="margin-top:10px;">
+      <button class="btn" id="btn_save_settings">Save settings</button>
+      <button class="btn secondary" id="btn_test_gotify">Test Gotify</button>
+      <button class="btn secondary" id="btn_test_dropbox">Test Dropbox</button>
+    </div>
+    <p class="muted" id="dropbox_hint"></p>
     <div style="margin-top:14px;"><label>Status</label><textarea id="s_status" readonly></textarea></div>
   </div>
 
   <!-- HELP -->
-  <div id="tab-help" class="card help" style="display:none;">
+  <div id="tab-help" class="card" style="display:none;">
     <h3>Where are my backups?</h3>
-    <p>Default: <code>/backup</code> (also shown in the <b>Explorer</b> tab and the <b>Backups</b> tab). On the HA host this is the standard <b>backup</b> share (via Samba add-on). Optional copy to Dropbox if configured.</p>
-    <h3>Disk device (dd)</h3>
-    <p>Whole disk, e.g. <code>/dev/sda</code> or <code>/dev/nvme0n1</code>. Backs up the entire system drive to a <code>.img.gz</code>.</p>
-    <h3>Dead server restore</h3>
-    <ol>
-      <li>Boot Linux live USB.</li>
-      <li>Get the image (from /backup, Explorer → Download, or Dropbox).</li>
-      <li>Run <code>gzip -dc image.img.gz | sudo dd of=/dev/sdX bs=64K status=progress</code>.</li>
-      <li>Reboot from the restored disk.</li>
-    </ol>
-    <h3>Other tools</h3>
+    <p>/backup by default or any mounted path under /mnt (see “Mounts”). You can see them in the “Backups” tab or “Restore → Browse”.</p>
+    <h3>Full disk vs files</h3>
     <ul>
-      <li>dd image: ungzip and write with <code>dd</code>, BalenaEtcher, etc.</li>
-      <li>rsync backup: normal folder tree; copy files as needed.</li>
+      <li><b>dd</b> backs up the whole disk (e.g. /dev/sda) to <code>.img.gz</code>. Restore from a Linux live USB: <code>gzip -dc image.img.gz | dd of=/dev/sdX bs=64K status=progress</code>.</li>
+      <li><b>rsync</b> copies a directory tree; restore by rsync back or pick individual files.</li>
     </ul>
+    <h3>Dropbox setup</h3>
+    <ol>
+      <li>On the host or inside an HA “Terminal” add-on, run: <code>rclone config file</code> to see the path. For this add-on we use <code>/config/rclone.conf</code>.</li>
+      <li>Run <code>rclone config</code>, create a remote named <code>dropbox</code> (or any name). The file must end up as <code>/config/rclone.conf</code>.</li>
+      <li>In Settings set “Dropbox remote” to something like <code>dropbox:HA-Backups</code>, then click “Test Dropbox”.</li>
+    </ol>
   </div>
 
   <script src="/www/app.js"></script>
