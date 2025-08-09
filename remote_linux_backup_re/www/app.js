@@ -15,11 +15,11 @@ function showTab(id){
   document.querySelector(`.tab[data-target="${id}"]`).classList.add('active');
 }
 
-/* ---- Global state ---- */
+/* ---- State ---- */
 let mounts = [];
 let servers = [];
 
-/* ---- Helper UI fillers ---- */
+/* ---- Fillers ---- */
 function fillTargets(){
   const sel = $('b_store');
   const current = sel.value;
@@ -32,7 +32,6 @@ function fillTargets(){
   if (current) sel.value = current;
   $('b_store_status').textContent = (mounts.find(x=>x.mount===sel.value)?.mounted ? 'Mounted' : '—');
 }
-
 function fillServersDropdowns(){
   function put(selectId){
     const sel = $(selectId);
@@ -50,7 +49,6 @@ function fillServersDropdowns(){
   }
   put('b_server'); put('r_server');
 }
-
 function applyServer(selectId, prefix){
   const sel = $(selectId);
   if (!sel.value) return;
@@ -69,7 +67,7 @@ async function loadOptions(){
   $('s_gotify_token').value = d.gotify_token || '';
   $('s_dropbox_enabled').value = String(!!d.dropbox_enabled);
   $('s_dropbox_remote').value = d.dropbox_remote || 'dropbox:HA-Backups';
-  $('dropbox_hint').textContent = d.rclone_config_exists ? 'rclone config found at /config/rclone.conf' : 'No /config/rclone.conf found. Run "rclone config" and ensure the file is at /config/rclone.conf.';
+  $('dropbox_hint').textContent = d.rclone_config_exists ? 'rclone config found at /config/rclone.conf' : 'No /config/rclone.conf found. Run "rclone config".';
 }
 
 /* ---- Mounts ---- */
@@ -78,7 +76,6 @@ async function refreshMounts(){
   mounts = res.items || [];
   $('mounts_json_hidden').value = JSON.stringify(mounts, null, 2);
 
-  // table
   const body = $('mount_rows'); body.innerHTML = '';
   mounts.forEach((m, idx)=>{
     const tr = document.createElement('tr');
@@ -86,17 +83,14 @@ async function refreshMounts(){
     tr.innerHTML = `<td>${m.name||''}</td><td>${m.proto}</td><td>${m.server}/${m.share}</td><td>${m.mount}</td><td>${m.auto_mount?'yes':'no'}</td><td>${status}</td><td></td>`;
     const td = tr.lastChild;
 
-    // Mount
     const mBtn = document.createElement('button'); mBtn.className='btn'; mBtn.textContent='Mount';
     mBtn.onclick = async()=>{ await api('/api/mounts/mount',{method:'POST',body:JSON.stringify({entry:m})}); await refreshMounts(); fillTargets(); };
     td.appendChild(mBtn);
 
-    // Unmount
     const uBtn = document.createElement('button'); uBtn.className='btn secondary'; uBtn.style.marginLeft='6px'; uBtn.textContent='Unmount';
     uBtn.onclick = async()=>{ await api('/api/mounts/unmount',{method:'POST',body:JSON.stringify({mount:m.mount})}); await refreshMounts(); fillTargets(); };
     td.appendChild(uBtn);
 
-    // Delete
     const dBtn = document.createElement('button'); dBtn.className='btn warn'; dBtn.style.marginLeft='6px'; dBtn.textContent='Delete';
     dBtn.onclick = async()=> {
       if (!confirm(`Delete mount preset "${m.name||m.mount}"?`)) return;
@@ -106,7 +100,6 @@ async function refreshMounts(){
     };
     td.appendChild(dBtn);
 
-    // Quick-fill form on row click
     tr.style.cursor='pointer';
     tr.onclick = () => {
       $('m_name').value = m.name || '';
@@ -125,7 +118,6 @@ async function refreshMounts(){
 
   fillTargets();
 }
-
 function formMount() {
   const name = $('m_name').value.trim();
   const mount = ($('m_mount').value.trim()) || (name ? `/mnt/${name}` : '');
@@ -141,10 +133,7 @@ function formMount() {
     auto_mount: $('m_auto').checked
   };
 }
-
-async function saveMounts(){
-  await api('/api/mounts', {method:'POST', body: JSON.stringify({mounts})});
-}
+async function saveMounts(){ await api('/api/mounts', {method:'POST', body: JSON.stringify({mounts})}); }
 
 /* ---- Servers ---- */
 async function refreshServers(){
@@ -158,39 +147,21 @@ async function refreshServers(){
     tr.innerHTML = `<td>${s.name||''}</td><td>${s.host}</td><td>${s.username}</td><td>${s.port}</td><td>${s.save_password?'yes':'no'}</td><td></td>`;
     const td = tr.lastChild;
 
-    // Use → copies to Backup form
     const useBtn = document.createElement('button'); useBtn.className='btn'; useBtn.textContent='Use';
-    useBtn.onclick = ()=>{
-      $('b_server').value = JSON.stringify(s);
-      applyServer('b_server','b');
-      showTab('tab-backup');
-    };
+    useBtn.onclick = ()=>{ $('b_server').value = JSON.stringify(s); applyServer('b_server','b'); showTab('tab-backup'); };
     td.appendChild(useBtn);
 
-    // Edit → fills Servers form (reuse Backup inputs)
     const editBtn = document.createElement('button'); editBtn.className='btn secondary'; editBtn.style.marginLeft='6px'; editBtn.textContent='Edit';
-    editBtn.onclick = ()=>{
-      $('b_name').value = s.name || '';
-      $('b_host').value = s.host; $('b_user').value = s.username; $('b_port').value = s.port;
-      if (s.save_password && s.password) $('b_pass').value = s.password;
-      showTab('tab-backup');
-    };
+    editBtn.onclick = ()=>{ $('b_name').value = s.name || ''; $('b_host').value = s.host; $('b_user').value = s.username; $('b_port').value = s.port; if (s.save_password && s.password) $('b_pass').value = s.password; showTab('tab-backup'); };
     td.appendChild(editBtn);
 
-    // Delete
     const delBtn = document.createElement('button'); delBtn.className='btn warn'; delBtn.style.marginLeft='6px'; delBtn.textContent='Delete';
-    delBtn.onclick = async()=>{
-      if (!confirm(`Delete server preset "${s.name||s.host}"?`)) return;
-      servers.splice(idx,1);
-      await api('/api/servers', {method:'POST', body: JSON.stringify({servers})});
-      await refreshServers();
-    };
+    delBtn.onclick = async()=>{ if (!confirm(`Delete server preset "${s.name||s.host}"?`)) return; servers.splice(idx,1); await api('/api/servers', {method:'POST', body: JSON.stringify({servers})}); await refreshServers(); };
     td.appendChild(delBtn);
 
     body.appendChild(tr);
   });
 }
-
 $('btn_add_server_from_backup')?.addEventListener('click', async e=>{
   e.preventDefault();
   const name = $('b_name').value.trim() || $('b_host').value.trim();
@@ -250,15 +221,14 @@ async function runBackup(){
   await backupsRefresh(); await refreshServers();
 }
 async function runRestore(){
-  const method = $('r_method').value;
   const payload = {
-    method, username:$('r_user').value, host:$('r_host').value, password:$('r_pass').value,
+    method:$('r_method').value, username:$('r_user').value, host:$('r_host').value, password:$('r_pass').value,
     port:parseInt($('r_port').value||'22',10),
     image_path:$('r_image').value, disk:$('r_disk').value,
     local_src:$('r_local_src').value, remote_dest:$('r_remote_dest').value,
     excludes:$('r_excl').value, bwlimit_kbps:parseInt($('r_bw').value||'0',10)
   };
-  const res = await api('/api/run_restore', {method:'POST', body: JSON.stringify(res ? res : payload)});
+  const res = await api('/api/run_restore', {method:'POST', body: JSON.stringify(payload)});
   $('r_result').value = res.out || JSON.stringify(res,null,2);
 }
 
@@ -278,7 +248,6 @@ async function backupsRefresh(){
     body.appendChild(tr);
   });
 }
-
 async function browseImage(){
   let roots = ['/backup']; mounts.filter(m=>m.mounted).forEach(m=>roots.push(m.mount));
   const root = prompt("Browse which root?\n" + roots.join("\n"), roots[0]);
@@ -287,6 +256,41 @@ async function browseImage(){
   const files = res.items.filter(it=>!it.is_dir).map(it=>it.path);
   const pick = prompt("Pick file (copy/paste path):\n"+files.join("\n"));
   if(pick) $('r_image').value = pick;
+}
+
+/* ---- SMB/NFS browsing helpers (simple prompts) ---- */
+async function listSharesOrExports(){
+  const proto = $('m_proto').value, host = $('m_server').value.trim();
+  if (!host) { alert('Enter server/host first.'); return; }
+  if (proto === 'cifs') {
+    const r = await api('/api/smb_shares', {method:'POST', body: JSON.stringify({host, username:$('m_user').value.trim(), password:$('m_pass').value})});
+    if (!r.ok) { alert('SMB list failed:\n'+(r.out||r.error||'')); return; }
+    const names = r.shares.map(s=>s.name).filter(n=>!!n);
+    const pick = prompt('Pick SMB share:', names.join('\n'));
+    if (pick) { $('m_share').value = pick; if (!$('m_name').value) $('m_name').value = pick; if (!$('m_mount').value) $('m_mount').value = `/mnt/${pick}`; }
+  } else {
+    const r = await api('/api/nfs_exports', {method:'POST', body: JSON.stringify({host})});
+    if (!r.ok) { alert('NFS exports failed:\n'+(r.raw||r.error||'')); return; }
+    const pick = prompt('Pick NFS export:', r.exports.join('\n'));
+    if (pick) { $('m_share').value = pick; if (!$('m_name').value) $('m_name').value = pick.replace(/\W+/g,'_'); if (!$('m_mount').value) $('m_mount').value = `/mnt/${$('m_name').value}`; }
+  }
+}
+async function browseShareFolder(){
+  const proto = $('m_proto').value, host=$('m_server').value.trim(), share=$('m_share').value.trim();
+  if (!host || !share) { alert('Enter server and share/export first.'); return; }
+  if (proto === 'cifs') {
+    const r = await api('/api/smb_ls', {method:'POST', body: JSON.stringify({host, share, username:$('m_user').value.trim(), password:$('m_pass').value, path:'/'})});
+    if (!r.ok) { alert('SMB browse failed:\n'+(r.raw||'')); return; }
+    const dirs = r.items.filter(i=>i.is_dir).map(i=>i.name);
+    const pick = prompt('Pick folder inside share (copy name):\n'+dirs.join('\n'));
+    if (pick) $('m_share').value = share; // share stays; we mount entire share; subfolder selection is informational
+  } else {
+    const r = await api('/api/nfs_ls', {method:'POST', body: JSON.stringify({host, export:share, path:'/'})});
+    if (!r.ok) { alert('NFS browse failed:\n'+(r.raw||'')); return; }
+    const dirs = r.items.filter(i=>i.is_dir).map(i=>i.name);
+    const pick = prompt('Pick folder in export (copy name):\n'+dirs.join('\n'));
+    if (pick) $('m_share').value = share; // as above, mount export; subfolder is informational
+  }
 }
 
 /* ---- Wire up ---- */
@@ -339,21 +343,10 @@ function wire(){
     $('b_store').value = m.mount;
   });
   $('btn_save_mounts').addEventListener('click', async (e)=>{ e.preventDefault(); await api('/api/mounts', {method:'POST', body: JSON.stringify({mounts})}); await refreshMounts(); });
-
   $('btn_refresh_mounts').addEventListener('click', (e)=>{ e.preventDefault(); refreshMounts().catch(console.error); });
 
-  // Servers
-  $('btn_refresh_servers').addEventListener('click', (e)=>{ e.preventDefault(); refreshServers().catch(console.error); });
-  $('btn_add_server_from_backup').addEventListener('click', async e=>{
-    e.preventDefault();
-    const name = $('b_name').value.trim() || $('b_host').value.trim();
-    if (!name) { alert('Set a Backup name or Host first.'); return; }
-    const s = { name, host:$('b_host').value.trim(), username:$('b_user').value.trim()||'root', port:parseInt($('b_port').value||'22',10), save_password: !!$('b_save_pw').checked, password: $('b_save_pw').checked ? $('b_pass').value : '' };
-    const i = servers.findIndex(x=>x.host===s.host && x.username===s.username && x.port===s.port);
-    if (i>=0) servers[i] = {...servers[i], ...s}; else servers.push(s);
-    await api('/api/servers', {method:'POST', body: JSON.stringify({servers})});
-    await refreshServers();
-  });
+  $('btn_list_shares').addEventListener('click', (e)=>{ e.preventDefault(); listSharesOrExports().catch(console.error); });
+  $('btn_browse_share').addEventListener('click', (e)=>{ e.preventDefault(); browseShareFolder().catch(console.error); });
 
   // Initial load
   Promise.all([loadOptions(), refreshMounts(), refreshServers(), backupsRefresh()]).then(()=>{
