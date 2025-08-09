@@ -1,45 +1,46 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8" />
-<title>Remote Linux Backup</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-  body{background:#0f172a;color:#e5e7eb;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;}
-  .wrap{max-width:1200px;margin:20px auto;padding:0 10px;}
-  .tabs{display:flex;gap:8px;margin-bottom:10px}
-  .tabs button{padding:8px 12px;border:1px solid #334155;background:#111827;color:#e5e7eb;border-radius:6px;cursor:pointer}
-  .tabs button.active{background:#1f2937}
-  .card{background:#111827;border:1px solid #334155;border-radius:10px;padding:16px;margin:14px 0}
-  input,select,textarea{width:100%;padding:8px;border-radius:6px;border:1px solid #334155;background:#0b1220;color:#e5e7eb}
-  label{font-size:12px;color:#93a3b8}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
-  .btn{padding:8px 12px;border:1px solid #334155;background:#1f2937;color:#e5e7eb;border-radius:6px;cursor:pointer}
-  .btn.inline{margin-right:8px}
-  .muted{color:#94a3b8;font-size:12px}
-  table{width:100%;border-collapse:collapse}
-  th,td{border-bottom:1px solid #223049;padding:8px;text-align:left;vertical-align:middle}
-  .ok{color:#10b981}.err{color:#ef4444}
-  #status_box{height:180px}
-  #browse_modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
-  #browse_panel{background:#0b1220;border:1px solid #334155;border-radius:10px;padding:14px;max-width:800px;width:92%}
-  .list{max-height:360px;overflow:auto;border:1px solid #223049;border-radius:6px;padding:6px}
-  .list div{padding:6px;border-bottom:1px dashed #223049;cursor:pointer}
-  .list div:hover{background:#111827}
-  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  .one{display:grid;grid-template-columns:1fr;gap:14px}
-  .hide{display:none}
-</style>
+  <meta charset="utf-8" />
+  <title>Remote Linux Backup</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{background:#0f172a;color:#e5e7eb;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+    .wrap{max-width:1200px;margin:20px auto;padding:0 10px}
+    .tabs{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+    .tabs button{padding:8px 12px;border:1px solid #334155;background:#111827;color:#e5e7eb;border-radius:6px;cursor:pointer}
+    .tabs button.active{background:#1f2937}
+    .card{background:#111827;border:1px solid #334155;border-radius:10px;padding:16px;margin:14px 0}
+    input,select,textarea{width:100%;padding:8px;border-radius:6px;border:1px solid #334155;background:#0b1220;color:#e5e7eb}
+    label{font-size:12px;color:#93a3b8}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+    .btn{padding:8px 12px;border:1px solid #334155;background:#1f2937;color:#e5e7eb;border-radius:6px;cursor:pointer}
+    .btn.inline{margin-right:8px}
+    .muted{color:#94a3b8;font-size:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #223049;padding:8px;text-align:left;vertical-align:middle}
+    .ok{color:#10b981}.err{color:#ef4444}
+    #status_box{height:180px}
+    .hide{display:none}
+
+    /* Browse modal */
+    #browse_modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
+    #browse_panel{background:#0b1220;border:1px solid #334155;border-radius:10px;padding:14px;max-width:800px;width:92%}
+    .list{max-height:360px;overflow:auto;border:1px solid #223049;border-radius:6px;padding:6px}
+    .list div{padding:6px;border-bottom:1px dashed #223049;cursor:pointer}
+    .list div:hover{background:#111827}
+  </style>
 </head>
 <body>
 <div class="wrap">
   <div class="tabs">
     <button id="tabBackup" class="active">Backup</button>
     <button id="tabRestore">Restore</button>
+    <button id="tabBackups">Backups</button>
     <button id="tabMounts">Mounts</button>
     <button id="tabSettings">Settings</button>
+    <button id="tabHelp">Help</button>
   </div>
 
   <!-- Backup -->
@@ -58,18 +59,9 @@
         <input id="b_name" placeholder="OPNsense-01">
       </div>
 
-      <div>
-        <label>User</label>
-        <input id="b_user" value="root">
-      </div>
-      <div>
-        <label>Port</label>
-        <input id="b_port" value="22">
-      </div>
-      <div>
-        <label>Password</label>
-        <input id="b_pass" type="password">
-      </div>
+      <div><label>User</label><input id="b_user" value="root"></div>
+      <div><label>Port</label><input id="b_port" value="22"></div>
+      <div><label>Password</label><input id="b_pass" type="password"></div>
 
       <div>
         <label>Method</label>
@@ -79,76 +71,46 @@
           <option value="zfs">ZFS snapshot</option>
         </select>
       </div>
-      <div>
-        <label>Disk device (dd)</label>
-        <input id="b_disk" value="/dev/sda">
-      </div>
+      <div><label>Disk device (dd)</label><input id="b_disk" value="/dev/sda"></div>
       <div>
         <label>Store to (folder or mounted share)</label>
-        <input id="b_store" value="/backup">
+        <select id="b_store">
+          <option value="/backup">/backup (local)</option>
+        </select>
+        <div class="muted">Use Mounts tab to add NAS paths. Pick them here.</div>
       </div>
 
-      <div>
-        <label>Files (rsync, comma separated)</label>
-        <input id="b_files" value="/etc,/home">
-      </div>
-      <div>
-        <label>Excludes (rsync, comma separated)</label>
-        <input id="b_excludes" placeholder="*.tmp,*.cache">
-      </div>
-      <div>
-        <label>Bandwidth limit (KB/s)</label>
-        <input id="b_bw" value="">
-      </div>
+      <div><label>Files (rsync, comma)</label><input id="b_files" value="/etc,/home"></div>
+      <div><label>Excludes (rsync, comma)</label><input id="b_excludes" placeholder="*.tmp,*.cache"></div>
+      <div><label>Bandwidth limit (KB/s)</label><input id="b_bw" value=""></div>
 
       <div>
         <label>Verify (dd)</label>
-        <select id="b_verify">
-          <option value="false">No</option>
-          <option value="true">Yes</option>
-        </select>
+        <select id="b_verify"><option value="false">No</option><option value="true">Yes</option></select>
       </div>
-      <div>
-        <label>Retention days (prune old)</label>
-        <input id="b_retention" value="">
-      </div>
+      <div><label>Retention days (prune old)</label><input id="b_retention" value=""></div>
       <div>
         <label>Cloud upload (rclone remote:path)</label>
         <input id="b_cloud" placeholder="dropbox:HA-Backups">
-        <div class="muted">Requires rclone config file (see README).</div>
+        <div class="muted">Requires rclone config (Settings → Dropbox note).</div>
       </div>
     </div>
 
     <div class="actions">
       <button class="btn inline" id="btnEstimate">Estimate</button>
-      <button class="btn inline" id="btnBackup">Run Backup</button>
+      <button class="btn inline" id="btnBackup">Run backup</button>
     </div>
   </div>
 
   <!-- Restore -->
   <div id="viewRestore" class="card hide">
     <div class="row3">
-      <div>
-        <label>Saved server</label>
-        <select id="r_saved"></select>
-      </div>
-      <div>
-        <label>Host/IP</label>
-        <input id="r_host" placeholder="10.0.0.10">
-      </div>
-      <div>
-        <label>User</label>
-        <input id="r_user" value="root">
-      </div>
+      <div><label>Saved server</label><select id="r_saved"></select></div>
+      <div><label>Host/IP</label><input id="r_host" placeholder="10.0.0.10"></div>
+      <div><label>User</label><input id="r_user" value="root"></div>
 
-      <div>
-        <label>Port</label>
-        <input id="r_port" value="22">
-      </div>
-      <div>
-        <label>Password</label>
-        <input id="r_pass" type="password">
-      </div>
+      <div><label>Port</label><input id="r_port" value="22"></div>
+      <div><label>Password</label><input id="r_pass" type="password"></div>
       <div>
         <label>Method</label>
         <select id="r_method">
@@ -157,83 +119,52 @@
         </select>
       </div>
 
-      <div>
-        <label>Disk device (dd)</label>
-        <input id="r_disk" value="/dev/sda">
-      </div>
+      <div><label>Disk device (dd)</label><input id="r_disk" value="/dev/sda"></div>
       <div>
         <label>Image path (dd)</label>
         <input id="r_img" placeholder="/backup/opnsense-2025*.img.gz">
+        <div class="muted"><button class="btn inline" id="btnBrowseImage">Browse</button></div>
       </div>
-      <div>
-        <label>Local src (rsync)</label>
-        <input id="r_src" placeholder="/backup/rsync-folder">
-      </div>
+      <div><label>Local src (rsync)</label><input id="r_src" placeholder="/backup/rsync-folder"></div>
 
-      <div>
-        <label>Remote dest (rsync)</label>
-        <input id="r_dest" value="/">
-      </div>
-      <div>
-        <label>Excludes (rsync)</label>
-        <input id="r_ex" placeholder="*.tmp,*.cache">
-      </div>
-      <div>
-        <label>Bandwidth limit (KB/s)</label>
-        <input id="r_bw" value="">
-      </div>
+      <div><label>Remote dest (rsync)</label><input id="r_dest" value="/"></div>
+      <div><label>Excludes (rsync)</label><input id="r_ex" placeholder="*.tmp,*.cache"></div>
+      <div><label>Bandwidth limit (KB/s)</label><input id="r_bw" value=""></div>
     </div>
     <div class="actions">
-      <button class="btn inline" id="btnRestore">Run Restore</button>
+      <button class="btn inline" id="btnRestore">Run restore</button>
     </div>
+  </div>
+
+  <!-- Backups -->
+  <div id="viewBackups" class="card hide">
+    <div class="actions"><button class="btn inline" id="btnRefreshBackups">Refresh</button></div>
+    <table>
+      <thead><tr><th>Path</th><th>Type</th><th>Host</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
+      <tbody id="backups_tbody"></tbody>
+    </table>
+    <div class="muted" style="margin-top:8px">This lists files under /backup and mounted NAS paths.</div>
   </div>
 
   <!-- Mounts -->
   <div id="viewMounts" class="card hide">
     <div class="row3">
-      <div>
-        <label>Preset name</label>
-        <input id="m_name" placeholder="NAS-Backups">
-      </div>
+      <div><label>Preset name</label><input id="m_name" placeholder="NAS-Backups"></div>
       <div>
         <label>Protocol</label>
-        <select id="m_proto">
-          <option value="cifs">SMB/CIFS</option>
-          <option value="nfs">NFS</option>
-        </select>
+        <select id="m_proto"><option value="cifs">SMB/CIFS</option><option value="nfs">NFS</option></select>
       </div>
-      <div>
-        <label>Server/host</label>
-        <input id="m_server" placeholder="10.0.0.21">
-      </div>
+      <div><label>Server / host</label><input id="m_server" placeholder="10.0.0.21"></div>
 
-      <div>
-        <label>Username (SMB)</label>
-        <input id="m_user" placeholder="user">
-      </div>
-      <div>
-        <label>Password (SMB)</label>
-        <input id="m_pass" type="password" placeholder="pass">
-      </div>
-      <div>
-        <label>Share (SMB: name or name/subdir) / Export (NFS: /path)</label>
-        <input id="m_share" placeholder="Backups  OR  /export/backups">
-      </div>
+      <div><label>Username (SMB)</label><input id="m_user" placeholder="user"></div>
+      <div><label>Password (SMB)</label><input id="m_pass" type="password" placeholder="pass"></div>
+      <div><label>Share (SMB: name[/sub]) / Export (NFS: /path)</label><input id="m_share" placeholder="Backups  OR  /export/backups"></div>
 
-      <div>
-        <label>Mount point</label>
-        <input id="m_mount" value="/mnt/Backups">
-      </div>
-      <div>
-        <label>Extra options</label>
-        <input id="m_opts" placeholder="iocharset=utf8,uid=0,gid=0">
-      </div>
+      <div><label>Mount point</label><input id="m_mount" value="/mnt/Backups"></div>
+      <div><label>Extra options</label><input id="m_opts" placeholder="iocharset=utf8,uid=0,gid=0"></div>
       <div>
         <label>Auto-mount on start</label>
-        <select id="m_auto">
-          <option value="false">No</option>
-          <option value="true">Yes</option>
-        </select>
+        <select id="m_auto"><option value="false">No</option><option value="true">Yes</option></select>
       </div>
     </div>
 
@@ -245,9 +176,7 @@
 
     <h3>Mount presets</h3>
     <table id="mountTable">
-      <thead>
-        <tr><th>Name</th><th>Proto</th><th>Server</th><th>Share/Export</th><th>Mount</th><th>Auto</th><th>Actions</th></tr>
-      </thead>
+      <thead><tr><th>Name</th><th>Proto</th><th>Server</th><th>Share/Export</th><th>Mount</th><th>Auto</th><th>Actions</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -255,79 +184,73 @@
   <!-- Settings -->
   <div id="viewSettings" class="card hide">
     <div class="row">
-      <div>
-        <label>Gotify URL (e.g. https://gotify.your.tld)</label>
-        <input id="s_gurl">
-      </div>
-      <div>
-        <label>Gotify token</label>
-        <input id="s_gtoken">
-      </div>
+      <div><label>Gotify URL</label><input id="s_gurl" placeholder="https://gotify.example.tld"></div>
+      <div><label>Gotify token</label><input id="s_gtoken"></div>
       <div>
         <label>Enable Gotify</label>
-        <select id="s_gen">
-          <option value="false">No</option>
-          <option value="true">Yes</option>
-        </select>
+        <select id="s_gen"><option value="false">No</option><option value="true">Yes</option></select>
       </div>
-      <div>
-        <label>Dropbox remote (rclone)</label>
-        <input id="s_dropremote" value="dropbox:HA-Backups">
-      </div>
+      <div><label>Dropbox remote (rclone)</label><input id="s_dropremote" value="dropbox:HA-Backups"></div>
       <div>
         <label>Enable Dropbox</label>
-        <select id="s_dben">
-          <option value="false">No</option>
-          <option value="true">Yes</option>
-        </select>
+        <select id="s_dben"><option value="false">No</option><option value="true">Yes</option></select>
       </div>
-      <div>
-        <label>UI Port</label>
-        <input id="s_uiport" value="8066">
-      </div>
+      <div><label>UI Port</label><input id="s_uiport" value="8066"></div>
     </div>
     <div class="actions">
-      <button class="btn inline" id="btnSaveSettings">Save Settings</button>
+      <button class="btn inline" id="btnSaveSettings">Save settings</button>
       <button class="btn inline" id="btnTestGotify">Test Gotify</button>
     </div>
 
     <h3>Saved servers</h3>
     <div class="row">
-      <div>
-        <label>Name</label>
-        <input id="sv_name" placeholder="OPNsense-01">
-      </div>
-      <div>
-        <label>Host/IP</label>
-        <input id="sv_host" placeholder="10.0.0.10">
-      </div>
-      <div>
-        <label>User</label>
-        <input id="sv_user" value="root">
-      </div>
-      <div>
-        <label>Port</label>
-        <input id="sv_port" value="22">
-      </div>
-      <div>
-        <label>Password (optional; stored if 'Save password' set)</label>
-        <input id="sv_pass" type="password">
-      </div>
+      <div><label>Name</label><input id="sv_name" placeholder="OPNsense-01"></div>
+      <div><label>Host/IP</label><input id="sv_host" placeholder="10.0.0.10"></div>
+      <div><label>User</label><input id="sv_user" value="root"></div>
+      <div><label>Port</label><input id="sv_port" value="22"></div>
+      <div><label>Password (optional)</label><input id="sv_pass" type="password"></div>
       <div>
         <label>Save password</label>
-        <select id="sv_savepwd">
-          <option value="false">No</option>
-          <option value="true">Yes</option>
-        </select>
+        <select id="sv_savepwd"><option value="false">No</option><option value="true">Yes</option></select>
       </div>
     </div>
-    <div class="actions">
-      <button class="btn inline" id="btnAddServer">Add / Update Server</button>
-    </div>
+    <div class="actions"><button class="btn inline" id="btnAddServer">Add / Update server</button></div>
     <table id="serverTable">
       <thead><tr><th>Name</th><th>Host</th><th>User</th><th>Port</th><th>Has Password</th><th>Actions</th></tr></thead>
       <tbody></tbody>
     </table>
+  </div>
+
+  <!-- Help -->
+  <div id="viewHelp" class="card hide">
+    <h3>How to use (simple)</h3>
+    <ol>
+      <li>Go to <b>Mounts</b> → add your NAS (SMB or NFS). Click <b>Mount</b>. It will appear in “Store to”.</li>
+      <li>Go to <b>Backup</b> → enter Host/IP, User, Password. Pick method:<br>
+        • <b>Full Disk (dd)</b> for entire disk images (raw, gzip).<br>
+        • <b>Files (rsync)</b> for folders.<br>
+        • <b>ZFS</b> (if supported) snapshot + send.</li>
+      <li>Choose “Store to”: <code>/backup</code> (local) or your NAS mount. Run backup.</li>
+      <li>Backups appear under the <b>Backups</b> tab; you can download or delete.</li>
+    </ol>
+
+    <h4>Restore from USB</h4>
+    <ol>
+      <li>Write the <code>.img.gz</code> (or un-gzip first) to a USB stick from the <b>Backups</b> tab (Download) or copy it manually to a USB drive.</li>
+      <li>Boot a live Linux on the target, plug in USB, find the target disk (e.g. <code>/dev/sda</code>).</li>
+      <li>Run: <code>gunzip -c /path/to/backup.img.gz | dd of=/dev/sda bs=4M status=progress</code></li>
+    </ol>
+
+    <h4>Restore directly over SSH</h4>
+    <ol>
+      <li>Mount NAS in this add-on if needed.</li>
+      <li>Go to <b>Restore</b>. Pick method = <b>dd</b>, fill Host/IP/User/Pass of the target machine, set Disk device and the Image path (Browse if needed). Run restore.</li>
+    </ol>
+
+    <h4>Dropbox</h4>
+    <p>Prepare <code>/config/rclone.conf</code> (host shell) with a <code>dropbox:</code> remote. In Backup, set “Cloud upload” to <code>dropbox:HA-Backups</code> (or your remote:path). Toggle in Settings if you like.</p>
+
+    <p class="muted">Alpha software. If you break something, you keep both pieces 🙂</p>
   </div>
 
   <div class="card">
@@ -349,319 +272,6 @@
   </div>
 </div>
 
-<script>
-const $ = (s)=>document.querySelector(s);
-const $id = (id)=>document.getElementById(id);
-
-function setActive(tab){
-  ["Backup","Restore","Mounts","Settings"].forEach(n=>{
-    $id("tab"+n).classList.toggle("active", n===tab);
-    $id("view"+n).classList.toggle("hide", n!==tab);
-  });
-}
-
-$id("tabBackup").onclick=()=>setActive("Backup");
-$id("tabRestore").onclick=()=>setActive("Restore");
-$id("tabMounts").onclick=()=>setActive("Mounts");
-$id("tabSettings").onclick=()=>setActive("Settings");
-
-async function loadOptions(){
-  const r = await fetch("/api/options"); const j = await r.json();
-  $id("s_gurl").value = (j.gotify_url||"");
-  $id("s_gtoken").value = (j.gotify_token||"");
-  $id("s_gen").value = String(!!j.gotify_enabled);
-  $id("s_dben").value = String(!!j.dropbox_enabled);
-  $id("s_dropremote").value = (j.dropbox_remote||"dropbox:HA-Backups");
-  $id("s_uiport").value = (j.ui_port||8066);
-}
-
-async function saveOptions(){
-  const body = {
-    gotify_url:$id("s_gurl").value.trim(),
-    gotify_token:$id("s_gtoken").value.trim(),
-    gotify_enabled:($id("s_gen").value==="true"),
-    dropbox_enabled:($id("s_dben").value==="true"),
-    dropbox_remote:$id("s_dropremote").value.trim(),
-    ui_port:parseInt($id("s_uiport").value||"8066",10)
-  };
-  const r = await fetch("/api/options",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json();
-  $id("status_box").value = JSON.stringify(j,null,2);
-}
-
-$id("btnSaveSettings").onclick = saveOptions;
-
-$id("btnTestGotify").onclick = async ()=>{
-  const body = { url:$id("s_gurl").value.trim(), token:$id("s_gtoken").value.trim(), insecure:true };
-  const r = await fetch("/api/gotify_test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json();
-  $id("status_box").value = JSON.stringify(j,null,2);
-};
-
-async function refreshMounts(){
-  const r = await fetch("/api/mounts"); const j = await r.json();
-  const tb = $id("mountTable").querySelector("tbody");
-  tb.innerHTML = "";
-  (j.mounts||[]).forEach(m=>{
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${m.name||""}</td>
-      <td>${m.proto}</td>
-      <td>${m.server}</td>
-      <td>${m.share}</td>
-      <td>${m.mount}</td>
-      <td>${m.auto_mount? "Yes":"No"}</td>
-      <td>
-        <button class="btn inline" data-act="mount">Mount</button>
-        <button class="btn inline" data-act="unmount">Unmount</button>
-        <button class="btn inline" data-act="delete">Delete</button>
-        <button class="btn inline" data-act="fill">Fill form</button>
-      </td>`;
-    tr.querySelector('[data-act="mount"]').onclick = async ()=>{
-      const r = await fetch("/api/mount_now",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(m)});
-      const j2 = await r.json(); $id("status_box").value = JSON.stringify(j2,null,2);
-      await refreshMounts();
-    };
-    tr.querySelector('[data-act="unmount"]').onclick = async ()=>{
-      const r = await fetch("/api/unmount_now",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mount:m.mount})});
-      const j2 = await r.json(); $id("status_box").value = JSON.stringify(j2,null,2);
-      await refreshMounts();
-    };
-    tr.querySelector('[data-act="delete"]').onclick = async ()=>{
-      const r = await fetch("/api/mount_delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:m.name})});
-      const j2 = await r.json(); $id("status_box").value = JSON.stringify(j2,null,2);
-      await refreshMounts();
-    };
-    tr.querySelector('[data-act="fill"]').onclick = ()=>{
-      $id("m_name").value = m.name||"";
-      $id("m_proto").value = m.proto||"cifs";
-      $id("m_server").value = m.server||"";
-      $id("m_user").value = m.username||"";
-      $id("m_pass").value = m.password||"";
-      $id("m_share").value = m.share||"";
-      $id("m_mount").value = m.mount||"";
-      $id("m_opts").value = m.options||"";
-      $id("m_auto").value = String(!!m.auto_mount);
-    };
-    tb.appendChild(tr);
-  });
-}
-
-$id("btnAddMount").onclick = async ()=>{
-  const body = {
-    name:$id("m_name").value.trim(),
-    proto:$id("m_proto").value.trim(),
-    server:$id("m_server").value.trim(),
-    username:$id("m_user").value,
-    password:$id("m_pass").value,
-    share:$id("m_share").value.trim(),
-    mount:$id("m_mount").value.trim(),
-    options:$id("m_opts").value.trim(),
-    auto_mount:($id("m_auto").value==="true")
-  };
-  const r = await fetch("/api/mount_add_update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json(); $id("status_box").value = JSON.stringify(j,null,2);
-  if(j.ok) refreshMounts();
-};
-
-$id("btnList").onclick = async ()=>{
-  const server = $id("m_server").value.trim();
-  const proto = $id("m_proto").value.trim();
-  if(!server){ alert("Enter server first"); return; }
-  const r = await fetch(`/api/mount_list?proto=${encodeURIComponent(proto)}&server=${encodeURIComponent(server)}`);
-  const j = await r.json(); $id("status_box").value = j.raw || JSON.stringify(j,null,2);
-};
-
-let browse_ctx = { proto:"cifs", server:"", user:"", pass:"", share:"", path:"" };
-
-function openBrowse(){ $id("browse_modal").style.display="flex"; }
-function closeBrowse(){ $id("browse_modal").style.display="none"; }
-
-function renderBrowse(items){
-  $id("browse_path").textContent = (browse_ctx.proto==="cifs"
-    ? `//${browse_ctx.server}/${browse_ctx.share||""}/${browse_ctx.path||""}`.replace(/\/+/g,"/")
-    : `${browse_ctx.server} (NFS exports)`
-  );
-  const list = $id("browse_list");
-  list.innerHTML = "";
-  items.forEach(it=>{
-    const div = document.createElement("div");
-    div.textContent = `${it.type.toUpperCase()}  ${it.name}`;
-    div.onclick = async ()=>{
-      if(browse_ctx.proto==="cifs"){
-        if(!browse_ctx.share && it.type==="share"){
-          // auto-fill Share field and close
-          $id("m_share").value = it.name;
-          closeBrowse();
-          return;
-        }
-        if(it.type==="dir"){
-          browse_ctx.path = (browse_ctx.path ? (browse_ctx.path+"/"+it.name) : it.name);
-          await doBrowse();
-        }else if(it.type==="file"){
-          // auto-fill share with subdir; close
-          const subdir = (browse_ctx.path ? (browse_ctx.path) : "");
-          $id("m_share").value = subdir ? (browse_ctx.share + "/" + subdir) : browse_ctx.share;
-          closeBrowse();
-        }
-      }else{ // NFS
-        if(it.type==="export"){
-          $id("m_share").value = it.path;
-          closeBrowse();
-        }
-      }
-    };
-    list.appendChild(div);
-  });
-}
-
-async function doBrowse(){
-  const body = {
-    proto: browse_ctx.proto,
-    server: browse_ctx.server,
-    username: browse_ctx.user,
-    password: browse_ctx.pass,
-    share: browse_ctx.share,
-    path: browse_ctx.path
-  };
-  const r = await fetch("/api/mount_browse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json();
-  renderBrowse(j.items||[]);
-}
-
-$id("btnBrowse").onclick = async ()=>{
-  browse_ctx = {
-    proto: $id("m_proto").value.trim(),
-    server: $id("m_server").value.trim(),
-    user: $id("m_user").value,
-    pass: $id("m_pass").value,
-    share: $id("m_share").value.trim(),
-    path: ""
-  };
-  if(!browse_ctx.server){ alert("Enter server first"); return; }
-  openBrowse();
-  await doBrowse();
-};
-$id("browse_close").onclick = closeBrowse;
-$id("browse_up").onclick = async ()=>{
-  if(browse_ctx.path){
-    const parts = browse_ctx.path.split("/");
-    parts.pop();
-    browse_ctx.path = parts.join("/");
-    await doBrowse();
-  }else{
-    // if share set, go back to share selection
-    if(browse_ctx.share){
-      browse_ctx.share = "";
-      await doBrowse();
-    }
-  }
-};
-
-async function refreshServers(){
-  const r = await fetch("/api/servers"); const j = await r.json();
-  const tb = $id("serverTable").querySelector("tbody");
-  tb.innerHTML = "";
-  const selB = $id("b_saved"); const selR = $id("r_saved");
-  selB.innerHTML = `<option value="">-- none --</option>`;
-  selR.innerHTML = `<option value="">-- none --</option>`;
-  (j.servers||[]).forEach(s=>{
-    const tr = document.createElement("tr");
-    const hasPwd = (s.password && s.password.length>0) ? "Yes" : "No";
-    tr.innerHTML = `<td>${s.name}</td><td>${s.host}</td><td>${s.username}</td><td>${s.port}</td><td>${hasPwd}</td>
-      <td>
-        <button class="btn inline" data-act="fill">Fill</button>
-        <button class="btn inline" data-act="delete">Delete</button>
-      </td>`;
-    tr.querySelector('[data-act="fill"]').onclick = ()=>{
-      $id("sv_name").value=s.name; $id("sv_host").value=s.host; $id("sv_user").value=s.username; $id("sv_port").value=s.port;
-      $id("b_host").value=s.host; $id("b_user").value=s.username; $id("b_port").value=s.port;
-      $id("r_host").value=s.host; $id("r_user").value=s.username; $id("r_port").value=s.port;
-    };
-    tr.querySelector('[data-act="delete"]').onclick = async ()=>{
-      const r = await fetch("/api/server_delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:s.name})});
-      const j2 = await r.json(); $id("status_box").value = JSON.stringify(j2,null,2);
-      await refreshServers();
-    };
-    tb.appendChild(tr);
-
-    const optB = document.createElement("option"); optB.value = s.name; optB.textContent = s.name; optB.dataset.server = JSON.stringify(s);
-    const optR = document.createElement("option"); optR.value = s.name; optR.textContent = s.name; optR.dataset.server = JSON.stringify(s);
-    selB.appendChild(optB); selR.appendChild(optR);
-  });
-
-  selB.onchange = ()=>{
-    const opt = selB.options[selB.selectedIndex];
-    if(opt && opt.dataset.server){
-      const s = JSON.parse(opt.dataset.server);
-      $id("b_host").value=s.host; $id("b_user").value=s.username; $id("b_port").value=s.port;
-      // never auto-fill saved password into visible field here
-    }
-  };
-  selR.onchange = ()=>{
-    const opt = selR.options[selR.selectedIndex];
-    if(opt && opt.dataset.server){
-      const s = JSON.parse(opt.dataset.server);
-      $id("r_host").value=s.host; $id("r_user").value=s.username; $id("r_port").value=s.port;
-    }
-  };
-}
-
-$id("btnAddServer").onclick = async ()=>{
-  const body = {
-    name:$id("sv_name").value.trim(),
-    host:$id("sv_host").value.trim(),
-    username:$id("sv_user").value.trim(),
-    port:parseInt($id("sv_port").value||"22",10),
-    password:$id("sv_pass").value,
-    save_password:($id("sv_savepwd").value==="true")
-  };
-  const r = await fetch("/api/server_add_update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json(); $id("status_box").value = JSON.stringify(j,null,2);
-  if(j.ok){ $id("sv_pass").value=""; await refreshServers(); }
-};
-
-$id("btnEstimate").onclick = async ()=>{
-  const body = {
-    method:$id("b_method").value, username:$id("b_user").value, host:$id("b_host").value,
-    password:$id("b_pass").value, port:parseInt($id("b_port").value||"22",10),
-    disk:$id("b_disk").value, files:$id("b_files").value, bwlimit_kbps:parseInt($id("b_bw").value||"0",10)
-  };
-  const r = await fetch("/api/estimate_backup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json(); $id("status_box").value = JSON.stringify(j,null,2);
-};
-
-$id("btnBackup").onclick = async ()=>{
-  const body = {
-    method:$id("b_method").value, username:$id("b_user").value, host:$id("b_host").value,
-    password:$id("b_pass").value, port:parseInt($id("b_port").value||"22",10),
-    disk:$id("b_disk").value, files:$id("b_files").value, store_to:$id("b_store").value,
-    verify:($id("b_verify").value==="true"), excludes:$id("b_excludes").value,
-    retention_days:parseInt($id("b_retention").value||"0",10),
-    backup_name:$id("b_name").value, bwlimit_kbps:parseInt($id("b_bw").value||"0",10),
-    cloud_upload:$id("b_cloud").value.trim()
-  };
-  const r = await fetch("/api/run_backup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json(); $id("status_box").value = JSON.stringify(j,null,2);
-};
-
-$id("btnRestore").onclick = async ()=>{
-  const body = {
-    method:$id("r_method").value, username:$id("r_user").value, host:$id("r_host").value,
-    password:$id("r_pass").value, port:parseInt($id("r_port").value||"22",10),
-    disk:$id("r_disk").value, image_path:$id("r_img").value,
-    local_src:$id("r_src").value, remote_dest:$id("r_dest").value,
-    excludes:$id("r_ex").value, bwlimit_kbps:parseInt($id("r_bw").value||"0",10)
-  };
-  const r = await fetch("/api/run_restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json(); $id("status_box").value = JSON.stringify(j,null,2);
-};
-
-(async function init(){
-  await loadOptions();
-  await refreshMounts();
-  await refreshServers();
-})();
-</script>
+<script src="app.js"></script>
 </body>
 </html>
