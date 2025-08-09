@@ -1,0 +1,44 @@
+{
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7",
+    "i386"
+  ],
+  "name": "Uptime Kuma",
+  "version": "1.0.0",
+  "slug": "uptime_kuma",
+  "description": "Self-hosted monitoring tool with a clean web UI. Monitors HTTP(S), TCP, DNS, ICMP and more. Uses official image.",
+  "url": "https://github.com/louislam/uptime-kuma",
+  "startup": "services",
+  "boot": "auto",
+  "ingress": true,
+  "ingress_port": 3001,
+  "host_network": false,
+  "webui": "http://[HOST]:[PORT:3001]",
+  "panel_icon": "mdi:monitor-eye",
+  "panel_title": "Uptime Kuma",
+  "panel_admin": false,
+  "image": "louislam/uptime-kuma:1",
+  "ports": {
+    "3001/tcp": 3001
+  },
+  "ports_description": {
+    "3001/tcp": "Uptime Kuma Web UI"
+  },
+  "map": [
+    "config:rw"
+  ],
+  "environment": {
+    "DATA_DIR": "/config/uptime-kuma",
+    "TZ": "Africa/Johannesburg"
+  },
+  "options": {
+    "port": 3001,
+    "data_dir": "/config/uptime-kuma"
+  },
+  "schema": {
+    "port": "int(1,65535)",
+    "data_dir": "str"
+  }
+}
