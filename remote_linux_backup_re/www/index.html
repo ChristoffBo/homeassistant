@@ -121,10 +121,10 @@
         <select id="m_proto"><option value="cifs">SMB / CIFS</option><option value="nfs">NFS</option></select>
       </div>
       <div><label>Server / host</label><input id="m_server" placeholder="192.168.1.10"></div>
-      <div><label>Share / export</label><input id="m_share" placeholder="Backups  (SMB)   or   /export/backups  (NFS)"></div>
+      <div><label>Share / export</label><div class="flex"><input id="m_share" placeholder="Backups  (SMB)   or   /export/backups  (NFS)"><button class="btn secondary" id="btn_list_shares">List shares/exports</button></div></div>
       <div><label>Username (SMB)</label><input id="m_user" placeholder="leave empty for NFS"></div>
       <div><label>Password (SMB)</label><input id="m_pass" type="password"></div>
-      <div><label>Mount point</label><input id="m_mount" placeholder="/mnt/NAS_Backups"></div>
+      <div><label>Mount point</label><div class="flex"><input id="m_mount" placeholder="/mnt/NAS_Backups"><button class="btn secondary" id="btn_browse_share">Browse folder</button></div></div>
       <div><label>Options (advanced)</label><input id="m_opts" placeholder="e.g. vers=3.1.1"></div>
       <div><label><input type="checkbox" id="m_auto"> Auto-mount on start</label></div>
     </div>
@@ -177,18 +177,15 @@
 
   <!-- HELP -->
   <div id="tab-help" class="card" style="display:none;">
-    <h3>Where are my backups?</h3>
-    <p>/backup by default or any mounted path under /mnt (see “Mounts”). You can see them in the “Backups” tab or “Restore → Browse”.</p>
-    <h3>Full disk vs files</h3>
+    <h3>Full machine vs Files</h3>
     <ul>
-      <li><b>dd</b> backs up the whole disk (e.g. /dev/sda) to <code>.img.gz</code>. Restore from a Linux live USB: <code>gzip -dc image.img.gz | dd of=/dev/sdX bs=64K status=progress</code>.</li>
-      <li><b>rsync</b> copies a directory tree; restore by rsync back or pick individual files.</li>
+      <li><b>Full Disk (dd)</b>: clones the entire disk (e.g., /dev/sda) to a compressed <code>.img.gz</code>. Restore from a Linux USB: <code>gzip -dc image.img.gz | dd of=/dev/sdX bs=64K status=progress</code>.</li>
+      <li><b>Files (rsync)</b>: choose folders; restore individual files or rsync them back.</li>
     </ul>
-    <h3>Dropbox setup</h3>
-    <ol>
-      <li>Use HA Terminal to create <code>/config/rclone.conf</code> with <code>rclone config</code>.</li>
-      <li>Set “Dropbox remote” here, then “Test Dropbox”.</li>
-    </ol>
+    <h3>Where are backups?</h3>
+    <p>Local: <code>/backup</code>. NAS mounts under <code>/mnt/NAME</code>. See “Backups” tab.</p>
+    <h3>Dropbox</h3>
+    <ol><li>Run <code>rclone config</code> in HA Terminal to create <code>/config/rclone.conf</code>.</li><li>Set remote name here and test.</li></ol>
   </div>
 
   <script src="/www/app.js"></script>
