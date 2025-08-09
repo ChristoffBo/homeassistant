@@ -6,7 +6,7 @@
     "i386"
   ],
   "name": "ntfy.sh",
-  "version": "latest",
+  "version": "v2.14.0-armv7",
   "slug": "ntfy",
   "description": "Lightweight topic-based push notifications server with a simple web UI. Uses the official image.",
   "url": "https://github.com/binwiederhier/ntfy",
