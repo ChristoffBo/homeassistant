@@ -1,4 +1,4 @@
-# Remote Linux Backup – Debian base
+# Remote Linux Backup — Debian base
 FROM ghcr.io/hassio-addons/debian-base:7.8.3
 
 # Tools:
@@ -6,9 +6,9 @@ FROM ghcr.io/hassio-addons/debian-base:7.8.3
 # - ssh: openssh-client, sshpass
 # - NAS: smbclient, cifs-utils, nfs-common, rpcbind
 # - python web: python3, python3-flask, python3-gunicorn, gunicorn
-# - cron + pkill: cron, psmisc
-# - certs: ca-certificates
-RUN apt-get update && apt-get upgrade -y && \
+# - cron + pkill/pgrep: cron, psmisc
+# - certs for HTTPS curl (Gotify): ca-certificates
+RUN apt-get update && apt-get upgrade -y || true && \
     apt-get install -y --no-install-recommends \
       bash curl jq coreutils pigz pv gzip \
       openssh-client sshpass rsync rclone \
