@@ -1,2 +1,5 @@
-flask==3.0.2
-gunicorn==21.2.0
+flask
+flask_cors
+apscheduler
+paramiko
+requests
