@@ -26,7 +26,9 @@
       <button class="tab active" data-tab="backup" role="tab" aria-selected="true">Backup</button>
       <button class="tab" data-tab="restore" role="tab" aria-selected="false">Restore</button>
       <button class="tab" data-tab="scheduler" role="tab" aria-selected="false">Scheduler</button>
-      <button class="tab" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+      <button class="tab" data-tab="storage" role="tab" aria-selected="false">Storage</button>
+      <button class="tab" data-tab="settings" role="tab" aria-selected="false">Servers</button>
+      <button class="tab" data-tab="help" role="tab" aria-selected="false">Help</button>
       <button class="tab" data-tab="logs" role="tab" aria-selected="false">Logs</button>
     </nav>
 
@@ -36,10 +38,10 @@
         <div class="card">
           <div class="card-head">
             <h2>Source (what to back up)</h2>
-            <span class="help" title="Choose the machine and path to back up. Use 'Folder / Files' for directories; use 'Full disk image' to copy an entire device with dd.">?</span>
+            <span class="help" title="Pick the server and path/device to back up. 'Folder/Files' for paths. 'Full disk image' for /dev/sdX.">?</span>
           </div>
           <div class="form-grid">
-            <label>Host
+            <label>Server to back up (From)
               <select id="bkSrcHost"></select>
             </label>
             <label>Backup type
@@ -48,8 +50,8 @@
                 <option value="dd">Full disk image (dd)</option>
               </select>
             </label>
-            <label id="bkPathLabel">Path (folder or file)
-              <input id="bkSrcPath" type="text" placeholder="/etc /var/lib/docker or /dev/sda" />
+            <label id="bkPathLabel">Path / Device
+              <input id="bkSrcPath" type="text" placeholder="/etc or /dev/sda" />
             </label>
             <label>Compression
               <select id="bkCompression">
@@ -65,23 +67,41 @@
         <div class="card">
           <div class="card-head">
             <h2>Destination (where to store)</h2>
-            <span class="help" title="Store to a NAS path or Dropbox. For Dropbox, authenticate then choose a folder.">?</span>
+            <span class="help" title="Use a mapped Share for NAS/SMB/NFS, or choose Dropbox.">?</span>
           </div>
           <div class="form-grid">
-            <label>Destination
+            <label>Destination type
               <select id="bkDestType">
-                <option value="path">Local/NAS path</option>
+                <option value="share">Mapped Share (SMB/NFS/Local)</option>
                 <option value="dropbox">Dropbox</option>
+                <option value="path">Direct path (container filesystem)</option>
               </select>
             </label>
-            <label id="bkDestPathWrap">Target path (NAS)
-              <input id="bkDestPath" type="text" placeholder="/mnt/nas/backups/server1" />
+
+            <div id="bkShareWrap">
+              <label>Share
+                <select id="bkShare"></select>
+              </label>
+              <label>Folder in share
+                <input id="bkShareSubpath" type="text" placeholder="/server1" />
+              </label>
+              <div class="row">
+                <span id="bkShareStatus" class="badge">Status: unknown</span>
+                <button id="bkShareBrowse" class="btn ghost">Browse</button>
+                <button id="bkShareConnect" class="btn">Connect</button>
+              </div>
+            </div>
+
+            <label id="bkDestPathWrap" class="hidden">Direct path
+              <input id="bkDestPath" type="text" placeholder="/data/backups" />
             </label>
+
             <div id="bkDropboxWrap" class="row hidden">
               <button id="bkConnectDropbox" class="btn">Connect Dropbox</button>
               <input id="bkDropboxFolder" class="grow" type="text" placeholder="/HA-Backups" />
               <button id="bkPickDropbox" class="btn ghost">Pick Folder</button>
             </div>
+
             <label>Name (optional)
               <input id="bkName" type="text" placeholder="auto if empty" />
             </label>
@@ -95,7 +115,7 @@
       <div class="card">
         <div class="card-head">
           <h2>Existing Backups</h2>
-          <span class="help" title="Click a backup to restore; you will be asked where to restore to.">?</span>
+          <span class="help" title="Click a backup to choose restore destination.">?</span>
         </div>
         <div id="backupsTable" class="table"></div>
       </div>
@@ -106,13 +126,13 @@
       <div class="card">
         <div class="card-head">
           <h2>Restore</h2>
-          <span class="help" title="Pick a backup and a restore target">?</span>
+          <span class="help" title="Select backup then pick the target server and path/device to restore to.">?</span>
         </div>
         <div class="form-grid three">
           <label>Backup
             <select id="rsBackupSelect"></select>
           </label>
-          <label>Restore to host
+          <label>Restore to server (To)
             <select id="rsTargetHost"></select>
           </label>
           <label>Restore path / device
@@ -131,7 +151,7 @@
         <div class="card">
           <div class="card-head">
             <h2>New Scheduled Job</h2>
-            <span class="help" title="Create an automatic backup job.">?</span>
+            <span class="help" title="Automate backups using weekly/monthly/one-time or cron.">?</span>
           </div>
           <div class="form-grid two">
             <label>Job name
@@ -143,21 +163,34 @@
                 <option value="dd">Full disk image (dd)</option>
               </select>
             </label>
-            <label>Source host
+            <label>Source server (From)
               <select id="scSrcHost"></select>
             </label>
             <label>Source path / device
               <input id="scSrcPath" type="text" placeholder="/home or /dev/sda" />
             </label>
-            <label>Destination
+
+            <label>Destination type
               <select id="scDestType">
-                <option value="path">Local/NAS path</option>
+                <option value="share">Mapped Share</option>
                 <option value="dropbox">Dropbox</option>
+                <option value="path">Direct path</option>
               </select>
             </label>
-            <label id="scDestPathLabel">Target path (NAS)
+
+            <div id="scShareWrap">
+              <label>Share
+                <select id="scShare"></select>
+              </label>
+              <label>Folder in share
+                <input id="scShareSubpath" type="text" placeholder="/server1" />
+              </label>
+            </div>
+
+            <label id="scDestPathLabel" class="hidden">Direct path
               <input id="scDestPath" type="text" placeholder="/mnt/nas/backups/server1" />
             </label>
+
             <div id="scDropboxWrap" class="row hidden">
               <input id="scDropboxFolder" class="grow" type="text" placeholder="/HA-Backups" />
               <button id="scPickDropbox" class="btn ghost">Pick</button>
@@ -213,55 +246,106 @@
       </div>
     </section>
 
-    <!-- Settings -->
-    <section id="tab-settings" class="tabpanel" role="tabpanel">
+    <!-- Storage (Shares) -->
+    <section id="tab-storage" class="tabpanel" role="tabpanel">
       <div class="grid two">
         <div class="card">
-          <div class="card-head"><h2>Hosts</h2></div>
-          <div class="form-grid three">
-            <label>Host label
-              <input id="hLabel" type="text" placeholder="Server 1" />
-            </label>
-            <label>Address
-              <input id="hAddr" type="text" placeholder="10.0.0.10" />
-            </label>
-            <label>User
-              <input id="hUser" type="text" placeholder="root" />
-            </label>
-            <label>Password
-              <input id="hPass" type="password" placeholder="password" />
-            </label>
-            <label>Default path
-              <input id="hPath" type="text" placeholder="/mnt/data" />
-            </label>
-            <div class="actions">
-              <button id="hAdd" class="btn">Add/Update</button>
-              <button id="hTest" class="btn ghost">Test SSH</button>
-            </div>
+          <div class="card-head">
+            <h2>Map a Share (SMB/NFS/Local)</h2>
+            <span class="help" title="Create a named Share mapping for reuse in Backup/Scheduler.">?</span>
           </div>
-          <div id="hostsTable" class="table"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-head"><h2>Integrations</h2></div>
           <div class="form-grid two">
-            <label>Dropbox token
-              <input id="setDropboxToken" type="password" placeholder="Paste OAuth token" />
+            <label>Share name
+              <input id="shName" type="text" placeholder="NAS_Backups" />
             </label>
-            <label>Default Dropbox folder
-              <input id="setDropboxFolder" type="text" placeholder="/HA-Backups" />
+            <label>Type
+              <select id="shType">
+                <option value="smb">SMB (Windows/Samba)</option>
+                <option value="nfs">NFS</option>
+                <option value="local">Local path</option>
+              </select>
             </label>
-            <label>Gotify URL
-              <input id="setGotifyUrl" type="text" placeholder="http://10.0.0.99:8091" />
+
+            <div id="shRemoteWrap">
+              <label>Server / Export
+                <input id="shServer" type="text" placeholder="10.0.0.5 or nfs-server:/export/backups" />
+              </label>
+              <label>Share name (SMB only)
+                <input id="shShare" type="text" placeholder="Backups" />
+              </label>
+            </div>
+
+            <label>Mount point (inside add-on)
+              <input id="shMount" type="text" placeholder="/mnt/shares/backups" />
             </label>
-            <label>Gotify token
-              <input id="setGotifyToken" type="password" placeholder="token" />
+
+            <label id="shLocalWrap" class="hidden">Local folder
+              <input id="shLocal" type="text" placeholder="/mnt/data/backups" />
+            </label>
+
+            <label>Username (SMB only)
+              <input id="shUser" type="text" placeholder="user (optional)" />
+            </label>
+            <label>Password (SMB only)
+              <input id="shPass" type="password" placeholder="password (optional)" />
             </label>
           </div>
           <div class="actions">
-            <button id="saveSettings" class="btn primary">Save Settings</button>
-            <button id="testDropbox" class="btn ghost">Test Dropbox</button>
+            <button id="shAdd" class="btn">Save Mapping</button>
+            <button id="shConnect" class="btn">Connect</button>
+            <button id="shDisconnect" class="btn ghost">Disconnect</button>
+            <button id="shTest" class="btn ghost">Test</button>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Mapped Shares</h2>
+          </div>
+          <div id="sharesTable" class="table"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Servers -->
+    <section id="tab-settings" class="tabpanel" role="tabpanel">
+      <div class="card">
+        <div class="card-head"><h2>Servers</h2></div>
+        <div class="form-grid three">
+          <label>Server label
+            <input id="hLabel" type="text" placeholder="Server 1" />
+          </label>
+          <label>Address
+            <input id="hAddr" type="text" placeholder="10.0.0.10" />
+          </label>
+          <label>User
+            <input id="hUser" type="text" placeholder="root" />
+          </label>
+          <label>Password
+            <input id="hPass" type="password" placeholder="password" />
+          </label>
+          <label>Default path
+            <input id="hPath" type="text" placeholder="/mnt/data" />
+          </label>
+          <div class="actions">
+            <button id="hAdd" class="btn">Add/Update</button>
+            <button id="hTest" class="btn ghost">Test SSH</button>
+          </div>
+        </div>
+        <div id="hostsTable" class="table"></div>
+      </div>
+    </section>
+
+    <!-- Help -->
+    <section id="tab-help" class="tabpanel" role="tabpanel">
+      <div class="card">
+        <div class="card-head"><h2>Help</h2></div>
+        <div class="form-grid">
+          <div class="kv"><span class="k">Folder / Files:</span><span>Use rsync/tar. Choose a server (From) and a path (e.g. /etc).</span></div>
+          <div class="kv"><span class="k">Full disk image:</span><span>Uses dd. Path must be a device (e.g. /dev/sda). Restores overwrite the target device.</span></div>
+          <div class="kv"><span class="k">Mapped Share:</span><span>Define under Storage. Supports SMB, NFS, or Local path. Once mapped and connected, it appears as a picker in Backup and Scheduler.</span></div>
+          <div class="kv"><span class="k">Dropbox:</span><span>Paste token in backend settings, then choose a folder in Backup/Scheduler.</span></div>
+          <div class="kv"><span class="k">Safety:</span><span>Restore requires explicit target path/device and confirmation.</span></div>
         </div>
       </div>
     </section>
@@ -274,21 +358,6 @@
       </div>
     </section>
   </main>
-
-  <!-- Modal -->
-  <dialog id="modal" class="modal">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h3 id="modalTitle">Confirm</h3>
-        <button id="modalClose" class="icon">&times;</button>
-      </div>
-      <div id="modalBody" class="modal-body"></div>
-      <div class="modal-actions">
-        <button id="modalCancel" class="btn ghost">Cancel</button>
-        <button id="modalOk" class="btn primary">OK</button>
-      </div>
-    </div>
-  </dialog>
 
   <template id="tpl-table">
     <table><thead></thead><tbody></tbody></table>
