@@ -3,28 +3,37 @@ set -euo pipefail
 
 CONFIG_PATH="/data/options.json"
 APP_CFG="/config/remote_linux_backup.json"
+
 mkdir -p /backup /mnt
 
-# Ensure app config exists
+# Always update OS packages on container start (non-fatal if offline)
+if command -v apt-get >/dev/null 2>&1; then
+  {
+    echo "[INFO] Updating container OS packages..."
+    apt-get update && apt-get upgrade -y
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+  } || echo "[WARN] OS update skipped (likely offline). Continuing startup..."
+fi
+
+# Ensure app config exists (persistent across restarts)
 if [ ! -f "$APP_CFG" ]; then
   cat > "$APP_CFG" <<'JSON'
 {
   "known_hosts": [],
+  "servers": [],
   "server_presets": [],
   "jobs": [],
-  "nas_mounts": [],
+  "mounts": [],
   "gotify_enabled": false,
   "gotify_url": "",
   "gotify_token": "",
   "dropbox_enabled": false,
-  "dropbox_remote": "dropbox:HA-Backups",
-  "mounts": [],
-  "servers": []
+  "dropbox_remote": "dropbox:HA-Backups"
 }
 JSON
 fi
 
-# Ensure HA options default exists (read-only at runtime)
+# Ensure HA options default exists (Supervisor may overwrite; used for UI port)
 if [ ! -f "$CONFIG_PATH" ]; then
   cat > "$CONFIG_PATH" <<'JSON'
 {
@@ -43,37 +52,44 @@ if [ ! -f "$CONFIG_PATH" ]; then
 JSON
 fi
 
+# Read UI port
 UI_PORT=$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)
 
-# Auto-mount presets marked auto_mount: true
+# Auto-mount presets marked auto_mount: true from APP_CFG
 if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
   mapfile -t MOUNTS < <(jq -c '.mounts[] | select(.auto_mount==true)' "$APP_CFG")
   for m in "${MOUNTS[@]}"; do
-    proto=$(jq -r '.proto' <<<"$m"); server=$(jq -r '.server' <<<"$m")
-    share=$(jq -r '.share' <<<"$m"); mountp=$(jq -r '.mount' <<<"$m")
-    user=$(jq -r '.username' <<<"$m"); pass=$(jq -r '.password' <<<"$m")
-    opts_extra=$(jq -r '.options' <<<"$m")
-    [ -z "$proto" ] && continue
+    proto=$(jq -r '.proto // ""' <<<"$m")
+    server=$(jq -r '.server // ""' <<<"$m")
+    share=$(jq -r '.share // ""' <<<"$m")
+    mountp=$(jq -r '.mount // ""' <<<"$m")
+    user=$(jq -r '.username // ""' <<<"$m")
+    pass=$(jq -r '.password // ""' <<<"$m")
+    opts_extra=$(jq -r '.options // ""' <<<"$m")
+
+    [ -z "$proto" ] || [ -z "$server" ] || [ -z "$share" ] || [ -z "$mountp" ] && continue
     mkdir -p "$mountp"
     if ! mountpoint -q "$mountp"; then
-      if [ "$proto" = "cifs" ]; then
+      if [ "$proto" = "cifs" ] || [ "$proto" = "smb" ]; then
         mopts="rw,vers=3.0,iocharset=utf8"
         [ -n "$user" ] && mopts="$mopts,username=$user"
         [ -n "$pass" ] && mopts="$mopts,password=$pass"
         [ -n "$opts_extra" ] && mopts="$mopts,$opts_extra"
-        mount -t cifs "//$server/$share" "$mountp" -o "$mopts" || true
+        echo "[INFO] Auto-mount CIFS //$server/$share -> $mountp (opts: $mopts)"
+        mount -t cifs "//$server/$share" "$mountp" -o "$mopts" || echo "[WARN] CIFS auto-mount failed for $mountp"
       elif [ "$proto" = "nfs" ]; then
         mopts="${opts_extra:-rw}"
-        mount -t nfs "$server:$share" "$mountp" -o "$mopts" || true
+        echo "[INFO] Auto-mount NFS $server:$share -> $mountp (opts: $mopts)"
+        mount -t nfs "$server:$share" "$mountp" -o "$mopts" || echo "[WARN] NFS auto-mount failed for $mountp"
       fi
     fi
   done
 fi
 
-# Apply schedules & start Debian cron
+# Apply schedules (non-fatal) & start cron
 python3 /app/scheduler.py apply || true
-cron -f &
+service cron start || true
 
-# Start API
+# Launch API
 cd /app
-exec gunicorn -w 2 -b 0.0.0.0:"$UI_PORT" api:app
+exec gunicorn -w 2 --threads 4 -b 0.0.0.0:"$UI_PORT" api:app
