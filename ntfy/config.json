@@ -6,7 +6,7 @@
     "i386"
   ],
   "name": "ntfy.sh",
-  "version": "v2.14.0-armv7",
+  "version": "v2.14.0",
   "slug": "ntfy",
   "description": "Lightweight topic-based push notifications server with a simple web UI. Uses the official image.",
   "url": "https://github.com/binwiederhier/ntfy",
@@ -33,6 +33,15 @@
     "TZ": "Africa/Johannesburg",
     "NTFY_DATA_DIR": "/config/ntfy"
   },
+  "init": false,
+  "command": [
+    "/bin/ntfy",
+    "serve",
+    "--listen",
+    "0.0.0.0:80",
+    "--data",
+    "/config/ntfy"
+  ],
   "options": {
     "port": 8092
   },
