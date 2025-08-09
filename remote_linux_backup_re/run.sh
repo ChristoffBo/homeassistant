@@ -15,7 +15,7 @@ if command -v apt-get >/dev/null 2>&1; then
   } || echo "[WARN] OS update skipped (likely offline). Continuing startup..."
 fi
 
-# Ensure app config (persisted in /config)
+# Ensure persistent app config
 if [ ! -f "$APP_CFG" ]; then
   cat > "$APP_CFG" <<'JSON'
 {
@@ -33,7 +33,7 @@ if [ ! -f "$APP_CFG" ]; then
 JSON
 fi
 
-# Ensure HA options file (used for UI port if Supervisor doesn't supply it)
+# Ensure options.json fallback (Supervisor usually writes this)
 if [ ! -f "$CONFIG_PATH" ]; then
   cat > "$CONFIG_PATH" <<'JSON'
 {
@@ -55,7 +55,7 @@ fi
 # Read UI port
 UI_PORT=$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)
 
-# Auto-mount presets (APP_CFG)
+# Auto-mount presets from APP_CFG
 if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
   mapfile -t MOUNTS < <(jq -c '.mounts[] | select(.auto_mount==true)' "$APP_CFG")
   for m in "${MOUNTS[@]}"; do
@@ -86,10 +86,10 @@ if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
   done
 fi
 
-# Apply schedules (non-fatal) & start cron
+# Scheduler & cron (non-fatal)
 python3 /app/scheduler.py apply || true
 service cron start || true
 
-# Launch API
+# API
 cd /app
 exec gunicorn -w 2 --threads 4 -b 0.0.0.0:"$UI_PORT" api:app
