@@ -29,17 +29,17 @@
     "jobs": []
   },
   "schema": {
-    "known_hosts": "list(str)?",
-    "ui_port": "int(1,65535)?",
-    "gotify_enabled": "bool?",
+    "known_hosts": ["str"],
+    "ui_port": "int",
+    "gotify_enabled": "bool",
     "gotify_url": "str?",
     "gotify_token": "str?",
-    "auto_install_tools": "bool?",
-    "dropbox_enabled": "bool?",
+    "auto_install_tools": "bool",
+    "dropbox_enabled": "bool",
     "dropbox_remote": "str?",
-    "nas_mounts": "list(str)?",
-    "server_presets": "list(str)?",
-    "jobs": "list(str)?"
+    "nas_mounts": ["str"],
+    "server_presets": ["str"],
+    "jobs": ["str"]
   },
   "ports": { "8066/tcp": 8066 },
   "ports_description": { "8066/tcp": "Web UI (non-Ingress)" }
