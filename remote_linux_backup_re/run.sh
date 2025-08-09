@@ -31,12 +31,15 @@ if [ ! -f "$APP_CONFIG" ]; then
   "known_hosts": [],
   "server_presets": [],
   "jobs": [],
-  "nas_mounts": []
+  "nas_mounts": [],
+  "gotify_enabled": false,
+  "gotify_url": "",
+  "gotify_token": "",
+  "dropbox_enabled": false,
+  "dropbox_remote": "dropbox:HA-Backups"
 }
 JSON
 fi
-
-# NOTE: Do NOT install packages at runtime. They are baked into the image via Dockerfile.
 
 # Resolve UI port safely
 UI_PORT="$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)"
@@ -74,7 +77,7 @@ fi
 # Apply schedules (best-effort)
 python3 /app/scheduler.py apply || true
 
-# Start cron (BusyBox crond daemonizes; no -l/-L)
+# Start cron (BusyBox crond daemonizes by default)
 if command -v crond >/dev/null 2>&1; then
   crond || true
 elif command -v cron >/dev/null 2>&1; then
