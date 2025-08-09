@@ -21,6 +21,8 @@
     </div>
   </header>
 
+  <div id="banner" class="banner hidden"></div>
+
   <main class="container">
     <nav class="tabs" role="tablist" aria-label="Main">
       <button class="tab active" data-tab="backup" role="tab" aria-selected="true">Backup</button>
@@ -51,7 +53,10 @@
               </select>
             </label>
             <label id="bkPathLabel">Path / Device
-              <input id="bkSrcPath" type="text" placeholder="/etc or /dev/sda" />
+              <div class="row">
+                <input id="bkSrcPath" type="text" placeholder="/etc or /dev/sda" class="grow"/>
+                <button id="bkBrowseSrc" class="btn ghost">Browse</button>
+              </div>
             </label>
             <label>Compression
               <select id="bkCompression">
@@ -83,11 +88,13 @@
                 <select id="bkShare"></select>
               </label>
               <label>Folder in share
-                <input id="bkShareSubpath" type="text" placeholder="/server1" />
+                <div class="row">
+                  <input id="bkShareSubpath" type="text" placeholder="/server1" class="grow"/>
+                  <button id="bkShareBrowse" class="btn ghost">Browse</button>
+                </div>
               </label>
               <div class="row">
                 <span id="bkShareStatus" class="badge">Status: unknown</span>
-                <button id="bkShareBrowse" class="btn ghost">Browse</button>
                 <button id="bkShareConnect" class="btn">Connect</button>
               </div>
             </div>
@@ -136,7 +143,10 @@
             <select id="rsTargetHost"></select>
           </label>
           <label>Restore path / device
-            <input id="rsTargetPath" type="text" placeholder="/restore/path or /dev/sda" />
+            <div class="row">
+              <input id="rsTargetPath" type="text" placeholder="/restore/path or /dev/sda" class="grow"/>
+              <button id="rsBrowseTarget" class="btn ghost">Browse</button>
+            </div>
           </label>
         </div>
         <div class="actions">
@@ -167,7 +177,10 @@
               <select id="scSrcHost"></select>
             </label>
             <label>Source path / device
-              <input id="scSrcPath" type="text" placeholder="/home or /dev/sda" />
+              <div class="row">
+                <input id="scSrcPath" type="text" placeholder="/home or /dev/sda" class="grow"/>
+                <button id="scBrowseSrc" class="btn ghost">Browse</button>
+              </div>
             </label>
 
             <label>Destination type
@@ -183,7 +196,10 @@
                 <select id="scShare"></select>
               </label>
               <label>Folder in share
-                <input id="scShareSubpath" type="text" placeholder="/server1" />
+                <div class="row">
+                  <input id="scShareSubpath" type="text" placeholder="/server1" class="grow"/>
+                  <button id="scShareBrowse" class="btn ghost">Browse</button>
+                </div>
               </label>
             </div>
 
@@ -307,7 +323,7 @@
       </div>
     </section>
 
-    <!-- Servers -->
+    <!-- Servers (Settings) -->
     <section id="tab-settings" class="tabpanel" role="tabpanel">
       <div class="card">
         <div class="card-head"><h2>Servers</h2></div>
@@ -358,6 +374,28 @@
       </div>
     </section>
   </main>
+
+  <!-- picker modal -->
+  <dialog id="picker" class="modal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="pickerTitle">Browse</h3>
+        <button id="pickerClose" class="icon">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+          <input id="pickerPath" class="grow" type="text" />
+          <button id="pickerUp" class="btn ghost">Up</button>
+          <button id="pickerRefresh" class="btn ghost">Refresh</button>
+        </div>
+        <div id="pickerList" class="table" style="margin-top:8px"></div>
+      </div>
+      <div class="modal-actions">
+        <button id="pickerCancel" class="btn ghost">Cancel</button>
+        <button id="pickerSelect" class="btn primary">Select</button>
+      </div>
+    </div>
+  </dialog>
 
   <template id="tpl-table">
     <table><thead></thead><tbody></tbody></table>
