@@ -1,359 +1,472 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Remote Linux Backup — Control Panel</title>
+  <title>Remote Linux Backup</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="header">
-    <div class="brand">
-      <img src="logo.png" alt="Logo" class="logo" />
-      <h1>Remote Linux Backup</h1>
+  <div class="page">
+    <div class="card">
+      <header class="card__header">
+        <div class="brand__logo" aria-hidden="true"></div>
+        <div>
+          <h1 class="brand__title">Remote Linux Backup</h1>
+          <p class="brand__subtitle">Back up and restore Linux machines over SSH. Clear, descriptive options. CIFS/NFS mounts made simple.</p>
+        </div>
+      </header>
+
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button class="tab is-active" data-tab="backup" role="tab" aria-selected="true">Backup</button>
+        <button class="tab" data-tab="restore" role="tab">Restore</button>
+        <button class="tab" data-tab="jobs" role="tab">Jobs</button>
+        <button class="tab" data-tab="mounts" role="tab">Mounts</button>
+        <button class="tab" data-tab="settings" role="tab">Settings</button>
+      </nav>
+
+      <!-- BACKUP -->
+      <section id="backup" class="panel is-active" role="tabpanel" aria-labelledby="Backup">
+        <div class="form">
+          <div class="field"><label>Backup from (host/IP)<span class="hint">Remote server address</span></label>
+            <div class="row">
+              <select id="b-host-sel" title="Pick a saved host"></select>
+              <input id="b-host" placeholder="10.0.0.21" />
+              <button id="b-host-save" class="btn" title="Save as Known Host">Save host</button>
+            </div>
+          </div>
+          <div class="field"><label>Username<span class="hint">SSH user on the remote server</span></label><input id="b-user" value="root" /></div>
+          <div class="field"><label>Password<span class="hint">SSH password (keys are not required)</span></label><input id="b-pass" type="password" /></div>
+          <div class="field">
+            <label>Backup method<span class="hint">Full Disk (dd) = clone a disk · Files (rsync) = copy selected folders · ZFS = make a snapshot</span></label>
+            <select id="b-method">
+              <option value="dd">Full Disk (dd)</option>
+              <option value="rsync">Files (rsync)</option>
+              <option value="zfs">ZFS Snapshot</option>
+            </select>
+          </div>
+          <div class="field" id="b-disk-wrap"><label>Disk device<span class="hint">Example: /dev/sda or /dev/nvme0n1 (for Full Disk backups)</span></label><input id="b-disk" value="/dev/sda" /></div>
+          <div class="field hide" id="b-files-wrap"><label>Paths to include<span class="hint">Comma-separated, e.g. /etc,/var/www (for Files backups)</span></label><input id="b-files" value="/etc,/var/backups" /></div>
+          <div class="field hide" id="b-zfs-wrap"><label>ZFS dataset<span class="hint">Example: tank/data (for ZFS Snapshot)</span></label><input id="b-zfs" /></div>
+          <div class="field"><label>Store to (local/NAS path)<span class="hint">Folder inside the add-on, e.g. /backup or a mounted NAS path</span></label><input id="b-store" value="/backup" /></div>
+          <div class="field"><label>Also upload to (optional)<span class="hint">rclone remote, e.g. dropbox:/HA-Backups</span></label><input id="b-cloud" /></div>
+        </div>
+
+        <div class="actions">
+          <button id="btn-probe" class="btn">Probe host</button>
+          <button id="btn-tools" class="btn">Auto-install tools</button>
+          <button id="btn-backup" class="btn btn--primary">Run backup</button>
+        </div>
+
+        <div class="log-wrap">
+          <div class="log-title">Result</div>
+          <pre id="backup-log" class="log" aria-live="polite"></pre>
+        </div>
+      </section>
+
+      <!-- RESTORE -->
+      <section id="restore" class="panel" role="tabpanel" aria-labelledby="Restore">
+        <div class="form">
+          <div class="field"><label>Restore to (host/IP)</label>
+            <div class="row">
+              <select id="r-host-sel" title="Pick a saved host"></select>
+              <input id="r-host" placeholder="10.0.0.21" />
+              <button id="r-host-save" class="btn" title="Save as Known Host">Save host</button>
+            </div>
+          </div>
+          <div class="field"><label>Username</label><input id="r-user" value="root" /></div>
+          <div class="field"><label>Password</label><input id="r-pass" type="password" /></div>
+          <div class="field">
+            <label>Restore method</label>
+            <select id="r-method">
+              <option value="dd">Restore Disk (dd)</option>
+              <option value="rsync">Restore Files (rsync)</option>
+            </select>
+          </div>
+          <div class="field" id="r-image-wrap"><label>Image file (.img.gz)<span class="hint">For dd restore</span></label><input id="r-image" /></div>
+          <div class="field" id="r-disk-wrap"><label>Disk device</label><input id="r-disk" value="/dev/sda" /></div>
+          <div class="field hide" id="r-src-wrap"><label>Local source folder<span class="hint">Inside the add-on</span></label><input id="r-src" placeholder="/backup/opnsense" /></div>
+          <div class="field hide" id="r-dest-wrap"><label>Remote destination path</label><input id="r-dest" value="/" /></div>
+        </div>
+
+        <div class="actions">
+          <button id="btn-run-restore" class="btn btn--primary">Run restore</button>
+        </div>
+
+        <div class="log-wrap">
+          <div class="log-title">Result</div>
+          <pre id="restore-log" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- JOBS -->
+      <section id="jobs" class="panel" role="tabpanel" aria-labelledby="Jobs">
+        <p class="help">
+          Create scheduled backups. No JSON required — fill the form and click “Add / Update Job”.
+        </p>
+        <div class="form">
+          <div class="field"><label>Job name</label><input id="j-name" placeholder="Nightly Proxmox dd" /></div>
+          <div class="field"><label>Host/IP</label>
+            <div class="row">
+              <select id="j-host-sel"></select>
+              <input id="j-host" placeholder="10.0.0.21" />
+            </div>
+          </div>
+          <div class="field"><label>Username</label><input id="j-user" value="root" /></div>
+          <div class="field"><label>Password</label><input id="j-pass" type="password" /></div>
+          <div class="field"><label>Backup method</label>
+            <select id="j-method">
+              <option value="dd">Full Disk (dd)</option>
+              <option value="rsync">Files (rsync)</option>
+            </select>
+          </div>
+          <div class="field" id="j-disk-wrap"><label>Disk device (for dd)</label><input id="j-disk" value="/dev/sda" /></div>
+          <div class="field hide" id="j-files-wrap"><label>Paths to include (for rsync)</label><input id="j-files" value="/etc" /></div>
+          <div class="field"><label>Store to (local/NAS)</label><input id="j-store" value="/backup" /></div>
+          <div class="field"><label>Also upload to (optional)</label><input id="j-cloud" placeholder="dropbox:/HA-Backups" /></div>
+          <div class="field"><label>Schedule (cron)</label><input id="j-cron" value="0 2 * * *" /></div>
+        </div>
+
+        <div class="actions">
+          <button id="btn-add-job" class="btn">Add / Update Job</button>
+          <button id="btn-clear-job" class="btn">Clear</button>
+          <button id="btn-apply" class="btn btn--primary">Apply schedule</button>
+        </div>
+
+        <div class="log-wrap">
+          <div class="log-title">Jobs</div>
+          <div id="jobs-list"></div>
+          <pre id="jobs-log" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- MOUNTS -->
+      <section id="mounts" class="panel" role="tabpanel" aria-labelledby="Mounts">
+        <p class="help">
+          Mount a NAS so backups can be stored there. <strong>CIFS</strong> (also called SMB/Windows shares) is usually used for Windows or many NAS devices.
+          <strong>NFS</strong> is common on Linux/UNIX NAS. Fill one line per mount; we’ll save it to options.
+        </p>
+        <div class="form">
+          <div class="field"><label>Protocol</label>
+            <select id="m-proto"><option value="cifs">CIFS / SMB (Windows share)</option><option value="nfs">NFS (Linux/UNIX)</option></select>
+          </div>
+          <div class="field"><label>Server</label><input id="m-server" placeholder="192.168.1.10" /></div>
+          <div class="field"><label>Share / Export</label><input id="m-share" placeholder="For CIFS: backups  ·  For NFS: /export/backups" /></div>
+          <div class="field"><label>Mount path inside add-on</label><input id="m-mount" placeholder="/mnt/nas" /></div>
+          <div class="field"><label>Username (CIFS only)</label><input id="m-user" placeholder="nasuser" /></div>
+          <div class="field"><label>Password (CIFS only)</label><input id="m-pass" type="password" placeholder="••••••" /></div>
+          <div class="field"><label>Extra options (optional)</label><input id="m-opts" placeholder="ro,nounix,vers=3.0" /></div>
+        </div>
+
+        <div class="actions">
+          <button id="btn-add-mount" class="btn">Add / Update Mount</button>
+          <button id="btn-clear-mount" class="btn">Clear</button>
+        </div>
+
+        <div class="log-wrap">
+          <div class="log-title">Configured mounts</div>
+          <div id="mounts-list"></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="settings" class="panel" role="tabpanel" aria-labelledby="Settings">
+        <div class="form">
+          <div class="field"><label>Web UI port<span class="hint">For non-Ingress access</span></label><input id="s-port" value="8066" /></div>
+          <div class="field"><label>Gotify URL<span class="hint">http://host:port</span></label><input id="s-gurl" /></div>
+          <div class="field"><label>Gotify Token</label><input id="s-gtok" /></div>
+          <div class="field"><label>Dropbox enabled</label>
+            <select id="s-dbxe"><option value="false" selected>false</option><option value="true">true</option></select>
+          </div>
+          <div class="field"><label>Dropbox remote</label><input id="s-dbxr" value="dropbox:HA-Backups" /></div>
+        </div>
+
+        <div class="actions">
+          <button id="btn-save" class="btn">Save settings</button>
+          <button id="btn-list" class="btn">List local backups</button>
+        </div>
+
+        <div class="log-wrap">
+          <div class="log-title">Status</div>
+          <pre id="settings-log" class="log"></pre>
+        </div>
+      </section>
     </div>
-    <nav class="tabs" role="tablist" aria-label="Sections">
-      <button class="tab active" data-tab="backup">Backup</button>
-      <button class="tab" data-tab="restore">Restore</button>
-      <button class="tab" data-tab="settings">Settings</button>
-      <button class="tab" data-tab="logs">Logs</button>
-    </nav>
-  </header>
+  </div>
 
-  <main>
-    <!-- BACKUP TAB -->
-    <section class="tab-panel active" id="backup" role="tabpanel">
-      <h2>Create a Backup</h2>
-      <p class="help">Fill in where to back up <strong>from</strong> and <strong>to</strong>. Use "Known Hosts" for quick fill.</p>
+  <script>
+    // Tabs
+    document.querySelectorAll('.tab').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.tab').forEach(b=>b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        document.querySelectorAll('.panel').forEach(p=>p.classList.remove('is-active'));
+        document.getElementById(btn.dataset.tab).classList.add('is-active');
+      });
+    });
+    const $ = s => document.querySelector(s);
+    const show = (el, v) => el.classList.toggle('hide', !v);
 
-      <div class="grid two">
-        <div class="card">
-          <h3>Source (server to back up from)</h3>
-          <div class="field">
-            <label for="known_src_select">Quick fill from Known Hosts</label>
-            <select id="known_src_select">
-              <option value="">— Select —</option>
-            </select>
-            <small>Select a saved host to auto-fill Source fields.</small>
-          </div>
-          <div class="field">
-            <label for="src_host">Host or IP</label>
-            <input id="src_host" placeholder="e.g. 10.0.0.5" autocomplete="host" />
-            <small>The source Linux machine you want to back up.</small>
-          </div>
-          <div class="grid two inner">
-            <div class="field">
-              <label for="src_user">SSH Username</label>
-              <input id="src_user" placeholder="e.g. root" autocomplete="username" />
-              <small>User with read access to paths you back up.</small>
-            </div>
-            <div class="field">
-              <label for="src_pass">SSH Password</label>
-              <input id="src_pass" type="password" placeholder="••••••••" autocomplete="current-password" />
-              <small>Password for SSH. Key auth not yet in UI.</small>
-            </div>
-          </div>
-          <div class="field">
-            <label for="src_path">Path to back up</label>
-            <input id="src_path" placeholder="/var/lib/app/ or / (root) for full image via dd" />
-            <small>Enter a folder for rsync backups or a block device (e.g. /dev/sda) for full image (dd).</small>
-          </div>
-        </div>
+    // HTTP helpers
+    async function POST(url, body) {
+      const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{})});
+      return r.json().catch(()=>({}));
+    }
+    async function GET(url) {
+      const r = await fetch(url);
+      return r.json().catch(()=>({}));
+    }
 
-        <div class="card">
-          <h3>Destination (where to store the backup)</h3>
-          <div class="field">
-            <label for="dst_type">Destination Type</label>
-            <select id="dst_type">
-              <option value="local">Local/NAS path</option>
-              <option value="dropbox">Dropbox (rclone remote)</option>
-            </select>
-            <small>Choose where to store the backup.</small>
-          </div>
+    // Encoders
+    function encHost(h){ return [h.host, h.user].join('|'); }
+    function decHost(s){ const [host,user] = String(s||'').split('|'); return {host,user}; }
+    function encJob(j){ return [j.name,j.host,j.user,j.method,j.disk||'',j.files||'',j.store||'',j.cloud||'',j.cron||'',j.password||''].join('|'); }
+    function decJob(s){ const p = String(s||'').split('|'); return {name:p[0]||'',host:p[1]||'',user:p[2]||'root',method:p[3]||'dd',disk:p[4]||'/dev/sda',files:p[5]||'',store:p[6]||'/backup',cloud:p[7]||'',cron:p[8]||'0 2 * * *',password:p[9]||''}; }
+    function encMount(m){
+      // proto=cifs;server=...;share=...;mount=...;username=...;password=...;options=...
+      const kv = [
+        ['proto', m.proto||'cifs'],
+        ['server', m.server||''],
+        ['share', m.share||''],
+        ['mount', m.mount||''],
+        ['username', m.username||''],
+        ['password', m.password||''],
+        ['options', m.options||'']
+      ];
+      return kv.map(([k,v])=>k+'='+String(v).replace(/;/g, '\\;')).join(';');
+    }
+    function decMount(s){
+      const out = {proto:'cifs',server:'',share:'',mount:'',username:'',password:'',options:''};
+      let cur=''; let key=''; let esc=false; const commit=(k,v)=>{ if(k) out[k]=v; };
+      function pushKV(str){
+        const [k,...rest] = str.split('=');
+        commit(k, rest.join('='));
+      }
+      for (let i=0;i<s.length;i++){
+        const ch=s[i];
+        if(esc){ cur+=ch; esc=false; continue; }
+        if(ch==='\\'){ esc=true; continue; }
+        if(ch===';'){ pushKV(cur); cur=''; continue; }
+        cur+=ch;
+      }
+      if(cur) pushKV(cur);
+      return out;
+    }
 
-          <div id="dst_local_group">
-            <div class="field">
-              <label for="dst_local_path">Local/NAS Path</label>
-              <input id="dst_local_path" placeholder="/mnt/nas/backups/server1/" />
-              <small>Mounted path visible to this add-on, e.g. /mnt/nas/…</small>
-            </div>
-          </div>
+    // State
+    let options = {};
+    let hosts = [];   // [{host,user}]
+    let jobs = [];    // array of job objects
+    let mounts = [];  // array of mount objects
+    let editJobIdx = -1;
+    let editMountIdx = -1;
 
-          <div id="dst_dropbox_group" class="hidden">
-            <div class="field">
-              <label for="dst_dropbox_path">Dropbox Path</label>
-              <input id="dst_dropbox_path" placeholder="dropbox:/HA-Backups/Server1" />
-              <small>Use your configured rclone remote. Example: <code>dropbox:/HA-Backups/Server1</code>.</small>
-            </div>
-          </div>
+    // Rendering
+    function refreshHostSelects(){
+      const sels = ['#b-host-sel','#r-host-sel','#j-host-sel'].map($);
+      sels.forEach(sel => {
+        sel.innerHTML = '';
+        const opt = document.createElement('option'); opt.value=''; opt.textContent='Known hosts…'; sel.appendChild(opt);
+        hosts.forEach(h=>{
+          const o = document.createElement('option');
+          o.value = encHost(h); o.textContent = h.host + ' ('+h.user+')';
+          sel.appendChild(o);
+        });
+      });
+    }
+    function renderJobs(){
+      const box = $('#jobs-list'); box.innerHTML='';
+      jobs.forEach((j, idx)=>{
+        const div = document.createElement('div');
+        div.className='job-item';
+        div.innerHTML = '<strong>'+j.name+'</strong> — '+j.method+' — '+j.user+'@'+j.host+' — '+j.cron+
+                        ' <button data-i="'+idx+'" class="btn">Edit</button>'+
+                        ' <button data-i="'+idx+'" class="btn btn--danger">Delete</button>';
+        const [btnEdit, btnDel] = div.querySelectorAll('button');
+        btnEdit.onclick = ()=>{ loadJobToForm(idx); };
+        btnDel.onclick = async ()=>{ jobs.splice(idx,1); await saveOptions(); renderJobs(); };
+        box.appendChild(div);
+      });
+    }
+    function renderMounts(){
+      const box = $('#mounts-list'); box.innerHTML='';
+      mounts.forEach((m, idx)=>{
+        const div = document.createElement('div');
+        div.className='job-item';
+        const protoLabel = (m.proto==='cifs'?'CIFS/SMB':'NFS');
+        div.innerHTML = '<strong>'+protoLabel+'</strong> — '+m.server+' / '+m.share+' → '+m.mount+
+                        ' <button data-i="'+idx+'" class="btn">Edit</button>'+
+                        ' <button data-i="'+idx+'" class="btn btn--danger">Delete</button>';
+        const [btnEdit, btnDel] = div.querySelectorAll('button');
+        btnEdit.onclick = ()=>{ loadMountToForm(idx); };
+        btnDel.onclick = async ()=>{ mounts.splice(idx,1); await saveOptions(); renderMounts(); };
+        box.appendChild(div);
+      });
+    }
 
-          <div class="grid two inner">
-            <div class="field">
-              <label for="job_interval">Run automatically</label>
-              <select id="job_interval">
-                <option value="disabled">Disabled (run once)</option>
-                <option value="6h">Every 6 hours</option>
-                <option value="12h">Every 12 hours</option>
-                <option value="1d">Daily</option>
-                <option value="7d">Weekly</option>
-              </select>
-              <small>Interval for automatic backups. Use Settings to adjust scheduler defaults.</small>
-            </div>
-            <div class="field">
-              <label for="compression">Compression</label>
-              <select id="compression">
-                <option value="none">None (fastest)</option>
-                <option value="gzip">gzip (.tar.gz)</option>
-                <option value="zstd">zstd (.tar.zst)</option>
-              </select>
-              <small>Compression reduces size; increases CPU usage and time.</small>
-            </div>
-          </div>
+    // Form helpers
+    function loadJobToForm(idx){
+      const j = jobs[idx]; editJobIdx = idx;
+      $('#j-name').value = j.name;
+      $('#j-host').value = j.host;
+      $('#j-user').value = j.user;
+      $('#j-pass').value = j.password || '';
+      $('#j-method').value = j.method;
+      $('#j-disk').value = j.disk || '/dev/sda';
+      $('#j-files').value = j.files || '';
+      $('#j-store').value = j.store || '/backup';
+      $('#j-cloud').value = j.cloud || '';
+      $('#j-cron').value = j.cron || '0 2 * * *';
+      toggleByMethod('j');
+    }
+    function clearJobForm(){
+      editJobIdx=-1;
+      ['#j-name','#j-host','#j-user','#j-pass','#j-disk','#j-files','#j-store','#j-cloud','#j-cron'].forEach(s=>$(s).value='');
+      $('#j-user').value='root'; $('#j-disk').value='/dev/sda'; $('#j-store').value='/backup'; $('#j-cron').value='0 2 * * *'; $('#j-method').value='dd';
+      toggleByMethod('j');
+    }
+    function loadMountToForm(idx){
+      const m = mounts[idx]; editMountIdx = idx;
+      $('#m-proto').value = m.proto || 'cifs';
+      $('#m-server').value = m.server || '';
+      $('#m-share').value = m.share || '';
+      $('#m-mount').value = m.mount || '';
+      $('#m-user').value = m.username || '';
+      $('#m-pass').value = m.password || '';
+      $('#m-opts').value = m.options || '';
+    }
+    function clearMountForm(){
+      editMountIdx = -1;
+      ['#m-server','#m-share','#m-mount','#m-user','#m-pass','#m-opts'].forEach(s=>$(s).value='');
+      $('#m-proto').value='cifs';
+    }
+    function toggleByMethod(prefix){
+      const m = $('#'+prefix+'-method').value;
+      show($('#'+prefix+'-disk-wrap'), m==='dd');
+      show($('#'+prefix+'-files-wrap'), m==='rsync');
+    }
+    $('#j-method').addEventListener('change', ()=>toggleByMethod('j'));
+    $('#b-method').addEventListener('change', ()=>{ const m=$('#b-method').value; show($('#b-disk-wrap'), m==='dd'); show($('#b-files-wrap'), m==='rsync'); show($('#b-zfs-wrap'), m==='zfs'); });
+    $('#r-method').addEventListener('change', e=>{
+      const m=e.target.value; show($('#r-image-wrap'), m==='dd'); show($('#r-disk-wrap'), m==='dd'); show($('#r-src-wrap'), m==='rsync'); show($('#r-dest-wrap'), m==='rsync');
+    });
 
-          <div class="field">
-            <label for="backup_name">Backup Name</label>
-            <input id="backup_name" placeholder="Optional label (defaults to hostname+timestamp)" />
-          </div>
+    // Known Hosts selection
+    $('#b-host-sel').addEventListener('change', e=>{ const h = decHost(e.target.value); if(h.host){ $('#b-host').value=h.host; $('#b-user').value=h.user; }});
+    $('#r-host-sel').addEventListener('change', e=>{ const h = decHost(e.target.value); if(h.host){ $('#r-host').value=h.host; $('#r-user').value=h.user; }});
+    $('#j-host-sel').addEventListener('change', e=>{ const h = decHost(e.target.value); if(h.host){ $('#j-host').value=h.host; $('#j-user').value=h.user; }});
 
-          <div class="actions">
-            <button id="btn_start_backup">Start Backup</button>
-            <button id="btn_dry_run" class="ghost">Dry Run</button>
-          </div>
-        </div>
-      </div>
-    </section>
+    // Save host buttons (autosave)
+    $('#b-host-save').onclick = async ()=>{
+      const host=$('#b-host').value.trim(); const user=$('#b-user').value.trim()||'root';
+      if(!host) return; if(!hosts.find(h=>h.host===host && h.user===user)) hosts.push({host,user});
+      await saveOptions(); refreshHostSelects();
+    };
+    $('#r-host-save').onclick = async ()=>{
+      const host=$('#r-host').value.trim(); const user=$('#r-user').value.trim()||'root';
+      if(!host) return; if(!hosts.find(h=>h.host===host && h.user===user)) hosts.push({host,user});
+      await saveOptions(); refreshHostSelects();
+    };
 
-    <!-- RESTORE TAB -->
-    <section class="tab-panel" id="restore" role="tabpanel">
-      <h2>Restore a Backup</h2>
-      <p class="help">Choose the <strong>target server to restore to</strong> and the <strong>backup location to restore from</strong>.</p>
+    // Job handlers
+    $('#btn-add-job').onclick = async ()=>{
+      const j = {
+        name: $('#j-name').value.trim(),
+        host: $('#j-host').value.trim(),
+        user: $('#j-user').value.trim() || 'root',
+        password: $('#j-pass').value,
+        method: $('#j-method').value,
+        disk: $('#j-disk').value.trim(),
+        files: $('#j-files').value.trim(),
+        store: $('#j-store').value.trim() || '/backup',
+        cloud: $('#j-cloud').value.trim(),
+        cron: $('#j-cron').value.trim() || '0 2 * * *'
+      };
+      if(!(j.name && j.host && j.user && j.method && j.cron)) { alert('Please fill Job name, Host, User, Method, and Schedule.'); return; }
+      if(editJobIdx>=0) jobs[editJobIdx]=j; else jobs.push(j);
+      await saveOptions(); renderJobs(); clearJobForm();
+    };
+    $('#btn-clear-job').onclick = ()=>clearJobForm();
 
-      <div class="grid two">
-        <div class="card">
-          <h3>Target (server to restore to)</h3>
-          <div class="field">
-            <label for="known_rst_select">Quick fill from Known Hosts</label>
-            <select id="known_rst_select">
-              <option value="">— Select —</option>
-            </select>
-            <small>Select a saved host to auto-fill Target fields.</small>
-          </div>
-          <div class="field">
-            <label for="rst_host">Host or IP</label>
-            <input id="rst_host" placeholder="e.g. 10.0.0.6" />
-            <small>Linux machine where data/disk will be restored.</small>
-          </div>
-          <div class="grid two inner">
-            <div class="field">
-              <label for="rst_user">SSH Username</label>
-              <input id="rst_user" placeholder="e.g. root" />
-            </div>
-            <div class="field">
-              <label for="rst_pass">SSH Password</label>
-              <input id="rst_pass" type="password" placeholder="••••••••" />
-            </div>
-          </div>
-          <div class="field">
-            <label for="rst_target_path">Restore target path or block device</label>
-            <input id="rst_target_path" placeholder="/var/lib/app/ or /dev/sdb for full image" />
-            <small>For rsync, choose a folder. For full disk restore, select the block device.</small>
-          </div>
-        </div>
+    // Mount handlers
+    $('#btn-add-mount').onclick = async ()=>{
+      const m = {
+        proto: $('#m-proto').value,
+        server: $('#m-server').value.trim(),
+        share: $('#m-share').value.trim(),
+        mount: $('#m-mount').value.trim(),
+        username: $('#m-user').value.trim(),
+        password: $('#m-pass').value,
+        options: $('#m-opts').value.trim()
+      };
+      if(!(m.server && m.share && m.mount)) { alert('Please fill Server, Share/Export, and Mount path.'); return; }
+      if(editMountIdx>=0) mounts[editMountIdx]=m; else mounts.push(m);
+      await saveOptions(); renderMounts(); clearMountForm();
+    };
+    $('#btn-clear-mount').onclick = ()=>clearMountForm();
 
-        <div class="card">
-          <h3>Backup Source (where to restore from)</h3>
-          <div class="field">
-            <label for="rst_source_type">Source Type</label>
-            <select id="rst_source_type">
-              <option value="local">Local/NAS path</option>
-              <option value="dropbox">Dropbox (rclone remote)</option>
-            </select>
-          </div>
+    // Settings save & list
+    $('#btn-save').onclick = async ()=>{
+      options.ui_port = parseInt($('#s-port').value||'8066',10);
+      options.gotify_url = $('#s-gurl').value; options.gotify_token = $('#s-gtok').value;
+      options.gotify_enabled = !!(options.gotify_url && options.gotify_token);
+      options.dropbox_enabled = ($('#s-dbxe').value==='true');
+      options.dropbox_remote = $('#s-dbxr').value;
+      await saveOptions(); $('#settings-log').textContent = 'Saved.';
+    };
+    $('#btn-list').onclick = async ()=>{
+      const j = await GET('api/list_backups?path=/backup');
+      $('#settings-log').textContent = (j||[]).map(x=>`${x.path} (${x.size} bytes)`).join('\n');
+    };
 
-          <div id="rst_local_group">
-            <div class="field">
-              <label for="rst_local_path">Local/NAS Path</label>
-              <input id="rst_local_path" placeholder="/mnt/nas/backups/server1/2025-08-01/" />
-            </div>
-          </div>
+    // Backup/restore actions
+    $('#btn-probe').onclick = async ()=>{
+      const payload={host:$('#b-host').value,username:$('#b-user').value,password:$('#b-pass').value};
+      const j=await POST('api/probe_host', payload);
+      $('#backup-log').textContent = j.out || JSON.stringify(j,null,2);
+    };
+    $('#btn-tools').onclick = async ()=>{
+      const payload={host:$('#b-host').value,username:$('#b-user').value,password:$('#b-pass').value};
+      const j=await POST('api/install_tools', payload);
+      $('#backup-log').textContent = j.out || JSON.stringify(j,null,2);
+    };
+    $('#btn-backup').onclick = async ()=>{
+      const p={method:$('#b-method').value,host:$('#b-host').value,username:$('#b-user').value,password:$('#b-pass').value,
+               store_to:$('#b-store').value,cloud_upload:$('#b-cloud').value,
+               disk:$('#b-disk').value,files:$('#b-files').value,zfs_dataset:$('#b-zfs').value};
+      const j=await POST('api/run_backup', p);
+      $('#backup-log').textContent = JSON.stringify(j,null,2);
+    };
+    $('#btn-run-restore').onclick = async ()=>{
+      const p={method:$('#r-method').value,host:$('#r-host').value,username:$('#r-user').value,password:$('#r-pass').value,
+               image_path:$('#r-image').value,disk:$('#r-disk').value,
+               local_src:$('#r-src').value,remote_dest:$('#r-dest').value};
+      const j=await POST('api/run_restore', p);
+      $('#restore-log').textContent = JSON.stringify(j,null,2);
+    };
 
-          <div id="rst_dropbox_group" class="hidden">
-            <div class="field">
-              <label for="rst_dropbox_path">Dropbox Path</label>
-              <input id="rst_dropbox_path" placeholder="dropbox:/HA-Backups/Server1/2025-08-01" />
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="rst_mode">Restore Mode</label>
-            <select id="rst_mode">
-              <option value="rsync">Rsync (files/folders)</option>
-              <option value="dd">Full Disk Image (dd)</option>
-            </select>
-            <small>Choose how to restore: files via rsync or full disk image via dd.</small>
-          </div>
-
-          <div class="actions">
-            <button id="btn_list_backups" class="ghost">List Backups</button>
-            <button id="btn_start_restore">Start Restore</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- SETTINGS TAB -->
-    <section class="tab-panel" id="settings" role="tabpanel">
-      <h2>Global Settings</h2>
-
-      <div class="grid two">
-        <div class="card">
-          <h3>Scheduler Defaults</h3>
-          <div class="grid two inner">
-            <div class="field">
-              <label for="default_interval">Default Interval</label>
-              <select id="default_interval">
-                <option value="6h">Every 6 hours</option>
-                <option value="12h">Every 12 hours</option>
-                <option value="1d">Daily</option>
-                <option value="7d" selected>Weekly</option>
-              </select>
-              <small>Used when a job doesn’t specify an interval.</small>
-            </div>
-            <div class="field">
-              <label for="auto_check">Auto Check Remote Storage</label>
-              <select id="auto_check">
-                <option value="enabled">Enabled</option>
-                <option value="disabled" selected>Disabled</option>
-              </select>
-              <small>When enabled, the UI will periodically verify access to storage paths.</small>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Dropbox / rclone</h3>
-          <div class="field">
-            <label for="rclone_remote">Configured rclone remote name</label>
-            <input id="rclone_remote" placeholder="dropbox" />
-            <small>Set up rclone in the add-on container. Use this remote name with paths like <code>dropbox:/HA-Backups</code>.</small>
-          </div>
-          <div class="field">
-            <label for="rclone_help">Where to get credentials?</label>
-            <details id="rclone_help">
-              <summary>Show rclone setup help</summary>
-              <ol>
-                <li>Install rclone and run <code>rclone config</code> inside the add-on shell.</li>
-                <li>Create a remote named <code>dropbox</code> and complete the OAuth flow.</li>
-                <li>Use paths in this UI like <code>dropbox:/HA-Backups/Server1</code>.</li>
-              </ol>
-            </details>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3>Known Hosts</h3>
-        <div class="grid two inner">
-          <div class="field">
-            <label for="kh_label">Label (friendly name)</label>
-            <input id="kh_label" placeholder="e.g. Proxmox-1" />
-          </div>
-          <div class="field">
-            <label for="kh_host">Host or IP</label>
-            <input id="kh_host" placeholder="10.0.0.5" />
-          </div>
-        </div>
-        <div class="grid two inner">
-          <div class="field">
-            <label for="kh_user">SSH User</label>
-            <input id="kh_user" placeholder="root" />
-          </div>
-          <div class="field">
-            <label for="kh_path">Default Path</label>
-            <input id="kh_path" placeholder="/var/lib/app/" />
-          </div>
-        </div>
-        <div class="actions">
-          <button id="kh_add">Add / Update</button>
-          <button id="kh_clear" class="ghost">Clear Form</button>
-        </div>
-        <div class="table-wrap">
-          <table class="table" id="kh_table" aria-label="Known hosts">
-            <thead>
-              <tr><th>Label</th><th>Host</th><th>User</th><th>Path</th><th>Actions</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <small>Known hosts are saved to add-on settings. Use the actions to apply to Backup/Restore.</small>
-      </div>
-
-      <div class="card">
-        <h3>Presets (used to pre-fill forms)</h3>
-        <div class="grid two inner">
-          <div class="field">
-            <label for="preset_src_host">Default Source Host</label>
-            <input id="preset_src_host" placeholder="10.0.0.5" />
-          </div>
-          <div class="field">
-            <label for="preset_src_user">Default Source User</label>
-            <input id="preset_src_user" placeholder="root" />
-          </div>
-        </div>
-        <div class="grid two inner">
-          <div class="field">
-            <label for="preset_src_path">Default Source Path</label>
-            <input id="preset_src_path" placeholder="/var/lib/app/" />
-          </div>
-          <div class="field">
-            <label for="preset_dst_local">Default Local/NAS Path</label>
-            <input id="preset_dst_local" placeholder="/mnt/nas/backups/" />
-          </div>
-        </div>
-        <div class="grid two inner">
-          <div class="field">
-            <label for="preset_dst_dropbox">Default Dropbox Path</label>
-            <input id="preset_dst_dropbox" placeholder="dropbox:/HA-Backups/Server1" />
-          </div>
-          <div class="field">
-            <label for="preset_interval">Default Job Interval</label>
-            <select id="preset_interval">
-              <option value="disabled">Disabled</option>
-              <option value="6h">6h</option>
-              <option value="12h">12h</option>
-              <option value="1d">1d</option>
-              <option value="7d">7d</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="actions">
-          <button id="btn_apply_presets" class="ghost">Apply to Forms</button>
-          <button id="btn_save_settings">Save Settings</button>
-        </div>
-        <small>Saving writes to the add-on settings via backend API. Applies without restarting.</small>
-      </div>
-    </section>
-
-    <!-- LOGS TAB -->
-    <section class="tab-panel" id="logs" role="tabpanel">
-      <h2>Activity & Logs</h2>
-      <div class="card">
-        <div class="actions">
-          <button id="btn_refresh_logs" class="ghost">Refresh</button>
-          <button id="btn_download_logs">Download</button>
-        </div>
-        <pre id="log_output" class="log"></pre>
-      </div>
-    </section>
-  </main>
-
-  <footer class="footer">
-    <span id="status_led" class="led led-idle" aria-live="polite">Idle</span>
-    <span class="sep">•</span>
-    <span id="status_text">Ready</span>
-  </footer>
-
-  <script src="app.js"></script>
+    // Persistence
+    async function saveOptions(){
+      options.known_hosts = hosts.map(h=>encHost(h));
+      options.jobs = jobs.map(j=>encJob(j));
+      options.nas_mounts = mounts.map(m=>encMount(m));
+      const res = await POST('api/options', options);
+      return res;
+    }
+    async function loadOptions(){
+      options = await GET('api/options');
+      hosts = Array.isArray(options.known_hosts) ? options.known_hosts.map(s=>{ const [host,user] = String(s).split('|'); return {host,user}; }) : [];
+      jobs = Array.isArray(options.jobs) ? options.jobs.map(decJob) : [];
+      mounts = Array.isArray(options.nas_mounts) ? options.nas_mounts.map(decMount) : [];
+      // populate Settings
+      $('#s-port').value = options.ui_port ?? 8066;
+      $('#s-gurl').value = options.gotify_url || '';
+      $('#s-gtok').value = options.gotify_token || '';
+      $('#s-dbxe').value = String(!!options.dropbox_enabled);
+      $('#s-dbxr').value = options.dropbox_remote || 'dropbox:HA-Backups';
+      refreshHostSelects(); renderJobs(); renderMounts(); clearJobForm(); clearMountForm();
+    }
+    loadOptions();
+  </script>
 </body>
 </html>
