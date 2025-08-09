@@ -1,54 +1,46 @@
 {
+  "arch": ["aarch64", "amd64", "armv7", "i386"],
   "name": "Remote Linux Backup",
-  "version": "1.0.14",
+  "version": "1.1.0",
   "slug": "remote_linux_backup",
-  "description": "Backup and restore remote Linux systems via SSH, Rsync, DD, or ZFS with optional Gotify notifications and cloud/NAS destinations.",
-  "url": "https://github.com/ChristoffBo/homeassistant",
-  "arch": ["amd64", "aarch64", "armv7", "i386"],
+  "description": "Backup and restore remote Linux systems via password-only SSH. dd, rsync, ZFS; NAS + Dropbox; per-job paths; Gotify; scheduler; dark UI.",
   "startup": "services",
   "boot": "auto",
+  "host_network": true,
   "ingress": true,
   "ingress_port": 8066,
+  "webui": "http://[HOST]:[PORT:8066]",
   "panel_icon": "mdi:backup-restore",
   "panel_title": "Remote Backup",
   "panel_admin": false,
+  "init": false,
   "map": ["config:rw", "backup:rw", "share:rw"],
   "options": {
+    "known_hosts": [],
     "ui_port": 8066,
-    "known_hosts": "",
     "gotify_enabled": false,
     "gotify_url": "",
     "gotify_token": "",
     "auto_install_tools": true,
     "dropbox_enabled": false,
     "dropbox_remote": "dropbox:HA-Backups",
-    "nas_mounts": "",
-    "server_presets": "",
-    "ssh_port": 22,
-    "bandwidth_limit": "",
-    "rsync_excludes": "",
-    "retention_days": 0
+    "nas_mounts": [],
+    "server_presets": [],
+    "jobs": []
   },
   "schema": {
+    "known_hosts": ["str"],
     "ui_port": "int(1,65535)?",
-    "known_hosts": "str?",
-    "gotify_enabled": "bool",
+    "gotify_enabled": "bool?",
     "gotify_url": "str?",
     "gotify_token": "str?",
-    "auto_install_tools": "bool",
-    "dropbox_enabled": "bool",
+    "auto_install_tools": "bool?",
+    "dropbox_enabled": "bool?",
     "dropbox_remote": "str?",
-    "nas_mounts": "str?",
-    "server_presets": "str?",
-    "ssh_port": "int(1,65535)?",
-    "bandwidth_limit": "str?",
-    "rsync_excludes": "str?",
-    "retention_days": "int(0,365)?"
+    "nas_mounts": ["str"],
+    "server_presets": ["str"],
+    "jobs": ["str"]
   },
-  "ports": {
-    "8066/tcp": 8066
-  },
-  "ports_description": {
-    "8066/tcp": "Web UI (non-Ingress)"
-  }
+  "ports": { "8066/tcp": 8066 },
+  "ports_description": { "8066/tcp": "Web UI (non-Ingress)" }
 }
