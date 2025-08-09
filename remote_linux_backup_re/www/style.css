@@ -1,84 +1,459 @@
-:root{
-  --bg:#0b0f14; --panel:#0f1720; --text:#eaf2f8; --muted:#b6c5d6;
-  --border:#223245; --accent:#7c5cff; --accent2:#0ea5e9; --danger:#ef4444;
-  --radius:16px; --shadow:0 14px 38px rgba(0,0,0,.40);
-}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Remote Linux Backup</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <div class="card__header">
+        <div class="brand__logo" aria-hidden="true"></div>
+        <div>
+          <h1 class="brand__title">Remote Linux Backup</h1>
+          <p class="brand__subtitle">Simple backups & mounts</p>
+        </div>
+      </div>
 
-*{box-sizing:border-box}
-html,body{height:100%}
-body{
-  margin:0;background:var(--bg);color:var(--text);
-  font:500 16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif;
-  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
-}
+      <nav class="tabs">
+        <button class="tab is-active" data-target="backup">Backup</button>
+        <button class="tab" data-target="restore">Restore</button>
+        <button class="tab" data-target="mounts">Mounts</button>
+        <button class="tab" data-target="backups">Backups</button>
+        <button class="tab" data-target="schedule">Schedule</button>
+        <button class="tab" data-target="settings">Settings</button>
+        <button class="tab" data-target="help">Help</button>
+      </nav>
 
-.wrap{max-width:1200px;margin:40px auto;padding:0 18px}
+      <div class="notice">
+        Alpha software. Use at your own risk. <b>Restores can destroy data.</b> Always have verified backups.
+      </div>
 
-.hero{
-  background:linear-gradient(180deg,#101a27 0%, #0c141f 100%);
-  border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
-  padding:22px 22px 18px;margin-bottom:18px
-}
-.brand{display:flex;align-items:center;gap:14px;margin-bottom:12px}
-.logo{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#7c5cff,#3dc8ff)}
-h1{margin:0;font-weight:800;letter-spacing:.3px;font-size:1.35rem}
-.sub{margin:.25rem 0 0;color:var(--muted)}
+      <!-- BACKUP -->
+      <section id="panel-backup" class="panel is-active">
+        <form class="form" onsubmit="return false;">
+          <div class="field">
+            <label>Host/IP
+              <input id="b_host" placeholder="10.0.0.10">
+            </label>
+          </div>
+          <div class="field">
+            <label>User
+              <input id="b_user" value="root">
+            </label>
+          </div>
+          <div class="field">
+            <label>Port
+              <input id="b_port" value="22">
+            </label>
+          </div>
+          <div class="field">
+            <label>Password
+              <input id="b_pass" type="password">
+            </label>
+          </div>
+          <div class="field">
+            <label>Method
+              <select id="b_method">
+                <option value="dd">Full Disk (dd)</option>
+                <option value="rsync">Files (rsync over SSH)</option>
+                <option value="zfs">ZFS snapshot</option>
+              </select>
+            </label>
+          </div>
+          <div class="field" data-show="dd">
+            <label>Disk device (dd)
+              <input id="b_disk" value="/dev/sda">
+            </label>
+          </div>
 
-.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
-.tab{background:#121e2c;border:1px solid var(--border);color:#ddecff;
-  padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:800}
-.tab.is-active{background:#1a2b3f;color:#fff;border-color:#33506f}
+          <!-- Rsync source (remote) -->
+          <div class="field field--wide" data-show="rsync">
+            <label>Rsync source (remote path or comma-separated list)
+              <div class="inline">
+                <input id="b_files" placeholder="/etc,/var/www or /home/user" />
+                <button class="btn" id="btn_browse_remote">Browse remote…</button>
+              </div>
+              <span class="hint">Uses SSH to list folders on the remote. If your backend doesn’t support it yet, type paths manually.</span>
+            </label>
+          </div>
 
-.alpha{margin-top:12px;color:var(--muted);background:#0b1522;border:1px solid var(--border);
-  border-radius:12px;padding:10px}
+          <div class="field field--wide">
+            <label>Store to (local folder or mounted share)
+              <select id="b_store"></select>
+            </label>
+            <div class="actions compact">
+              <button class="btn" id="btn_store_mount">Mount</button>
+              <button class="btn" id="btn_store_unmount">Unmount</button>
+              <span id="b_store_status" class="hint"></span>
+            </div>
+          </div>
 
-.panel{
-  background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;
-  display:none
-}
-.panel.is-active{display:block}
+          <div class="field" data-show="rsync">
+            <label>Excludes (rsync, comma separated)
+              <input id="b_excludes" placeholder="*.tmp,*.cache">
+            </label>
+          </div>
+          <div class="field">
+            <label>Bandwidth limit (KB/s)
+              <input id="b_bw" placeholder="">
+            </label>
+          </div>
+          <div class="field" data-show="dd">
+            <label>Verify (dd)
+              <select id="b_verify">
+                <option value="false">No</option>
+                <option value="true">Yes</option>
+              </select>
+            </label>
+          </div>
+          <div class="field">
+            <label>Retention days (prune old)
+              <input id="b_retention" placeholder="">
+            </label>
+          </div>
+          <div class="field field--wide">
+            <label>Cloud upload (rclone remote:path)
+              <input id="b_cloud" placeholder="dropbox:HA-Backups">
+            </label>
+          </div>
+          <div class="field">
+            <label>Backup name (label)
+              <input id="b_name" placeholder="OPNsense-01">
+            </label>
+          </div>
+        </form>
+        <div class="actions">
+          <button class="btn" id="btnEstimate">Estimate</button>
+          <button class="btn btn--primary" id="btnBackup">Run Backup</button>
+        </div>
+      </section>
 
-.grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
-@media (max-width:820px){ .grid{grid-template-columns:1fr} }
-.field{display:flex;flex-direction:column;gap:6px}
-.field.wide{grid-column:1/-1}
+      <!-- RESTORE -->
+      <section id="panel-restore" class="panel">
+        <form class="form" onsubmit="return false;">
+          <div class="field">
+            <label>Host/IP
+              <input id="r_host" placeholder="10.0.0.10">
+            </label>
+          </div>
+          <div class="field">
+            <label>User
+              <input id="r_user" value="root">
+            </label>
+          </div>
+          <div class="field">
+            <label>Port
+              <input id="r_port" value="22">
+            </label>
+          </div>
+          <div class="field">
+            <label>Password
+              <input id="r_pass" type="password">
+            </label>
+          </div>
+          <div class="field">
+            <label>Method
+              <select id="r_method">
+                <option value="dd">Full Disk (dd)</option>
+                <option value="rsync">Files (rsync)</option>
+              </select>
+            </label>
+          </div>
+          <div class="field" data-show="dd">
+            <label>Disk device (dd)
+              <input id="r_disk" value="/dev/sda">
+            </label>
+          </div>
+          <div class="field field--wide">
+            <label>Image path (dd) or local source (rsync)
+              <div class="inline">
+                <input id="r_image" placeholder="/backup/myhost-2025-01-01.img.gz">
+                <button class="btn" id="btn_browse_local">Pick from backups…</button>
+              </div>
+              <span class="hint">Use the Backups tab and click “Use for restore” to auto-fill, or pick here.</span>
+            </label>
+          </div>
+          <div class="field" data-show="rsync">
+            <label>Remote dest (rsync)
+              <input id="r_dest" value="/">
+            </label>
+          </div>
+          <div class="field" data-show="rsync">
+            <label>Excludes (rsync)
+              <input id="r_ex" placeholder="*.tmp,*.cache">
+            </label>
+          </div>
+          <div class="field">
+            <label>Bandwidth limit (KB/s)
+              <input id="r_bw" placeholder="">
+            </label>
+          </div>
+        </form>
+        <div class="actions">
+          <button class="btn btn--danger" id="btnRestore">Restore (double confirm)</button>
+        </div>
+      </section>
 
-label{font-weight:700}
-.tiny{font-size:.9rem}
-.muted{color:var(--muted)}
+      <!-- MOUNTS -->
+      <section id="panel-mounts" class="panel">
+        <form class="form" onsubmit="return false;">
+          <div class="field">
+            <label>Preset name
+              <input id="m_name" placeholder="NAS-Backups">
+            </label>
+          </div>
+          <div class="field">
+            <label>Protocol
+              <select id="m_proto">
+                <option value="cifs">SMB/CIFS</option>
+                <option value="nfs">NFS</option>
+              </select>
+            </label>
+          </div>
+          <div class="field">
+            <label>Server / host
+              <input id="m_server" placeholder="10.0.0.21">
+            </label>
+          </div>
+          <div class="field">
+            <label>Username (SMB)
+              <input id="m_user" placeholder="user">
+            </label>
+          </div>
+          <div class="field">
+            <label>Password (SMB)
+              <input id="m_pass" type="password" placeholder="password">
+            </label>
+          </div>
+          <div class="field field--wide">
+            <label>Share (SMB: name/subdir) or Export (NFS: /path)
+              <div class="inline">
+                <select id="m_share_select"></select>
+                <input id="m_share" placeholder="Backups or Backups/subdir or /export/backups">
+              </div>
+              <span class="hint">Use “List shares/exports” and “Browse” to populate.</span>
+            </label>
+          </div>
+          <div class="field">
+            <label>Mount point
+              <input id="m_mount" value="/mnt/Backups">
+            </label>
+          </div>
+          <div class="field">
+            <label>Extra options
+              <input id="m_opts" placeholder="iocharset=utf8,uid=0,gid=0">
+            </label>
+          </div>
+          <div class="field">
+            <label>Auto-mount on start
+              <select id="m_auto">
+                <option value="false">No</option>
+                <option value="true">Yes</option>
+              </select>
+            </label>
+          </div>
+        </form>
+        <div class="actions">
+          <button class="btn" id="btnList">List shares/exports</button>
+          <button class="btn" id="btnBrowse">Browse</button>
+          <button class="btn btn--primary" id="btnAddMount">Add / Update</button>
+        </div>
 
-input,select,textarea{
-  background:#0e1724;border:1px solid var(--border);color:var(--text);
-  border-radius:10px;padding:10px 12px;font-size:1rem;outline:none
-}
-input::placeholder,textarea::placeholder{color:#8ba2b9}
-input:focus,select:focus,textarea:focus{border-color:#3a5a78;box-shadow:0 0 0 3px rgba(14,165,233,.18)}
+        <h3 class="table-title">Mount presets</h3>
+        <table class="table">
+          <thead>
+            <tr><th>Name</th><th>Proto</th><th>Server</th><th>Share/Export</th><th>Mount</th><th>Auto</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="mountTable"></tbody>
+        </table>
+      </section>
 
-.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-.actions.right{justify-content:flex-end}
-.btn{background:#17263a;border:1px solid var(--border);color:#e6f1ff;
-  padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:800}
-.btn:hover{filter:brightness(1.06)}
-.btn.primary{background:var(--accent2);color:#03131e;border-color:transparent}
-.btn.danger{background:var(--danger);color:#fff;border-color:transparent}
+      <!-- BACKUPS -->
+      <section id="panel-backups" class="panel">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Path</th><th>Type</th><th>Location</th><th>Size</th><th>Date</th><th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="backups_rows"></tbody>
+        </table>
+      </section>
 
-.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
-.table{width:100%;border-collapse:collapse;min-width:760px}
-.table th,.table td{border-bottom:1px solid #223049;padding:10px;text-align:left;vertical-align:middle}
-.table th{color:#cfe0ff;font-weight:800}
-.table tr:last-child td{border-bottom:none}
+      <!-- SCHEDULE -->
+      <section id="panel-schedule" class="panel">
+        <form class="form" onsubmit="return false;">
+          <div class="field field--wide">
+            <label>Job name
+              <input id="sch_name" placeholder="Nightly-OPNsense" />
+            </label>
+          </div>
+          <div class="field">
+            <label>CRON (min hour dom mon dow)
+              <input id="sch_cron" placeholder="0 2 * * *">
+              <span class="hint">Examples: <code>0 2 * * *</code> (02:00 daily), <code>0 */6 * * *</code> (every 6h)</span>
+            </label>
+          </div>
+          <div class="field">
+            <label>Method
+              <select id="sch_method">
+                <option value="dd">dd</option>
+                <option value="rsync">rsync</option>
+                <option value="zfs">zfs</option>
+              </select>
+            </label>
+          </div>
+          <div class="field">
+            <label>Host/IP
+              <input id="sch_host" placeholder="10.0.0.10">
+            </label>
+          </div>
+          <div class="field">
+            <label>User
+              <input id="sch_user" value="root">
+            </label>
+          </div>
+          <div class="field">
+            <label>Port
+              <input id="sch_port" value="22">
+            </label>
+          </div>
+          <div class="field">
+            <label>Password
+              <input id="sch_pass" type="password">
+            </label>
+          </div>
+          <div class="field">
+            <label>Disk / Rsync source
+              <input id="sch_source" placeholder="/dev/sda or /etc,/home">
+            </label>
+          </div>
+          <div class="field">
+            <label>Store to
+              <input id="sch_store" placeholder="/backup or /mnt/NAS">
+            </label>
+          </div>
+        </form>
+        <div class="actions">
+          <button class="btn btn--primary" id="btnSchAdd">Add / Update Schedule</button>
+          <button class="btn" id="btnSchRefresh">Refresh</button>
+        </div>
 
-.log{
-  background:#0a121b;border:1px solid var(--border);border-radius:10px;
-  padding:12px;min-height:140px;max-height:380px;overflow:auto;
-  white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace
-}
+        <table class="table">
+          <thead>
+            <tr><th>Name</th><th>Cron</th><th>Method</th><th>Host</th><th>Source</th><th>Store</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="sch_rows"></tbody>
+        </table>
+        <div class="hint" id="sch_hint"></div>
+      </section>
 
-.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:20}
-.modal-card{background:#0b1522;border:1px solid var(--border);border-radius:14px;max-width:900px;width:92%;padding:16px}
-.list{max-height:360px;overflow:auto;border:1px solid #223049;border-radius:8px;margin-top:8px}
-.list div{padding:8px;border-bottom:1px dashed #223049;cursor:pointer}
-.list div:hover{background:#111827}
+      <!-- SETTINGS -->
+      <section id="panel-settings" class="panel">
+        <form class="form" onsubmit="return false;">
+          <div class="field">
+            <label>Gotify URL (e.g. https://gotify.your.tld)
+              <input id="s_gurl">
+            </label>
+          </div>
+          <div class="field">
+            <label>Gotify token
+              <input id="s_gtoken">
+            </label>
+          </div>
+          <div class="field">
+            <label>Enable Gotify
+              <select id="s_gen">
+                <option value="false">No</option>
+                <option value="true">Yes</option>
+              </select>
+            </label>
+          </div>
+          <div class="field">
+            <label>Dropbox remote (rclone)
+              <input id="s_dropremote" value="dropbox:HA-Backups">
+            </label>
+          </div>
+          <div class="field">
+            <label>Enable Dropbox
+              <select id="s_dben">
+                <option value="false">No</option>
+                <option value="true">Yes</option>
+              </select>
+            </label>
+          </div>
+          <div class="field">
+            <label>UI Port
+              <input id="s_uiport" value="8066">
+            </label>
+          </div>
+        </form>
+        <div class="actions">
+          <button class="btn btn--primary" id="btnSaveSettings">Save Settings</button>
+          <button class="btn" id="btnTestGotify">Test Gotify</button>
+        </div>
+        <textarea id="status_box" class="log" placeholder="Status / Output"></textarea>
+      </section>
 
-.share-picker{display:grid;grid-template-columns:1fr 220px;gap:8px}
-.inline{height:42px}
+      <!-- HELP -->
+      <section id="panel-help" class="panel">
+        <h3>How to use</h3>
+        <details class="details" open>
+          <summary>Quick start</summary>
+          <div class="code">
+            1) Go to <b>Mounts</b>, click “List shares/exports” or “Browse”, then “Add / Update” and “Mount”.<br/>
+            2) In <b>Backup</b>, set Host/IP, credentials, choose a method:<br/>
+            &nbsp;• <b>dd</b> for whole disk images (fastest restore, biggest files).<br/>
+            &nbsp;• <b>rsync</b> to copy selected directories (uses SSH). Click “Browse remote” to pick folders.<br/>
+            3) Pick “Store to” (your mounted path or /backup). Run backup. Gotify will notify on success/fail if enabled.<br/>
+            4) Restore from <b>Backups</b> (Use for restore → Restore tab). Double confirmation before proceeding.
+          </div>
+        </details>
+
+        <details class="details">
+          <summary>Restore from USB</summary>
+          <div>
+            Mount your USB into the add-on (via other HA add-ons or host bind). If mounted under /backup or /mnt/… it will appear in the <b>Backups</b> list.
+            Click “Use for restore” then go to <b>Restore</b> and run (two prompts will confirm).
+          </div>
+        </details>
+
+        <details class="details">
+          <summary>SMB/NFS</summary>
+          <div>
+            Use <b>List</b> to pull shares/exports, then <b>Browse</b> to pick subfolders. For SMB subpaths the UI fills
+            <code>SHARE/subdir</code>. If your environment requires <code>prefixpath=subdir</code> put it in <b>Extra options</b>.
+          </div>
+        </details>
+
+        <details class="details">
+          <summary>Schedules</summary>
+          <div>
+            Use standard CRON syntax. Jobs trigger the same backup engine and will send Gotify on completion if enabled.
+          </div>
+        </details>
+      </section>
+    </div>
+  </div>
+
+  <!-- MODAL (reused for SMB/NFS and SSH) -->
+  <div id="browse_modal" class="modal" aria-hidden="true">
+    <div class="modal__panel">
+      <div class="modal__header">
+        <strong id="browse_title">Browse</strong>
+        <button class="btn btn--ghost" id="browse_close">Close</button>
+      </div>
+      <div class="muted" id="browse_path"></div>
+      <div class="list" id="browse_list"></div>
+      <div class="actions">
+        <button class="btn" id="browse_up">Up</button>
+        <button class="btn btn--primary" id="browse_select">Select this folder</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
