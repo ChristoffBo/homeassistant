@@ -3,12 +3,14 @@ FROM ghcr.io/hassio-addons/debian-base:7.8.3
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Update + upgrade before installing packages
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
       bash curl jq coreutils pigz pv gzip \
       openssh-client sshpass rsync rclone \
       smbclient cifs-utils nfs-common rpcbind \
       python3 python3-flask python3-gunicorn gunicorn cron \
+      procps \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
