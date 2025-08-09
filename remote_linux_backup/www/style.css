@@ -1,19 +1,69 @@
-* { box-sizing: border-box }
-body { margin:0; background:#0b0f14; color:#e6edf3; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; }
-.wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
-header { display:flex; align-items:center; gap:12px; padding:8px 0 16px; border-bottom:1px solid #1e2936; }
-.logo { width:32px; height:32px; }
-nav { display:flex; gap:8px; margin:16px 0; }
-.tab { background:#111827; color:#cbd5e1; border:1px solid #1f2937; padding:8px 12px; border-radius:10px; cursor:pointer; }
-.tab.active { background:#1f2937; color:#fff; border-color:#334155; }
-.tabpane { display:none; }
-.tabpane.active { display:block; }
-.grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px; }
-label { display:flex; flex-direction:column; font-size:14px; gap:6px; }
-input, select, textarea { background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:8px; padding:8px; }
-textarea.code { width:100%; min-height:220px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
-.actions { display:flex; gap:12px; margin:12px 0; flex-wrap:wrap; }
-button { background:#0ea5e9; color:#001018; border:none; border-radius:10px; padding:10px 14px; font-weight:600; cursor:pointer; }
-button:hover { filter: brightness(1.08); }
-.log { background:#0a1016; border:1px solid #1f2937; border-radius:10px; padding:12px; min-height:160px; overflow:auto; }
-.hide { display:none; }
+:root{
+  --bg:#0a0f14;
+  --panel:#0f1720;
+  --muted:#9fb0c3;
+  --text:#e6edf3;
+  --accent:#0ea5e9;
+  --accent-2:#22c55e;
+  --border:#1f2a36;
+  --danger:#ef4444;
+  --code:#0b1219;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif;
+}
+
+.container{max-width:1200px;margin:0 auto;padding:20px}
+
+.header{display:flex;flex-direction:column;gap:12px;margin-bottom:16px}
+.brand{display:flex;gap:12px;align-items:center}
+.brand__logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(130deg,var(--accent),#74d1ff)}
+.brand__title{margin:0;font-size:20px;font-weight:700}
+.brand__subtitle{margin:0;color:var(--muted);font-size:13px}
+
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tab{
+  background:#0e141b;border:1px solid var(--border);color:var(--muted);
+  padding:8px 12px;border-radius:10px;cursor:pointer
+}
+.tab.is-active{background:#162232;color:#fff;border-color:#2b3b4f}
+
+.panel{display:none;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:12px}
+.panel.is-active{display:block}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+
+.field label{display:flex;flex-direction:column;gap:6px;font-weight:600}
+.hint{font-weight:400;color:var(--muted);font-size:12px}
+input,select,textarea{
+  background:#0d1520;border:1px solid var(--border);color:var(--text);
+  border-radius:10px;padding:10px 12px;outline:none
+}
+input:focus,select:focus,textarea:focus{border-color:#2b3b4f}
+.textarea{width:100%;min-height:200px;resize:vertical}
+.code{background:var(--code);padding:10px;border-radius:10px;border:1px solid var(--border);overflow:auto}
+
+.actions{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.btn{
+  background:#152131;border:1px solid var(--border);color:#e0f2ff;
+  padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:700
+}
+.btn:hover{filter:brightness(1.05)}
+.btn--primary{background:var(--accent);border-color:transparent;color:#03121a}
+.btn--danger{background:var(--danger);color:#fff;border-color:transparent}
+
+.log-wrap{margin-top:12px}
+.log-title{color:var(--muted);font-size:12px;margin-bottom:6px}
+.log{
+  white-space:pre-wrap;background:#0b1219;border:1px solid var(--border);
+  border-radius:10px;padding:12px;min-height:140px;max-height:360px;overflow:auto
+}
+
+.details{margin-top:10px}
+.hide{display:none}
