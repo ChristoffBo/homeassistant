@@ -1,9 +1,10 @@
-\
 import os, json, subprocess, shlex, time, hashlib
 from flask import Flask, request, jsonify, send_from_directory
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 WWW_DIR = os.path.join(APP_DIR, "www")
+
+# HA-managed options (read-only for us)
 OPTIONS_PATH = "/data/options.json"
 DEFAULT_OPTIONS = {
     "known_hosts": [],
@@ -17,6 +18,15 @@ DEFAULT_OPTIONS = {
     "nas_mounts": [],
     "server_presets": [],
     "jobs": []
+}
+
+# App-owned config (UI writes go here)
+APP_CONFIG = "/config/remote_linux_backup.json"
+APP_DEFAULTS = {
+    "known_hosts": [],
+    "server_presets": [],
+    "jobs": [],
+    "nas_mounts": []
 }
 
 app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
@@ -45,20 +55,27 @@ def _safe_load_json(path):
         return {}
 
 def load_opts():
+    """Load HA-managed options (read-only)."""
     d = _safe_load_json(OPTIONS_PATH)
     for k, v in DEFAULT_OPTIONS.items():
         d.setdefault(k, v)
     return d
 
-def save_opts(d):
-    try:
-        tmp = OPTIONS_PATH + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(d, f, indent=2)
-        os.replace(tmp, OPTIONS_PATH)
-        return True
-    except Exception:
-        return False
+def load_app_config():
+    """Load UI-managed config stored under /config."""
+    if not os.path.exists(APP_CONFIG):
+        with open(APP_CONFIG, "w") as f:
+            json.dump(APP_DEFAULTS, f, indent=2)
+    with open(APP_CONFIG, "r") as f:
+        return json.load(f)
+
+def save_app_config(data: dict):
+    """Persist UI-managed config to /config."""
+    cfg = load_app_config()
+    cfg.update(data)
+    with open(APP_CONFIG, "w") as f:
+        json.dump(cfg, f, indent=2)
+    return True
 
 def run(cmd):
     p = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -97,23 +114,22 @@ def dd_backup(user, host, password, disk, out_path, port=22, verify=False, bwlim
     rc,out = run(pipeline)
     sha_path = out_path + ".sha256"
     if rc==0:
-        import hashlib
         h = hashlib.sha256()
         with open(out_path, "rb") as f:
             for chunk in iter(lambda: f.read(1024*1024), b""):
                 h.update(chunk)
         with open(sha_path, "w") as sf:
-            sf.write(f"{h.hexdigest()}  {os.path.basename(out_path)}\\n")
+            sf.write(f"{h.hexdigest()}  {os.path.basename(out_path)}\n")
         if verify:
             hv = hashlib.sha256()
             with open(out_path, "rb") as f:
                 for chunk in iter(lambda: f.read(1024*1024), b""):
                     hv.update(chunk)
             if hv.hexdigest()!=h.hexdigest():
-                out += "\\n[VERIFY] SHA256 mismatch!"
+                out += "\n[VERIFY] SHA256 mismatch!"
                 rc = 2
             else:
-                out += "\\n[VERIFY] SHA256 OK"
+                out += "\n[VERIFY] SHA256 OK"
     return rc, out
 
 def dd_restore(user, host, password, disk, image_path, port=22, bwlimit_kbps=None):
@@ -132,9 +148,9 @@ def rsync_pull(user, host, password, sources_csv, dest, port=22, excludes_csv=""
     for src in [s.strip() for s in sources_csv.split(",") if s.strip()]:
         cmd = f"sshpass -p {shlex.quote(password)} rsync -aAX --numeric-ids{bw} -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p {int(port)}' {excl} {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(src)} {shlex.quote(dest.rstrip('/') + '/')}"
         r, o = run(cmd)
-        outs.append(f"$ {cmd}\\n{o}")
+        outs.append(f"$ {cmd}\n{o}")
         if r != 0: rc = r
-    return rc, "\\n".join(outs)
+    return rc, "\n".join(outs)
 
 def rsync_push(user, host, password, local_src, remote_dest, port=22, excludes_csv="", bwlimit_kbps=None):
     excl = ""
@@ -163,7 +179,7 @@ def prune_old(path, days):
                     deleted.append(p)
             except Exception:
                 pass
-    return "\\n".join(deleted)
+    return "\n".join(deleted)
 
 def local_size_bytes(path):
     if os.path.isfile(path):
@@ -181,17 +197,33 @@ def local_size_bytes(path):
 def root():
     return app.send_static_file("index.html")
 
+# Merge HA options (read-only) + app config (UI-writable)
 @app.get("/api/options")
 def get_options():
-    return jsonify(load_opts())
+    ha = load_opts()
+    appcfg = load_app_config()
+    merged = {**ha, **{k: appcfg.get(k, APP_DEFAULTS[k]) for k in APP_DEFAULTS}}
+    return jsonify(merged)
 
+# Save only UI-owned keys to /config
 @app.post("/api/options")
 def set_options():
-    data = request.json or {}
-    opts = load_opts()
-    opts.update(data)
-    ok = save_opts(opts)
-    return jsonify({"ok": ok})
+    data = request.get_json(force=True) or {}
+    allowed = {k: data[k] for k in ("known_hosts","server_presets","jobs","nas_mounts") if k in data}
+    ok = save_app_config(allowed)
+    return jsonify({"ok": ok, "saved": allowed})
+
+# Optional explicit UI-config endpoints
+@app.get("/api/app-config")
+def get_app_config():
+    return jsonify(load_app_config())
+
+@app.post("/api/app-config")
+def set_app_config():
+    data = request.get_json(force=True) or {}
+    allowed = {k: data[k] for k in ("known_hosts","server_presets","jobs","nas_mounts") if k in data}
+    ok = save_app_config(allowed)
+    return jsonify({"ok": ok, "saved": allowed, "config": load_app_config()})
 
 @app.post("/api/apply_schedule")
 def apply_schedule():
@@ -223,7 +255,7 @@ def install_tools():
         rc, out = ssh(user, host, pwd, c, port=port)
         out_all.append(out)
         if rc != 0: rc_final = rc
-    return jsonify({"rc": rc_final, "out": "\\n".join(out_all)})
+    return jsonify({"rc": rc_final, "out": "\n".join(out_all)})
 
 @app.post("/api/estimate_backup")
 def estimate_backup():
@@ -281,11 +313,11 @@ def run_backup():
         rc,out = dd_backup(user,host,pwd,disk,out_path,port=port,verify=verify,bwlimit_kbps=bwlimit)
         size_bytes = local_size_bytes(out_path) if rc==0 else 0
         if rc==0 and cloud:
-            rcrc,rout = rclone_copy(out_path,cloud,bwlimit_kbps=bwlimit); out += "\\n[RCLONE]\\n"+rout
+            rcrc,rout = rclone_copy(out_path,cloud,bwlimit_kbps=bwlimit); out += "\n[RCLONE]\n"+rout
         if retention_days>0:
-            out += "\\n[PRUNE]\\n" + prune_old(store_to, retention_days)
+            out += "\n[PRUNE]\n" + prune_old(store_to, retention_days)
         took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: dd\\nSaved: {out_path}\\nSize: {human_size(size_bytes)}\\nTime: {human_time(int(took))}")
+        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd\nSaved: {out_path}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took))}")
         return jsonify({"rc":rc,"out":out,"seconds":took,"saved":out_path,"size_bytes":size_bytes})
 
     elif method=="rsync":
@@ -295,11 +327,11 @@ def run_backup():
         rc,out = rsync_pull(user,host,pwd,files,dest,port=port,excludes_csv=excludes,bwlimit_kbps=bwlimit)
         size_bytes = local_size_bytes(dest) if rc==0 else 0
         if rc==0 and cloud:
-            rcrc,rout = rclone_copy(dest,cloud,bwlimit_kbps=bwlimit); out += "\\n[RCLONE]\\n"+rout
+            rcrc,rout = rclone_copy(dest,cloud,bwlimit_kbps=bwlimit); out += "\n[RCLONE]\n"+rout
         if retention_days>0:
-            out += "\\n[PRUNE]\\n" + prune_old(dest, retention_days)
+            out += "\n[PRUNE]\n" + prune_old(dest, retention_days)
         took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: rsync\\nSaved: {dest}\\nSize: {human_size(size_bytes)}\\nTime: {human_time(int(took))}")
+        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync\nSaved: {dest}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took))}")
         return jsonify({"rc":rc,"out":out,"seconds":took,"saved":dest,"size_bytes":size_bytes})
 
     elif method=="zfs":
@@ -309,7 +341,7 @@ def run_backup():
         snap=b.get("snapshot_name", time.strftime("backup-%Y%m%d-%H%M%S"))
         rc,out = ssh(user,host,pwd,f"zfs snapshot {shlex.quote(dataset)}@{shlex.quote(snap)}", port=port)
         took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: zfs snapshot\\nSnapshot: {dataset}@{snap}\\nTime: {human_time(int(took))}")
+        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: zfs snapshot\nSnapshot: {dataset}@{snap}\nTime: {human_time(int(took))}")
         return jsonify({"rc":rc,"out":out,"seconds":took})
 
     else:
@@ -329,7 +361,7 @@ def run_restore():
             return jsonify({"rc":2,"out":"Missing image_path"}),400
         rc,out = dd_restore(user,host,pwd,disk,image,port=port,bwlimit_kbps=bwlimit)
         took=round(time.time()-t0,2)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: dd restore\\nSrc: {image}\\nTime: {human_time(int(took))}")
+        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd restore\nSrc: {image}\nTime: {human_time(int(took))}")
         return jsonify({"rc":rc,"out":out,"seconds":took})
     elif method=="rsync":
         local_src=b.get("local_src"); remote_dest=b.get("remote_dest","/")
@@ -337,7 +369,7 @@ def run_restore():
             return jsonify({"rc":2,"out":"Missing local_src"}),400
         rc,out = rsync_push(user,host,pwd,local_src,remote_dest,port=port,excludes_csv=excludes,bwlimit_kbps=bwlimit)
         took=round(time.time()-t0,2)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: rsync restore\\nDest: {remote_dest}\\nTime: {human_time(int(took))}")
+        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync restore\nDest: {remote_dest}\nTime: {human_time(int(took))}")
         return jsonify({"rc":rc,"out":out,"seconds":took})
     else:
         return jsonify({"rc":2,"out":"Unknown restore method"}),400
