@@ -34,8 +34,8 @@
     "auto_install_tools": "bool",
     "dropbox_enabled": "bool",
     "dropbox_remote": "str",
-    "nas_mounts": "list",
-    "jobs": "list"
+    "nas_mounts": "list(str)",
+    "jobs": "list(str)"
   },
   "ports": { "8066/tcp": 8066 },
   "ports_description": { "8066/tcp": "Web UI (non-Ingress)" }
