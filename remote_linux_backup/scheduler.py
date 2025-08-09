@@ -1,4 +1,3 @@
-\
 import os, json, subprocess
 
 OPTIONS_PATH = "/data/options.json"
@@ -42,14 +41,14 @@ def build_cron_line(j: dict):
     if not sched:
         return None
     payload = json.dumps(j).replace('"','\\\"')
-    return f'{sched} root JOB_JSON="{payload}" /usr/bin/python3 /app/job_runner.py >> /var/log/remote_linux_backup.log 2>&1\\n'
+    return f'{sched} root JOB_JSON="{payload}" /usr/bin/python3 /app/job_runner.py >> /var/log/remote_linux_backup.log 2>&1\n'
 
 def apply():
     opts = load_opts()
     jobs_raw = opts.get("jobs", [])
     lines = [
-        "SHELL=/bin/bash\\n",
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\\n"
+        "SHELL=/bin/bash\n",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
     ]
     for item in jobs_raw:
         j = parse_job(item)
@@ -62,7 +61,8 @@ def apply():
     with open(CRON_FILE, "w") as f:
         f.write("".join(lines))
     os.chmod(CRON_FILE, 0o644)
-    subprocess.run(["/usr/sbin/service", "cron", "reload"], check=False)
+    # Reload crond (cronie) to pick up changes
+    subprocess.run(["pkill", "-HUP", "crond"], check=False)
     return "".join(lines)
 
 if __name__ == "__main__":
