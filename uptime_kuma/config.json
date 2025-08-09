@@ -6,7 +6,7 @@
     "i386"
   ],
   "name": "Uptime Kuma",
-  "version": "1.0.0",
+  "version": "1",
   "slug": "uptime_kuma",
   "description": "Self-hosted monitoring tool with a clean web UI. Monitors HTTP(S), TCP, DNS, ICMP and more. Uses official image.",
   "url": "https://github.com/louislam/uptime-kuma",
@@ -19,7 +19,7 @@
   "panel_icon": "mdi:monitor-eye",
   "panel_title": "Uptime Kuma",
   "panel_admin": false,
-  "image": "louislam/uptime-kuma:1",
+  "image": "louislam/uptime-kuma",
   "ports": {
     "3001/tcp": 3001
   },
