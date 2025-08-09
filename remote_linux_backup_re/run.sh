@@ -5,7 +5,10 @@ CONFIG_PATH="/data/options.json"
 APP_CONFIG="/config/remote_linux_backup.json"
 mkdir -p /backup /mnt/nas
 
-# Ensure default options file exists for first start
+# Make rclone read a persistent config in /config
+export RCLONE_CONFIG="/config/rclone.conf"
+
+# Ensure default HA options.json exists
 if [ ! -f "$CONFIG_PATH" ]; then
   cat > "$CONFIG_PATH" <<'JSON'
 {
@@ -24,7 +27,7 @@ if [ ! -f "$CONFIG_PATH" ]; then
 JSON
 fi
 
-# Ensure app config file exists (UI saves here)
+# Ensure app config exists (UI writes here)
 if [ ! -f "$APP_CONFIG" ]; then
   cat > "$APP_CONFIG" <<'JSON'
 {
@@ -37,7 +40,8 @@ if [ ! -f "$APP_CONFIG" ]; then
   "gotify_token": "",
   "dropbox_enabled": false,
   "dropbox_remote": "dropbox:HA-Backups",
-  "mounts": []
+  "mounts": [],
+  "servers": []
 }
 JSON
 fi
@@ -45,7 +49,7 @@ fi
 # Resolve UI port safely
 UI_PORT="$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)"
 
-# Helper to mount one item (proto=cifs|nfs)
+# Helper: mount one item
 _mount_one() {
   local proto="$1" server="$2" share="$3" mountp="$4" user="$5" pass="$6" opts_extra="$7"
   mkdir -p "$mountp"
@@ -61,23 +65,7 @@ _mount_one() {
   fi
 }
 
-# Mount legacy HA nas_mounts (if any)
-if jq -e '.nas_mounts | length > 0' "$CONFIG_PATH" >/dev/null 2>&1; then
-  mapfile -t NAS_ITEMS < <(jq -r '.nas_mounts[]' "$CONFIG_PATH")
-  for row in "${NAS_ITEMS[@]}"; do
-    declare -A kv; kv=()
-    IFS=';' read -ra parts <<< "$row"
-    for p in "${parts[@]}"; do
-      k="${p%%=*}"; v="${p#*=}"
-      k="$(echo "$k" | xargs)"; v="$(echo "$v" | xargs)"
-      [ -n "$k" ] && kv["$k"]="$v"
-    done
-    [ -z "${kv[proto]:-}" ] || [ -z "${kv[server]:-}" ] || [ -z "${kv[share]:-}" ] || [ -z "${kv[mount]:-}" ] && continue
-    _mount_one "${kv[proto]}" "${kv[server]}" "${kv[share]}" "${kv[mount]}" "${kv[username]:-}" "${kv[password]:-}" "${kv[options]:-}"
-  done
-fi
-
-# Mount new UI-managed mounts with auto_mount=true
+# Auto-mount UI-managed mounts
 if jq -e '.mounts | length > 0' "$APP_CONFIG" >/dev/null 2>&1; then
   count="$(jq -r '.mounts | length' "$APP_CONFIG")"
   if [ "$count" -gt 0 ]; then
