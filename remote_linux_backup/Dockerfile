@@ -1,26 +1,32 @@
-FROM debian:bookworm
+ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.3.2
+FROM $BUILD_FROM
 
-ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# Install required packages
+RUN apk add --no-cache \
+    python3 py3-pip \
+    openssh-client rsync \
+    curl bash jq \
+    pigz gzip tar \
+    rclone coreutils util-linux \
+    zfs \
+    tzdata \
+    dropbear \
+    samba-client \
+    && pip3 install --no-cache-dir --upgrade pip
 
-# system packages (no apt gunicorn; we'll use the venv one)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv \
-    openssh-client sshpass rsync gzip tar coreutils util-linux fdisk \
-    rclone cifs-utils nfs-common curl jq procps ca-certificates cron \
-    && rm -rf /var/lib/apt/lists/*
+# Copy add-on files
+COPY requirements.txt /app/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/requirements.txt
 
-# create app dir
-WORKDIR /app
-COPY app /app
-
-# create and use virtualenv for Python deps (avoids PEP 668)
-RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
-ENV PATH="/opt/venv/bin:${PATH}"
-
-# web assets & entrypoint
-COPY www /app/www
 COPY run.sh /run.sh
-RUN chmod +x /run.sh
+COPY api.py /app/api.py
+COPY job_runner.py /app/job_runner.py
+COPY scheduler.py /app/scheduler.py
+COPY index.html /app/index.html
+COPY style.css /app/style.css
 
-EXPOSE 8066
-CMD ["/run.sh"]
+# Ensure scripts are executable
+RUN chmod a+x /run.sh /app/*.py
+
+# Entrypoint
+CMD [ "/run.sh" ]
