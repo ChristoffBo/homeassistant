@@ -159,4 +159,165 @@ host=10.0.0.30;username=root;password=pass;method=dd;disk=/dev/sda;store_to=/mnt
       </div>
 
       <div class="log-wrap">
-        <div class="log
+        <div class="log-title">Scheduler</div>
+        <pre id="jobs-log" class="log"></pre>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="settings" class="panel" role="tabpanel" aria-labelledby="Settings">
+      <div class="grid">
+        <div class="field">
+          <label>UI Port <span class="hint">Non-Ingress port</span></label>
+          <input id="s-port" value="8066" />
+        </div>
+        <div class="field">
+          <label>Gotify URL <span class="hint">http://host:port</span></label>
+          <input id="s-gurl" placeholder="http://10.0.0.99:8091" />
+        </div>
+        <div class="field">
+          <label>Gotify Token</label>
+          <input id="s-gtok" placeholder="token" />
+        </div>
+        <div class="field">
+          <label>Dropbox enabled</label>
+          <select id="s-dbxe">
+            <option value="false" selected>false</option>
+            <option value="true">true</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Dropbox remote <span class="hint">e.g. dropbox:HA-Backups</span></label>
+          <input id="s-dbxr" value="dropbox:HA-Backups" />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btn-save" class="btn">Save settings</button>
+        <button id="btn-list" class="btn">List local backups</button>
+      </div>
+
+      <div class="log-wrap">
+        <div class="log-title">Status</div>
+        <pre id="settings-log" class="log"></pre>
+      </div>
+
+      <details class="help details">
+        <summary>NAS mounts (configure in add-on Configuration)</summary>
+        <p>
+          Add mounts under the add-on’s <strong>Configuration</strong>. One line per mount:
+          <code>proto=cifs;server=192.168.1.10;share=backups;mount=/mnt/nas;username=nasuser;password=pass</code><br/>
+          NFS: <code>proto=nfs;server=192.168.1.20;share=/export/backups;mount=/mnt/nfs</code>
+        </p>
+      </details>
+    </section>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const show = (el, v) => el.classList.toggle('hide', !v);
+
+    // Tabs
+    document.querySelectorAll('.tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('is-active'));
+        document.getElementById(tab).classList.add('is-active');
+      });
+    });
+
+    // Field visibility
+    $('#b-method').addEventListener('change', e => {
+      const m = e.target.value;
+      show($('#b-disk-wrap'), m === 'dd');
+      show($('#b-files-wrap'), m === 'rsync');
+      show($('#b-zfs-wrap'), m === 'zfs');
+    });
+    $('#r-method').addEventListener('change', e => {
+      const m = e.target.value;
+      show($('#r-image-wrap'), m === 'dd');
+      show($('#r-disk-wrap'), m === 'dd');
+      show($('#r-src-wrap'), m === 'rsync');
+      show($('#r-dest-wrap'), m === 'rsync');
+    });
+
+    // API helpers
+    async function POST(url, body) {
+      const r = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body || {}) });
+      return r.json().catch(() => ({}));
+    }
+    async function GET(url) {
+      const r = await fetch(url);
+      return r.json().catch(() => ({}));
+    }
+
+    // Actions
+    $('#btn-probe').onclick = async () => {
+      const payload = { host: $('#b-host').value, username: $('#b-user').value, password: $('#b-pass').value };
+      const j = await POST('/api/probe_host', payload);
+      $('#backup-log').textContent = j.out || JSON.stringify(j, null, 2);
+    };
+
+    $('#btn-tools').onclick = async () => {
+      const payload = { host: $('#b-host').value, username: $('#b-user').value, password: $('#b-pass').value };
+      const j = await POST('/api/install_tools', payload);
+      $('#backup-log').textContent = j.out || JSON.stringify(j, null, 2);
+    };
+
+    $('#btn-backup').onclick = async () => {
+      const p = {
+        method: $('#b-method').value,
+        host: $('#b-host').value, username: $('#b-user').value, password: $('#b-pass').value,
+        store_to: $('#b-store').value, cloud_upload: $('#b-cloud').value,
+        disk: $('#b-disk').value, files: $('#b-files').value, zfs_dataset: $('#b-zfs').value
+      };
+      const j = await POST('/api/run_backup', p);
+      $('#backup-log').textContent = JSON.stringify(j, null, 2);
+    };
+
+    $('#btn-run-restore').onclick = async () => {
+      const p = {
+        method: $('#r-method').value,
+        host: $('#r-host').value, username: $('#r-user').value, password: $('#r-pass').value,
+        image_path: $('#r-image').value, disk: $('#r-disk').value,
+        local_src: $('#r-src').value, remote_dest: $('#r-dest').value
+      };
+      const j = await POST('/api/run_restore', p);
+      $('#restore-log').textContent = JSON.stringify(j, null, 2);
+    };
+
+    $('#btn-save').onclick = async () => {
+      const p = {
+        ui_port: parseInt($('#s-port').value || '8066', 10),
+        gotify_enabled: !!($('#s-gurl').value && $('#s-gtok').value),
+        gotify_url: $('#s-gurl').value,
+        gotify_token: $('#s-gtok').value,
+        dropbox_enabled: $('#s-dbxe').value === 'true',
+        dropbox_remote: $('#s-dbxr').value
+      };
+      const j = await POST('/api/options', p);
+      $('#settings-log').textContent = j.ok ? 'Saved.' : JSON.stringify(j);
+    };
+
+    $('#btn-list').onclick = async () => {
+      const j = await GET('/api/list_backups?path=/backup');
+      $('#settings-log').textContent = (j || []).map(x => `${x.path} (${x.size} bytes)`).join('\n');
+    };
+
+    $('#btn-save-jobs').onclick = async () => {
+      const lines = ($('#jobs-json').value || '').split('\n').map(s => s.trim()).filter(Boolean);
+      const opts = await GET('/api/options');
+      opts.jobs = lines;
+      const j = await POST('/api/options', opts);
+      $('#jobs-log').textContent = j.ok ? 'Jobs saved. Click "Apply schedule".' : JSON.stringify(j);
+    };
+
+    $('#btn-apply').onclick = async () => {
+      const j = await POST('/api/apply_schedule');
+      $('#jobs-log').textContent = j.out || JSON.stringify(j, null, 2);
+    };
+  </script>
+</body>
+</html>
