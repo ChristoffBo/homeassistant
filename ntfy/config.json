@@ -35,7 +35,6 @@
   },
   "init": false,
   "command": [
-    "/bin/ntfy",
     "serve",
     "--listen",
     "0.0.0.0:80",
@@ -43,7 +42,7 @@
     "/config/ntfy"
   ],
   "options": {
-    "port": 8092
+    "port": 8092"
   },
   "schema": {
     "port": "int(1,65535)"
