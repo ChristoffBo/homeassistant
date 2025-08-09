@@ -16,9 +16,9 @@ function showTab(id){
   document.querySelector(`.tab[data-target="${id}"]`).classList.add('active');
 }
 
+/* ----- Settings ----- */
 async function loadOptions(){
   const d = await api('/api/options');
-  // Settings
   $('s_ui_port').value = d.ui_port ?? 8066;
   $('s_gotify_url').value = d.gotify_url || '';
   $('s_gotify_token').value = d.gotify_token || '';
@@ -40,6 +40,7 @@ async function listBackups(){
   $('s_status').value = res.map(x => `${x.path}  (${(x.size/1048576).toFixed(1)} MB)`).join('\n');
 }
 
+/* ----- Backup/Restore ----- */
 async function probeHost(){
   const payload = { host:$('b_host').value, username:$('b_user').value, password:$('b_pass').value, port:parseInt($('b_port').value||'22',10) };
   const res = await api('/api/probe_host', {method:'POST', body: JSON.stringify(payload)});
@@ -69,6 +70,7 @@ async function runBackup(){
   };
   const res = await api('/api/run_backup', {method:'POST', body: JSON.stringify(payload)});
   $('b_result').value = res.out || JSON.stringify(res,null,2);
+  await backupsRefresh();
 }
 async function runRestore(){
   const method = $('r_method').value;
@@ -83,54 +85,60 @@ async function runRestore(){
   $('r_result').value = res.out || JSON.stringify(res,null,2);
 }
 
-/* ---------- Explorer ---------- */
+/* ----- Explorer ----- */
 let currentPath = "/backup";
 function renderCrumbs(path){
-  const cont = $('crumbs');
-  cont.innerHTML = "";
+  const cont = $('crumbs'); cont.innerHTML = "";
   const parts = path.split("/").filter(Boolean);
   let acc = path.startsWith("/") ? "/" : "";
   const rootSpan = document.createElement("span");
-  rootSpan.textContent = "/";
-  rootSpan.onclick = ()=> loadDir("/");
+  rootSpan.textContent = "/"; rootSpan.onclick = ()=> loadDir("/");
   cont.appendChild(rootSpan);
   parts.forEach(p=>{
     acc = (acc === "/" ? "" : acc) + "/" + p;
     const s = document.createElement("span");
-    s.textContent = p;
-    s.onclick = ()=> loadDir(acc);
+    s.textContent = p; s.onclick = ()=> loadDir(acc);
     cont.appendChild(s);
   });
 }
 async function loadDir(path){
   try{
     const res = await api(`/api/ls?path=${encodeURIComponent(path)}`);
-    currentPath = res.path;
-    renderCrumbs(currentPath);
-    const body = $('explorer_rows');
-    body.innerHTML = "";
+    currentPath = res.path; renderCrumbs(currentPath);
+    const body = $('explorer_rows'); body.innerHTML = "";
     res.items.forEach(it=>{
       const tr = document.createElement('tr');
-      const name = document.createElement('td'); name.textContent = it.name; tr.appendChild(name);
-      const typ = document.createElement('td'); typ.textContent = it.is_dir ? "dir" : "file"; tr.appendChild(typ);
-      const size = document.createElement('td'); size.textContent = it.is_dir ? "" : (it.size/1048576).toFixed(1) + " MB"; tr.appendChild(size);
-      const act = document.createElement('td');
+      tr.innerHTML = `<td>${it.name}</td><td>${it.is_dir ? "dir" : "file"}</td><td>${it.is_dir ? "" : (it.size/1048576).toFixed(1)+" MB"}</td><td></td>`;
+      const td = tr.lastChild;
       if(it.is_dir){
         const btn = document.createElement('button'); btn.className="btn secondary"; btn.textContent="Open";
-        btn.onclick = ()=> loadDir(it.path);
-        act.appendChild(btn);
-      }else{
+        btn.onclick = ()=> loadDir(it.path); td.appendChild(btn);
+      } else {
         const a = document.createElement('a'); a.className="btn"; a.textContent="Download";
-        a.href = `/api/download?path=${encodeURIComponent(it.path)}`; a.target="_blank";
-        act.appendChild(a);
+        a.href = `/api/download?path=${encodeURIComponent(it.path)}`; a.target="_blank"; td.appendChild(a);
       }
-      tr.appendChild(act);
       body.appendChild(tr);
     });
-  }catch(e){
-    alert("Error: "+e.message);
-  }
+  }catch(e){ alert("Error: "+e.message); }
 }
+
+/* ----- Backups (persistent index) ----- */
+function fmtDate(ts){ const d=new Date(ts*1000); return d.toISOString().replace('T',' ').slice(0,19); }
+async function backupsRefresh(){
+  const data = await api('/api/backups');
+  const body = $('backups_rows'); body.innerHTML="";
+  data.items.sort((a,b)=>b.created-a.created).forEach(x=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${x.path}</td><td>${x.kind}</td><td>${x.host||""}</td><td>${(x.size/1048576).toFixed(1)} MB</td><td>${fmtDate(x.created)}</td><td></td>`;
+    const td = tr.lastChild;
+    const dl = document.createElement('a'); dl.className="btn"; dl.textContent="Download"; dl.href=`/api/download?path=${encodeURIComponent(x.path)}`; dl.target="_blank";
+    const del = document.createElement('button'); del.className="btn secondary"; del.textContent="Delete";
+    del.onclick = async ()=>{ if(confirm(`Delete ${x.path}?`)){ await api('/api/backups/delete',{method:'POST',body:JSON.stringify({path:x.path})}); await backupsRefresh(); }};
+    td.appendChild(dl); td.appendChild(document.createTextNode(" ")); td.appendChild(del);
+    body.appendChild(tr);
+  });
+}
+async function backupsRescan(){ await api('/api/backups?rescan=1'); await backupsRefresh(); }
 
 /* wiring */
 function wire(){
@@ -144,7 +152,11 @@ function wire(){
   $('btn_run_restore').addEventListener('click', (e)=>{ e.preventDefault(); runRestore().catch(console.error); });
   $('jump_backup').addEventListener('click', ()=> loadDir('/backup'));
   $('jump_mnt').addEventListener('click', ()=> loadDir('/mnt'));
+  $('btn_backups_refresh').addEventListener('click', (e)=>{ e.preventDefault(); backupsRefresh().catch(console.error); });
+  $('btn_backups_rescan').addEventListener('click', (e)=>{ e.preventDefault(); backupsRescan().catch(console.error); });
+
   loadOptions().catch(console.error);
   loadDir('/backup').catch(console.error);
+  backupsRefresh().catch(console.error);
 }
 document.addEventListener('DOMContentLoaded', wire);
