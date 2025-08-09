@@ -1,234 +1,302 @@
+// -------- small helper --------
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const id = s => document.getElementById(s);
+
 async function api(path, opts = {}) {
   const headers = opts.headers || {};
-  if (!headers["Content-Type"] && opts.method && opts.method.toUpperCase() === "POST") {
-    headers["Content-Type"] = "application/json";
-  }
+  if (!headers["Content-Type"] && opts.body) headers["Content-Type"] = "application/json";
   const r = await fetch(path, { ...opts, headers });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  const ct = r.headers.get("content-type") || "";
+  return ct.includes("application/json") ? r.json() : r.text();
 }
-const $ = (s) => document.querySelector(s);
-function showTab(id) {
-  document.querySelectorAll(".panel").forEach(p => p.classList.remove("is-active"));
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("is-active"));
-  $(`#panel-${id}`).classList.add("is-active");
-  document.querySelector(`.tab[data-target="${id}"]`).classList.add("is-active");
+function log(msg) {
+  const box = id("status_box");
+  if (typeof msg === "object") msg = JSON.stringify(msg, null, 2);
+  box.value = (box.value ? box.value + "\n" : "") + msg;
+  box.scrollTop = box.scrollHeight;
 }
 
-// Tabs
-document.querySelectorAll(".tab").forEach(t => {
-  t.addEventListener("click", () => showTab(t.dataset.target));
-});
+// -------- tabs --------
+function show(tab) {
+  $$(".tab").forEach(b => b.classList.toggle("is-active", b.dataset.tab === tab));
+  $$(".panel").forEach(p => p.classList.toggle("is-active", p.id === `panel-${tab}`));
+}
+$$(".tab").forEach(btn => btn.addEventListener("click", () => show(btn.dataset.tab)));
 
-// ------------ Settings ------------
+// -------- options / settings (with Gotify test) --------
 async function loadOptions() {
-  const j = await api("/api/options");
-  $("#s_gotify_url").value = j.gotify_url || "";
-  $("#s_gotify_token").value = j.gotify_token || "";
-  $("#s_gotify_enabled").value = String(!!j.gotify_enabled);
-  $("#s_dropbox_enabled").value = String(!!j.dropbox_enabled);
-  $("#s_dropbox_remote").value = j.dropbox_remote || "dropbox:HA-Backups";
-  $("#s_ui_port").value = j.ui_port || 8066;
+  try {
+    const o = await api("/api/options");
+    id("s_gurl").value = o.gotify_url || "";
+    id("s_gtoken").value = o.gotify_token || "";
+    id("s_gen").value = String(!!o.gotify_enabled);
+    id("s_dben").value = String(!!o.dropbox_enabled);
+    id("s_dropremote").value = o.dropbox_remote || "dropbox:HA-Backups";
+    id("s_uiport").value = o.ui_port || 8066;
+  } catch (e) {
+    log("Load options failed: " + e.message);
+  }
 }
-async function saveOptions() {
-  const body = {
-    gotify_url: $("#s_gotify_url").value.trim(),
-    gotify_token: $("#s_gotify_token").value.trim(),
-    gotify_enabled: $("#s_gotify_enabled").value === "true",
-    dropbox_enabled: $("#s_dropbox_enabled").value === "true",
-    dropbox_remote: $("#s_dropbox_remote").value.trim(),
-    ui_port: parseInt($("#s_ui_port").value || "8066", 10),
-  };
-  const j = await api("/api/options", { method: "POST", body: JSON.stringify(body) });
-  $("#s_status").textContent = JSON.stringify(j, null, 2);
-}
-$("#btn_save_settings").onclick = saveOptions;
-$("#btn_test_gotify").onclick = async () => {
-  const body = {
-    url: $("#s_gotify_url").value.trim(),
-    token: $("#s_gotify_token").value.trim(),
-    enabled: $("#s_gotify_enabled").value === "true",
-    insecure: false
-  };
-  const j = await api("/api/gotify_test", { method: "POST", body: JSON.stringify(body) });
-  $("#s_status").textContent = JSON.stringify(j, null, 2);
+id("btnSaveSettings").onclick = async () => {
+  try {
+    const body = {
+      gotify_url: id("s_gurl").value.trim(),
+      gotify_token: id("s_gtoken").value.trim(),
+      gotify_enabled: id("s_gen").value === "true",
+      dropbox_enabled: id("s_dben").value === "true",
+      dropbox_remote: id("s_dropremote").value.trim(),
+      ui_port: parseInt(id("s_uiport").value || "8066", 10),
+    };
+    const j = await api("/api/options", { method: "POST", body: JSON.stringify(body) });
+    log(j);
+  } catch (e) { log("Save options error: " + e.message); }
+};
+id("btnTestGotify").onclick = async () => {
+  try {
+    const j = await api("/api/gotify_test", { method: "POST", body: JSON.stringify({
+      url: id("s_gurl").value.trim(),
+      token: id("s_gtoken").value.trim(),
+      insecure: true
+    })});
+    log(j);
+  } catch (e) { log("Gotify test error: " + e.message); }
 };
 
-// ------------ Mounts ------------
+// -------- mounts --------
+let mounts = [];
 async function refreshMounts() {
-  const j = await api("/api/mounts");
-  const tb = $("#mount_rows"); tb.innerHTML = "";
-  (j.mounts || []).forEach(m => {
-    const tr = document.createElement("tr");
-    const stat = m.mounted ? "🟢 mounted" : "🔴 not mounted";
-    tr.innerHTML = `<td>${m.name||""}</td><td>${m.proto}</td><td>${m.server}</td><td>${m.share}</td><td>${m.mount}</td><td>${m.auto_mount?"yes":"no"}</td><td>${stat}</td><td></td>`;
-    const actions = tr.lastChild;
-
-    const bMount = document.createElement("button"); bMount.className="btn"; bMount.textContent="Mount";
-    bMount.onclick = async()=>{ const r=await api("/api/mount_now",{method:"POST",body:JSON.stringify(m)}); await refreshMounts(); alert(r.ok?"Mounted":"Failed"); };
-    actions.appendChild(bMount);
-
-    const bUm = document.createElement("button"); bUm.className="btn"; bUm.style.marginLeft="6px"; bUm.textContent="Unmount";
-    bUm.onclick = async()=>{ const r=await api("/api/unmount_now",{method:"POST",body:JSON.stringify({mount:m.mount})}); await refreshMounts(); alert(r.ok?"Unmounted":"Failed"); };
-    actions.appendChild(bUm);
-
-    const bDel = document.createElement("button"); bDel.className="btn btn--danger"; bDel.style.marginLeft="6px"; bDel.textContent="Delete";
-    bDel.onclick = async()=>{ if(!confirm(`Delete preset "${m.name||m.mount}"?`)) return; const r=await api("/api/mount_delete",{method:"POST",body:JSON.stringify({name:m.name})}); await refreshMounts(); };
-    actions.appendChild(bDel);
-
-    tr.onclick = ()=>{ // fill form
-      $("#m_name").value = m.name||"";
-      $("#m_proto").value = m.proto||"cifs";
-      $("#m_server").value = m.server||"";
-      $("#m_user").value = m.username||"";
-      $("#m_pass").value = m.password||"";
-      $("#m_share").value = m.share||"";
-      $("#m_mount").value = m.mount||"";
-      $("#m_opts").value = m.options||"";
-      $("#m_auto").value = String(!!m.auto_mount);
-    };
-
-    tb.appendChild(tr);
-  });
+  try {
+    const j = await api("/api/mounts");
+    mounts = j.mounts || j.items || [];
+    // table
+    const tb = id("mountTable").querySelector("tbody");
+    tb.innerHTML = "";
+    mounts.forEach(m => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${m.name || ""}</td>
+        <td>${m.proto}</td>
+        <td>${m.server}</td>
+        <td>${m.share}</td>
+        <td>${m.mount}</td>
+        <td>${m.auto_mount ? "Yes" : "No"}</td>
+        <td class="row-actions"></td>`;
+      const cell = tr.querySelector(".row-actions");
+      const mk = (txt, fn, cls="btn") => { const b=document.createElement("button"); b.className=cls; b.textContent=txt; b.onclick=fn; return b; };
+      cell.appendChild(mk("Mount", async ()=>{ log(await api("/api/mount_now",{method:"POST",body:JSON.stringify(m)})); await refreshMounts(); fillStoreTo(); }));
+      cell.appendChild(mk("Unmount", async ()=>{ log(await api("/api/unmount_now",{method:"POST",body:JSON.stringify({mount:m.mount})})); await refreshMounts(); fillStoreTo(); }, "btn"));
+      cell.appendChild(mk("Delete", async ()=>{ if(!confirm("Delete preset?")) return; log(await api("/api/mount_delete",{method:"POST",body:JSON.stringify({name:m.name})})); await refreshMounts(); }, "btn danger"));
+      tr.onclick = () => { // fill form
+        id("m_name").value=m.name||""; id("m_proto").value=m.proto; id("m_server").value=m.server;
+        id("m_user").value=m.username||""; id("m_pass").value=m.password||"";
+        id("m_share").value=m.share||""; id("m_mount").value=m.mount||"";
+        id("m_opts").value=m.options||""; id("m_auto").value=String(!!m.auto_mount);
+      };
+      tb.appendChild(tr);
+    });
+    fillStoreTo();
+  } catch (e) { log("Load mounts failed: " + e.message); }
 }
-
-async function listShares() {
-  const server = $("#m_server").value.trim();
-  const proto = $("#m_proto").value.trim();
-  const username = $("#m_user").value.trim();
-  const password = $("#m_pass").value;
-  if (!server) { alert("Enter server/host first."); return; }
-  const r = await api(`/api/mount_list?proto=${encodeURIComponent(proto)}&server=${encodeURIComponent(server)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
-  const sel = $("#m_share_select"); sel.innerHTML = "";
-  if (!r.ok && r.error) { alert(r.error); return; }
-  (r.items||[]).forEach(it => {
+function fillStoreTo() {
+  const sel = id("b_store");
+  const keep = sel.value;
+  sel.innerHTML = "";
+  const optLocal = document.createElement("option");
+  optLocal.value = "/backup"; optLocal.textContent = "/backup (local)";
+  sel.appendChild(optLocal);
+  mounts.filter(m => m.mounted || true).forEach(m => {
     const o = document.createElement("option");
-    o.value = it.name || it.path || "";
-    o.textContent = it.name || it.path || "";
+    o.value = m.mount; o.textContent = `${m.name || m.mount} (${m.mount})`;
     sel.appendChild(o);
   });
-  if (sel.options.length) sel.selectedIndex = 0;
+  if (keep) sel.value = keep;
 }
-$("#btn_list_shares").onclick = (e)=>{ e.preventDefault(); listShares().catch(console.error); };
-
-$("#btn_use_selected").onclick = (e)=>{
-  e.preventDefault();
-  const sel = $("#m_share_select");
-  if (sel.value) $("#m_share").value = sel.value;
-};
-
-$("#btn_mount_selected").onclick = async (e)=>{
-  e.preventDefault();
-  const sel = $("#m_share_select");
-  if (!sel.value) { alert("No share selected."); return; }
-  $("#m_share").value = sel.value;
-  // attempt mount immediately (without needing to save preset)
-  const payload = {
-    name: $("#m_name").value.trim() || sel.value,
-    proto: $("#m_proto").value.trim(),
-    server: $("#m_server").value.trim(),
-    username: $("#m_user").value.trim(),
-    password: $("#m_pass").value,
-    share: $("#m_share").value.trim(),
-    mount: $("#m_mount").value.trim() || `/mnt/${($("#m_name").value.trim()||sel.value)}`,
-    options: $("#m_opts").value.trim(),
-    auto_mount: $("#m_auto").value==="true"
-  };
-  const r = await api("/api/mount_now",{method:"POST",body:JSON.stringify(payload)});
-  alert(r.ok ? "Mounted." : ("Mount failed:\n" + (r.err||r.out||"")));
-  await refreshMounts();
-};
-
-$("#btn_add_mount").onclick = async (e)=>{
-  e.preventDefault();
-  const payload = {
-    name: $("#m_name").value.trim(),
-    proto: $("#m_proto").value.trim(),
-    server: $("#m_server").value.trim(),
-    username: $("#m_user").value.trim(),
-    password: $("#m_pass").value,
-    share: $("#m_share").value.trim(),
-    mount: $("#m_mount").value.trim(),
-    options: $("#m_opts").value.trim(),
-    auto_mount: $("#m_auto").value==="true"
-  };
-  if (!payload.name || !payload.server || !payload.share) { alert("Name, server and share are required."); return; }
-  const r = await api("/api/mount_add_update",{method:"POST",body:JSON.stringify(payload)});
-  if (r.ok) { await refreshMounts(); alert("Saved."); } else { alert("Save failed."); }
-};
-
-// ------------ Backups list ------------
-function fmtSize(n){ if(n<1024) return n+" B"; const u=["KB","MB","GB","TB"]; let i=-1; do{ n/=1024; i++; }while(n>=1024 && i<u.length-1); return n.toFixed(1)+" "+u[i]; }
-function fmtDate(ts){ const d=new Date(ts*1000); return d.toISOString().replace("T"," ").slice(0,19); }
-
-async function refreshBackups() {
-  const j = await api("/api/backups");
-  const tb = $("#backups_rows"); tb.innerHTML = "";
-  (j.items||[]).sort((a,b)=>b.created-a.created).forEach(x=>{
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${x.path}</td><td>${x.kind}</td><td>${x.location||"Local"}</td><td>${fmtSize(x.size)}</td><td>${fmtDate(x.created)}</td><td></td>`;
-    const td = tr.lastChild;
-    const dl = document.createElement("a"); dl.className="btn"; dl.textContent="Download"; dl.href=`/api/download?path=${encodeURIComponent(x.path)}`; dl.target="_blank";
-    td.appendChild(dl);
-
-    const rs = document.createElement("button"); rs.className="btn btn--danger"; rs.style.marginLeft="6px"; rs.textContent="Restore";
-    rs.onclick = async ()=>{
-      if (!confirm("Restore selected image/files?\nThis can overwrite data.")) return;
-      if (!confirm("FINAL WARNING: This may DESTROY data on the destination. Continue?")) return;
-      // Fill restore panel and switch there, user presses Restore button afterwards (safer)
-      $("#r_image").value = x.path;
-      showTab("restore");
+id("btnAddMount").onclick = async () => {
+  try {
+    const body = {
+      name: id("m_name").value.trim(),
+      proto: id("m_proto").value,
+      server: id("m_server").value.trim(),
+      username: id("m_user").value,
+      password: id("m_pass").value,
+      share: id("m_share").value.trim(),
+      mount: id("m_mount").value.trim(),
+      options: id("m_opts").value.trim(),
+      auto_mount: id("m_auto").value === "true",
     };
-    td.appendChild(rs);
+    if(!body.name || !body.server || !body.share) return alert("Name, server, share/export are required.");
+    const j = await api("/api/mount_add_update", { method:"POST", body: JSON.stringify(body) });
+    log(j); await refreshMounts();
+  } catch (e) { log("Add/update mount error: " + e.message); }
+};
 
-    tb.appendChild(tr);
+// Shares/exports -> dropdown
+id("btnList").onclick = async () => {
+  try {
+    const server = id("m_server").value.trim();
+    const proto = id("m_proto").value;
+    if (!server) return alert("Enter server/host first");
+    const res = await api(`/api/mount_list?proto=${encodeURIComponent(proto)}&server=${encodeURIComponent(server)}`);
+    const items = res.items || [];
+    const sel = id("m_share_list");
+    sel.innerHTML = "";
+    const blank = document.createElement("option"); blank.value = ""; blank.textContent = "— select —"; sel.appendChild(blank);
+    items.forEach(it => {
+      const o = document.createElement("option");
+      o.value = (proto==="cifs") ? it.name : it.path;
+      o.textContent = (proto==="cifs") ? it.name : it.path;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => { if (sel.value) id("m_share").value = sel.value; };
+    // also dump to status for visibility
+    log(res);
+  } catch (e) { log("List shares error: " + e.message); }
+};
+
+// Browse modal (same endpoints you already had)
+const modal = id("browse_modal");
+let browse_ctx = { proto:"cifs", server:"", user:"", pass:"", share:"", path:"" };
+function openModal(){ modal.style.display="flex"; }
+function closeModal(){ modal.style.display="none"; }
+id("browse_close").onclick = closeModal;
+id("btnBrowse").onclick = async ()=>{
+  browse_ctx = {
+    proto: id("m_proto").value.trim(),
+    server: id("m_server").value.trim(),
+    user: id("m_user").value,
+    pass: id("m_pass").value,
+    share: id("m_share").value.trim(),
+    path: ""
+  };
+  if(!browse_ctx.server) return alert("Enter server first");
+  openModal(); await doBrowse();
+};
+id("browse_up").onclick = async ()=>{
+  if (browse_ctx.path) {
+    const p = browse_ctx.path.split("/"); p.pop(); browse_ctx.path = p.join("/");
+    await doBrowse();
+  } else if (browse_ctx.share) {
+    browse_ctx.share = ""; await doBrowse();
+  }
+};
+async function doBrowse(){
+  id("browse_path").textContent = browse_ctx.proto==="cifs"
+      ? `//${browse_ctx.server}/${browse_ctx.share||""}/${browse_ctx.path||""}`.replace(/\/+/g,"/")
+      : `${browse_ctx.server} (NFS)`;
+  const r = await api("/api/mount_browse", { method:"POST", body: JSON.stringify(browse_ctx) });
+  const list = id("browse_list"); list.innerHTML = "";
+  (r.items||[]).forEach(it=>{
+    const div = document.createElement("div");
+    div.textContent = `${(it.type||"").toUpperCase()}  ${it.name || it.path}`;
+    div.onclick = async ()=>{
+      if(browse_ctx.proto==="cifs"){
+        if(!browse_ctx.share && it.type==="share"){ id("m_share").value = it.name; closeModal(); return; }
+        if(it.type==="dir"){ browse_ctx.path = browse_ctx.path ? `${browse_ctx.path}/${it.name}` : it.name; await doBrowse(); }
+        if(it.type==="file"){ closeModal(); }
+      }else{ // NFS
+        if(it.type==="export"){ id("m_share").value = it.path; closeModal(); }
+      }
+    };
+    list.appendChild(div);
   });
 }
 
-// ------------ Backup / Restore stubs tied to your existing endpoints ------------
-$("#btn_estimate").onclick = async ()=>{
-  const payload = {
-    method: $("#b_method").value, username: $("#b_user").value, host: $("#b_host").value,
-    password: $("#b_pass").value, port: parseInt($("#b_port").value||"22",10),
-    disk: $("#b_disk").value
-  };
-  let j = {};
-  try { j = await api("/api/estimate_backup",{method:"POST",body:JSON.stringify(payload)}); }
-  catch(e){ j = {ok:false,error:String(e)}; }
-  $("#status_box").textContent = JSON.stringify(j,null,2);
+// -------- Backups table with double-confirm Restore --------
+async function refreshBackups() {
+  try {
+    const j = await api("/api/backups");
+    const items = (j.items||[]).sort((a,b)=> (b.created||0) - (a.created||0));
+    const tb = id("backupsTable").querySelector("tbody");
+    tb.innerHTML = "";
+    items.forEach(x=>{
+      const tr = document.createElement("tr");
+      const size = (x.size && x.size > 0) ? human(x.size) : "";
+      const date = x.created ? new Date(x.created*1000).toISOString().replace("T"," ").slice(0,19) : "";
+      tr.innerHTML = `
+        <td>${x.path}</td>
+        <td>${x.kind || "unknown"}</td>
+        <td>${x.location || "Local"}</td>
+        <td>${size}</td>
+        <td>${date}</td>
+        <td class="row-actions"></td>`;
+      const cell = tr.querySelector(".row-actions");
+      const dl = document.createElement("a");
+      dl.className = "btn"; dl.textContent = "Download";
+      dl.href = `/api/download?path=${encodeURIComponent(x.path)}`; dl.target = "_blank";
+      const rs = document.createElement("button");
+      rs.className = "btn danger"; rs.textContent = "Restore";
+      rs.onclick = async ()=>{
+        if (!confirm(`Are you sure you want to restore from:\n${x.path}?`)) return;
+        if (!confirm("FINAL WARNING: This will overwrite data at the destination. Continue?")) return;
+        // Infer method from extension
+        const method = x.path.endsWith(".img") || x.path.endsWith(".img.gz") ? "dd" : "rsync";
+        const payload = (method==="dd")
+          ? { method, username:id("r_user").value, host:id("r_host").value, password:id("r_pass").value,
+              port:parseInt(id("r_port").value||"22",10), image_path:x.path, disk:id("r_disk").value }
+          : { method, username:id("r_user").value, host:id("r_host").value, password:id("r_pass").value,
+              port:parseInt(id("r_port").value||"22",10), local_src:x.path, remote_dest:id("r_dest").value };
+        const out = await api("/api/run_restore",{method:"POST",body:JSON.stringify(payload)});
+        log(out);
+        alert("Restore started. Check Status/Output for progress.");
+      };
+      cell.appendChild(dl); cell.appendChild(document.createTextNode(" ")); cell.appendChild(rs);
+      tb.appendChild(tr);
+    });
+  } catch (e) { log("Backups fetch failed: " + e.message); }
+}
+function human(bytes){
+  const u=['B','KB','MB','GB','TB']; let i=0; let n=bytes;
+  while(n>=1024 && i<u.length-1){ n/=1024; i++; }
+  return `${n.toFixed(n>=100||i===0?0:1)} ${u[i]}`;
+}
+
+// -------- Backup / Restore actions (from forms) --------
+id("btnEstimate").onclick = async ()=>{
+  try{
+    const body = {
+      method:id("b_method").value, username:id("b_user").value, host:id("b_host").value,
+      password:id("b_pass").value, port:parseInt(id("b_port").value||"22",10),
+      disk:id("b_disk").value, files:id("b_files").value, bwlimit_kbps:parseInt(id("b_bw").value||"0",10)
+    };
+    log(await api("/api/estimate_backup",{method:"POST",body:JSON.stringify(body)}));
+  }catch(e){ log("Estimate error: "+e.message); }
+};
+id("btnBackup").onclick = async ()=>{
+  try{
+    const body = {
+      method:id("b_method").value, username:id("b_user").value, host:id("b_host").value,
+      password:id("b_pass").value, port:parseInt(id("b_port").value||"22",10),
+      disk:id("b_disk").value, files:id("b_files").value, store_to:id("b_store").value,
+      verify:id("b_verify").value==="true", excludes:id("b_excludes").value,
+      retention_days:parseInt(id("b_retention").value||"0",10),
+      backup_name:id("b_name").value, bwlimit_kbps:parseInt(id("b_bw").value||"0",10),
+      cloud_upload:id("b_cloud").value.trim()
+    };
+    log(await api("/api/run_backup",{method:"POST",body:JSON.stringify(body)}));
+    await refreshBackups();
+  }catch(e){ log("Backup error: "+e.message); }
+};
+id("btnRestore").onclick = async ()=>{
+  try{
+    if(!confirm("Are you sure?")) return;
+    if(!confirm("FINAL WARNING: This will overwrite data at the destination.")) return;
+    const body = {
+      method:id("r_method").value, username:id("r_user").value, host:id("r_host").value,
+      password:id("r_pass").value, port:parseInt(id("r_port").value||"22",10),
+      disk:id("r_disk").value, image_path:id("r_src").value,
+      local_src:id("r_src").value, remote_dest:id("r_dest").value,
+      excludes:id("r_ex").value, bwlimit_kbps:parseInt(id("r_bw").value||"0",10)
+    };
+    log(await api("/api/run_restore",{method:"POST",body:JSON.stringify(body)}));
+  }catch(e){ log("Restore error: "+e.message); }
 };
 
-$("#btn_run_backup").onclick = async ()=>{
-  const payload = {
-    method: $("#b_method").value, username: $("#b_user").value, host: $("#b_host").value,
-    password: $("#b_pass").value, port: parseInt($("#b_port").value||"22",10),
-    disk: $("#b_disk").value, store_to: $("#b_store").value,
-    verify: ($("#b_verify").value==="true"), backup_name: $("#b_name").value
-  };
-  let j = {};
-  try { j = await api("/api/run_backup",{method:"POST",body:JSON.stringify(payload)}); }
-  catch(e){ j = {ok:false,error:String(e)}; }
-  $("#status_box").textContent = JSON.stringify(j,null,2);
-  await refreshBackups();
-};
-
-$("#btn_run_restore").onclick = async ()=>{
-  if (!confirm("Restore will overwrite data. Continue?")) return;
-  if (!confirm("FINAL WARNING: This may DESTROY data on the destination. Are you absolutely sure?")) return;
-  const payload = {
-    method: $("#r_method").value, username: $("#r_user").value, host: $("#r_host").value,
-    password: $("#r_pass").value, port: parseInt($("#r_port").value||"22",10),
-    image_path: $("#r_image").value, disk: $("#r_disk").value
-  };
-  let j = {};
-  try { j = await api("/api/run_restore",{method:"POST",body:JSON.stringify(payload)}); }
-  catch(e){ j = {ok:false,error:String(e)}; }
-  $("#restore_box").textContent = JSON.stringify(j,null,2);
-};
-
-// ------------ init ------------
+// -------- init --------
 (async function init(){
   await loadOptions();
   await refreshMounts();
   await refreshBackups();
+  fillStoreTo();
 })();
