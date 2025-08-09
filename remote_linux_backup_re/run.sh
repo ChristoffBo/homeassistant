@@ -70,9 +70,9 @@ if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
   done
 fi
 
-# Apply schedules & start cron (foreground, syslog)
+# Apply schedules & start Debian cron
 python3 /app/scheduler.py apply || true
-crond -n -s -L /var/log/remote_linux_backup.log &
+cron -f &
 
 # Start API
 cd /app
