@@ -2,15 +2,10 @@ import os, json, subprocess, shlex, time
 from flask import Flask, request, jsonify, send_from_directory
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(APP_DIR, "data")
 WWW_DIR = os.path.join(APP_DIR, "www")
-os.makedirs(DATA_DIR, exist_ok=True)
-
 OPTIONS_PATH = "/data/options.json"
-app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
-
-# Bootstrap default options if /data/options.json not present
 DEFAULT_OPTIONS = {
+    "known_hosts": [],
     "ui_port": 8066,
     "gotify_enabled": False,
     "gotify_url": "",
@@ -20,33 +15,34 @@ DEFAULT_OPTIONS = {
     "dropbox_remote": "dropbox:HA-Backups",
     "nas_mounts": [],
     "server_presets": [],
-    "known_hosts": [],
     "jobs": []
 }
 
-def load_opts():
+app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
+
+def _safe_load_json(path):
     try:
-        if os.path.exists(OPTIONS_PATH):
-            with open(OPTIONS_PATH, "r") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    # ensure all keys
-                    for k,v in DEFAULT_OPTIONS.items():
-                        data.setdefault(k, v)
-                    return data
+        with open(path, "r") as f:
+            return json.load(f)
     except Exception:
-        pass
-    return dict(DEFAULT_OPTIONS)
+        return {}
+
+def load_opts():
+    d = _safe_load_json(OPTIONS_PATH)
+    # merge defaults without overwriting user keys
+    for k, v in DEFAULT_OPTIONS.items():
+        d.setdefault(k, v)
+    return d
 
 def save_opts(d):
-    os.makedirs(os.path.dirname(OPTIONS_PATH), exist_ok=True)
-    data = dict(DEFAULT_OPTIONS)
-    if isinstance(d, dict):
-        data.update(d)
-    tmp = OPTIONS_PATH + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, OPTIONS_PATH)
+    try:
+        tmp = OPTIONS_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f, indent=2)
+        os.replace(tmp, OPTIONS_PATH)
+        return True
+    except Exception as e:
+        return False
 
 def run(cmd):
     p = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -107,8 +103,11 @@ def get_options():
 @app.post("/api/options")
 def set_options():
     data = request.json or {}
-    save_opts(data)
-    return jsonify({"ok": True})
+    # ensure defaults
+    opts = load_opts()
+    opts.update(data)
+    ok = save_opts(opts)
+    return jsonify({"ok": ok})
 
 @app.post("/api/apply_schedule")
 def apply_schedule():
@@ -118,14 +117,18 @@ def apply_schedule():
 @app.post("/api/probe_host")
 def probe_host():
     b = request.json or {}
-    user = b.get("username","root"); host=b["host"]; pwd=b["password"]
+    user = b.get("username","root"); host=b.get("host",""); pwd=b.get("password","")
+    if not host:
+        return jsonify({"rc":2,"out":"Missing host"}),400
     rc, out = ssh(user, host, pwd, "uname -a || true; cat /etc/os-release 2>/dev/null || true; which rsync || true; which dd || true; which zfs || true")
     return jsonify({"rc": rc, "out": out})
 
 @app.post("/api/install_tools")
 def install_tools():
     b = request.json or {}
-    user = b.get("username","root"); host=b["host"]; pwd=b["password"]
+    user = b.get("username","root"); host=b.get("host",""); pwd=b.get("password","")
+    if not host:
+        return jsonify({"rc":2,"out":"Missing host"}),400
     cmds = [
         "which rsync || (which apt && apt update && apt install -y rsync) || (which apk && apk add rsync) || (which dnf && dnf install -y rsync) || (which pkg && pkg install -y rsync) || true",
         "which gzip || (which apt && apt update && apt install -y gzip) || (which apk && apk add gzip) || (which dnf && dnf install -y gzip) || (which pkg && pkg install -y gzip) || true"
@@ -140,7 +143,9 @@ def install_tools():
 @app.post("/api/run_backup")
 def run_backup():
     b = request.json or {}
-    method=b["method"]; user=b.get("username","root"); host=b["host"]; pwd=b["password"]
+    method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password","")
+    if not host or not method:
+        return jsonify({"rc":2,"out":"Missing host/method"}),400
     store_to=b.get("store_to","/backup"); os.makedirs(store_to, exist_ok=True)
     cloud=b.get("cloud_upload",""); t0=time.time()
     if method=="dd":
@@ -160,7 +165,9 @@ def run_backup():
         gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync\nSaved: {store_to}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
     elif method=="zfs":
-        dataset=b["zfs_dataset"]
+        dataset=b.get("zfs_dataset")
+        if not dataset:
+            return jsonify({"rc":2,"out":"Missing zfs_dataset"}),400
         snap=b.get("snapshot_name", time.strftime("backup-%Y%m%d-%H%M%S"))
         rc,out = ssh(user,host,pwd,f"zfs snapshot {shlex.quote(dataset)}@{shlex.quote(snap)}")
         gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: zfs snapshot\nSnapshot: {dataset}@{snap}")
@@ -171,14 +178,20 @@ def run_backup():
 @app.post("/api/run_restore")
 def run_restore():
     b = request.json or {}
-    method=b["method"]; user=b.get("username","root"); host=b["host"]; pwd=b["password"]; t0=time.time()
+    method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); t0=time.time()
+    if not host or not method:
+        return jsonify({"rc":2,"out":"Missing host/method"}),400
     if method=="dd":
-        image=b["image_path"]; disk=b.get("disk","/dev/sda")
+        image=b.get("image_path"); disk=b.get("disk","/dev/sda")
+        if not image:
+            return jsonify({"rc":2,"out":"Missing image_path"}),400
         rc,out = dd_restore(user,host,pwd,disk,image)
         gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd restore\nSrc: {image}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
     elif method=="rsync":
-        local_src=b["local_src"]; remote_dest=b.get("remote_dest","/")
+        local_src=b.get("local_src"); remote_dest=b.get("remote_dest","/")
+        if not local_src:
+            return jsonify({"rc":2,"out":"Missing local_src"}),400
         rc,out = rsync_push(user,host,pwd,local_src,remote_dest)
         gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync restore\nDest: {remote_dest}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
