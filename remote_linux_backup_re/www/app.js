@@ -8,7 +8,6 @@ async function api(path, opts={}) {
   return r.json();
 }
 function $(id){ return document.getElementById(id); }
-
 function showTab(id){
   document.querySelectorAll('.card').forEach(c => c.style.display = 'none');
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -16,7 +15,47 @@ function showTab(id){
   document.querySelector(`.tab[data-target="${id}"]`).classList.add('active');
 }
 
-/* ----- Settings ----- */
+/* ---- Options + dropdowns ---- */
+let mounts = [];
+let servers = [];
+
+function fillTargets(){
+  const sel = $('b_store');
+  sel.innerHTML = '';
+  const opt1 = document.createElement('option'); opt1.value = '/backup'; opt1.textContent = '/backup';
+  sel.appendChild(opt1);
+  mounts.filter(m=>m.mounted).forEach(m=>{
+    const o = document.createElement('option'); o.value = m.mount; o.textContent = `${m.name || m.mount} (${m.mount})`;
+    sel.appendChild(o);
+  });
+}
+
+function fillServers(){
+  function put(selectId){
+    const sel = $(selectId);
+    sel.innerHTML = '';
+    const blank = document.createElement('option'); blank.value = ''; blank.textContent = '— choose —';
+    sel.appendChild(blank);
+    servers.forEach(s=>{
+      const o = document.createElement('option');
+      o.value = JSON.stringify(s);
+      o.textContent = `${s.name || s.host} (${s.username}@${s.host}:${s.port})`;
+      sel.appendChild(o);
+    });
+  }
+  put('b_server'); put('r_server');
+}
+
+function applyServer(selectId, prefix){
+  const sel = $(selectId);
+  if (!sel.value) return;
+  const s = JSON.parse(sel.value);
+  $(prefix+'_host').value = s.host || '';
+  $(prefix+'_user').value = s.username || 'root';
+  $(prefix+'_port').value = s.port || 22;
+  if (s.save_password && s.password) $(prefix+'_pass').value = s.password;
+}
+
 async function loadOptions(){
   const d = await api('/api/options');
   $('s_ui_port').value = d.ui_port ?? 8066;
@@ -24,7 +63,36 @@ async function loadOptions(){
   $('s_gotify_token').value = d.gotify_token || '';
   $('s_dropbox_enabled').value = String(!!d.dropbox_enabled);
   $('s_dropbox_remote').value = d.dropbox_remote || 'dropbox:HA-Backups';
+  $('dropbox_hint').textContent = d.rclone_config_exists ? 'rclone config found at /config/rclone.conf' : 'No /config/rclone.conf found. Run "rclone config" and ensure the file is at /config/rclone.conf.';
 }
+
+async function refreshMounts(){
+  const res = await api('/api/mounts');
+  mounts = res.items || [];
+  fillTargets();
+  // table
+  const body = $('mount_rows'); body.innerHTML = '';
+  mounts.forEach(m=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${m.name||''}</td><td>${m.proto}</td><td>${m.server}/${m.share}</td><td>${m.mount}</td><td>${m.mounted?'mounted':'—'}</td><td></td>`;
+    const td = tr.lastChild;
+    const mBtn = document.createElement('button'); mBtn.className='btn'; mBtn.textContent='Mount'; mBtn.onclick = async()=>{await api('/api/mounts/mount',{method:'POST',body:JSON.stringify({entry:m})}); await refreshMounts();};
+    const uBtn = document.createElement('button'); uBtn.className='btn secondary'; uBtn.style.marginLeft='6px'; uBtn.textContent='Unmount'; uBtn.onclick = async()=>{await api('/api/mounts/unmount',{method:'POST',body:JSON.stringify({mount:m.mount})}); await refreshMounts();};
+    td.appendChild(mBtn); td.appendChild(uBtn);
+    body.appendChild(tr);
+  });
+  // JSON editor
+  $('mounts_json').value = JSON.stringify(mounts, null, 2);
+}
+
+async function refreshServers(){
+  const res = await api('/api/servers');
+  servers = res.items || [];
+  $('servers_json').value = JSON.stringify(servers, null, 2);
+  fillServers();
+}
+
+/* ---- Settings ---- */
 async function saveOptions(){
   const payload = {
     gotify_url: $('s_gotify_url').value.trim(),
@@ -35,12 +103,10 @@ async function saveOptions(){
   const res = await api('/api/options', {method:'POST', body: JSON.stringify(payload)});
   $('s_status').value = res.ok ? 'Saved settings.\n' + JSON.stringify(res.config, null, 2) : 'Failed to save.';
 }
-async function listBackups(){
-  const res = await api('/api/list_backups');
-  $('s_status').value = res.map(x => `${x.path}  (${(x.size/1048576).toFixed(1)} MB)`).join('\n');
-}
+async function testGotify(){ const r = await api('/api/gotify_test', {method:'POST', body:'{}'}); $('s_status').value = r.ok ? 'Gotify test sent.' : 'Gotify test failed.'; }
+async function testDropbox(){ const r = await api('/api/dropbox_test', {method:'POST', body:'{}'}); $('s_status').value = JSON.stringify(r, null, 2); }
 
-/* ----- Backup/Restore ----- */
+/* ---- Backup/Restore actions ---- */
 async function probeHost(){
   const payload = { host:$('b_host').value, username:$('b_user').value, password:$('b_pass').value, port:parseInt($('b_port').value||'22',10) };
   const res = await api('/api/probe_host', {method:'POST', body: JSON.stringify(payload)});
@@ -66,11 +132,12 @@ async function runBackup(){
     disk:$('b_disk').value, store_to:$('b_store').value, cloud_upload:$('b_cloud').value,
     excludes:$('b_excl').value, bwlimit_kbps:parseInt($('b_bw').value||'0',10),
     retention_days:parseInt($('b_ret').value||'0',10),
-    verify:$('b_verify').checked, backup_name:$('b_name').value
+    verify:$('b_verify').checked, backup_name:$('b_name').value,
+    remember_server:true, save_password:$('b_save_pw').checked
   };
   const res = await api('/api/run_backup', {method:'POST', body: JSON.stringify(payload)});
   $('b_result').value = res.out || JSON.stringify(res,null,2);
-  await backupsRefresh();
+  await backupsRefresh(); await refreshServers();
 }
 async function runRestore(){
   const method = $('r_method').value;
@@ -85,44 +152,7 @@ async function runRestore(){
   $('r_result').value = res.out || JSON.stringify(res,null,2);
 }
 
-/* ----- Explorer ----- */
-let currentPath = "/backup";
-function renderCrumbs(path){
-  const cont = $('crumbs'); cont.innerHTML = "";
-  const parts = path.split("/").filter(Boolean);
-  let acc = path.startsWith("/") ? "/" : "";
-  const rootSpan = document.createElement("span");
-  rootSpan.textContent = "/"; rootSpan.onclick = ()=> loadDir("/");
-  cont.appendChild(rootSpan);
-  parts.forEach(p=>{
-    acc = (acc === "/" ? "" : acc) + "/" + p;
-    const s = document.createElement("span");
-    s.textContent = p; s.onclick = ()=> loadDir(acc);
-    cont.appendChild(s);
-  });
-}
-async function loadDir(path){
-  try{
-    const res = await api(`/api/ls?path=${encodeURIComponent(path)}`);
-    currentPath = res.path; renderCrumbs(currentPath);
-    const body = $('explorer_rows'); body.innerHTML = "";
-    res.items.forEach(it=>{
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${it.name}</td><td>${it.is_dir ? "dir" : "file"}</td><td>${it.is_dir ? "" : (it.size/1048576).toFixed(1)+" MB"}</td><td></td>`;
-      const td = tr.lastChild;
-      if(it.is_dir){
-        const btn = document.createElement('button'); btn.className="btn secondary"; btn.textContent="Open";
-        btn.onclick = ()=> loadDir(it.path); td.appendChild(btn);
-      } else {
-        const a = document.createElement('a'); a.className="btn"; a.textContent="Download";
-        a.href = `/api/download?path=${encodeURIComponent(it.path)}`; a.target="_blank"; td.appendChild(a);
-      }
-      body.appendChild(tr);
-    });
-  }catch(e){ alert("Error: "+e.message); }
-}
-
-/* ----- Backups (persistent index) ----- */
+/* ---- Backups + Explorer-ish picker for image ---- */
 function fmtDate(ts){ const d=new Date(ts*1000); return d.toISOString().replace('T',' ').slice(0,19); }
 async function backupsRefresh(){
   const data = await api('/api/backups');
@@ -138,25 +168,47 @@ async function backupsRefresh(){
     body.appendChild(tr);
   });
 }
-async function backupsRescan(){ await api('/api/backups?rescan=1'); await backupsRefresh(); }
+
+async function browseImage(){
+  // simple browser: list /backup and mounted roots, pick a file ending with .img or .img.gz
+  let roots = ['/backup']; mounts.filter(m=>m.mounted).forEach(m=>roots.push(m.mount));
+  const root = prompt("Browse which root?\n" + roots.join("\n"), roots[0]);
+  if(!root) return;
+  const res = await api('/api/ls?path='+encodeURIComponent(root));
+  const files = res.items.filter(it=>!it.is_dir).map(it=>it.path);
+  const pick = prompt("Pick file (copy/paste path):\n"+files.join("\n"));
+  if(pick) $('r_image').value = pick;
+}
+
+/* ---- Mounts / Servers editors ---- */
+async function saveMounts(){ const arr = JSON.parse($('mounts_json').value||'[]'); await api('/api/mounts', {method:'POST', body: JSON.stringify({mounts:arr})}); await refreshMounts(); }
+async function saveServers(){ const arr = JSON.parse($('servers_json').value||'[]'); await api('/api/servers', {method:'POST', body: JSON.stringify({servers:arr})}); await refreshServers(); }
 
 /* wiring */
 function wire(){
   document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.target)));
   $('btn_save_settings').addEventListener('click', (e)=>{ e.preventDefault(); saveOptions().catch(err=>{$('s_status').value='Error: '+err.message;}); });
-  $('btn_list_backups').addEventListener('click', (e)=>{ e.preventDefault(); listBackups().catch(console.error); });
+  $('btn_test_gotify').addEventListener('click', (e)=>{ e.preventDefault(); testGotify().catch(err=>{$('s_status').value='Error: '+err.message;}); });
+  $('btn_test_dropbox').addEventListener('click', (e)=>{ e.preventDefault(); testDropbox().catch(err=>{$('s_status').value='Error: '+err.message;}); });
+
   $('btn_probe').addEventListener('click', (e)=>{ e.preventDefault(); probeHost().catch(console.error); });
   $('btn_install').addEventListener('click', (e)=>{ e.preventDefault(); installTools().catch(console.error); });
   $('btn_estimate').addEventListener('click', (e)=>{ e.preventDefault(); estimateTime().catch(console.error); });
   $('btn_run_backup').addEventListener('click', (e)=>{ e.preventDefault(); runBackup().catch(console.error); });
   $('btn_run_restore').addEventListener('click', (e)=>{ e.preventDefault(); runRestore().catch(console.error); });
-  $('jump_backup').addEventListener('click', ()=> loadDir('/backup'));
-  $('jump_mnt').addEventListener('click', ()=> loadDir('/mnt'));
   $('btn_backups_refresh').addEventListener('click', (e)=>{ e.preventDefault(); backupsRefresh().catch(console.error); });
-  $('btn_backups_rescan').addEventListener('click', (e)=>{ e.preventDefault(); backupsRescan().catch(console.error); });
+  $('btn_backups_rescan').addEventListener('click', (e)=>{ e.preventDefault(); api('/api/backups?rescan=1').then(backupsRefresh).catch(console.error); });
+  $('btn_refresh_mounts').addEventListener('click', (e)=>{ e.preventDefault(); refreshMounts().catch(console.error); });
+  $('btn_save_mounts').addEventListener('click', (e)=>{ e.preventDefault(); saveMounts().catch(console.error); });
+  $('btn_save_servers').addEventListener('click', (e)=>{ e.preventDefault(); saveServers().catch(console.error); });
+  $('btn_refresh_servers').addEventListener('click', (e)=>{ e.preventDefault(); refreshServers().catch(console.error); });
+  $('btn_browse_image').addEventListener('click', (e)=>{ e.preventDefault(); browseImage().catch(console.error); });
 
-  loadOptions().catch(console.error);
-  loadDir('/backup').catch(console.error);
-  backupsRefresh().catch(console.error);
+  $('b_server').addEventListener('change', ()=>applyServer('b_server','b'));
+  $('r_server').addEventListener('change', ()=>applyServer('r_server','r'));
+
+  Promise.all([loadOptions(), refreshMounts(), refreshServers(), backupsRefresh()]).then(()=>{
+    fillTargets(); fillServers();
+  });
 }
 document.addEventListener('DOMContentLoaded', wire);
