@@ -143,4 +143,20 @@
       <details class="help details">
         <summary>Examples</summary>
         <pre class="code">
-#
+# rsync files hourly
+host=10.0.0.21;username=root;password=pass;method=rsync;files=/etc;store_to=/mnt/nas/test;schedule=5 * * * *
+
+# full disk dd nightly + Dropbox
+host=10.0.0.30;username=root;password=pass;method=dd;disk=/dev/sda;store_to=/mnt/nas/proxmox;schedule=0 2 * * *;cloud_upload=dropbox:/HA-Backups/Proxmox
+        </pre>
+      </details>
+
+      <textarea id="jobs-json" class="textarea" rows="10" placeholder="One job per line"></textarea>
+
+      <div class="actions">
+        <button id="btn-save-jobs" class="btn">Save jobs</button>
+        <button id="btn-apply" class="btn btn--primary">Apply schedule</button>
+      </div>
+
+      <div class="log-wrap">
+        <div class="log
