@@ -1,35 +1,30 @@
-# Remote Linux Backup — Debian base
+# ---- Home Assistant Debian base ----
 FROM ghcr.io/hassio-addons/debian-base:7.8.3
 
-# Tools:
-# - backup: rsync, pigz, pv, rclone
-# - ssh: openssh-client, sshpass
-# - NAS: smbclient, cifs-utils, nfs-common, rpcbind
-# - python web: python3, python3-flask, python3-gunicorn, gunicorn
-# - cron + pkill/pgrep: cron, psmisc
-# - certs for HTTPS curl (Gotify): ca-certificates
-RUN apt-get update && apt-get upgrade -y || true && \
-    apt-get install -y --no-install-recommends \
+# ---- System packages ----
+# tools: ssh/rsync/rclone/cifs/nfs, pigz/pv, curl/jq, cron, pkill (psmisc)
+# python + flask + gunicorn for the API/UI
+RUN apt-get update \
+ && apt-get upgrade -y || true \
+ && apt-get install -y --no-install-recommends \
       bash curl jq coreutils pigz pv gzip \
       openssh-client sshpass rsync rclone \
       smbclient cifs-utils nfs-common rpcbind \
       python3 python3-flask python3-gunicorn gunicorn \
-      cron psmisc ca-certificates && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+      cron psmisc ca-certificates \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# App
+# ---- App files live under /app in the image ----
 WORKDIR /app
-COPY api.py scheduler.py job_runner.py run.sh /app/
-COPY www /app/www
 
-# Ensure LF endings + exec on run.sh; create common dirs; prepare log
-RUN sed -i 's/\r$//' /app/run.sh && chmod 0755 /app/run.sh && \
-    mkdir -p /backup /mnt/nas /mnt/mounts && \
-    touch /var/log/remote_linux_backup.log
+# copy EVERYTHING from your repo's /app folder (api.py, run.sh, scheduler.py, job_runner.py)
+COPY app/ /app/
 
-# Runtime env
-ENV PYTHONUNBUFFERED=1 \
-    FLASK_ENV=production
+# copy the web UI
+COPY www/ /app/www/
 
-# Entrypoint
+# ensure LF endings and exec bit on run.sh
+RUN sed -i 's/\r$//' /app/run.sh && chmod 0755 /app/run.sh
+
+# ---- Entrypoint ----
 CMD ["/app/run.sh"]
