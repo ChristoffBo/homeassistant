@@ -53,19 +53,9 @@ if jq -e '.nas_mounts | length > 0' "$CONFIG_PATH" >/dev/null 2>&1; then
   done
 fi
 
-# Prepare rclone for Dropbox if enabled
-if jq -e '.dropbox_enabled == true' "$CONFIG_PATH" >/dev/null 2>&1; then
-  mkdir -p /root/.config/rclone
-  if [ -f /config/rclone.conf ]; then
-    cp /config/rclone.conf /root/.config/rclone/rclone.conf
-  elif [ ! -f /root/.config/rclone/rclone.conf ]; then
-    printf "# Put your rclone Dropbox remote here (or upload /config/rclone.conf)\n" > /root/.config/rclone/rclone.conf
-  fi
-fi
-
-# Apply schedules & start cron
+# Apply schedules & start crond
 python3 /app/scheduler.py apply || true
-service cron start || true
+crond -b -l 8 || true
 
 # Launch API
 cd /app
