@@ -1,4 +1,4 @@
-import os, json, subprocess, shlex, time, hashlib
+import os, json, subprocess, shlex, time, hashlib, shutil
 from flask import Flask, request, jsonify, send_from_directory, send_file, abort
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,7 +23,6 @@ DEFAULT_OPTIONS = {
 # App-owned config (UI writes go here) - PERSISTENT
 APP_CONFIG = "/config/remote_linux_backup.json"
 APP_DEFAULTS = {
-    # UI-managed keys (we prefer these over HA options if present)
     "known_hosts": [],
     "server_presets": [],
     "jobs": [],
@@ -34,6 +33,9 @@ APP_DEFAULTS = {
     "dropbox_enabled": False,
     "dropbox_remote": "dropbox:HA-Backups"
 }
+
+# Backups index (persistent, user-visible list)
+INDEX_PATH = "/config/remote_linux_backup_index.json"
 
 # File explorer roots (read-only browsing)
 SAFE_ROOTS = ["/backup", "/mnt"]
@@ -49,40 +51,32 @@ def _safe_load_json(path):
         return {}
 
 def load_opts():
-    """Load HA-managed options (read-only)."""
     d = _safe_load_json(OPTIONS_PATH)
     for k, v in DEFAULT_OPTIONS.items():
         d.setdefault(k, v)
     return d
 
 def load_app_config():
-    """Load UI-managed config stored under /config."""
     os.makedirs(os.path.dirname(APP_CONFIG), exist_ok=True)
     if not os.path.exists(APP_CONFIG):
         with open(APP_CONFIG, "w") as f:
-            json.dump(APP_DEFAULTS, f, indent=2)
-            f.flush(); os.fsync(f.fileno())
+            json.dump(APP_DEFAULTS, f, indent=2); f.flush(); os.fsync(f.fileno())
     with open(APP_CONFIG, "r") as f:
         data = json.load(f)
-    # ensure defaults exist
     for k, v in APP_DEFAULTS.items():
         data.setdefault(k, v)
     return data
 
 def save_app_config(data: dict):
-    """Persist UI-managed config to /config (atomic)."""
     cfg = load_app_config()
     for k, v in data.items():
-        # Normalize list-like strings
         if k in ("known_hosts","server_presets","jobs","nas_mounts") and isinstance(v, str):
             v = [s.strip() for s in v.replace("\r","").replace("\n",",").split(",") if s.strip()]
-        # accept sane JSON types
         if isinstance(v, (str, int, float, bool)) or v is None or isinstance(v, (list, dict)):
             cfg[k] = v
     tmp = APP_CONFIG + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(cfg, f, indent=2)
-        f.flush(); os.fsync(f.fileno())
+        json.dump(cfg, f, indent=2); f.flush(); os.fsync(f.fileno())
     os.replace(tmp, APP_CONFIG)
     return True
 
@@ -119,13 +113,11 @@ def ssh(user, host, password, remote_cmd, port=22):
     return run(cmd)
 
 def gotify(title, message, priority=5):
-    # Prefer app config (user UI values), fallback to HA options
     appcfg = load_app_config()
     url = appcfg.get("gotify_url") or ""
     token = appcfg.get("gotify_token") or ""
     enabled = bool(appcfg.get("gotify_enabled"))
     if not enabled:
-        # fallback
         opts = load_opts()
         url = url or opts.get("gotify_url") or ""
         token = token or opts.get("gotify_token") or ""
@@ -134,6 +126,93 @@ def gotify(title, message, priority=5):
         return
     cmd = f"curl -s -X POST {shlex.quote(url)}/message -F token={shlex.quote(token)} -F title={shlex.quote(title)} -F message={shlex.quote(message)} -F priority={priority}"
     run(cmd)
+
+def prune_old(path, days):
+    if not days or days <= 0: return ""
+    now = time.time()
+    cutoff = now - days*86400
+    deleted = []
+    for r,ds,fs in os.walk(path):
+        for f in fs:
+            p=os.path.join(r,f)
+            try:
+                st = os.stat(p)
+                if st.st_mtime < cutoff:
+                    os.remove(p); deleted.append(p)
+            except Exception:
+                pass
+    return "\n".join(deleted)
+
+def local_size_bytes(path):
+    if os.path.isfile(path):
+        try: return os.path.getsize(path)
+        except: return 0
+    total=0
+    for r,ds,fs in os.walk(path):
+        for f in fs:
+            p=os.path.join(r,f)
+            try: total+=os.path.getsize(p)
+            except: pass
+    return total
+
+# ---------- backups index ----------
+def _load_index():
+    d = _safe_load_json(INDEX_PATH)
+    if not isinstance(d, dict) or "items" not in d:
+        d = {"items": []}
+    return d
+
+def _save_index(d):
+    tmp = INDEX_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, INDEX_PATH)
+
+def index_add(path, kind, host, note=""):
+    it = {
+        "path": path,
+        "kind": kind,      # 'dd' | 'rsync' | 'zfs' | 'file'
+        "host": host or "",
+        "size": local_size_bytes(path),
+        "created": int(time.time()),
+        "note": note or ""
+    }
+    d = _load_index()
+    # dedupe by path
+    d["items"] = [x for x in d["items"] if x.get("path") != path]
+    d["items"].append(it)
+    _save_index(d)
+    return it
+
+def index_remove(path):
+    d = _load_index()
+    d["items"] = [x for x in d["items"] if x.get("path") != path]
+    _save_index(d)
+
+def _is_under_roots(p):
+    rp = os.path.realpath(p)
+    for root in SAFE_ROOTS:
+        rr = os.path.realpath(root)
+        if rp == rr or rp.startswith(rr + os.sep):
+            return True
+    return False
+
+def rescan_backups():
+    items=[]
+    for root in SAFE_ROOTS:
+        if not os.path.isdir(root): continue
+        for r,ds,fs in os.walk(root):
+            for f in fs:
+                p=os.path.join(r,f)
+                # consider any file as a candidate; dd images commonly end with .img.gz
+                kind = "dd" if f.endswith(".img.gz") or f.endswith(".img") else "file"
+                try:
+                    st=os.stat(p)
+                    items.append({"path":p,"kind":kind,"host":"","size":st.st_size,"created":int(st.st_mtime),"note":""})
+                except: pass
+    d={"items":items}
+    _save_index(d)
+    return d
 
 # ---------- backup/restore operations ----------
 def dd_backup(user, host, password, disk, out_path, port=22, verify=False, bwlimit_kbps=None):
@@ -185,14 +264,17 @@ def rsync_push(user, host, password, local_src, remote_dest, port=22, excludes_c
 
 def rclone_copy(local_path, remote_spec, bwlimit_kbps=None):
     bw = f" --bwlimit {int(bwlimit_kbps)}k" if bwlimit_kbps else ""
+    return run(f"rclone copy {shlex.quote(local_path)} {shlex_quote(remote_spec)} --progress{bw}")
+# (continuation of api.py)
+
+def rclone_copy(local_path, remote_spec, bwlimit_kbps=None):
+    bw = f" --bwlimit {int(bwlimit_kbps)}k" if bwlimit_kbps else ""
     return run(f"rclone copy {shlex.quote(local_path)} {shlex.quote(remote_spec)} --progress{bw}")
 
-# ---------- routes ----------
 @app.get("/")
 def root():
     return app.send_static_file("index.html")
 
-# Unified options: HA options overlaid with app config (UI-writable)
 @app.get("/api/options")
 def get_options():
     ha = load_opts()
@@ -204,7 +286,6 @@ def get_options():
 
 @app.post("/api/options")
 def set_options():
-    # Accept JSON, form, or raw text JSON
     data = request.get_json(silent=True)
     if data is None and request.form:
         data = request.form.to_dict(flat=True)
@@ -309,7 +390,10 @@ def run_backup():
         if retention_days>0:
             out += "\n[PRUNE]\n" + prune_old(store_to, retention_days)
         took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd\nSaved: {out_path}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took)))}")
+        gotify("Backup "+("OK" if rc==0 else "FAIL"),
+               f"Host: {host}\nMethod: dd\nSaved: {out_path}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took))}")
+        # record to index
+        index_add(out_path, "dd", host, note=name)
         return jsonify({"rc":rc,"out":out,"seconds":took,"saved":out_path,"size_bytes":size_bytes})
 
     elif method=="rsync":
@@ -323,7 +407,9 @@ def run_backup():
         if retention_days>0:
             out += "\n[PRUNE]\n" + prune_old(dest, retention_days)
         took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync\nSaved: {dest}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took))}")
+        gotify("Backup "+("OK" if rc==0 else "FAIL"),
+               f"Host: {host}\nMethod: rsync\nSaved: {dest}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took))}")
+        index_add(dest, "rsync", host, note=name or files)
         return jsonify({"rc":rc,"out":out,"seconds":took,"saved":dest,"size_bytes":size_bytes})
 
     elif method=="zfs":
@@ -333,7 +419,9 @@ def run_backup():
         snap=b.get("snapshot_name", time.strftime("backup-%Y%m%d-%H%M%S"))
         rc,out = ssh(user,host,pwd,f"zfs snapshot {shlex.quote(dataset)}@{shlex.quote(snap)}", port=port)
         took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: zfs snapshot\nSnapshot: {dataset}@{snap}\nTime: {human_time(int(took))}")
+        gotify("Backup "+("OK" if rc==0 else "FAIL"),
+               f"Host: {host}\nMethod: zfs snapshot\nSnapshot: {dataset}@{snap}\nTime: {human_time(int(took))}")
+        index_add(f"{dataset}@{snap}", "zfs", host)
         return jsonify({"rc":rc,"out":out,"seconds":took})
 
     else:
@@ -353,7 +441,8 @@ def run_restore():
             return jsonify({"rc":2,"out":"Missing image_path"}),400
         rc,out = dd_restore(user,host,pwd,disk,image,port=port,bwlimit_kbps=bwlimit)
         took=round(time.time()-t0,2)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd restore\nSrc: {image}\nTime: {human_time(int(took)))}")
+        gotify("Restore "+("OK" if rc==0 else "FAIL"),
+               f"Host: {host}\nMethod: dd restore\nSrc: {image}\nTime: {human_time(int(took))}")
         return jsonify({"rc":rc,"out":out,"seconds":took})
     elif method=="rsync":
         local_src=b.get("local_src"); remote_dest=b.get("remote_dest","/")
@@ -361,7 +450,8 @@ def run_restore():
             return jsonify({"rc":2,"out":"Missing local_src"}),400
         rc,out = rsync_push(user,host,pwd,local_src,remote_dest,port=port,excludes_csv=excludes,bwlimit_kbps=bwlimit)
         took=round(time.time()-t0,2)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync restore\nDest: {remote_dest}\nTime: {human_time(int(took))}")
+        gotify("Restore "+("OK" if rc==0 else "FAIL"),
+               f"Host: {host}\nMethod: rsync restore\nDest: {remote_dest}\nTime: {human_time(int(took))}")
         return jsonify({"rc":rc,"out":out,"seconds":took})
     else:
         return jsonify({"rc":2,"out":"Unknown restore method"}),400
@@ -378,8 +468,7 @@ def list_backups():
             res.append({"path":p,"size":sz})
     return jsonify(sorted(res,key=lambda x:x["path"]))
 
-# -------- File Explorer APIs --------
-
+# ---- File Explorer & Backups index APIs ----
 def _is_path_allowed(p: str) -> bool:
     rp = os.path.realpath(p)
     for root in SAFE_ROOTS:
@@ -394,21 +483,18 @@ def api_ls():
     if not _is_path_allowed(path) or not os.path.exists(path):
         return jsonify({"ok": False, "error": "Path not allowed or does not exist", "path": path}), 400
     items = []
-    try:
-        for name in sorted(os.listdir(path)):
-            full = os.path.join(path, name)
-            try:
-                st = os.stat(full, follow_symlinks=False)
-                items.append({
-                    "name": name,
-                    "path": full,
-                    "is_dir": os.path.isdir(full),
-                    "size": st.st_size if os.path.isfile(full) else 0
-                })
-            except Exception:
-                pass
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    for name in sorted(os.listdir(path)):
+        full = os.path.join(path, name)
+        try:
+            st = os.stat(full, follow_symlinks=False)
+            items.append({
+                "name": name,
+                "path": full,
+                "is_dir": os.path.isdir(full),
+                "size": st.st_size if os.path.isfile(full) else 0
+            })
+        except Exception:
+            pass
     return jsonify({"ok": True, "path": path, "items": items})
 
 @app.get("/api/download")
@@ -417,6 +503,30 @@ def api_download():
     if not path or not _is_path_allowed(path) or not os.path.isfile(path):
         abort(404)
     return send_file(path, as_attachment=True)
+
+@app.get("/api/backups")
+def api_backups_get():
+    if request.args.get("rescan") == "1":
+        d = rescan_backups()
+    else:
+        d = _load_index()
+    return jsonify(d)
+
+@app.post("/api/backups/delete")
+def api_backups_delete():
+    b = request.get_json(silent=True) or {}
+    path = b.get("path","")
+    if not path or not _is_under_roots(path):
+        return jsonify({"ok": False, "error": "bad path"}), 400
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        elif os.path.isfile(path):
+            os.remove(path)
+        index_remove(path)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.get("/www/<path:fn>")
 def serve_www(fn):
