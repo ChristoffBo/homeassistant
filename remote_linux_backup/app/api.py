@@ -6,18 +6,47 @@ DATA_DIR = os.path.join(APP_DIR, "data")
 WWW_DIR = os.path.join(APP_DIR, "www")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-OPTIONS_PATH = os.path.join(DATA_DIR, "options.json")
+OPTIONS_PATH = "/data/options.json"
 app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
 
+# Bootstrap default options if /data/options.json not present
+DEFAULT_OPTIONS = {
+    "ui_port": 8066,
+    "gotify_enabled": False,
+    "gotify_url": "",
+    "gotify_token": "",
+    "auto_install_tools": True,
+    "dropbox_enabled": False,
+    "dropbox_remote": "dropbox:HA-Backups",
+    "nas_mounts": [],
+    "server_presets": [],
+    "known_hosts": [],
+    "jobs": []
+}
+
 def load_opts():
-    if os.path.exists(OPTIONS_PATH):
-        with open(OPTIONS_PATH, "r") as f:
-            return json.load(f)
-    return {}
+    try:
+        if os.path.exists(OPTIONS_PATH):
+            with open(OPTIONS_PATH, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    # ensure all keys
+                    for k,v in DEFAULT_OPTIONS.items():
+                        data.setdefault(k, v)
+                    return data
+    except Exception:
+        pass
+    return dict(DEFAULT_OPTIONS)
 
 def save_opts(d):
-    with open(OPTIONS_PATH, "w") as f:
-        json.dump(d, f, indent=2)
+    os.makedirs(os.path.dirname(OPTIONS_PATH), exist_ok=True)
+    data = dict(DEFAULT_OPTIONS)
+    if isinstance(d, dict):
+        data.update(d)
+    tmp = OPTIONS_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, OPTIONS_PATH)
 
 def run(cmd):
     p = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -106,7 +135,7 @@ def install_tools():
         rc, out = ssh(user, host, pwd, c)
         out_all.append(out)
         if rc != 0: rc_final = rc
-    return jsonify({"rc": rc_final, "out": "\\n".join(out_all)})
+    return jsonify({"rc": rc_final, "out": "\n".join(out_all)})
 
 @app.post("/api/run_backup")
 def run_backup():
@@ -120,21 +149,21 @@ def run_backup():
         out_path=os.path.join(store_to, f"{host.replace('.','_')}-{ts}.img.gz")
         rc,out = dd_backup(user,host,pwd,disk,out_path)
         if rc==0 and cloud:
-            rcrc,rout = rclone_copy(out_path,cloud); out += "\\n[RCLONE]\\n"+rout
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: dd\\nSaved: {out_path}")
+            rcrc,rout = rclone_copy(out_path,cloud); out += "\n[RCLONE]\n"+rout
+        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd\nSaved: {out_path}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2),"saved":out_path})
     elif method=="rsync":
         files=b.get("files","/etc")
         rc,out = rsync_pull(user,host,pwd,files,store_to)
         if rc==0 and cloud:
-            rcrc,rout = rclone_copy(store_to,cloud); out += "\\n[RCLONE]\\n"+rout
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: rsync\\nSaved: {store_to}")
+            rcrc,rout = rclone_copy(store_to,cloud); out += "\n[RCLONE]\n"+rout
+        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync\nSaved: {store_to}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
     elif method=="zfs":
         dataset=b["zfs_dataset"]
         snap=b.get("snapshot_name", time.strftime("backup-%Y%m%d-%H%M%S"))
         rc,out = ssh(user,host,pwd,f"zfs snapshot {shlex.quote(dataset)}@{shlex.quote(snap)}")
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: zfs snapshot\\nSnapshot: {dataset}@{snap}")
+        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: zfs snapshot\nSnapshot: {dataset}@{snap}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
     else:
         return jsonify({"rc":2,"out":"Unknown method"}),400
@@ -146,12 +175,12 @@ def run_restore():
     if method=="dd":
         image=b["image_path"]; disk=b.get("disk","/dev/sda")
         rc,out = dd_restore(user,host,pwd,disk,image)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: dd restore\\nSrc: {image}")
+        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd restore\nSrc: {image}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
     elif method=="rsync":
         local_src=b["local_src"]; remote_dest=b.get("remote_dest","/")
         rc,out = rsync_push(user,host,pwd,local_src,remote_dest)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\\nMethod: rsync restore\\nDest: {remote_dest}")
+        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync restore\nDest: {remote_dest}")
         return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
     else:
         return jsonify({"rc":2,"out":"Unknown restore method"}),400
