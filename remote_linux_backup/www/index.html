@@ -13,7 +13,7 @@
         <div class="brand__logo" aria-hidden="true"></div>
         <div>
           <h1 class="brand__title">Remote Linux Backup</h1>
-          <p class="brand__subtitle">Back up and restore Linux machines over SSH. Clear, descriptive options. CIFS/NFS mounts made simple.</p>
+          <p class="brand__subtitle">Back up remote Linux servers via SSH. Full disk (dd), files (rsync), ZFS snapshots. NAS mounts, Dropbox, scheduler &amp; Gotify.</p>
         </div>
       </header>
 
@@ -22,34 +22,33 @@
         <button class="tab" data-tab="restore" role="tab">Restore</button>
         <button class="tab" data-tab="jobs" role="tab">Jobs</button>
         <button class="tab" data-tab="mounts" role="tab">Mounts</button>
+        <button class="tab" data-tab="hosts" role="tab">Known Hosts</button>
         <button class="tab" data-tab="settings" role="tab">Settings</button>
       </nav>
 
       <!-- BACKUP -->
       <section id="backup" class="panel is-active" role="tabpanel" aria-labelledby="Backup">
         <div class="form">
-          <div class="field"><label>Backup from (host/IP)<span class="hint">Remote server address</span></label>
-            <div class="row">
-              <select id="b-host-sel" title="Pick a saved host"></select>
-              <input id="b-host" placeholder="10.0.0.21" />
-              <button id="b-host-save" class="btn" title="Save as Known Host">Save host</button>
-            </div>
-          </div>
-          <div class="field"><label>Username<span class="hint">SSH user on the remote server</span></label><input id="b-user" value="root" /></div>
-          <div class="field"><label>Password<span class="hint">SSH password (keys are not required)</span></label><input id="b-pass" type="password" /></div>
+          <div class="field"><label>Backup from (Host/IP) <span class="hint">Remote server address</span></label><input id="b-host" placeholder="10.0.0.21" /></div>
+          <div class="field"><label>SSH user <span class="hint">e.g. root</span></label><input id="b-user" value="root" /></div>
+          <div class="field"><label>SSH password</label><input id="b-pass" type="password" /></div>
           <div class="field">
-            <label>Backup method<span class="hint">Full Disk (dd) = clone a disk · Files (rsync) = copy selected folders · ZFS = make a snapshot</span></label>
+            <label>Method <span class="hint">dd = disk image · rsync = files · ZFS = snapshot</span></label>
             <select id="b-method">
               <option value="dd">Full Disk (dd)</option>
               <option value="rsync">Files (rsync)</option>
               <option value="zfs">ZFS Snapshot</option>
             </select>
           </div>
-          <div class="field" id="b-disk-wrap"><label>Disk device<span class="hint">Example: /dev/sda or /dev/nvme0n1 (for Full Disk backups)</span></label><input id="b-disk" value="/dev/sda" /></div>
-          <div class="field hide" id="b-files-wrap"><label>Paths to include<span class="hint">Comma-separated, e.g. /etc,/var/www (for Files backups)</span></label><input id="b-files" value="/etc,/var/backups" /></div>
-          <div class="field hide" id="b-zfs-wrap"><label>ZFS dataset<span class="hint">Example: tank/data (for ZFS Snapshot)</span></label><input id="b-zfs" /></div>
-          <div class="field"><label>Store to (local/NAS path)<span class="hint">Folder inside the add-on, e.g. /backup or a mounted NAS path</span></label><input id="b-store" value="/backup" /></div>
-          <div class="field"><label>Also upload to (optional)<span class="hint">rclone remote, e.g. dropbox:/HA-Backups</span></label><input id="b-cloud" /></div>
+          <div class="field" id="b-disk-wrap"><label>Disk device <span class="hint">For dd, e.g. /dev/sda</span></label><input id="b-disk" value="/dev/sda" /></div>
+          <div class="field hide" id="b-files-wrap"><label>Paths (comma separated) <span class="hint">For rsync, e.g. /etc,/var/log</span></label><input id="b-files" value="/etc,/var/backups" /></div>
+          <div class="field hide" id="b-zfs-wrap"><label>ZFS dataset <span class="hint">e.g. tank/data</span></label><input id="b-zfs" /></div>
+          <div class="field"><label>Store to <span class="hint">Local/NAS path inside add-on (e.g. /backup or /mnt/nas/name)</span></label><input id="b-store" value="/backup" /></div>
+          <div class="field"><label>Cloud (rclone remote) <span class="hint">Optional, e.g. dropbox:/HA-Backups</span></label><input id="b-cloud" /></div>
+          <div class="field">
+            <label>Use preset <span class="hint">Quick-fill from Known Hosts</span></label>
+            <select id="b-preset"><option value="">—</option></select>
+          </div>
         </div>
 
         <div class="actions">
@@ -67,26 +66,20 @@
       <!-- RESTORE -->
       <section id="restore" class="panel" role="tabpanel" aria-labelledby="Restore">
         <div class="form">
-          <div class="field"><label>Restore to (host/IP)</label>
-            <div class="row">
-              <select id="r-host-sel" title="Pick a saved host"></select>
-              <input id="r-host" placeholder="10.0.0.21" />
-              <button id="r-host-save" class="btn" title="Save as Known Host">Save host</button>
-            </div>
-          </div>
-          <div class="field"><label>Username</label><input id="r-user" value="root" /></div>
-          <div class="field"><label>Password</label><input id="r-pass" type="password" /></div>
+          <div class="field"><label>Restore to (Host/IP)</label><input id="r-host" placeholder="10.0.0.21" /></div>
+          <div class="field"><label>SSH user</label><input id="r-user" value="root" /></div>
+          <div class="field"><label>SSH password</label><input id="r-pass" type="password" /></div>
           <div class="field">
-            <label>Restore method</label>
+            <label>Method</label>
             <select id="r-method">
               <option value="dd">Restore Disk (dd)</option>
               <option value="rsync">Restore Files (rsync)</option>
             </select>
           </div>
-          <div class="field" id="r-image-wrap"><label>Image file (.img.gz)<span class="hint">For dd restore</span></label><input id="r-image" /></div>
+          <div class="field" id="r-image-wrap"><label>Image path (.img.gz) <span class="hint">For dd restore</span></label><input id="r-image" /></div>
           <div class="field" id="r-disk-wrap"><label>Disk device</label><input id="r-disk" value="/dev/sda" /></div>
-          <div class="field hide" id="r-src-wrap"><label>Local source folder<span class="hint">Inside the add-on</span></label><input id="r-src" placeholder="/backup/opnsense" /></div>
-          <div class="field hide" id="r-dest-wrap"><label>Remote destination path</label><input id="r-dest" value="/" /></div>
+          <div class="field hide" id="r-src-wrap"><label>Local source dir <span class="hint">Folder inside add-on</span></label><input id="r-src" placeholder="/backup/opnsense" /></div>
+          <div class="field hide" id="r-dest-wrap"><label>Remote destination</label><input id="r-dest" value="/" /></div>
         </div>
 
         <div class="actions">
@@ -102,40 +95,37 @@
       <!-- JOBS -->
       <section id="jobs" class="panel" role="tabpanel" aria-labelledby="Jobs">
         <p class="help">
-          Create scheduled backups. No JSON required — fill the form and click “Add / Update Job”.
+          Create scheduled backups. No JSON editing needed.
         </p>
+
         <div class="form">
-          <div class="field"><label>Job name</label><input id="j-name" placeholder="Nightly Proxmox dd" /></div>
-          <div class="field"><label>Host/IP</label>
-            <div class="row">
-              <select id="j-host-sel"></select>
-              <input id="j-host" placeholder="10.0.0.21" />
-            </div>
-          </div>
-          <div class="field"><label>Username</label><input id="j-user" value="root" /></div>
-          <div class="field"><label>Password</label><input id="j-pass" type="password" /></div>
-          <div class="field"><label>Backup method</label>
+          <div class="field"><label>Job name</label><input id="j-name" placeholder="nightly-proxmox" /></div>
+          <div class="field"><label>Host/IP</label><input id="j-host" placeholder="10.0.0.21" /></div>
+          <div class="field"><label>SSH user</label><input id="j-user" value="root" /></div>
+          <div class="field"><label>SSH password</label><input id="j-pass" type="password" /></div>
+          <div class="field">
+            <label>Method</label>
             <select id="j-method">
               <option value="dd">Full Disk (dd)</option>
               <option value="rsync">Files (rsync)</option>
+              <option value="zfs">ZFS Snapshot</option>
             </select>
           </div>
-          <div class="field" id="j-disk-wrap"><label>Disk device (for dd)</label><input id="j-disk" value="/dev/sda" /></div>
-          <div class="field hide" id="j-files-wrap"><label>Paths to include (for rsync)</label><input id="j-files" value="/etc" /></div>
-          <div class="field"><label>Store to (local/NAS)</label><input id="j-store" value="/backup" /></div>
-          <div class="field"><label>Also upload to (optional)</label><input id="j-cloud" placeholder="dropbox:/HA-Backups" /></div>
-          <div class="field"><label>Schedule (cron)</label><input id="j-cron" value="0 2 * * *" /></div>
+          <div class="field" id="j-disk-wrap"><label>Disk device</label><input id="j-disk" value="/dev/sda" /></div>
+          <div class="field hide" id="j-files-wrap"><label>Paths (comma separated)</label><input id="j-files" value="/etc" /></div>
+          <div class="field hide" id="j-zfs-wrap"><label>ZFS dataset</label><input id="j-zfs" /></div>
+          <div class="field"><label>Store to</label><input id="j-store" value="/backup" /></div>
+          <div class="field"><label>Cloud (rclone)</label><input id="j-cloud" /></div>
+          <div class="field"><label>Cron schedule <span class="hint">e.g. 0 2 * * *</span></label><input id="j-sched" value="0 2 * * *" /></div>
         </div>
 
         <div class="actions">
-          <button id="btn-add-job" class="btn">Add / Update Job</button>
-          <button id="btn-clear-job" class="btn">Clear</button>
+          <button id="btn-add-job" class="btn">Add/Update job</button>
           <button id="btn-apply" class="btn btn--primary">Apply schedule</button>
         </div>
 
         <div class="log-wrap">
           <div class="log-title">Jobs</div>
-          <div id="jobs-list"></div>
           <pre id="jobs-log" class="log"></pre>
         </div>
       </section>
@@ -143,46 +133,65 @@
       <!-- MOUNTS -->
       <section id="mounts" class="panel" role="tabpanel" aria-labelledby="Mounts">
         <p class="help">
-          Mount a NAS so backups can be stored there. <strong>CIFS</strong> (also called SMB/Windows shares) is usually used for Windows or many NAS devices.
-          <strong>NFS</strong> is common on Linux/UNIX NAS. Fill one line per mount; we’ll save it to options.
+          Add storage locations. <strong>CIFS/SMB:</strong> Windows-style network share. <strong>NFS:</strong> Unix/Linux export.
         </p>
         <div class="form">
-          <div class="field"><label>Protocol</label>
-            <select id="m-proto"><option value="cifs">CIFS / SMB (Windows share)</option><option value="nfs">NFS (Linux/UNIX)</option></select>
+          <div class="field">
+            <label>Protocol</label>
+            <select id="m-proto"><option value="cifs">CIFS/SMB</option><option value="nfs">NFS</option></select>
           </div>
-          <div class="field"><label>Server</label><input id="m-server" placeholder="192.168.1.10" /></div>
-          <div class="field"><label>Share / Export</label><input id="m-share" placeholder="For CIFS: backups  ·  For NFS: /export/backups" /></div>
-          <div class="field"><label>Mount path inside add-on</label><input id="m-mount" placeholder="/mnt/nas" /></div>
-          <div class="field"><label>Username (CIFS only)</label><input id="m-user" placeholder="nasuser" /></div>
-          <div class="field"><label>Password (CIFS only)</label><input id="m-pass" type="password" placeholder="••••••" /></div>
-          <div class="field"><label>Extra options (optional)</label><input id="m-opts" placeholder="ro,nounix,vers=3.0" /></div>
+          <div class="field"><label>Server <span class="hint">IP or hostname</span></label><input id="m-server" placeholder="192.168.1.10" /></div>
+          <div class="field"><label>Share/Export <span class="hint">CIFS: share name · NFS: export path</span></label><input id="m-share" placeholder="backups or /export/backups" /></div>
+          <div class="field"><label>Mount path <span class="hint">Inside add-on</span></label><input id="m-mount" placeholder="/mnt/nas/backups" /></div>
+          <div class="field"><label>Username (CIFS)</label><input id="m-user" /></div>
+          <div class="field"><label>Password (CIFS)</label><input id="m-pass" type="password" /></div>
+          <div class="field"><label>Options</label><input id="m-opts" placeholder="vers=3.0" /></div>
         </div>
-
         <div class="actions">
-          <button id="btn-add-mount" class="btn">Add / Update Mount</button>
-          <button id="btn-clear-mount" class="btn">Clear</button>
+          <button id="btn-add-mount" class="btn">Add/Update mount</button>
         </div>
-
         <div class="log-wrap">
           <div class="log-title">Configured mounts</div>
-          <div id="mounts-list"></div>
+          <pre id="mounts-log" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- HOSTS -->
+      <section id="hosts" class="panel" role="tabpanel" aria-labelledby="Hosts">
+        <p class="help">Save servers you use often. Apply a preset to quickly fill forms.</p>
+        <div class="form">
+          <div class="field"><label>Label</label><input id="h-label" placeholder="Proxmox" /></div>
+          <div class="field"><label>Host/IP</label><input id="h-host" placeholder="10.0.0.21" /></div>
+          <div class="field"><label>SSH user</label><input id="h-user" value="root" /></div>
+          <div class="field"><label>SSH password</label><input id="h-pass" type="password" /></div>
+          <div class="field"><label>Default store</label><input id="h-store" value="/backup" /></div>
+          <div class="field"><label>Default disk</label><input id="h-disk" value="/dev/sda" /></div>
+          <div class="field"><label>Default files</label><input id="h-files" value="/etc" /></div>
+        </div>
+        <div class="actions">
+          <button id="btn-add-host" class="btn">Add/Update host</button>
+          <button id="btn-apply-host" class="btn">Apply to forms</button>
+        </div>
+        <div class="log-wrap">
+          <div class="log-title">Presets</div>
+          <pre id="hosts-log" class="log"></pre>
         </div>
       </section>
 
       <!-- SETTINGS -->
       <section id="settings" class="panel" role="tabpanel" aria-labelledby="Settings">
         <div class="form">
-          <div class="field"><label>Web UI port<span class="hint">For non-Ingress access</span></label><input id="s-port" value="8066" /></div>
-          <div class="field"><label>Gotify URL<span class="hint">http://host:port</span></label><input id="s-gurl" /></div>
+          <div class="field"><label>UI Port <span class="hint">Non-Ingress port</span></label><input id="s-port" value="8066" /></div>
+          <div class="field"><label>Gotify URL <span class="hint">http://host:port</span></label><input id="s-gurl" /></div>
           <div class="field"><label>Gotify Token</label><input id="s-gtok" /></div>
           <div class="field"><label>Dropbox enabled</label>
             <select id="s-dbxe"><option value="false" selected>false</option><option value="true">true</option></select>
           </div>
-          <div class="field"><label>Dropbox remote</label><input id="s-dbxr" value="dropbox:HA-Backups" /></div>
+          <div class="field"><label>Dropbox remote <span class="hint">e.g. dropbox:HA-Backups</span></label><input id="s-dbxr" value="dropbox:HA-Backups" /></div>
         </div>
 
         <div class="actions">
-          <button id="btn-save" class="btn">Save settings</button>
+          <button id="btn-save" class="btn btn--primary">Save settings</button>
           <button id="btn-list" class="btn">List local backups</button>
         </div>
 
@@ -204,10 +213,10 @@
         document.getElementById(btn.dataset.tab).classList.add('is-active');
       });
     });
+
     const $ = s => document.querySelector(s);
     const show = (el, v) => el.classList.toggle('hide', !v);
 
-    // HTTP helpers
     async function POST(url, body) {
       const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{})});
       return r.json().catch(()=>({}));
@@ -217,209 +226,54 @@
       return r.json().catch(()=>({}));
     }
 
-    // Encoders
-    function encHost(h){ return [h.host, h.user].join('|'); }
-    function decHost(s){ const [host,user] = String(s||'').split('|'); return {host,user}; }
-    function encJob(j){ return [j.name,j.host,j.user,j.method,j.disk||'',j.files||'',j.store||'',j.cloud||'',j.cron||'',j.password||''].join('|'); }
-    function decJob(s){ const p = String(s||'').split('|'); return {name:p[0]||'',host:p[1]||'',user:p[2]||'root',method:p[3]||'dd',disk:p[4]||'/dev/sda',files:p[5]||'',store:p[6]||'/backup',cloud:p[7]||'',cron:p[8]||'0 2 * * *',password:p[9]||''}; }
-    function encMount(m){
-      // proto=cifs;server=...;share=...;mount=...;username=...;password=...;options=...
-      const kv = [
-        ['proto', m.proto||'cifs'],
-        ['server', m.server||''],
-        ['share', m.share||''],
-        ['mount', m.mount||''],
-        ['username', m.username||''],
-        ['password', m.password||''],
-        ['options', m.options||'']
-      ];
-      return kv.map(([k,v])=>k+'='+String(v).replace(/;/g, '\\;')).join(';');
-    }
-    function decMount(s){
-      const out = {proto:'cifs',server:'',share:'',mount:'',username:'',password:'',options:''};
-      let cur=''; let key=''; let esc=false; const commit=(k,v)=>{ if(k) out[k]=v; };
-      function pushKV(str){
-        const [k,...rest] = str.split('=');
-        commit(k, rest.join('='));
-      }
-      for (let i=0;i<s.length;i++){
-        const ch=s[i];
-        if(esc){ cur+=ch; esc=false; continue; }
-        if(ch==='\\'){ esc=true; continue; }
-        if(ch===';'){ pushKV(cur); cur=''; continue; }
-        cur+=ch;
-      }
-      if(cur) pushKV(cur);
-      return out;
-    }
-
-    // State
-    let options = {};
-    let hosts = [];   // [{host,user}]
-    let jobs = [];    // array of job objects
-    let mounts = [];  // array of mount objects
-    let editJobIdx = -1;
-    let editMountIdx = -1;
-
-    // Rendering
-    function refreshHostSelects(){
-      const sels = ['#b-host-sel','#r-host-sel','#j-host-sel'].map($);
-      sels.forEach(sel => {
-        sel.innerHTML = '';
-        const opt = document.createElement('option'); opt.value=''; opt.textContent='Known hosts…'; sel.appendChild(opt);
-        hosts.forEach(h=>{
-          const o = document.createElement('option');
-          o.value = encHost(h); o.textContent = h.host + ' ('+h.user+')';
-          sel.appendChild(o);
-        });
+    // Form toggles
+    function bindToggles(prefix){
+      $('#'+prefix+'-method').addEventListener('change', e=>{
+        const m=e.target.value;
+        show($('#'+prefix+'-disk-wrap'), m==='dd');
+        show($('#'+prefix+'-files-wrap'), m==='rsync');
+        if (prefix==='b' || prefix==='j') show($('#'+prefix+'-zfs-wrap'), m==='zfs');
+        if (prefix==='r') { show($('#r-image-wrap'), m==='dd'); show($('#r-disk-wrap'), m==='dd'); show($('#r-src-wrap'), m==='rsync'); show($('#r-dest-wrap'), m==='rsync'); }
       });
     }
-    function renderJobs(){
-      const box = $('#jobs-list'); box.innerHTML='';
-      jobs.forEach((j, idx)=>{
-        const div = document.createElement('div');
-        div.className='job-item';
-        div.innerHTML = '<strong>'+j.name+'</strong> — '+j.method+' — '+j.user+'@'+j.host+' — '+j.cron+
-                        ' <button data-i="'+idx+'" class="btn">Edit</button>'+
-                        ' <button data-i="'+idx+'" class="btn btn--danger">Delete</button>';
-        const [btnEdit, btnDel] = div.querySelectorAll('button');
-        btnEdit.onclick = ()=>{ loadJobToForm(idx); };
-        btnDel.onclick = async ()=>{ jobs.splice(idx,1); await saveOptions(); renderJobs(); };
-        box.appendChild(div);
-      });
-    }
-    function renderMounts(){
-      const box = $('#mounts-list'); box.innerHTML='';
-      mounts.forEach((m, idx)=>{
-        const div = document.createElement('div');
-        div.className='job-item';
-        const protoLabel = (m.proto==='cifs'?'CIFS/SMB':'NFS');
-        div.innerHTML = '<strong>'+protoLabel+'</strong> — '+m.server+' / '+m.share+' → '+m.mount+
-                        ' <button data-i="'+idx+'" class="btn">Edit</button>'+
-                        ' <button data-i="'+idx+'" class="btn btn--danger">Delete</button>';
-        const [btnEdit, btnDel] = div.querySelectorAll('button');
-        btnEdit.onclick = ()=>{ loadMountToForm(idx); };
-        btnDel.onclick = async ()=>{ mounts.splice(idx,1); await saveOptions(); renderMounts(); };
-        box.appendChild(div);
-      });
-    }
+    bindToggles('b'); bindToggles('r'); bindToggles('j');
 
-    // Form helpers
-    function loadJobToForm(idx){
-      const j = jobs[idx]; editJobIdx = idx;
-      $('#j-name').value = j.name;
-      $('#j-host').value = j.host;
-      $('#j-user').value = j.user;
-      $('#j-pass').value = j.password || '';
-      $('#j-method').value = j.method;
-      $('#j-disk').value = j.disk || '/dev/sda';
-      $('#j-files').value = j.files || '';
-      $('#j-store').value = j.store || '/backup';
-      $('#j-cloud').value = j.cloud || '';
-      $('#j-cron').value = j.cron || '0 2 * * *';
-      toggleByMethod('j');
+    // Load & save options
+    let OPTIONS = {};
+    async function loadOptions(){
+      OPTIONS = await GET('api/options') || {};
+      // Settings
+      $('#s-port').value = OPTIONS.ui_port||8066;
+      $('#s-gurl').value = OPTIONS.gotify_url||'';
+      $('#s-gtok').value = OPTIONS.gotify_token||'';
+      $('#s-dbxe').value = String(!!OPTIONS.dropbox_enabled);
+      $('#s-dbxr').value = OPTIONS.dropbox_remote||'dropbox:HA-Backups';
+      // Hosts
+      const hosts = OPTIONS.known_hosts||[];
+      $('#hosts-log').textContent = hosts.map(h=>`${h.label||''} — ${h.host||''} (${h.username||'root'})`).join('\n');
+      const preset = $('#b-preset'); preset.innerHTML='<option value="">—</option>'+(hosts.map((h,i)=>`<option value="${i}">${h.label||h.host}</option>`).join(''));
+      // Mounts
+      const ms = OPTIONS.nas_mounts||[];
+      $('#mounts-log').textContent = ms.join('\n');
+      // Jobs (display only)
+      $('#jobs-log').textContent = (OPTIONS.jobs||[]).join('\n');
     }
-    function clearJobForm(){
-      editJobIdx=-1;
-      ['#j-name','#j-host','#j-user','#j-pass','#j-disk','#j-files','#j-store','#j-cloud','#j-cron'].forEach(s=>$(s).value='');
-      $('#j-user').value='root'; $('#j-disk').value='/dev/sda'; $('#j-store').value='/backup'; $('#j-cron').value='0 2 * * *'; $('#j-method').value='dd';
-      toggleByMethod('j');
-    }
-    function loadMountToForm(idx){
-      const m = mounts[idx]; editMountIdx = idx;
-      $('#m-proto').value = m.proto || 'cifs';
-      $('#m-server').value = m.server || '';
-      $('#m-share').value = m.share || '';
-      $('#m-mount').value = m.mount || '';
-      $('#m-user').value = m.username || '';
-      $('#m-pass').value = m.password || '';
-      $('#m-opts').value = m.options || '';
-    }
-    function clearMountForm(){
-      editMountIdx = -1;
-      ['#m-server','#m-share','#m-mount','#m-user','#m-pass','#m-opts'].forEach(s=>$(s).value='');
-      $('#m-proto').value='cifs';
-    }
-    function toggleByMethod(prefix){
-      const m = $('#'+prefix+'-method').value;
-      show($('#'+prefix+'-disk-wrap'), m==='dd');
-      show($('#'+prefix+'-files-wrap'), m==='rsync');
-    }
-    $('#j-method').addEventListener('change', ()=>toggleByMethod('j'));
-    $('#b-method').addEventListener('change', ()=>{ const m=$('#b-method').value; show($('#b-disk-wrap'), m==='dd'); show($('#b-files-wrap'), m==='rsync'); show($('#b-zfs-wrap'), m==='zfs'); });
-    $('#r-method').addEventListener('change', e=>{
-      const m=e.target.value; show($('#r-image-wrap'), m==='dd'); show($('#r-disk-wrap'), m==='dd'); show($('#r-src-wrap'), m==='rsync'); show($('#r-dest-wrap'), m==='rsync');
+    loadOptions();
+
+    // Apply host preset to Backup form
+    $('#b-preset').addEventListener('change', e=>{
+      const idx = parseInt(e.target.value,10);
+      const h = (OPTIONS.known_hosts||[])[idx];
+      if (!h) return;
+      $('#b-host').value = h.host||'';
+      $('#b-user').value = h.username||'root';
+      $('#b-pass').value = h.password||'';
+      $('#b-disk').value = h.disk||'/dev/sda';
+      $('#b-files').value = h.files||'/etc';
+      $('#b-store').value = h.store_to||'/backup';
     });
 
-    // Known Hosts selection
-    $('#b-host-sel').addEventListener('change', e=>{ const h = decHost(e.target.value); if(h.host){ $('#b-host').value=h.host; $('#b-user').value=h.user; }});
-    $('#r-host-sel').addEventListener('change', e=>{ const h = decHost(e.target.value); if(h.host){ $('#r-host').value=h.host; $('#r-user').value=h.user; }});
-    $('#j-host-sel').addEventListener('change', e=>{ const h = decHost(e.target.value); if(h.host){ $('#j-host').value=h.host; $('#j-user').value=h.user; }});
-
-    // Save host buttons (autosave)
-    $('#b-host-save').onclick = async ()=>{
-      const host=$('#b-host').value.trim(); const user=$('#b-user').value.trim()||'root';
-      if(!host) return; if(!hosts.find(h=>h.host===host && h.user===user)) hosts.push({host,user});
-      await saveOptions(); refreshHostSelects();
-    };
-    $('#r-host-save').onclick = async ()=>{
-      const host=$('#r-host').value.trim(); const user=$('#r-user').value.trim()||'root';
-      if(!host) return; if(!hosts.find(h=>h.host===host && h.user===user)) hosts.push({host,user});
-      await saveOptions(); refreshHostSelects();
-    };
-
-    // Job handlers
-    $('#btn-add-job').onclick = async ()=>{
-      const j = {
-        name: $('#j-name').value.trim(),
-        host: $('#j-host').value.trim(),
-        user: $('#j-user').value.trim() || 'root',
-        password: $('#j-pass').value,
-        method: $('#j-method').value,
-        disk: $('#j-disk').value.trim(),
-        files: $('#j-files').value.trim(),
-        store: $('#j-store').value.trim() || '/backup',
-        cloud: $('#j-cloud').value.trim(),
-        cron: $('#j-cron').value.trim() || '0 2 * * *'
-      };
-      if(!(j.name && j.host && j.user && j.method && j.cron)) { alert('Please fill Job name, Host, User, Method, and Schedule.'); return; }
-      if(editJobIdx>=0) jobs[editJobIdx]=j; else jobs.push(j);
-      await saveOptions(); renderJobs(); clearJobForm();
-    };
-    $('#btn-clear-job').onclick = ()=>clearJobForm();
-
-    // Mount handlers
-    $('#btn-add-mount').onclick = async ()=>{
-      const m = {
-        proto: $('#m-proto').value,
-        server: $('#m-server').value.trim(),
-        share: $('#m-share').value.trim(),
-        mount: $('#m-mount').value.trim(),
-        username: $('#m-user').value.trim(),
-        password: $('#m-pass').value,
-        options: $('#m-opts').value.trim()
-      };
-      if(!(m.server && m.share && m.mount)) { alert('Please fill Server, Share/Export, and Mount path.'); return; }
-      if(editMountIdx>=0) mounts[editMountIdx]=m; else mounts.push(m);
-      await saveOptions(); renderMounts(); clearMountForm();
-    };
-    $('#btn-clear-mount').onclick = ()=>clearMountForm();
-
-    // Settings save & list
-    $('#btn-save').onclick = async ()=>{
-      options.ui_port = parseInt($('#s-port').value||'8066',10);
-      options.gotify_url = $('#s-gurl').value; options.gotify_token = $('#s-gtok').value;
-      options.gotify_enabled = !!(options.gotify_url && options.gotify_token);
-      options.dropbox_enabled = ($('#s-dbxe').value==='true');
-      options.dropbox_remote = $('#s-dbxr').value;
-      await saveOptions(); $('#settings-log').textContent = 'Saved.';
-    };
-    $('#btn-list').onclick = async ()=>{
-      const j = await GET('api/list_backups?path=/backup');
-      $('#settings-log').textContent = (j||[]).map(x=>`${x.path} (${x.size} bytes)`).join('\n');
-    };
-
-    // Backup/restore actions
+    // Backup actions
     $('#btn-probe').onclick = async ()=>{
       const payload={host:$('#b-host').value,username:$('#b-user').value,password:$('#b-pass').value};
       const j=await POST('api/probe_host', payload);
@@ -437,6 +291,8 @@
       const j=await POST('api/run_backup', p);
       $('#backup-log').textContent = JSON.stringify(j,null,2);
     };
+
+    // Restore
     $('#btn-run-restore').onclick = async ()=>{
       const p={method:$('#r-method').value,host:$('#r-host').value,username:$('#r-user').value,password:$('#r-pass').value,
                image_path:$('#r-image').value,disk:$('#r-disk').value,
@@ -445,28 +301,94 @@
       $('#restore-log').textContent = JSON.stringify(j,null,2);
     };
 
-    // Persistence
-    async function saveOptions(){
-      options.known_hosts = hosts.map(h=>encHost(h));
-      options.jobs = jobs.map(j=>encJob(j));
-      options.nas_mounts = mounts.map(m=>encMount(m));
-      const res = await POST('api/options', options);
-      return res;
+    // Settings save
+    $('#btn-save').onclick = async ()=>{
+      const p={ui_port:parseInt($('#s-port').value||'8066',10),
+               gotify_enabled:!!($('#s-gurl').value && $('#s-gtok').value),
+               gotify_url:$('#s-gurl').value, gotify_token:$('#s-gtok').value,
+               dropbox_enabled:($('#s-dbxe').value==='true'),
+               dropbox_remote:$('#s-dbxr').value};
+      const opts = Object.assign({}, OPTIONS, p);
+      const j=await POST('api/options', opts);
+      $('#settings-log').textContent = j.ok ? 'Saved.' : JSON.stringify(j);
+      loadOptions();
+    };
+
+    // Jobs
+    function jobFromForm(){
+      const m=$('#j-method').value;
+      const j={
+        name: $('#j-name').value, host: $('#j-host').value, username: $('#j-user').value, password: $('#j-pass').value,
+        method: m, disk: $('#j-disk').value, files: $('#j-files').value, zfs_dataset: $('#j-zfs').value,
+        store_to: $('#j-store').value, cloud_upload: $('#j-cloud').value, schedule: $('#j-sched').value
+      };
+      return j;
     }
-    async function loadOptions(){
-      options = await GET('api/options');
-      hosts = Array.isArray(options.known_hosts) ? options.known_hosts.map(s=>{ const [host,user] = String(s).split('|'); return {host,user}; }) : [];
-      jobs = Array.isArray(options.jobs) ? options.jobs.map(decJob) : [];
-      mounts = Array.isArray(options.nas_mounts) ? options.nas_mounts.map(decMount) : [];
-      // populate Settings
-      $('#s-port').value = options.ui_port ?? 8066;
-      $('#s-gurl').value = options.gotify_url || '';
-      $('#s-gtok').value = options.gotify_token || '';
-      $('#s-dbxe').value = String(!!options.dropbox_enabled);
-      $('#s-dbxr').value = options.dropbox_remote || 'dropbox:HA-Backups';
-      refreshHostSelects(); renderJobs(); renderMounts(); clearJobForm(); clearMountForm();
+    function addOrUpdateJob(){
+      const j = jobFromForm();
+      const arr = OPTIONS.jobs || [];
+      const idx = arr.findIndex(x=>{ try{ const o=JSON.parse(x); return o.name && o.name===j.name; }catch(e){ return false; } });
+      const line = JSON.stringify(j);
+      if (idx>=0) arr[idx]=line; else arr.push(line);
+      OPTIONS.jobs = arr;
     }
-    loadOptions();
+    $('#btn-add-job').onclick = async ()=>{
+      addOrUpdateJob();
+      const res = await POST('api/options', OPTIONS);
+      $('#jobs-log').textContent = res.ok ? (OPTIONS.jobs||[]).join('\n') : JSON.stringify(res);
+    };
+    $('#btn-apply').onclick = async ()=>{
+      const j=await POST('api/apply_schedule');
+      $('#jobs-log').textContent = j.out || JSON.stringify(j,null,2);
+    };
+
+    // Mounts
+    function mountLine(){
+      const proto=$('#m-proto').value, server=$('#m-server').value, share=$('#m-share').value, mount=$('#m-mount').value;
+      const user=$('#m-user').value, pass=$('#m-pass').value, opts=$('#m-opts').value;
+      let line = `proto=${proto};server=${server};share=${share};mount=${mount}`;
+      if (user) line+=`;username=${user}`;
+      if (pass) line+=`;password=${pass}`;
+      if (opts) line+=`;options=${opts}`;
+      return line;
+    }
+    $('#btn-add-mount').onclick = async ()=>{
+      const line = mountLine();
+      const arr = OPTIONS.nas_mounts || [];
+      const key = line.replace(/;password=[^;]*/,''); // dedupe ignoring pw
+      const idx = arr.findIndex(s=>s && s.replace(/;password=[^;]*/,'')===key);
+      if (idx>=0) arr[idx]=line; else arr.push(line);
+      OPTIONS.nas_mounts = arr;
+      const res = await POST('api/options', OPTIONS);
+      $('#mounts-log').textContent = (OPTIONS.nas_mounts||[]).join('\n');
+    };
+
+    // Known hosts
+    function hostFromForm(){
+      return {
+        label: $('#h-label').value, host: $('#h-host').value, username: $('#h-user').value, password: $('#h-pass').value,
+        store_to: $('#h-store').value, disk: $('#h-disk').value, files: $('#h-files').value
+      };
+    }
+    $('#btn-add-host').onclick = async ()=>{
+      const h = hostFromForm();
+      const arr = OPTIONS.known_hosts || [];
+      const idx = arr.findIndex(x=> (x.label && x.label===h.label) || (x.host && x.host===h.host));
+      if (idx>=0) arr[idx]=h; else arr.push(h);
+      OPTIONS.known_hosts = arr;
+      const res = await POST('api/options', OPTIONS);
+      $('#hosts-log').textContent = arr.map(h=>`${h.label||''} — ${h.host||''} (${h.username||'root'})`).join('\n');
+      const preset = $('#b-preset'); preset.innerHTML='<option value="">—</option>'+(arr.map((h,i)=>`<option value="${i}">${h.label||h.host}</option>`).join(''));
+    };
+    $('#btn-apply-host').onclick = ()=>{
+      const h = hostFromForm();
+      $('#b-host').value = h.host||'';
+      $('#b-user').value = h.username||'root';
+      $('#b-pass').value = h.password||'';
+      $('#b-disk').value = h.disk||'/dev/sda';
+      $('#b-files').value = h.files||'/etc';
+      $('#b-store').value = h.store_to||'/backup';
+    };
   </script>
 </body>
 </html>
