@@ -31,6 +31,8 @@ APP_DEFAULTS = {
 
 app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
 
+# ---------- helpers ----------
+
 def human_size(n):
     n=float(n)
     for u in ['B','KB','MB','GB','TB']:
@@ -63,18 +65,27 @@ def load_opts():
 
 def load_app_config():
     """Load UI-managed config stored under /config."""
+    os.makedirs(os.path.dirname(APP_CONFIG), exist_ok=True)
     if not os.path.exists(APP_CONFIG):
         with open(APP_CONFIG, "w") as f:
             json.dump(APP_DEFAULTS, f, indent=2)
+            f.flush(); os.fsync(f.fileno())
     with open(APP_CONFIG, "r") as f:
         return json.load(f)
 
 def save_app_config(data: dict):
-    """Persist UI-managed config to /config."""
+    """Persist UI-managed config to /config (atomic)."""
     cfg = load_app_config()
-    cfg.update(data)
-    with open(APP_CONFIG, "w") as f:
+    # Accept any JSON-serializable keys (so the UI can add fields without backend changes)
+    for k, v in data.items():
+        # basic guard: only store JSON-safe primitives, lists, dicts
+        if isinstance(v, (str, int, float, bool)) or v is None or isinstance(v, (list, dict)):
+            cfg[k] = v
+    tmp = APP_CONFIG + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(cfg, f, indent=2)
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, APP_CONFIG)
     return True
 
 def run(cmd):
@@ -105,6 +116,8 @@ def ssh(user, host, password, remote_cmd, port=22):
     cmd = f"sshpass -p {shlex.quote(password)} {base} {shlex.quote(user)}@{shlex.quote(host)} {shlex.quote(remote_cmd)}"
     return run(cmd)
 
+# ---------- backup/restore operations ----------
+
 def dd_backup(user, host, password, disk, out_path, port=22, verify=False, bwlimit_kbps=None):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     comp = "pigz -c" if subprocess.call("command -v pigz >/dev/null 2>&1", shell=True)==0 else "gzip -c"
@@ -120,16 +133,16 @@ def dd_backup(user, host, password, disk, out_path, port=22, verify=False, bwlim
                 h.update(chunk)
         with open(sha_path, "w") as sf:
             sf.write(f"{h.hexdigest()}  {os.path.basename(out_path)}\n")
-        if verify:
-            hv = hashlib.sha256()
-            with open(out_path, "rb") as f:
-                for chunk in iter(lambda: f.read(1024*1024), b""):
-                    hv.update(chunk)
-            if hv.hexdigest()!=h.hexdigest():
-                out += "\n[VERIFY] SHA256 mismatch!"
-                rc = 2
-            else:
-                out += "\n[VERIFY] SHA256 OK"
+    if rc==0 and verify:
+        hv = hashlib.sha256()
+        with open(out_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024*1024), b""):
+                hv.update(chunk)
+        if hv.hexdigest()!=h.hexdigest():
+            out += "\n[VERIFY] SHA256 mismatch!"
+            rc = 2
+        else:
+            out += "\n[VERIFY] SHA256 OK"
     return rc, out
 
 def dd_restore(user, host, password, disk, image_path, port=22, bwlimit_kbps=None):
@@ -193,6 +206,8 @@ def local_size_bytes(path):
             except: pass
     return total
 
+# ---------- routes ----------
+
 @app.get("/")
 def root():
     return app.send_static_file("index.html")
@@ -202,16 +217,18 @@ def root():
 def get_options():
     ha = load_opts()
     appcfg = load_app_config()
-    merged = {**ha, **{k: appcfg.get(k, APP_DEFAULTS[k]) for k in APP_DEFAULTS}}
+    merged = dict(ha)
+    # Overlay UI-managed keys so UI sees what it saved
+    for k in appcfg:
+        merged[k] = appcfg[k]
     return jsonify(merged)
 
-# Save only UI-owned keys to /config
+# Save any posted UI keys into /config (atomic write + fsync)
 @app.post("/api/options")
 def set_options():
     data = request.get_json(force=True) or {}
-    allowed = {k: data[k] for k in ("known_hosts","server_presets","jobs","nas_mounts") if k in data}
-    ok = save_app_config(allowed)
-    return jsonify({"ok": ok, "saved": allowed})
+    ok = save_app_config(data)
+    return jsonify({"ok": ok, "config": load_app_config()})
 
 # Optional explicit UI-config endpoints
 @app.get("/api/app-config")
@@ -221,9 +238,8 @@ def get_app_config():
 @app.post("/api/app-config")
 def set_app_config():
     data = request.get_json(force=True) or {}
-    allowed = {k: data[k] for k in ("known_hosts","server_presets","jobs","nas_mounts") if k in data}
-    ok = save_app_config(allowed)
-    return jsonify({"ok": ok, "saved": allowed, "config": load_app_config()})
+    ok = save_app_config(data)
+    return jsonify({"ok": ok, "config": load_app_config()})
 
 @app.post("/api/apply_schedule")
 def apply_schedule():
@@ -247,8 +263,8 @@ def install_tools():
         return jsonify({"rc":2,"out":"Missing host"}),400
     cmds = [
         "which rsync || (which apt && apt update && apt install -y rsync) || (which apk && apk add rsync) || (which dnf && dnf install -y rsync) || (which pkg && pkg install -y rsync) || true",
-        "which gzip || (which apt && apt update && apt install -y gzip) || (which apk && apk add gzip) || (which dnf && dnf install -y gzip) || (which pkg && pkg install -y gzip) || true",
-        "which pigz || (which apt && apt update && apt install -y pigz) || (which apk && apk add pigz) || (which dnf && dnf install -y pigz) || (which pkg && pkg install -y pigz) || true"
+        "which gzip || (which apt && apt install -y gzip) || (which apk && apk add gzip) || (which dnf && dnf install -y gzip) || (which pkg && pkg install -y gzip) || true",
+        "which pigz || (which apt && apt install -y pigz) || (which apk && apk add pigz) || (which dnf && dnf install -y pigz) || (which pkg && pkg install -y pigz) || true"
     ]
     out_all, rc_final = [], 0
     for c in cmds:
@@ -262,7 +278,7 @@ def estimate_backup():
     b = request.json or {}
     method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); port=int(b.get("port",22))
     bwlimit = int(b.get("bwlimit_kbps",0) or 0)
-    kbps = bwlimit if bwlimit>0 else (40*1024)  # default 40 MB/s
+    kbps = bwlimit if bwlimit>0 else (40*1024)
     if not host or not method:
         return jsonify({"rc":2,"out":"Missing host/method"}),400
     if method=="dd":
@@ -301,7 +317,7 @@ def run_backup():
     cloud=b.get("cloud_upload",""); t0=time.time()
     bwlimit = int(b.get("bwlimit_kbps",0) or 0) or None
     verify = bool(b.get("verify", False))
-    excludes = b.get("excludes","")  # rsync only
+    excludes = b.get("excludes","")
     retention_days = int(b.get("retention_days",0) or 0)
     name = b.get("backup_name","").strip()
 
