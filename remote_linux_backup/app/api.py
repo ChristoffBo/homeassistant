@@ -1,218 +1,113 @@
-import os, json, subprocess, shlex, time
+import os
+import json
+import time
+import subprocess
+import threading
+import hashlib
 from flask import Flask, request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-WWW_DIR = os.path.join(APP_DIR, "www")
-OPTIONS_PATH = "/data/options.json"
-DEFAULT_OPTIONS = {
-    "known_hosts": [],
-    "ui_port": 8066,
-    "gotify_enabled": False,
-    "gotify_url": "",
-    "gotify_token": "",
-    "auto_install_tools": True,
-    "dropbox_enabled": False,
-    "dropbox_remote": "dropbox:HA-Backups",
-    "nas_mounts": [],
-    "server_presets": [],
-    "jobs": []
-}
+CONFIG_PATH = None
+app = Flask(__name__)
 
-app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
+# Load configuration
+def load_config():
+    with open(CONFIG_PATH, "r") as f:
+        return json.load(f)
 
-def _safe_load_json(path):
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+def save_config(cfg):
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(cfg, f, indent=2)
 
-def load_opts():
-    d = _safe_load_json(OPTIONS_PATH)
-    # merge defaults without overwriting user keys
-    for k, v in DEFAULT_OPTIONS.items():
-        d.setdefault(k, v)
-    return d
-
-def save_opts(d):
-    try:
-        tmp = OPTIONS_PATH + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(d, f, indent=2)
-        os.replace(tmp, OPTIONS_PATH)
-        return True
-    except Exception as e:
-        return False
-
-def run(cmd):
-    p = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out_lines = []
-    for line in p.stdout:
-        out_lines.append(line)
-    rc = p.wait()
-    return rc, "".join(out_lines)
-
-def gotify(title, message, priority=5):
-    opts = load_opts()
-    if not opts.get("gotify_enabled"):
+# Gotify notification
+def send_gotify(title, message):
+    cfg = load_config()
+    if not cfg.get("gotify_enabled"):
         return
-    url = opts.get("gotify_url")
-    token = opts.get("gotify_token")
+    url = cfg.get("gotify_url")
+    token = cfg.get("gotify_token")
     if not url or not token:
         return
-    cmd = f"curl -s -X POST {shlex.quote(url)}/message -F token={shlex.quote(token)} -F title={shlex.quote(title)} -F message={shlex.quote(message)} -F priority={priority}"
-    run(cmd)
+    try:
+        subprocess.run(
+            [
+                "curl", "-s", "-X", "POST", f"{url}/message",
+                "-F", f"token={token}",
+                "-F", f"title={title}",
+                "-F", f"message={message}"
+            ],
+            check=False
+        )
+    except Exception as e:
+        print(f"[Gotify Error] {e}")
 
-def ssh(user, host, password, remote_cmd):
-    cmd = f"sshpass -p {shlex.quote(password)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {shlex.quote(user)}@{shlex.quote(host)} {shlex.quote(remote_cmd)}"
-    return run(cmd)
+# Backup execution
+def run_backup(job):
+    start_time = time.time()
+    destination = job.get("destination")
+    backup_name = job.get("name") or f"backup_{int(start_time)}"
+    filename = os.path.join(destination, f"{backup_name}.img.gz")
 
-def dd_backup(user, host, password, disk, out_path):
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    pipeline = f"sshpass -p {shlex.quote(password)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {shlex.quote(user)}@{shlex.quote(host)} 'dd if={shlex.quote(disk)} bs=64K status=progress | gzip -c' > {shlex.quote(out_path)}"
-    return run(pipeline)
+    # Build SSH/rsync/dd command
+    ssh_host = job.get("ssh_host")
+    ssh_user = job.get("ssh_user")
+    ssh_pass = job.get("ssh_pass")
+    ssh_port = job.get("ssh_port", 22)
+    bandwidth = job.get("bandwidth_limit", 0)
+    excludes = job.get("excludes", "")
+    verify = job.get("verify", False)
 
-def dd_restore(user, host, password, disk, image_path):
-    pipeline = f"gzip -dc {shlex.quote(image_path)} | sshpass -p {shlex.quote(password)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {shlex.quote(user)}@{shlex.quote(host)} 'dd of={shlex.quote(disk)} bs=64K status=progress'"
-    return run(pipeline)
-
-def rsync_pull(user, host, password, sources_csv, dest):
-    outs, rc = [], 0
-    for src in [s.strip() for s in sources_csv.split(",") if s.strip()]:
-        cmd = f"sshpass -p {shlex.quote(password)} rsync -aAX --numeric-ids -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(src)} {shlex.quote(dest.rstrip('/') + '/')}"
-        r, o = run(cmd)
-        outs.append(f"$ {cmd}\n{o}")
-        if r != 0: rc = r
-    return rc, "\n".join(outs)
-
-def rsync_push(user, host, password, local_src, remote_dest):
-    cmd = f"sshpass -p {shlex.quote(password)} rsync -aAX --numeric-ids -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' {shlex.quote(local_src.rstrip('/') + '/')} {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(remote_dest.rstrip('/') + '/')}"
-    return run(cmd)
-
-def rclone_copy(local_path, remote_spec):
-    return run(f"rclone copy {shlex.quote(local_path)} {shlex.quote(remote_spec)} --progress")
-
-@app.get("/")
-def root():
-    return app.send_static_file("index.html")
-
-@app.get("/api/options")
-def get_options():
-    return jsonify(load_opts())
-
-@app.post("/api/options")
-def set_options():
-    data = request.json or {}
-    # ensure defaults
-    opts = load_opts()
-    opts.update(data)
-    ok = save_opts(opts)
-    return jsonify({"ok": ok})
-
-@app.post("/api/apply_schedule")
-def apply_schedule():
-    rc, out = run("python3 /app/scheduler.py apply")
-    return jsonify({"rc": rc, "out": out})
-
-@app.post("/api/probe_host")
-def probe_host():
-    b = request.json or {}
-    user = b.get("username","root"); host=b.get("host",""); pwd=b.get("password","")
-    if not host:
-        return jsonify({"rc":2,"out":"Missing host"}),400
-    rc, out = ssh(user, host, pwd, "uname -a || true; cat /etc/os-release 2>/dev/null || true; which rsync || true; which dd || true; which zfs || true")
-    return jsonify({"rc": rc, "out": out})
-
-@app.post("/api/install_tools")
-def install_tools():
-    b = request.json or {}
-    user = b.get("username","root"); host=b.get("host",""); pwd=b.get("password","")
-    if not host:
-        return jsonify({"rc":2,"out":"Missing host"}),400
-    cmds = [
-        "which rsync || (which apt && apt update && apt install -y rsync) || (which apk && apk add rsync) || (which dnf && dnf install -y rsync) || (which pkg && pkg install -y rsync) || true",
-        "which gzip || (which apt && apt update && apt install -y gzip) || (which apk && apk add gzip) || (which dnf && dnf install -y gzip) || (which pkg && pkg install -y gzip) || true"
-    ]
-    out_all, rc_final = [], 0
-    for c in cmds:
-        rc, out = ssh(user, host, pwd, c)
-        out_all.append(out)
-        if rc != 0: rc_final = rc
-    return jsonify({"rc": rc_final, "out": "\n".join(out_all)})
-
-@app.post("/api/run_backup")
-def run_backup():
-    b = request.json or {}
-    method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password","")
-    if not host or not method:
-        return jsonify({"rc":2,"out":"Missing host/method"}),400
-    store_to=b.get("store_to","/backup"); os.makedirs(store_to, exist_ok=True)
-    cloud=b.get("cloud_upload",""); t0=time.time()
-    if method=="dd":
-        disk=b.get("disk","/dev/sda")
-        ts=time.strftime("%Y%m%d-%H%M%S")
-        out_path=os.path.join(store_to, f"{host.replace('.','_')}-{ts}.img.gz")
-        rc,out = dd_backup(user,host,pwd,disk,out_path)
-        if rc==0 and cloud:
-            rcrc,rout = rclone_copy(out_path,cloud); out += "\n[RCLONE]\n"+rout
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd\nSaved: {out_path}")
-        return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2),"saved":out_path})
-    elif method=="rsync":
-        files=b.get("files","/etc")
-        rc,out = rsync_pull(user,host,pwd,files,store_to)
-        if rc==0 and cloud:
-            rcrc,rout = rclone_copy(store_to,cloud); out += "\n[RCLONE]\n"+rout
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync\nSaved: {store_to}")
-        return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
-    elif method=="zfs":
-        dataset=b.get("zfs_dataset")
-        if not dataset:
-            return jsonify({"rc":2,"out":"Missing zfs_dataset"}),400
-        snap=b.get("snapshot_name", time.strftime("backup-%Y%m%d-%H%M%S"))
-        rc,out = ssh(user,host,pwd,f"zfs snapshot {shlex.quote(dataset)}@{shlex.quote(snap)}")
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: zfs snapshot\nSnapshot: {dataset}@{snap}")
-        return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
+    if job.get("mode") == "dd":
+        cmd = f"ssh -p {ssh_port} {ssh_user}@{ssh_host} 'sudo dd if={job['source']}' | gzip -c > '{filename}'"
+    elif job.get("mode") == "rsync":
+        exclude_args = " ".join([f"--exclude='{e.strip()}'" for e in excludes.split(",") if e.strip()])
+        bwlimit = f"--bwlimit={bandwidth}" if bandwidth > 0 else ""
+        cmd = f"rsync -avz -e 'ssh -p {ssh_port}' {exclude_args} {bwlimit} {ssh_user}@{ssh_host}:{job['source']} {destination}"
     else:
-        return jsonify({"rc":2,"out":"Unknown method"}),400
+        return False, "Unsupported mode"
 
-@app.post("/api/run_restore")
-def run_restore():
-    b = request.json or {}
-    method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); t0=time.time()
-    if not host or not method:
-        return jsonify({"rc":2,"out":"Missing host/method"}),400
-    if method=="dd":
-        image=b.get("image_path"); disk=b.get("disk","/dev/sda")
-        if not image:
-            return jsonify({"rc":2,"out":"Missing image_path"}),400
-        rc,out = dd_restore(user,host,pwd,disk,image)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd restore\nSrc: {image}")
-        return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
-    elif method=="rsync":
-        local_src=b.get("local_src"); remote_dest=b.get("remote_dest","/")
-        if not local_src:
-            return jsonify({"rc":2,"out":"Missing local_src"}),400
-        rc,out = rsync_push(user,host,pwd,local_src,remote_dest)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync restore\nDest: {remote_dest}")
-        return jsonify({"rc":rc,"out":out,"seconds":round(time.time()-t0,2)})
+    os.makedirs(destination, exist_ok=True)
+    print(f"[Backup] Running: {cmd}")
+    result = subprocess.run(cmd, shell=True)
+
+    elapsed = round(time.time() - start_time, 2)
+    backup_size = 0
+    if os.path.exists(filename):
+        backup_size = os.path.getsize(filename)
+
+    if result.returncode == 0:
+        msg = f"Backup completed: {backup_name}\nTime: {elapsed}s\nSize: {backup_size} bytes\nDestination: {destination}"
+        send_gotify("Backup Success", msg)
+        return True, msg
     else:
-        return jsonify({"rc":2,"out":"Unknown restore method"}),400
+        msg = f"Backup failed: {backup_name}"
+        send_gotify("Backup Failed", msg)
+        return False, msg
 
-@app.get("/api/list_backups")
-def list_backups():
-    base = request.args.get("path","/backup")
-    res = []
-    for r,ds,fs in os.walk(base):
-        for f in fs:
-            p=os.path.join(r,f)
-            try: sz=os.path.getsize(p)
-            except: sz=0
-            res.append({"path":p,"size":sz})
-    return jsonify(sorted(res,key=lambda x:x["path"]))
+@app.route("/api/config", methods=["GET", "POST"])
+def config_api():
+    if request.method == "GET":
+        return jsonify(load_config())
+    data = request.json
+    save_config(data)
+    return jsonify({"status": "ok"})
 
-@app.get("/www/<path:fn>")
-def serve_www(fn):
-    return send_from_directory(WWW_DIR, fn)
+@app.route("/api/run_job", methods=["POST"])
+def run_job():
+    job = request.json
+    threading.Thread(target=run_backup, args=(job,)).start()
+    return jsonify({"status": "started"})
+
+@app.route("/", defaults={"path": "index.html"})
+@app.route("/<path:path>")
+def static_files(path):
+    return send_from_directory("/app/www", path)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8066)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8066)
+    parser.add_argument("--config", type=str, required=True)
+    args = parser.parse_args()
+    CONFIG_PATH = args.config
+    app.run(host="0.0.0.0", port=args.port)
