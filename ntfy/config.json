@@ -1,0 +1,42 @@
+{
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7",
+    "i386"
+  ],
+  "name": "ntfy.sh",
+  "version": "latest",
+  "slug": "ntfy",
+  "description": "Lightweight topic-based push notifications server with a simple web UI. Uses the official image.",
+  "url": "https://github.com/binwiederhier/ntfy",
+  "startup": "services",
+  "boot": "auto",
+  "ingress": true,
+  "ingress_port": 80,
+  "host_network": false,
+  "webui": "http://[HOST]:[PORT:8092]",
+  "panel_icon": "mdi:bell-ring",
+  "panel_title": "ntfy",
+  "panel_admin": false,
+  "image": "binwiederhier/ntfy",
+  "ports": {
+    "80/tcp": 8092
+  },
+  "ports_description": {
+    "80/tcp": "ntfy Web UI and API"
+  },
+  "map": [
+    "config:rw"
+  ],
+  "environment": {
+    "TZ": "Africa/Johannesburg",
+    "NTFY_DATA_DIR": "/config/ntfy"
+  },
+  "options": {
+    "port": 8092
+  },
+  "schema": {
+    "port": "int(1,65535)"
+  }
+}
