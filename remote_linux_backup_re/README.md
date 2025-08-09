@@ -1,3 +1,5 @@
+Under Construction
+
 🧩 Remote Linux Backup — Home Assistant Add-on
 
 Full-featured backup and restore tool for remote Linux systems over SSH. Supports full disk imaging (dd), rsync folder backups, ZFS, NAS mounts, and cloud uploads. Designed for non-technical users with an easy-to-use web UI, preset manager, and file explorer.
