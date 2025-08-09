@@ -16,8 +16,8 @@ DEFAULT_OPTIONS = {
     "dropbox_enabled": False,
     "dropbox_remote": "dropbox:HA-Backups",
     "nas_mounts": [],
-    "server_presets": [],     # [{name, host, port, username, password?}]
-    "jobs": []                # scheduler jobs
+    "server_presets": [],
+    "jobs": []
 }
 
 app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
