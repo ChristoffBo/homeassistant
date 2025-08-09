@@ -1,4 +1,5 @@
-/* Compact centered card UI – sleek and descriptive */
+/* Compact centered card UI – high readability */
+
 :root{
   --bg:#0b0f14; --panel:#0f1720; --text:#eaf2f8; --muted:#b6c5d6;
   --border:#223245; --accent:#7c5cff; --accent-2:#0ea5e9; --danger:#ef4444;
@@ -15,10 +16,14 @@ body{
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
 
-.page{ min-height:100dvh;display:grid;place-items:center;padding:32px 16px; }
+/* Centered page */
+.page{
+  min-height:100dvh;display:grid;place-items:center;padding:32px 16px;
+}
 
+/* Card */
 .card{
-  width:100%;max-width:960px;background:linear-gradient(180deg,#101a27 0%, #0c141f 100%);
+  width:100%;max-width:880px;background:linear-gradient(180deg,#101a27 0%, #0c141f 100%);
   border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
   padding:22px 22px 26px;
 }
@@ -28,6 +33,7 @@ body{
 .brand__title{margin:0;font-weight:800;letter-spacing:.3px;font-size:1.35rem}
 .brand__subtitle{margin:2px 0 0;color:var(--muted);font-size:.95rem}
 
+/* Tabs */
 .tabs{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
 .tab{
   background:#121e2c;border:1px solid var(--border);color:#ddecff;
@@ -35,22 +41,17 @@ body{
 }
 .tab.is-active{background:#1a2b3f;color:#fff;border-color:#33506f}
 
+/* Panels */
 .panel{display:none;margin-top:14px;background:var(--panel);border:1px solid var(--border);
   border-radius:12px;padding:16px}
 .panel.is-active{display:block}
 
-.form{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:12px}
-@media (max-width:780px){ .form{grid-template-columns:1fr} }
+/* Form layout */
+.form{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
+@media (max-width:720px){ .form{grid-template-columns:1fr} }
 
 .field label{display:grid;gap:6px;font-weight:800}
 .hint{color:var(--muted);font-weight:600;font-size:.9rem}
-
-.row{display:flex;gap:8px}
-.row input, .row select{flex:1}
-
-input,select,textarea,button{
-  font:inherit;
-}
 
 input,select,textarea{
   background:#0e1724;border:1px solid var(--border);color:var(--text);
@@ -60,6 +61,7 @@ input::placeholder,textarea::placeholder{color:#8ba2b9}
 input:focus,select:focus,textarea:focus{border-color:#3a5a78;box-shadow:0 0 0 3px rgba(14,165,233,.18)}
 .textarea{min-height:200px;resize:vertical}
 
+/* Buttons */
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
 .btn{
   background:#17263a;border:1px solid var(--border);color:#e6f1ff;
@@ -69,6 +71,7 @@ input:focus,select:focus,textarea:focus{border-color:#3a5a78;box-shadow:0 0 0 3p
 .btn--primary{background:var(--accent-2);color:#03131e;border-color:transparent}
 .btn--danger{background:var(--danger);color:#fff;border-color:transparent}
 
+/* Logs */
 .log-wrap{margin-top:12px}
 .log-title{color:var(--muted);font-weight:800;margin-bottom:6px}
 .log{
@@ -77,8 +80,7 @@ input:focus,select:focus,textarea:focus{border-color:#3a5a78;box-shadow:0 0 0 3p
   white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.97rem
 }
 
-.job-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0;padding:8px;border:1px dashed var(--border);border-radius:10px}
-
+/* Utilities */
 .details{margin-top:10px}
 .details summary{cursor:pointer;font-weight:800}
 .code{background:#0b1522;border:1px solid var(--border);border-radius:10px;padding:10px;overflow:auto}
