@@ -142,6 +142,7 @@ def ssh(user, host, password, remote_cmd, port=22):
     cmd = f"sshpass -p {shlex.quote(password)} {base} {shlex.quote(user)}@{shlex.quote(host)} {shlex.quote(remote_cmd)}"
     return run(cmd)
 
+# ---------- helpers USED by backup/restore (PLACED ABOVE their first use) ----------
 def gotify(title, message, priority=5):
     appcfg = load_app_config()
     url = appcfg.get("gotify_url") or ""
@@ -156,6 +157,59 @@ def gotify(title, message, priority=5):
     cmd = f"curl -s -X POST {shlex.quote(url)}/message -F token={shlex.quote(token)} -F title={shlex.quote(title)} -F message={shlex.quote(message)} -F priority={priority}"
     run(cmd)
 
+def dd_backup(user, host, password, disk, out_path, port=22, verify=False, bwlimit_kbps=None):
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    comp = "pigz -c" if subprocess.call("command -v pigz >/dev/null 2>&1", shell=True)==0 else "gzip -c"
+    bw = f" | pv -q -L {int(bwlimit_kbps)*1024} " if bwlimit_kbps else " | "
+    pipeline = f"sshpass -p {shlex.quote(password)} {_ssh_base_cmd(port)} {shlex.quote(user)}@{shlex.quote(host)} 'dd if={shlex.quote(disk)} bs=64K status=progress'{bw}{comp} > {shlex.quote(out_path)}"
+    rc,out = run(pipeline)
+    sha_path = out_path + ".sha256"
+    if rc==0:
+        h = hashlib.sha256()
+        with open(out_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024*1024), b""):
+                h.update(chunk)
+        with open(sha_path, "w") as sf:
+            sf.write(f"{h.hexdigest()}  {os.path.basename(out_path)}\n")
+        if verify:
+            hv = hashlib.sha256()
+            with open(out_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024*1024), b""):
+                    hv.update(chunk)
+            if hv.hexdigest()!=h.hexdigest():
+                out += "\n[VERIFY] SHA256 mismatch!"; rc = 2
+            else:
+                out += "\n[VERIFY] SHA256 OK"
+    return rc, out
+
+def dd_restore(user, host, password, disk, image_path, port=22, bwlimit_kbps=None):
+    comp = "pigz -dc" if subprocess.call("command -v pigz >/dev/null 2>&1", shell=True)==0 else "gzip -dc"
+    bw = f" | pv -q -L {int(bwlimit_kbps)*1024} " if bwlimit_kbps else " | "
+    pipeline = f"{comp} {shlex.quote(image_path)}{bw}sshpass -p {shlex.quote(password)} {_ssh_base_cmd(port)} {shlex.quote(user)}@{shlex.quote(host)} 'dd of={shlex.quote(disk)} bs=64K status=progress'"
+    return run(pipeline)
+
+def rsync_pull(user, host, password, sources_csv, dest, port=22, excludes_csv="", bwlimit_kbps=None):
+    outs, rc = [], 0
+    excl = "".join([f" --exclude {shlex.quote(pat)}" for pat in [s.strip() for s in (excludes_csv or "").split(",") if s.strip()]])
+    bw = f" --bwlimit={int(bwlimit_kbps)}" if bwlimit_kbps else ""
+    for src in [s.strip() for s in sources_csv.split(",") if s.strip()]:
+        cmd = f"sshpass -p {shlex.quote(password)} rsync -aAX --numeric-ids{bw} -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p {int(port)}' {excl} {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(src)} {shlex.quote(dest.rstrip('/') + '/')}"
+        r, o = run(cmd)
+        outs.append(f"$ {cmd}\n{o}");  rc = r if r != 0 else rc
+    return rc, "\n".join(outs)
+
+def rsync_push(user, host, password, local_src, remote_dest, port=22, excludes_csv="", bwlimit_kbps=None):
+    excl = "".join([f" --exclude {shlex.quote(pat)}" for pat in [s.strip() for s in (excludes_csv or "").split(",") if s.strip()]])
+    bw = f" --bwlimit={int(bwlimit_kbps)}" if bwlimit_kbps else ""
+    cmd = f"sshpass -p {shlex.quote(password)} rsync -aAX --numeric-ids{bw} -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p {int(port)}' {excl} {shlex.quote(local_src.rstrip('/') + '/')} {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(remote_dest.rstrip('/') + '/')}"
+    return run(cmd)
+
+def rclone_copy(local_path, remote_spec, bwlimit_kbps=None):
+    cfg = shlex.quote(RCLONE_CONFIG)
+    bw = f" --bwlimit {int(bwlimit_kbps)}k" if bwlimit_kbps else ""
+    return run(f"rclone copy {shlex.quote(local_path)} {shlex.quote(remote_spec)} --progress --config {cfg}{bw}")
+
+# ---------- index helpers ----------
 def prune_old(path, days):
     if not days or days <= 0: return ""
     now = time.time(); cutoff = now - days*86400; deleted = []
@@ -181,7 +235,6 @@ def local_size_bytes(path):
             except: pass
     return total
 
-# ---- index ----
 def _load_index():
     d = _safe_load_json(INDEX_PATH)
     if not isinstance(d, dict) or "items" not in d: d = {"items": []}
@@ -288,7 +341,7 @@ def set_options():
 # Gotify / Dropbox tests
 @app.post("/api/gotify_test")
 def api_gotify_test():
-    gotify("Test Notification", "Hello from Remote Linux Backup (UI test).", 5)
+    gotify("Test Notification", "Hello from Remote Linux Backup (UI test).", 5)  # no-op if not configured
     return jsonify({"ok": True})
 
 @app.post("/api/dropbox_test")
@@ -412,17 +465,17 @@ def run_backup():
 
     # upsert server preset
     if remember_server:
-      cfg = load_app_config(); servers = cfg.get("servers", [])
-      found = None
-      for s in servers:
-          if s.get("host")==host and s.get("username")==user and int(s.get("port",22))==int(port):
-              found = s; break
-      if not found:
-          servers.append({"name": name or host, "host": host, "username": user, "port": int(port), "save_password": save_password, "password": (pwd if save_password else "")})
-      else:
-          found.update({"name": name or found.get("name") or host, "save_password": save_password})
-          if save_password: found["password"]=pwd
-      save_app_config({"servers": servers})
+        cfg = load_app_config(); servers = cfg.get("servers", [])
+        found = None
+        for s in servers:
+            if s.get("host")==host and s.get("username")==user and int(s.get("port",22))==int(port):
+                found = s; break
+        if not found:
+            servers.append({"name": name or host, "host": host, "username": user, "port": int(port), "save_password": save_password, "password": (pwd if save_password else "")})
+        else:
+            found.update({"name": name or found.get("name") or host, "save_password": save_password})
+            if save_password: found["password"]=pwd
+        save_app_config({"servers": servers})
 
     if method=="dd":
         disk=b.get("disk","/dev/sda")
@@ -432,8 +485,7 @@ def run_backup():
         rc,out = dd_backup(user,host,pwd,disk,out_path,port=port,verify=verify,bwlimit_kbps=bwlimit)
         size_bytes = local_size_bytes(out_path) if rc==0 else 0
         if rc==0 and cloud:
-            rcrc,rout = run(f"rclone copy {shlex.quote(out_path)} {shlex.quote(cloud)} --progress --config {shlex.quote(RCLONE_CONFIG)}")
-            out += "\n[RCLONE]\n" + rout
+            rcrc,rout = rclone_copy(out_path,cloud,bwlimit_kbps=bwlimit); out += "\n[RCLONE]\n"+rout
         if retention_days>0:
             out += "\n[PRUNE]\n" + prune_old(store_to, retention_days)
         took=round(time.time()-t0,2)
@@ -448,8 +500,7 @@ def run_backup():
         rc,out = rsync_pull(user,host,pwd,files,dest,port=port,excludes_csv=excludes,bwlimit_kbps=bwlimit)
         size_bytes = local_size_bytes(dest) if rc==0 else 0
         if rc==0 and cloud:
-            rcrc,rout = run(f"rclone copy {shlex.quote(dest)} {shlex.quote(cloud)} --progress --config {shlex.quote(RCLONE_CONFIG)}")
-            out += "\n[RCLONE]\n" + rout
+            rcrc,rout = rclone_copy(dest,cloud,bwlimit_kbps=bwlimit); out += "\n[RCLONE]\n"+rout
         if retention_days>0:
             out += "\n[PRUNE]\n" + prune_old(dest, retention_days)
         took=round(time.time()-t0,2)
