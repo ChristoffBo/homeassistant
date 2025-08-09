@@ -1,24 +1,28 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install runtime deps (Alpine)
-# cronie provides crond; flask/gunicorn from repos
+# Runtime deps:
+# - cronie: cron scheduler
+# - openssh-client + sshpass: remote commands & rsync over ssh
+# - samba-client: smbclient for SMB share listing/browsing
+# - nfs-utils: showmount and NFS mount support
+# - rclone: optional cloud copy (Dropbox etc.)
+# - Flask + Gunicorn: web UI/API
 RUN apk add --no-cache \
-    bash curl jq coreutils pigz pv openssh-client sshpass rsync rclone \
-    python3 py3-flask py3-gunicorn cronie gzip
+    bash curl jq coreutils pigz pv gzip \
+    openssh-client sshpass rsync rclone \
+    samba-client nfs-utils \
+    python3 py3-flask py3-gunicorn cronie
 
-# App
 WORKDIR /app
 
-# Copy application files
 COPY api.py scheduler.py job_runner.py run.sh /app/
 COPY www /app/www
 
-# Ensure Unix LF endings and exec bit on run.sh (fixes "Permission denied")
+# Ensure run.sh is LF and executable
 RUN sed -i 's/\r$//' /app/run.sh && chmod 0755 /app/run.sh
 
-# Log file for cronie jobs (optional)
+# Optional log
 RUN touch /var/log/remote_linux_backup.log
 
-# Entrypoint
 CMD ["/app/run.sh"]
