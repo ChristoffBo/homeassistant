@@ -1,594 +1,95 @@
-import os, json, subprocess, shlex, time, hashlib
-from flask import Flask, request, jsonify, send_from_directory
+#!/bin/bash
+set -euo pipefail
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-WWW_DIR = os.path.join(APP_DIR, "www")
-OPTIONS_PATH = "/data/options.json"
-APP_CFG_PATH = "/config/remote_linux_backup.json"
+CONFIG_PATH="/data/options.json"
+APP_CFG="/config/remote_linux_backup.json"
 
-DEFAULT_OPTIONS = {
-    "known_hosts": [],
-    "ui_port": 8066,
-    "gotify_enabled": False,
-    "gotify_url": "",
-    "gotify_token": "",
-    "auto_install_tools": True,
-    "dropbox_enabled": False,
-    "dropbox_remote": "dropbox:HA-Backups",
-    "nas_mounts": [],
-    "server_presets": [],
-    "jobs": []
+mkdir -p /backup /mnt
+
+# Update OS packages (non-fatal if offline)
+if command -v apt-get >/dev/null 2>&1; then
+  {
+    echo "[INFO] Updating container OS packages..."
+    apt-get update && apt-get upgrade -y
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+  } || echo "[WARN] OS update skipped (likely offline). Continuing startup..."
+fi
+
+# Ensure persistent app config
+if [ ! -f "$APP_CFG" ]; then
+  cat > "$APP_CFG" <<'JSON'
+{
+  "known_hosts": [],
+  "servers": [],
+  "server_presets": [],
+  "jobs": [],
+  "mounts": [],
+  "gotify_enabled": false,
+  "gotify_url": "",
+  "gotify_token": "",
+  "dropbox_enabled": false,
+  "dropbox_remote": "dropbox:HA-Backups"
 }
-
-app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
-
-# ---------------------- basic helpers ----------------------
-
-def human_size(n):
-    n=float(n)
-    for u in ['B','KB','MB','GB','TB']:
-        if n<1024.0:
-            return f"{n:.1f} {u}"
-        n/=1024.0
-    return f"{n:.1f} PB"
-
-def human_time(s):
-    s=int(s)
-    m,s=divmod(s,60)
-    h,m=divmod(m,60)
-    if h: return f"{h}h {m}m {s}s"
-    if m: return f"{m}m {s}s"
-    return f"{s}s"
-
-def _safe_load_json(path):
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def _safe_save_json(path, data):
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)
-    return True
-
-def load_opts():
-    d = _safe_load_json(OPTIONS_PATH)
-    for k, v in DEFAULT_OPTIONS.items():
-        d.setdefault(k, v)
-    return d
-
-def run(cmd):
-    p = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out = p.communicate()[0]
-    return p.returncode, out
-
-# ---------------------- mount normalisation ----------------------
-
-def _norm_proto(p):
-    p = (p or "").strip().lower()
-    if p in ("smb", "cifs", "smb/cifs", "smb_cifs", "smb-cifs"): return "cifs"
-    if p in ("nfs",): return "nfs"
-    return p or "cifs"
-
-def _split_smb_share_and_subdir(raw_share):
-    s = (raw_share or "").strip().strip("\\/")
-    if not s: return "", ""
-    parts = s.replace("\\", "/").split("/")
-    share = parts[0]
-    subdir = "/".join(parts[1:]) if len(parts) > 1 else ""
-    return share, subdir
-
-def normalise_mount_input(proto, server, share, username, password, mountp, opts):
-    proto = _norm_proto(proto)
-    server = (server or "").strip()
-    username = (username or "").strip()
-    password = (password or "").strip()
-    mountp = (mountp or "").strip()
-    opts = (opts or "").strip()
-
-    if proto == "cifs":
-        share_name, subdir = _split_smb_share_and_subdir(share)
-        if subdir and "subdir=" not in opts:
-            opts = (opts + ("," if opts else "") + f"subdir={subdir}")
-        share = share_name
-        if "vers=" not in opts:
-            opts = (opts + ("," if opts else "") + "vers=3.1.1")
-    else:
-        s = (share or "").replace("\\", "/")
-        if not s.startswith("/"):
-            s = "/" + s
-        share = s
-
-    return {
-        "proto": proto, "server": server, "share": share,
-        "username": username, "password": password,
-        "mount": mountp, "options": opts
-    }
-
-# ---------------------- gotify ----------------------
-
-def gotify_enabled_cfg():
-    appcfg = _safe_load_json(APP_CFG_PATH)
-    # prefer app cfg values, then options.json
-    opts = load_opts()
-    enabled = bool(appcfg.get("gotify_enabled", opts.get("gotify_enabled", False)))
-    url = (appcfg.get("gotify_url") or opts.get("gotify_url") or "").strip().rstrip("/")
-    token = (appcfg.get("gotify_token") or opts.get("gotify_token") or "").strip()
-    return enabled, url, token
-
-def gotify_send(url, token, title, message, insecure=False, priority=5):
-    if not url or not token:
-        return 2, "Missing Gotify URL or token"
-    curl_flags = "-sS"
-    if insecure:
-        curl_flags += " -k"
-    cmd = f'curl {curl_flags} -w " HTTPSTATUS:%{{http_code}}" -X POST {shlex.quote(url)}/message ' \
-          f'-F token={shlex.quote(token)} -F title={shlex.quote(title)} ' \
-          f'-F message={shlex.quote(message)} -F priority={int(priority)}'
-    rc, out = run(cmd)
-    # Extract HTTP status
-    http_status = "000"
-    if "HTTPSTATUS:" in out:
-        body, http_status = out.rsplit("HTTPSTATUS:", 1)
-        out = body.strip()
-        http_status = http_status.strip()
-    return rc if http_status.startswith("2") else 1, f"HTTP {http_status}\n{out}"
-
-@app.post("/api/gotify_test")
-def gotify_test():
-    b = request.json or {}
-    url = (b.get("url") or "").strip().rstrip("/")
-    token = (b.get("token") or "").strip()
-    insecure = bool(b.get("insecure", False))
-    rc, out = gotify_send(url, token, "Remote Linux Backup: Test", "This is a test message.", insecure=insecure)
-    return jsonify({"ok": rc == 0, "rc": rc, "out": out})
-
-def gotify(title, message, priority=5):
-    enabled, url, token = gotify_enabled_cfg()
-    if not enabled:
-        return
-    gotify_send(url, token, title, message, insecure=True, priority=priority)
-
-# ---------------------- SSH / backup helpers ----------------------
-
-def _ssh_base_cmd(port):
-    port_flag = f"-p {int(port)}" if str(port).strip() else ""
-    return f"ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {port_flag}"
-
-def ssh(user, host, password, remote_cmd, port=22):
-    base = _ssh_base_cmd(port)
-    cmd = f"sshpass -p {shlex.quote(password)} {base} {shlex.quote(user)}@{shlex.quote(host)} {shlex.quote(remote_cmd)}"
-    return run(cmd)
-
-def dd_backup(user, host, password, disk, out_path, port=22, verify=False, bwlimit_kbps=None):
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    comp = "pigz -c" if subprocess.call("command -v pigz >/dev/null 2>&1", shell=True)==0 else "gzip -c"
-    base = _ssh_base_cmd(port)
-    bw = f" | pv -q -L {int(bwlimit_kbps)*1024} " if bwlimit_kbps else " | "
-    pipeline = f"sshpass -p {shlex.quote(password)} {base} {shlex.quote(user)}@{shlex.quote(host)} 'dd if={shlex.quote(disk)} bs=64K status=progress'{bw}{comp} > {shlex.quote(out_path)}"
-    rc,out = run(pipeline)
-    sha_path = out_path + ".sha256"
-    if rc==0:
-        h = hashlib.sha256()
-        with open(out_path, "rb") as f:
-            for chunk in iter(lambda: f.read(1024*1024), b""):
-                h.update(chunk)
-        with open(sha_path, "w") as sf:
-            sf.write(f"{h.hexdigest()}  {os.path.basename(out_path)}\n")
-        if verify:
-            hv = hashlib.sha256()
-            with open(out_path, "rb") as f:
-                for chunk in iter(lambda: f.read(1024*1024), b""):
-                    hv.update(chunk)
-            if hv.hexdigest()!=h.hexdigest():
-                out += "\n[VERIFY] SHA256 mismatch!"
-                rc = 2
-            else:
-                out += "\n[VERIFY] SHA256 OK"
-    return rc, out
-
-def dd_restore(user, host, password, disk, image_path, port=22, bwlimit_kbps=None):
-    comp = "pigz -dc" if subprocess.call("command -v pigz >/dev/null 2>&1", shell=True)==0 else "gzip -dc"
-    base = _ssh_base_cmd(port)
-    bw = f" | pv -q -L {int(bwlimit_kbps)*1024} " if bwlimit_kbps else " | "
-    pipeline = f"{comp} {shlex.quote(image_path)}{bw}sshpass -p {shlex.quote(password)} {base} {shlex.quote(user)}@{shlex.quote(host)} 'dd of={shlex.quote(disk)} bs=64K status=progress'"
-    return run(pipeline)
-
-def rsync_pull(user, host, password, sources_csv, dest, port=22, excludes_csv="", bwlimit_kbps=None):
-    outs, rc = [], 0
-    excl = ""
-    for pat in [s.strip() for s in (excludes_csv or "").split(",") if s.strip()]:
-        excl += f" --exclude {shlex.quote(pat)}"
-    bw = f" --bwlimit={int(bwlimit_kbps)}" if bwlimit_kbps else ""
-    for src in [s.strip() for s in sources_csv.split(",") if s.strip()]:
-        cmd = f"sshpass -p {shlex.quote(password)} rsync -aAX --numeric-ids{bw} -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p {int(port)}' {excl} {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(src)} {shlex.quote(dest.rstrip('/') + '/')}"
-        r, o = run(cmd)
-        outs.append(f"$ {cmd}\n{o}")
-        if r != 0: rc = r
-    return rc, "\n".join(outs)
-
-def rsync_push(user, host, password, local_src, remote_dest, port=22, excludes_csv="", bwlimit_kbps=None):
-    excl = ""
-    for pat in [s.strip() for s in (excludes_csv or "").split(",") if s.strip()]:
-        excl += f" --exclude {shlex.quote(pat)}"
-    bw = f" --bwlimit={int(bwlimit_kbps)}" if bwlimit_kbps else ""
-    cmd = f"sshpass -p {shlex.quote(password)} rsync -aAX --numeric-ids{bw} -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p {int(port)}' {excl} {shlex.quote(local_src.rstrip('/') + '/')} {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(remote_dest.rstrip('/') + '/')}"
-    return run(cmd)
-
-def rclone_copy(local_path, remote_spec, bwlimit_kbps=None):
-    bw = f" --bwlimit {int(bwlimit_kbps)}k" if bwlimit_kbps else ""
-    return run(f"rclone copy {shlex.quote(local_path)} {shlex.quote(remote_spec)} --progress{bw}")
-
-def prune_old(path, days):
-    if not days or days <= 0: return ""
-    now = time.time()
-    cutoff = now - days*86400
-    deleted = []
-    for r,ds,fs in os.walk(path):
-        for f in fs:
-            p=os.path.join(r,f)
-            try:
-                st = os.stat(p)
-                if st.st_mtime < cutoff:
-                    os.remove(p)
-                    deleted.append(p)
-            except Exception:
-                pass
-    return "\n".join(deleted)
-
-def local_size_bytes(path):
-    if os.path.isfile(path):
-        try: return os.path.getsize(path)
-        except: return 0
-    total=0
-    for r,ds,fs in os.walk(path):
-        for f in fs:
-            p=os.path.join(r,f)
-            try: total+=os.path.getsize(p)
-            except: pass
-    return total
-
-# ---------------------- API: static & options ----------------------
-
-@app.get("/")
-def root():
-    return app.send_static_file("index.html")
-
-@app.get("/api/options")
-def get_options():
-    return jsonify(load_opts())
-
-@app.post("/api/options")
-def set_options():
-    data = request.json or {}
-    opts = load_opts()
-    opts.update(data)
-    _safe_save_json(OPTIONS_PATH, opts)
-    return jsonify({"ok": True})
-
-# ---------------------- API: mount browsing & management ----------------------
-
-@app.get("/api/mount_list")
-def mount_list():
-    proto = _norm_proto(request.args.get("proto", "cifs"))
-    server = (request.args.get("server") or "").strip()
-    if not server:
-        return jsonify({"ok": False, "error": "Missing server"}), 400
-
-    if proto == "cifs":
-        # try anonymous first, then with -N shows list without prompting
-        rc, out = run(f"smbclient -L //{shlex.quote(server)} -N -g 2>&1 || true")
-        return jsonify({"ok": True, "proto": "cifs", "raw": out})
-    else:
-        rc, out = run(f"showmount -e {shlex.quote(server)} 2>&1 || true")
-        return jsonify({"ok": True, "proto": "nfs", "raw": out})
-
-@app.post("/api/mount_browse")
-def mount_browse():
-    b = request.json or {}
-    proto = _norm_proto(b.get("proto", "cifs"))
-    server = (b.get("server") or "").strip()
-    user = (b.get("username") or "").strip()
-    pwd = (b.get("password") or "").strip()
-    share = (b.get("share") or "").strip()
-    path = (b.get("path") or "").strip().strip("\\/")
-
-    items = []
-
-    if not server:
-        return jsonify({"ok": False, "error": "Missing server"}), 400
-
-    if proto == "cifs":
-        if not share:
-            # list shares
-            auth = f"-U {shlex.quote(user)}%{shlex.quote(pwd)}" if user or pwd else "-N"
-            rc, out = run(f"smbclient -L //{shlex.quote(server)} {auth} -g 2>&1 || true")
-            for line in out.splitlines():
-                # format: "Disk|Sharename|Comment"
-                if line.startswith("Disk|"):
-                    parts = line.split("|")
-                    if len(parts) >= 2:
-                        items.append({"type":"share","name":parts[1],"path":parts[1]})
-        else:
-            # list inside share/path
-            auth = f"-U {shlex.quote(user)}%{shlex.quote(pwd)}" if user or pwd else "-N"
-            cpath = f'"{path}"' if path else '""'
-            rc, out = run(f'smbclient //{shlex.quote(server)}/{shlex.quote(share)} {auth} -c "ls {cpath}" -g 2>&1 || true')
-            # smbclient -g lists "D|name" for dirs and "N|name|size|date" for files
-            for line in out.splitlines():
-                if line.startswith("D|"):
-                    name = line.split("|",2)[1]
-                    items.append({"type":"dir","name":name,"path":(path + "/" + name).strip("/")})
-                elif line.startswith("N|"):
-                    name = line.split("|",3)[1]
-                    items.append({"type":"file","name":name,"path":(path + "/" + name).strip("/")})
-    else:
-        # NFS: list exports only (browsing inside export isn't available server-side)
-        rc, out = run(f"showmount -e {shlex.quote(server)} 2>&1 || true")
-        for line in out.splitlines():
-            if line.startswith(server) or line.strip().startswith("/"):
-                export = line.split()[0].strip()
-                items.append({"type":"export","name":export,"path":export})
-
-    return jsonify({"ok": True, "items": items})
-
-@app.post("/api/mount_add_update")
-def mount_add_update():
-    data = request.json or {}
-    n = normalise_mount_input(
-        data.get("proto"),
-        data.get("server"),
-        data.get("share"),
-        data.get("username"),
-        data.get("password"),
-        data.get("mount"),
-        data.get("options"),
-    )
-    n["name"] = (data.get("name") or "").strip()
-    n["auto_mount"] = bool(data.get("auto_mount", False))
-
-    if not n["name"]:
-        return jsonify({"ok": False, "error": "Missing preset name"}), 400
-    if not (n["server"] and n["share"] and n["mount"]):
-        return jsonify({"ok": False, "error": "Missing server/share/mount"}), 400
-
-    cfg = _safe_load_json(APP_CFG_PATH) or {}
-    mounts = cfg.get("mounts", [])
-    for i, m in enumerate(mounts):
-        if m.get("name") == n["name"]:
-            mounts[i] = n
-            break
-    else:
-        mounts.append(n)
-    cfg["mounts"] = mounts
-    _safe_save_json(APP_CFG_PATH, cfg)
-    return jsonify({"ok": True, "normalized": n})
-
-@app.get("/api/mounts")
-def mounts_list():
-    cfg = _safe_load_json(APP_CFG_PATH) or {}
-    return jsonify({"ok": True, "mounts": cfg.get("mounts", [])})
-
-@app.post("/api/mount_now")
-def mount_now():
-    data = request.json or {}
-    n = normalise_mount_input(
-        data.get("proto"),
-        data.get("server"),
-        data.get("share"),
-        data.get("username"),
-        data.get("password"),
-        data.get("mount"),
-        data.get("options"),
-    )
-    os.makedirs(n["mount"], exist_ok=True)
-    if n["proto"] == "cifs":
-        mopts = "rw"
-        if n["username"]:
-            mopts += f",username={shlex.quote(n['username'])}"
-        if n["password"]:
-            mopts += f",password={shlex.quote(n['password'])}"
-        if n["options"]:
-            mopts += f",{n['options']}"
-        cmd = f"mount -t cifs //{shlex.quote(n['server'])}/{shlex.quote(n['share'])} {shlex.quote(n['mount'])} -o {mopts}"
-    else:
-        mopts = n["options"] or "rw"
-        cmd = f"mount -t nfs {shlex.quote(n['server'])}:{shlex.quote(n['share'])} {shlex.quote(n['mount'])} -o {mopts}"
-
-    rc, out = run(cmd + " 2>&1 || true")
-    mounted = (rc == 0) or os.system(f"mountpoint -q {shlex.quote(n['mount'])}") == 0
-    return jsonify({"ok": mounted, "rc": rc, "cmd": cmd, "out": out})
-
-@app.post("/api/unmount_now")
-def unmount_now():
-    b = request.json or {}
-    mountp = (b.get("mount") or "").strip()
-    if not mountp:
-        return jsonify({"ok": False, "error": "Missing mount path"}), 400
-    rc, out = run(f"umount {shlex.quote(mountp)} 2>&1 || true")
-    ok = os.system(f"mountpoint -q {shlex.quote(mountp)}") != 0
-    return jsonify({"ok": ok, "rc": rc, "out": out})
-
-@app.post("/api/mount_delete")
-def mount_delete():
-    b = request.json or {}
-    name = (b.get("name") or "").strip()
-    if not name:
-        return jsonify({"ok": False, "error": "Missing name"}), 400
-    cfg = _safe_load_json(APP_CFG_PATH) or {}
-    mounts = [m for m in cfg.get("mounts", []) if m.get("name") != name]
-    cfg["mounts"] = mounts
-    _safe_save_json(APP_CFG_PATH, cfg)
-    return jsonify({"ok": True})
-
-# ---------------------- API: probe/install/estimate/backup/restore ----------------------
-
-@app.post("/api/probe_host")
-def probe_host():
-    b = request.json or {}
-    user = b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); port=int(b.get("port",22))
-    if not host:
-        return jsonify({"rc":2,"out":"Missing host"}),400
-    rc, out = ssh(user, host, pwd, "uname -a || true; cat /etc/os-release 2>/dev/null || true; which rsync || true; which dd || true; which zfs || true", port=port)
-    return jsonify({"rc": rc, "out": out})
-
-@app.post("/api/install_tools")
-def install_tools():
-    b = request.json or {}
-    user = b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); port=int(b.get("port",22))
-    if not host:
-        return jsonify({"rc":2,"out":"Missing host"}),400
-    cmds = [
-        "which rsync || (which apt && apt update && apt install -y rsync) || (which apk && apk add rsync) || (which dnf && dnf install -y rsync) || (which pkg && pkg install -y rsync) || true",
-        "which gzip || (which apt && apt update && apt install -y gzip) || (which apk && apk add gzip) || (which dnf && dnf install -y gzip) || (which pkg && pkg install -y gzip) || true",
-        "which pigz || (which apt && apt update && apt install -y pigz) || (which apk && apk add pigz) || (which dnf && dnf install -y pigz) || (which pkg && pkg install -y pigz) || true"
-    ]
-    out_all, rc_final = [], 0
-    for c in cmds:
-        rc, out = ssh(user, host, pwd, c, port=port)
-        out_all.append(out)
-        if rc != 0: rc_final = rc
-    return jsonify({"rc": rc_final, "out": "\n".join(out_all)})
-
-@app.post("/api/estimate_backup")
-def estimate_backup():
-    b = request.json or {}
-    method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); port=int(b.get("port",22))
-    bwlimit = int(b.get("bwlimit_kbps",0) or 0)
-    kbps = bwlimit if bwlimit>0 else (40*1024)  # default 40 MB/s
-    if not host or not method:
-        return jsonify({"rc":2,"out":"Missing host/method"}),400
-    if method=="dd":
-        disk=b.get("disk","/dev/sda")
-        rc,out = ssh(user,host,pwd,f"blockdev --getsize64 {shlex.quote(disk)} 2>/dev/null || cat /sys/block/$(basename {shlex.quote(disk)})/size 2>/dev/null", port=port)
-        try:
-            size_bytes=int(out.strip().splitlines()[-1])
-        except Exception:
-            size_bytes=0
-        secs = int(size_bytes/ (kbps*1024)) if size_bytes>0 else 0
-        return jsonify({"rc":0,"bytes":size_bytes,"eta_seconds":secs,"eta":human_time(secs),"size":human_size(size_bytes)})
-    elif method=="rsync":
-        sources=b.get("files","/etc")
-        total=0
-        for src in [s.strip() for s in sources.split(",") if s.strip()]:
-            rc,out = ssh(user,host,pwd,f"du -sb {shlex.quote(src)} 2>/dev/null | cut -f1", port=port)
-            try:
-                val=int(out.strip().splitlines()[-1])
-            except Exception:
-                val=0
-            total+=val
-        secs = int(total/(kbps*1024)) if total>0 else 0
-        return jsonify({"rc":0,"bytes":total,"eta_seconds":secs,"eta":human_time(secs),"size":human_size(total)})
-    elif method=="zfs":
-        return jsonify({"rc":0,"bytes":0,"eta_seconds":5,"eta":"~5s","size":"n/a"})
-    else:
-        return jsonify({"rc":2,"out":"Unknown method"}),400
-
-@app.post("/api/run_backup")
-def run_backup():
-    b = request.json or {}
-    method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); port=int(b.get("port",22))
-    if not host or not method:
-        return jsonify({"rc":2,"out":"Missing host/method"}),400
-    store_to=b.get("store_to","/backup"); os.makedirs(store_to, exist_ok=True)
-    cloud=b.get("cloud_upload",""); t0=time.time()
-    bwlimit = int(b.get("bwlimit_kbps",0) or 0) or None
-    verify = bool(b.get("verify", False))
-    excludes = b.get("excludes","")  # rsync only
-    retention_days = int(b.get("retention_days",0) or 0)
-    name = b.get("backup_name","").strip()
-
-    if method=="dd":
-        disk=b.get("disk","/dev/sda")
-        ts=time.strftime("%Y%m%d-%H%M%S")
-        base_name=(name.replace(' ','_')+'-' if name else f"{host.replace('.','_')}-")+ts+".img.gz"
-        out_path=os.path.join(store_to, base_name)
-        rc,out = dd_backup(user,host,pwd,disk,out_path,port=port,verify=verify,bwlimit_kbps=bwlimit)
-        size_bytes = local_size_bytes(out_path) if rc==0 else 0
-        if rc==0 and cloud:
-            rcrc,rout = rclone_copy(out_path,cloud,bwlimit_kbps=bwlimit); out += "\n[RCLONE]\n"+rout
-        if retention_days>0:
-            out += "\n[PRUNE]\n" + prune_old(store_to, retention_days)
-        took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd\nSaved: {out_path}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took))}")
-        return jsonify({"rc":rc,"out":out,"seconds":took,"saved":out_path,"size_bytes":size_bytes})
-
-    elif method=="rsync":
-        files=b.get("files","/etc")
-        dest = os.path.join(store_to, name.replace(' ','_')) if name else store_to
-        os.makedirs(dest, exist_ok=True)
-        rc,out = rsync_pull(user,host,pwd,files,dest,port=port,excludes_csv=excludes,bwlimit_kbps=bwlimit)
-        size_bytes = local_size_bytes(dest) if rc==0 else 0
-        if rc==0 and cloud:
-            rcrc,rout = rclone_copy(dest,cloud,bwlimit_kbps=bwlimit); out += "\n[RCLONE]\n"+rout
-        if retention_days>0:
-            out += "\n[PRUNE]\n" + prune_old(dest, retention_days)
-        took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync\nSaved: {dest}\nSize: {human_size(size_bytes)}\nTime: {human_time(int(took))}")
-        return jsonify({"rc":rc,"out":out,"seconds":took,"saved":dest,"size_bytes":size_bytes})
-
-    elif method=="zfs":
-        dataset=b.get("zfs_dataset")
-        if not dataset:
-            return jsonify({"rc":2,"out":"Missing zfs_dataset"}),400
-        snap=b.get("snapshot_name", time.strftime("backup-%Y%m%d-%H%M%S"))
-        rc,out = ssh(user,host,pwd,f"zfs snapshot {shlex.quote(dataset)}@{shlex.quote(snap)}", port=port)
-        took=round(time.time()-t0,2)
-        gotify("Backup "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: zfs snapshot\nSnapshot: {dataset}@{snap}\nTime: {human_time(int(took))}")
-        return jsonify({"rc":rc,"out":out,"seconds":took})
-
-    else:
-        return jsonify({"rc":2,"out":"Unknown method"}),400
-
-@app.post("/api/run_restore")
-def run_restore():
-    b = request.json or {}
-    method=b.get("method"); user=b.get("username","root"); host=b.get("host",""); pwd=b.get("password",""); port=int(b.get("port",22)); t0=time.time()
-    bwlimit = int(b.get("bwlimit_kbps",0) or 0) or None
-    excludes = b.get("excludes","")
-    if not host or not method:
-        return jsonify({"rc":2,"out":"Missing host/method"}),400
-    if method=="dd":
-        image=b.get("image_path"); disk=b.get("disk","/dev/sda")
-        if not image:
-            return jsonify({"rc":2,"out":"Missing image_path"}),400
-        rc,out = dd_restore(user,host,pwd,disk,image,port=port,bwlimit_kbps=bwlimit)
-        took=round(time.time()-t0,2)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: dd restore\nSrc: {image}\nTime: {human_time(int(took))}")
-        return jsonify({"rc":rc,"out":out,"seconds":took})
-    elif method=="rsync":
-        local_src=b.get("local_src"); remote_dest=b.get("remote_dest","/")
-        if not local_src:
-            return jsonify({"rc":2,"out":"Missing local_src"}),400
-        rc,out = rsync_push(user,host,pwd,local_src,remote_dest,port=port,excludes_csv=excludes,bwlimit_kbps=bwlimit)
-        took=round(time.time()-t0,2)
-        gotify("Restore "+("OK" if rc==0 else "FAIL"), f"Host: {host}\nMethod: rsync restore\nDest: {remote_dest}\nTime: {human_time(int(took))}")
-        return jsonify({"rc":rc,"out":out,"seconds":took})
-    else:
-        return jsonify({"rc":2,"out":"Unknown restore method"}),400
-
-# ---------------------- list backups (simple) ----------------------
-
-@app.get("/api/list_backups")
-def list_backups():
-    base = request.args.get("path","/backup")
-    res = []
-    for r,ds,fs in os.walk(base):
-        for f in fs:
-            p=os.path.join(r,f)
-            try: sz=os.path.getsize(p)
-            except: sz=0
-            res.append({"path":p,"size":sz})
-    return jsonify(sorted(res,key=lambda x:x["path"]))
-
-# ---------------------- static assets ----------------------
-
-@app.get("/www/<path:fn>")
-def serve_www(fn):
-    return send_from_directory(WWW_DIR, fn)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8066)
+JSON
+fi
+
+# Ensure options.json fallback (Supervisor usually writes this)
+if [ ! -f "$CONFIG_PATH" ]; then
+  cat > "$CONFIG_PATH" <<'JSON'
+{
+  "known_hosts": [],
+  "ui_port": 8066,
+  "gotify_enabled": false,
+  "gotify_url": "",
+  "gotify_token": "",
+  "auto_install_tools": true,
+  "dropbox_enabled": false,
+  "dropbox_remote": "dropbox:HA-Backups",
+  "nas_mounts": [],
+  "server_presets": [],
+  "jobs": []
+}
+JSON
+fi
+
+# Read UI port
+UI_PORT=$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)
+
+# Auto-mount presets from APP_CFG
+if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
+  mapfile -t MOUNTS < <(jq -c '.mounts[] | select(.auto_mount==true)' "$APP_CFG")
+  for m in "${MOUNTS[@]}"; do
+    proto=$(jq -r '.proto // ""' <<<"$m")
+    server=$(jq -r '.server // ""' <<<"$m")
+    share=$(jq -r '.share // ""' <<<"$m")
+    mountp=$(jq -r '.mount // ""' <<<"$m")
+    user=$(jq -r '.username // ""' <<<"$m")
+    pass=$(jq -r '.password // ""' <<<"$m")
+    opts_extra=$(jq -r '.options // ""' <<<"$m")
+
+    [ -z "$proto" ] || [ -z "$server" ] || [ -z "$share" ] || [ -z "$mountp" ] && continue
+    mkdir -p "$mountp"
+    if ! mountpoint -q "$mountp"; then
+      if [[ "$proto" == "cifs" || "$proto" == "smb" ]]; then
+        mopts="rw,vers=3.1.1,iocharset=utf8"
+        [ -n "$user" ] && mopts="$mopts,username=$user"
+        [ -n "$pass" ] && mopts="$mopts,password=$pass"
+        [ -n "$opts_extra" ] && mopts="$mopts,$opts_extra"
+        echo "[INFO] Auto-mount CIFS //$server/$share -> $mountp (opts: $mopts)"
+        mount -t cifs "//$server/$share" "$mountp" -o "$mopts" || echo "[WARN] CIFS auto-mount failed for $mountp"
+      elif [ "$proto" = "nfs" ]; then
+        mopts="${opts_extra:-rw}"
+        echo "[INFO] Auto-mount NFS $server:$share -> $mountp (opts: $mopts)"
+        mount -t nfs "$server:$share" "$mountp" -o "$mopts" || echo "[WARN] NFS auto-mount failed for $mountp"
+      fi
+    fi
+  done
+fi
+
+# Scheduler & cron (non-fatal)
+python3 /app/scheduler.py apply || true
+service cron start || true
+
+# API
+cd /app
+exec gunicorn -w 2 --threads 4 -b 0.0.0.0:"$UI_PORT" api:app
