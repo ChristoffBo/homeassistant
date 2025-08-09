@@ -2,13 +2,29 @@
 set -euo pipefail
 
 CONFIG_PATH="/data/options.json"
-APP_CONFIG="/config/remote_linux_backup.json"
-mkdir -p /backup /mnt/nas
+APP_CFG="/config/remote_linux_backup.json"
+mkdir -p /backup /mnt
 
-# Make rclone read a persistent config in /config
-export RCLONE_CONFIG="/config/rclone.conf"
+# Ensure app config exists
+if [ ! -f "$APP_CFG" ]; then
+  cat > "$APP_CFG" <<'JSON'
+{
+  "known_hosts": [],
+  "server_presets": [],
+  "jobs": [],
+  "nas_mounts": [],
+  "gotify_enabled": false,
+  "gotify_url": "",
+  "gotify_token": "",
+  "dropbox_enabled": false,
+  "dropbox_remote": "dropbox:HA-Backups",
+  "mounts": [],
+  "servers": []
+}
+JSON
+fi
 
-# Ensure default HA options.json exists
+# Ensure HA options default exists (read-only at runtime)
 if [ ! -f "$CONFIG_PATH" ]; then
   cat > "$CONFIG_PATH" <<'JSON'
 {
@@ -27,76 +43,37 @@ if [ ! -f "$CONFIG_PATH" ]; then
 JSON
 fi
 
-# Ensure app config exists (UI writes here)
-if [ ! -f "$APP_CONFIG" ]; then
-  cat > "$APP_CONFIG" <<'JSON'
-{
-  "known_hosts": [],
-  "server_presets": [],
-  "jobs": [],
-  "nas_mounts": [],
-  "gotify_enabled": false,
-  "gotify_url": "",
-  "gotify_token": "",
-  "dropbox_enabled": false,
-  "dropbox_remote": "dropbox:HA-Backups",
-  "mounts": [],
-  "servers": []
-}
-JSON
-fi
+UI_PORT=$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)
 
-# Resolve UI port safely
-UI_PORT="$(jq -r '.ui_port // 8066' "$CONFIG_PATH" 2>/dev/null || echo 8066)"
-
-# Helper: mount one item
-_mount_one() {
-  local proto="$1" server="$2" share="$3" mountp="$4" user="$5" pass="$6" opts_extra="$7"
-  mkdir -p "$mountp"
-  if [ "$proto" = "cifs" ]; then
-    local mopts="rw,vers=3.0,iocharset=utf8"
-    [ -n "$user" ] && mopts="$mopts,username=$user"
-    [ -n "$pass" ] && mopts="$mopts,password=$pass"
-    [ -n "$opts_extra" ] && mopts="$mopts,$opts_extra"
-    mount -t cifs "//$server/$share" "$mountp" -o "$mopts" || true
-  elif [ "$proto" = "nfs" ]; then
-    local mopts="${opts_extra:-rw}"
-    mount -t nfs "$server:$share" "$mountp" -o "$mopts" || true
-  fi
-}
-
-# Auto-mount UI-managed mounts
-if jq -e '.mounts | length > 0' "$APP_CONFIG" >/dev/null 2>&1; then
-  count="$(jq -r '.mounts | length' "$APP_CONFIG")"
-  if [ "$count" -gt 0 ]; then
-    for i in $(seq 0 $((count-1))); do
-      auto="$(jq -r ".mounts[$i].auto_mount // false" "$APP_CONFIG")"
-      if [ "$auto" = "true" ]; then
-        proto="$(jq -r ".mounts[$i].proto" "$APP_CONFIG")"
-        server="$(jq -r ".mounts[$i].server" "$APP_CONFIG")"
-        share="$(jq -r ".mounts[$i].share" "$APP_CONFIG")"
-        mountp="$(jq -r ".mounts[$i].mount" "$APP_CONFIG")"
-        user="$(jq -r ".mounts[$i].username // \"\"" "$APP_CONFIG")"
-        pass="$(jq -r ".mounts[$i].password // \"\"" "$APP_CONFIG")"
-        opts="$(jq -r ".mounts[$i].options // \"\"" "$APP_CONFIG")"
-        [ "$proto" = "null" ] && continue
-        [ -z "$proto" ] || [ -z "$server" ] || [ -z "$share" ] || [ -z "$mountp" ] && continue
-        _mount_one "$proto" "$server" "$share" "$mountp" "$user" "$pass" "$opts"
+# Auto-mount presets marked auto_mount: true
+if jq -e '.mounts | length > 0' "$APP_CFG" >/dev/null 2>&1; then
+  mapfile -t MOUNTS < <(jq -c '.mounts[] | select(.auto_mount==true)' "$APP_CFG")
+  for m in "${MOUNTS[@]}"; do
+    proto=$(jq -r '.proto' <<<"$m"); server=$(jq -r '.server' <<<"$m")
+    share=$(jq -r '.share' <<<"$m"); mountp=$(jq -r '.mount' <<<"$m")
+    user=$(jq -r '.username' <<<"$m"); pass=$(jq -r '.password' <<<"$m")
+    opts_extra=$(jq -r '.options' <<<"$m")
+    [ -z "$proto" ] && continue
+    mkdir -p "$mountp"
+    if ! mountpoint -q "$mountp"; then
+      if [ "$proto" = "cifs" ]; then
+        mopts="rw,vers=3.0,iocharset=utf8"
+        [ -n "$user" ] && mopts="$mopts,username=$user"
+        [ -n "$pass" ] && mopts="$mopts,password=$pass"
+        [ -n "$opts_extra" ] && mopts="$mopts,$opts_extra"
+        mount -t cifs "//$server/$share" "$mountp" -o "$mopts" || true
+      elif [ "$proto" = "nfs" ]; then
+        mopts="${opts_extra:-rw}"
+        mount -t nfs "$server:$share" "$mountp" -o "$mopts" || true
       fi
-    done
-  fi
+    fi
+  done
 fi
 
-# Apply schedules (best-effort)
+# Apply schedules & start cron (foreground, syslog)
 python3 /app/scheduler.py apply || true
-
-# Start cron (BusyBox crond daemonizes by default)
-if command -v crond >/dev/null 2>&1; then
-  crond || true
-elif command -v cron >/dev/null 2>&1; then
-  service cron start || true
-fi
+crond -n -s -L /var/log/remote_linux_backup.log &
 
 # Start API
 cd /app
-exec gunicorn -w 2 -k gthread --threads 8 --timeout 120 -b "0.0.0.0:${UI_PORT}" api:app
+exec gunicorn -w 2 -b 0.0.0.0:"$UI_PORT" api:app
