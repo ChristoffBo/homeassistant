@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-# Remote Linux Backup – API (mounts + gotify + presets)
-# Drop-in server that matches the UI endpoints used in your app.js
+# Remote Linux Backup – API (mounts + gotify + presets + backups listing)
 
 import os
 import json
 import shlex
 import time
 import pathlib
+import mimetypes
 import subprocess
-from typing import Dict, Any
+from typing import Dict, Any, List
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_file, abort, send_from_directory
 
-# -----------------------------------------------------------------------------
-# Basic app
-# -----------------------------------------------------------------------------
 app = Flask(__name__, static_folder=None)
 
-DATA_DIR = "/data"                  # HA add-on persistent storage
+DATA_DIR = "/data"
 CONF_PATH = os.path.join(DATA_DIR, "config.json")
-WWW_DIR = "/app/www"                # static UI (served by HA Ingress or nginx)
+WWW_DIR = "/app/www"
+
 DEFAULT_CONFIG = {
     "options": {
         "ui_port": 8066,
@@ -29,14 +27,11 @@ DEFAULT_CONFIG = {
         "dropbox_enabled": False,
         "dropbox_remote": "dropbox:HA-Backups"
     },
-    "servers": [],  # [{name,host,username,port,save_password,password?}]
-    "mounts": []    # [{name,proto,server,share,mount,username,password,options,auto_mount}]
+    "servers": [],
+    "mounts": []
 }
 
-
-# -----------------------------------------------------------------------------
-# Helpers: storage
-# -----------------------------------------------------------------------------
+# ---------- storage helpers ----------
 def _ensure_dirs():
     pathlib.Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -58,12 +53,8 @@ def _save_config(cfg: Dict[str, Any]):
         json.dump(cfg, f, indent=2, ensure_ascii=False)
     os.replace(tmp, CONF_PATH)
 
-
-# -----------------------------------------------------------------------------
-# Helpers: command runner
-# -----------------------------------------------------------------------------
+# ---------- command runner ----------
 def run_cmd(cmd: str, timeout: int = 30):
-    """Run shell command safely; returns (rc, out, err)."""
     try:
         p = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=timeout
@@ -72,16 +63,11 @@ def run_cmd(cmd: str, timeout: int = 30):
     except Exception as e:
         return 99, "", str(e)
 
-
-# -----------------------------------------------------------------------------
-# SMB/NFS discovery
-# -----------------------------------------------------------------------------
+# ---------- SMB/NFS discovery ----------
 def _smb_try_modes():
-    # try modern -> older
     return ["SMB3", "SMB2", "NT1"]
 
 def smb_list_shares(host: str, username: str = "", password: str = ""):
-    """Return {ok, shares[], mode|error} using smbclient -L -g."""
     creds = ""
     if username or password:
         creds = f" -U {shlex.quote(f'{username}%{password}')}"
@@ -92,7 +78,6 @@ def smb_list_shares(host: str, username: str = "", password: str = ""):
         rc, out, err = run_cmd(cmd, timeout=25)
         if rc == 0 and out:
             for line in out.splitlines():
-                # Disk|Sharename|Comment
                 if line.startswith("Disk|"):
                     parts = line.split("|", 2)
                     if len(parts) >= 2:
@@ -105,7 +90,6 @@ def smb_list_shares(host: str, username: str = "", password: str = ""):
     return {"ok": False, "error": last}
 
 def smb_ls(host: str, share: str, path: str = "/", username: str = "", password: str = ""):
-    """List inside share/path. Returns {ok, items:[{type:'dir'|'file',name}], mode|error}"""
     if not path:
         path = "/"
     creds = f" -U {shlex.quote(f'{username}%{password}')}" if (username or password) else ""
@@ -117,7 +101,6 @@ def smb_ls(host: str, share: str, path: str = "/", username: str = "", password:
         rc, out, err = run_cmd(cmd, timeout=35)
         if rc == 0 and out:
             for line in out.splitlines():
-                # D|dirname|...  or  A|filename|...
                 parts = line.split("|")
                 if len(parts) >= 2:
                     kind = parts[0].strip().upper()
@@ -146,10 +129,7 @@ def nfs_list_exports(host: str):
             exports.append(path)
     return {"ok": True, "exports": exports}
 
-
-# -----------------------------------------------------------------------------
-# Mount actions
-# -----------------------------------------------------------------------------
+# ---------- mounts ----------
 def ensure_dir(path: str):
     try:
         pathlib.Path(path).mkdir(parents=True, exist_ok=True)
@@ -158,10 +138,8 @@ def ensure_dir(path: str):
 
 def mount_cifs(server: str, share: str, mount_point: str, username: str = "", password: str = "", extra: str = ""):
     ensure_dir(mount_point)
-    # Build -o options: username/password first, then user-provided
     opts = [f"username={username}", f"password={password}", "iocharset=utf8", "vers=3.0"]
     if extra:
-        # allow overriding vers/options; let user’s options come last
         opts.append(extra)
     opt_str = ",".join([o for o in opts if o])
     cmd = f"mount -t cifs //{shlex.quote(server)}/{shlex.quote(share)} {shlex.quote(mount_point)} -o {shlex.quote(opt_str)}"
@@ -176,20 +154,13 @@ def mount_nfs(server: str, export: str, mount_point: str, extra: str = ""):
 def umount_path(mount_point: str):
     return run_cmd(f"umount -l {shlex.quote(mount_point)}", timeout=20)
 
-
-# -----------------------------------------------------------------------------
-# Gotify
-# -----------------------------------------------------------------------------
+# ---------- gotify ----------
 def gotify_send(title: str, message: str, priority: int = 5, cfg: Dict[str, Any] = None, verify_tls: bool = True):
-    """
-    Send a message to Gotify. Uses X-Gotify-Key header (works with v2).
-    """
     import urllib.request
     import ssl
 
     if cfg is None:
         cfg = _load_config()
-
     opts = cfg.get("options", {})
     if not opts.get("gotify_enabled"):
         return {"ok": False, "error": "gotify disabled"}
@@ -216,10 +187,7 @@ def gotify_send(title: str, message: str, priority: int = 5, cfg: Dict[str, Any]
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-
-# -----------------------------------------------------------------------------
-# API: Options
-# -----------------------------------------------------------------------------
+# ---------- options ----------
 @app.get("/api/options")
 def api_options_get():
     cfg = _load_config()
@@ -230,7 +198,6 @@ def api_options_post():
     body = request.get_json(silent=True) or {}
     cfg = _load_config()
     opts = cfg.get("options", {})
-    # store known keys
     for k in ["ui_port", "gotify_enabled", "gotify_url", "gotify_token", "dropbox_enabled", "dropbox_remote"]:
         if k in body:
             opts[k] = body[k]
@@ -238,10 +205,7 @@ def api_options_post():
     _save_config(cfg)
     return jsonify({"ok": True, "config": opts})
 
-
-# -----------------------------------------------------------------------------
-# API: Servers (presets)
-# -----------------------------------------------------------------------------
+# ---------- servers ----------
 @app.get("/api/servers")
 def api_servers_get():
     cfg = _load_config()
@@ -265,7 +229,6 @@ def api_server_add_update():
         server["password"] = b.get("password") or ""
     cfg = _load_config()
     arr = cfg.get("servers", [])
-    # upsert by (host,username,port) or name match
     idx = -1
     for i, s in enumerate(arr):
         if (s.get("host") == server["host"] and s.get("username") == server["username"] and int(s.get("port", 22)) == server["port"]) or (name and s.get("name") == name):
@@ -288,21 +251,16 @@ def api_server_delete():
     if key:
         new = [s for s in old if s.get("name") != key]
     else:
-        # fallback: delete by host if provided
         host = (b.get("host") or "").strip()
         new = [s for s in old if s.get("host") != host]
     cfg["servers"] = new
     _save_config(cfg)
     return jsonify({"ok": True, "deleted": key or b.get("host")})
 
-
-# -----------------------------------------------------------------------------
-# API: Mount presets (CRUD)
-# -----------------------------------------------------------------------------
+# ---------- mounts (CRUD + actions) ----------
 @app.get("/api/mounts")
 def api_mounts_get():
     cfg = _load_config()
-    # also show live status if mounted
     rows = []
     for m in cfg.get("mounts", []):
         mounted = os.path.ismount(m.get("mount", ""))
@@ -318,7 +276,6 @@ def api_mounts_set_all():
     _save_config(cfg)
     return jsonify({"ok": True, "count": len(mounts)})
 
-# Compatibility with your UI button
 @app.post("/api/mount_add_update")
 def api_mount_add_update():
     b = request.get_json(silent=True) or {}
@@ -405,10 +362,7 @@ def api_unmount_now():
     rc, out, err = umount_path(mountp)
     return jsonify({"ok": rc == 0, "rc": rc, "out": out, "err": err})
 
-
-# -----------------------------------------------------------------------------
-# API: SMB/NFS browse for UI modal
-# -----------------------------------------------------------------------------
+# ---------- SMB/NFS browse ----------
 @app.get("/api/mount_list")
 def api_mount_list_get():
     proto = (request.args.get("proto") or "cifs").lower()
@@ -485,14 +439,81 @@ def api_mount_browse():
         items = [{"type": "export", "name": p, "path": p} for p in r["exports"]]
         return jsonify({"ok": True, "items": items})
 
+# ---------- Backups listing + download ----------
+BACKUP_EXTS = (".img", ".img.gz", ".img.xz", ".dd", ".dd.gz", ".tar", ".tgz", ".tar.gz", ".zip")
 
-# -----------------------------------------------------------------------------
-# API: Gotify test
-# -----------------------------------------------------------------------------
+def _roots_and_map(cfg: Dict[str, Any]):
+    roots: List[str] = []
+    mapping = {}  # mount_path -> preset name
+    roots.append("/backup")  # local default (optional)
+    for m in cfg.get("mounts", []):
+        mp = m.get("mount")
+        if not mp:
+            continue
+        if os.path.isdir(mp):
+            roots.append(mp)
+            mapping[mp] = m.get("name") or mp
+    return roots, mapping
+
+def _list_files(root: str):
+    items = []
+    for base, _, files in os.walk(root):
+        for f in files:
+            p = os.path.join(base, f)
+            try:
+                st = os.stat(p)
+            except Exception:
+                continue
+            items.append({
+                "path": p,
+                "size": st.st_size,
+                "created": int(st.st_mtime),
+                "kind": ("image" if f.lower().endswith(BACKUP_EXTS) else "file")
+            })
+    return items
+
+@app.get("/api/backups")
+def api_backups():
+    cfg = _load_config()
+    roots, mapping = _roots_and_map(cfg)
+    out = []
+    for r in roots:
+        if os.path.isdir(r):
+            out.extend(_list_files(r))
+
+    # add location (preset)
+    for it in out:
+        it["location"] = "Local"
+        for mp, nm in mapping.items():
+            if it["path"].startswith(mp.rstrip("/") + "/") or it["path"] == mp:
+                it["location"] = nm
+                break
+    return jsonify({"items": out})
+
+@app.get("/api/download")
+def api_download():
+    path = request.args.get("path", "").strip()
+    if not path:
+        abort(400)
+    cfg = _load_config()
+    roots, _ = _roots_and_map(cfg)
+    # security: ensure path is within an allowed root
+    path = os.path.realpath(path)
+    allowed = False
+    for r in roots:
+        rreal = os.path.realpath(r)
+        if path == rreal or path.startswith(rreal + os.sep):
+            allowed = True
+            break
+    if not allowed or not os.path.isfile(path):
+        abort(404)
+    mime, _ = mimetypes.guess_type(path)
+    return send_file(path, as_attachment=True, download_name=os.path.basename(path), mimetype=mime or "application/octet-stream")
+
+# ---------- gotify test ----------
 @app.post("/api/gotify_test")
 def api_gotify_test():
     b = request.get_json(silent=True) or {}
-    # optional override url/token for testing; otherwise use stored options
     cfg = _load_config()
     if "url" in b:
         cfg["options"]["gotify_url"] = b.get("url") or ""
@@ -501,18 +522,13 @@ def api_gotify_test():
     if "enabled" in b:
         cfg["options"]["gotify_enabled"] = bool(b.get("enabled"))
     else:
-        # enable temporarily for test if both fields provided
         if b.get("url") and b.get("token"):
             cfg["options"]["gotify_enabled"] = True
-
     verify = not bool(b.get("insecure"))
     r = gotify_send("Remote Linux Backup", "This is a test from the add-on UI.", priority=5, cfg=cfg, verify_tls=verify)
     return jsonify(r)
 
-
-# -----------------------------------------------------------------------------
-# (Optional) serve static UI if you hit the container directly
-# -----------------------------------------------------------------------------
+# ---------- static root (optional) ----------
 @app.get("/")
 def root():
     index = os.path.join(WWW_DIR, "index.html")
@@ -520,10 +536,6 @@ def root():
         return send_from_directory(WWW_DIR, "index.html")
     return "OK", 200
 
-
-# -----------------------------------------------------------------------------
-# Entrypoint for gunicorn
-# -----------------------------------------------------------------------------
-# gunicorn will import "app:app"
+# gunicorn entry
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8066, debug=False)
