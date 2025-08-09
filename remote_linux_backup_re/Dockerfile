@@ -1,18 +1,23 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
-FROM ${BUILD_FROM}
+# Debian base from the HA Community Add-ons project
+# https://github.com/hassio-addons/addon-debian-base
+FROM ghcr.io/hassio-addons/debian-base:7.8.3
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Runtime deps:
-# - cronie: cron scheduler
-# - openssh-client + sshpass: remote commands & rsync over ssh
-# - samba-client: smbclient for SMB share listing/browsing
-# - nfs-utils: showmount and NFS mount support
+# - cron: scheduler
+# - openssh-client + sshpass: remote cmds & rsync over ssh
+# - smbclient + cifs-utils: list & mount SMB/CIFS shares
+# - nfs-common: NFS client + showmount
 # - rclone: optional cloud copy (Dropbox etc.)
-# - Flask + Gunicorn: web UI/API
-RUN apk add --no-cache \
-    bash curl jq coreutils pigz pv gzip \
-    openssh-client sshpass rsync rclone \
-    samba-client nfs-utils \
-    python3 py3-flask py3-gunicorn cronie
+# - Python3 + Flask + Gunicorn: web UI/API
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash curl jq coreutils pigz pv gzip \
+      openssh-client sshpass rsync rclone \
+      smbclient cifs-utils nfs-common \
+      python3 python3-pip gunicorn cron \
+    && pip3 install --no-cache-dir flask \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -22,7 +27,7 @@ COPY www /app/www
 # Ensure run.sh is LF and executable
 RUN sed -i 's/\r$//' /app/run.sh && chmod 0755 /app/run.sh
 
-# Optional log
+# Optional log file you can tail inside the container
 RUN touch /var/log/remote_linux_backup.log
 
 CMD ["/app/run.sh"]
