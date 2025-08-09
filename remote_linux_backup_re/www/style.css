@@ -1,87 +1,84 @@
-/* Compact centered card UI – high readability */
-
 :root{
   --bg:#0b0f14; --panel:#0f1720; --text:#eaf2f8; --muted:#b6c5d6;
-  --border:#223245; --accent:#7c5cff; --accent-2:#0ea5e9; --danger:#ef4444;
+  --border:#223245; --accent:#7c5cff; --accent2:#0ea5e9; --danger:#ef4444;
   --radius:16px; --shadow:0 14px 38px rgba(0,0,0,.40);
 }
 
 *{box-sizing:border-box}
-html{font-size:16px}
-@media (min-width:1500px){ html{font-size:17px} }
-
+html,body{height:100%}
 body{
   margin:0;background:var(--bg);color:var(--text);
-  font:500 1rem/1.6 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif;
+  font:500 16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
 
-/* Centered page */
-.page{
-  min-height:100dvh;display:grid;place-items:center;padding:32px 16px;
-}
+.wrap{max-width:1200px;margin:40px auto;padding:0 18px}
 
-/* Card */
-.card{
-  width:100%;max-width:880px;background:linear-gradient(180deg,#101a27 0%, #0c141f 100%);
+.hero{
+  background:linear-gradient(180deg,#101a27 0%, #0c141f 100%);
   border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
-  padding:22px 22px 26px;
+  padding:22px 22px 18px;margin-bottom:18px
 }
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.logo{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#7c5cff,#3dc8ff)}
+h1{margin:0;font-weight:800;letter-spacing:.3px;font-size:1.35rem}
+.sub{margin:.25rem 0 0;color:var(--muted)}
 
-.card__header{display:flex;gap:14px;align-items:center;margin-bottom:12px}
-.brand__logo{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#7c5cff,#3dc8ff)}
-.brand__title{margin:0;font-weight:800;letter-spacing:.3px;font-size:1.35rem}
-.brand__subtitle{margin:2px 0 0;color:var(--muted);font-size:.95rem}
-
-/* Tabs */
-.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
-.tab{
-  background:#121e2c;border:1px solid var(--border);color:#ddecff;
-  padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:800
-}
+.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.tab{background:#121e2c;border:1px solid var(--border);color:#ddecff;
+  padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:800}
 .tab.is-active{background:#1a2b3f;color:#fff;border-color:#33506f}
 
-/* Panels */
-.panel{display:none;margin-top:14px;background:var(--panel);border:1px solid var(--border);
-  border-radius:12px;padding:16px}
+.alpha{margin-top:12px;color:var(--muted);background:#0b1522;border:1px solid var(--border);
+  border-radius:12px;padding:10px}
+
+.panel{
+  background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;
+  display:none
+}
 .panel.is-active{display:block}
 
-/* Form layout */
-.form{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
-@media (max-width:720px){ .form{grid-template-columns:1fr} }
+.grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
+@media (max-width:820px){ .grid{grid-template-columns:1fr} }
+.field{display:flex;flex-direction:column;gap:6px}
+.field.wide{grid-column:1/-1}
 
-.field label{display:grid;gap:6px;font-weight:800}
-.hint{color:var(--muted);font-weight:600;font-size:.9rem}
+label{font-weight:700}
+.tiny{font-size:.9rem}
+.muted{color:var(--muted)}
 
 input,select,textarea{
   background:#0e1724;border:1px solid var(--border);color:var(--text);
-  border-radius:10px;padding:10px 12px;font-size:1.02rem;outline:none
+  border-radius:10px;padding:10px 12px;font-size:1rem;outline:none
 }
 input::placeholder,textarea::placeholder{color:#8ba2b9}
 input:focus,select:focus,textarea:focus{border-color:#3a5a78;box-shadow:0 0 0 3px rgba(14,165,233,.18)}
-.textarea{min-height:200px;resize:vertical}
 
-/* Buttons */
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-.btn{
-  background:#17263a;border:1px solid var(--border);color:#e6f1ff;
-  padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:800
-}
+.actions.right{justify-content:flex-end}
+.btn{background:#17263a;border:1px solid var(--border);color:#e6f1ff;
+  padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:800}
 .btn:hover{filter:brightness(1.06)}
-.btn--primary{background:var(--accent-2);color:#03131e;border-color:transparent}
-.btn--danger{background:var(--danger);color:#fff;border-color:transparent}
+.btn.primary{background:var(--accent2);color:#03131e;border-color:transparent}
+.btn.danger{background:var(--danger);color:#fff;border-color:transparent}
 
-/* Logs */
-.log-wrap{margin-top:12px}
-.log-title{color:var(--muted);font-weight:800;margin-bottom:6px}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
+.table{width:100%;border-collapse:collapse;min-width:760px}
+.table th,.table td{border-bottom:1px solid #223049;padding:10px;text-align:left;vertical-align:middle}
+.table th{color:#cfe0ff;font-weight:800}
+.table tr:last-child td{border-bottom:none}
+
 .log{
   background:#0a121b;border:1px solid var(--border);border-radius:10px;
   padding:12px;min-height:140px;max-height:380px;overflow:auto;
-  white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.97rem
+  white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace
 }
 
-/* Utilities */
-.details{margin-top:10px}
-.details summary{cursor:pointer;font-weight:800}
-.code{background:#0b1522;border:1px solid var(--border);border-radius:10px;padding:10px;overflow:auto}
-.hide{display:none !important}
+.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:20}
+.modal-card{background:#0b1522;border:1px solid var(--border);border-radius:14px;max-width:900px;width:92%;padding:16px}
+.list{max-height:360px;overflow:auto;border:1px solid #223049;border-radius:8px;margin-top:8px}
+.list div{padding:8px;border-bottom:1px dashed #223049;cursor:pointer}
+.list div:hover{background:#111827}
+
+.share-picker{display:grid;grid-template-columns:1fr 220px;gap:8px}
+.inline{height:42px}
