@@ -1,7 +1,7 @@
 {
   "arch": ["aarch64", "amd64", "armv7", "i386"],
   "name": "Remote Linux Backup",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "slug": "remote_linux_backup",
   "description": "Backup and restore remote Linux systems via password-only SSH. dd, rsync, ZFS; NAS + Dropbox; per-job paths; Gotify; scheduler; dark UI.",
   "startup": "services",
