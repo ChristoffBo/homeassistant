@@ -13,12 +13,13 @@
     textarea { min-height:120px; }
     .btn { background:#0ea5e9; color:#002338; border:0; padding:10px 14px; border-radius:12px; font-weight:600; cursor:pointer; }
     .btn.secondary { background:#1f2f44; color:#cfe8ff; }
+    .btn.warn { background:#e11d48; color:#fff; }
     .tabs { display:flex; gap:8px; margin:16px auto; max-width:1100px; }
     .tab { padding:8px 12px; border-radius:10px; background:#0f1c2a; border:1px solid #213246; cursor:pointer; }
     .tab.active { background:#0ea5e9; color:#002338; border-color:#0ea5e9; font-weight:700; }
     .muted { color:#9fb6cc; font-size:13px; }
     table { width:100%; border-collapse:collapse; }
-    th, td { border-bottom:1px solid #213246; padding:8px; text-align:left; }
+    th, td { border-bottom:1px solid #213246; padding:8px; text-align:left; vertical-align:middle; }
     tr:hover { background:#0b1724; }
     .flex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   </style>
@@ -36,6 +37,7 @@
 
   <!-- BACKUP -->
   <div id="tab-backup" class="card">
+    <h3 style="margin:0 0 10px 0;">Source server</h3>
     <div class="row">
       <div><label>Server preset</label><select id="b_server"></select></div>
       <div><label>Backup name</label><input id="b_name" placeholder="proxmox-node1"></div>
@@ -44,10 +46,23 @@
       <div><label>Password</label><input id="b_pass" type="password"></div>
       <div><label>Port</label><input id="b_port" value="22"></div>
       <div><label>Method</label>
-        <select id="b_method"><option value="dd">Full Disk (dd)</option><option value="rsync">Files (rsync)</option><option value="zfs">ZFS snapshot</option></select>
+        <select id="b_method">
+          <option value="dd">Full Disk (dd)</option>
+          <option value="rsync">Files (rsync)</option>
+          <option value="zfs">ZFS snapshot</option>
+        </select>
       </div>
       <div><label>Disk device <span class="muted">dd only (e.g. /dev/sda)</span></label><input id="b_disk" value="/dev/sda"></div>
+    </div>
+
+    <h3 style="margin:24px 0 10px 0;">Destination (store to)</h3>
+    <div class="row">
       <div><label>Store to</label><select id="b_store"></select></div>
+      <div><label>Status</label><div id="b_store_status" class="muted">—</div></div>
+      <div class="flex" style="align-items:flex-end;">
+        <button class="btn secondary" id="btn_store_mount">Mount now</button>
+        <button class="btn secondary" id="btn_store_unmount">Unmount</button>
+      </div>
       <div><label>Dropbox remote</label><input id="b_cloud" placeholder="dropbox:HA-Backups"></div>
       <div><label>Exclude patterns <span class="muted">rsync only</span></label><input id="b_excl" placeholder="*.iso,*.img"></div>
       <div><label>Bandwidth limit (KB/s) <span class="muted">0=unlimited</span></label><input id="b_bw" value="0"></div>
@@ -55,6 +70,7 @@
       <div><label><input type="checkbox" id="b_verify"> Verify image checksum (dd)</label></div>
       <div><label><input type="checkbox" id="b_save_pw"> Save password in preset</label></div>
     </div>
+
     <div class="flex" style="margin-top:14px;">
       <button class="btn secondary" id="btn_probe">Probe host</button>
       <button class="btn secondary" id="btn_install">Auto-install tools</button>
@@ -66,6 +82,7 @@
 
   <!-- RESTORE -->
   <div id="tab-restore" class="card" style="display:none;">
+    <h3 style="margin:0 0 10px 0;">Restore target server</h3>
     <div class="row">
       <div><label>Server preset</label><select id="r_server"></select></div>
       <div><label>Host/IP</label><input id="r_host"></div>
@@ -97,24 +114,46 @@
 
   <!-- MOUNTS -->
   <div id="tab-mounts" class="card" style="display:none;">
-    <p class="muted">Define NAS mounts (CIFS/NFS). Toggle <b>auto-mount</b> to mount on add-on start.</p>
-    <div><textarea id="mounts_json" placeholder='[{"name":"NAS","proto":"cifs","server":"10.0.0.10","share":"Backups","mount":"/mnt/nas/Backups","username":"user","password":"pass","options":"","auto_mount":true}]'></textarea></div>
+    <p class="muted">Add NAS mounts (SMB/CIFS or NFS). They appear in the “Store to” dropdown. Tick <b>Auto-mount</b> for startup.</p>
+    <div class="row">
+      <div><label>Preset name</label><input id="m_name" placeholder="NAS_Backups"></div>
+      <div><label>Protocol</label>
+        <select id="m_proto"><option value="cifs">SMB / CIFS</option><option value="nfs">NFS</option></select>
+      </div>
+      <div><label>Server / host</label><input id="m_server" placeholder="192.168.1.10"></div>
+      <div><label>Share / export</label><input id="m_share" placeholder="Backups  (SMB)   or   /export/backups  (NFS)"></div>
+      <div><label>Username (SMB)</label><input id="m_user" placeholder="leave empty for NFS"></div>
+      <div><label>Password (SMB)</label><input id="m_pass" type="password"></div>
+      <div><label>Mount point</label><input id="m_mount" placeholder="/mnt/NAS_Backups"></div>
+      <div><label>Options (advanced)</label><input id="m_opts" placeholder="e.g. vers=3.1.1"></div>
+      <div><label><input type="checkbox" id="m_auto"> Auto-mount on start</label></div>
+    </div>
     <div class="flex" style="margin-top:10px;">
-      <button class="btn" id="btn_save_mounts">Save mounts</button>
+      <button class="btn" id="btn_add_mount">Add / Update</button>
+      <button class="btn secondary" id="btn_save_mounts">Save all</button>
       <button class="btn secondary" id="btn_refresh_mounts">Refresh status</button>
     </div>
     <div style="overflow:auto; margin-top:10px;">
-      <table><thead><tr><th>Name</th><th>Proto</th><th>Server/share</th><th>Mount</th><th>Status</th><th>Action</th></tr></thead><tbody id="mount_rows"></tbody></table>
+      <table>
+        <thead><tr><th>Name</th><th>Proto</th><th>Server/share</th><th>Mount</th><th>Auto</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="mount_rows"></tbody>
+      </table>
     </div>
+    <textarea id="mounts_json_hidden" style="display:none;"></textarea>
   </div>
 
   <!-- SERVERS -->
   <div id="tab-servers" class="card" style="display:none;">
-    <p class="muted">Saved servers (host/user/port). Password is stored only if you tick “Save password”.</p>
-    <div><textarea id="servers_json" placeholder='[{"name":"Proxmox","host":"10.0.0.21","username":"root","port":22,"save_password":false,"password":""}]'></textarea></div>
-    <div class="flex" style="margin-top:10px;">
-      <button class="btn" id="btn_save_servers">Save servers</button>
+    <p class="muted">Saved servers (host/user/port). Select on Backup/Restore via “Server preset”.</p>
+    <div class="flex" style="margin-bottom:10px;">
+      <button class="btn" id="btn_add_server_from_backup">Save current Backup form as preset</button>
       <button class="btn secondary" id="btn_refresh_servers">Reload</button>
+    </div>
+    <div style="overflow:auto;">
+      <table>
+        <thead><tr><th>Name</th><th>Host</th><th>User</th><th>Port</th><th>Password saved</th><th>Actions</th></tr></thead>
+        <tbody id="servers_rows"></tbody>
+      </table>
     </div>
   </div>
 
@@ -147,9 +186,8 @@
     </ul>
     <h3>Dropbox setup</h3>
     <ol>
-      <li>On the host or inside an HA “Terminal” add-on, run: <code>rclone config file</code> to see the path. For this add-on we use <code>/config/rclone.conf</code>.</li>
-      <li>Run <code>rclone config</code>, create a remote named <code>dropbox</code> (or any name). The file must end up as <code>/config/rclone.conf</code>.</li>
-      <li>In Settings set “Dropbox remote” to something like <code>dropbox:HA-Backups</code>, then click “Test Dropbox”.</li>
+      <li>Use HA Terminal to create <code>/config/rclone.conf</code> with <code>rclone config</code>.</li>
+      <li>Set “Dropbox remote” here, then “Test Dropbox”.</li>
     </ol>
   </div>
 
