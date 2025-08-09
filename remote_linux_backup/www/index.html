@@ -1,196 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Remote Linux Backup</title>
-<link rel="stylesheet" href="/www/style.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Remote Linux Backup</title>
+  <link rel="stylesheet" href="/www/style.css" />
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <img src="/www/logo.png" alt="logo" class="logo">
-    <h1>Remote Linux Backup</h1>
-  </header>
+  <div class="container">
+    <header class="header">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true"></div>
+        <div>
+          <h1 class="brand__title">Remote Linux Backup</h1>
+          <p class="brand__subtitle">Back up &amp; restore remote Linux (dd, rsync, ZFS) with NAS mounts, Dropbox, scheduler &amp; Gotify.</p>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button class="tab is-active" data-tab="backup" role="tab" aria-selected="true">Backup</button>
+        <button class="tab" data-tab="restore" role="tab">Restore</button>
+        <button class="tab" data-tab="jobs" role="tab">Jobs</button>
+        <button class="tab" data-tab="settings" role="tab">Settings</button>
+      </nav>
+    </header>
 
-  <nav>
-    <button class="tab active" data-tab="backup">Backup</button>
-    <button class="tab" data-tab="restore">Restore</button>
-    <button class="tab" data-tab="jobs">Jobs</button>
-    <button class="tab" data-tab="settings">Settings</button>
-  </nav>
+    <!-- BACKUP -->
+    <section id="backup" class="panel is-active" role="tabpanel" aria-labelledby="Backup">
+      <div class="grid">
+        <div class="field">
+          <label>Host/IP <span class="hint">Remote server to back up</span></label>
+          <input id="b-host" placeholder="10.0.0.21" />
+        </div>
+        <div class="field">
+          <label>User <span class="hint">SSH username</span></label>
+          <input id="b-user" value="root" />
+        </div>
+        <div class="field">
+          <label>Password <span class="hint">SSH password (no keys required)</span></label>
+          <input id="b-pass" type="password" />
+        </div>
+        <div class="field">
+          <label>Method <span class="hint">dd = full disk image; rsync = files; ZFS = snapshot</span></label>
+          <select id="b-method">
+            <option value="dd">Full Disk (dd)</option>
+            <option value="rsync">Files (rsync)</option>
+            <option value="zfs">ZFS Snapshot</option>
+          </select>
+        </div>
 
-  <section id="backup" class="tabpane active">
-    <div class="grid">
-      <label>Host <input id="b-host" placeholder="10.0.0.21"></label>
-      <label>User <input id="b-user" value="root"></label>
-      <label>Password <input id="b-pass" type="password"></label>
-      <label>Method
-        <select id="b-method">
-          <option value="dd">Full Disk (dd)</option>
-          <option value="rsync">Files (rsync)</option>
-          <option value="zfs">ZFS Snapshot</option>
-        </select>
-      </label>
-      <label id="b-disk-wrap">Disk <input id="b-disk" value="/dev/sda"></label>
-      <label id="b-files-wrap" class="hide">Files (comma) <input id="b-files" value="/etc,/conf/config.xml"></label>
-      <label id="b-zfs-wrap" class="hide">ZFS Dataset <input id="b-zfs" placeholder="rpool/ROOT/pve-1"></label>
-      <label>Store to (local/NAS) <input id="b-store" value="/backup"></label>
-      <label>Dropbox (optional) <input id="b-cloud" placeholder="dropbox:/HA-Backups/Proxmox"></label>
-    </div>
-    <div class="actions">
-      <button id="btn-probe">Probe Host</button>
-      <button id="btn-tools">Auto-Install Tools</button>
-      <button id="btn-backup">Run Backup</button>
-    </div>
-    <pre id="backup-log" class="log"></pre>
-  </section>
+        <div class="field" id="b-disk-wrap">
+          <label>Disk device <span class="hint">Only for dd</span></label>
+          <input id="b-disk" value="/dev/sda" />
+        </div>
+        <div class="field hide" id="b-files-wrap">
+          <label>Paths (comma separated) <span class="hint">Only for rsync</span></label>
+          <input id="b-files" value="/etc,/var/backups" />
+        </div>
+        <div class="field hide" id="b-zfs-wrap">
+          <label>ZFS dataset <span class="hint">e.g. rpool/ROOT/pve-1</span></label>
+          <input id="b-zfs" placeholder="tank/data" />
+        </div>
 
-  <section id="restore" class="tabpane">
-    <div class="grid">
-      <label>Host <input id="r-host" placeholder="10.0.0.21"></label>
-      <label>User <input id="r-user" value="root"></label>
-      <label>Password <input id="r-pass" type="password"></label>
-      <label>Method
-        <select id="r-method">
-          <option value="dd">Restore Disk (dd)</option>
-          <option value="rsync">Restore Files (rsync)</option>
-        </select>
-      </label>
-      <label id="r-image-wrap">Image Path (.img.gz) <input id="r-image" placeholder="/mnt/nas/prox.img.gz"></label>
-      <label id="r-disk-wrap">Disk <input id="r-disk" value="/dev/sda"></label>
-      <label id="r-src-wrap" class="hide">Local Source Dir <input id="r-src" placeholder="/backup/opnsense"></label>
-      <label id="r-dest-wrap" class="hide">Remote Dest <input id="r-dest" value="/"></label>
-    </div>
-    <div class="actions">
-      <button id="btn-run-restore">Run Restore</button>
-    </div>
-    <pre id="restore-log" class="log"></pre>
-  </section>
+        <div class="field">
+          <label>Store to (local/NAS path) <span class="hint">Where images/files are saved inside the add-on</span></label>
+          <input id="b-store" value="/backup" />
+        </div>
+        <div class="field">
+          <label>Dropbox remote (optional) <span class="hint">rclone remote, e.g. dropbox:/HA-Backups/Proxmox</span></label>
+          <input id="b-cloud" placeholder="dropbox:/HA-Backups/Proxmox" />
+        </div>
+      </div>
 
-  <section id="jobs" class="tabpane">
-    <p>Jobs JSON (save then Apply Schedule)</p>
-    <textarea id="jobs-json" class="code" rows="12">[
-  {"host":"10.0.0.21","username":"root","password":"pass","method":"dd","disk":"/dev/sda","store_to":"/mnt/nas/proxmox/","cloud_upload":"dropbox:/HA-Backups/Proxmox","schedule":"0 2 * * *"}
-]</textarea>
-    <div class="actions">
-      <button id="btn-save-jobs">Save Jobs</button>
-      <button id="btn-apply">Apply Schedule</button>
-    </div>
-    <pre id="jobs-log" class="log"></pre>
-  </section>
+      <div class="actions">
+        <button id="btn-probe" class="btn">Probe host</button>
+        <button id="btn-tools" class="btn">Auto-install tools</button>
+        <button id="btn-backup" class="btn btn--primary">Run backup</button>
+      </div>
 
-  <section id="settings" class="tabpane">
-    <div class="grid">
-      <label>UI Port <input id="s-port" value="8066"></label>
-      <label>Gotify URL <input id="s-gurl" placeholder="http://10.0.0.99:8091"></label>
-      <label>Gotify Token <input id="s-gtok" placeholder="token"></label>
-      <label>Dropbox enabled
-        <select id="s-dbxe">
-          <option value="false">false</option>
-          <option value="true">true</option>
-        </select>
-      </label>
-      <label>Dropbox Remote <input id="s-dbxr" value="dropbox:HA-Backups"></label>
-    </div>
-    <div class="actions">
-      <button id="btn-save">Save Options</button>
-      <button id="btn-list">List Local Backups</button>
-    </div>
-    <pre id="settings-log" class="log"></pre>
-  </section>
-</div>
+      <div class="log-wrap">
+        <div class="log-title">Result</div>
+        <pre id="backup-log" class="log" aria-live="polite"></pre>
+      </div>
+    </section>
 
-<script>
-const $ = s => document.querySelector(s);
-const show = (el, v) => el.classList.toggle('hide', !v);
+    <!-- RESTORE -->
+    <section id="restore" class="panel" role="tabpanel" aria-labelledby="Restore">
+      <div class="grid">
+        <div class="field">
+          <label>Host/IP <span class="hint">Remote server to restore to</span></label>
+          <input id="r-host" placeholder="10.0.0.21" />
+        </div>
+        <div class="field">
+          <label>User</label>
+          <input id="r-user" value="root" />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input id="r-pass" type="password" />
+        </div>
+        <div class="field">
+          <label>Method</label>
+          <select id="r-method">
+            <option value="dd">Restore Disk (dd)</option>
+            <option value="rsync">Restore Files (rsync)</option>
+          </select>
+        </div>
 
-document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click', e=>{
-  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  const tab = btn.dataset.tab;
-  document.querySelectorAll('.tabpane').forEach(p=>p.classList.remove('active'));
-  document.getElementById(tab).classList.add('active');
-}));
+        <div class="field" id="r-image-wrap">
+          <label>Image path (.img.gz) <span class="hint">For dd restore</span></label>
+          <input id="r-image" placeholder="/mnt/nas/proxmox-20250101.img.gz" />
+        </div>
+        <div class="field" id="r-disk-wrap">
+          <label>Disk device <span class="hint">Target device on remote host</span></label>
+          <input id="r-disk" value="/dev/sda" />
+        </div>
+        <div class="field hide" id="r-src-wrap">
+          <label>Local source dir <span class="hint">Folder inside the add-on to push via rsync</span></label>
+          <input id="r-src" placeholder="/backup/opnsense" />
+        </div>
+        <div class="field hide" id="r-dest-wrap">
+          <label>Remote destination <span class="hint">Path on the remote host</span></label>
+          <input id="r-dest" value="/" />
+        </div>
+      </div>
 
-$('#b-method').addEventListener('change', e=>{
-  const m=e.target.value;
-  show($('#b-disk-wrap'), m==='dd');
-  show($('#b-files-wrap'), m==='rsync');
-  show($('#b-zfs-wrap'), m==='zfs');
-});
-$('#r-method').addEventListener('change', e=>{
-  const m=e.target.value;
-  show($('#r-image-wrap'), m==='dd');
-  show($('#r-disk-wrap'), m==='dd');
-  show($('#r-src-wrap'), m==='rsync');
-  show($('#r-dest-wrap'), m==='rsync');
-});
+      <div class="actions">
+        <button id="btn-run-restore" class="btn btn--primary">Run restore</button>
+      </div>
 
-async function probe(){
-  const payload={host:$('#b-host').value,username:$('#b-user').value,password:$('#b-pass').value};
-  const r=await fetch('/api/probe_host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  $('#backup-log').textContent=(await r.json()).out||'done';
-}
-async function tools(){
-  const payload={host:$('#b-host').value,username:$('#b-user').value,password:$('#b-pass').value};
-  const r=await fetch('/api/install_tools',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  $('#backup-log').textContent=(await r.json()).out||'done';
-}
-async function runBackup(){
-  const p={
-    method:$('#b-method').value, host:$('#b-host').value, username:$('#b-user').value, password:$('#b-pass').value,
-    store_to:$('#b-store').value, cloud_upload:$('#b-cloud').value,
-    disk:$('#b-disk').value, files:$('#b-files').value, zfs_dataset:$('#b-zfs').value
-  };
-  const r=await fetch('/api/run_backup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  $('#backup-log').textContent=JSON.stringify(await r.json(),null,2);
-}
-async function runRestore(){
-  const p={
-    method:$('#r-method').value, host:$('#r-host').value, username:$('#r-user').value, password:$('#r-pass').value,
-    image_path:$('#r-image').value, disk:$('#r-disk').value, local_src:$('#r-src').value, remote_dest:$('#r-dest').value
-  };
-  const r=await fetch('/api/run_restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  $('#restore-log').textContent=JSON.stringify(await r.json(),null,2);
-}
-async function saveOptions(){
-  const p={
-    ui_port: parseInt($('#s-port').value||'8066'),
-    gotify_enabled: !!$('#s-gurl').value && !!$('#s-gtok').value,
-    gotify_url: $('#s-gurl').value,
-    gotify_token: $('#s-gtok').value,
-    dropbox_enabled: $('#s-dbxe').value==='true',
-    dropbox_remote: $('#s-dbxr').value
-  };
-  const r=await fetch('/api/options',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  $('#settings-log').textContent='Saved';
-}
-async function listBackups(){
-  const r=await fetch('/api/list_backups?path=/backup');
-  $('#settings-log').textContent=(await r.json()).map(x=>`${x.path} (${x.size} bytes)`).join('\n');
-}
-async function saveJobs(){
-  let jobs=[]; try{ jobs=JSON.parse($('#jobs-json').value||'[]'); }catch(e){ $('#jobs-log').textContent='Invalid JSON'; return; }
-  const opts = await (await fetch('/api/options')).json();
-  opts.jobs = jobs;
-  await fetch('/api/options',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(opts)});
-  $('#jobs-log').textContent='Jobs saved. Click Apply Schedule.';
-}
-async function applySchedule(){
-  const r=await fetch('/api/apply_schedule',{method:'POST'});
-  const j=await r.json();
-  $('#jobs-log').textContent = j.out || JSON.stringify(j,null,2);
-}
+      <div class="log-wrap">
+        <div class="log-title">Result</div>
+        <pre id="restore-log" class="log" aria-live="polite"></pre>
+      </div>
+    </section>
 
-$('#btn-probe').onclick=probe;
-$('#btn-tools').onclick=tools;
-$('#btn-backup').onclick=runBackup;
-$('#btn-run-restore').onclick=runRestore;
-$('#btn-save').onclick=saveOptions;
-$('#btn-list').onclick=listBackups;
-$('#btn-save-jobs').onclick=saveJobs;
-$('#btn-apply').onclick=applySchedule;
-</script>
-</body>
-</html>
+    <!-- JOBS -->
+    <section id="jobs" class="panel" role="tabpanel" aria-labelledby="Jobs">
+      <p class="help">
+        <strong>Jobs</strong> run on a schedule (cron). Each line can be either JSON or simple
+        <code>key=value;key=value</code>. Required: <code>host</code>, <code>username</code>, <code>password</code>, <code>method</code>, <code>schedule</code>.
+      </p>
+      <details class="help details">
+        <summary>Examples</summary>
+        <pre class="code">
+#
