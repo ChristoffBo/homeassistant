@@ -1,14 +1,18 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install runtime deps (use cronie on Alpine)
+# Install runtime deps (Alpine packages)
+# - python3 + py3-pip for pip installs
+# - cronie provides crond (not "cron")
 RUN apk add --no-cache \
-    bash curl jq coreutils pigz pv openssh-client sshpass rsync rclone cronie gzip
+    bash curl jq coreutils pigz pv openssh-client sshpass rsync rclone \
+    python3 py3-pip cronie gzip
 
 # App
 WORKDIR /app
 COPY requirements.txt /app/
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+# Always use python3 -m pip to avoid PATH issues
+RUN python3 -m pip install --no-cache-dir -r /app/requirements.txt
 
 COPY api.py scheduler.py job_runner.py run.sh /app/
 COPY www /app/www
