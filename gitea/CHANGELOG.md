@@ -1,3 +1,7 @@
+## 1.24.4 (2025-08-09 04:00:32)
+- Update from 1.24.3 to 1.24.4
+- Docker Image: [ghcr.io/alexbelgium/gitea-{arch}:1.24.4](https://github.com/orgs/alexbelgium/gitea-{arch}/packages)
+
 ## 1.24.3
 - Updated from [2025-08-02 19:04:05 SAST] [0;33m⚠️ No valid version tag found for ghcr.io/alexbelgium/gitea-{arch}. Skipping update.[0m to 1.24.3
 - Docker: [ghcr.io/alexbelgium/gitea-{arch}](https://github.com/alexbelgium/gitea-{arch}/pkgs/container/gitea-{arch}/tags)
