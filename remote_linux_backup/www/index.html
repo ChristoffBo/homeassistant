@@ -1,500 +1,314 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Remote Linux Backup</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
-    <nav class="tabs" id="tabs">
-      <button class="tab-btn active" data-tab="tab-backup">Backup</button>
-      <button class="tab-btn" data-tab="tab-restore">Restore</button>
-      <button class="tab-btn" data-tab="tab-connections">Connections</button>
-      <button class="tab-btn" data-tab="tab-mounts">Mounts</button>
-      <button class="tab-btn" data-tab="tab-backups">Backups</button>
-      <button class="tab-btn" data-tab="tab-schedule">Schedule</button>
-      <button class="tab-btn" data-tab="tab-notifications">Notifications</button>
-      <button class="tab-btn" data-tab="tab-help">Help</button>
-    </nav>
-  </header>
+<header>
+  <nav class="tabs" id="tabs">
+    <button class="tab-btn active" data-tab="tab-backup" title="Create a new backup">Backup</button>
+    <button class="tab-btn" data-tab="tab-restore" title="Restore a backup to a device or folder">Restore</button>
+    <button class="tab-btn" data-tab="tab-connections" title="Saved SSH hosts used for rsync/image">Connections</button>
+    <button class="tab-btn" data-tab="tab-mounts" title="SMB/NFS network shares used as sources/destinations">Mounts</button>
+    <button class="tab-btn" data-tab="tab-backups" title="List, download, verify and delete backups">Backups</button>
+    <button class="tab-btn" data-tab="tab-schedule" title="Run backups automatically">Schedule</button>
+    <button class="tab-btn" data-tab="tab-notifications" title="Gotify notifications and system update">Notifications</button>
+    <button class="tab-btn" data-tab="tab-help" title="How to use + disaster recovery">Help</button>
+  </nav>
+</header>
 
-  <main class="container">
-    <!-- Backup -->
-    <section id="tab-backup" class="tab-panel active">
-      <div class="card">
-        <h2>Backup</h2>
-        <p class="muted">Make a safe copy of files/folders (rsync) or create a full disk image (dd). Choose a saved connection or enter host details, then pick a source path or a device.</p>
-        <form id="backup-form">
-          <div class="grid-3">
-            <div class="field">
-              <label>Dry run</label>
-              <select id="b_dryrun">
-                <option value="0">No</option>
-                <option value="1">Yes</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Connection</label>
-              <select id="b_conn"></select>
-            </div>
-            <div class="field">
-              <label>Source Type</label>
-              <select id="b_source_type">
-                <option value="ssh">SSH (remote)</option>
-                <option value="mount">Mount (SMB/NFS)</option>
-              </select>
-            </div>
+<main id="content">
+  <!-- BACKUP -->
+  <section id="tab-backup" class="tab-panel active">
+    <div class="card">
+      <h2>Backup</h2>
+      <p class="muted">Make a safe copy of files/folders (rsync/copy) or create a full disk image (dd). Complete the steps below from left to right.</p>
+
+      <div class="explainer">
+        <div class="step" id="step-source">1. Pick source</div>
+        <div class="step" id="step-mode">2. Choose mode</div>
+        <div class="step" id="step-destination">3. Choose destination</div>
+        <div class="step" id="step-run">4. Start</div>
+      </div>
+
+      <div class="grid-3">
+        <div class="field">
+          <label>Dry run</label>
+          <select id="b_dry"><option>No</option><option>Yes</option></select>
+        </div>
+        <div class="field">
+          <label>Connection <span class="hint">(saved)</span></label>
+          <select id="b_conn" title="Pick a saved SSH connection from the Connections tab"></select>
+          <button id="b_conn_use" class="small secondary" type="button" title="Fill host/user/pass from this saved connection">Use</button>
+        </div>
+        <div class="field">
+          <label>Source type</label>
+          <select id="b_src_type">
+            <option value="ssh">SSH (remote)</option>
+            <option value="local">Local path (this HA)</option>
+            <option value="mount">Mount (SMB/NFS)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Hostname / IP</label>
+          <input id="b_host" placeholder="e.g. 10.0.0.21">
+        </div>
+        <div class="field">
+          <label>Username</label>
+          <input id="b_user" value="root">
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input id="b_pass" type="password">
+        </div>
+
+        <div class="field">
+          <label>Mode</label>
+          <select id="b_mode">
+            <option value="rsync">Rsync (SSH) — Files & folders</option>
+            <option value="copy_local">Copy (local) — Files & folders</option>
+            <option value="copy_mount">Copy (mount) — SMB/NFS</option>
+            <option value="image">Image (dd) — Full disk</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Label (optional)</label>
+          <input id="b_label" placeholder="e.g. after-upgrade">
+        </div>
+        <div class="field">
+          <label>Max MB/s</label>
+          <input id="b_bwlimit" type="number" min="0" value="0" title="0 = unlimited">
+          <input id="b_bw_slider" type="range" min="0" max="200" step="1" value="0">
+          <small>0 = unlimited • quick picks: 1, 2, 5, 10, 20, 50, 100</small>
+        </div>
+      </div>
+
+      <div class="card subtle">
+        <h3>Destination</h3>
+        <div class="grid-3">
+          <div class="field">
+            <label>Store backup to</label>
+            <select id="dest_type">
+              <option value="local">Local (this HA)</option>
+              <option value="mount">Mount (SMB/NFS)</option>
+            </select>
           </div>
-
-          <div class="grid-3">
-            <div class="field">
-              <label>Hostname / IP</label>
-              <input id="b_host" placeholder="e.g. 10.0.0.10">
-            </div>
-            <div class="field">
-              <label>Username</label>
-              <input id="b_user" placeholder="root">
-            </div>
-            <div class="field">
-              <label>Password</label>
-              <input id="b_pass" type="password" placeholder="••••••••">
-            </div>
+          <div class="field">
+            <label>Destination mount</label>
+            <select id="dest_mount"></select>
           </div>
-
-          <div class="grid-3">
-            <div class="field">
-              <label>Mode</label>
-              <select id="b_mode">
-                <option value="rsync">Copy (rsync) — Files & folders</option>
-                <option value="image">Image (dd) — Full disk</option>
-                <option value="copy_local">Copy (local) — This HA host path</option>
-                <option value="copy_mount">Copy (mount) — SMB/NFS</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Label (optional)</label>
-              <input id="b_label" placeholder="e.g. after-upgrade">
-            </div>
-            <div class="field">
-              <label>Max MB/s (optional)</label>
-              <input id="b_bwlimit" type="number" min="0" value="0">
-              <input id="b_bw_slider" type="range" min="0" max="200" step="1" value="0">
-              <small>0 = unlimited • quick picks: 1, 2, 5, 10, 20, 50, 100</small>
-            </div>
+          <div class="field">
+            <label>Destination subfolder (optional)</label>
+            <input id="dest_subdir" placeholder="e.g. backups/servers/proxmox">
           </div>
+        </div>
+      </div>
 
-          <div class="card subtle">
-  <h3>Destination</h3>
-  <div class="grid-3">
-    <div class="field">
-      <label>Store backup to</label>
-      <select id="dest_type">
-        <option value="local">Local (this HA)</option>
-        <option value="mount">Mount (SMB/NFS)</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Destination mount</label>
-      <select id="dest_mount"></select>
-    </div>
-    <div class="field">
-      <label>Destination subfolder (optional)</label>
-      <input id="dest_subdir" placeholder="e.g. backups/servers/proxmox">
-    </div>
-  </div>
-</div>
-<div class="grid-3" id="rsync-row">
-            <div class="field">
-              <label>Source folder (file picker)</label>
-              <input id="b_src" value="/" placeholder="/path">
-              <div class="actions"><button type="button" id="b_pick_local" class="secondary">Pick local</button><button type="button" id="b_pick_mount" class="secondary">Pick from mount</button></div>
-              <button type="button" id="b_browse" class="secondary">Browse (SSH)</button>
-              <small>Pick the folder you want to back up. This uses SFTP over SSH.</small>
-            </div>
-            <div class="field"></div>
-            <div class="field">
-              <label>&nbsp;</label>
-              <button type="button" id="b_estimate" class="secondary">Estimate size</button>
-            </div>
-          </div>
-
-          <div class="grid-3 hidden" id="image-row">
-            <div class="field">
-              <label>Block device (remote)</label>
-              <input id="b_device" placeholder="/dev/sda">
-            </div>
-            <div class="field">
-              <label>Encrypt image</label>
-              <select id="b_encrypt">
-                <option value="0">No</option>
-                <option value="1">Yes (AES-256)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Passphrase</label>
-              <input id="b_passphrase" type="password" placeholder="required if encrypting">
-            </div>
-          </div>
-
-          <div class="muted" id="dest_info" style="margin:8px 0;">Backups are stored under <code>/config/remote_linux_backup/backups/</code>.</div>
+      <div class="grid-3" id="rsync-row">
+        <div class="field">
+          <label>Source folder / device</label>
+          <input id="b_src" value="/" placeholder="/path or /dev/sdX">
           <div class="actions">
-            <button type="button" id="b_start" class="primary">Start</button>
-            <button type="button" id="b_cancel" class="danger">Cancel Job</button>
+            <button type="button" id="b_browse" class="secondary" title="Browse over SSH">Browse (SSH)</button>
+            <button type="button" id="b_pick_local" class="secondary" title="Pick local path on this HA">Pick local</button>
+            <button type="button" id="b_pick_mount" class="secondary" title="Pick path from a saved mount">Pick from mount</button>
+            <button type="button" id="b_test" class="secondary" title="Test SSH connection">Test SSH</button>
           </div>
-
-          <div class="progress-wrap">
-            <label>Progress:</label>
-            <progress id="b_progress" max="100" value="0"></progress>
-            <span id="b_progress_pct">0%</span>
-          </div>
-
-          <pre id="log" class="log"></pre>
-        </form>
+        </div>
+        <div class="field">
+          <label>Estimate</label>
+          <button id="b_estimate" type="button" class="secondary" title="Estimate total size to transfer">Estimate size</button>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <div class="muted" id="dest_info">Backups are stored under <code>/config/remote_linux_backup/backups/</code>.</div>
+        </div>
       </div>
-    </section>
 
-    <!-- Restore -->
-    <section id="tab-restore" class="tab-panel">
-      <div class="card">
-        <h2>Restore</h2>
-        <div class="grid-3">
-          <div class="field">
-            <label>Mode</label>
-            <select id="r_mode">
-              <option value="rsync">Copy back (rsync)</option>
-              <option value="image">Image restore (dd)</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Hostname / IP</label>
-            <input id="r_host" placeholder="e.g. 10.0.0.10">
-          </div>
-          <div class="field">
-            <label>Username / Password</label>
-            <div class="inline">
-              <input id="r_user" placeholder="root">
-              <input id="r_pass" type="password" placeholder="••••••••">
-            </div>
-          </div>
-        </div>
-        <div class="grid-3" id="r-row-rsync">
-          <div class="field">
-            <label>Source folder (local backup)</label>
-            <input id="r_src" placeholder="/config/remote_linux_backup/backups/...">
-            <button type="button" id="r_pick_src" class="secondary">Pick</button>
-          </div>
-          <div class="field">
-            <label>Remote destination path</label>
-            <input id="r_dest" value="/" placeholder="/">
-          </div>
-          <div class="field">
-            <label>Dry run</label>
-            <select id="r_dry">
-              <option value="0">No</option>
-              <option value="1">Yes</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid-3 hidden" id="r-row-image">
-          <div class="field">
-            <label>Image file (local)</label>
-            <input id="r_img" placeholder="/path/to/image.img.gz or .enc">
-            <button type="button" id="r_pick_img" class="secondary">Pick</button>
-          </div>
-          <div class="field">
-            <label>Remote device</label>
-            <input id="r_dev" placeholder="/dev/sda">
-          </div>
-          <div class="field">
-            <label>Confirm (type hostname)</label>
-            <input id="r_confirm" placeholder="hostname from meta">
-            <small class="muted">Required for safety. Device size is checked.</small>
-          </div>
-        </div>
-        <div class="actions">
-          <button type="button" id="r_start" class="primary">Start restore</button>
-        </div>
-        <pre id="r_log" class="log"></pre>
+      <div class="actions">
+        <button id="b_start" class="primary" title="Start the selected backup">Start</button>
+        <button id="b_cancel" class="danger" title="Cancel the currently running job">Cancel Job</button>
       </div>
-    </section>
 
-    <!-- Connections -->
-    <section id="tab-connections" class="tab-panel">
-      <div class="card">
-        <h2>Connections</h2>
-        <div class="grid-4">
-          <div class="field"><label>Name</label><input id="c_name"></div>
-          <div class="field"><label>Host</label><input id="c_host"></div>
-          <div class="field"><label>Port</label><input id="c_port" type="number" value="22"></div>
-          <div class="field"><label>Username</label><input id="c_user" value="root"></div>
-          <div class="field"><label>Password</label><input id="c_pass" type="password"></div>
-        </div>
-        <div class="actions">
-          <button id="c_save" class="primary" type="button">Save</button>
-          <button id="c_refresh" class="secondary" type="button">Refresh</button>
-        </div>
-        <table class="table" id="c_table">
-          <thead><tr><th>Name</th><th>Host</th><th>Port</th><th>User</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
+      <div class="progress-row">
+        <label>Progress:</label>
+        <progress id="b_progress" value="0" max="100"></progress>
+        <span id="b_progress_pct">0%</span>
       </div>
-    </section>
+      <pre class="log" id="log"></pre>
+    </div>
+  </section>
 
-    <!-- Mounts -->
-    <section id="tab-mounts" class="tab-panel">
-      <div class="card">
-        <h2>Mounts</h2>
-        <div class="grid-4">
-          <div class="field"><label>Name</label><input id="m_name"></div>
-          <div class="field"><label>Type</label><select id="m_type"><option value="smb">SMB</option><option value="nfs">NFS</option></select></div>
-          <div class="field"><label>Host</label><input id="m_host"></div>
-          <div class="field"><label>Share/Export</label><input id="m_share"><</div>
-          <div class="field"><label>Username</label><input id="m_user"></div>
-          <div class="field"><label>Password</label><input id="m_pass" type="password"></div>
-          <div class="field"><label>Options</label><input id="m_opts" placeholder="ro,vers=3"></div>
-          <div class="field"><label>Auto-retry</label><select id="m_retry"><option value="1">Yes</option><option value="0">No</option></select></div>
-        </div>
-        <div class="actions">
-          <button id="m_scan" class="secondary" type="button">Scan network</button>
-          <button id="m_connect" class="secondary" type="button">Connect</button>
-          <button id="m_pick_share" class="secondary" type="button">Pick share</button>
-          <button id="m_save" class="primary" type="button">Save</button>
-          <button id="m_refresh" class="secondary" type="button">Refresh</button>
-        </div>
-        <table class="table" id="m_table">
-          <thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share/Export</th><th>Status</th><th>Mountpoint</th><th>Last error</th><th>Actions</th></tr></thead>
-          <tbody></tbody>
-        </table>
+  <!-- RESTORE -->
+  <section id="tab-restore" class="tab-panel">
+    <div class="card">
+      <h2>Restore</h2>
+      <p class="muted">Pick a backup and restore it to a folder (rsync) or device (dd). For safety, image restore checks device size and may ask you to confirm the hostname.</p>
+      <div class="grid-3">
+        <div class="field"><label>Backup path</label><input id="r_src" placeholder="/config/remote_linux_backup/backups/..."><button id="r_pick_local" class="secondary small">Pick local</button></div>
+        <div class="field"><label>Target host</label><input id="r_host" placeholder="10.0.0.2"></div>
+        <div class="field"><label>User / Password</label><input id="r_user" value="root"><input id="r_pass" type="password"></div>
       </div>
-    </section>
+      <div class="grid-3">
+        <div class="field"><label>Device (for image restore)</label><input id="r_device" placeholder="/dev/sda"></div>
+        <div class="field"><label>Mode</label><select id="r_mode"><option value="rsync">Rsync to folder</option><option value="image">Image to device</option></select></div>
+        <div class="field"><label>&nbsp;</label><button id="r_start" class="primary">Start restore</button></div>
+      </div>
+      <pre class="log" id="r_log"></pre>
+    </div>
+  </section>
 
-    <!-- Backups -->
-    <section id="tab-backups" class="tab-panel">
-      <div class="card">
-        <h2>Backups</h2>
-        <div class="grid-3">
-          <div class="field"><label>Filter</label><input id="b_search"></div>
-          <div class="field"><label>Group</label><select id="b_group"></select></div>
-          <div class="field actions-right">
-            <button id="b_refresh" class="secondary" type="button">Refresh</button>
-            <button id="b_export_settings" class="secondary" type="button">Export settings</button>
-            <button id="b_download_logs" class="secondary" type="button">Download logs</button>
-            <label class="btnlike secondary">Upload<input type="file" id="b_upload" hidden></label>
-          </div>
-        </div>
-        <table class="table" id="b_table">
-          <thead><tr><th>Rel path</th><th>Dir?</th><th>Size</th><th>Modified</th><th>Action</th></tr></thead>
-          <tbody></tbody>
-        </table>
+  <!-- CONNECTIONS -->
+  <section id="tab-connections" class="tab-panel">
+    <div class="card">
+      <h2>Connections</h2>
+      <div class="grid-4">
+        <div class="field"><label>Name</label><input id="c_name"></div>
+        <div class="field"><label>Host</label><input id="c_host"></div>
+        <div class="field"><label>Port</label><input id="c_port" type="number" value="22"></div>
+        <div class="field"><label>Username</label><input id="c_user" value="root"></div>
+        <div class="field"><label>Password</label><input id="c_pass" type="password"></div>
       </div>
-    </section>
+      <div class="actions">
+        <button id="c_save" class="primary" title="Save this connection">Save</button>
+        <button id="c_refresh" class="secondary" title="Refresh list">Refresh</button>
+        <button id="c_test" class="secondary" title="Test SSH to host">Test</button>
+      </div>
+      <table class="table" id="c_table">
+        <thead><tr><th>Name</th><th>Host</th><th>Port</th><th>User</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
 
-    <!-- Schedule -->
-    <section id="tab-schedule" class="tab-panel">
-  <div class="card">
-    <h2>Schedule</h2>
-    <div class="grid-3">
-      <div class="field">
-        <label>Max concurrent jobs</label>
-        <input id="j_max" type="number" min="1" value="1">
+  <!-- MOUNTS -->
+  <section id="tab-mounts" class="tab-panel">
+    <div class="card">
+      <h2>Mounts</h2>
+      <div class="grid-4">
+        <div class="field"><label>Name</label><input id="m_name" placeholder="e.g. NAS1"></div>
+        <div class="field"><label>Type</label><select id="m_type"><option value="smb">SMB</option><option value="nfs">NFS</option></select></div>
+        <div class="field"><label>Host</label><input id="m_host" placeholder="10.0.0.21"></div>
+        <div class="field"><label>Share/Export</label><input id="m_share" placeholder="For SMB: share | For NFS: /export"></div>
+        <div class="field"><label>Username</label><input id="m_user"></div>
+        <div class="field"><label>Password</label><input id="m_pass" type="password"></div>
+        <div class="field"><label>Options</label><input id="m_opts" placeholder="e.g. ro,vers=3"></div>
+        <div class="field"><label>Auto-retry</label><select id="m_retry"><option value="1">Yes</option><option value="0">No</option></select></div>
       </div>
-      <div class="field">
-        <label>Default bwlimit (KB/s)</label>
-        <input id="j_bw" type="number" min="0" value="0">
+      <div class="actions">
+        <button id="m_scan" class="secondary" type="button" title="Discover SMB/NFS servers on your LAN">Scan network</button>
+        <button id="m_connect" class="secondary" type="button" title="Query shares/exports on host">Connect</button>
+        <button id="m_pick_share" class="secondary" type="button" title="Choose from the discovered list">Pick share</button>
+        <button id="m_test" class="secondary" type="button" title="Verify credentials and access">Test SMB/NFS</button>
+        <button id="m_save" class="primary" type="button" title="Save mount">Save</button>
+        <button id="m_refresh" class="secondary" type="button" title="Refresh table">Refresh</button>
+      </div>
+      <table class="table" id="m_table">
+        <thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share/Export</th><th>Status</th><th>Mountpoint</th><th>Last error</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- BACKUPS LIST -->
+  <section id="tab-backups" class="tab-panel">
+    <div class="card">
+      <h2>Backups</h2>
+      <div class="grid-4">
+        <div class="field"><label>Search</label><input id="bk_search" placeholder="label, host, type"></div>
+        <div class="field"><label>Group by</label><select id="bk_group"><option value="label">Label</option><option value="date">Date</option><option value="host">Host</option></select></div>
+      </div>
+      <table class="table" id="bk_table">
+        <thead><tr><th>Label</th><th>Date</th><th>Type</th><th>Size</th><th>Location</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- SCHEDULE -->
+  <section id="tab-schedule" class="tab-panel">
+    <div class="card">
+      <h2>Schedule</h2>
+      <div class="grid-3">
+        <div class="field"><label>Max concurrent jobs</label><input id="j_max" type="number" min="1" value="1"></div>
+        <div class="field"><label>Default bwlimit (KB/s)</label><input id="j_bw" type="number" min="0" value="0"></div>
       </div>
     </div>
-  </div>
-
-  <div class="card">
-    <h3>Create / Update Schedule</h3>
-    <div class="grid-4">
-      <div class="field"><label>Name</label><input id="sch_name"></div>
-      <div class="field"><label>Frequency</label><select id="sch_freq"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
-      <div class="field"><label>Time (HH:MM)</label><input id="sch_time" placeholder="02:00" value="02:00"></div>
-      <div class="field"><label>Day (Sun=0..Sat=6 or 1..28)</label><input id="sch_day" placeholder="for weekly or monthly"></div>
-    </div>
-    <div class="grid-4">
-      <div class="field"><label>Mode</label><select id="sch_mode"><option value="rsync">Rsync (SSH)</option><option value="image">Image (dd)</option><option value="copy_local">Copy (local)</option><option value="copy_mount">Copy (mount)</option></select></div>
-      <div class="field"><label>Label</label><input id="sch_label" placeholder="optional tag"></div>
-      <div class="field"><label>BW limit (KB/s)</label><input id="sch_bw" type="number" min="0" value="0"></div>
-      <div class="field"><label>Enabled</label><select id="sch_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
-    </div>
-    <div class="grid-4">
-      <div class="field"><label>Host</label><input id="sch_host" placeholder="for rsync/image"></div>
-      <div class="field"><label>Port</label><input id="sch_port" type="number" value="22"></div>
-      <div class="field"><label>User</label><input id="sch_user"></div>
-      <div class="field"><label>Password</label><input id="sch_pass" type="password"></div>
-      <div class="field"><label>Source path / Device</label><input id="sch_src" placeholder="/ or /dev/sda"></div>
-      <div class="field"><label>Mount name (for copy_mount)</label><input id="sch_mount"></div>
-      <div class="field"><label>Destination: type</label><select id="sch_dest_type"><option value="local">Local</option><option value="mount">Mount</option></select></div>
-      <div class="field"><label>Destination: mount name</label><input id="sch_dest_mount"></div>
-      <div class="field"><label>Destination: subfolder</label><input id="sch_dest_subdir"></div>
-    </div>
-    <div class="actions">
-      <button id="sch_add" class="primary" type="button">Save schedule</button>
-      <button id="sch_clear_form" class="secondary" type="button">Clear</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>Schedules</h3>
-    <table class="table" id="sch_table">
-      <thead><tr><th>Name</th><th>Freq</th><th>Time</th><th>Next run</th><th>Template</th><th>Enabled</th><th>Actions</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-      <div class="card">
-        <h2>Schedule</h2>
-        <div class="grid-3">
-          <div class="field">
-            <label>Max concurrent jobs</label>
-            <input id="j_max" type="number" min="1" value="1">
-          </div>
-          <div class="field">
-            <label>Default bwlimit (KB/s)</label>
-            <input id="j_bw" type="number" min="0" value="0">
-          </div>
-          <div class="field actions">
-            <button id="j_save" class="primary" type="button">Save</button>
-          </div>
-        </div>
+    <div class="card">
+      <h3>Create / Update Schedule</h3>
+      <div class="grid-4">
+        <div class="field"><label>Name</label><input id="sch_name"></div>
+        <div class="field"><label>Frequency</label><select id="sch_freq"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
+        <div class="field"><label>Time (HH:MM)</label><input id="sch_time" value="02:00"></div>
+        <div class="field"><label>Day (Sun=0..Sat=6 or 1..28)</label><input id="sch_day"></div>
       </div>
-    </section>
-
-    <!-- Notifications -->
-    <section id="tab-notifications" class="tab-panel">
-  <div class="card">
-    <h2>Notifications</h2>
-    <div class="grid-4">
-      <div class="field"><label>Enabled</label><select id="n_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
-      <div class="field"><label>Gotify URL (e.g., https://gotify.your.tld)</label><input id="n_url"></div>
-      <div class="field"><label>App Token</label><input id="n_token"></div>
-      <div class="field"><label>Priority</label><input id="n_priority" type="number" value="5"></div>
-    </div>
-    <div class="actions">
-      <button id="n_save" class="primary" type="button">Save</button>
-      <button id="n_test" class="secondary" type="button">Send test</button>
-      <button id="sys_apt" class="secondary" type="button">System Update (apt)</button>
-    </div>
-    <pre id="sys_log" class="log"></pre>
-  </div>
-</section>
-
-      <div class="card">
-        <h2>Notifications</h2>
-        <p class="muted">Gotify settings are in add-on options. Logs can be downloaded from Backups tab.</p>
-        <div class="actions">
-          <button id="sys_apt" class="secondary" type="button">System Update (apt)</button>
-        </div>
-        <pre id="sys_log" class="log"></pre>
+      <div class="grid-4">
+        <div class="field"><label>Mode</label><select id="sch_mode"><option value="rsync">Rsync (SSH)</option><option value="image">Image (dd)</option><option value="copy_local">Copy (local)</option><option value="copy_mount">Copy (mount)</option></select></div>
+        <div class="field"><label>Label</label><input id="sch_label"></div>
+        <div class="field"><label>BW limit (KB/s)</label><input id="sch_bw" type="number" value="0"></div>
+        <div class="field"><label>Enabled</label><select id="sch_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
       </div>
-    </section>
+      <div class="grid-4">
+        <div class="field"><label>Host</label><input id="sch_host"></div>
+        <div class="field"><label>Port</label><input id="sch_port" type="number" value="22"></div>
+        <div class="field"><label>User</label><input id="sch_user"></div>
+        <div class="field"><label>Password</label><input id="sch_pass" type="password"></div>
+        <div class="field"><label>Source path / Device</label><input id="sch_src"></div>
+        <div class="field"><label>Mount name (for copy_mount)</label><input id="sch_mount"></div>
+        <div class="field"><label>Destination: type</label><select id="sch_dest_type"><option value="local">Local</option><option value="mount">Mount</option></select></div>
+        <div class="field"><label>Destination: mount name</label><input id="sch_dest_mount"></div>
+        <div class="field"><label>Destination: subfolder</label><input id="sch_dest_subdir"></div>
+      </div>
+      <div class="actions">
+        <button id="sch_add" class="primary">Save schedule</button>
+        <button id="sch_clear_form" class="secondary">Clear</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Schedules</h3>
+      <table class="table" id="sch_table">
+        <thead><tr><th>Name</th><th>Freq</th><th>Time</th><th>Next run</th><th>Template</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
 
-    <!-- Help -->
-    <section id="tab-help" class="tab-panel">
-  <div class="card">
-    <h2>Help</h2>
+  <!-- NOTIFICATIONS -->
+  <section id="tab-notifications" class="tab-panel">
+    <div class="card">
+      <h2>Notifications</h2>
+      <div class="grid-4">
+        <div class="field"><label>Enabled</label><select id="n_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
+        <div class="field"><label>Gotify URL</label><input id="n_url" placeholder="https://gotify.example.com"></div>
+        <div class="field"><label>Token</label><input id="n_token"></div>
+        <div class="field"><label>Priority</label><input id="n_priority" type="number" value="5"></div>
+      </div>
+      <div class="actions">
+        <button id="n_save" class="primary">Save</button>
+        <button id="n_test" class="secondary">Send test</button>
+        <button id="sys_apt" class="secondary">System Update (apt)</button>
+      </div>
+      <pre id="sys_log" class="log"></pre>
+    </div>
+  </section>
 
-    <h3>What each tab does</h3>
-    <ul class="bullets">
-      <li><b>Backup</b> — Make copies with rsync (files/folders), or create a full-disk image (dd). Shows progress and logs.</li>
-      <li><b>Restore</b> — Send a local backup back to a remote machine: either rsync a folder, or write an image to a device (dd).</li>
-      <li><b>Connections</b> — Save SSH hosts (name, host, port, user, pass). Used on the Backup/Restore forms.</li>
-      <li><b>Mounts</b> — Add SMB/NFS network shares. Lets you copy from mounted shares and see mount health/errors.</li>
-      <li><b>Backups</b> — See every backup and location, filter, download, delete, and verify a folder against its manifest.</li>
-      <li><b>Schedule</b> — Set max concurrent jobs and a default bandwidth cap. (Cron-style scheduling coming next.)</li>
-      <li><b>Notifications</b> — System apt update/upgrade and info on Gotify notifications.</li>
-      <li><b>Help</b> — This page. Contains disaster‑recovery instructions that work even if the UI is unavailable.</li>
-    </ul>
+  <!-- HELP -->
+  <section id="tab-help" class="tab-panel">
+    <div class="card">
+      <h2>Help</h2>
+      <p>Each tab explains itself. If this UI ever breaks, use the commands in this Help to restore manually.</p>
+      <p>Backups live under <code>/config/remote_linux_backup/backups/</code>. See detailed disaster‑recovery instructions below.</p>
+      <div class="muted">Scroll up for tabs.</div>
+    </div>
+  </section>
 
-    <h3>Where backups are stored</h3>
-    <p>On this Home Assistant host, backups live under:</p>
-    <pre class="code"><code>/config/remote_linux_backup/backups/</code></pre>
-    <p>Structure:</p>
-    <pre class="code"><code>{label}/
-  {YYYYMMDD-HHMMSS}/
-    copy/      # local/copy_mount backups (rsync output)
-    rsync/     # SSH rsync backups (files/folders)
-    image_*.img.gz         # compressed full-disk image
-    image_*.img.gz.enc     # encrypted image (AES-256, optional)
-    image_*.img.gz.sha256  # SHA-256 checksum for the image
-    image_*.meta.json      # metadata (host, device, size) used for safe restore
-</code></pre>
-
-    <h3>Restore if this UI is unavailable</h3>
-    <p>You can restore directly from the Home Assistant host (or any Linux/macOS PC) using the commands below. Replace placeholders in <code>&lt;angle brackets&gt;</code>.</p>
-
-    <h4>A) Restore files/folders (rsync backup)</h4>
-    <ol>
-      <li>Find the backup folder that contains <code>rsync/</code> or <code>copy/</code>.</li>
-      <li>Run rsync to a remote server over SSH:</li>
-    </ol>
-    <pre class="code"><code># Linux/macOS terminal on the HA host (or a machine that can reach the target)
-rsync -avz --info=progress2 \
-  -e 'ssh -p &lt;PORT&gt; -o StrictHostKeyChecking=no' \
-  "/config/remote_linux_backup/backups/&lt;label&gt;/&lt;timestamp&gt;/rsync/" \
-  &lt;USER&gt;@&lt;HOST&gt;:"&lt;/remote/destination/path&gt;/"</code></pre>
-
-    <h4>B) Restore a full-disk image to a local USB/HDD (this HA host)</h4>
-    <ol>
-      <li>Plug the target disk (e.g., <code>/dev/sdb</code>). Make sure you target the correct device.</li>
-      <li>Write the image:</li>
-    </ol>
-    <pre class="code"><code># Unencrypted image
-gunzip -c "/config/remote_linux_backup/backups/&lt;label&gt;/&lt;timestamp&gt;/image_XXXX.img.gz" | \
-  sudo dd of=/dev/&lt;DISK&gt; bs=4M status=progress
-
-# Encrypted image (AES-256)
-opopenssl enc -d -aes-256-cbc -pass pass:'&lt;PASSPHRASE&gt;' -in \
-  "/config/remote_linux_backup/backups/&lt;label&gt;/&lt;timestamp&gt;/image_XXXX.img.gz.enc" | \
-  gunzip -c | sudo dd of=/dev/&lt;DISK&gt; bs=4M status=progress</code></pre>
-
-    <h4>C) Restore a full-disk image over the network to a remote device</h4>
-    <pre class="code"><code># Remote restore over SSH
-gunzip -c "/config/remote_linux_backup/backups/&lt;label&gt;/&lt;timestamp&gt;/image_XXXX.img.gz" | \
-  ssh -p &lt;PORT&gt; -o StrictHostKeyChecking=no &lt;USER&gt;@&lt;HOST&gt; \
-  "sudo dd of=/dev/&lt;DEVICE&gt; bs=4M status=progress"</code></pre>
-
-    <h4>Verify image integrity</h4>
-    <pre class="code"><code># From the same folder as the image:
-sha256sum -c image_XXXX.img.gz.sha256</code></pre>
-
-    <h3>Mount and browse a backup image (advanced, optional)</h3>
-    <pre class="code"><code># Map partitions from the image using a loop device (Linux)
-sudo losetup -fP "/config/remote_linux_backup/backups/&lt;label&gt;/&lt;timestamp&gt;/image_XXXX.img"
-sudo partprobe /dev/loop0
-lsblk /dev/loop0  # shows loop0p1, loop0p2, ...
-sudo mkdir -p /mnt/recovery && sudo mount -o ro /dev/loop0p1 /mnt/recovery
-# When done:
-sudo umount /mnt/recovery && sudo losetup -d /dev/loop0</code></pre>
-
-    <h3>SMB/NFS mounts (as a source)</h3>
-    <p>Use the <b>Mounts</b> tab to define a share once. After saving, click <b>Mount</b>. In Backup mode choose “Copy (mount)” and select the path under that mount.</p>
-
-    <h3>Safety</h3>
-    <ul class="bullets">
-      <li>Image restore checks the target device size and requires typing the hostname from the image metadata unless you force via API.</li>
-      <li>Always verify the target device path (e.g., <code>/dev/sda</code> vs <code>/dev/sdb</code>).</li>
-      <li>Keep passphrases safe; encrypted images can’t be restored without them.</li>
-    </ul>
-
-    <h3>Troubleshooting</h3>
-    <ul class="bullets">
-      <li><b>Port in use</b>: change the add-on host port in <code>config.json</code> or enable Ingress.</li>
-      <li><b>Permission denied</b>: run commands with <code>sudo</code> on the target device or use a root-capable account.</li>
-      <li><b>Not enough space</b>: the Help → “Where backups are stored” section shows the path; free space or prune old backups.</li>
-      <li><b>Mount errors</b>: check options (e.g., <code>vers=3.0</code> for old SMB), see the “Last error” column in Mounts.</li>
-    </ul>
-
-    <p class="muted">All commands are plain Linux/macOS shell and can be executed without this UI.</p>
-  </div>
-</section>
-
-    <!-- Picker Modal -->
+  <!-- Picker Modal -->
   <div id="picker-modal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
@@ -513,14 +327,12 @@ sudo umount /mnt/recovery && sudo losetup -d /dev/loop0</code></pre>
       </div>
     </div>
   </div>
+
   <!-- Network Scan Modal -->
   <div id="scan-modal" class="modal hidden">
     <div class="modal-card" style="min-width:70%">
       <div class="modal-head">
-        <div>
-          <strong>Network scan</strong>
-          <div class="muted">Discover SMB/NFS servers and shares on your LAN</div>
-        </div>
+        <div><strong>Network scan</strong><div class="muted">Discover SMB/NFS servers and shares on your LAN</div></div>
         <button id="scan-close" class="secondary small">Close</button>
       </div>
       <div class="modal-body">
@@ -537,10 +349,9 @@ sudo umount /mnt/recovery && sudo losetup -d /dev/loop0</code></pre>
       </div>
     </div>
   </div>
+
 </main>
 
-
-
-    <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
