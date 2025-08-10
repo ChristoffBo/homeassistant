@@ -81,7 +81,7 @@ def smb_ls(host:str, share:str, user:str, pw:str, rel:str="/"):
     items=[]
     for line in (out or "").splitlines():
         # Expect forms like: D|folder or N|file|1234|...
-        if not line or line.startswith(".");
+        if not line or line.startswith("."):
             continue
         parts = line.split("|")
         if not parts:
@@ -94,8 +94,10 @@ def smb_ls(host:str, share:str, user:str, pw:str, rel:str="/"):
         elif tag in ("N","n","A"):  # file
             name = parts[1] if len(parts)>1 else ""
             if name in (".",".."): continue
-            try: size = int(parts[2]) if len(parts)>2 else 0
-            except: size = 0
+            try:
+                size = int(parts[2]) if len(parts)>2 else 0
+            except:
+                size = 0
             items.append({"name":name,"dir":False,"size":size})
     items = sorted(items, key=lambda x:(not x["dir"], x["name"].lower()))
     return items
@@ -253,6 +255,7 @@ def api_ssh_test():
     rc,out,err=run_cmd(cmd); return jsonify({"ok": rc==0 and 'OK' in out, "out": out, "err": err})
 
 
+
 @app.post("/api/ssh/listdir")
 def api_ssh_listdir():
     b=request.json or {}
@@ -269,45 +272,34 @@ def api_ssh_listdir():
             try:
                 items_attr = s.listdir_attr(use_path)
             except Exception:
-                # fallback to user's home if root not browsable
                 try:
-                    s.chdir(".")  # ensure session
+                    s.chdir(".")
                     home = s.normalize(".")
                     use_path = home
                     items_attr = s.listdir_attr(use_path)
                 except Exception:
                     items_attr = []
-            items=[{"name":e.filename,"dir":bool(e.st_mode & 0o040000),"size":getattr(e,'st_size',0),
-                    "path": (use_path.rstrip('/') + '/' + e.filename).replace('//','/')} for e in items_attr if e.filename not in ('.','..')]
+            items=[{"name":e.filename,"dir":bool(getattr(e,'st_mode',0) & 0o040000),"size":getattr(e,'st_size',0),
+                    "path": (use_path.rstrip('/') + '/' + e.filename).replace('//','/')} for e in items_attr if getattr(e,'filename','') not in ('.','..')]
             s.close(); t.close()
             return jsonify({"ok":True,"items":items,"base":use_path})
         except Exception:
             pass
     # Fallback via ssh/ls; try requested path then $HOME
-    quoted_path = shlex.quote(path)
-    remote = f"sh -lc 'ls -1p {quoted_path} 2>/dev/null || ls -1p ~'"
+    remote = f"sh -lc 'ls -1p {shlex.quote(path)} 2>/dev/null || ls -1p ~'"
     cmd=f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p {port} {shlex.quote(user)}@{shlex.quote(host)} {remote}"
     rc,out,err=run_cmd(cmd + " 2>&1 || true")
-    items=[]; base="/"
+    items=[]; base=path or "/"
+    if not out:
+        base="/"
     for line in (out or '').splitlines():
         name=line.strip()
         if not name: continue
         is_dir=name.endswith('/')
         name=name.rstrip('/')
-        items.append({"name":name,"dir":is_dir,"size":0,"path": ("/" if base=="/" else base.rstrip('/')+'/') + name})
+        items.append({"name":name,"dir":is_dir,"size":0,"path": (base.rstrip('/')+'/' if base!='/' else '/') + name})
     return jsonify({"ok":True,"items":items,"base":base})
 
-        except Exception: pass
-    remote=f"ls -1p {shlex.quote(path)} || true"
-    cmd=f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -p {port} {shlex.quote(user)}@{shlex.quote(host)} {remote}"
-    rc,out,err=run_cmd(cmd+" 2>&1 || true"); items=[]
-    for line in out.splitlines():
-        name=line.strip(); 
-        if not name: continue
-        items.append({"name":name.rstrip('/'),"dir":name.endswith('/')})
-    return jsonify({"ok":True,"items":items})
-
-# ------- Local / mount browse + mkdir
 @app.get("/api/local/listdir")
 def api_local_listdir():
     path=request.args.get("path") or "/config"
@@ -370,9 +362,12 @@ def api_mounts_test():
         exports=[line.split()[0] for line in out.splitlines() if line.strip().startswith('/')]
         return jsonify({"ok": len(exports)>0, "exports": exports, "raw": out})
 
+
 @app.post("/api/mounts/listdir")
 def api_mounts_listdir():
-    b=request.json or {}; name=b.get("name",""); rel=b.get("path","/")
+    b=request.json or {}
+    name=b.get("name","")
+    rel=b.get("path","/")
     data=read_json(PATHS["mounts"],[])
     m=next((x for x in data if x.get("name")==name), None)
     if not m: return jsonify({"ok":False,"error":"unknown mount"}),400
@@ -385,14 +380,18 @@ def api_mounts_listdir():
         return jsonify({"ok":True,"base":mp,"path":path,"items":items})
     # Fallback to smbclient listing (no kernel mount)
     if m.get("type")=="smb":
-        rel = rel.lstrip("/")
-        items = smb_ls(m.get("host",""), m.get("share",""), m.get("username",""), m.get("password",""), rel if rel else "/")
-        return jsonify({"ok":True,"base":"//%s/%s"%(m.get("host",""),m.get("share","")), "path":"/"+rel, "items":items, "fallback":True})
+        rel2 = rel.lstrip("/")
+        items = smb_ls(m.get("host",""), m.get("share",""), m.get("username",""), m.get("password",""), rel2 if rel2 else "/")
+        return jsonify({"ok":True,"base":"//%s/%s"%(m.get("host",""),m.get("share","")), "path":"/"+rel2, "items":items, "fallback":True})
     return jsonify({"ok":False,"error":"mount failed"}),400
+
 
 @app.post("/api/mounts/mkdir")
 def api_mounts_mkdir():
-    b=request.json or {}; name=b.get("name",""); rel=b.get("path","/"); folder=b.get("folder","new_folder")
+    b=request.json or {}
+    name=b.get("name","")
+    rel=b.get("path","/")
+    folder=b.get("folder","new_folder")
     data=read_json(PATHS["mounts"],[])
     m=next((x for x in data if x.get("name")==name), None)
     if not m: return jsonify({"ok":False,"error":"unknown mount"}),400
@@ -400,17 +399,18 @@ def api_mounts_mkdir():
     if os.path.ismount(mp) and ensure_mount(name):
         base=os.path.normpath(os.path.join(mp, rel.lstrip("/")))
         if not base.startswith(mp): return jsonify({"ok":False,"error":"bad path"}),400
-        full=os.path.join(base,folder); os.makedirs(full,exist_ok=True); return jsonify({"ok":True,"path":full})
+        full=os.path.join(base,folder)
+        os.makedirs(full,exist_ok=True)
+        return jsonify({"ok":True,"path":full})
     if m.get("type")=="smb":
-        rel = (rel.strip('/') + '/' if rel.strip('/') else '') + folder
+        rel2 = (rel.strip('/') + '/' if rel.strip('/') else '') + folder
         auth = f"-U {shlex.quote(m.get('username','')+'%'+m.get('password',''))}" if m.get("username") else "-N"
-        cmd = f"smbclient //{shlex.quote(m.get('host',''))}/{shlex.quote(m.get('share',''))} {auth} -c " + shlex.quote(f"mkdir {rel}")
+        cmd = f"smbclient //{shlex.quote(m.get('host',''))}/{shlex.quote(m.get('share',''))} {auth} -c " + shlex.quote(f"mkdir {rel2}")
         rc,out,err = run_cmd(cmd + " 2>&1 || true")
         ok = (rc==0) or ('created directory' in (out or '').lower())
-        return jsonify({"ok": ok, "path":"/"+rel})
+        return jsonify({"ok": ok, "path":"/"+rel2})
     return jsonify({"ok":False,"error":"mkdir failed"}),400
 
-# ------- Estimate
 @app.post("/api/estimate")
 def api_estimate():
     b=request.json or {}; mode=b.get("mode","local"); path=b.get("path","/")
