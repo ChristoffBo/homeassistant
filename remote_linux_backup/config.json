@@ -1,1 +1,42 @@
-1
+{
+  "arch": ["aarch64", "amd64", "armv7", "i386"],
+  "name": "Remote Linux Backup",
+  "version": "2.0.0",
+  "slug": "remote_linux_backup",
+  "description": "Full backup & restore over SSH with UI: rsync, dd images, scheduler, browser, Gotify. Debian base.",
+  "startup": "services",
+  "boot": "auto",
+  "host_network": true,
+  "ingress": true,
+  "ingress_port": 8066,
+  "webui": "http://[HOST]:[PORT:8066]",
+  "panel_icon": "mdi:backup-restore",
+  "panel_title": "Remote Backup",
+  "ports": {
+    "8066/tcp": 8066
+  },
+  "ports_description": {
+    "8066/tcp": "Web UI (disable if using Ingress)"
+  },
+  "map": ["config:rw"],
+  "options": {
+    "timezone": "Africa/Johannesburg",
+    "ui_port": 8066,
+    "gotify_url": "",
+    "gotify_token": "",
+    "storage_path": "/config/remote_linux_backup/backups",
+    "auto_check_interval_hours": 0
+  },
+  "schema": {
+    "timezone": "str",
+    "ui_port": "int",
+    "gotify_url": "str?",
+    "gotify_token": "str?",
+    "storage_path": "str",
+    "auto_check_interval_hours": "int"
+  },
+  "image": null,
+  "icon": "icon.png",
+  "logo": "logo.png"
+}
+
