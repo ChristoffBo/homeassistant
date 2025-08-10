@@ -1,148 +1,290 @@
-const $=s=>document.querySelector(s);const $$=s=>Array.from(document.querySelectorAll(s));
-function activateTab(id){$$('.panel').forEach(p=>p.classList.add('hidden'));$('#'+id).classList.remove('hidden');$$('.tab-btn').forEach(a=>a.classList.toggle('active', a.getAttribute('href')==='#'+id));localStorage.setItem('rlb_tab',id)}
-window.addEventListener('DOMContentLoaded',()=>{const saved=localStorage.getItem('rlb_tab')||'backup'; if(location.hash){activateTab(location.hash.slice(1))} else {activateTab(saved)} });
-window.addEventListener('hashchange',()=>activateTab(location.hash.slice(1)));
 
-async function j(url,opts={}){const res=await fetch(url,{headers:{'Content-Type':'application/json'}, ...opts}); return res.json();}
-function logInto(id, t){const el=$(id); if(!el) return; el.textContent += (t+'\n'); el.scrollTop=el.scrollHeight;}
+const $ = (q)=>document.querySelector(q);
+const j = async (url, opt={})=>{
+  const res = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opt));
+  const ct = res.headers.get('content-type')||'';
+  if(ct.includes('application/json')) return await res.json();
+  return await res.text();
+};
+const logInto = (id, t)=>{const el=$(id); el.textContent += (t+'\n'); el.scrollTop=el.scrollHeight;};
 
-// Backup actions + logs
-$('#btn_test_ssh').addEventListener('click', async ()=>{
-  const body={host:$('#b_host').value, port:22, username:$('#b_user').value, password:$('#b_pass').value};
-  const r=await j('/api/ssh/test',{method:'POST',body:JSON.stringify(body)}); logInto('#log_backup', JSON.stringify(r));
+// tabs
+document.querySelectorAll('nav .tab').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('nav .tab').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    document.querySelectorAll('.tabpane').forEach(p=>p.classList.remove('active'));
+    $('#'+b.dataset.tab).classList.add('active');
+  });
 });
-$('#btn_start').addEventListener('click', async ()=>{
-  const body={
-    mode: $('#b_mode').value,
+
+// backup wizard visibility
+function syncSshVisibility(){
+  const ssh = $('#b_source_type').value === 'ssh' || $('#b_mode').value === 'rsync';
+  document.querySelectorAll('.ssh-only').forEach(x=>x.style.display = ssh ? '' : 'none');
+}
+$('#b_source_type').addEventListener('change', syncSshVisibility);
+$('#b_mode').addEventListener('change', syncSshVisibility);
+syncSshVisibility();
+
+// ---- Picker modal ----
+const Picker = {
+  onChoose:null, ctx:{},
+  open(title){ $('#picker_title').textContent=title; $('#picker_modal').classList.remove('hidden'); },
+  close(){ $('#picker_modal').classList.add('hidden'); $('#picker_list').innerHTML=''; $('#picker_sel').textContent=''; $('#picker_breadcrumbs').textContent=''; this.onChoose=null; this.ctx={}; },
+  setPath(p){ this.ctx.path=p; $('#picker_breadcrumbs').textContent=p; },
+  setItems(items){ const ul=$('#picker_list'); ul.innerHTML=''; items.forEach(it=>{ const li=document.createElement('li'); li.dataset.name=it.name; li.dataset.dir=it.dir?'1':'0'; li.innerHTML=`<span>${it.dir?'📁':'📄'} ${it.name}</span>${it.dir?'<span class="badge">dir</span>':''}`; li.onclick=()=>{ ul.querySelectorAll('li').forEach(x=>x.classList.remove('sel')); li.classList.add('sel'); $('#picker_sel').textContent=it.name; }; ul.appendChild(li); }); }
+};
+$('#picker_close').onclick=()=>Picker.close();
+$('#picker_choose').onclick=()=>{ const sel=$('#picker_list li.sel'); if(!sel){alert('Select an item'); return;} let p=Picker.ctx.path; if(!p.endsWith('/')) p+='/'; p+= sel.dataset.name; if(Picker.onChoose) Picker.onChoose({name:sel.dataset.name, dir: sel.dataset.dir==='1', path:p}); Picker.close(); };
+
+// browse helpers
+async function browseSSH(start='/'){
+  const body={host:$('#b_host').value,port:22,username:$('#b_user').value,password:$('#b_pass').value,path:start};
+  const r=await j('/api/ssh/listdir',{method:'POST',body:JSON.stringify(body)});
+  if(!r.ok){alert('SSH browse failed');return;}
+  Picker.open('Browse SSH'); Picker.setPath(start); Picker.setItems(r.items);
+  Picker.onChoose=async (sel)=>{
+    if(sel.dir){ const r2=await j('/api/ssh/listdir',{method:'POST',body:JSON.stringify({...body,path:sel.path})}); if(r2.ok){ Picker.open('Browse SSH'); Picker.setPath(sel.path); Picker.setItems(r2.items); Picker.onChoose=Picker.onChoose; } }
+    else { $('#b_src').value=sel.path; }
+  };
+}
+$('#bw_browse_ssh')?.addEventListener('click', ()=>browseSSH($('#b_src').value||'/'));
+
+async function pickLocal(start='/config', setTargetInput){
+  const r=await j('/api/local/listdir?path='+encodeURIComponent(start));
+  if(!r.ok){alert('Local browse failed');return;}
+  Picker.open('Pick local'); Picker.setPath(start); Picker.setItems(r.items);
+  Picker.onChoose=async (sel)=>{
+    if(sel.dir){ const r2=await j('/api/local/listdir?path='+encodeURIComponent(sel.path)); if(r2.ok){ Picker.open('Pick local'); Picker.setPath(sel.path); Picker.setItems(r2.items); Picker.onChoose=Picker.onChoose; } }
+    else { $(setTargetInput).value = sel.path; }
+  };
+}
+$('#bw_pick_local').addEventListener('click', ()=>pickLocal('/config','#b_src'));
+$('#bw_pick_dest_local').addEventListener('click', ()=>pickLocal('/config','#b_dest_path'));
+
+async function listMounts(){ return await j('/api/mounts'); }
+async function ensureMounted(name){
+  const r = await listMounts();
+  const m = r.mounts.find(x=>x.name===name);
+  if(!m){ throw new Error('Mount not found'); }
+  if(m.mounted) return true;
+  const r2 = await j('/api/mounts/mount',{method:'POST',body:JSON.stringify({name})});
+  return r2.ok;
+}
+async function browseMount(name, start='/', targetInput='#b_src'){
+  try{ await ensureMounted(name); }catch(e){ alert('Mount failed'); return; }
+  const r=await j('/api/mounts/listdir',{method:'POST',body:JSON.stringify({name, path:start})});
+  if(!r.ok){ alert('Mount browse failed'); return; }
+  Picker.open('Browse mount: '+name); Picker.setPath(start); Picker.setItems(r.items);
+  Picker.onChoose=async (sel)=>{
+    if(sel.dir){ const r2=await j('/api/mounts/listdir',{method:'POST',body:JSON.stringify({name, path:sel.path})}); if(r2.ok){ Picker.open('Browse mount: '+name); Picker.setPath(sel.path); Picker.setItems(r2.items); Picker.onChoose=Picker.onChoose; } }
+    else { $(targetInput).value = sel.path; }
+  };
+}
+$('#bw_pick_mount').addEventListener('click', async ()=>{
+  const r=await listMounts(); const names=r.mounts.map(m=>m.name);
+  if(!names.length){ alert('No mounts saved. Create one first.'); return; }
+  Picker.open('Pick mount'); Picker.setPath('(mount)'); Picker.setItems(names.map(n=>({name:n,dir:false})));
+  Picker.onChoose=(sel)=>browseMount(sel.name,'/','#b_src');
+});
+$('#bw_pick_dest_mount').addEventListener('click', async ()=>{
+  const r=await listMounts(); const names=r.mounts.map(m=>m.name);
+  if(!names.length){ alert('No mounts saved. Create one first.'); return; }
+  Picker.open('Pick destination mount'); Picker.setPath('(mount)'); Picker.setItems(names.map(n=>({name:n,dir:false})));
+  Picker.onChoose=(sel)=>{ $('#b_dest_mount').value=sel.name; browseMount(sel.name,'/','#b_dest_path'); };
+});
+
+// mkdir destination
+$('#bw_mkdir_dest').addEventListener('click', async ()=>{
+  const mode=$('#b_dest_type').value;
+  const base=$('#b_dest_path').value || '/config';
+  const folder=prompt('New folder name:');
+  if(!folder) return;
+  if(mode==='local'){
+    const r=await j('/api/local/mkdir',{method:'POST',body:JSON.stringify({path:base,name:folder})});
+    logInto('#log_backup','mkdir local: '+JSON.stringify(r));
+    if(r.ok) $('#b_dest_path').value = r.path;
+  }else{
+    const name=$('#b_dest_mount').value.trim();
+    if(!name){ alert('Set mount name first'); return; }
+    const r=await j('/api/mounts/mkdir',{method:'POST',body:JSON.stringify({name, path:base, folder})});
+    logInto('#log_backup','mkdir mount: '+JSON.stringify(r));
+    if(r.ok) $('#b_dest_path').value = r.path.replace(/^.*?:/,''); // keep path
+  }
+});
+
+// estimate
+$('#bw_estimate').addEventListener('click', async ()=>{
+  const mode = $('#b_source_type').value;
+  const path = $('#b_src').value || '/';
+  let body = {mode:'local', path};
+  if(mode==='ssh') body = {mode:'ssh', path, host:$('#b_host').value, username:$('#b_user').value, password:$('#b_pass').value};
+  if(mode==='mount'){ body = {mode:'mount', path, name:$('#b_dest_mount').value || ''}; }
+  const r = await j('/api/estimate',{method:'POST',body:JSON.stringify(body)});
+  if(r.ok){ $('#bw_estimate_out').textContent = r.bytes+' bytes'; logInto('#log_backup', 'estimate: '+JSON.stringify(r)); }
+});
+
+// test ssh
+$('#bw_test_ssh')?.addEventListener('click', async ()=>{
+  const body = {host:$('#b_host').value, port:22, username:$('#b_user').value, password:$('#b_pass').value};
+  const r = await j('/api/ssh/test',{method:'POST',body:JSON.stringify(body)});
+  logInto('#log_backup', 'ssh test: '+JSON.stringify(r));
+  alert(r.ok ? 'SSH OK' : 'SSH failed');
+});
+
+// start backup
+$('#bw_start').addEventListener('click', async ()=>{
+  const modeSel = $('#b_mode').value;
+  const src = $('#b_src').value || '/';
+  const payload = {
+    mode: modeSel,
     label: $('#b_label').value || 'backup',
+    bwlimit_kbps: parseInt($('#b_bw').value||'0'),
+    dry_run: $('#b_dry').value==='1',
+    profile: $('#b_profile').value.toLowerCase(),
     dest_type: $('#b_dest_type').value,
     dest_mount_name: $('#b_dest_mount').value,
-    bwlimit_kbps: parseInt($('#b_bw').value||'0',10),
-    dry_run: $('#b_dry').value==='1',
-    verify: $('#b_verify').value==='1',
-    profile: ($('#b_profile').value||'').toLowerCase(),
+    dest_path: $('#b_dest_path').value,
+    source_path: src,
     host: $('#b_host').value, username: $('#b_user').value, password: $('#b_pass').value,
-    source_path: $('#b_src').value, mount_name: $('#b_dest_mount').value, device: $('#b_src').value
+    mount_name: $('#b_dest_mount').value
   };
-  const r=await j('/api/backup/start',{method:'POST',body:JSON.stringify(body)});
-  logInto('#log_backup', 'start: '+JSON.stringify(r));
-});
-$('#btn_cancel').addEventListener('click', async ()=>{const r=await j('/api/jobs/cancel',{method:'POST'}); logInto('#log_backup', JSON.stringify(r))});
-
-async function pollJob(){try{const arr=await j('/api/jobs'); const cur=arr[0]; if(!cur){$('#b_pct').textContent='0%'; $('#b_progress').value=0; return} $('#b_pct').textContent=(cur.progress||0)+'%'; $('#b_progress').value=cur.progress||0; if(cur.log&&cur.log.length){logInto('#log_backup', cur.log[cur.log.length-1])}}catch(e){}}
-setInterval(pollJob,1500);
-
-// Connections logs
-$('#c_save').addEventListener('click', async ()=>{
-  const body={name:$('#c_name').value, host:$('#c_host').value, port:parseInt($('#c_port').value||'22',10), username:$('#c_user').value, password:$('#c_pass').value};
-  const r=await j('/api/connections/save',{method:'POST',body:JSON.stringify(body)}); logInto('#log_connections', 'save '+JSON.stringify(r));
-});
-$('#c_test').addEventListener('click', async ()=>{
-  const body={host:$('#c_host').value, port:parseInt($('#c_port').value||'22',10), username:$('#c_user').value, password:$('#c_pass').value};
-  const r=await j('/api/ssh/test',{method:'POST',body:JSON.stringify(body)}); logInto('#log_connections','test '+JSON.stringify(r));
+  const r = await j('/api/backup/start',{method:'POST',body:JSON.stringify(payload)});
+  logInto('#log_backup','start: '+JSON.stringify(r));
+  if($('#backups').classList.contains('active')) loadBackups();
 });
 
-// Mounts logs
-async function refreshMounts(){const d=await j('/api/mounts'); const tb=$('#m_table tbody'); tb.innerHTML=''; (d.mounts||[]).forEach(m=>{const tr=document.createElement('tr'); tr.innerHTML=`<td>${m.name}</td><td>${m.type}</td><td>${m.host}</td><td>${m.share||''}</td><td>${m.mounted?'mounted':'not mounted'}</td><td>${m.mountpoint||''}</td>`; tb.appendChild(tr)});}
+$('#bw_cancel').addEventListener('click', async ()=>{
+  const r = await j('/api/jobs/cancel',{method:'POST'});
+  logInto('#log_backup','cancel: '+JSON.stringify(r));
+});
+
+// jobs polling
+setInterval(async ()=>{
+  const r = await j('/api/jobs');
+  if(Array.isArray(r) && r.length){
+    const j0 = r[0];
+    const p = Math.max(0, Math.min(100, j0.progress || 0));
+    $('#bw_progress > div').style.width = p+'%';
+  }else{
+    $('#bw_progress > div').style.width = '0%';
+  }
+}, 1000);
+
+// ---- Backups tab ----
+function fmtBytes(n){ if(!n) return '0'; const u=['B','KB','MB','GB','TB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(1)+' '+u[i]; }
+function fmtWhen(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleString(); }
+async function loadBackups(){
+  const r=await j('/api/backups');
+  const tb=$('#bk_table tbody'); tb.innerHTML='';
+  (r.items||[]).forEach(b=>{
+    const tr=document.createElement('tr');
+    const src=b.source||{};
+    const sdesc = src.type==='ssh'?`${src.user}@${src.host}:${src.path||src.device||''}`: src.type==='mount'?`${src.name}:${src.path}`: src.type==='local'?`${src.path}`:'';
+    tr.innerHTML = `<td>${b.label}</td><td>${fmtWhen(b.when)}</td><td>${fmtBytes(b.size)}</td><td>${b.mode}</td><td>${sdesc}</td>
+      <td class="row">
+        <button data-id="${b.id}" class="bk_restore_original">Restore (original)</button>
+        <button data-id="${b.id}" class="bk_restore_to secondary">Restore to…</button>
+        <a class="secondary" href="/api/backups/download-archive?id=${encodeURIComponent(b.id)}">Download (.tar.gz)</a>
+      </td>`;
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll('.bk_restore_original').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id=btn.dataset.id; const pw = prompt('If original is SSH, enter password (leave blank for local/mount):','');
+      const payload={id, original:true}; if(pw) payload.password=pw;
+      const r=await j('/api/restore/start',{method:'POST',body:JSON.stringify(payload)});
+      logInto('#log_backups','restore original: '+JSON.stringify(r));
+    };
+  });
+  tb.querySelectorAll('.bk_restore_to').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id=btn.dataset.id;
+      // choose destination (local or mount) and path
+      const mode = confirm('OK = restore to LOCAL folder (pick next). Cancel = restore to MOUNT.') ? 'local' : 'mount';
+      if(mode==='local'){
+        pickLocal('/config','#b_dest_path'); // reuse picker
+        Picker.onChoose = async (sel)=>{
+          if(sel.dir){
+            const r2=await j('/api/local/listdir?path='+encodeURIComponent(sel.path)); if(r2.ok){ Picker.open('Pick local'); Picker.setPath(sel.path); Picker.setItems(r2.items); Picker.onChoose=Picker.onChoose; }
+          }else{
+            const payload={id, original:false, to_mode:'local', to_path: sel.path};
+            const r=await j('/api/restore/start',{method:'POST',body:JSON.stringify(payload)});
+            logInto('#log_backups','restore to local: '+JSON.stringify(r));
+          }
+        };
+      }else{
+        const r=await listMounts(); const names=r.mounts.map(m=>m.name);
+        if(!names.length){ alert('No mounts saved.'); return; }
+        Picker.open('Pick mount'); Picker.setPath('(mount)'); Picker.setItems(names.map(n=>({name:n,dir:false})));
+        Picker.onChoose=(sel)=>{
+          browseMount(sel.name,'/','#b_dest_path');
+          Picker.onChoose=async (pick)=>{
+            if(pick.dir){
+              const r2=await j('/api/mounts/listdir',{method:'POST',body:JSON.stringify({name:sel.name, path:pick.path})});
+              if(r2.ok){ Picker.open('Browse mount: '+sel.name); Picker.setPath(pick.path); Picker.setItems(r2.items); Picker.onChoose=Picker.onChoose; }
+            }else{
+              const payload={id, original:false, to_mode:'mount', mount_name: sel.name, to_path: pick.path};
+              const r=await j('/api/restore/start',{method:'POST',body:JSON.stringify(payload)});
+              logInto('#log_backups','restore to mount: '+JSON.stringify(r));
+            }
+          };
+        };
+      }
+    };
+  });
+}
+document.querySelector('button[data-tab="backups"]').addEventListener('click', loadBackups);
+
+// ---- Mounts tab ----
+async function refreshMounts(){
+  const r = await j('/api/mounts');
+  const tb = $('#m_table tbody'); tb.innerHTML='';
+  r.mounts.forEach(m=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${m.name}</td><td>${m.type}</td><td>${m.host||''}</td><td>${m.share||''}</td>
+      <td>${m.mounted?'<span class="badge ok">mounted</span>':'<span class="badge err">not mounted</span>'}${m.last_error?` <span class="badge err">${m.last_error}</span>`:''}</td>
+      <td>${m.mountpoint||''}</td>`;
+    tr.onclick=()=>{ $('#m_name').value=m.name; $('#m_type').value=m.type; $('#m_host').value=m.host||''; $('#m_share').value=m.share||''; $('#m_user').value=m.username||''; $('#m_pass').value=m.password||''; $('#m_options').value=m.options||''; $('#m_retry').value=m.auto_retry?'1':'0'; };
+    tb.appendChild(tr);
+  });
+}
+$('#m_refresh').addEventListener('click', refreshMounts);
+refreshMounts();
+setInterval(refreshMounts, 5000);
+
 $('#m_save').addEventListener('click', async ()=>{
-  const body={name:$('#m_name').value, type:$('#m_type').value, host:$('#m_host').value, share:$('#m_share').value, username:$('#m_user').value, password:$('#m_pass').value, options:$('#m_opts').value, auto_retry:$('#m_retry').value};
-  const r=await j('/api/mounts/save',{method:'POST',body:JSON.stringify(body)}); logInto('#log_mounts', 'save '+JSON.stringify(r)); refreshMounts();
+  const body={name:$('#m_name').value.trim(), type:$('#m_type').value, host:$('#m_host').value.trim(), share:$('#m_share').value.trim(),
+    username:$('#m_user').value, password:$('#m_pass').value, options:$('#m_options').value, auto_retry:$('#m_retry').value};
+  const r=await j('/api/mounts/save',{method:'POST',body:JSON.stringify(body)});
+  logInto('#log_mounts','save: '+JSON.stringify(r)); refreshMounts();
 });
-$('#m_mount').addEventListener('click', async ()=>{
-  const r=await j('/api/mounts/mount',{method:'POST',body:JSON.stringify({name:$('#m_name').value})}); logInto('#log_mounts', 'mount '+JSON.stringify(r)); refreshMounts();
-});
-$('#m_unmount').addEventListener('click', async ()=>{
-  const r=await j('/api/mounts/unmount',{method:'POST',body:JSON.stringify({name:$('#m_name').value})}); logInto('#log_mounts', 'unmount '+JSON.stringify(r)); refreshMounts();
-});
+$('#m_mount').addEventListener('click', async ()=>{ const r=await j('/api/mounts/mount',{method:'POST',body:JSON.stringify({name:$('#m_name').value})}); logInto('#log_mounts','mount: '+JSON.stringify(r)); refreshMounts(); });
+$('#m_unmount').addEventListener('click', async ()=>{ const r=await j('/api/mounts/unmount',{method:'POST',body:JSON.stringify({name:$('#m_name').value})}); logInto('#log_mounts','unmount: '+JSON.stringify(r)); refreshMounts(); });
 $('#m_test').addEventListener('click', async ()=>{
   const body={type:$('#m_type').value, host:$('#m_host').value, username:$('#m_user').value, password:$('#m_pass').value};
-  const r=await j('/api/mounts/test',{method:'POST',body:JSON.stringify(body)}); logInto('#log_mounts', 'test '+JSON.stringify(r));
+  const r=await j('/api/mounts/test',{method:'POST',body:JSON.stringify(body)});
+  logInto('#log_mounts','test: '+JSON.stringify(r));
+  alert(r.ok ? 'Server OK' : 'Server connection failed (see log)');
+});
+$('#m_pick_share').addEventListener('click', async ()=>{
+  const body={type:$('#m_type').value, host:$('#m_host').value.trim(), username:$('#m_user').value, password:$('#m_pass').value};
+  const r=await j('/api/mounts/test',{method:'POST',body:JSON.stringify(body)});
+  const items=(r.shares||r.exports||[]).map(x=>({name:x, dir:false}));
+  if(!items.length){ alert('No shares/exports found'); return; }
+  Picker.open('Pick share/export'); Picker.setPath(body.host); Picker.setItems(items);
+  Picker.onChoose=(sel)=>{ $('#m_share').value=sel.name; };
+});
+$('#m_browse').addEventListener('click', async ()=>{
+  const name=$('#m_name').value.trim(); if(!name){ alert('Enter Name, Save, then Mount first.'); return; }
+  browseMount(name,'/');
 });
 
-// Backups list + logs
-async function refreshBackups(){const d=await j('/api/backups'); const tb=$('#bk_table tbody'); tb.innerHTML=''; (d.items||[]).forEach(x=>{const tr=document.createElement('tr'); tr.innerHTML=`<td>${x.label}</td><td>${(x.size/1048576).toFixed(1)} MB</td><td>${x.location}</td><td><a href="/api/backups/download?id=${encodeURIComponent(x.id)}">Download</a></td>`; tb.appendChild(tr)});}
-$('#btn_upload').addEventListener('click', async ()=>{
-  const fi=$('#upload_input'); if(!fi.files.length){alert('Pick a file'); return;}
-  const fd=new FormData(); fd.append('file', fi.files[0]); const res=await fetch('/api/upload',{method:'POST', body:fd}); const d=await res.json(); logInto('#log_backups','upload '+JSON.stringify(d)); refreshBackups();
-});
-
-// Schedules logs
-async function refreshSchedules(){const d=await j('/api/schedules'); const tb=$('#sch_table tbody'); tb.innerHTML=''; (d.schedules||[]).forEach(s=>{const tr=document.createElement('tr'); tr.innerHTML=`<td>${s.name||''}</td><td>${s.frequency}</td><td>${s.time}</td><td>${s.next_run||''}</td><td>${s.enabled?'Yes':'No'}</td>`; tb.appendChild(tr)});}
-$('#sch_save').addEventListener('click', async ()=>{
-  const body={name:$('#sch_name').value, frequency:$('#sch_freq').value, time:$('#sch_time').value, day:$('#sch_day').value, enabled:$('#sch_enabled').value==='1', template:{
-    mode: $('#sch_mode').value, host: $('#sch_host').value, username: $('#sch_user').value, password: $('#sch_pass').value,
-    source_path: $('#sch_src').value, mount_name: $('#sch_mount').value, dest_type: $('#sch_dest_type').value, dest_mount_name: $('#sch_dest_mount').value,
-    label: $('#sch_label').value, bwlimit_kbps: parseInt($('#sch_bw').value||'0',10)
-  }};
-  const r=await j('/api/schedules/save',{method:'POST',body:JSON.stringify(body)}); logInto('#log_schedule', 'save '+JSON.stringify(r)); refreshSchedules();
-});
-
-// Notifications logs
-async function loadNotify(){
-  const d=await j('/api/notify/config');
-  if(d.enabled) $('#n_enabled').value='1'; else $('#n_enabled').value='0';
-  $('#n_url').value=d.url||''; $('#n_token').value=d.token||''; $('#n_priority').value=d.priority||5;
-  const inc=d.include||{}; $('#inc_date').checked=!!inc.date; $('#inc_size').checked=!!inc.size; $('#inc_dur').checked=!!inc.duration; $('#inc_fail').checked=!!inc.failure;
+// health
+async function refreshHealth(){
+  const r = await j('/api/health');
+  $('#health_json').textContent = JSON.stringify(r, null, 2);
 }
-$('#n_save').addEventListener('click', async ()=>{
-  const body={enabled: $('#n_enabled').value==='1', url: $('#n_url').value, token: $('#n_token').value, priority: parseInt($('#n_priority').value||'5',10),
-  include:{date:$('#inc_date').checked,size:$('#inc_size').checked,duration:$('#inc_dur').checked,failure:$('#inc_fail').checked}};
-  const r=await j('/api/notify/config',{method:'POST',body:JSON.stringify(body)}); logInto('#log_notifications','save '+JSON.stringify(r));
-});
-$('#n_test').addEventListener('click', async ()=>{
-  const r=await j('/api/notify/test',{method:'POST'}); logInto('#log_notifications','test '+JSON.stringify(r));
-});
-
-// Health
-async function refreshHealth(){const d=await j('/api/health'); $('#health_info').textContent = JSON.stringify(d, null, 2);}
-
-// Restore logs
-async function loadRestoreBackups(){const d=await j('/api/backups'); const sel=$('#r_backup'); sel.innerHTML=''; (d.items||[]).forEach(x=>{const o=document.createElement('option'); o.value=x.id; o.textContent=x.label; sel.appendChild(o)});}
-$('#r_start').addEventListener('click', async ()=>{
-  const body={from_id: $('#r_backup').value, to_mode: $('#r_mode').value, to_path: $('#r_path').value, bwlimit_kbps: parseInt($('#r_bw').value||'0',10),
-  host: $('#r_host').value, username: $('#r_user').value, password: $('#r_pass').value};
-  const r=await j('/api/restore/start',{method:'POST',body:JSON.stringify(body)}); logInto('#log_restore', JSON.stringify(r));
-});
-
-// Picker Modal
-let picker = {mode:'local', path:'/', mount:'', context:'Local', onChoose:null, ssh:{host:'',user:'',pass:''}};
-const pm = id=>document.getElementById(id);
-function showPicker(show){pm('picker_modal').classList.toggle('hidden', !show);}
-async function loadMountNames(){const d=await j('/api/mounts'); const sel=pm('picker_mount'); sel.innerHTML=''; (d.mounts||[]).forEach(m=>{const o=document.createElement('option'); o.value=m.name; o.textContent=m.name; sel.appendChild(o)})}
-async function listDir(){
-  const tbody = pm('picker_table').querySelector('tbody'); tbody.innerHTML='';
-  let items = [];
-  if(picker.mode==='local'){ const d=await j('/api/local/listdir?path='+encodeURIComponent(picker.path||'/')); items=d.items||[]; }
-  else if(picker.mode==='ssh'){ const body={host:picker.ssh.host, port:22, username:picker.ssh.user, password:picker.ssh.pass, path:picker.path||'/'}; const d=await j('/api/ssh/listdir',{method:'POST',body:JSON.stringify(body)}); items=d.items||[]; }
-  else if(picker.mode==='mount'){ const body={name:picker.mount, path:picker.path||'/'}; const d=await j('/api/mounts/listdir',{method:'POST',body:JSON.stringify(body)}); items=d.items||[]; }
-  items.forEach(it=>{const tr=document.createElement('tr'); tr.innerHTML=`<td>${it.name}</td><td>${it.dir?'Dir':'File'}</td><td>${it.size||''}</td>`; tr.addEventListener('click',()=>{ if(it.dir){ picker.path=(picker.path.replace(/\/$/,'')+'/'+it.name).replace(/\/+/g,'/'); pm('picker_path').value=picker.path; listDir(); } }); tbody.appendChild(tr);});
-  pm('picker_context').value=picker.context; pm('picker_path').value=picker.path; pm('picker_mount').value=picker.mount||'';
-}
-pm('picker_close').addEventListener('click', ()=>showPicker(false));
-pm('picker_up').addEventListener('click', ()=>{ let p=picker.path||'/'; p=p.replace(/\/+$/,''); p=p.substring(0,p.lastIndexOf('/'))||'/'; picker.path=p; pm('picker_path').value=p; listDir(); });
-pm('picker_choose').addEventListener('click', ()=>{ if(picker.onChoose){ picker.onChoose(picker.path) } showPicker(false); });
-pm('picker_mount').addEventListener('change', ()=>{ picker.mount=pm('picker_mount').value; picker.path='/'; listDir(); });
-
-async function openPicker(mode, onChoose){
-  picker.mode=mode; picker.onChoose=onChoose; picker.path='/';
-  if(mode==='local'){ picker.context='Local filesystem'; await listDir(); showPicker(true); }
-  else if(mode==='ssh'){ picker.context='SSH browse'; picker.ssh={host:$('#b_host').value,user:$('#b_user').value,pass:$('#b_pass').value}; await listDir(); showPicker(true); }
-  else if(mode==='mount'){ picker.context='Mount browse'; await loadMountNames(); picker.mount=pm('picker_mount').value; await listDir(); showPicker(true); }
-}
-$('#btn_browse_local').addEventListener('click', ()=>openPicker('local', p=>{$('#b_src').value=p}));
-$('#btn_browse_ssh').addEventListener('click', ()=>openPicker('ssh', p=>{$('#b_src').value=p}));
-$('#btn_browse_mount').addEventListener('click', ()=>openPicker('mount', p=>{$('#b_src').value=p}));
-
-// Estimate
-$('#btn_estimate').addEventListener('click', async ()=>{
-  let body={mode:'local', path:$('#b_src').value}; const st=$('#b_src_type').value;
-  if(st==='SSH (remote)'){ body={mode:'ssh', path:$('#b_src').value, host:$('#b_host').value, username:$('#b_user').value, password:$('#b_pass').value}; }
-  else if(st==='Mount (SMB/NFS)'){ body={mode:'mount', name:$('#b_dest_mount').value, path:$('#b_src').value}; }
-  const d=await j('/api/estimate',{method:'POST',body:JSON.stringify(body)}); logInto('#log_backup', 'estimate '+JSON.stringify(d)); alert('Estimated size: '+(d.bytes? (d.bytes/1048576).toFixed(1)+' MB' : 'unknown'));
-});
-
-// Wizard clickable badges
-$$('.wizard .step').forEach(el=>el.addEventListener('click',()=>{$$('.wizard .step').forEach(s=>s.classList.remove('active')); el.classList.add('active'); window.scrollTo({top:document.querySelector('#backup').offsetTop,behavior:'smooth'});}));
-
-// Initial loads
-refreshMounts(); refreshBackups(); refreshSchedules(); loadNotify(); refreshHealth(); loadRestoreBackups();
+refreshHealth();
+setInterval(refreshHealth, 8000);

@@ -1,246 +1,174 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Remote Linux Backup</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <nav class="tabs" id="tabs">
-    <a class="tab-btn" href="#backup">Backup</a>
-    <a class="tab-btn" href="#restore">Restore</a>
-    <a class="tab-btn" href="#connections">Connections</a>
-    <a class="tab-btn" href="#mounts">Mounts</a>
-    <a class="tab-btn" href="#backups">Backups</a>
-    <a class="tab-btn" href="#schedule">Schedule</a>
-    <a class="tab-btn" href="#notifications">Notifications</a>
-    <a class="tab-btn" href="#health">Health</a>
-    <a class="tab-btn" href="#help">Help</a>
-  </nav>
-</header>
-<main>
+<nav class="tabs">
+  <button class="tab active" data-tab="backup">Backup</button>
+  <button class="tab" data-tab="backups">Backups</button>
+  <button class="tab" data-tab="mounts">Mounts</button>
+  <button class="tab" data-tab="health">Health</button>
+</nav>
 
-<section id="backup" class="panel">
-  <div class="card">
-    <h2>Backup Wizard</h2>
-    <div class="wizard">
-      <div class="step active" data-step="1">1. Source</div>
-      <div class="step" data-step="2">2. Mode</div>
-      <div class="step" data-step="3">3. Destination</div>
-      <div class="step" data-step="4">4. Run</div>
+<section id="backup" class="tabpane active">
+  <h2>Backup Wizard</h2>
+  <div class="grid two">
+    <div>
+      <label>Source type</label>
+      <select id="b_source_type">
+        <option value="ssh">SSH (remote)</option>
+        <option value="local">Local (this HA)</option>
+        <option value="mount">Mount (SMB/NFS)</option>
+      </select>
     </div>
+    <div>
+      <label>Profile (sets safe defaults)</label>
+      <select id="b_profile">
+        <option>Generic Linux</option>
+        <option>Proxmox</option>
+        <option>OPNsense</option>
+        <option>Unraid</option>
+      </select>
+    </div>
+    <div class="ssh-only">
+      <label>Host/IP</label>
+      <input id="b_host" placeholder="e.g. 10.0.0.21">
+    </div>
+    <div class="ssh-only">
+      <label>User</label>
+      <input id="b_user" value="root">
+    </div>
+    <div class="ssh-only">
+      <label>Password</label>
+      <input id="b_pass" type="password">
+    </div>
+    <div>
+      <label>Mode</label>
+      <select id="b_mode">
+        <option value="rsync">Rsync (SSH) — files</option>
+        <option value="copy_local">Copy (local) — files</option>
+        <option value="copy_mount">Copy (mount) — files</option>
+        <option value="image">Disk image (dd)</option>
+      </select>
+    </div>
+    <div>
+      <label>Label</label>
+      <input id="b_label" placeholder="e.g. after-upgrade">
+    </div>
+  </div>
 
-    <div class="grid-3">
-      <div class="field"><label>Source type</label>
-        <select id="b_src_type">
-          <option>SSH (remote)</option>
-          <option>Local path</option>
-          <option>Mount (SMB/NFS)</option>
+  <h3 class="mt">From → To</h3>
+  <div class="grid two">
+    <div>
+      <label>Source path / device</label>
+      <input id="b_src" value="/">
+      <div class="row">
+        <button id="bw_browse_ssh" class="ssh-only">Browse (SSH)</button>
+        <button id="bw_pick_local">Pick local</button>
+        <button id="bw_pick_mount">Pick from mount</button>
+        <button id="bw_test_ssh" class="ssh-only secondary">Test SSH</button>
+      </div>
+    </div>
+    <div>
+      <label>Destination location</label>
+      <div class="row">
+        <select id="b_dest_type">
+          <option value="local">Local (this HA)</option>
+          <option value="mount">Mounted share (SMB/NFS)</option>
         </select>
+        <input id="b_dest_mount" placeholder="mount name (for mount)" value="">
       </div>
-      <div class="field"><label>Profile (sets safe defaults)</label>
-        <select id="b_profile">
-          <option>Generic Linux</option><option>Proxmox</option><option>OPNsense/pfSense</option><option>Unraid/OMV</option>
-        </select>
+      <label class="mt-6">Destination base folder</label>
+      <input id="b_dest_path" value="/config/remote_linux_backup/backups">
+      <div class="row">
+        <button id="bw_pick_dest_local">Pick local</button>
+        <button id="bw_pick_dest_mount">Pick from mount</button>
+        <button id="bw_mkdir_dest" class="secondary">Create folder…</button>
       </div>
-      <div class="field"><label>Label</label><input id="b_label" placeholder="after-upgrade"></div>
-
-      <div class="field"><label>Host/IP</label><input id="b_host" placeholder="10.0.0.21"></div>
-      <div class="field"><label>User</label><input id="b_user" value="root"></div>
-      <div class="field"><label>Password</label><input id="b_pass" type="password"></div>
-
-      <div class="field"><label>Mode</label>
-        <select id="b_mode">
-          <option value="rsync">Rsync (SSH) — files</option>
-          <option value="copy_local">Copy (local)</option>
-          <option value="copy_mount">Copy (mount)</option>
-          <option value="image">Image (dd) — disk</option>
-        </select>
-      </div>
-      <div class="field"><label>Bandwidth limit (KB/s)</label><input id="b_bw" type="number" value="0"></div>
-      <div class="field"><label>Dry run</label><select id="b_dry"><option value="0">No</option><option value="1">Yes</option></select></div>
-
-      <div class="field"><label>Verify manifest</label><select id="b_verify"><option value="0">No</option><option value="1">Yes</option></select></div>
-      <div class="field"><label>Source path / device</label><input id="b_src" value="/" placeholder="/path or /dev/sdX"></div>
-      <div class="field"><label>Pickers</label>
-        <div class="actions">
-          <button id="btn_browse_ssh" class="secondary">Browse (SSH)</button>
-          <button id="btn_browse_local" class="secondary">Pick local</button>
-          <button id="btn_browse_mount" class="secondary">Pick from mount</button>
-          <button id="btn_test_ssh" class="secondary">Test SSH</button>
-        </div>
+      <div class="row mt">
+        <label>Bandwidth (KB/s)</label>
+        <input id="b_bw" type="number" min="0" value="0">
+        <label>Dry run</label>
+        <select id="b_dry"><option value="0">No</option><option value="1">Yes</option></select>
+        <button id="bw_estimate" class="secondary">Estimate size</button>
+        <span id="bw_estimate_out"></span>
       </div>
     </div>
-
-    <div class="card subtle">
-      <h3>Destination</h3>
-      <div class="grid-3">
-        <div class="field"><label>Store to</label><select id="b_dest_type"><option value="local">Local (this HA)</option><option value="mount">Mount (SMB/NFS)</option></select></div>
-        <div class="field"><label>Destination mount name</label><input id="b_dest_mount" placeholder="NAS1"></div>
-        <div class="field"><label>Subfolder (optional)</label><input id="b_dest_subdir" placeholder="backups/myserver"></div>
-      </div>
-    </div>
-
-    <div class="actions">
-      <button id="btn_estimate" class="secondary">Estimate size</button>
-      <button id="btn_start" class="primary">Start</button>
-      <button id="btn_cancel" class="danger">Cancel Job</button>
-    </div>
-    <div class="progress-row">
-      <label>Progress:</label><progress id="b_progress" value="0" max="100"></progress><span id="b_pct">0%</span>
-    </div>
-    <pre class="log" id="log_backup"></pre>
   </div>
+
+  <div class="row mt">
+    <button id="bw_start" class="primary">Start</button>
+    <button id="bw_cancel" class="danger">Cancel Job</button>
+    <div class="grow">
+      <div id="bw_progress" class="progress"><div></div></div>
+    </div>
+  </div>
+  <pre class="log" id="log_backup"></pre>
 </section>
 
-<section id="restore" class="panel hidden">
-  <div class="card"><h2>Restore Wizard</h2>
-    <div class="grid-4">
-      <div class="field"><label>Backup to restore</label><select id="r_backup"></select></div>
-      <div class="field"><label>Restore to</label><select id="r_mode"><option value="local">Local path</option><option value="ssh">Remote (SSH)</option></select></div>
-      <div class="field"><label>Target path / device</label><input id="r_path" value="/"></div>
-      <div class="field"><label>BW limit (KB/s)</label><input id="r_bw" type="number" value="0"></div>
-      <div class="field"><label>Host</label><input id="r_host"></div>
-      <div class="field"><label>User</label><input id="r_user" value="root"></div>
-      <div class="field"><label>Password</label><input id="r_pass" type="password"></div>
-    </div>
-    <div class="actions"><button id="r_start" class="primary">Start Restore</button></div>
-    <pre class="log" id="log_restore"></pre>
-  </div>
+<section id="backups" class="tabpane">
+  <h2>Backups</h2>
+  <table id="bk_table">
+    <thead><tr><th>Label</th><th>When</th><th>Size</th><th>Mode</th><th>Source</th><th>Actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <pre class="log" id="log_backups"></pre>
 </section>
 
-<section id="connections" class="panel hidden">
-  <div class="card"><h2>Connections</h2>
-    <div class="grid-4">
-      <div class="field"><label>Name</label><input id="c_name"></div>
-      <div class="field"><label>Host</label><input id="c_host"></div>
-      <div class="field"><label>Port</label><input id="c_port" type="number" value="22"></div>
-      <div class="field"><label>User</label><input id="c_user" value="root"></div>
-      <div class="field"><label>Password</label><input id="c_pass" type="password"></div>
-    </div>
-    <div class="actions">
-      <button id="c_save" class="primary">Save</button><button id="c_test" class="secondary">Test</button>
-    </div>
-    <table class="table" id="c_table"><thead><tr><th>Name</th><th>Host</th><th>Port</th><th>User</th></tr></thead><tbody></tbody></table>
-    <pre class="log" id="log_connections"></pre>
+<section id="mounts" class="tabpane">
+  <h2>Mounts</h2>
+  <div class="grid three">
+    <div><label>Name</label><input id="m_name" placeholder="unique name"></div>
+    <div><label>Type</label><select id="m_type"><option value="smb">SMB</option><option value="nfs">NFS</option></select></div>
+    <div><label>Host</label><input id="m_host" placeholder="server IP or name"></div>
+    <div><label>Share/Export</label><input id="m_share" placeholder="For SMB: share  |  For NFS: /export"><div class="row"><button id="m_pick_share" class="secondary">Pick share/export</button></div></div>
+    <div><label>User</label><input id="m_user" placeholder="optional for SMB"></div>
+    <div><label>Password</label><input id="m_pass" type="password"></div>
+    <div><label>Options</label><input id="m_options" placeholder="e.g. ro,vers=3"></div>
+    <div><label>Auto-retry</label><select id="m_retry"><option value="1">Yes</option><option value="0">No</option></select></div>
   </div>
+  <div class="row mt">
+    <button id="m_test" class="secondary">Test</button>
+    <button id="m_save" class="primary">Save</button>
+    <button id="m_mount">Mount</button>
+    <button id="m_unmount" class="danger">Unmount</button>
+    <button id="m_refresh" class="secondary">Refresh</button>
+    <button id="m_browse" class="secondary">Browse mounted…</button>
+  </div>
+  <table class="mt" id="m_table">
+    <thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share</th><th>Status</th><th>Mountpoint</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <pre class="log" id="log_mounts"></pre>
 </section>
 
-<section id="mounts" class="panel hidden">
-  <div class="card"><h2>Mounts</h2>
-    <div class="grid-4">
-      <div class="field"><label>Name</label><input id="m_name"></div>
-      <div class="field"><label>Type</label><select id="m_type"><option value="smb">SMB</option><option value="nfs">NFS</option></select></div>
-      <div class="field"><label>Host</label><input id="m_host"></div>
-      <div class="field"><label>Share/Export</label><input id="m_share"></div>
-      <div class="field"><label>User</label><input id="m_user"></div>
-      <div class="field"><label>Password</label><input id="m_pass" type="password"></div>
-      <div class="field"><label>Options</label><input id="m_opts" placeholder="e.g. ro,vers=3"></div>
-      <div class="field"><label>Auto-retry</label><select id="m_retry"><option value="1">Yes</option><option value="0">No</option></select></div>
-    </div>
-    <div class="actions">
-      <button id="m_test" class="secondary">Test</button>
-      <button id="m_save" class="primary">Save</button>
-      <button id="m_mount" class="secondary">Mount</button>
-      <button id="m_unmount" class="secondary">Unmount</button>
-    </div>
-    <table class="table" id="m_table"><thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share</th><th>Status</th><th>Mountpoint</th></tr></thead><tbody></tbody></table>
-    <pre class="log" id="log_mounts"></pre>
-  </div>
+<section id="health" class="tabpane">
+  <h2>Health</h2>
+  <pre id="health_json"></pre>
+  <pre class="log" id="log_health"></pre>
 </section>
 
-<section id="backups" class="panel hidden">
-  <div class="card"><h2>Backups</h2>
-    <div class="actions"><input type="file" id="upload_input" /><button id="btn_upload" class="secondary">Upload</button></div>
-    <table class="table" id="bk_table"><thead><tr><th>Label</th><th>Size</th><th>Location</th><th>Actions</th></tr></thead><tbody></tbody></table>
-    <pre class="log" id="log_backups"></pre>
-  </div>
-</section>
-
-<section id="schedule" class="panel hidden">
-  <div class="card">
-    <h2>Schedule</h2>
-    <div class="grid-4">
-      <div class="field"><label>Name</label><input id="sch_name"></div>
-      <div class="field"><label>Frequency</label><select id="sch_freq"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
-      <div class="field"><label>Time (HH:MM)</label><input id="sch_time" value="02:00"></div>
-      <div class="field"><label>Day (0..6 or 1..28)</label><input id="sch_day" placeholder="0=Sun for weekly, 1..28 for monthly"></div>
-    </div>
-    <div class="grid-4">
-      <div class="field"><label>Mode</label><select id="sch_mode"><option value="rsync">Rsync</option><option value="image">Image</option><option value="copy_local">Copy Local</option><option value="copy_mount">Copy Mount</option></select></div>
-      <div class="field"><label>Host</label><input id="sch_host"></div>
-      <div class="field"><label>User</label><input id="sch_user" value="root"></div>
-      <div class="field"><label>Password</label><input id="sch_pass" type="password"></div>
-      <div class="field"><label>Source path / device</label><input id="sch_src"></div>
-      <div class="field"><label>Mount name (copy_mount)</label><input id="sch_mount"></div>
-      <div class="field"><label>Dest type</label><select id="sch_dest_type"><option value="local">Local</option><option value="mount">Mount</option></select></div>
-      <div class="field"><label>Dest mount</label><input id="sch_dest_mount"></div>
-      <div class="field"><label>Label</label><input id="sch_label"></div>
-      <div class="field"><label>BW (KB/s)</label><input id="sch_bw" type="number" value="0"></div>
-      <div class="field"><label>Enabled</label><select id="sch_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
-    </div>
-    <div class="actions"><button id="sch_save" class="primary">Save schedule</button></div>
-    <div class="card"><h3>Schedules</h3><table class="table" id="sch_table"><thead><tr><th>Name</th><th>Freq</th><th>Time</th><th>Next run</th><th>Enabled</th></tr></thead><tbody></tbody></table></div>
-    <pre class="log" id="log_schedule"></pre>
-  </div>
-</section>
-
-<section id="notifications" class="panel hidden">
-  <div class="card"><h2>Notifications (Gotify)</h2>
-    <div class="grid-4">
-      <div class="field"><label>Enabled</label><select id="n_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
-      <div class="field"><label>URL</label><input id="n_url" placeholder="https://gotify.example.com"></div>
-      <div class="field"><label>Token</label><input id="n_token"></div>
-      <div class="field"><label>Priority</label><input id="n_priority" type="number" value="5"></div>
-      <div class="field"><label>Include in message</label>
-        <div><label><input type="checkbox" id="inc_date"> Date/Time</label></div>
-        <div><label><input type="checkbox" id="inc_size"> Size</label></div>
-        <div><label><input type="checkbox" id="inc_dur"> Duration</label></div>
-        <div><label><input type="checkbox" id="inc_fail"> Failure status</label></div>
-      </div>
-    </div>
-    <div class="actions"><button id="n_save" class="primary">Save</button><button id="n_test" class="secondary">Send test</button></div>
-    <pre class="log" id="log_notifications"></pre>
-  </div>
-</section>
-
-<section id="health" class="panel hidden">
-  <div class="card"><h2>Health</h2>
-    <div id="health_info" class="muted">Loading…</div>
-  </div>
-</section>
-
-<section id="help" class="panel hidden">
-  <div class="card"><h2>Help</h2>
-    <p><strong>Restore without this UI (disaster recovery):</strong></p>
-    <ol>
-      <li>SSH into Home Assistant host or any Linux box.</li>
-      <li>Backups are stored in <code>/config/remote_linux_backup/backups/</code>.</li>
-      <li>Rsync/copy backups: <code>rsync -a /path/to/backup/ /target/</code> or <code>cp -a</code>.</li>
-      <li>Image backups (<code>.img.gz</code>): <code>gunzip -c disk.img.gz | sudo dd of=/dev/sdX bs=4M status=progress</code>.</li>
-      <li>Never restore an image to the wrong disk. Double-check device name.</li>
-    </ol>
-    <p>All settings persist in <code>/config/remote_linux_backup/state/</code>. SSH sessions use keepalives to remain stable. SMB has a userspace fallback if kernel mounts are blocked.</p>
-  </div>
-</section>
-
-<!-- Picker modal -->
+<!-- Generic picker modal -->
 <div id="picker_modal" class="modal hidden">
   <div class="modal-body">
-    <div class="modal-head"><span id="picker_title">Pick folder</span><button id="picker_close" class="secondary">×</button></div>
-    <div class="grid-3">
-      <div class="field"><label>Context</label><input id="picker_context" readonly></div>
-      <div class="field"><label>Path</label><input id="picker_path"></div>
-      <div class="field"><label>Mount</label><select id="picker_mount"></select></div>
+    <div class="modal-head">
+      <h3 id="picker_title">Choose…</h3>
+      <button id="picker_close">✕</button>
     </div>
-    <div class="actions"><button id="picker_up" class="secondary">Up</button><button id="picker_choose" class="primary">Choose this</button></div>
-    <table class="table" id="picker_table"><thead><tr><th>Name</th><th>Type</th><th>Size</th></tr></thead><tbody></tbody></table>
+    <div id="picker_breadcrumbs" class="breadcrumbs"></div>
+    <ul id="picker_list" class="picker-list"></ul>
+    <div class="row">
+      <button id="picker_choose" class="primary">Choose</button>
+      <span id="picker_sel" class="ml"></span>
+    </div>
   </div>
 </div>
 
-</main>
 <script src="app.js"></script>
+<link rel="stylesheet" href="style.css">
 </body>
 </html>
