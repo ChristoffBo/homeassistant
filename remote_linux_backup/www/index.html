@@ -1,218 +1,266 @@
-<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Remote Linux Backup</title>
-<link rel="stylesheet" href="style.css">
-</head><body>
-<nav class="tabs">
-  <button class="tab active" data-tab="backup">Backup</button>
-  <button class="tab" data-tab="backups">Backups</button>
-  <button class="tab" data-tab="mounts">Backup Destinations</button>
-  <button class="tab" data-tab="schedule">Schedule</button>
-  <button class="tab" data-tab="alerts">Alerts</button>
-  <button class="tab" data-tab="help">Help</button>
-</nav>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Remote Linux Backup</title>
+  <style>
+    :root{--bg:#0e1621;--panel:#111b27;--text:#e6eef8;--muted:#9fb3c8;--accent:#4ea1ff;--danger:#ff6b6b;--ok:#22c55e;--line:#233242}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    .topbar{display:flex;gap:.5rem;align-items:center;padding:.6rem;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:10}
+    .tab{padding:.45rem .8rem;border:1px solid var(--line);background:var(--panel);border-radius:.5rem;color:var(--muted);cursor:pointer}
+    .tab.active{color:var(--text);border-color:var(--accent);outline:2px solid rgba(78,161,255,.2)}
+    .wrap{max-width:1280px;margin:0 auto;padding:1rem}
+    .panel{display:none}
+    .panel.active{display:block}
+    h2{margin:.3rem 0 1rem}
+    .card{background:var(--panel);border:1px solid var(--line);padding:1rem;border-radius:.8rem;margin:0 0 1rem}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
+    .row .card{margin:0}
+    label{display:block;margin:.3rem 0 .3rem;color:var(--muted)}
+    input,select,button,textarea{width:100%;padding:.55rem .65rem;border-radius:.5rem;border:1px solid var(--line);background:#0b1320;color:var(--text)}
+    .btn{cursor:pointer}
+    .btn.primary{background:var(--accent);border-color:var(--accent);color:#001a33}
+    .btn.danger{background:var(--danger);border-color:var(--danger);color:#330000}
+    .btn.ghost{background:transparent}
+    .grid{display:grid;gap:.6rem}
+    .grid-cols-3{grid-template-columns:repeat(3,1fr)}
+    .muted{color:var(--muted)}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid var(--line);padding:.55rem;text-align:left}
+    .toolbar{display:flex;gap:.5rem;flex-wrap:wrap}
+    .progress{height:.5rem;background:#0b1320;border:1px solid var(--line);border-radius:.5rem;overflow:hidden}
+    .progress > span{display:block;height:100%;background:var(--accent);width:0}
+    /* Modal */
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
+    .modal.open{display:flex}
+    .dialog{width:min(920px,95vw);max-height:85vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:.8rem}
+    .dialog header{display:flex;justify-content:space-between;align-items:center;padding:.8rem 1rem;border-bottom:1px solid var(--line)}
+    .dialog .body{padding:0}
+    .list{list-style:none;margin:0;padding:0}
+    .list li{display:flex;align-items:center;gap:.6rem;padding:.6rem 1rem;border-bottom:1px solid var(--line);cursor:pointer}
+    .list li:hover{background:#0b1320}
+    .pill{display:inline-block;padding:.15rem .45rem;border:1px solid var(--line);border-radius:.5rem;margin-left:.4rem;color:var(--muted)}
+    .right{margin-left:auto}
+    code{background:#0b1320;border:1px solid var(--line);padding:.15rem .35rem;border-radius:.35rem}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <button class="tab active" data-tab="backup">Backup</button>
+    <button class="tab" data-tab="backups">Backups</button>
+    <button class="tab" data-tab="destinations">Backup Destinations</button>
+    <button class="tab" data-tab="schedule">Schedule</button>
+    <button class="tab" data-tab="alerts">Alerts</button>
+    <button class="tab" data-tab="help">Help</button>
+    <span class="right muted" id="statusLine">Idle</span>
+  </div>
 
-<section id="backup" class="tabpane active">
-  <h2>Backup Wizard</h2>
-  <div class="two-col">
-    <div>
-      <h3>Backup from (Source)</h3>
-      <label>Source type</label>
-      <select id="b_source_type">
-        <option value="ssh">SSH (remote)</option>
-        <option value="local">Local (this HA)</option>
-        <option value="mount">Mount (SMB/NFS)</option>
-      </select>
-      <div class="ssh-only"><label>Host/IP</label><input id="b_host" placeholder="e.g. 10.0.0.21"></div>
-      <div class="ssh-only"><label>User</label><input id="b_user" value="root"></div>
-      <div class="ssh-only"><label>Password</label><input id="b_pass" type="password"></div>
-      <label>Mode</label>
-      <select id="b_mode">
-        <option value="rsync">Rsync (SSH) — files</option>
-        <option value="copy_local">Copy (local) — files</option>
-        <option value="copy_mount">Copy (mount) — files</option>
-        <option value="image">Disk image (dd)</option>
-      </select>
-      <label>Label</label><input id="b_label" placeholder="e.g. after-upgrade">
-      <label>Source path / device</label><input id="b_src" value="/">
+  <div class="wrap">
+    <!-- Backup -->
+    <section id="panel-backup" class="panel active">
+      <h2>Backup Wizard</h2>
       <div class="row">
-        <button id="bw_browse_ssh" class="ssh-only">Browse (SSH)</button>
-        <button id="bw_pick_local">Pick local</button>
-        <button id="bw_pick_mount">Pick from mount</button>
-        <button id="bw_test_ssh" class="ssh-only secondary">Test SSH</button>
+        <div class="card grid">
+          <div class="grid">
+            <label>Source type</label>
+            <select id="srcType">
+              <option value="ssh">SSH (remote)</option>
+              <option value="local">Local (this HA)</option>
+              <option value="mount">Mounted share</option>
+            </select>
+          </div>
+          <div class="grid">
+            <label>Profile <span class="pill">sets safe defaults</span></label>
+            <select id="profile">
+              <option>Generic Linux</option>
+              <option>OPNsense</option>
+              <option>Proxmox</option>
+              <option>Unraid</option>
+            </select>
+          </div>
+
+          <div class="grid">
+            <label>Host/IP</label>
+            <input id="srcHost" placeholder="e.g. 10.0.0.21">
+          </div>
+          <div class="grid">
+            <label>User</label>
+            <input id="srcUser" value="root">
+          </div>
+
+          <div class="grid">
+            <label>Password</label>
+            <input id="srcPass" type="password">
+          </div>
+          <div class="grid">
+            <label>Dry run</label>
+            <select id="dryRun"><option value="no">No</option><option value="yes">Yes</option></select>
+          </div>
+
+          <div class="grid">
+            <label>Mode</label>
+            <select id="mode">
+              <option value="rsync">Rsync (SSH) — files</option>
+              <option value="copy">Copy (rsync) — files & folders</option>
+              <option value="dd">DD (image) — disk/partition</option>
+            </select>
+          </div>
+          <div class="grid">
+            <label>Label (optional)</label>
+            <input id="label" placeholder="e.g. after-upgrade">
+          </div>
+
+          <div class="grid">
+            <label>Source path / device</label>
+            <input id="srcPath" value="/" placeholder="/ or /dev/sda">
+            <div class="toolbar">
+              <button class="btn" id="btnBrowseSSH">Browse (SSH)</button>
+              <button class="btn" id="btnPickLocal">Pick local</button>
+              <button class="btn" id="btnPickFromMount">Pick from mount</button>
+              <button class="btn" id="btnTestSSH">Test SSH</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card grid">
+          <div class="grid">
+            <label>Destination type</label>
+            <select id="dstType">
+              <option value="local">Local (this HA)</option>
+              <option value="mount">Mounted share</option>
+            </select>
+          </div>
+          <div class="grid">
+            <label>Destination mount (when using mounted share)</label>
+            <select id="dstMount"><option value="">—</option></select>
+          </div>
+          <div class="grid">
+            <label>Destination folder (base)</label>
+            <input id="dstFolder" value="/config/remote_linux_backup/backups">
+            <div class="toolbar">
+              <button class="btn" id="btnDstPickLocal">Pick local</button>
+              <button class="btn" id="btnDstPickFromMount">Pick from mount</button>
+              <button class="btn" id="btnDstCreate">Create folder…</button>
+            </div>
+          </div>
+          <div class="grid">
+            <label>Bandwidth limit (KB/s)</label>
+            <input id="bw" type="number" value="0">
+          </div>
+          <div class="grid">
+            <label>Run</label>
+            <div class="toolbar">
+              <button class="btn primary" id="btnStart">Start</button>
+              <button class="btn danger" id="btnCancel">Cancel Job</button>
+              <button class="btn" id="btnEstimate">Estimate size</button>
+            </div>
+          </div>
+          <div class="grid">
+            <label>Progress</label>
+            <div class="progress"><span id="progressBar"></span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Backups -->
+    <section id="panel-backups" class="panel">
+      <h2>Backups</h2>
+      <div class="card">
+        <table id="tblBackups">
+          <thead><tr><th>Label</th><th>When</th><th>Size</th><th>Mode</th><th>Source</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Destinations -->
+    <section id="panel-destinations" class="panel">
+      <h2>Backup Destinations</h2>
+      <div class="card">
+        <div class="toolbar" style="justify-content:space-between">
+          <div class="toolbar">
+            <button class="btn" id="btnMountRefresh">Refresh</button>
+            <button class="btn" id="btnBrowseMounted">Browse mounted…</button>
+          </div>
+          <div class="muted">Auto-retry is handled in the backend.</div>
+        </div>
+        <table id="tblMounts">
+          <thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share/Export</th><th>Status</th><th>Mountpoint</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Schedule -->
+    <section id="panel-schedule" class="panel">
+      <h2>Schedule</h2>
+      <div class="card grid grid-cols-3">
+        <div><label>Max concurrent jobs</label><input id="schedMax" type="number" value="1"></div>
+        <div><label>Default bwlimit (KB/s)</label><input id="schedBw" type="number" value="0"></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn primary" id="btnSchedSave">Save</button></div>
+      </div>
+      <div class="card">
+        <table id="tblSchedules"><thead><tr><th>Name</th><th>When</th><th>Actions</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- Alerts -->
+    <section id="panel-alerts" class="panel">
+      <h2>Alerts (Gotify)</h2>
+      <div class="card grid grid-cols-3">
+        <div><label>Server URL</label><input id="gotifyUrl" placeholder="http(s)://host:port/"></div>
+        <div><label>App Token</label><input id="gotifyToken" placeholder="token"></div>
+        <div><label>Enabled</label><select id="gotifyOn"><option value="1">Yes</option><option value="0">No</option></select></div>
+        <div class="grid" style="grid-column:1/4">
+          <label>Include in message</label>
+          <div class="toolbar">
+            <label><input type="checkbox" id="gf_time" checked> time</label>
+            <label><input type="checkbox" id="gf_size" checked> size</label>
+            <label><input type="checkbox" id="gf_name" checked> backup name</label>
+            <label><input type="checkbox" id="gf_duration" checked> duration</label>
+            <label><input type="checkbox" id="gf_status" checked> status</label>
+          </div>
+        </div>
+        <div style="grid-column:1/4;display:flex;gap:.5rem">
+          <button class="btn primary" id="btnGotifySave">Save</button>
+          <button class="btn" id="btnGotifyTest">Send test</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Help -->
+    <section id="panel-help" class="panel">
+      <h2>Help</h2>
+      <div class="card">
+        <p>Each tab describes what it does. Backups are always restorable even without this UI.</p>
+        <p><b>Disaster recovery for dd images</b>:
+          Write the image to a disk/USB using <code>dd if=image.dd of=/dev/sdX bs=4M status=progress conv=fsync</code>.
+        </p>
+        <p><b>Rsync file copies</b>: contents are plain files; restore by copying back with rsync or your file manager.</p>
+        <p>For issues, check logs at the bottom of each tab and the add-on log in Supervisor.</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal for pickers -->
+  <div class="modal" id="pickerModal">
+    <div class="dialog">
+      <header>
+        <div><b id="pickerTitle">Picker</b> <span class="pill" id="pickerPath"></span></div>
+        <button class="tab" id="pickerClose">✕</button>
+      </header>
+      <div class="body">
+        <ul class="list" id="pickerList"></ul>
+      </div>
+      <div style="padding:.8rem;border-top:1px solid var(--line);display:flex;gap:.5rem;justify-content:flex-end">
+        <button class="btn" id="pickerUp">Up</button>
+        <button class="btn primary" id="pickerChoose">Choose</button>
       </div>
     </div>
-    <div>
-      <h3>Backup to (Destination)</h3>
-      <label>Destination type</label>
-      <div class="row">
-        <select id="b_dest_type"><option value="local">Local (this HA)</option><option value="mount">Mounted share</option><option value="ssh">SSH (remote)</option></select>
-        <input id="b_dest_mount" placeholder="mount name (for mounted share)">
-      </div>
-      <div class="row ssh-dest-only">
-        <input id="d_host" placeholder="dest host / IP">
-        <input id="d_user" placeholder="username">
-        <input id="d_pass" placeholder="password" type="password">
-      </div>
-      <label>Destination folder (base)</label><input id="b_dest_path" value="/config/remote_linux_backup/backups">
-      <div class="row">
-        <button id="bw_pick_dest_local">Pick local</button>
-        <button id="bw_pick_dest_mount">Pick from mount</button>
-        <button id="bw_pick_dest_ssh" class="ssh-dest-only">Pick via SSH</button>
-        <button id="bw_mkdir_dest" class="secondary">Create folder…</button>
-      </div>
-      <label>Profile (sets safe defaults)</label>
-      <select id="b_profile"><option>Generic Linux</option><option>Proxmox</option><option>OPNsense</option><option>Unraid</option></select>
-      <div class="row mt">
-        <label>Bandwidth (KB/s)</label><input id="b_bw" type="number" min="0" value="0">
-        <label>Dry run</label><select id="b_dry"><option value="0">No</option><option value="1">Yes</option></select>
-        <button id="bw_estimate" class="secondary">Estimate size</button><span id="bw_estimate_out"></span>
-      </div>
-    </div>
   </div>
-  <div class="row mt">
-    <button id="bw_start" class="primary grow">Start</button>
-    <button id="bw_cancel" class="danger">Cancel Job</button>
-  </div>
-  <div class="progress mt" id="bw_progress"><div></div></div>
-  <pre class="log" id="log_backup"></pre>
-</section>
 
-<section id="backups" class="tabpane">
-  <h2>Backups</h2>
-  <table id="bk_table"><thead><tr><th>Label</th><th>When</th><th>Size</th><th>Mode</th><th>Source</th><th>Actions</th></tr></thead><tbody></tbody></table>
-  <pre class="log" id="log_backups"></pre>
-</section>
-
-<section id="mounts" class="tabpane">
-  <h2>Backup Destinations</h2>
-  <div class="grid three">
-    <div><label>Name</label><input id="m_name" placeholder="unique name"></div>
-    <div><label>Type</label><select id="m_type"><option value="smb">SMB</option><option value="nfs">NFS</option></select></div>
-    <div><label>Host</label><input id="m_host" placeholder="server IP or name"></div>
-    <div><label>Share/Export</label><input id="m_share" placeholder="For SMB: share  |  For NFS: /export"><div class="row"><button id="m_pick_share" class="secondary">Pick share/export</button></div></div>
-    <div><label>User</label><input id="m_user" placeholder="optional for SMB"></div>
-    <div><label>Password</label><input id="m_pass" type="password"></div>
-    <div><label>Options</label><input id="m_options" placeholder="e.g. ro,vers=3"></div>
-    <div><label>Auto-retry</label><select id="m_retry"><option value="1">Yes</option><option value="0">No</option></select></div>
-  </div>
-  <div class="row mt">
-    <button id="m_test" class="secondary">Test</button>
-    <button id="m_save" class="primary">Save</button>
-    <button id="m_mount">Mount</button>
-    <button id="m_unmount" class="danger">Unmount</button>
-    <button id="m_refresh" class="secondary">Refresh</button>
-    <button id="m_browse" class="secondary">Browse mounted…</button>
-  </div>
-  <table class="mt" id="m_table"><thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share</th><th>Status</th><th>Mountpoint</th><th>Actions</th></tr></thead><tbody></tbody></table>
-  <pre class="log" id="log_mounts"></pre>
-</section>
-
-
-<section id="connections" class="tab">
-  <h2>Connections</h2>
-  <div class="grid two">
-    <div>
-      <label>Name</label><input id="c_name">
-      <label>Host/IP</label><input id="c_host">
-      <label>User</label><input id="c_user">
-      <label>Password</label><input id="c_pass" type="password">
-      <div class="row">
-        <button id="c_test">Test</button>
-        <button id="c_save" class="primary">Save</button>
-      </div>
-    </div>
-    <div>
-      <table class="list" id="c_table"><thead><tr><th>Name</th><th>Host</th><th>User</th><th>Actions</th></tr></thead><tbody></tbody></table>
-    </div>
-  </div>
-  <pre id="log_conn" class="log"></pre>
-</section>
-<section id="schedule" class="tabpane">
-  <h2>Schedule</h2>
-  <div class="grid three">
-    <div>
-      <label>Rule</label>
-      <select id="sch_type"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
-      <label>Time (HH:MM)</label><input id="sch_time" value="03:00">
-      <label class="small">Weekly: days (0=Mon, comma separated). Monthly: days-of-month.</label>
-      <input id="sch_days" placeholder="e.g. 0,2,4 or 1,15,28">
-    </div>
-    <div>
-      <label>Template from current Backup Wizard</label>
-      <button id="sch_use_from_wizard" class="secondary">Use wizard values</button>
-      <pre id="sch_tpl_preview" class="mini"></pre>
-    </div>
-    <div class="mt">
-      <button id="sch_save" class="primary">Save schedule</button>
-    </div>
-  </div>
-  <h3 class="mt">Schedules</h3>
-  <table id="sch_table"><thead><tr><th>ID</th><th>Enabled</th><th>Next run</th><th>Rule</th><th>Actions</th></tr></thead><tbody></tbody></table>
-  <pre class="log" id="log_schedule"></pre>
-</section>
-
-<section id="alerts" class="tabpane">
-  <h2>Alerts (Gotify)</h2>
-  <div class="grid three">
-    <div><label>Enabled</label><select id="n_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
-    <div><label>Gotify URL</label><input id="n_url" placeholder="https://gotify.your.domain"></div>
-    <div><label>Token</label><input id="n_token"></div>
-    <div><label>Include in message</label>
-      <div class="row">
-        <label><input type="checkbox" id="n_inc_date" checked> date/time</label>
-        <label><input type="checkbox" id="n_inc_name" checked> job name</label>
-        <label><input type="checkbox" id="n_inc_size" checked> size</label>
-        <label><input type="checkbox" id="n_inc_dur" checked> duration</label>
-      </div>
-    </div>
-    <div><label>When</label>
-      <div class="row">
-        <label><input type="checkbox" id="n_on_ok" checked> success</label>
-        <label><input type="checkbox" id="n_on_fail" checked> failure</label>
-      </div>
-    </div>
-  </div>
-  <div class="row mt">
-    <button id="n_save" class="primary">Save</button>
-    <button id="n_test" class="secondary">Send test</button>
-  </div>
-  <pre class="log" id="log_alerts"></pre>
-</section>
-
-<section id="help" class="tabpane">
-  <h2>Help</h2>
-  <div class="helptext">
-    <h3>How backups work</h3>
-    <ol>
-      <li><b>Backup Destinations</b>: Define your SMB/NFS destinations (Pick share/export, then folder).</li>
-      <li><b>Backup</b>: Choose <i>Backup from</i> (source) and <i>Backup to</i> (destination) using the pickers.</li>
-      <li><b>Backups</b>: Each job stores a MANIFEST so <i>Restore (original)</i> can auto-mount and restore to the original path.</li>
-    </ol>
-    <h3>Disaster recovery (without this UI)</h3>
-    <p><b>Files/folders (rsync):</b> On a machine with SSH, run:<br>
-    <code>rsync -aAXH --numeric-ids user@host:/path/ /target/</code></p>
-    <p><b>Disk image (dd):</b> Write image back to a disk:<br>
-    <code>gunzip -c disk.img.gz | dd of=/dev/sdX bs=4M status=progress</code><br>
-    Replace <code>/dev/sdX</code> with the target drive. Prefer imaging a snapshot or maintenance mode for consistency.</p>
-  </div>
-  <pre class="log" id="log_help"></pre>
-</section>
-
-<div id="picker_modal" class="modal hidden">
-  <div class="modal-body">
-    <div class="modal-head"><h3 id="picker_title">Choose…</h3><button id="picker_close">✕</button></div>
-    <div id="picker_breadcrumbs" class="breadcrumbs"></div>
-    <ul id="picker_list" class="picker-list"></ul>
-    <div class="row"><button id="picker_choose" class="primary">Choose</button><span id="picker_sel" class="ml"></span></div>
-  </div>
-</div>
-
-<script src="app.js"></script>
-
-<div id="log_dest" class="logbar"></div>
-<div id="log_sched" class="logbar"></div>
-<div id="log_alerts" class="logbar"></div>
+  <script src="app.js"></script>
 </body>
 </html>
