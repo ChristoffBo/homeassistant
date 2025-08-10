@@ -11,20 +11,20 @@
 <body>
 <header>
   <nav class="tabs" id="tabs">
-    <button class="tab-btn active" data-tab="tab-backup" title="Create a new backup">Backup</button>
-    <button class="tab-btn" data-tab="tab-restore" title="Restore a backup to a device or folder">Restore</button>
-    <button class="tab-btn" data-tab="tab-connections" title="Saved SSH hosts used for rsync/image">Connections</button>
-    <button class="tab-btn" data-tab="tab-mounts" title="SMB/NFS network shares used as sources/destinations">Mounts</button>
-    <button class="tab-btn" data-tab="tab-backups" title="List, download, verify and delete backups">Backups</button>
-    <button class="tab-btn" data-tab="tab-schedule" title="Run backups automatically">Schedule</button>
-    <button class="tab-btn" data-tab="tab-notifications" title="Gotify notifications and system update">Notifications</button>
-    <button class="tab-btn" data-tab="tab-help" title="How to use + disaster recovery">Help</button>
+    <a class="tab-btn" href="#tab-backup" data-tab="tab-backup" title="Create a new backup">Backup</a>
+    <a class="tab-btn" href="#tab-restore" data-tab="tab-restore" title="Restore a backup to a device or folder">Restore</a>
+    <a class="tab-btn" href="#tab-connections" data-tab="tab-connections" title="Saved SSH hosts for rsync/image">Connections</a>
+    <a class="tab-btn" href="#tab-mounts" data-tab="tab-mounts" title="SMB/NFS network shares">Mounts</a>
+    <a class="tab-btn" href="#tab-backups" data-tab="tab-backups" title="List, download, verify and delete backups">Backups</a>
+    <a class="tab-btn" href="#tab-schedule" data-tab="tab-schedule" title="Run backups automatically">Schedule</a>
+    <a class="tab-btn" href="#tab-notifications" data-tab="tab-notifications" title="Gotify notifications and system update">Notifications</a>
+    <a class="tab-btn" href="#tab-help" data-tab="tab-help" title="How to use + disaster recovery">Help</a>
   </nav>
 </header>
 
 <main id="content">
   <!-- BACKUP -->
-  <section id="tab-backup" class="tab-panel active">
+  <section id="tab-backup" class="tab-panel default">
     <div class="card">
       <h2>Backup</h2>
       <p class="muted">Make a safe copy of files/folders (rsync/copy) or create a full disk image (dd). Complete the steps below from left to right.</p>
@@ -147,21 +147,7 @@
 
   <!-- RESTORE -->
   <section id="tab-restore" class="tab-panel">
-    <div class="card">
-      <h2>Restore</h2>
-      <p class="muted">Pick a backup and restore it to a folder (rsync) or device (dd). For safety, image restore checks device size and may ask you to confirm the hostname.</p>
-      <div class="grid-3">
-        <div class="field"><label>Backup path</label><input id="r_src" placeholder="/config/remote_linux_backup/backups/..."><button id="r_pick_local" class="secondary small">Pick local</button></div>
-        <div class="field"><label>Target host</label><input id="r_host" placeholder="10.0.0.2"></div>
-        <div class="field"><label>User / Password</label><input id="r_user" value="root"><input id="r_pass" type="password"></div>
-      </div>
-      <div class="grid-3">
-        <div class="field"><label>Device (for image restore)</label><input id="r_device" placeholder="/dev/sda"></div>
-        <div class="field"><label>Mode</label><select id="r_mode"><option value="rsync">Rsync to folder</option><option value="image">Image to device</option></select></div>
-        <div class="field"><label>&nbsp;</label><button id="r_start" class="primary">Start restore</button></div>
-      </div>
-      <pre class="log" id="r_log"></pre>
-    </div>
+    <div class="card"><h2>Restore</h2><p class="muted">Pick a backup and restore it to a folder (rsync) or device (dd).</p></div>
   </section>
 
   <!-- CONNECTIONS -->
@@ -216,18 +202,10 @@
     </div>
   </section>
 
-  <!-- BACKUPS LIST -->
+  <!-- BACKUPS -->
   <section id="tab-backups" class="tab-panel">
-    <div class="card">
-      <h2>Backups</h2>
-      <div class="grid-4">
-        <div class="field"><label>Search</label><input id="bk_search" placeholder="label, host, type"></div>
-        <div class="field"><label>Group by</label><select id="bk_group"><option value="label">Label</option><option value="date">Date</option><option value="host">Host</option></select></div>
-      </div>
-      <table class="table" id="bk_table">
-        <thead><tr><th>Label</th><th>Date</th><th>Type</th><th>Size</th><th>Location</th><th>Actions</th></tr></thead>
-        <tbody></tbody>
-      </table>
+    <div class="card"><h2>Backups</h2><p class="muted">List, download, verify and delete backups.</p>
+      <table class="table" id="bk_table"><thead><tr><th>Label</th><th>Date</th><th>Type</th><th>Size</th><th>Location</th><th>Actions</th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 
@@ -272,10 +250,7 @@
     </div>
     <div class="card">
       <h3>Schedules</h3>
-      <table class="table" id="sch_table">
-        <thead><tr><th>Name</th><th>Freq</th><th>Time</th><th>Next run</th><th>Template</th><th>Enabled</th><th>Actions</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <table class="table" id="sch_table"><thead><tr><th>Name</th><th>Freq</th><th>Time</th><th>Next run</th><th>Template</th><th>Enabled</th><th>Actions</th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 
@@ -300,12 +275,7 @@
 
   <!-- HELP -->
   <section id="tab-help" class="tab-panel">
-    <div class="card">
-      <h2>Help</h2>
-      <p>Each tab explains itself. If this UI ever breaks, use the commands in this Help to restore manually.</p>
-      <p>Backups live under <code>/config/remote_linux_backup/backups/</code>. See detailed disaster‑recovery instructions below.</p>
-      <div class="muted">Scroll up for tabs.</div>
-    </div>
+    <div class="card"><h2>Help</h2><p>Each tab explains itself. If this UI breaks, you can still restore manually by copying from <code>/config/remote_linux_backup/backups/</code>.</p></div>
   </section>
 
   <!-- Picker Modal -->
@@ -316,15 +286,9 @@
         <button id="picker-close" class="secondary small">Close</button>
       </div>
       <div class="modal-body">
-        <table class="table" id="picker-table">
-          <thead><tr><th>Name</th><th>Type</th><th>Size</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <table class="table" id="picker-table"><thead><tr><th>Name</th><th>Type</th><th>Size</th></tr></thead><tbody></tbody></table>
       </div>
-      <div class="modal-foot">
-        <button id="picker-up" class="secondary">Up</button>
-        <button id="picker-select" class="primary">Select</button>
-      </div>
+      <div class="modal-foot"><button id="picker-up" class="secondary">Up</button><button id="picker-select" class="primary">Select</button></div>
     </div>
   </div>
 
@@ -342,16 +306,12 @@
           <div class="field"><label>&nbsp;</label><button id="scan-start" class="primary" type="button">Start scan</button></div>
           <div class="field"><label>Status</label><input id="scan-status" readonly></div>
         </div>
-        <table class="table" id="scan-table">
-          <thead><tr><th>IP</th><th>SMB shares</th><th>NFS exports</th><th>Action</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <table class="table" id="scan-table"><thead><tr><th>IP</th><th>SMB shares</th><th>NFS exports</th><th>Action</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
   </div>
-
 </main>
 
-<script src="app.js"></script>
+<script src="app.js" defer></script>
 </body>
 </html>
