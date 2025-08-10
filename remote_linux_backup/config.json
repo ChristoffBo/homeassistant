@@ -1,38 +1,36 @@
 {
   "name": "Remote Linux Backup",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "slug": "remote_linux_backup",
-  "description": "Full backup/restore solution: SSH rsync & dd images, SMB/NFS mounts, scheduling, manifests, verify, encryption, UI with pickers.",
+  "description": "Backup/restore over SSH, SMB/NFS (with userspace fallback), and disk images. Wizard UI.",
   "url": "https://github.com/ChristoffBo/homeassistant",
-  "arch": ["aarch64", "amd64", "armv7", "i386"],
   "startup": "services",
   "boot": "auto",
-  "init": false,
-  "webui": "http://[HOST]:[PORT:8066]",
-  "ingress": false,
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7",
+    "armhf",
+    "i386"
+  ],
+  "host_network": false,
   "ports": {
-    "8066/tcp": 18066
+    "8066/tcp": 8066
   },
-  "ports_description": {
-    "8066/tcp": "Web UI"
-  },
-  "map": ["config:rw", "ssl:ro", "share:rw", "media:rw", "backup:rw"],
-  "privileged": ["SYS_ADMIN"],
+  "ingress": false,
+  "panel_icon": "mdi:backup-restore",
   "apparmor": false,
-  "full_access": false,
-  "environment": {},
+  "privileged": [
+    "SYS_ADMIN"
+  ],
+  "map": [
+    "config:rw",
+    "share:rw"
+  ],
   "options": {
-    "storage_path": "/config/remote_linux_backup/backups",
-    "gotify_url": "",
-    "gotify_token": "",
-    "auto_check_hours": 0,
-    "timezone": "Africa/Johannesburg"
+    "port": 8066
   },
   "schema": {
-    "storage_path": "str",
-    "gotify_url": "str?",
-    "gotify_token": "str?",
-    "auto_check_hours": "int",
-    "timezone": "str"
+    "port": "int"
   }
 }
