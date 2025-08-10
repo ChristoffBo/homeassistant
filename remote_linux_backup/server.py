@@ -2,6 +2,12 @@
 import os, json, time, threading, subprocess, shlex, datetime, pathlib, re, argparse, shutil
 from flask import Flask, request, jsonify, send_from_directory, Response, send_file
 from flask_socketio import SocketIO, emit
+import warnings
+try:
+    from cryptography.utils import CryptographyDeprecationWarning
+    warnings.simplefilter('ignore', CryptographyDeprecationWarning)
+except Exception:
+    pass
 from apscheduler.schedulers.background import BackgroundScheduler
 import paramiko
 import psutil
@@ -378,7 +384,7 @@ def backups_groups():
         break
     for name in sorted(os.listdir(BACKUPS_DIR)):
         gpath = os.path.join(BACKUPS_DIR, name)
-        if not os.path.isdir(gpath): 
+        if not os.path.isdir(gpath):
             continue
         entries = []
         for sub in os.listdir(gpath):
