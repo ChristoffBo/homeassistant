@@ -1,3 +1,7 @@
+# ⚠️ Alpha Build Disclaimer
+
+This is an **ALPHA** build. **No assistance will be given.** **No responsibility is accepted for breakage or loss of data.** **Use at your own risk.**
+
 # 🧩 Remote Linux Backup
 A full backup & restore solution for remote Linux/UNIX systems with a clean, easy UI. Works over SSH with no command line required. Copy (rsync) for files and folders, or Full Image (dd) for entire disks. Includes a backup browser (download/delete), scheduler (daily/weekly/monthly), connections manager, and optional Gotify notifications. Clear logs and live progress with percent and size. Backups are stored as plain files/folders so they are restorable even without this add-on.
 
