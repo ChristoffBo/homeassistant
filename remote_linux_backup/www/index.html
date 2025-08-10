@@ -21,34 +21,48 @@
   </nav>
 </header>
 <main>
+
 <section id="backup" class="panel">
   <div class="card">
     <h2>Backup Wizard</h2>
     <div class="wizard">
-      <div class="step active" data-step="1" title="Pick where data comes from">1. Source</div>
-      <div class="step" data-step="2" title="Choose how to copy">2. Mode</div>
-      <div class="step" data-step="3" title="Pick where to store it">3. Destination</div>
-      <div class="step" data-step="4" title="Run and monitor">4. Run</div>
+      <div class="step active" data-step="1">1. Source</div>
+      <div class="step" data-step="2">2. Mode</div>
+      <div class="step" data-step="3">3. Destination</div>
+      <div class="step" data-step="4">4. Run</div>
     </div>
+
     <div class="grid-3">
       <div class="field"><label>Source type</label>
-        <select id="b_src_type"><option value="ssh">SSH (remote)</option><option value="local">Local path</option><option value="mount">Mount (SMB/NFS)</option></select>
+        <select id="b_src_type">
+          <option>SSH (remote)</option>
+          <option>Local path</option>
+          <option>Mount (SMB/NFS)</option>
+        </select>
       </div>
-      <div class="field"><label>Profile <span class="muted">(sets safe defaults)</span></label>
-        <select id="b_profile"><option value="">Generic Linux</option><option value="proxmox">Proxmox</option><option value="opnsense">OPNsense/pfSense</option><option value="unraid">Unraid/OMV</option></select>
+      <div class="field"><label>Profile (sets safe defaults)</label>
+        <select id="b_profile">
+          <option>Generic Linux</option><option>Proxmox</option><option>OPNsense/pfSense</option><option>Unraid/OMV</option>
+        </select>
       </div>
       <div class="field"><label>Label</label><input id="b_label" placeholder="after-upgrade"></div>
+
       <div class="field"><label>Host/IP</label><input id="b_host" placeholder="10.0.0.21"></div>
       <div class="field"><label>User</label><input id="b_user" value="root"></div>
       <div class="field"><label>Password</label><input id="b_pass" type="password"></div>
+
       <div class="field"><label>Mode</label>
-        <select id="b_mode"><option value="rsync">Rsync (SSH) — files</option><option value="copy_local">Copy (local)</option><option value="copy_mount">Copy (mount)</option><option value="image">Image (dd) — disk</option></select>
+        <select id="b_mode">
+          <option value="rsync">Rsync (SSH) — files</option>
+          <option value="copy_local">Copy (local)</option>
+          <option value="copy_mount">Copy (mount)</option>
+          <option value="image">Image (dd) — disk</option>
+        </select>
       </div>
-      <div class="field"><label>Bandwidth limit (KB/s)</label><input id="b_bw" type="number" value="0" title="0 = unlimited"></div>
+      <div class="field"><label>Bandwidth limit (KB/s)</label><input id="b_bw" type="number" value="0"></div>
       <div class="field"><label>Dry run</label><select id="b_dry"><option value="0">No</option><option value="1">Yes</option></select></div>
+
       <div class="field"><label>Verify manifest</label><select id="b_verify"><option value="0">No</option><option value="1">Yes</option></select></div>
-    </div>
-    <div class="grid-3">
       <div class="field"><label>Source path / device</label><input id="b_src" value="/" placeholder="/path or /dev/sdX"></div>
       <div class="field"><label>Pickers</label>
         <div class="actions">
@@ -58,8 +72,8 @@
           <button id="btn_test_ssh" class="secondary">Test SSH</button>
         </div>
       </div>
-      <div class="field"><label>Estimate</label><button id="btn_estimate" class="secondary">Estimate size</button></div>
     </div>
+
     <div class="card subtle">
       <h3>Destination</h3>
       <div class="grid-3">
@@ -68,14 +82,16 @@
         <div class="field"><label>Subfolder (optional)</label><input id="b_dest_subdir" placeholder="backups/myserver"></div>
       </div>
     </div>
+
     <div class="actions">
+      <button id="btn_estimate" class="secondary">Estimate size</button>
       <button id="btn_start" class="primary">Start</button>
       <button id="btn_cancel" class="danger">Cancel Job</button>
     </div>
     <div class="progress-row">
       <label>Progress:</label><progress id="b_progress" value="0" max="100"></progress><span id="b_pct">0%</span>
     </div>
-    <pre class="log" id="log"></pre>
+    <pre class="log" id="log_backup"></pre>
   </div>
 </section>
 
@@ -91,7 +107,7 @@
       <div class="field"><label>Password</label><input id="r_pass" type="password"></div>
     </div>
     <div class="actions"><button id="r_start" class="primary">Start Restore</button></div>
-    <pre class="log" id="r_log"></pre>
+    <pre class="log" id="log_restore"></pre>
   </div>
 </section>
 
@@ -108,6 +124,7 @@
       <button id="c_save" class="primary">Save</button><button id="c_test" class="secondary">Test</button>
     </div>
     <table class="table" id="c_table"><thead><tr><th>Name</th><th>Host</th><th>Port</th><th>User</th></tr></thead><tbody></tbody></table>
+    <pre class="log" id="log_connections"></pre>
   </div>
 </section>
 
@@ -130,6 +147,7 @@
       <button id="m_unmount" class="secondary">Unmount</button>
     </div>
     <table class="table" id="m_table"><thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share</th><th>Status</th><th>Mountpoint</th></tr></thead><tbody></tbody></table>
+    <pre class="log" id="log_mounts"></pre>
   </div>
 </section>
 
@@ -137,6 +155,7 @@
   <div class="card"><h2>Backups</h2>
     <div class="actions"><input type="file" id="upload_input" /><button id="btn_upload" class="secondary">Upload</button></div>
     <table class="table" id="bk_table"><thead><tr><th>Label</th><th>Size</th><th>Location</th><th>Actions</th></tr></thead><tbody></tbody></table>
+    <pre class="log" id="log_backups"></pre>
   </div>
 </section>
 
@@ -164,6 +183,7 @@
     </div>
     <div class="actions"><button id="sch_save" class="primary">Save schedule</button></div>
     <div class="card"><h3>Schedules</h3><table class="table" id="sch_table"><thead><tr><th>Name</th><th>Freq</th><th>Time</th><th>Next run</th><th>Enabled</th></tr></thead><tbody></tbody></table></div>
+    <pre class="log" id="log_schedule"></pre>
   </div>
 </section>
 
@@ -182,6 +202,7 @@
       </div>
     </div>
     <div class="actions"><button id="n_save" class="primary">Save</button><button id="n_test" class="secondary">Send test</button></div>
+    <pre class="log" id="log_notifications"></pre>
   </div>
 </section>
 
@@ -201,9 +222,24 @@
       <li>Image backups (<code>.img.gz</code>): <code>gunzip -c disk.img.gz | sudo dd of=/dev/sdX bs=4M status=progress</code>.</li>
       <li>Never restore an image to the wrong disk. Double-check device name.</li>
     </ol>
-    <p><strong>Notes:</strong> SSH sessions use keepalives to remain stable. SMB has a userspace fallback if kernel mounts are blocked. All settings persist in <code>/config/remote_linux_backup/state/</code>.</p>
+    <p>All settings persist in <code>/config/remote_linux_backup/state/</code>. SSH sessions use keepalives to remain stable. SMB has a userspace fallback if kernel mounts are blocked.</p>
   </div>
 </section>
+
+<!-- Picker modal -->
+<div id="picker_modal" class="modal hidden">
+  <div class="modal-body">
+    <div class="modal-head"><span id="picker_title">Pick folder</span><button id="picker_close" class="secondary">×</button></div>
+    <div class="grid-3">
+      <div class="field"><label>Context</label><input id="picker_context" readonly></div>
+      <div class="field"><label>Path</label><input id="picker_path"></div>
+      <div class="field"><label>Mount</label><select id="picker_mount"></select></div>
+    </div>
+    <div class="actions"><button id="picker_up" class="secondary">Up</button><button id="picker_choose" class="primary">Choose this</button></div>
+    <table class="table" id="picker_table"><thead><tr><th>Name</th><th>Type</th><th>Size</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+
 </main>
 <script src="app.js"></script>
 </body>
