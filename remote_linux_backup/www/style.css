@@ -39,3 +39,5 @@ pre.log{background:#0b1520;border:1px solid #1e2b3c;border-radius:12px;padding:1
 .badge{padding:2px 8px;border-radius:999px;font-size:12px}
 .badge.ok{background:#123b2e;color:#61d3b3}
 .badge.err{background:#3b1212;color:#ff9b9b}
+
+.logbar{margin:8px 12px;padding:6px 10px;background:#0f1724;border-radius:6px;font-family:monospace;min-height:20px;color:#9bb3d1}

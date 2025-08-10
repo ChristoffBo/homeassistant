@@ -7,7 +7,7 @@
 <nav class="tabs">
   <button class="tab active" data-tab="backup">Backup</button>
   <button class="tab" data-tab="backups">Backups</button>
-  <button class="tab" data-tab="mounts">Destinations</button>
+  <button class="tab" data-tab="mounts">Backup Destinations</button>
   <button class="tab" data-tab="schedule">Schedule</button>
   <button class="tab" data-tab="alerts">Alerts</button>
   <button class="tab" data-tab="help">Help</button>
@@ -80,7 +80,7 @@
 </section>
 
 <section id="mounts" class="tabpane">
-  <h2>Destinations</h2>
+  <h2>Backup Destinations</h2>
   <div class="grid three">
     <div><label>Name</label><input id="m_name" placeholder="unique name"></div>
     <div><label>Type</label><select id="m_type"><option value="smb">SMB</option><option value="nfs">NFS</option></select></div>
@@ -160,7 +160,7 @@
   <div class="helptext">
     <h3>How backups work</h3>
     <ol>
-      <li><b>Destinations</b>: Define your SMB/NFS destinations (Pick share/export, then folder).</li>
+      <li><b>Backup Destinations</b>: Define your SMB/NFS destinations (Pick share/export, then folder).</li>
       <li><b>Backup</b>: Choose <i>Backup from</i> (source) and <i>Backup to</i> (destination) using the pickers.</li>
       <li><b>Backups</b>: Each job stores a MANIFEST so <i>Restore (original)</i> can auto-mount and restore to the original path.</li>
     </ol>
@@ -184,4 +184,9 @@
 </div>
 
 <script src="app.js"></script>
-</body></html>
+
+<div id="log_dest" class="logbar"></div>
+<div id="log_sched" class="logbar"></div>
+<div id="log_alerts" class="logbar"></div>
+</body>
+</html>

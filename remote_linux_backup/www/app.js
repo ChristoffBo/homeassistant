@@ -83,7 +83,7 @@ async function refreshMounts(){ const r=await j('/api/mounts'); const tb=$('#m_t
   tb.querySelectorAll('.use_dst').forEach(b=>b.onclick=async(ev)=>{ ev.stopPropagation(); ev.preventDefault(); const n=b.dataset.name; $('#b_dest_type').value='mount'; $('#b_dest_mount').value=n; browseMount(n,'/','#b_dest_path'); document.querySelector('nav .tab[data-tab="backup"]').click(); });
   tb.querySelectorAll('.use_src').forEach(b=>b.onclick=async(ev)=>{ ev.stopPropagation(); ev.preventDefault(); const n=b.dataset.name; $('#b_source_type').value='mount'; browseMount(n,'/','#b_src'); document.querySelector('nav .tab[data-tab="backup"]').click(); });
   tb.querySelectorAll('.mnt').forEach(b=>b.onclick=async(ev)=>{ ev.stopPropagation(); ev.preventDefault(); const n=b.dataset.name; if(b.textContent==='Unmount'){ await j('/api/mounts/unmount',{method:'POST',body:JSON.stringify({name:n})}); } else { await j('/api/mounts/mount',{method:'POST',body:JSON.stringify({name:n})}); } refreshMounts(); });
-  tb.querySelectorAll('.del').forEach(b=>b.onclick=async(ev)=>{ ev.stopPropagation(); ev.preventDefault(); if(!confirm('Delete this mount?')) return; await j('/api/mounts/unmount',{method:'POST',body:JSON.stringify({name:b.dataset.name})}); const r=await j('/api/mounts/delete',{method:'POST',body:JSON.stringify({name:b.dataset.name})}); logInto('#log_mounts','delete: '+JSON.stringify(r)); refreshMounts(); });
+  tb.querySelectorAll('.del').forEach(b=>b.onclick=async(ev)=>{ ev.stopPropagation(); ev.preventDefault(); if(!confirm('Delete this mount?')) return; await j('/api/mounts/unmount',{method:'POST',body:JSON.stringify({name:b.dataset.name})}); const r=await j('/api/mounts/delete',{method:'POST',body:JSON.stringify({name:b.dataset.name})}); logInto('#log_mounts','delete: '+JSON.stringify(r)); if(!r.ok && r.error){ alert('Delete failed: '+r.error);} refreshMounts(); });
 }
 $('#m_refresh').addEventListener('click',refreshMounts); refreshMounts(); setInterval(refreshMounts,5000);
 $('#m_save').addEventListener('click', async ()=>{ const body={name:$('#m_name').value.trim(), type:$('#m_type').value, host:$('#m_host').value.trim(), share:$('#m_share').value.trim(), username:$('#m_user').value, password:$('#m_pass').value, options:$('#m_options').value, auto_retry:$('#m_retry').value}; const r=await j('/api/mounts/save',{method:'POST',body:JSON.stringify(body)}); logInto('#log_mounts','save: '+JSON.stringify(r)); refreshMounts(); });
@@ -103,3 +103,59 @@ function currentWizardTemplate(){ return { mode:$('#b_mode').value, label:$('#b_
 $('#sch_use_from_wizard').addEventListener('click', ()=>{ const tpl=currentWizardTemplate(); $('#sch_tpl_preview').textContent=JSON.stringify(tpl,null,2); });
 async function loadSchedules(){ const r=await j('/api/schedules'); const tb=$('#sch_table tbody'); tb.innerHTML=''; (r.items||[]).forEach(s=>{ const rule=s.rule||{}; const txt=rule.type+' '+(rule.time||'')+' '+(rule.dow||rule.dom||''); const tr=document.createElement('tr'); const when=new Date((s.next_run||0)*1000).toLocaleString(); tr.innerHTML=`<td>${s.id}</td><td>${s.enabled?'yes':'no'}</td><td>${when}</td><td>${txt}</td><td class="row"><button class="secondary toggle" data-id="${s.id}">${s.enabled?'Disable':'Enable'}</button><button class="danger del" data-id="${s.id}">Delete</button></td>`; tb.appendChild(tr); }); tb.querySelectorAll('.toggle').forEach(b=>b.onclick=async()=>{ const r=await j('/api/schedules'); const s=(r.items||[]).find(x=>x.id==b.dataset.id); if(!s) return; s.enabled=!s.enabled; const r2=await j('/api/schedules/save',{method:'POST',body:JSON.stringify(s)}); loadSchedules(); }); tb.querySelectorAll('.del').forEach(b=>b.onclick=async(ev)=>{ ev.stopPropagation(); ev.preventDefault(); await j('/api/schedules/delete',{method:'POST',body:JSON.stringify({id:parseInt(b.dataset.id)})}); loadSchedules(); }); }
 $('#sch_save').addEventListener('click', async ()=>{ const rule={type:$('#sch_type').value, time:$('#sch_time').value}; const days=$('#sch_days').value.trim(); if(rule.type==='weekly'&&days) rule.dow=days.split(',').map(x=>parseInt(x)); if(rule.type==='monthly'&&days) rule.dom=days.split(',').map(x=>parseInt(x)); const tpl=JSON.parse($('#sch_tpl_preview').textContent||'{}'); if(!tpl.mode){ alert('Click "Use wizard values" first'); return; } const body={enabled:true, rule, template:tpl}; const r=await j('/api/schedules/save',{method:'POST',body:JSON.stringify(body)}); logInto('#log_schedule','save: '+JSON.stringify(r)); loadSchedules(); });
+
+// Test SFTP (added)
+document.getElementById('bw_test_ssh')?.addEventListener('click', async (e)=>{
+  const host = val('#b_host'), user = val('#b_user'), pass = val('#b_pass');
+  const port = num('#b_port')||22;
+  const body = {host, port, username:user, password:pass};
+  try{
+    const r = await post('/api/ssh/test_sftp', body);
+    logInto('#log_backup', 'sftp_test: '+JSON.stringify(r));
+    alert(r.ok ? 'SFTP OK' : ('SFTP failed: '+(r.error||'unknown')));
+  }catch(err){
+    logInto('#log_backup','sftp_test error: '+err);
+    alert('SFTP test error: '+err);
+  }
+});
+
+async function openSshPicker(startPath){
+  const host = val('#b_host'), user = val('#b_user'), pass = val('#b_pass');
+  const port = num('#b_port')||22;
+  const modal = Picker.open('Browse SSH', [], {extraButtons:[{label:'Go to ~', id:'goHome'}]});
+  async function load(p){
+    const r = await post('/api/ssh/listdir', {host, port, username:user, password:pass, path:p});
+    logInto('#log_backup', 'ssh_browse: '+JSON.stringify(r));
+    if(!r.ok){
+      Picker.fill([{name:r.error||'Failed', dir:false, size:0, disabled:true}]);
+      return;
+    }
+    Picker.fill(r.items||[]);
+  }
+  modal.on('extra','goHome', async ()=>{ await load('~'); });
+  modal.on('choose', (item)=>{
+    if(item && item.path){
+      setVal('#b_src', item.path);
+    }
+  });
+  await load(startPath||'/');
+}
+document.getElementById('bw_browse_ssh')?.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); openSshPicker('/'); });
+
+async function openSharePicker(){
+  const host = val('#m_host'), user = val('#m_user'), pass = val('#m_pass');
+  const type = val('#m_type'); if(type!=='smb') return;
+  const r = await post('/api/mounts/listshares', {host, username:user, password:pass, type});
+  logInto('#log_dest', 'shares: '+JSON.stringify(r));
+  if(!r.ok){ alert(r.error||'Failed to list shares'); return; }
+  const modal = Picker.open('Pick share/export', r.items||[]);
+  modal.on('choose', async (item)=>{
+    if(!item || !item.name) return;
+    setVal('#m_share', item.name);
+    // stay on Destinations
+    const name = val('#m_name')||item.name;
+    const root = await post('/api/mounts/listdir', {name, path:'/'});
+    logInto('#log_dest', 'share_browse_root: '+JSON.stringify(root));
+  });
+}
+document.getElementById('m_pick_share')?.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); openSharePicker(); });
