@@ -602,24 +602,40 @@ def _restore_image(job_id, host, port, user, password, image_path, device):
     log_event("INFO", f"RESTORE-IMAGE finished", job_id)
 
 @app.post("/api/backup/start")
+
 def api_backup_start():
     data = request.json or {}
-    mode = data.get("mode")  # "copy" or "image"
+    mode = data.get("mode")  # "copy", "rsync" or "image"
     conn_name = data.get("connection_name")
     host = data.get("host")
     port = int(data.get("port") or 22)
     user = data.get("username")
     password = data.get("password")
+
     src_path = data.get("source_path", "/")
     mount_name = data.get("mount_name")
     device = data.get("device")  # for image mode
     label = safe_name(data.get("label") or "")
+
+    # Local copy from mounted share (no SSH)
+    if mode == "copy" and mount_name:
+        ts = now_ts()
+        target_dir = os.path.join(BACKUPS_DIR, safe_name(mount_name), f"{ts}_{label}" if label else ts)
+        base = os.path.join(MOUNTS_DIR, safe_name(mount_name))
+        abs_src = os.path.normpath(os.path.join(base, src_path.lstrip("/")))
+        os.makedirs(target_dir, exist_ok=True)
+        job_id = register_job("local_backup", {"mount": mount_name, "src": abs_src, "dest": target_dir})
+        threading.Thread(target=_local_copy, args=(job_id, abs_src, target_dir), daemon=True).start()
+        return jsonify({"ok": True, "job_id": job_id, "dest": target_dir})
+
+    # Resolve SSH connection if saved
     if conn_name and (not host):
         conn = _get_conn_by_name(conn_name)
         if not conn:
             return jsonify({"ok": False, "error": "Connection not found"}), 404
         host = conn["host"]; port = int(conn.get("port") or 22); user = conn["username"]
         password = password or conn.get("password")
+
     if not (host and user and password):
         return jsonify({"ok": False, "error": "Missing host/user/password"}), 400
 
@@ -627,19 +643,7 @@ def api_backup_start():
     target_dir = os.path.join(BACKUPS_DIR, safe_name(host), f"{ts}_{label}" if label else ts)
     os.makedirs(target_dir, exist_ok=True)
 
-
-# Local copy from mounted share (no SSH)
-if mode == "copy" and mount_name:
-    ts = now_ts()
-    target_dir = os.path.join(BACKUPS_DIR, safe_name(mount_name), ts)
-    job_id = register_job("local_backup", {"mount": mount_name, "src": src_path, "dest": target_dir})
-    base = os.path.join(MOUNTS_DIR, safe_name(mount_name))
-    abs_src = os.path.join(base, src_path.lstrip("/"))
-    threading.Thread(target=_local_copy, args=(job_id, abs_src, target_dir), daemon=True).start()
-    return jsonify({"ok": True, "job_id": job_id, "dest": target_dir})
-
-if mode == "image":
-
+    if mode == "image":
         if not device:
             return jsonify({"ok": False, "error": "Missing device"}), 400
         dest_file = os.path.join(target_dir, f"{safe_name(host)}_{ts}{('_'+label) if label else ''}.img.gz")
@@ -652,6 +656,7 @@ if mode == "image":
         return jsonify({"ok": True, "job_id": job_id, "dest": target_dir})
 
 @app.post("/api/restore/start")
+
 def api_restore_start():
     data = request.json or {}
     mode = data.get("mode")  # "rsync" or "image"
@@ -660,36 +665,25 @@ def api_restore_start():
     port = int(data.get("port") or 22)
     user = data.get("username")
     password = data.get("password")
-    dest_path = data.get("dest_path")  # for rsync
-    image_device = data.get("device")  # for image
+    dest_path = data.get("dest_path")  # for rsync restore destination on remote
+    image_device = data.get("device")  # for image restore target device
     local_src = data.get("local_src")  # file or directory under BACKUPS_DIR
+
     if conn_name and (not host):
         conn = _get_conn_by_name(conn_name)
         if not conn:
             return jsonify({"ok": False, "error": "Connection not found"}), 404
         host = conn["host"]; port = int(conn.get("port") or 22); user = conn["username"]
         password = password or conn.get("password")
+
     if not (host and user and password):
         return jsonify({"ok": False, "error": "Missing host/user/password"}), 400
+
     if not local_src:
-        return jsonify({"ok": False, "error": "Missing local_src"}), 400
-    full_src = os.path.normpath(os.path.join(BACKUPS_DIR, local_src))
-    if not full_src.startswith(BACKUPS_DIR) or not os.path.exists(full_src):
-        return jsonify({"ok": False, "error": "Invalid local_src"}), 400
+        return jsonify({"ok": False, "error": "Missing local source"}), 400
+    full_src = os.path.normpath(os.path.join(BACKUPS_DIR, local_src.lstrip("/")))
 
-
-# Local copy from mounted share (no SSH)
-if mode == "copy" and mount_name:
-    ts = now_ts()
-    target_dir = os.path.join(BACKUPS_DIR, safe_name(mount_name), ts)
-    job_id = register_job("local_backup", {"mount": mount_name, "src": src_path, "dest": target_dir})
-    base = os.path.join(MOUNTS_DIR, safe_name(mount_name))
-    abs_src = os.path.join(base, src_path.lstrip("/"))
-    threading.Thread(target=_local_copy, args=(job_id, abs_src, target_dir), daemon=True).start()
-    return jsonify({"ok": True, "job_id": job_id, "dest": target_dir})
-
-if mode == "image":
-
+    if mode == "image":
         if not image_device or not os.path.isfile(full_src):
             return jsonify({"ok": False, "error": "Need image file and device"}), 400
         job_id = register_job("image_restore", {"host": host, "image": full_src, "device": image_device})
@@ -766,7 +760,7 @@ def api_estimate_ssh():
     if not (host and user and password): return jsonify({"ok": False, "error":"Missing host/user/password"}), 400
     try:
         ssh = ssh_connect(host, port, user, password)
-        stdin, stdout, stderr = ssh.exec_command(f"du -sb {shlex.quote(path)} 2>/dev/null | awk '{'{print $1}'}'")
+        stdin, stdout, stderr = ssh.exec_command("du -sb " + shlex.quote(path) + " 2>/dev/null | awk '{print $1}'")
         out = stdout.read().decode().strip()
         ssh.close()
         size = int(out) if out.isdigit() else None
@@ -895,7 +889,7 @@ def api_mounts_smb_shares():
     if not host: return jsonify({"ok": False, "error":"Missing host"}), 400
     # smbclient -L //host -U user%pass
     auth = f"-U {shlex.quote(user+'%'+pw) }" if user else "-N"
-    cmd = ["bash","-lc", f"smbclient -L //{shlex.quote(host)} {auth} 2>/dev/null | awk '/Disk|IPC/ {print $1}'"]
+    cmd = ["bash","-lc", f"smbclient -L //{shlex.quote(host)} {auth} 2>/dev/null | awk '/Disk|IPC/ {{print $1}}'"]
     code,out,err = run_cmd(cmd)
     shares = [x for x in out.splitlines() if x and x not in ('IPC$',)]
     return jsonify({"ok": code==0, "shares": shares, "out": out, "err": err})
@@ -905,7 +899,7 @@ def api_mounts_nfs_exports():
     data = request.json or {}
     host = data.get("host")
     if not host: return jsonify({"ok": False, "error":"Missing host"}), 400
-    cmd = ["bash","-lc", f"showmount -e {shlex.quote(host)} 2>/dev/null | awk 'NR>1 {print $1}'"]
+    cmd = ["bash","-lc", f"showmount -e {shlex.quote(host)} 2>/dev/null | awk 'NR>1 {{print $1}}'"]
     code,out,err = run_cmd(cmd)
     exports = [x for x in out.splitlines() if x]
     return jsonify({"ok": code==0, "exports": exports, "out": out, "err": err})
@@ -930,9 +924,9 @@ def auto_remount_configured():
                 opts = m.get("options") or "ro"
                 cmd = ["bash","-lc", f"mount -t nfs {shlex.quote(m['host'])}:{shlex.quote(m['export'])} {shlex.quote(mntp)} -o {opts}"]
             code,out,err = run_cmd(cmd)
-            log_event('INFO', f'Auto mount {m.get(\"name\")}: code={code} out={out.strip()} err={err.strip()}')
+            log_event('INFO', f"Auto mount {m.get('name')}: code={code} out={out.strip()} err={err.strip()}")
         except Exception as e:
-            log_event('ERROR', f'Auto mount {m.get(\"name\")} failed: {e}')
+            log_event('ERROR', f"Auto mount {m.get('name')} failed: {e}")
 
 # Ensure auto-remount at startup
 auto_remount_configured()
