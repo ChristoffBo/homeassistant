@@ -966,3 +966,319 @@ if __name__ == "__main__":
     port = int(args.port)
     print(f"[RLB] Launching on 0.0.0.0:{port}, backups at {BACKUPS_DIR}")
     socketio.run(app, host="0.0.0.0", port=port)
+
+
+@app.post("/api/ssh/listdir")
+def api_ssh_listdir():
+    data = request.json or {}
+    host = data.get("host"); port = int(data.get("port") or 22)
+    user = data.get("username"); password = data.get("password")
+    path = data.get("path") or "/"
+    if not (host and user and password):
+        return jsonify({"ok": False, "error": "Missing host/user/password"}), 400
+    try:
+        items = sftp_listdir(host, port, user, password, path)
+        # normalize
+        for it in items:
+            it["path"] = (path.rstrip("/") + "/" + it["name"]).replace("//","/")
+        items.sort(key=lambda x: (not x["dir"], x["name"].lower()))
+        return jsonify({"ok": True, "path": path, "items": items})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+SAFE_LOCAL_ROOTS = ["/config", "/share", "/media", "/backup"]
+def _safe_local_path(p):
+    p = os.path.normpath(p or "/config")
+    for root in SAFE_LOCAL_ROOTS:
+        rp = os.path.normpath(p)
+        if rp == root or rp.startswith(root + "/"):
+            return rp
+    return "/config"
+
+@app.get("/api/local/listdir")
+def api_local_listdir():
+    p = request.args.get("path") or "/config"
+    p = _safe_local_path(p)
+    out = []
+    try:
+        with os.scandir(p) as it:
+            for e in it:
+                out.append({"name": e.name, "dir": e.is_dir(), "size": (e.stat().st_size if e.is_file() else 0)})
+        out.sort(key=lambda x: (not x["dir"], x["name"].lower()))
+        return jsonify({"ok": True, "path": p, "items": out})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/smb/shares")
+def api_smb_shares():
+    data = request.json or {}
+    host = data.get("host")
+    user = data.get("username") or ""
+    password = data.get("password") or ""
+    if not host:
+        return jsonify({"ok": False, "error": "Missing host"}), 400
+    if user:
+        cmd = ["bash","-lc", f"smbclient -L //{shlex.quote(host)} -U {shlex.quote(user)}%{shlex.quote(password)} -g 2>/dev/null || true"]
+    else:
+        cmd = ["bash","-lc", f"smbclient -L //{shlex.quote(host)} -N -g 2>/dev/null || true"]
+    code,out,err = run_cmd(cmd)
+    shares = []
+    for line in out.splitlines():
+        # Example: 'Disk|SHARENAME|....'
+        if line.startswith("Disk|"):
+            parts = line.split("|")
+            if len(parts) >= 2:
+                shares.append(parts[1])
+    return jsonify({"ok": True, "host": host, "shares": sorted(set(shares))})
+
+
+@app.post("/api/nfs/exports")
+def api_nfs_exports():
+    data = request.json or {}
+    host = data.get("host")
+    if not host:
+        return jsonify({"ok": False, "error": "Missing host"}), 400
+    cmd = ["bash","-lc", f"showmount -e {shlex.quote(host)} 2>/dev/null || true"]
+    code,out,err = run_cmd(cmd)
+    exports = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Export list") or line.startswith("Exports list"):
+            continue
+        parts = line.split()
+        if parts:
+            exports.append(parts[0])
+    return jsonify({"ok": True, "host": host, "exports": exports})
+
+
+
+
+# ---------- Notifications (Gotify) ----------
+NOTIFY_FILE = os.path.join(STATE_DIR, "notify.json")
+
+def load_notify():
+    return load_json(NOTIFY_FILE, {"enabled": False, "url": "", "token": "", "priority": 5})
+
+def save_notify(cfg):
+    save_json(NOTIFY_FILE, cfg)
+
+def send_gotify(title, message, priority=5):
+    cfg = load_notify()
+    if not cfg.get("enabled"):
+        return False, "disabled"
+    url = cfg.get("url") or ""
+    token = cfg.get("token") or ""
+    if not url or not token:
+        return False, "missing url/token"
+    data = json.dumps({"title": title, "message": message, "priority": int(cfg.get("priority") or priority)})
+    # Use curl to avoid adding external deps
+    code, out, err = run_cmd(["bash","-lc", f"curl -sS -X POST {shlex.quote(url)}/message -H 'X-Gotify-Key: {shlex.quote(token)}' -H 'Content-Type: application/json' -d {shlex.quote(data)}"])
+    return code == 0, err if code != 0 else "ok"
+
+@app.get("/api/notify/config")
+def api_notify_get():
+    return jsonify(load_notify())
+
+@app.post("/api/notify/config")
+def api_notify_set():
+    data = request.json or {}
+    cfg = {"enabled": bool(data.get("enabled")), "url": data.get("url") or "", "token": data.get("token") or "", "priority": int(data.get("priority") or 5)}
+    save_notify(cfg); return jsonify({"ok": True, "config": cfg})
+
+@app.post("/api/notify/test")
+def api_notify_test():
+    ok, info = send_gotify("RLB test", "This is a test notification from Remote Linux Backup.")
+    return jsonify({"ok": bool(ok), "info": info})
+
+
+@app.get("/api/estimate/local_size")
+def api_estimate_local():
+    root = request.args.get("path") or "/config"
+    root = os.path.normpath(root)
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        for f in filenames:
+            try:
+                total += os.stat(os.path.join(dirpath, f)).st_size
+            except FileNotFoundError:
+                pass
+    return jsonify({"ok": True, "bytes": total})
+
+
+@app.post("/api/ssh/test")
+def api_ssh_test():
+    data = request.json or {}
+    host = data.get("host"); port = int(data.get("port") or 22)
+    user = data.get("username"); password = data.get("password")
+    try:
+        ssh = ssh_connect(host, port, user, password)
+        ssh.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ---------- Simple Scheduler ----------
+SCHEDULES_FILE = os.path.join(STATE_DIR, "schedules.json")
+
+def load_schedules():
+    return load_json(SCHEDULES_FILE, {"schedules": []})
+
+def save_schedules(d):
+    save_json(SCHEDULES_FILE, d)
+
+def _parse_time(t):
+    try:
+        hh, mm = t.split(":")
+        return int(hh), int(mm)
+    except Exception:
+        return 0, 0
+
+def _next_run_for(entry, now=None):
+    now = now or datetime.datetime.now()
+    hh, mm = _parse_time(entry.get("time") or "00:00")
+    freq = entry.get("freq")
+    if freq == "daily":
+        run = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if run < now: run += datetime.timedelta(days=1)
+        return run
+    if freq == "weekly":
+        dow = int(entry.get("dow") or 0)  # 0=Mon (python), but user expects 0=Sun; map
+        # map user 0-6 (Sun-Sat) to python 0-6 (Mon-Sun)
+        py_dow = (dow + 6) % 7
+        days_ahead = (py_dow - now.weekday()) % 7
+        run = now.replace(hour=hh, minute=mm, second=0, microsecond=0) + datetime.timedelta(days=days_ahead)
+        if run < now: run += datetime.timedelta(days=7)
+        return run
+    if freq == "monthly":
+        dom = max(1, min(28, int(entry.get("dom") or 1)))  # clamp 1..28 safe
+        month = now.month; year = now.year
+        try:
+            run = now.replace(day=dom, hour=hh, minute=mm, second=0, microsecond=0)
+            if run < now:
+                if month == 12:
+                    year += 1; month = 1
+                else:
+                    month += 1
+                run = run.replace(year=year, month=month, day=dom)
+        except Exception:
+            run = now + datetime.timedelta(days=1)
+        return run
+    return now + datetime.timedelta(days=365)
+
+LAST_RAN = set()
+
+def scheduler_loop():
+    while True:
+        try:
+            data = load_schedules()
+            now = datetime.datetime.now()
+            for e in data.get("schedules", []):
+                if not e.get("enabled", True): continue
+                nr = _next_run_for(e, now)
+                # Trigger when inside the minute window
+                key = f"{e.get('id')}::{nr.strftime('%Y%m%d%H%M')}"
+                if nr <= now and key not in LAST_RAN:
+                    # Build job from template
+                    tpl = e.get("template") or {}
+                    try:
+                        mode = tpl.get("mode")
+                        label = tpl.get("label") or e.get("name") or "scheduled"
+                        body = {"mode": mode, "label": label, "bwlimit_kbps": int(tpl.get("bwlimit_kbps") or 0)}
+                        # source
+                        if mode in ("rsync","image"):
+                            body.update({"host": tpl.get("host"), "port": int(tpl.get("port") or 22), "username": tpl.get("username"), "password": tpl.get("password")})
+                        if mode == "rsync":
+                            body["source_path"] = tpl.get("source_path") or "/"
+                        if mode == "image":
+                            body["device"] = tpl.get("device") or "/dev/sda"
+                            body["encrypt"] = bool(tpl.get("encrypt")); body["passphrase"] = tpl.get("passphrase") or ""
+                        if mode == "copy_local":
+                            body["source_path"] = tpl.get("source_path") or "/config"
+                        if mode == "copy_mount":
+                            body["mount_name"] = tpl.get("mount_name"); body["source_path"] = tpl.get("source_path") or "/"
+                        # destination
+                        if tpl.get("dest_type") == "mount":
+                            body["dest_type"] = "mount"; body["dest_mount_name"] = tpl.get("dest_mount_name"); body["dest_subdir"] = tpl.get("dest_subdir") or ""
+                        else:
+                            body["dest_type"] = "local"
+                        enqueue_job("scheduled", {"body": body})  # the dispatcher will handle by body.mode
+                        LAST_RAN.add(key)
+                        # cap LAST_RAN size
+                        if len(LAST_RAN) > 2000:
+                            LAST_RAN.clear()
+                    except Exception as ex:
+                        log_event("ERROR", f"schedule trigger failed: {ex}")
+            time.sleep(15)
+        except Exception as e:
+            log_event("ERROR", f"scheduler error: {e}")
+            time.sleep(15)
+
+threading.Thread(target=scheduler_loop, daemon=True).start()
+
+@app.get("/api/schedules")
+def api_schedules_get():
+    d = load_schedules()
+    # add next_run field
+    now = datetime.datetime.now()
+    for e in d.get("schedules", []):
+        try:
+            e["next_run"] = int(_next_run_for(e, now).timestamp())
+        except Exception:
+            e["next_run"] = None
+    return jsonify(d)
+
+@app.post("/api/schedules")
+def api_schedules_set():
+    e = request.json or {}
+    d = load_schedules()
+    if not e.get("id"):
+        e["id"] = f"sched_{int(time.time()*1000)}"
+    # replace or add
+    d["schedules"] = [x for x in d.get("schedules", []) if x.get("id") != e["id"]]
+    d["schedules"].append(e)
+    save_schedules(d)
+    return jsonify({"ok": True, "entry": e})
+
+@app.post("/api/schedules/delete")
+def api_schedules_del():
+    data = request.json or {}
+    sid = data.get("id")
+    d = load_schedules()
+    d["schedules"] = [x for x in d.get("schedules", []) if x.get("id") != sid]
+    save_schedules(d)
+    return jsonify({"ok": True})
+
+@app.post("/api/schedules/run_now")
+def api_schedules_run():
+    data = request.json or {}
+    sid = data.get("id")
+    d = load_schedules()
+    e = next((x for x in d.get("schedules", []) if x.get("id") == sid), None)
+    if not e:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    tpl = e.get("template") or {}
+    mode = tpl.get("mode") or "rsync"
+    body = {"mode": mode, "label": tpl.get("label") or e.get("name") or "scheduled", "bwlimit_kbps": int(tpl.get("bwlimit_kbps") or 0)}
+    if mode in ("rsync","image"):
+        body.update({"host": tpl.get("host"), "port": int(tpl.get("port") or 22), "username": tpl.get("username"), "password": tpl.get("password")})
+    if mode == "rsync":
+        body["source_path"] = tpl.get("source_path") or "/"
+    if mode == "image":
+        body["device"] = tpl.get("device") or "/dev/sda"
+        body["encrypt"] = bool(tpl.get("encrypt")); body["passphrase"] = tpl.get("passphrase") or ""
+    if mode == "copy_local":
+        body["source_path"] = tpl.get("source_path") or "/config"
+    if mode == "copy_mount":
+        body["mount_name"] = tpl.get("mount_name"); body["source_path"] = tpl.get("source_path") or "/"
+    if tpl.get("dest_type") == "mount":
+        body["dest_type"] = "mount"; body["dest_mount_name"] = tpl.get("dest_mount_name"); body["dest_subdir"] = tpl.get("dest_subdir") or ""
+    else:
+        body["dest_type"] = "local"
+    jid = register_job("scheduled", {"body": body})
+    enqueue_job("scheduled", {"body": body})
+    return jsonify({"ok": True, "job_id": jid})
+
+
