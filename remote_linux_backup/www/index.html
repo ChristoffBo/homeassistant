@@ -1,55 +1,41 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Remote Linux Backup</title>
 <link rel="stylesheet" href="style.css">
-</head>
-<body>
+</head><body>
 <nav class="tabs">
   <button class="tab active" data-tab="backup">Backup</button>
   <button class="tab" data-tab="backups">Backups</button>
   <button class="tab" data-tab="mounts">Mounts</button>
-  <button class="tab" data-tab="health">Health</button>
+  <button class="tab" data-tab="schedule">Schedule</button>
+  <button class="tab" data-tab="alerts">Alerts</button>
   <button class="tab" data-tab="help">Help</button>
 </nav>
 
 <section id="backup" class="tabpane active">
   <h2>Backup Wizard</h2>
-  <div class="grid two">
+  <div class="two-col">
     <div>
+      <h3>Backup from (Source)</h3>
       <label>Source type</label>
       <select id="b_source_type">
         <option value="ssh">SSH (remote)</option>
         <option value="local">Local (this HA)</option>
         <option value="mount">Mount (SMB/NFS)</option>
       </select>
-    </div>
-    <div>
-      <label>Profile (sets safe defaults)</label>
-      <select id="b_profile">
-        <option>Generic Linux</option><option>Proxmox</option><option>OPNsense</option><option>Unraid</option>
-      </select>
-    </div>
-    <div class="ssh-only"><label>Host/IP</label><input id="b_host" placeholder="e.g. 10.0.0.21"></div>
-    <div class="ssh-only"><label>User</label><input id="b_user" value="root"></div>
-    <div class="ssh-only"><label>Password</label><input id="b_pass" type="password"></div>
-    <div><label>Mode</label>
+      <div class="ssh-only"><label>Host/IP</label><input id="b_host" placeholder="e.g. 10.0.0.21"></div>
+      <div class="ssh-only"><label>User</label><input id="b_user" value="root"></div>
+      <div class="ssh-only"><label>Password</label><input id="b_pass" type="password"></div>
+      <label>Mode</label>
       <select id="b_mode">
         <option value="rsync">Rsync (SSH) — files</option>
         <option value="copy_local">Copy (local) — files</option>
         <option value="copy_mount">Copy (mount) — files</option>
         <option value="image">Disk image (dd)</option>
       </select>
-    </div>
-    <div><label>Label</label><input id="b_label" placeholder="e.g. after-upgrade"></div>
-  </div>
-
-  <h3 class="mt">From → To</h3>
-  <div class="grid two">
-    <div>
-      <label>Source path / device</label>
-      <input id="b_src" value="/">
+      <label>Label</label><input id="b_label" placeholder="e.g. after-upgrade">
+      <label>Source path / device</label><input id="b_src" value="/">
       <div class="row">
         <button id="bw_browse_ssh" class="ssh-only">Browse (SSH)</button>
         <button id="bw_pick_local">Pick local</button>
@@ -58,18 +44,20 @@
       </div>
     </div>
     <div>
-      <label>Destination</label>
+      <h3>Backup to (Destination)</h3>
+      <label>Destination type</label>
       <div class="row">
         <select id="b_dest_type"><option value="local">Local (this HA)</option><option value="mount">Mounted share</option></select>
-        <input id="b_dest_mount" placeholder="mount name (when using mounted share)">
+        <input id="b_dest_mount" placeholder="mount name (for mounted share)">
       </div>
-      <label class="mt-6">Destination folder (base)</label>
-      <input id="b_dest_path" value="/config/remote_linux_backup/backups">
+      <label>Destination folder (base)</label><input id="b_dest_path" value="/config/remote_linux_backup/backups">
       <div class="row">
         <button id="bw_pick_dest_local">Pick local</button>
         <button id="bw_pick_dest_mount">Pick from mount</button>
         <button id="bw_mkdir_dest" class="secondary">Create folder…</button>
       </div>
+      <label>Profile (sets safe defaults)</label>
+      <select id="b_profile"><option>Generic Linux</option><option>Proxmox</option><option>OPNsense</option><option>Unraid</option></select>
       <div class="row mt">
         <label>Bandwidth (KB/s)</label><input id="b_bw" type="number" min="0" value="0">
         <label>Dry run</label><select id="b_dry"><option value="0">No</option><option value="1">Yes</option></select>
@@ -77,12 +65,11 @@
       </div>
     </div>
   </div>
-
   <div class="row mt">
-    <button id="bw_start" class="primary">Start</button>
+    <button id="bw_start" class="primary grow">Start</button>
     <button id="bw_cancel" class="danger">Cancel Job</button>
-    <div class="grow"><div id="bw_progress" class="progress"><div></div></div></div>
   </div>
+  <div class="progress mt" id="bw_progress"><div></div></div>
   <pre class="log" id="log_backup"></pre>
 </section>
 
@@ -116,38 +103,75 @@
   <pre class="log" id="log_mounts"></pre>
 </section>
 
-<section id="health" class="tabpane">
-  <h2>Health</h2>
-  <pre id="health_json"></pre>
-  <pre class="log" id="log_health"></pre>
+<section id="schedule" class="tabpane">
+  <h2>Schedule</h2>
+  <div class="grid three">
+    <div>
+      <label>Rule</label>
+      <select id="sch_type"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+      <label>Time (HH:MM)</label><input id="sch_time" value="03:00">
+      <label class="small">Weekly: days (0=Mon, comma separated). Monthly: days-of-month.</label>
+      <input id="sch_days" placeholder="e.g. 0,2,4 or 1,15,28">
+    </div>
+    <div>
+      <label>Template from current Backup Wizard</label>
+      <button id="sch_use_from_wizard" class="secondary">Use wizard values</button>
+      <pre id="sch_tpl_preview" class="mini"></pre>
+    </div>
+    <div class="mt">
+      <button id="sch_save" class="primary">Save schedule</button>
+    </div>
+  </div>
+  <h3 class="mt">Schedules</h3>
+  <table id="sch_table"><thead><tr><th>ID</th><th>Enabled</th><th>Next run</th><th>Rule</th><th>Actions</th></tr></thead><tbody></tbody></table>
+  <pre class="log" id="log_schedule"></pre>
+</section>
+
+<section id="alerts" class="tabpane">
+  <h2>Alerts (Gotify)</h2>
+  <div class="grid three">
+    <div><label>Enabled</label><select id="n_enabled"><option value="1">Yes</option><option value="0">No</option></select></div>
+    <div><label>Gotify URL</label><input id="n_url" placeholder="https://gotify.your.domain"></div>
+    <div><label>Token</label><input id="n_token"></div>
+    <div><label>Include in message</label>
+      <div class="row">
+        <label><input type="checkbox" id="n_inc_date" checked> date/time</label>
+        <label><input type="checkbox" id="n_inc_name" checked> job name</label>
+        <label><input type="checkbox" id="n_inc_size" checked> size</label>
+        <label><input type="checkbox" id="n_inc_dur" checked> duration</label>
+      </div>
+    </div>
+    <div><label>When</label>
+      <div class="row">
+        <label><input type="checkbox" id="n_on_ok" checked> success</label>
+        <label><input type="checkbox" id="n_on_fail" checked> failure</label>
+      </div>
+    </div>
+  </div>
+  <div class="row mt">
+    <button id="n_save" class="primary">Save</button>
+    <button id="n_test" class="secondary">Send test</button>
+  </div>
+  <pre class="log" id="log_alerts"></pre>
 </section>
 
 <section id="help" class="tabpane">
   <h2>Help</h2>
-  <div class="help">
-    <h3>Quick start</h3>
+  <div class="helptext">
+    <h3>How backups work</h3>
     <ol>
-      <li><b>Mounts</b>: Add a mount, <i>Pick share/export</i>, then choose a folder with <i>Browse mounted…</i>.</li>
-      <li><b>Backup</b>: Pick the source folder with <i>Browse (SSH)</i>, <i>Pick local</i>, or <i>Pick from mount</i>.</li>
-      <li>Pick the destination folder (local or mounted share). You can <i>Create folder…</i>.</li>
-      <li>Click <b>Start</b>. Progress and logs show at the bottom.</li>
-      <li><b>Backups</b> tab: each backup has <i>Restore (original)</i>, <i>Restore to…</i>, and <i>Download (.tar.gz)</i>.</li>
+      <li><b>Mounts</b>: Define your SMB/NFS destinations (Pick share/export, then folder).</li>
+      <li><b>Backup</b>: Choose <i>Backup from</i> (source) and <i>Backup to</i> (destination) using the pickers.</li>
+      <li><b>Backups</b>: Each job stores a MANIFEST so <i>Restore (original)</i> can auto-mount and restore to the original path.</li>
     </ol>
-    <h3>Disaster recovery (dd image)</h3>
-    <p>If you created a <i>Disk image (dd)</i>, your backup contains <code>disk.img.gz</code> and <code>MANIFEST.json</code>.</p>
-    <p>To restore from a PC or a USB boot:</p>
-<pre>
-gunzip -c disk.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
-</pre>
-    <p>Replace <code>/dev/sdX</code> with your target disk. For network transfer to a live server:</p>
-<pre>
-ssh user@host "gunzip -c - &gt; /dev/sdX" &lt; disk.img.gz
-</pre>
-    <p>For rsync/copy backups, contents are plain files. You can restore with:</p>
-<pre>
-rsync -aAXH /path/to/backup/ /target/path/
-</pre>
+    <h3>Disaster recovery (without this UI)</h3>
+    <p><b>Files/folders (rsync):</b> On a machine with SSH, run:<br>
+    <code>rsync -aAXH --numeric-ids user@host:/path/ /target/</code></p>
+    <p><b>Disk image (dd):</b> Write image back to a disk:<br>
+    <code>gunzip -c disk.img.gz | dd of=/dev/sdX bs=4M status=progress</code><br>
+    Replace <code>/dev/sdX</code> with the target drive. Prefer imaging a snapshot or maintenance mode for consistency.</p>
   </div>
+  <pre class="log" id="log_help"></pre>
 </section>
 
 <div id="picker_modal" class="modal hidden">
@@ -160,5 +184,4 @@ rsync -aAXH /path/to/backup/ /target/path/
 </div>
 
 <script src="app.js"></script>
-</body>
-</html>
+</body></html>
