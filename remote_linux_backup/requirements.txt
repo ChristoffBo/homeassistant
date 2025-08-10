@@ -1,0 +1,7 @@
+Flask==3.0.3
+Flask-SocketIO==5.3.6
+eventlet==0.35.2
+paramiko==3.4.0
+APScheduler==3.10.4
+humanize==4.9.0
+psutil==6.0.0
