@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
-    openssh-client sshpass rsync pv jq curl tzdata \
+    openssh-client sshpass rsync pv jq curl tzdata smbclient cifs-utils nfs-common \
     gzip ca-certificates iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
