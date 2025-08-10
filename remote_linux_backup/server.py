@@ -42,6 +42,13 @@ def load_json(path, default):
         return default
 
 def save_json(path, data):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception:
+        return False
 
 def is_path_mounted(path):
     try:
