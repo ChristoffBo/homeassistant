@@ -1,60 +1,148 @@
 #!/usr/bin/env python3
-import os, re, json, shlex, subprocess, threading, time, argparse
+import os, re, json, shlex, subprocess, threading, time, argparse, hashlib, socket, datetime
 from flask import Flask, request, jsonify, send_file, send_from_directory
+from werkzeug.utils import secure_filename
+
+# Optional robust SFTP browsing via Paramiko
+try:
+    import paramiko
+except Exception:
+    paramiko = None
 
 app = Flask(__name__, static_folder="www", static_url_path="")
 
 DATA_DIR = "/config/remote_linux_backup"
 STATE_DIR = os.path.join(DATA_DIR, "state")
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 MOUNTS_BASE = "/mnt/rlb"
 
-for d in (DATA_DIR, STATE_DIR, BACKUP_DIR, MOUNTS_BASE):
+for d in (DATA_DIR, STATE_DIR, BACKUP_DIR, UPLOAD_DIR, MOUNTS_BASE):
     os.makedirs(d, exist_ok=True)
 
-STATE = {
-    "connections_file": os.path.join(STATE_DIR, "connections.json"),
-    "mounts_file": os.path.join(STATE_DIR, "mounts.json"),
-    "notify_file": os.path.join(STATE_DIR, "notify.json"),
-    "schedules_file": os.path.join(STATE_DIR, "schedules.json"),
+PATHS = {
+    "connections": os.path.join(STATE_DIR, "connections.json"),
+    "mounts": os.path.join(STATE_DIR, "mounts.json"),
+    "notify": os.path.join(STATE_DIR, "notify.json"),
+    "schedules": os.path.join(STATE_DIR, "schedules.json"),
+    "settings": os.path.join(STATE_DIR, "settings.json"),
+    "history": os.path.join(STATE_DIR, "history.json"),
 }
-for k,v in STATE.items():
-    if not os.path.exists(v):
-        with open(v, "w") as f: f.write(json.dumps([] if "connections" in k or "mounts" in k or "schedules" in k else {}))
 
-JOBS = {"current": None, "history": []}
-job_lock = threading.Lock()
+# Initialize files
+def _init_file(path, default):
+    if not os.path.exists(path):
+        with open(path, "w") as f:
+            json.dump(default, f)
+for k,p in PATHS.items():
+    _init_file(p, [] if k in ("connections","mounts","schedules","history") else {})
 
 def read_json(path, default):
     try:
         with open(path, "r") as f: return json.load(f)
-    except Exception: return default
+    except Exception:
+        return default
 
 def write_json(path, data):
     tmp = path + ".tmp"
     with open(tmp, "w") as f: json.dump(data, f, indent=2)
     os.replace(tmp, path)
 
+def mountpoint(name): return os.path.join(MOUNTS_BASE, name)
+
 def run_cmd(cmd):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
     out, err = p.communicate()
     return p.returncode, out, err
 
-def mountpoint(name): return os.path.join(MOUNTS_BASE, name)
+# ---------------------- Job system (queue + worker) ----------------------
+class JobWorker(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.queue = []
+        self.cur = None
+        self.lock = threading.Lock()
+        self.cv = threading.Condition(self.lock)
 
-# ---------- Static UI ----------
-@app.get("/")
-def ui_root(): return send_from_directory("www", "index.html")
+    def submit(self, spec):
+        with self.lock:
+            self.queue.append(spec)
+            self.cv.notify_all()
+        return {"ok": True, "queued": True}
 
-# ---------- Connections ----------
+    def cancel(self):
+        # Best-effort: kill common processes
+        run_cmd("pkill -f 'rsync|ssh .* dd|smbclient|pv' || true")
+        return {"ok": True}
+
+    def run(self):
+        while True:
+            with self.lock:
+                while not self.queue:
+                    self.cv.wait()
+                job = self.queue.pop(0)
+                self.cur = job
+                job["status"] = "running"
+                job["progress"] = 0
+                job["log"] = []
+            try:
+                self._execute(job)
+            except Exception as e:
+                job["status"] = "error"
+                job.setdefault("log", []).append(str(e))
+            finally:
+                hist = read_json(PATHS["history"], [])
+                hist.append({k: job.get(k) for k in ("id","kind","label","status","started","ended","dest","mode")})
+                write_json(PATHS["history"], hist)
+                with self.lock:
+                    self.cur = None
+
+    def _execute(self, job):
+        job["started"] = int(time.time())
+        cmd = job["cmd"]
+        mode = job.get("mode","")
+
+        # Stream output and try to parse progress
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=True, bufsize=1, executable="/bin/bash")
+        for line in p.stdout:
+            line=line.rstrip()
+            job["log"].append(line)
+            # Parse percent numbers (rsync --info=progress2, pv -n writes numbers -> we echo percent in wrapper)
+            m = re.search(r"(\d+)%", line)
+            if m:
+                try: job["progress"] = min(100, max(0, int(m.group(1))))
+                except: pass
+        rc = p.wait()
+        job["ended"] = int(time.time())
+        job["status"] = "success" if rc==0 else "error"
+        if job["status"]=="success":
+            job["progress"] = 100
+            notify_job_done(job, success=True)
+        else:
+            notify_job_done(job, success=False)
+
+worker = JobWorker()
+worker.start()
+
+@app.get("/api/jobs")
+def api_jobs():
+    with worker.lock:
+        cur = worker.cur
+    return jsonify([cur] if cur else [])
+
+@app.post("/api/jobs/cancel")
+def api_jobs_cancel():
+    return jsonify(worker.cancel())
+
+# ---------------------- Connections ----------------------
 @app.get("/api/connections")
 def api_connections():
-    return jsonify({"connections": read_json(STATE["connections_file"], [])})
+    return jsonify({"connections": read_json(PATHS["connections"], [])})
 
 @app.post("/api/connections/save")
 def api_connections_save():
     b = request.json or {}
-    data = read_json(STATE["connections_file"], [])
+    data = read_json(PATHS["connections"], [])
     data = [x for x in data if x.get("name") != b.get("name")]
     data.append({
         "name": b.get("name","").strip(),
@@ -63,7 +151,7 @@ def api_connections_save():
         "username": b.get("username","").strip(),
         "password": b.get("password",""),
     })
-    write_json(STATE["connections_file"], data)
+    write_json(PATHS["connections"], data)
     return jsonify({"ok": True})
 
 @app.post("/api/ssh/test")
@@ -71,7 +159,9 @@ def api_ssh_test():
     b = request.json or {}
     host = b.get("host",""); port = int(b.get("port") or 22)
     user = b.get("username",""); pw = b.get("password","")
-    cmd = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 -p {port} {shlex.quote(user)}@{shlex.quote(host)} echo OK"
+    # Keepalive options to reduce disconnects
+    keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6"
+    cmd = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 {keep} -p {port} {shlex.quote(user)}@{shlex.quote(host)} echo OK"
     rc,out,err = run_cmd(cmd)
     return jsonify({"ok": rc==0 and 'OK' in out, "out": out, "err": err})
 
@@ -80,6 +170,17 @@ def api_ssh_listdir():
     b = request.json or {}
     host=b.get("host"); port=int(b.get("port") or 22)
     user=b.get("username"); pw=b.get("password"); path=b.get("path") or "/"
+    if paramiko:
+        try:
+            t = paramiko.Transport((host, port)); t.connect(username=user, password=pw)
+            sftp = paramiko.SFTPClient.from_transport(t)
+            items = []
+            for e in sftp.listdir_attr(path):
+                items.append({"name": e.filename, "dir": bool(e.st_mode & 0o040000), "size": e.st_size})
+            sftp.close(); t.close()
+            return jsonify({"ok": True, "items": items})
+        except Exception as e:
+            pass  # fall back to ssh+ls
     remote = f"ls -1p {shlex.quote(path)} || true"
     cmd = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -p {port} {shlex.quote(user)}@{shlex.quote(host)} {remote}"
     rc,out,err = run_cmd(cmd)
@@ -100,15 +201,15 @@ def api_local_listdir():
     try:
         items=[]
         for e in os.scandir(path):
-            items.append({"name": e.name, "dir": e.is_dir()})
+            items.append({"name": e.name, "dir": e.is_dir(), "size": (e.stat().st_size if not e.is_dir() else 0)})
         return jsonify({"ok": True, "items": items})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
-# ---------- Mounts ----------
+# ---------------------- Mounts (SMB/NFS) ----------------------
 @app.get("/api/mounts")
 def api_mounts():
-    data = read_json(STATE["mounts_file"], [])
+    data = read_json(PATHS["mounts"], [])
     for m in data:
         mp = mountpoint(m.get("name",""))
         m["mountpoint"] = mp
@@ -121,7 +222,7 @@ def api_mounts_save():
     b = request.json or {}
     name=b.get("name","").strip()
     if not name: return jsonify({"ok": False, "error": "name required"}), 400
-    data = read_json(STATE["mounts_file"], [])
+    data = read_json(PATHS["mounts"], [])
     data = [x for x in data if x.get("name")!=name]
     item = {
         "name": name,
@@ -135,14 +236,14 @@ def api_mounts_save():
         "last_error": ""
     }
     data.append(item)
-    write_json(STATE["mounts_file"], data)
+    write_json(PATHS["mounts"], data)
     os.makedirs(mountpoint(name), exist_ok=True)
     return jsonify({"ok": True})
 
 @app.post("/api/mounts/mount")
 def api_mounts_mount():
     name=(request.json or {}).get("name","")
-    data = read_json(STATE["mounts_file"], [])
+    data = read_json(PATHS["mounts"], [])
     m = next((x for x in data if x.get("name")==name), None)
     if not m: return jsonify({"ok": False, "error":"not found"}), 404
     mp = mountpoint(name); os.makedirs(mp, exist_ok=True)
@@ -159,15 +260,14 @@ def api_mounts_mount():
     rc,out,err = run_cmd(cmd + " 2>&1 || true")
     ok = os.path.ismount(mp)
     if not ok:
-        # userspace fallback for SMB: copy without mounting
         if m["type"]=="smb":
-            m["last_error"]= "kernel mount failed; will use userspace copy when selected"
-            write_json(STATE["mounts_file"], data)
-            return jsonify({"ok": False, "error": "kernel mount failed; userspace copy will be used"})
+            m["last_error"]= "kernel mount failed; will use userspace smbclient fallback"
+            write_json(PATHS["mounts"], data)
+            return jsonify({"ok": False, "error": "kernel mount failed; userspace smbclient fallback will be used"})
         m["last_error"]= out or err
-        write_json(STATE["mounts_file"], data)
+        write_json(PATHS["mounts"], data)
         return jsonify({"ok": False, "error": out or err})
-    m["last_error"]=""; write_json(STATE["mounts_file"], data)
+    m["last_error"]=""; write_json(PATHS["mounts"], data)
     return jsonify({"ok": True})
 
 @app.post("/api/mounts/unmount")
@@ -190,38 +290,24 @@ def api_mounts_test():
         exports = [line.split()[0] for line in out.splitlines() if line.strip().startswith('/')]
         return jsonify({"ok": len(exports)>0, "exports": exports, "raw": out})
 
-# ---------- SMB userspace list + copy ----------
+# SMB listdir/copy fallback
 @app.post("/api/smb/listdir")
 def api_smb_listdir():
     b=request.json or {}
     host=b.get("host"); share=b.get("share"); user=b.get("username",""); pw=b.get("password",""); path=b.get("path","/")
     auth = f"-U {shlex.quote(user+'%'+pw)}" if user else "-N"
-    # smbclient 'ls' shows directories ending with /
     cmd = f"smbclient //{shlex.quote(host)}/{shlex.quote(share)} {auth} -c 'cd {shlex.quote(path)}; ls' 2>&1 || true"
     rc,out,err = run_cmd(cmd)
     items=[]
     for line in out.splitlines():
-        line=line.strip()
-        if not line or line.startswith('  .') or line.startswith('  ..'): continue
-        parts = line.split()
-        name = parts[0]
+        s=line.strip()
+        if not s or s.startswith('  .'): continue
+        name = s.split()[0]
         is_dir = name.endswith('/')
         items.append({"name": name.rstrip('/'), "dir": is_dir})
     return jsonify({"ok": True, "items": items, "raw": out})
 
-@app.post("/api/smb/copy")
-def api_smb_copy():
-    b=request.json or {}
-    host=b.get("host"); share=b.get("share"); user=b.get("username",""); pw=b.get("password","")
-    src=b.get("source_path","/"); label=b.get("label","smbcopy")
-    dest_root = os.path.join(BACKUP_DIR, f"{label}-{int(time.time())}")
-    os.makedirs(dest_root, exist_ok=True)
-    auth = f"-U {shlex.quote(user+'%'+pw)}" if user else "-N"
-    # Recursively get everything from src
-    cmd = f"smbclient //{shlex.quote(host)}/{shlex.quote(share)} {auth} -c 'prompt OFF; recurse ON; cd {shlex.quote(src)}; mget *' -D {shlex.quote(dest_root)}"
-    return start_job(cmd, "rsync_like")
-
-# ---------- Backups management ----------
+# ---------------------- Backups & upload ----------------------
 @app.get("/api/backups")
 def api_backups():
     items=[]
@@ -233,6 +319,12 @@ def api_backups():
             items.append({"id": os.path.relpath(p, BACKUP_DIR), "label": f, "size": sz, "location": os.path.relpath(root, BACKUP_DIR)})
     return jsonify({"items": sorted(items, key=lambda x: x['label'], reverse=True)})
 
+@app.get("/api/backups/download")
+def api_backups_download():
+    bid=request.args.get("id",""); p=os.path.normpath(os.path.join(BACKUP_DIR,bid))
+    if not p.startswith(BACKUP_DIR) or not os.path.exists(p): return ("not found",404)
+    return send_file(p, as_attachment=True)
+
 @app.post("/api/backups/delete")
 def api_backups_delete():
     bid=(request.json or {}).get("id","")
@@ -241,48 +333,54 @@ def api_backups_delete():
     try: os.remove(p); return jsonify({"ok": True})
     except Exception as e: return jsonify({"ok": False, "error": str(e)})
 
-@app.get("/api/backups/download")
-def api_backups_download():
-    bid=request.args.get("id",""); p=os.path.normpath(os.path.join(BACKUP_DIR,bid))
-    if not p.startswith(BACKUP_DIR) or not os.path.exists(p): return ("not found",404)
-    return send_file(p, as_attachment=True)
+@app.post("/api/upload")
+def api_upload():
+    f = request.files.get("file")
+    if not f: return jsonify({"ok": False, "error":"no file"}), 400
+    name = secure_filename(f.filename)
+    dest = os.path.join(UPLOAD_DIR, name)
+    f.save(dest)
+    return jsonify({"ok": True, "path": dest})
 
-# ---------- Jobs ----------
-def start_job(cmd, kind, size_hint=0):
-    with job_lock:
-        if JOBS["current"]:
-            return jsonify({"ok": False, "error": "job already running"})
-        JOBS["current"]={"id": int(time.time()), "cmd": cmd, "kind": kind, "progress":0, "status":"running", "log":[]}
+# ---------------------- Health ----------------------
+@app.get("/api/health")
+def api_health():
+    # free space for BACKUP_DIR
+    rc,out,err = run_cmd(f"df -Pk {shlex.quote(BACKUP_DIR)} | tail -1")
+    free_mb = None
+    try:
+        parts = out.split()
+        free_k = int(parts[3]) if len(parts)>=4 else 0
+        free_mb = free_k // 1024
+    except Exception:
+        free_mb = None
+    mounts = read_json(PATHS["mounts"], [])
+    return jsonify({
+        "backup_dir": BACKUP_DIR,
+        "free_mb": free_mb,
+        "mounts": [{"name":m["name"], "mounted": os.path.ismount(mountpoint(m["name"])), "mountpoint": mountpoint(m["name"]), "last_error": m.get("last_error","")} for m in mounts]
+    })
 
-    def runner():
-        job=JOBS["current"]
-        try:
-            p=subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=True, bufsize=1)
-            for line in p.stdout:
-                job["log"].append(line.rstrip())
-                # Try parse percent
-                m=re.search(r"(\\d+)%", line); 
-                if m: job["progress"]=int(m.group(1))
-            rc=p.wait(); job["status"]="success" if rc==0 else "error"
-            if rc==0: job["progress"]=100
-        except Exception as e:
-            job["status"]="error"; job["log"].append(str(e))
-        finally:
-            JOBS["history"].append(job); JOBS["current"]=None
-    threading.Thread(target=runner, daemon=True).start()
-    return jsonify({"ok": True})
+# ---------------------- Backup start ----------------------
+def rsync_cmd(src, dst, bwkb=0, rsh=None, excludes=None, dry=False):
+    bw = f"--bwlimit={bwkb}" if bwkb and int(bwkb)>0 else ""
+    exc = " ".join([f"--exclude={shlex.quote(x)}" for x in (excludes or [])])
+    dr  = "--dry-run" if dry else ""
+    base = f"rsync -aAXH --numeric-ids --info=progress2 {bw} {exc} {dr}"
+    if rsh:
+        return f"RSYNC_RSH='{rsh}' {base} {src.rstrip('/')}/ {dst.rstrip('/')}/"
+    return f"{base} {src.rstrip('/')}/ {dst.rstrip('/')}/"
 
-@app.get("/api/jobs")
-def api_jobs():
-    j=JOBS["current"]
-    return jsonify([j] if j else [])
+def dd_image_cmd(host, user, pw, dev, out_file, limit_kbps=0):
+    keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6"
+    ssh = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {keep} {shlex.quote(user)}@{shlex.quote(host)}"
+    size_cmd = f"{ssh} 'blockdev --getsize64 {shlex.quote(dev)}'"
+    rc,out,err = run_cmd(size_cmd)
+    try: size=int(out.strip())
+    except: size=0
+    limit = f"| pv -n -L {int(limit_kbps)*1024}" if limit_kbps and int(limit_kbps)>0 else "| pv -n"
+    return f"{ssh} 'dd if={shlex.quote(dev)} bs=4M status=none iflag=fullblock' {limit} | gzip > {shlex.quote(out_file)}"
 
-@app.post("/api/jobs/cancel")
-def api_jobs_cancel():
-    run_cmd("pkill -f 'rsync|ssh .* dd|smbclient' || true")
-    return jsonify({"ok": True})
-
-# ---------- Backup start ----------
 @app.post("/api/backup/start")
 def api_backup_start():
     b=request.json or {}
@@ -291,78 +389,225 @@ def api_backup_start():
     dest_type=b.get("dest_type","local")
     dest_mount=b.get("dest_mount_name","")
     bwkb=int(b.get("bwlimit_kbps") or 0)
+    dry=bool(b.get("dry_run", False))
+    profile=(b.get("profile") or "").lower()
+    verify=bool(b.get("verify", False))
+
     dest_root = BACKUP_DIR if dest_type=="local" else os.path.join(mountpoint(dest_mount), "rlb_backups")
     os.makedirs(dest_root, exist_ok=True)
     out_dir=os.path.join(dest_root, f"{label}-{int(time.time())}")
     os.makedirs(out_dir, exist_ok=True)
 
+    excludes = []
+    if profile in ("opnsense","pfsense"):
+        excludes = ["/dev","/proc","/sys","/tmp","/run","/mnt","/media"]
+    elif profile in ("proxmox","pve"):
+        excludes = ["/proc","/sys","/run","/dev","/tmp","/var/lib/vz/tmp"]
+    elif profile in ("unraid","omv"):
+        excludes = ["/proc","/sys","/run","/dev","/tmp"]
+
+    keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p 22"
     if mode=="rsync":
         host=b.get("host"); user=b.get("username"); pw=b.get("password"); src=b.get("source_path","/")
-        bw = f"--bwlimit={bwkb}" if bwkb>0 else ""
-        cmd = f"RSYNC_RSH='sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -p 22' rsync -a --info=progress2 {bw} {shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(src).rstrip('/')}/ {shlex.quote(out_dir)}/"
-        return start_job(cmd, "rsync")
+        rsh = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {keep}"
+        cmd = rsync_cmd(f"{shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(src)}", out_dir, bwkb=bwkb, rsh=rsh, excludes=excludes, dry=dry)
+        job={"id": int(time.time()), "cmd": cmd, "kind": "backup", "label": label, "mode": mode, "dest": out_dir}
+        return jsonify(worker.submit(job))
     elif mode=="copy_local":
-        src=b.get("source_path","/config"); bw=f'--bwlimit={bwkb}' if bwkb>0 else ''
-        cmd=f"rsync -a --info=progress2 {bw} {shlex.quote(src).rstrip('/')}/ {shlex.quote(out_dir)}/"; return start_job(cmd,"rsync")
+        src=b.get("source_path","/config")
+        cmd = rsync_cmd(shlex.quote(src), out_dir, bwkb=bwkb, excludes=excludes, dry=dry)
+        job={"id": int(time.time()), "cmd": cmd, "kind": "backup", "label": label, "mode": mode, "dest": out_dir}
+        return jsonify(worker.submit(job))
     elif mode=="copy_mount":
-        # If kernel mount exists, copy from mountpoint; else fallback via smbclient copy endpoint
         name=b.get("mount_name"); src=b.get("source_path","/")
         mp=mountpoint(name)
         if os.path.ismount(mp):
-            cmd=f"rsync -a --info=progress2 {shlex.quote(os.path.join(mp, src.lstrip('/'))).rstrip('/')}/ {shlex.quote(out_dir)}/"
-            return start_job(cmd,"rsync")
-        else:
-            # userspace smbclient fallback
-            mounts=read_json(STATE['mounts_file'],[])
-            m=next((x for x in mounts if x.get('name')==name),None)
-            if not m or m.get('type')!='smb':
-                return jsonify({'ok': False, 'error':'Mount not available (kernel) and no SMB fallback'}), 400
-            auth = f"-U {shlex.quote((m.get('username','')+'%'+m.get('password','')))}" if m.get('username') else "-N"
-            cmd = f"smbclient //{shlex.quote(m['host'])}/{shlex.quote(m['share'])} {auth} -c 'prompt OFF; recurse ON; cd {shlex.quote(src)}; mget *' -D {shlex.quote(out_dir)}"
-            return start_job(cmd,"rsync_like")
-    else:
+            cmd = rsync_cmd(shlex.quote(os.path.join(mp, src.lstrip('/'))), out_dir, bwkb=bwkb, excludes=excludes, dry=dry)
+            job={"id": int(time.time()), "cmd": cmd, "kind": "backup", "label": label, "mode": mode, "dest": out_dir}
+            return jsonify(worker.submit(job))
+        # SMB userspace fallback if kernel mount not available
+        mounts=read_json(PATHS['mounts'],[])
+        m=next((x for x in mounts if x.get('name')==name),None)
+        if not m or m.get('type')!='smb':
+            return jsonify({'ok': False, 'error':'Mount not available and no SMB fallback'}), 400
+        auth = f"-U {shlex.quote((m.get('username','')+'%'+m.get('password','')))}" if m.get('username') else "-N"
+        # Use smbclient recurse mget; cannot apply rsync excludes here
+        cmd = f"smbclient //{shlex.quote(m['host'])}/{shlex.quote(m['share'])} {auth} -c 'prompt OFF; recurse ON; cd {shlex.quote(src)}; mget *' -D {shlex.quote(out_dir)}"
+        job={"id": int(time.time()), "cmd": cmd, "kind": "backup", "label": label, "mode": mode, "dest": out_dir}
+        return jsonify(worker.submit(job))
+    elif mode=="image":
         host=b.get("host"); user=b.get("username"); pw=b.get("password"); dev=b.get("device","/dev/sda")
-        size_cmd=f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {shlex.quote(user)}@{shlex.quote(host)} 'blockdev --getsize64 {shlex.quote(dev)}'"
-        rc,out,err = run_cmd(size_cmd)
-        try: size=int(out.strip())
-        except: size=0
         out_file=os.path.join(out_dir,"disk.img.gz")
-        cmd=f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {shlex.quote(user)}@{shlex.quote(host)} 'dd if={shlex.quote(dev)} bs=4M status=none' | pv -n -s {size} | gzip > {shlex.quote(out_file)}"
-        return start_job(cmd,"pv",size_hint=size)
+        cmd = dd_image_cmd(host,user,pw,dev,out_file,limit_kbps=bwkb)
+        job={"id": int(time.time()), "cmd": cmd, "kind": "image", "label": label, "mode": mode, "dest": out_dir}
+        return jsonify(worker.submit(job))
+    else:
+        return jsonify({"ok": False, "error": "unknown mode"}), 400
 
-# ---------- Notifications / Gotify ----------
+# ---------------------- Notifications (Gotify) ----------------------
+def notify_job_done(job, success=True):
+    cfg = read_json(PATHS["notify"], {})
+    if not cfg or not cfg.get("enabled"): return
+    if not cfg.get("url") or not cfg.get("token"): return
+    include = cfg.get("include", {})
+    title = f"RLB {'OK' if success else 'FAIL'}: {job.get('label','job')}"
+    parts = []
+    if include.get("date"): parts.append(datetime.datetime.now().isoformat(timespec='seconds'))
+    parts.append(f"mode={job.get('mode')}")
+    if include.get("size"):
+        # rough size of dest dir
+        size_bytes = 0
+        dest = job.get("dest")
+        for root,_,files in os.walk(dest or ""):
+            for f in files:
+                try: size_bytes += os.path.getsize(os.path.join(root,f))
+                except: pass
+        parts.append(f"size={size_bytes//(1024*1024)}MB")
+    if include.get("duration"):
+        started=job.get("started",time.time()); ended=job.get("ended",time.time())
+        parts.append(f"duration={int(ended-started)}s")
+    if not success and include.get("failure"):
+        parts.append("status=ERROR")
+    msg = " | ".join(parts)
+
+    url = cfg["url"].rstrip("/") + "/message"
+    pr = int(cfg.get("priority",5))
+    cmd = f"curl -fsSL -X POST {shlex.quote(url)} -H 'X-Gotify-Key: {cfg['token']}' -F title='{shlex.quote(title)}' -F priority='{pr}' -F message='{shlex.quote(msg)}'"
+    run_cmd(cmd + " 2>&1 || true")
+
 @app.get("/api/notify/config")
-def api_notify_get(): return jsonify(read_json(STATE["notify_file"], {}))
+def api_notify_get(): return jsonify(read_json(PATHS["notify"], {}))
 
 @app.post("/api/notify/config")
-def api_notify_set(): write_json(STATE["notify_file"], request.json or {}); return jsonify({"ok": True})
+def api_notify_set():
+    write_json(PATHS["notify"], request.json or {}); return jsonify({"ok": True})
 
 @app.post("/api/notify/test")
 def api_notify_test():
-    cfg=read_json(STATE["notify_file"], {})
+    cfg = read_json(PATHS["notify"], {})
     if not cfg.get("url") or not cfg.get("token"): return jsonify({"ok": False, "error":"missing url/token"})
-    msg="RLB test message"; pr=int(cfg.get("priority") or 5)
-    cmd=f"curl -fsSL -X POST {shlex.quote(cfg['url'].rstrip('/')+'/message')} -H 'X-Gotify-Key: {cfg['token']}' -F title='RLB Test' -F priority='{pr}' -F message='{msg}'"
+    url = cfg["url"].rstrip("/") + "/message"
+    pr = int(cfg.get("priority",5))
+    cmd = f"curl -fsSL -X POST {shlex.quote(url)} -H 'X-Gotify-Key: {cfg['token']}' -F title='RLB Test' -F priority='{pr}' -F message='This is a test from RLB'"
     rc,out,err = run_cmd(cmd + " 2>&1 || true")
     return jsonify({"ok": rc==0, "out": out or err})
 
-# ---------- System update (safe) ----------
+# ---------------------- System update (safe) ----------------------
 @app.post("/api/system/apt_upgrade")
 def api_system_apt_upgrade():
-    # Prechecks: DNS, dpkg/apt locks, internet
     checks=[
         "getent hosts deb.debian.org >/dev/null 2>&1 || getent hosts google.com >/dev/null 2>&1",
         "test ! -e /var/lib/dpkg/lock-frontend",
         "test ! -e /var/lib/apt/lists/lock"
     ]
     for c in checks:
-        rc,_,_ = run_cmd(c); if rc!=0: return jsonify({"ok": False, "error": f"Pre-check failed: {c}"})
+        rc,_,_ = run_cmd(c)
+        if rc!=0: return jsonify({"ok": False, "error": f"Pre-check failed: {c}"})
     cmds="export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get -y --with-new-pkgs upgrade"
     rc,out,err = run_cmd(cmds + " 2>&1 || true")
     ok=("E:" not in out and "Failed to fetch" not in out)
     return jsonify({"ok": ok, "output": (out[-4000:] if len(out)>4000 else out)})
 
-# ---------- CLI ----------
+# ---------------------- Schedules (simple) ----------------------
+SCHED_STOP=False
+def sched_thread():
+    while not SCHED_STOP:
+        sch = read_json(PATHS["schedules"], [])
+        now = time.time()
+        for s in sch:
+            if not s.get("enabled"): continue
+            nxt = s.get("next_run", 0)
+            if nxt and nxt > now: continue
+            # Run job
+            body = s.get("template", {})
+            body["label"] = s.get("name","job")
+            try:
+                with app.test_request_context():
+                    api_backup_start.__globals__['request'].json = body
+                    api_backup_start()
+            except Exception:
+                pass
+            # calculate next run (daily/weekly/monthly)
+            freq = s.get("frequency","daily")
+            tm = s.get("time","02:00")
+            day = int(s.get("day", 0))
+            hh,mm = map(int, tm.split(":"))
+            dt = datetime.datetime.now()
+            if freq=="daily":
+                dt = (dt + datetime.timedelta(days=1)).replace(hour=hh, minute=mm, second=0, microsecond=0)
+            elif freq=="weekly":
+                # day: 0..6
+                days_ahead = (day - dt.weekday() + 7) % 7 or 7
+                dt = (dt + datetime.timedelta(days=days_ahead)).replace(hour=hh, minute=mm, second=0, microsecond=0)
+            else:
+                # monthly: day 1..28
+                m = dt.month + 1
+                y = dt.year + (1 if m>12 else 0)
+                m = 1 if m>12 else m
+                d = max(1, min(28, day or 1))
+                dt = datetime.datetime(y,m,d,hour=hh,minute=mm)
+            s["next_run"] = int(dt.timestamp())
+        write_json(PATHS["schedules"], sch)
+        time.sleep(30)
+
+threading.Thread(target=sched_thread, daemon=True).start()
+
+@app.get("/api/schedules")
+def api_schedules_get():
+    return jsonify({"schedules": read_json(PATHS["schedules"], [])})
+
+@app.post("/api/schedules/save")
+def api_schedules_save():
+    b = request.json or {}
+    sch = read_json(PATHS["schedules"], [])
+    sch = [x for x in sch if x.get("name") != b.get("name")]
+    b.setdefault("enabled", True)
+    b.setdefault("frequency", "daily")
+    b.setdefault("time", "02:00")
+    b.setdefault("day", 0)
+    b.setdefault("template", {})
+    b.setdefault("next_run", 0)
+    sch.append(b)
+    write_json(PATHS["schedules"], sch)
+    return jsonify({"ok": True})
+
+
+# ---------------------- Restore ----------------------
+@app.post("/api/restore/start")
+def api_restore_start():
+    b=request.json or {}
+    # from_path is inside BACKUP_DIR (relative id), or absolute path
+    from_id = b.get("from_id","")
+    to_mode = b.get("to_mode","local")  # local | ssh
+    to_path = b.get("to_path","/")
+    bwkb = int(b.get("bwlimit_kbps") or 0)
+
+    if os.path.isabs(from_id):
+        src_path = from_id
+    else:
+        src_path = os.path.normpath(os.path.join(BACKUP_DIR, from_id))
+
+    if not src_path.startswith(BACKUP_DIR) or not os.path.exists(src_path):
+        return jsonify({"ok": False, "error": "invalid source"}), 400
+
+    if to_mode=="local":
+        cmd = rsync_cmd(shlex.quote(src_path), shlex.quote(to_path), bwkb=bwkb)
+        job={"id": int(time.time()), "cmd": cmd, "kind": "restore", "label": f"restore->{to_path}", "mode": "restore", "dest": to_path}
+        return jsonify(worker.submit(job))
+    else:
+        host=b.get("host"); user=b.get("username"); pw=b.get("password")
+        keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p 22"
+        rsh = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {keep}"
+        dst = f"{shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(to_path)}"
+        cmd = rsync_cmd(shlex.quote(src_path), dst, bwkb=bwkb, rsh=rsh)
+        job={"id": int(time.time()), "cmd": cmd, "kind": "restore", "label": f"restore->{to_path}", "mode": "restore", "dest": to_path}
+        return jsonify(worker.submit(job))
+
+# ---------- Static UI ----------
+@app.get("/")
+def ui_root():
+    return send_from_directory("www", "index.html")
+
 if __name__ == "__main__":
     ap=argparse.ArgumentParser(); ap.add_argument("--port", type=int, default=8066); args=ap.parse_args()
     app.run(host="0.0.0.0", port=args.port)

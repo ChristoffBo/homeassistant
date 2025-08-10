@@ -1,8 +1,8 @@
 {
   "name": "Remote Linux Backup",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "slug": "remote_linux_backup",
-  "description": "Backup/restore over SSH, SMB/NFS (with userspace fallback), and disk images. Wizard UI.",
+  "description": "Backup/restore over SSH, SMB/NFS (with fallback), image (dd). Wizard UI. Duplicati-inspired.",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
   "boot": "auto",
