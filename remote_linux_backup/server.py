@@ -256,13 +256,40 @@ def api_ssh_test():
 
 
 
+
+@app.post("/api/ssh/test_sftp")
+def api_ssh_test_sftp():
+    b=request.json or {}
+    host=b.get("host"); port=int(b.get("port") or 22)
+    user=b.get("username"); pw=b.get("password")
+    if not paramiko:
+        return jsonify({"ok":False,"error":"paramiko not available"}),200
+    try:
+        t=paramiko.Transport((host,port))
+        t.connect(username=user,password=pw)
+        s=paramiko.SFTPClient.from_transport(t)
+        _ = s.listdir(".")
+        s.close(); t.close()
+        return jsonify({"ok":True})
+    except Exception as e:
+        try:
+            s.close()
+        except Exception:
+            pass
+        try:
+            t.close()
+        except Exception:
+            pass
+        return jsonify({"ok":False,"error":str(e)}),200
+
 @app.post("/api/ssh/listdir")
 def api_ssh_listdir():
     b=request.json or {}
     host=b.get("host"); port=int(b.get("port") or 22)
     user=b.get("username"); pw=b.get("password")
     path=b.get("path") or "/"
-    # Try Paramiko first
+    want_home = (str(path).strip() in ("~","$HOME"))
+    last_err = ""
     if paramiko:
         try:
             t=paramiko.Transport((host,port))
@@ -270,19 +297,41 @@ def api_ssh_listdir():
             s=paramiko.SFTPClient.from_transport(t)
             use_path = path
             try:
+                if want_home:
+                    s.chdir("."); use_path = s.normalize(".")
                 items_attr = s.listdir_attr(use_path)
             except Exception:
                 try:
                     s.chdir(".")
-                    home = s.normalize(".")
-                    use_path = home
+                    use_path = s.normalize(".")
                     items_attr = s.listdir_attr(use_path)
-                except Exception:
-                    items_attr = []
+                except Exception as ee:
+                    last_err = str(ee)
+                    s.close(); t.close()
+                    raise ee
             items=[{"name":e.filename,"dir":bool(getattr(e,'st_mode',0) & 0o040000),"size":getattr(e,'st_size',0),
                     "path": (use_path.rstrip('/') + '/' + e.filename).replace('//','/')} for e in items_attr if getattr(e,'filename','') not in ('.','..')]
             s.close(); t.close()
-            return jsonify({"ok":True,"items":items,"base":use_path})
+            return jsonify({"ok":True,"items":items,"base":use_path,"via":"sftp"})
+        except Exception as e:
+            last_err = str(e)
+    else:
+        last_err = "paramiko not available"
+    # Fallback via SSH shell
+    remote = f"sh -lc 'ls -1Ap {shlex.quote(path)} 2>/dev/null || ls -1Ap ~'"
+    cmd=f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p {port} {shlex.quote(user)}@{shlex.quote(host)} {remote}"
+    rc,out,err=run_cmd(cmd + " 2>&1 || true")
+    if out:
+        items=[]; base=path or "/"
+        for line in out.splitlines():
+            name=line.strip()
+            if not name or name in ('.','..'): 
+                continue
+            is_dir=name.endswith('/')
+            name=name.rstrip('/')
+            items.append({"name":name,"dir":is_dir,"size":0,"path": (base.rstrip('/')+'/' if base!='/' else '/') + name})
+        return jsonify({"ok":True,"items":items,"base":base,"via":"ssh"})
+    return jsonify({"ok":False,"error": last_err or (err or 'ssh list failed')}),200
         except Exception:
             pass
     # Fallback via ssh/ls; try requested path then $HOME
@@ -335,12 +384,42 @@ def api_mounts_save():
                  "auto_retry":bool(int(b.get("auto_retry",1))),"last_error":""})
     write_json(PATHS["mounts"],data); os.makedirs(mountpoint(name),exist_ok=True); return jsonify({"ok":True})
 
+
 @app.post("/api/mounts/delete")
 def api_mounts_delete():
-    name=(request.json or {}).get("name","")
-    data=read_json(PATHS["mounts"],[]); data=[x for x in data if x.get("name")!=name]; write_json(PATHS["mounts"],data)
-    run_cmd(f"umount {shlex.quote(mountpoint(name))} 2>&1 || true"); return jsonify({"ok":True})
+    b = request.json or {}
+    name = (b.get("name") or "").strip()
+    host = (b.get("host") or "").strip()
+    share = (b.get("share") or "").strip()
+    typ = (b.get("type") or "").strip().lower()
 
+    data = read_json(PATHS["mounts"], [])
+    before = len(data)
+
+    # Prefer name match
+    data2 = [m for m in data if (m.get("name","").strip() != name)] if name else data
+
+    # If nothing removed and host/share provided, remove by host/share/type
+    if len(data2) == before and (host or share):
+        def same(m):
+            return (m.get("host","").strip()==host) and (m.get("share","").strip()==share) and ((m.get("type","").strip().lower()==typ) if typ else True)
+        data2 = [m for m in data if not same(m)]
+
+    write_json(PATHS["mounts"], data2)
+
+    # Attempt cleanup of mount directory
+    mp = mountpoint(name) if name else ""
+    removed = before - len(data2)
+    try:
+        if name and mp:
+            if os.path.ismount(mp):
+                run_cmd(f"umount -l {shlex.quote(mp)}")
+            if os.path.isdir(mp) and not os.listdir(mp):
+                os.rmdir(mp)
+    except Exception as e:
+        pass
+
+    return jsonify({"ok": True, "removed": removed, "left": len(data2)})
 @app.post("/api/mounts/mount")
 def api_mounts_mount():
     name=(request.json or {}).get("name",""); return jsonify({"ok":ensure_mount(name)})
