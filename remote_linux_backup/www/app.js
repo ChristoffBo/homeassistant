@@ -52,16 +52,34 @@
     updateRows();
 
     // SocketIO
-    const socket = io();
-    socket.on('connect', () => logLine('[socket] connected'));
-    socket.on('job_update', (job) => {
+    /* SOCKET FALLBACK */
+    let socket = null;
+    try { if (window.io) { socket = io(); } } catch(e) {}
+    if (socket) { socket.on('connect', () => logLine('[socket] connected')); socket.on('job_update', (job) => {
       const p = $('#b_progress');
       const pct = Math.max(0, Math.min(100, job.progress || 0));
       if (p) p.value = pct;
       const pctEl = $('#b_progress_pct');
       if (pctEl) pctEl.textContent = `${pct}%`;
     });
-    socket.on('job_log', (d) => logLine(d.line || ''));
+    socket.on && socket.on('job_log', (d) => logLine(d.line || ''));
+    // Polling fallback
+    if (!socket) {
+      setInterval(async () => {
+        try {
+          const jobs = await fetchJSON('/api/jobs');
+          const running = jobs.find && jobs.find(j => j.status === 'running');
+          if (running) {
+            const p = document.getElementById('b_progress');
+            const pct = Math.max(0, Math.min(100, running.progress || 0));
+            if (p) p.value = pct;
+            const pctEl = document.getElementById('b_progress_pct');
+            if (pctEl) pctEl.textContent = `${pct}%`;
+          }
+        } catch(e){}
+      }, 2000);
+    }
+
 
     // Buttons
     on($('#b_estimate'), 'click', async () => {
@@ -614,3 +632,80 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSched();
 });
 
+
+// ---------- Network scan (SMB/NFS) ----------
+function openScanModal(){
+  const modal = document.getElementById('scan-modal');
+  const subnetSel = document.getElementById('scan-subnet');
+  const status = document.getElementById('scan-status');
+  const table = document.querySelector('#scan-table tbody');
+  table.innerHTML = ''; status.value = '';
+  fetch('/api/network/subnets').then(r=>r.json()).then(d=>{
+    subnetSel.innerHTML = '';
+    (d.subnets||[]).forEach(s => { const o=document.createElement('option'); o.value=s; o.textContent=s; subnetSel.appendChild(o); });
+  });
+  document.getElementById('scan-start').onclick = async () => {
+    table.innerHTML = ''; status.value = 'Scanning...';
+    const subnet = subnetSel.value; const types = Array.from(document.getElementById('scan-types').selectedOptions).map(o=>o.value);
+    const r = await fetch('/api/network/scan', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({subnet, types})}).then(r=>r.json());
+    status.value = r.ok ? ('Found ' + (r.count||0) + ' host(s)') : ('Error: ' + (r.error||''));
+    if (!r.ok) return;
+    (r.results||[]).forEach(x => {
+      const tr = document.createElement('tr');
+      const smb = (x.smb_shares||[]).join(', ');
+      const nfs = (x.nfs_exports||[]).join(', ');
+      tr.innerHTML = `<td>${x.ip}</td><td>${smb}</td><td>${nfs}</td>
+        <td><button class="small" data-use="${x.ip}">Use</button></td>`;
+      table.appendChild(tr);
+    });
+  };
+  document.getElementById('scan-table').onclick = (ev) => {
+    const b = ev.target.closest('button[data-use]'); if(!b) return;
+    const ip = b.dataset.use;
+    // Populate Mounts form with best guess
+    document.getElementById('m_host').value = ip;
+    // Prefer SMB if present, else NFS
+    const row = b.closest('tr');
+    const smbTxt = row.children[1].textContent.trim();
+    const nfsTxt = row.children[2].textContent.trim();
+    if (smbTxt){
+      document.getElementById('m_type').value = 'smb';
+      document.getElementById('m_share').value = smbTxt.split(', ')[0] || '';
+    } else {
+      document.getElementById('m_type').value = 'nfs';
+      document.getElementById('m_share').value = nfsTxt.split(', ')[0] || '';
+    }
+    modal.classList.add('hidden');
+  };
+  document.getElementById('scan-close').onclick = ()=> modal.classList.add('hidden');
+  modal.classList.remove('hidden');
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('m_scan');
+  btn && btn.addEventListener('click', openScanModal);
+});
+
+// Bandwidth slider sync
+document.addEventListener('DOMContentLoaded', () => {
+  const num = document.getElementById('b_bwlimit');
+  const rng = document.getElementById('b_bw_slider');
+  if (!num || !rng) return;
+  const clamp = v => Math.max(0, Math.min(200, v));
+  rng.addEventListener('input', () => { num.value = clamp(rng.value); });
+  num.addEventListener('input', () => { rng.value = clamp(num.value||0); });
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('b_conn');
+  if (!sel) return;
+  // Add a small Use button inline
+  const btn = document.createElement('button'); btn.textContent = 'Use'; btn.id='b_conn_use'; btn.className='secondary small'; btn.type='button';
+  sel.parentElement.appendChild(btn);
+  btn.addEventListener('click', () => {
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt || !opt.dataset.host) { alert('Select a saved connection first (Connections tab).'); return; }
+    document.getElementById('b_host').value = opt.dataset.host || '';
+    document.getElementById('b_user').value = opt.dataset.username || '';
+    document.getElementById('b_pass').value = opt.dataset.password || '';
+  });
+});

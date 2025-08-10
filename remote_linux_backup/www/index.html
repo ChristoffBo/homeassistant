@@ -80,7 +80,8 @@
             <div class="field">
               <label>Max MB/s (optional)</label>
               <input id="b_bwlimit" type="number" min="0" value="0">
-              <small>0 = unlimited</small>
+              <input id="b_bw_slider" type="range" min="0" max="200" step="1" value="0">
+              <small>0 = unlimited • quick picks: 1, 2, 5, 10, 20, 50, 100</small>
             </div>
           </div>
 
@@ -256,6 +257,7 @@
           <div class="field"><label>Auto-retry</label><select id="m_retry"><option value="1">Yes</option><option value="0">No</option></select></div>
         </div>
         <div class="actions">
+          <button id="m_scan" class="secondary" type="button">Scan network</button>
           <button id="m_connect" class="secondary" type="button">Connect</button>
           <button id="m_pick_share" class="secondary" type="button">Pick share</button>
           <button id="m_save" class="primary" type="button">Save</button>
@@ -511,10 +513,34 @@ sudo umount /mnt/recovery && sudo losetup -d /dev/loop0</code></pre>
       </div>
     </div>
   </div>
+  <!-- Network Scan Modal -->
+  <div id="scan-modal" class="modal hidden">
+    <div class="modal-card" style="min-width:70%">
+      <div class="modal-head">
+        <div>
+          <strong>Network scan</strong>
+          <div class="muted">Discover SMB/NFS servers and shares on your LAN</div>
+        </div>
+        <button id="scan-close" class="secondary small">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid-4">
+          <div class="field"><label>Subnet</label><select id="scan-subnet"></select></div>
+          <div class="field"><label>Types</label><select id="scan-types" multiple><option value="smb" selected>SMB</option><option value="nfs" selected>NFS</option></select></div>
+          <div class="field"><label>&nbsp;</label><button id="scan-start" class="primary" type="button">Start scan</button></div>
+          <div class="field"><label>Status</label><input id="scan-status" readonly></div>
+        </div>
+        <table class="table" id="scan-table">
+          <thead><tr><th>IP</th><th>SMB shares</th><th>NFS exports</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </main>
 
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="app.js"></script>
+
+    <script src="app.js"></script>
 </body>
 </html>
