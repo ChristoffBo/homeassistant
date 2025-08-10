@@ -11,7 +11,7 @@
   "webui": "http://[HOST]:[PORT:8066]",
   "ingress": false,
   "ports": {
-    "8066/tcp": 8066
+    "8066/tcp": 18066
   },
   "ports_description": {
     "8066/tcp": "Web UI"
