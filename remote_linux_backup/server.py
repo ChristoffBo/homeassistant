@@ -1282,3 +1282,106 @@ def api_schedules_run():
     return jsonify({"ok": True, "job_id": jid})
 
 
+
+
+@app.get("/api/network/subnets")
+def api_net_subnets():
+    # Use 'ip -j addr' to get IPv4 subnets
+    code, out, err = run_cmd(["bash","-lc","ip -j addr 2>/dev/null || true"])
+    subs = []
+    try:
+        data = json.loads(out)
+        for iface in data:
+            ifaces = iface.get("addr_info", [])
+            if iface.get("ifname","").startswith("lo"): 
+                continue
+            for ai in ifaces:
+                if ai.get("family") == "inet":
+                    cidr = f"{ai.get('local')}/{ai.get('prefixlen')}"
+                    subs.append(cidr)
+    except Exception:
+        pass
+    # fallback: detect from default route
+    if not subs:
+        code, out, err = run_cmd(["bash","-lc","ip -o route | awk '/default/ {print $3}' | head -1 || true"])
+        gw = out.strip()
+        if gw:
+            # assume /24 around gateway
+            parts = gw.split(".")
+            if len(parts)==4:
+                subs.append(".".join(parts[:3]) + ".0/24")
+    return jsonify({"ok": True, "subnets": sorted(set(subs))})
+
+
+@app.post("/api/network/scan")
+def api_net_scan():
+    data = request.json or {}
+    subnet = data.get("subnet")
+    types = data.get("types") or ["smb","nfs"]
+    max_hosts = int(data.get("max_hosts") or 256)
+    if not subnet:
+        return jsonify({"ok": False, "error": "missing subnet"}), 400
+    import ipaddress, concurrent.futures
+    net = ipaddress.ip_network(subnet, strict=False)
+    hosts = [str(ip) for ip in net.hosts()][:max_hosts]
+
+    results = []
+    lock = threading.Lock()
+
+    def scan_ip(ip):
+        res = {"ip": ip}
+        if "smb" in types:
+            # fast query with 1.5s timeout
+            code,out,err = run_cmd(["bash","-lc", f"timeout 1.5s smbclient -L //{shlex.quote(ip)} -N -g 2>/dev/null || true"])
+            shares = []
+            for line in out.splitlines():
+                if line.startswith("Disk|"):
+                    parts = line.split("|")
+                    if len(parts)>=2: shares.append(parts[1])
+            if shares:
+                res["smb_shares"] = sorted(set(shares))
+        if "nfs" in types:
+            code,out,err = run_cmd(["bash","-lc", f"timeout 1.5s showmount -e {shlex.quote(ip)} 2>/dev/null || true"])
+            exports = []
+            for ln in out.splitlines():
+                ln = ln.strip()
+                if not ln or ln.startswith("Export list") or ln.startswith("Exports list"): 
+                    continue
+                parts = ln.split()
+                if parts: exports.append(parts[0])
+            if exports:
+                res["nfs_exports"] = exports
+        if len(res)>1:
+            with lock:
+                results.append(res)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as ex:
+        list(ex.map(scan_ip, hosts))
+
+    results.sort(key=lambda r: r["ip"])
+    return jsonify({"ok": True, "results": results, "count": len(results)})
+
+
+
+
+@app.post("/api/system/apt_upgrade")
+def api_system_apt_upgrade():
+    # Safe: abort if no internet or dpkg lock
+    checks = [
+        "getent hosts deb.debian.org >/dev/null 2>&1 || getent hosts google.com >/dev/null 2>&1",
+        "test ! -e /var/lib/dpkg/lock-frontend"
+    ]
+    for cmd in checks:
+        code, out, err = run_cmd(["bash","-lc", cmd])
+        if code != 0:
+            return jsonify({"ok": False, "error": f"Pre-check failed: {cmd}"})
+    cmds = [
+        "export DEBIAN_FRONTEND=noninteractive",
+        "apt-get update -y",
+        "apt-get -y --with-new-pkgs upgrade"
+    ]
+    code, out, err = run_cmd(["bash","-lc", " && ".join(cmds) + " 2>&1 || true"])
+    ok = "Err:" not in out and "Failed to fetch" not in out and "E:" not in out
+    return jsonify({"ok": ok, "output": out[-4000:]})
+
+
