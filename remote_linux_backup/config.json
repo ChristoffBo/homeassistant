@@ -1,6 +1,6 @@
 {
   "name": "Remote Linux Backup",
-  "version": "1.6.0",
+  "version": "1.6.3",
   "slug": "remote_linux_backup",
   "description": "Backup/restore over SSH, SMB/NFS (with fallback), image (dd). Wizard UI. Duplicati-inspired.",
   "url": "https://github.com/ChristoffBo/homeassistant",
@@ -15,7 +15,7 @@
   ],
   "host_network": false,
   "ports": {
-    "8066/tcp": 8066
+    "8066/tcp": null
   },
   "ingress": false,
   "panel_icon": "mdi:backup-restore",
