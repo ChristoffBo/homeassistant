@@ -760,35 +760,45 @@ def api_sched_delete():
 @app.get("/")
 def ui(): return send_from_directory("www","index.html")
 
-if __name__=="__main__":
-    ap=argparse.ArgumentParser(); ap.add_argument("--port",type=int,default=8066); args=ap.parse_args()
-    app.run(host="0.0.0.0", port=args.port
-@app.get('/api/connections')
+
+# ------- Saved SSH connections (optional convenience)
+@app.get("/api/connections")
 def api_connections_list():
-    items=_load_json(PATHS.CONNECTIONS).get('items',[])
-    return {'ok':True,'items':items}
+    items = (read_json(PATHS["connections"]) or {}).get("items", [])
+    return jsonify({"ok": True, "items": items})
 
-@app.post('/api/connections/save')
+@app.post("/api/connections/save")
 def api_connections_save():
-    data=request.get_json(force=True) or {}
-    state=_load_json(PATHS.CONNECTIONS)
-    items=state.get('items',[])
+    data = request.json or {}
+    state = read_json(PATHS["connections"]) or {}
+    items = state.get("items", [])
+    name = data.get("name")
+    if not name:
+        return jsonify({"ok": False, "error": "name required"}), 400
     # upsert by name
-    name=data.get('name')
-    if not name: return jsonify({'ok':False,'error':'name required'}),400
-    rest=[i for i in items if i.get('name')!=name]
-    rest.append({'name':name, 'host':data.get('host'), 'user':data.get('user'), 'password':data.get('password')})
-    state['items']=rest
-    _save_json(PATHS.CONNECTIONS,state)
-    return {'ok':True,'items':rest}
+    items = [i for i in items if i.get("name") != name]
+    items.append({
+        "name": name,
+        "host": data.get("host"),
+        "user": data.get("user"),
+        "password": data.get("password")
+    })
+    state["items"] = items
+    write_json(PATHS["connections"], state)
+    return jsonify({"ok": True, "items": items})
 
-@app.post('/api/connections/delete')
+@app.post("/api/connections/delete")
 def api_connections_delete():
-    data=request.get_json(force=True) or {}
-    name=data.get('name')
-    state=_load_json(PATHS.CONNECTIONS)
-    items=[i for i in state.get('items',[]) if i.get('name')!=name]
-    state['items']=items
-    _save_json(PATHS.CONNECTIONS,state)
-    return {'ok':True}
-)
+    data = request.json or {}
+    name = data.get("name")
+    state = read_json(PATHS["connections"]) or {}
+    items = [i for i in state.get("items", []) if i.get("name") != name]
+    state["items"] = items
+    write_json(PATHS["connections"], state)
+    return jsonify({"ok": True})
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=8066)
+    args = ap.parse_args()
+    app.run(host="0.0.0.0", port=args.port)
