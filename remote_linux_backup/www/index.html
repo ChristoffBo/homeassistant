@@ -1,8 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Remote Linux Backup</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -12,6 +11,7 @@
   <button class="tab" data-tab="backups">Backups</button>
   <button class="tab" data-tab="mounts">Mounts</button>
   <button class="tab" data-tab="health">Health</button>
+  <button class="tab" data-tab="help">Help</button>
 </nav>
 
 <section id="backup" class="tabpane active">
@@ -28,26 +28,13 @@
     <div>
       <label>Profile (sets safe defaults)</label>
       <select id="b_profile">
-        <option>Generic Linux</option>
-        <option>Proxmox</option>
-        <option>OPNsense</option>
-        <option>Unraid</option>
+        <option>Generic Linux</option><option>Proxmox</option><option>OPNsense</option><option>Unraid</option>
       </select>
     </div>
-    <div class="ssh-only">
-      <label>Host/IP</label>
-      <input id="b_host" placeholder="e.g. 10.0.0.21">
-    </div>
-    <div class="ssh-only">
-      <label>User</label>
-      <input id="b_user" value="root">
-    </div>
-    <div class="ssh-only">
-      <label>Password</label>
-      <input id="b_pass" type="password">
-    </div>
-    <div>
-      <label>Mode</label>
+    <div class="ssh-only"><label>Host/IP</label><input id="b_host" placeholder="e.g. 10.0.0.21"></div>
+    <div class="ssh-only"><label>User</label><input id="b_user" value="root"></div>
+    <div class="ssh-only"><label>Password</label><input id="b_pass" type="password"></div>
+    <div><label>Mode</label>
       <select id="b_mode">
         <option value="rsync">Rsync (SSH) — files</option>
         <option value="copy_local">Copy (local) — files</option>
@@ -55,10 +42,7 @@
         <option value="image">Disk image (dd)</option>
       </select>
     </div>
-    <div>
-      <label>Label</label>
-      <input id="b_label" placeholder="e.g. after-upgrade">
-    </div>
+    <div><label>Label</label><input id="b_label" placeholder="e.g. after-upgrade"></div>
   </div>
 
   <h3 class="mt">From → To</h3>
@@ -74,15 +58,12 @@
       </div>
     </div>
     <div>
-      <label>Destination location</label>
+      <label>Destination</label>
       <div class="row">
-        <select id="b_dest_type">
-          <option value="local">Local (this HA)</option>
-          <option value="mount">Mounted share (SMB/NFS)</option>
-        </select>
-        <input id="b_dest_mount" placeholder="mount name (for mount)" value="">
+        <select id="b_dest_type"><option value="local">Local (this HA)</option><option value="mount">Mounted share</option></select>
+        <input id="b_dest_mount" placeholder="mount name (when using mounted share)">
       </div>
-      <label class="mt-6">Destination base folder</label>
+      <label class="mt-6">Destination folder (base)</label>
       <input id="b_dest_path" value="/config/remote_linux_backup/backups">
       <div class="row">
         <button id="bw_pick_dest_local">Pick local</button>
@@ -90,12 +71,9 @@
         <button id="bw_mkdir_dest" class="secondary">Create folder…</button>
       </div>
       <div class="row mt">
-        <label>Bandwidth (KB/s)</label>
-        <input id="b_bw" type="number" min="0" value="0">
-        <label>Dry run</label>
-        <select id="b_dry"><option value="0">No</option><option value="1">Yes</option></select>
-        <button id="bw_estimate" class="secondary">Estimate size</button>
-        <span id="bw_estimate_out"></span>
+        <label>Bandwidth (KB/s)</label><input id="b_bw" type="number" min="0" value="0">
+        <label>Dry run</label><select id="b_dry"><option value="0">No</option><option value="1">Yes</option></select>
+        <button id="bw_estimate" class="secondary">Estimate size</button><span id="bw_estimate_out"></span>
       </div>
     </div>
   </div>
@@ -103,19 +81,14 @@
   <div class="row mt">
     <button id="bw_start" class="primary">Start</button>
     <button id="bw_cancel" class="danger">Cancel Job</button>
-    <div class="grow">
-      <div id="bw_progress" class="progress"><div></div></div>
-    </div>
+    <div class="grow"><div id="bw_progress" class="progress"><div></div></div></div>
   </div>
   <pre class="log" id="log_backup"></pre>
 </section>
 
 <section id="backups" class="tabpane">
   <h2>Backups</h2>
-  <table id="bk_table">
-    <thead><tr><th>Label</th><th>When</th><th>Size</th><th>Mode</th><th>Source</th><th>Actions</th></tr></thead>
-    <tbody></tbody>
-  </table>
+  <table id="bk_table"><thead><tr><th>Label</th><th>When</th><th>Size</th><th>Mode</th><th>Source</th><th>Actions</th></tr></thead><tbody></tbody></table>
   <pre class="log" id="log_backups"></pre>
 </section>
 
@@ -139,10 +112,7 @@
     <button id="m_refresh" class="secondary">Refresh</button>
     <button id="m_browse" class="secondary">Browse mounted…</button>
   </div>
-  <table class="mt" id="m_table">
-    <thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share</th><th>Status</th><th>Mountpoint</th></tr></thead>
-    <tbody></tbody>
-  </table>
+  <table class="mt" id="m_table"><thead><tr><th>Name</th><th>Type</th><th>Host</th><th>Share</th><th>Status</th><th>Mountpoint</th><th>Actions</th></tr></thead><tbody></tbody></table>
   <pre class="log" id="log_mounts"></pre>
 </section>
 
@@ -152,23 +122,43 @@
   <pre class="log" id="log_health"></pre>
 </section>
 
-<!-- Generic picker modal -->
+<section id="help" class="tabpane">
+  <h2>Help</h2>
+  <div class="help">
+    <h3>Quick start</h3>
+    <ol>
+      <li><b>Mounts</b>: Add a mount, <i>Pick share/export</i>, then choose a folder with <i>Browse mounted…</i>.</li>
+      <li><b>Backup</b>: Pick the source folder with <i>Browse (SSH)</i>, <i>Pick local</i>, or <i>Pick from mount</i>.</li>
+      <li>Pick the destination folder (local or mounted share). You can <i>Create folder…</i>.</li>
+      <li>Click <b>Start</b>. Progress and logs show at the bottom.</li>
+      <li><b>Backups</b> tab: each backup has <i>Restore (original)</i>, <i>Restore to…</i>, and <i>Download (.tar.gz)</i>.</li>
+    </ol>
+    <h3>Disaster recovery (dd image)</h3>
+    <p>If you created a <i>Disk image (dd)</i>, your backup contains <code>disk.img.gz</code> and <code>MANIFEST.json</code>.</p>
+    <p>To restore from a PC or a USB boot:</p>
+<pre>
+gunzip -c disk.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+</pre>
+    <p>Replace <code>/dev/sdX</code> with your target disk. For network transfer to a live server:</p>
+<pre>
+ssh user@host "gunzip -c - &gt; /dev/sdX" &lt; disk.img.gz
+</pre>
+    <p>For rsync/copy backups, contents are plain files. You can restore with:</p>
+<pre>
+rsync -aAXH /path/to/backup/ /target/path/
+</pre>
+  </div>
+</section>
+
 <div id="picker_modal" class="modal hidden">
   <div class="modal-body">
-    <div class="modal-head">
-      <h3 id="picker_title">Choose…</h3>
-      <button id="picker_close">✕</button>
-    </div>
+    <div class="modal-head"><h3 id="picker_title">Choose…</h3><button id="picker_close">✕</button></div>
     <div id="picker_breadcrumbs" class="breadcrumbs"></div>
     <ul id="picker_list" class="picker-list"></ul>
-    <div class="row">
-      <button id="picker_choose" class="primary">Choose</button>
-      <span id="picker_sel" class="ml"></span>
-    </div>
+    <div class="row"><button id="picker_choose" class="primary">Choose</button><span id="picker_sel" class="ml"></span></div>
   </div>
 </div>
 
 <script src="app.js"></script>
-<link rel="stylesheet" href="style.css">
 </body>
 </html>
