@@ -282,72 +282,90 @@ def api_ssh_test_sftp():
             pass
         return jsonify({"ok":False,"error":str(e)}),200
 
+
 @app.post("/api/ssh/listdir")
 def api_ssh_listdir():
-    b=request.json or {}
-    host=b.get("host"); port=int(b.get("port") or 22)
-    user=b.get("username"); pw=b.get("password")
-    path=b.get("path") or "/"
-    want_home = (str(path).strip() in ("~","$HOME"))
+    b = request.json or {}
+    host = b.get("host")
+    port = int(b.get("port") or 22)
+    user = b.get("username")
+    pw   = b.get("password")
+    path = (b.get("path") or "/")
+    want_home = (str(path).strip() in ("~", "$HOME"))
     last_err = ""
+
+    # Try SFTP first
     if paramiko:
         try:
-            t=paramiko.Transport((host,port))
-            t.connect(username=user,password=pw)
-            s=paramiko.SFTPClient.from_transport(t)
+            t = paramiko.Transport((host, port))
+            t.connect(username=user, password=pw)
+            sftp = paramiko.SFTPClient.from_transport(t)
+
             use_path = path
             try:
                 if want_home:
-                    s.chdir("."); use_path = s.normalize(".")
-                items_attr = s.listdir_attr(use_path)
+                    sftp.chdir(".")
+                    use_path = sftp.normalize(".")
+                entries = sftp.listdir_attr(use_path)
             except Exception:
-                try:
-                    s.chdir(".")
-                    use_path = s.normalize(".")
-                    items_attr = s.listdir_attr(use_path)
-                except Exception as ee:
-                    last_err = str(ee)
-                    s.close(); t.close()
-                    raise ee
-            items=[{"name":e.filename,"dir":bool(getattr(e,'st_mode',0) & 0o040000),"size":getattr(e,'st_size',0),
-                    "path": (use_path.rstrip('/') + '/' + e.filename).replace('//','/')} for e in items_attr if getattr(e,'filename','') not in ('.','..')]
-            s.close(); t.close()
-            return jsonify({"ok":True,"items":items,"base":use_path,"via":"sftp"})
+                # Fallback to home
+                sftp.chdir(".")
+                use_path = sftp.normalize(".")
+                entries = sftp.listdir_attr(use_path)
+
+            items = []
+            for e in entries:
+                name = getattr(e, "filename", "")
+                if not name or name in (".", ".."):
+                    continue
+                is_dir = bool(getattr(e, "st_mode", 0) & 0o040000)
+                items.append({
+                    "name": name,
+                    "dir": is_dir,
+                    "size": getattr(e, "st_size", 0),
+                    "path": (use_path.rstrip("/") + "/" + name).replace("//", "/"),
+                })
+            sftp.close()
+            t.close()
+            return jsonify({"ok": True, "items": items, "base": use_path, "via": "sftp"})
         except Exception as e:
             last_err = str(e)
+            try:
+                sftp.close()
+            except Exception:
+                pass
+            try:
+                t.close()
+            except Exception:
+                pass
     else:
         last_err = "paramiko not available"
-    # Fallback via SSH shell
+
+    # Fallback via SSH shell (ls). Try requested path, then HOME.
     remote = f"sh -lc 'ls -1Ap {shlex.quote(path)} 2>/dev/null || ls -1Ap ~'"
-    cmd=f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p {port} {shlex.quote(user)}@{shlex.quote(host)} {remote}"
-    rc,out,err=run_cmd(cmd + " 2>&1 || true")
+    cmd = (
+        f"sshpass -p {shlex.quote(pw)} ssh "
+        f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "
+        f"-p {port} {shlex.quote(user)}@{shlex.quote(host)} {remote}"
+    )
+    rc, out, err = run_cmd(cmd + " 2>&1 || true")
     if out:
-        items=[]; base=path or "/"
+        items = []
+        base = path or "/"
         for line in out.splitlines():
-            name=line.strip()
-            if not name or name in ('.','..'): 
+            name = line.strip()
+            if not name or name in (".", ".."):
                 continue
-            is_dir=name.endswith('/')
-            name=name.rstrip('/')
-            items.append({"name":name,"dir":is_dir,"size":0,"path": (base.rstrip('/')+'/' if base!='/' else '/') + name})
-        return jsonify({"ok":True,"items":items,"base":base,"via":"ssh"})
-    return jsonify({"ok":False,"error": last_err or (err or 'ssh list failed')}),200
-        except Exception:
-            pass
-    # Fallback via ssh/ls; try requested path then $HOME
-    remote = f"sh -lc 'ls -1p {shlex.quote(path)} 2>/dev/null || ls -1p ~'"
-    cmd=f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p {port} {shlex.quote(user)}@{shlex.quote(host)} {remote}"
-    rc,out,err=run_cmd(cmd + " 2>&1 || true")
-    items=[]; base=path or "/"
-    if not out:
-        base="/"
-    for line in (out or '').splitlines():
-        name=line.strip()
-        if not name: continue
-        is_dir=name.endswith('/')
-        name=name.rstrip('/')
-        items.append({"name":name,"dir":is_dir,"size":0,"path": (base.rstrip('/')+'/' if base!='/' else '/') + name})
-    return jsonify({"ok":True,"items":items,"base":base})
+            is_dir = name.endswith("/")
+            name = name.rstrip("/")
+            items.append({
+                "name": name,
+                "dir": is_dir,
+                "size": 0,
+                "path": (base.rstrip("/") + "/" if base != "/" else "/") + name,
+            })
+        return jsonify({"ok": True, "items": items, "base": base, "via": "ssh"})
+    return jsonify({"ok": False, "error": last_err or (err or "ssh list failed")}), 200
 
 @app.get("/api/local/listdir")
 def api_local_listdir():
