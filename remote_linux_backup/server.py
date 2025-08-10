@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import os, re, json, shlex, subprocess, threading, time, argparse, datetime
-from flask import Flask, request, jsonify, send_file, send_from_directory
+import os, re, json, shlex, subprocess, threading, time, argparse, datetime, io, tarfile
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response, stream_with_context
 from werkzeug.utils import secure_filename
 
 try:
@@ -62,6 +62,16 @@ def run_cmd(cmd: str):
     )
     out, err = p.communicate()
     return p.returncode, out, err
+
+def sum_dir_bytes(path: str) -> int:
+    total = 0
+    for root, dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root,f))
+            except Exception:
+                pass
+    return total
 
 # ----------------- Job worker -----------------
 class JobWorker(threading.Thread):
@@ -142,7 +152,7 @@ def api_jobs():
 def api_jobs_cancel():
     return jsonify(worker.cancel())
 
-# ----------------- Connections & SSH browse -----------------
+# ----------------- Connections (saved SSH) -----------------
 @app.get("/api/connections")
 def api_connections():
     return jsonify({"connections": read_json(PATHS["connections"], [])})
@@ -153,15 +163,16 @@ def api_connections_save():
     data = read_json(PATHS["connections"], [])
     data = [x for x in data if x.get("name") != b.get("name")]
     data.append({
-        "name": b.get("name", "").strip(),
-        "host": b.get("host", "").strip(),
+        "name": b.get("name","").strip(),
+        "host": b.get("host","").strip(),
         "port": int(b.get("port") or 22),
-        "username": b.get("username", "").strip(),
-        "password": b.get("password", ""),
+        "username": b.get("username","").strip(),
+        "password": b.get("password","")
     })
     write_json(PATHS["connections"], data)
     return jsonify({"ok": True})
 
+# ----------------- SSH browse/test -----------------
 @app.post("/api/ssh/test")
 def api_ssh_test():
     b   = request.json or {}
@@ -184,7 +195,6 @@ def api_ssh_listdir():
     host = b.get("host"); port = int(b.get("port") or 22)
     user = b.get("username"); pw = b.get("password")
     path = b.get("path") or "/"
-
     if paramiko:
         try:
             t = paramiko.Transport((host, port))
@@ -199,7 +209,6 @@ def api_ssh_listdir():
             return jsonify({"ok": True, "items": items})
         except Exception:
             pass
-
     remote = f"ls -1p {shlex.quote(path)} || true"
     cmd = (
         f"sshpass -p {shlex.quote(pw)} "
@@ -215,6 +224,7 @@ def api_ssh_listdir():
         items.append({"name": name.rstrip("/"), "dir": name.endswith("/")})
     return jsonify({"ok": True, "items": items})
 
+# ----------------- Local & Mount browse / mkdir -----------------
 @app.get("/api/local/listdir")
 def api_local_listdir():
     path = request.args.get("path") or "/config"
@@ -226,11 +236,22 @@ def api_local_listdir():
                 "dir": e.is_dir(),
                 "size": (0 if e.is_dir() else e.stat().st_size)
             })
+        items = sorted(items, key=lambda x: (not x["dir"], x["name"].lower()))
         return jsonify({"ok": True, "items": items})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
-# ----------------- Mounts (SMB/NFS) -----------------
+@app.post("/api/local/mkdir")
+def api_local_mkdir():
+    b = request.json or {}
+    path = b.get("path","/config")
+    name = b.get("name","new_folder")
+    full = os.path.normpath(os.path.join(path, name))
+    if not full.startswith("/"):
+        return jsonify({"ok": False, "error":"bad path"}), 400
+    os.makedirs(full, exist_ok=True)
+    return jsonify({"ok": True, "path": full})
+
 @app.get("/api/mounts")
 def api_mounts():
     data = read_json(PATHS["mounts"], [])
@@ -271,10 +292,8 @@ def api_mounts_mount():
     m = next((x for x in data if x.get("name") == name), None)
     if not m:
         return jsonify({"ok": False, "error":"not found"}), 404
-
     mp = mountpoint(name)
     os.makedirs(mp, exist_ok=True)
-
     if m["type"] == "smb":
         unc  = f"//{m['host']}/{m['share']}"
         opts = m.get("options","")
@@ -288,20 +307,16 @@ def api_mounts_mount():
         export = m["share"] if m["share"].startswith("/") else "/" + m["share"]
         opts   = m.get("options","")
         cmd = f"mount -t nfs {shlex.quote(m['host'] + ':' + export)} {shlex.quote(mp)}" + (f" -o {shlex.quote(opts)}" if opts else "")
-
     rc, out, err = run_cmd(cmd + " 2>&1 || true")
     ok = os.path.ismount(mp)
-
     if not ok and m["type"] == "smb":
         m["last_error"] = "kernel mount failed; userspace smbclient fallback will be used"
         write_json(PATHS["mounts"], data)
         return jsonify({"ok": False, "error": m["last_error"]})
-
     if not ok:
         m["last_error"] = out or err
         write_json(PATHS["mounts"], data)
         return jsonify({"ok": False, "error": out or err})
-
     m["last_error"] = ""
     write_json(PATHS["mounts"], data)
     return jsonify({"ok": True})
@@ -319,7 +334,6 @@ def api_mounts_test():
     host = b.get("host")
     user = b.get("username","")
     pw   = b.get("password","")
-
     if t == "smb":
         auth = f"-U {shlex.quote(user + '%' + pw)}" if user else "-N"
         rc, out, err = run_cmd(f"smbclient -L //{shlex.quote(host)} {auth} -g 2>&1 || true")
@@ -352,54 +366,39 @@ def api_mounts_listdir():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.post("/api/mounts/mkdir")
+def api_mounts_mkdir():
+    b = request.json or {}
+    name = b.get("name","")
+    rel  = b.get("path","/")
+    folder = b.get("folder","new_folder")
+    mp = mountpoint(name)
+    base = os.path.normpath(os.path.join(mp, rel.lstrip("/")))
+    if not base.startswith(mp):
+        return jsonify({"ok": False, "error":"invalid path"}), 400
+    full = os.path.join(base, folder)
+    os.makedirs(full, exist_ok=True)
+    return jsonify({"ok": True, "path": full})
+
 # ----------------- Estimate -----------------
 @app.post("/api/estimate")
 def api_estimate():
     b    = request.json or {}
     mode = b.get("mode","local")
     path = b.get("path","/")
-
     if mode == "local":
-        rc, out, err = run_cmd(
-            f"du -s -B1 {shlex.quote(path)} 2>/dev/null || "
-            f"du -sb {shlex.quote(path)} 2>/dev/null || "
-            f"du -sk {shlex.quote(path)}"
-        )
-        try:
-            size = int(out.split()[0])
-            if out.strip().endswith("\t" + path) and " -sk " in out:
-                size *= 1024
-        except Exception:
-            size = 0
+        size = sum_dir_bytes(path) if os.path.exists(path) else 0
         return jsonify({"ok": True, "bytes": size})
-
     elif mode == "mount":
         name = b.get("name","")
         mp   = mountpoint(name)
         real = os.path.normpath(os.path.join(mp, path.lstrip("/")))
-        rc, out, err = run_cmd(
-            f"du -s -B1 {shlex.quote(real)} 2>/dev/null || "
-            f"du -sb {shlex.quote(real)} 2>/dev/null || "
-            f"du -sk {shlex.quote(real)} 2>/dev/null"
-        )
-        try:
-            size = int(out.split()[0])
-            if out.strip().endswith("\t" + real) and " -sk " in out:
-                size *= 1024
-        except Exception:
-            size = 0
+        size = sum_dir_bytes(real) if os.path.exists(real) else 0
         return jsonify({"ok": True, "bytes": size})
-
     elif mode == "ssh":
-        host = b.get("host")
-        user = b.get("username")
-        pw   = b.get("password")
+        host = b.get("host"); user = b.get("username"); pw = b.get("password")
         keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p 22"
-        remote = (
-            f"du -s -B1 {shlex.quote(path)} 2>/dev/null || "
-            f"du -sb {shlex.quote(path)} 2>/dev/null || "
-            f"du -sk {shlex.quote(path)}"
-        )
+        remote = f"du -sb {shlex.quote(path)} 2>/dev/null || du -sk {shlex.quote(path)}"
         cmd = (
             f"sshpass -p {shlex.quote(pw)} "
             f"ssh -o StrictHostKeyChecking=no {keep} "
@@ -407,101 +406,83 @@ def api_estimate():
         )
         rc, out, err = run_cmd(cmd + " 2>&1 || true")
         try:
-            size = int(out.split()[0])
-            if " -sk " in remote:
-                size *= 1024
-        except Exception:
-            size = 0
-        return jsonify({"ok": True, "bytes": size, "raw": out})
-
+            n = int(out.split()[0]); 
+            if " -sk " in remote: n*=1024
+        except Exception: 
+            n = 0
+        return jsonify({"ok": True, "bytes": n, "raw": out})
     return jsonify({"ok": False, "error": "unknown mode"}), 400
 
-# ----------------- Backups & Upload -----------------
+# ----------------- Backups listing / download -----------------
+def manifest_path(dirpath:str)->str:
+    return os.path.join(dirpath, "MANIFEST.json")
+
+def write_manifest(dirpath:str, data:dict):
+    data = data.copy()
+    fp = manifest_path(dirpath)
+    with open(fp,"w") as f: json.dump(data, f, indent=2)
+
+def read_manifest(dirpath:str)->dict:
+    try:
+        with open(manifest_path(dirpath),"r") as f: return json.load(f)
+    except Exception:
+        return {}
+
 @app.get("/api/backups")
 def api_backups():
     items = []
-    for root, _, files in os.walk(BACKUP_DIR):
-        for f in files:
-            p = os.path.join(root, f)
-            try:
-                sz = os.path.getsize(p)
-            except Exception:
-                sz = 0
-            items.append({
-                "id": os.path.relpath(p, BACKUP_DIR),
-                "label": f,
-                "size": sz,
-                "location": os.path.relpath(root, BACKUP_DIR)
-            })
-    return jsonify({"items": sorted(items, key=lambda x: x["label"], reverse=True)})
+    for name in os.listdir(BACKUP_DIR):
+        p = os.path.join(BACKUP_DIR, name)
+        if not os.path.isdir(p): 
+            continue
+        man = read_manifest(p)
+        size = sum_dir_bytes(p)
+        items.append({
+            "id": name,
+            "label": man.get("label", name),
+            "when": man.get("started", 0),
+            "size": size,
+            "mode": man.get("mode",""),
+            "source": man.get("source",{}),
+            "dest": man.get("dest",{}),
+            "has_image": os.path.exists(os.path.join(p,"disk.img.gz"))
+        })
+    items.sort(key=lambda x: x["when"], reverse=True)
+    return jsonify({"items": items})
 
-@app.get("/api/backups/download")
-def api_backups_download():
+@app.get("/api/backups/download-archive")
+def api_backups_download_archive():
     bid = request.args.get("id","")
-    p   = os.path.normpath(os.path.join(BACKUP_DIR, bid))
-    if not p.startswith(BACKUP_DIR) or not os.path.exists(p):
+    src = os.path.normpath(os.path.join(BACKUP_DIR,bid))
+    if not src.startswith(BACKUP_DIR) or not os.path.isdir(src):
         return ("not found", 404)
-    return send_file(p, as_attachment=True)
-
-@app.post("/api/backups/delete")
-def api_backups_delete():
-    bid = (request.json or {}).get("id","")
-    p   = os.path.normpath(os.path.join(BACKUP_DIR, bid))
-    if not p.startswith(BACKUP_DIR):
-        return jsonify({"ok": False}), 400
-    try:
-        os.remove(p)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
-
-@app.post("/api/upload")
-def api_upload():
-    f = request.files.get("file")
-    if not f:
-        return jsonify({"ok": False, "error":"no file"}), 400
-    name = secure_filename(f.filename)
-    dest = os.path.join(UPLOAD_DIR, name)
-    f.save(dest)
-    return jsonify({"ok": True, "path": dest})
+    # create tar.gz to tmp and serve
+    tmp = os.path.join(UPLOAD_DIR, f"{bid}.tar.gz")
+    with tarfile.open(tmp, "w:gz") as tar:
+        tar.add(src, arcname=os.path.basename(src))
+    return send_file(tmp, as_attachment=True)
 
 # ----------------- Health -----------------
 @app.get("/api/health")
 def api_health():
-    rc, out, err = run_cmd(f"df -Pk {shlex.quote(BACKUP_DIR)} | tail -1")
-    try:
-        parts   = out.split()
-        free_mb = int(parts[3]) // 1024
-    except Exception:
-        free_mb = None
-
     total_sz = 0; count = 0
     for root, _, files in os.walk(BACKUP_DIR):
         for f in files:
             count += 1
-            try:
-                total_sz += os.path.getsize(os.path.join(root, f))
-            except Exception:
-                pass
-
+            try: total_sz += os.path.getsize(os.path.join(root, f))
+            except Exception: pass
     mounts   = read_json(PATHS["mounts"], [])
-    next_run = 0
-    sch = read_json(PATHS["schedules"], [])
-    if sch:
-        next_run = min((s.get("next_run",0) or 0) for s in sch if s.get("next_run"))
-
     try:
         up_secs = float(open("/proc/uptime").read().split()[0])
     except Exception:
         up_secs = None
-
+    stat = os.statvfs(BACKUP_DIR)
+    free_mb = (stat.f_bavail * stat.f_frsize) // (1024*1024)
     return jsonify({
         "backup_dir": BACKUP_DIR,
-        "free_mb": free_mb,
+        "free_mb": int(free_mb),
         "backup_files": count,
         "backup_bytes": total_sz,
-        "next_schedule": next_run,
-        "uptime_seconds": up_secs,
         "mounts": [{
             "name": m["name"],
             "mounted": os.path.ismount(mountpoint(m["name"])),
@@ -510,7 +491,7 @@ def api_health():
         } for m in mounts]
     })
 
-# ----------------- Backup start -----------------
+# ----------------- Rsync / imaging helpers -----------------
 def rsync_cmd(src, dst, bwkb=0, rsh=None, excludes=None, dry=False):
     bw  = f"--bwlimit={bwkb}" if bwkb and int(bwkb) > 0 else ""
     exc = " ".join([f"--exclude={shlex.quote(x)}" for x in (excludes or [])])
@@ -529,6 +510,7 @@ def dd_image_cmd(host, user, pw, dev, out_file, limit_kbps=0):
     limit = f"| pv -n -L {int(limit_kbps)*1024}" if limit_kbps and int(limit_kbps) > 0 else "| pv -n"
     return f"{ssh} 'dd if={shlex.quote(dev)} bs=4M status=none iflag=fullblock' {limit} | gzip > {shlex.quote(out_file)}"
 
+# ----------------- Backup start -----------------
 @app.post("/api/backup/start")
 def api_backup_start():
     b = request.json or {}
@@ -536,17 +518,19 @@ def api_backup_start():
     label = b.get("label","backup")
     dest_type  = b.get("dest_type","local")
     dest_mount = b.get("dest_mount_name","")
+    dest_path  = b.get("dest_path","")  # base folder chosen by picker
     bwkb = int(b.get("bwlimit_kbps") or 0)
     dry  = bool(b.get("dry_run", False))
     profile = (b.get("profile") or "").lower()
 
+    # Figure dest base
     if dest_type == "local":
-        dest_root = BACKUP_DIR
+        base = dest_path if dest_path else BACKUP_DIR
     else:
-        dest_root = os.path.join(mountpoint(dest_mount), "rlb_backups")
+        base = os.path.join(mountpoint(dest_mount), dest_path.lstrip("/")) if dest_path else mountpoint(dest_mount)
+    os.makedirs(base, exist_ok=True)
 
-    os.makedirs(dest_root, exist_ok=True)
-    out_dir = os.path.join(dest_root, f"{label}-{int(time.time())}")
+    out_dir = os.path.join(base, f"{label}-{int(time.time())}")
     os.makedirs(out_dir, exist_ok=True)
 
     excludes = []
@@ -559,6 +543,16 @@ def api_backup_start():
 
     keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p 22"
 
+    manifest = {
+        "label": label,
+        "mode": mode,
+        "profile": profile,
+        "started": int(time.time()),
+        "out_dir": out_dir,
+        "dest": {"type": dest_type, "mount": dest_mount, "base": base},
+        "source": {},
+    }
+
     if mode == "rsync":
         host = b.get("host"); user = b.get("username"); pw = b.get("password")
         src  = b.get("source_path","/")
@@ -568,12 +562,16 @@ def api_backup_start():
             out_dir,
             bwkb=bwkb, rsh=rsh, excludes=excludes, dry=dry
         )
+        manifest["source"] = {"type":"ssh","host":host,"user":user,"path":src}
+        write_manifest(out_dir, manifest)
         job = {"id": int(time.time()), "cmd": cmd, "kind":"backup", "label": label, "mode": mode, "dest": out_dir}
         return jsonify(worker.submit(job))
 
     elif mode == "copy_local":
         src = b.get("source_path","/config")
         cmd = rsync_cmd(shlex.quote(src), out_dir, bwkb=bwkb, excludes=excludes, dry=dry)
+        manifest["source"] = {"type":"local","path":src}
+        write_manifest(out_dir, manifest)
         job = {"id": int(time.time()), "cmd": cmd, "kind":"backup", "label": label, "mode": mode, "dest": out_dir}
         return jsonify(worker.submit(job))
 
@@ -581,10 +579,11 @@ def api_backup_start():
         name = b.get("mount_name")
         src  = b.get("source_path","/")
         mp   = mountpoint(name)
+        manifest["source"] = {"type":"mount","name":name,"path":src}
+        write_manifest(out_dir, manifest)
         if os.path.ismount(mp):
             cmd = rsync_cmd(shlex.quote(os.path.join(mp, src.lstrip('/'))), out_dir, bwkb=bwkb, excludes=excludes, dry=dry)
         else:
-            # userspace smbclient fallback
             mounts = read_json(PATHS["mounts"], [])
             m = next((x for x in mounts if x.get("name") == name), None)
             if not m or m.get("type") != "smb":
@@ -602,6 +601,8 @@ def api_backup_start():
         dev  = b.get("device","/dev/sda")
         out_file = os.path.join(out_dir, "disk.img.gz")
         cmd = dd_image_cmd(host, user, pw, dev, out_file, limit_kbps=bwkb)
+        manifest["source"] = {"type":"ssh","host":host,"user":user,"device":dev,"image_gz":"disk.img.gz"}
+        write_manifest(out_dir, manifest)
         job = {"id": int(time.time()), "cmd": cmd, "kind":"image", "label": label, "mode": mode, "dest": out_dir}
         return jsonify(worker.submit(job))
 
@@ -612,115 +613,61 @@ def api_backup_start():
 @app.post("/api/restore/start")
 def api_restore_start():
     b = request.json or {}
-    from_id = b.get("from_id","")
-    to_mode = b.get("to_mode","local")
-    to_path = b.get("to_path","/")
-    bwkb    = int(b.get("bwlimit_kbps") or 0)
+    bid = b.get("id","")
+    src_dir = os.path.normpath(os.path.join(BACKUP_DIR, bid))
+    if not src_dir.startswith(BACKUP_DIR) or not os.path.isdir(src_dir):
+        return jsonify({"ok": False, "error":"bad backup id"}), 400
+    man = read_manifest(src_dir)
+    if not man:
+        return jsonify({"ok": False, "error":"manifest missing"}), 400
 
-    src_path = from_id if os.path.isabs(from_id) else os.path.normpath(os.path.join(BACKUP_DIR, from_id))
-    if not src_path.startswith(BACKUP_DIR) or not os.path.exists(src_path):
-        return jsonify({"ok": False, "error":"invalid source"}), 400
+    original = bool(b.get("original", False))
+    bwkb = int(b.get("bwlimit_kbps") or 0)
 
-    if to_mode == "local":
-        cmd = rsync_cmd(shlex.quote(src_path), shlex.quote(to_path), bwkb=bwkb)
-        job = {"id": int(time.time()), "cmd": cmd, "kind":"restore", "label": f"restore->{to_path}", "mode":"restore", "dest": to_path}
+    if original:
+        src = src_dir
+        srcq = shlex.quote(src)
+        src_type = man.get("source",{}).get("type")
+        if src_type == "local":
+            dst = man["source"]["path"]
+            cmd = rsync_cmd(srcq, shlex.quote(dst), bwkb=bwkb)
+        elif src_type == "ssh":
+            keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p 22"
+            host = man["source"]["host"]; user = man["source"]["user"]
+            # password not stored; require it now
+            pw = b.get("password","")
+            if not pw: return jsonify({"ok": False, "error":"password required for original (ssh)"}), 400
+            rsh  = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {keep}"
+            dst  = f"{shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(man['source'].get('path','/'))}"
+            cmd  = rsync_cmd(srcq, dst, bwkb=bwkb, rsh=rsh)
+        elif src_type == "mount":
+            mp = mountpoint(man["source"]["name"])
+            dst = os.path.join(mp, man["source"]["path"].lstrip("/"))
+            cmd = rsync_cmd(srcq, shlex.quote(dst), bwkb=bwkb)
+        else:
+            return jsonify({"ok": False, "error":"unsupported source type"}), 400
+        job = {"id": int(time.time()), "cmd": cmd, "kind":"restore", "label": f"restore->{src_type}", "mode":"restore", "dest": "original"}
         return jsonify(worker.submit(job))
     else:
-        host = b.get("host"); user = b.get("username"); pw = b.get("password")
-        keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p 22"
-        rsh  = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {keep}"
-        dst  = f"{shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(to_path)}"
-        cmd  = rsync_cmd(shlex.quote(src_path), dst, bwkb=bwkb, rsh=rsh)
-        job  = {"id": int(time.time()), "cmd": cmd, "kind":"restore", "label": f"restore->{to_path}", "mode":"restore", "dest": to_path}
+        # custom destination
+        to_mode = b.get("to_mode","local")
+        to_path = b.get("to_path","/")
+        if to_mode == "local":
+            cmd = rsync_cmd(shlex.quote(src_dir), shlex.quote(to_path), bwkb=bwkb)
+        elif to_mode == "ssh":
+            keep = "-o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p 22"
+            host = b.get("host"); user = b.get("username"); pw = b.get("password")
+            rsh  = f"sshpass -p {shlex.quote(pw)} ssh -o StrictHostKeyChecking=no {keep}"
+            dst  = f"{shlex.quote(user)}@{shlex.quote(host)}:{shlex.quote(to_path)}"
+            cmd  = rsync_cmd(shlex.quote(src_dir), dst, bwkb=bwkb, rsh=rsh)
+        elif to_mode == "mount":
+            name = b.get("mount_name"); mp = mountpoint(name)
+            dst = os.path.join(mp, to_path.lstrip("/"))
+            cmd = rsync_cmd(shlex.quote(src_dir), shlex.quote(dst), bwkb=bwkb)
+        else:
+            return jsonify({"ok": False, "error":"unknown to_mode"}), 400
+        job = {"id": int(time.time()), "cmd": cmd, "kind":"restore", "label": f"restore->{to_mode}", "mode":"restore", "dest": to_path}
         return jsonify(worker.submit(job))
-
-# ----------------- Notifications (Gotify minimal) -----------------
-@app.get("/api/notify/config")
-def api_notify_get():
-    return jsonify(read_json(PATHS["notify"], {}))
-
-@app.post("/api/notify/config")
-def api_notify_set():
-    write_json(PATHS["notify"], request.json or {})
-    return jsonify({"ok": True})
-
-@app.post("/api/notify/test")
-def api_notify_test():
-    cfg = read_json(PATHS["notify"], {})
-    if not cfg.get("url") or not cfg.get("token"):
-        return jsonify({"ok": False, "error":"missing url/token"})
-    url = cfg["url"].rstrip("/") + "/message"
-    pr  = int(cfg.get("priority",5))
-    cmd = (
-        f"curl -fsSL -X POST {shlex.quote(url)} "
-        f"-H 'X-Gotify-Key: {cfg['token']}' "
-        f"-F title='RLB Test' -F priority='{pr}' -F message='This is a test from RLB'"
-    )
-    rc, out, err = run_cmd(cmd + " 2>&1 || true")
-    return jsonify({"ok": rc == 0, "out": out or err})
-
-# ----------------- Schedules (simple) -----------------
-def _tick_schedules():
-    while True:
-        sch = read_json(PATHS["schedules"], [])
-        now = time.time()
-        changed = False
-        for s in sch:
-            if not s.get("enabled"):
-                continue
-            nxt = s.get("next_run",0) or 0
-            if nxt and nxt > now:
-                continue
-            body = s.get("template",{}).copy()
-            body["label"] = s.get("name","job")
-            try:
-                with app.test_request_context():
-                    request.json = body
-                    api_backup_start()
-            except Exception:
-                pass
-            # calc next
-            freq = s.get("frequency","daily")
-            tm   = s.get("time","02:00")
-            day  = int(s.get("day",0) or 0)
-            hh, mm = map(int, tm.split(":"))
-            dt = datetime.datetime.now()
-            if freq == "daily":
-                dt = (dt + datetime.timedelta(days=1)).replace(hour=hh, minute=mm, second=0, microsecond=0)
-            elif freq == "weekly":
-                days = (day - dt.weekday() + 7) % 7 or 7
-                dt = (dt + datetime.timedelta(days=days)).replace(hour=hh, minute=mm, second=0, microsecond=0)
-            else:
-                m = dt.month + 1
-                y = dt.year + (1 if m > 12 else 0)
-                m = 1 if m > 12 else m
-                d = max(1, min(28, day or 1))
-                dt = datetime.datetime(y, m, d, hour=hh, minute=mm)
-            s["next_run"] = int(dt.timestamp()); changed = True
-        if changed:
-            write_json(PATHS["schedules"], sch)
-        time.sleep(30)
-
-threading.Thread(target=_tick_schedules, daemon=True).start()
-
-@app.get("/api/schedules")
-def api_schedules_get():
-    return jsonify({"schedules": read_json(PATHS["schedules"], [])})
-
-@app.post("/api/schedules/save")
-def api_schedules_save():
-    b = request.json or {}
-    sch = read_json(PATHS["schedules"], [])
-    sch = [x for x in sch if x.get("name") != b.get("name")]
-    b.setdefault("enabled", True)
-    b.setdefault("frequency", "daily")
-    b.setdefault("time", "02:00")
-    b.setdefault("day", 0)
-    b.setdefault("template", {})
-    b.setdefault("next_run", 0)
-    sch.append(b)
-    write_json(PATHS["schedules"], sch)
-    return jsonify({"ok": True})
 
 # --------------- Static UI ---------------
 @app.get("/")
