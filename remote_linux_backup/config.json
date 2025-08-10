@@ -18,7 +18,7 @@
   },
   "map": ["config:rw", "ssl:ro", "share:rw", "media:rw", "backup:rw"],
   "privileged": ["SYS_ADMIN"],
-  "apparmor": "unconfined",
+  "apparmor": false,
   "full_access": false,
   "environment": {},
   "options": {
