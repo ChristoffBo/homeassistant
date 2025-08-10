@@ -47,13 +47,19 @@
       <h3>Backup to (Destination)</h3>
       <label>Destination type</label>
       <div class="row">
-        <select id="b_dest_type"><option value="local">Local (this HA)</option><option value="mount">Mounted share</option></select>
+        <select id="b_dest_type"><option value="local">Local (this HA)</option><option value="mount">Mounted share</option><option value="ssh">SSH (remote)</option></select>
         <input id="b_dest_mount" placeholder="mount name (for mounted share)">
+      </div>
+      <div class="row ssh-dest-only">
+        <input id="d_host" placeholder="dest host / IP">
+        <input id="d_user" placeholder="username">
+        <input id="d_pass" placeholder="password" type="password">
       </div>
       <label>Destination folder (base)</label><input id="b_dest_path" value="/config/remote_linux_backup/backups">
       <div class="row">
         <button id="bw_pick_dest_local">Pick local</button>
         <button id="bw_pick_dest_mount">Pick from mount</button>
+        <button id="bw_pick_dest_ssh" class="ssh-dest-only">Pick via SSH</button>
         <button id="bw_mkdir_dest" class="secondary">Create folder…</button>
       </div>
       <label>Profile (sets safe defaults)</label>
@@ -103,6 +109,26 @@
   <pre class="log" id="log_mounts"></pre>
 </section>
 
+
+<section id="connections" class="tab">
+  <h2>Connections</h2>
+  <div class="grid two">
+    <div>
+      <label>Name</label><input id="c_name">
+      <label>Host/IP</label><input id="c_host">
+      <label>User</label><input id="c_user">
+      <label>Password</label><input id="c_pass" type="password">
+      <div class="row">
+        <button id="c_test">Test</button>
+        <button id="c_save" class="primary">Save</button>
+      </div>
+    </div>
+    <div>
+      <table class="list" id="c_table"><thead><tr><th>Name</th><th>Host</th><th>User</th><th>Actions</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+  <pre id="log_conn" class="log"></pre>
+</section>
 <section id="schedule" class="tabpane">
   <h2>Schedule</h2>
   <div class="grid three">
