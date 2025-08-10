@@ -238,6 +238,30 @@ class ScheduleWorker(threading.Thread):
 sched_worker=ScheduleWorker(); sched_worker.start()
 
 # ------- API: jobs
+
+def _explain_ssh_error(msg: str) -> str:
+    """Return a short human explanation for common SSH/SFTP failures."""
+    if not msg:
+        return ""
+    m = msg.lower()
+    # Authentication / account issues
+    if "permission denied" in m or "auth fail" in m or "authentication failed" in m:
+        return "Login failed: wrong username or password, or account is not permitted by sshd (AllowUsers/Match)."
+    if "no such file or directory" in m and "sftp" in m:
+        return "SFTP is disabled on the server (Subsystem sftp not enabled)."
+    # Connection policies
+    if "kex_exchange_identification" in m or "connection reset by peer" in m or "banner exchange" in m:
+        return "Server closed the connection before auth. Common causes: wrong username, sshd DenyUsers/AllowUsers, MaxStartups rate-limit, or firewall."
+    if "connection refused" in m:
+        return "SSH is not running on that host/port, or a firewall refused the connection."
+    if "no route to host" in m or "network is unreachable" in m:
+        return "Cannot reach host (routing/firewall)."
+    if "could not resolve hostname" in m or "temporary failure in name resolution" in m:
+        return "Hostname cannot be resolved (DNS). Try using an IP."
+    # Crypto / compatibility
+    if "no matching host key type" in m or "no matching key exchange method" in m or "no matching cipher found" in m:
+        return "Crypto mismatch between client and server. Update OpenSSH or enable modern algorithms on the server."
+    return ""
 @app.get("/api/jobs")
 def api_jobs():
     with worker.lock: cur=worker.cur
@@ -365,7 +389,7 @@ def api_ssh_listdir():
                 "path": (base.rstrip("/") + "/" if base != "/" else "/") + name,
             })
         return jsonify({"ok": True, "items": items, "base": base, "via": "ssh"})
-    return jsonify({"ok": False, "error": last_err or (err or "ssh list failed")}), 200
+    return jsonify({"ok": False, "error": last_err or (err or "ssh list failed"), "explain": _explain_ssh_error(str(last_err or err))}), 200
 
 @app.get("/api/local/listdir")
 def api_local_listdir():
@@ -403,6 +427,7 @@ def api_mounts_save():
     write_json(PATHS["mounts"],data); os.makedirs(mountpoint(name),exist_ok=True); return jsonify({"ok":True})
 
 
+
 @app.post("/api/mounts/delete")
 def api_mounts_delete():
     b = request.json or {}
@@ -414,27 +439,35 @@ def api_mounts_delete():
     data = read_json(PATHS["mounts"], [])
     before = len(data)
 
-    # Prefer name match
-    data2 = [m for m in data if (m.get("name","").strip() != name)] if name else data
+    removed = 0
+    data2 = []
+    for m in data:
+        match = False
+        if name and m.get("name","").strip() == name:
+            match = True
+        elif host or share or typ:
+            if (host and m.get("host","").strip() == host) and (share and m.get("share","").strip() == share or not share) and (typ and m.get("type","").strip().lower() == typ or not typ):
+                match = True
+        if match:
+            removed += 1
+        else:
+            data2.append(m)
 
-    # If nothing removed and host/share provided, remove by host/share/type
-    if len(data2) == before and (host or share):
-        def same(m):
-            return (m.get("host","").strip()==host) and (m.get("share","").strip()==share) and ((m.get("type","").strip().lower()==typ) if typ else True)
-        data2 = [m for m in data if not same(m)]
-
+    # write back
     write_json(PATHS["mounts"], data2)
 
-    # Attempt cleanup of mount directory
-    mp = mountpoint(name) if name else ""
-    removed = before - len(data2)
+    # Attempt cleanup of mount directory (best-effort)
     try:
-        if name and mp:
+        mp = mountpoint(name) if name else ""
+        if mp:
             if os.path.ismount(mp):
-                run_cmd(f"umount -l {shlex.quote(mp)}")
-            if os.path.isdir(mp) and not os.listdir(mp):
-                os.rmdir(mp)
-    except Exception as e:
+                run_cmd(f"umount -l {shlex.quote(mp)} 2>&1 || true")
+            if os.path.isdir(mp):
+                try:
+                    os.rmdir(mp)
+                except OSError:
+                    pass
+    except Exception:
         pass
 
     return jsonify({"ok": True, "removed": removed, "left": len(data2)})
@@ -729,4 +762,33 @@ def ui(): return send_from_directory("www","index.html")
 
 if __name__=="__main__":
     ap=argparse.ArgumentParser(); ap.add_argument("--port",type=int,default=8066); args=ap.parse_args()
-    app.run(host="0.0.0.0", port=args.port)
+    app.run(host="0.0.0.0", port=args.port
+@app.get('/api/connections')
+def api_connections_list():
+    items=_load_json(PATHS.CONNECTIONS).get('items',[])
+    return {'ok':True,'items':items}
+
+@app.post('/api/connections/save')
+def api_connections_save():
+    data=request.get_json(force=True) or {}
+    state=_load_json(PATHS.CONNECTIONS)
+    items=state.get('items',[])
+    # upsert by name
+    name=data.get('name')
+    if not name: return jsonify({'ok':False,'error':'name required'}),400
+    rest=[i for i in items if i.get('name')!=name]
+    rest.append({'name':name, 'host':data.get('host'), 'user':data.get('user'), 'password':data.get('password')})
+    state['items']=rest
+    _save_json(PATHS.CONNECTIONS,state)
+    return {'ok':True,'items':rest}
+
+@app.post('/api/connections/delete')
+def api_connections_delete():
+    data=request.get_json(force=True) or {}
+    name=data.get('name')
+    state=_load_json(PATHS.CONNECTIONS)
+    items=[i for i in state.get('items',[]) if i.get('name')!=name]
+    state['items']=items
+    _save_json(PATHS.CONNECTIONS,state)
+    return {'ok':True}
+)
