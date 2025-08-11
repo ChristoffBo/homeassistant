@@ -1,200 +1,154 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Unified DNS</title>
-  <link rel="stylesheet" href="./style.css">
-  <link rel="icon" href="./logo.png">
+  <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
-  <header class="topbar">
-    <img src="./logo.png" alt="Logo" class="logo" />
-    <div class="titles">
-      <h1>Unified DNS</h1>
-      <p>Manual sync · Soft-color stats · Gotify · Self-Check</p>
-    </div>
-  </header>
-
+<header class="app-header">
+  <div class="title">
+    <h1>Unified DNS</h1>
+    <p>Manual sync · Soft‑color stats · Gotify · Self‑Check</p>
+  </div>
   <nav class="tabs">
-    <button data-tab="dashboard" class="active">Dashboard</button>
-    <button data-tab="sync">Sync</button>
-    <button data-tab="notify">Notify</button>
-    <button data-tab="settings">Settings</button>
-    <button data-tab="selfcheck">Self-Check</button>
-    <button data-tab="logs">Logs</button>
+    <a class="tab-link active" data-tab="tab-dashboard">Dashboard</a>
+    <a class="tab-link" data-tab="tab-sync">Sync</a>
+    <a class="tab-link" data-tab="tab-notify">Notify</a>
+    <a class="tab-link" data-tab="tab-settings">Settings</a>
+    <a class="tab-link" data-tab="tab-selfcheck">Self‑Check</a>
+    <a class="tab-link" data-tab="tab-logs">Logs</a>
   </nav>
+</header>
 
-  <main>
-    <!-- DASHBOARD -->
-    <section id="tab-dashboard" class="tab active">
-      <div class="card controls">
-        <div class="row">
-          <label for="refresh">Refresh every</label>
-          <select id="refresh">
-            <option value="2">2</option>
-            <option value="5" selected>5</option>
-            <option value="10">10</option>
-            <option value="20">20</option>
-          </select>
-          <span>sec</span>
-          <button id="btn-refresh-now" class="btn">Update now</button>
+<main>
+  <!-- DASHBOARD -->
+  <section id="tab-dashboard" class="tab active">
+    <div class="card">
+      <div class="card-header">
+        <h2>Unified Overview</h2>
+        <div class="controls">
+          <label class="inline">
+            <span>Refresh every</span>
+            <select id="refresh-every">
+              <option value="2">2</option>
+              <option value="5" selected>5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+            </select>
+            <span>sec</span>
+          </label>
+          <button id="btn-update-now" class="btn">Update now</button>
         </div>
       </div>
-
       <div class="kpis">
-        <div class="kpi">
-          <div class="kpi-number" id="kpi-total">0</div>
-          <div class="kpi-label">Total</div>
+        <div class="kpi"><div class="kpi-title">Total</div><div id="kpi-total" class="kpi-value">0</div></div>
+        <div class="kpi kpi-red"><div class="kpi-title">Blocked</div><div id="kpi-blocked" class="kpi-value">0</div></div>
+        <div class="kpi kpi-green"><div class="kpi-title">Allowed</div><div id="kpi-allowed" class="kpi-value">0</div></div>
+        <div class="kpi"><div class="kpi-title">% Blocked</div><div id="kpi-pct" class="kpi-value">0%</div></div>
+        <div class="kpi"><div class="kpi-title">Busiest</div><div id="kpi-busiest" class="kpi-value">n/a</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <h3>Servers</h3>
+        <table class="table" id="tbl-servers">
+          <thead><tr><th>Server</th><th>Type</th><th>Status</th><th>Total</th><th>Allowed</th><th>Blocked</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SYNC (placeholder text; manual sync logic to be added later) -->
+  <section id="tab-sync" class="tab">
+    <div class="card">
+      <h2>Sync</h2>
+      <p>Manual sync is disabled in this cut; focus is on fixing persistence and stats. (We can re‑enable once servers confirm OK.)</p>
+    </div>
+  </section>
+
+  <!-- NOTIFY -->
+  <section id="tab-notify" class="tab">
+    <div class="card">
+      <h2>Notify</h2>
+      <div class="form-grid">
+        <label>Gotify URL<input id="opt-gotify-url" type="text" placeholder="https://gotify.example.com/"/></label>
+        <label>Gotify Token<input id="opt-gotify-token" type="password" placeholder="token"/></label>
+        <div class="actions">
+          <button id="btn-save-notify" class="btn">Save</button>
         </div>
-        <div class="kpi kpi-red">
-          <div class="kpi-number" id="kpi-blocked">0</div>
-          <div class="kpi-label">Blocked</div>
-        </div>
-        <div class="kpi kpi-green">
-          <div class="kpi-number" id="kpi-allowed">0</div>
-          <div class="kpi-label">Allowed</div>
-        </div>
-        <div class="kpi kpi-red">
-          <div class="kpi-number" id="kpi-blocked-pct">0%</div>
-          <div class="kpi-label">% Blocked</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-number" id="kpi-busiest">n/a</div>
-          <div class="kpi-label">Busiest server</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="tab-settings" class="tab">
+    <div class="card">
+      <h2>Settings</h2>
+      <div class="form-grid">
+        <label>Display Name<input id="srv-name" type="text" placeholder="Tech-1"/></label>
+        <label>Type
+          <select id="srv-type">
+            <option value="technitium">Technitium</option>
+            <option value="adguard">AdGuard</option>
+            <option value="pihole">Pi-hole</option>
+          </select>
+        </label>
+        <label>Base URL<input id="srv-base" type="text" placeholder="http://dns:5380/"/></label>
+        <label>DNS Host (optional)<input id="srv-dnshost" type="text" placeholder="10.0.0.2"/></label>
+        <label>DNS Port (default 53)<input id="srv-dnsport" type="number" min="1" max="65535" value="53"/></label>
+        <label>DNS Protocol
+          <select id="srv-dnsproto">
+            <option value="udp">udp</option>
+            <option value="tcp">tcp</option>
+          </select>
+        </label>
+        <label>Username<input id="srv-user" type="text"/></label>
+        <label>Password<input id="srv-pass" type="password"/></label>
+        <label>Token<input id="srv-token" type="text"/></label>
+        <label class="switch"><input id="srv-verify" type="checkbox" checked/><span>Verify TLS</span></label>
+        <label class="switch"><input id="srv-primary" type="checkbox"/><span>Primary</span></label>
+        <div class="actions">
+          <button id="btn-save-server" class="btn">Save/Update Server</button>
+          <button id="btn-clear-form" class="btn btn-secondary">Clear</button>
         </div>
       </div>
 
-      <div class="card lists">
-        <div class="list">
-          <h3>Top 3 queried domains</h3>
-          <ol id="top-queried"></ol>
-        </div>
-        <div class="list">
-          <h3>Top 3 blocked domains</h3>
-          <ol id="top-blocked"></ol>
-        </div>
-        <div class="list">
-          <h3>Top 3 busiest servers</h3>
-          <ol id="top-busiest"></ol>
-        </div>
+      <h3>Configured Servers</h3>
+      <table class="table" id="tbl-configured">
+        <thead><tr><th>Name</th><th>Type</th><th>URL</th><th>Primary</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3>Cache Builder (Global)</h3>
+      <textarea id="opt-cache-global" rows="6" placeholder="one domain per line"></textarea>
+      <div class="actions">
+        <button id="btn-save-cache" class="btn">Save</button>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- SYNC (stub UI – works with same API helper) -->
-    <section id="tab-sync" class="tab">
-      <div class="card">
-        <h2>Manual Sync</h2>
-        <div class="row">
-          <label><input type="checkbox" id="dry-run" checked> Dry run</label>
-          <button id="btn-sync" class="btn">Run sync</button>
-        </div>
-        <pre id="sync-output" class="code"></pre>
+  <!-- SELF-CHECK -->
+  <section id="tab-selfcheck" class="tab">
+    <div class="card">
+      <h2>Self‑Check</h2>
+      <div class="actions">
+        <button id="btn-selfcheck" class="btn">Run Self‑Check</button>
       </div>
-    </section>
+      <pre id="selfcheck-output" class="pre"></pre>
+    </div>
+  </section>
 
-    <!-- NOTIFY -->
-    <section id="tab-notify" class="tab">
-      <div class="card">
-        <h2>Gotify</h2>
-        <div class="row">
-          <label for="gotify-url">URL</label>
-          <input id="gotify-url" placeholder="https://gotify.example.com" />
-        </div>
-        <div class="row">
-          <label for="gotify-token">Token</label>
-          <input id="gotify-token" placeholder="app token" />
-        </div>
-        <div class="row">
-          <button id="btn-save-gotify" class="btn">Save</button>
-          <button id="btn-test-gotify" class="btn ghost">Test</button>
-        </div>
-        <div id="notify-msg" class="msg"></div>
-      </div>
-    </section>
+  <!-- LOGS (placeholder) -->
+  <section id="tab-logs" class="tab">
+    <div class="card">
+      <h2>Logs</h2>
+      <p>See Supervisor logs for backend traces. UI will show API errors inline where relevant.</p>
+    </div>
+  </section>
+</main>
 
-    <!-- SETTINGS -->
-    <section id="tab-settings" class="tab">
-      <div class="card">
-        <h2>Servers</h2>
-        <form id="server-form" class="form">
-          <div class="row">
-            <label>Name</label><input name="name" required>
-          </div>
-          <div class="row">
-            <label>Type</label>
-            <select name="type" required>
-              <option value="technitium" selected>Technitium</option>
-              <option value="adguard">AdGuard</option>
-              <option value="pihole">Pi-hole</option>
-            </select>
-          </div>
-          <div class="row">
-            <label>Base URL</label><input name="base_url" placeholder="http(s)://host:port" required>
-          </div>
-          <div class="row">
-            <label>DNS Host</label><input name="dns_host" placeholder="optional">
-          </div>
-          <div class="row">
-            <label>DNS Port</label><input name="dns_port" type="number" placeholder="53">
-          </div>
-          <div class="row">
-            <label>DNS Protocol</label>
-            <select name="dns_protocol">
-              <option value="">(default)</option>
-              <option value="udp">udp</option>
-              <option value="tcp">tcp</option>
-            </select>
-          </div>
-          <div class="row">
-            <label>Username</label><input name="username" placeholder="if required">
-          </div>
-          <div class="row">
-            <label>Password</label><input name="password" type="password" placeholder="if required">
-          </div>
-          <div class="row">
-            <label>Token</label><input name="token" placeholder="if required">
-          </div>
-          <div class="row">
-            <label><input type="checkbox" name="verify_tls" checked> Verify TLS</label>
-            <label><input type="checkbox" name="primary"> Primary</label>
-          </div>
-          <div class="row">
-            <button class="btn" type="submit">Add/Update</button>
-            <button class="btn ghost" type="button" id="btn-clear-form">Clear</button>
-          </div>
-        </form>
-
-        <div class="table-wrap">
-          <table class="table" id="server-table">
-            <thead>
-              <tr><th>Name</th><th>Type</th><th>Base URL</th><th>Primary</th><th>Actions</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- SELF-CHECK -->
-    <section id="tab-selfcheck" class="tab">
-      <div class="card">
-        <h2>Self-Check</h2>
-        <button id="btn-selfcheck" class="btn">Run Self-Check</button>
-        <pre id="selfcheck-output" class="code"></pre>
-      </div>
-    </section>
-
-    <!-- LOGS -->
-    <section id="tab-logs" class="tab">
-      <div class="card">
-        <h2>Logs</h2>
-        <pre id="logs-output" class="code"></pre>
-        <button id="btn-logs-refresh" class="btn">Refresh</button>
-      </div>
-    </section>
-  </main>
-
-  <script defer src="./app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
