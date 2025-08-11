@@ -1,20 +1,33 @@
 /* eslint-disable */
-const $ = (q) => document.querySelector(q);
-const $$ = (q) => Array.from(document.querySelectorAll(q));
+const $ = (q, root = document) => root.querySelector(q);
+const $$ = (q, root = document) => Array.from(root.querySelectorAll(q));
 
-/**
- * Build a URL that always works under HA Ingress and direct access.
- * Using the URL constructor guarantees correct resolution from the current page.
- */
+/* ---------- Utilities ---------- */
+function ensureToast() {
+  let t = $("#toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "toast";
+    t.className = "toast";
+    document.body.appendChild(t);
+  }
+  return t;
+}
+
+function toast(msg, cls = "") {
+  const t = ensureToast();
+  t.textContent = msg;
+  t.className = `toast show ${cls || ""}`;
+  setTimeout(() => t.classList.remove("show"), 2500);
+}
+
 function buildUrl(path) {
-  // Accept absolute URLs untouched
-  if (/^https?:\/\//i.test(path)) return path;
-  // Ensure relative resolution against current page (works in ingress)
-  return new URL(path.replace(/^\//, ""), window.location.href).toString();
+  if (/^https?:\/\//i.test(path)) return path;                    // absolute
+  return new URL(path.replace(/^\//, ""), window.location.href).toString(); // relative to ingress page
 }
 
 async function api(path, method = "GET", body = null) {
-  const url = buildUrl(path); // <-- The final URL we will call
+  const url = buildUrl(path);
   try {
     const res = await fetch(url, {
       method,
@@ -24,8 +37,8 @@ async function api(path, method = "GET", body = null) {
       cache: "no-store",
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url} :: ${text.slice(0,160)}`);
+      const txt = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url} :: ${txt.slice(0,160)}`);
     }
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json")) {
@@ -34,20 +47,27 @@ async function api(path, method = "GET", body = null) {
     }
     return await res.json();
   } catch (err) {
-    console.error("FETCH ERROR:", err.message);
+    console.error("FETCH ERROR:", err);
     toast(`Fetch failed: ${err.message}`, "err");
     throw err;
   }
 }
 
-function toast(msg, cls = "") {
-  const t = $("#toast");
-  if (!t) return alert(msg);
-  t.textContent = msg;
-  t.className = `toast show ${cls || ""}`;
-  setTimeout(() => t.classList.remove("show"), 2500);
+/* ---------- Safe element reads ---------- */
+function val(id, def = "") {
+  const el = document.getElementById(id);
+  if (!el) return def;
+  if ("checked" in el) return el.checked;
+  return (el.value ?? def);
+}
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if ("checked" in el) el.checked = !!v;
+  else el.value = v ?? "";
 }
 
+/* ---------- Tabs ---------- */
 function bindTabs() {
   $$(".tab-link").forEach((a) => {
     a.addEventListener("click", (e) => {
@@ -55,25 +75,32 @@ function bindTabs() {
       $$(".tab-link").forEach((x) => x.classList.remove("active"));
       a.classList.add("active");
       const tab = a.dataset.tab;
+      if (!tab) return;
       $$(".tab").forEach((s) => s.classList.remove("active"));
-      $("#" + tab).classList.add("active");
+      const target = document.getElementById(tab);
+      if (target) target.classList.add("active");
     }, { passive: false });
   });
 }
 
-let OPTIONS = null;
+/* ---------- State ---------- */
+let OPTIONS = { servers: [], cache_builder_list: [] };
+let pollTimer = null;
 
+/* ---------- Options ---------- */
 async function loadOptions() {
-  const js = await api("api/options");     // relative path → /<ingress>/api/options
-  OPTIONS = js.options || { servers: [], cache_builder_list: [] };
-  $("#opt-gotify-url").value = OPTIONS.gotify_url || "";
-  $("#opt-gotify-token").value = OPTIONS.gotify_token || "";
-  $("#opt-cache-global").value = (OPTIONS.cache_builder_list || []).join("\n");
+  const js = await api("api/options");
+  OPTIONS = js.options || OPTIONS;
+  setVal("opt-gotify-url", OPTIONS.gotify_url || "");
+  setVal("opt-gotify-token", OPTIONS.gotify_token || "");
+  setVal("opt-cache-global", (OPTIONS.cache_builder_list || []).join("\n"));
   renderConfigured();
 }
 
 function renderConfigured() {
-  const tb = $("#tbl-configured tbody");
+  const table = document.getElementById("tbl-configured");
+  if (!table) return; // mobile layout might hide it
+  const tb = $("tbody", table);
   if (!tb) return;
   tb.innerHTML = "";
   (OPTIONS.servers || []).forEach((s, idx) => {
@@ -96,40 +123,41 @@ async function saveOptions(patch) {
   OPTIONS = js.options || OPTIONS;
 }
 
+/* ---------- Forms ---------- */
 function readServerForm() {
   return {
-    name: $("#srv-name").value.trim(),
-    type: $("#srv-type").value,
-    base_url: $("#srv-base").value.trim(),
-    dns_host: $("#srv-dnshost").value.trim(),
-    dns_port: parseInt($("#srv-dnsport").value, 10) || 53,
-    dns_protocol: $("#srv-dnsproto").value,
-    username: $("#srv-user").value,
-    password: $("#srv-pass").value,
-    token: $("#srv-token").value,
-    verify_tls: $("#srv-verify").checked,
-    primary: $("#srv-primary").checked,
+    name: val("srv-name").trim(),
+    type: val("srv-type") || "technitium",
+    base_url: val("srv-base").trim(),
+    dns_host: val("srv-dnshost").trim(),
+    dns_port: parseInt(val("srv-dnsport", 53), 10) || 53,
+    dns_protocol: val("srv-dnsproto") || "udp",
+    username: val("srv-user"),
+    password: val("srv-pass"),
+    token: val("srv-token"),
+    verify_tls: !!val("srv-verify", true),
+    primary: !!val("srv-primary", false),
     cache_builder_override: false,
     cache_builder_list: [],
   };
 }
-
 function clearServerForm() {
-  $("#srv-name").value = "";
-  $("#srv-type").value = "technitium";
-  $("#srv-base").value = "";
-  $("#srv-dnshost").value = "";
-  $("#srv-dnsport").value = 53;
-  $("#srv-dnsproto").value = "udp";
-  $("#srv-user").value = "";
-  $("#srv-pass").value = "";
-  $("#srv-token").value = "";
-  $("#srv-verify").checked = true;
-  $("#srv-primary").checked = false;
+  setVal("srv-name", "");
+  setVal("srv-type", "technitium");
+  setVal("srv-base", "");
+  setVal("srv-dnshost", "");
+  setVal("srv-dnsport", 53);
+  setVal("srv-dnsproto", "udp");
+  setVal("srv-user", "");
+  setVal("srv-pass", "");
+  setVal("srv-token", "");
+  setVal("srv-verify", true);
+  setVal("srv-primary", false);
 }
 
+/* ---------- Actions ---------- */
 async function saveServer() {
-  toast("Saving server...", "ok");
+  toast("Saving server…", "ok");
   const s = readServerForm();
   if (!s.name) { toast("Display Name is required", "err"); return; }
   if (!s.base_url) { toast("Base URL is required", "err"); return; }
@@ -144,17 +172,20 @@ async function saveServer() {
 }
 
 async function saveNotify() {
-  toast("Saving notify...", "ok");
+  toast("Saving notify…", "ok");
   await saveOptions({
-    gotify_url: $("#opt-gotify-url").value.trim(),
-    gotify_token: $("#opt-gotify-token").value.trim(),
+    gotify_url: val("opt-gotify-url").trim(),
+    gotify_token: val("opt-gotify-token").trim(),
   });
   toast("Notify saved", "ok");
 }
 
 async function saveCacheGlobal() {
-  toast("Saving cache list...", "ok");
-  const lines = $("#opt-cache-global").value.split("\n").map((x) => x.trim()).filter(Boolean);
+  toast("Saving cache list…", "ok");
+  const lines = val("opt-cache-global")
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean);
   await saveOptions({ cache_builder_list: lines });
   toast("Cache list saved", "ok");
 }
@@ -162,48 +193,64 @@ async function saveCacheGlobal() {
 async function refreshStats() {
   const js = await api("api/stats");
   const u = js.unified || { total: 0, blocked: 0, allowed: 0, servers: [] };
-  $("#kpi-total").textContent = u.total;
-  $("#kpi-blocked").textContent = u.blocked;
-  $("#kpi-allowed").textContent = u.allowed;
-  $("#kpi-pct").textContent = (js.pct_blocked || 0) + "%";
+  setVal("kpi-total", u.total);
+  setVal("kpi-blocked", u.blocked);
+  setVal("kpi-allowed", u.allowed);
+  const pct = (js.pct_blocked || 0) + "%";
+  setText("kpi-pct", pct);
+
   let busiest = "n/a", best = -1;
   (u.servers || []).forEach((s) => { if (s.ok && s.total > best) { best = s.total; busiest = s.name || s.type; } });
-  $("#kpi-busiest").textContent = busiest;
+  setText("kpi-busiest", busiest);
 
-  const tb = $("#tbl-servers tbody");
-  tb.innerHTML = "";
-  (u.servers || []).forEach((s) => {
-    const tr = document.createElement("tr");
-    const status = s.ok ? "OK" : "ERR: " + (s.error || "");
-    tr.innerHTML = `
-      <td>${s.name || ""}</td>
-      <td>${s.type || ""}</td>
-      <td>${status}</td>
-      <td>${s.ok ? s.total : "-"}</td>
-      <td>${s.ok ? s.allowed : "-"}</td>
-      <td>${s.ok ? s.blocked : "-"}</td>`;
-    tb.appendChild(tr);
-  });
+  const table = document.getElementById("tbl-servers");
+  if (table) {
+    const tb = $("tbody", table);
+    if (tb) {
+      tb.innerHTML = "";
+      (u.servers || []).forEach((s) => {
+        const tr = document.createElement("tr");
+        const status = s.ok ? "OK" : "ERR: " + (s.error || "");
+        tr.innerHTML = `
+          <td>${s.name || ""}</td>
+          <td>${s.type || ""}</td>
+          <td>${status}</td>
+          <td>${s.ok ? s.total : "-"}</td>
+          <td>${s.ok ? s.allowed : "-"}</td>
+          <td>${s.ok ? s.blocked : "-"}</td>`;
+        tb.appendChild(tr);
+      });
+    }
+  }
+}
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
 }
 
-let pollTimer = null;
 function setAutoRefresh() {
   if (pollTimer) clearInterval(pollTimer);
-  const sec = parseInt($("#refresh-every").value, 10);
+  const sel = document.getElementById("refresh-every");
+  if (!sel) return;
+  const sec = parseInt(sel.value || "5", 10);
   pollTimer = setInterval(refreshStats, sec * 1000);
 }
 
 async function runSelfCheck() {
-  $("#selfcheck-output").textContent = "Running...";
+  const out = document.getElementById("selfcheck-output");
+  if (out) out.textContent = "Running…";
   const js = await api("api/selfcheck");
-  $("#selfcheck-output").textContent = JSON.stringify(js, null, 2);
+  if (out) out.textContent = JSON.stringify(js, null, 2);
 }
 
-// Delegated click/touch so buttons always fire
+/* ---------- Strong event wiring (works on mobile/ingress) ---------- */
 function bindEvents() {
   document.body.addEventListener("click", onAction, { passive: false });
   document.body.addEventListener("touchend", onAction, { passive: false });
   bindTabs();
+
+  const sel = document.getElementById("refresh-every");
+  if (sel) sel.addEventListener("change", () => setAutoRefresh(), { passive: true });
 }
 
 async function onAction(e) {
@@ -225,17 +272,17 @@ async function onAction(e) {
     if (act === "edit") {
       const i = parseInt(btn.dataset.idx, 10);
       const s = (OPTIONS.servers || [])[i] || {};
-      $("#srv-name").value = s.name || "";
-      $("#srv-type").value = s.type || "technitium";
-      $("#srv-base").value = s.base_url || "";
-      $("#srv-dnshost").value = s.dns_host || "";
-      $("#srv-dnsport").value = s.dns_port || 53;
-      $("#srv-dnsproto").value = s.dns_protocol || "udp";
-      $("#srv-user").value = s.username || "";
-      $("#srv-pass").value = s.password || "";
-      $("#srv-token").value = s.token || "";
-      $("#srv-verify").checked = !!s.verify_tls;
-      $("#srv-primary").checked = !!s.primary;
+      setVal("srv-name", s.name || "");
+      setVal("srv-type", s.type || "technitium");
+      setVal("srv-base", s.base_url || "");
+      setVal("srv-dnshost", s.dns_host || "");
+      setVal("srv-dnsport", s.dns_port || 53);
+      setVal("srv-dnsproto", s.dns_protocol || "udp");
+      setVal("srv-user", s.username || "");
+      setVal("srv-pass", s.password || "");
+      setVal("srv-token", s.token || "");
+      setVal("srv-verify", !!s.verify_tls);
+      setVal("srv-primary", !!s.primary);
       toast("Loaded into form", "ok");
       return;
     }
@@ -253,9 +300,32 @@ async function onAction(e) {
   }
 }
 
+/* ---------- Boot sequence with element wait ---------- */
+function waitForElements(ids, timeoutMs = 2500) {
+  const start = performance.now();
+  return new Promise((resolve) => {
+    function check() {
+      const missing = ids.filter((id) => document.getElementById(id) == null);
+      if (missing.length === 0) return resolve(true);
+      if (performance.now() - start > timeoutMs) {
+        console.warn("Missing elements after wait:", missing);
+        return resolve(false); // continue anyway, code is null-safe
+      }
+      requestAnimationFrame(check);
+    }
+    check();
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   try {
+    ensureToast();
     bindEvents();
+    // Elements we most commonly use; we wait briefly so mobile rendering is ready
+    await waitForElements([
+      "srv-name","srv-type","srv-base","srv-dnsproto","srv-dnsport",
+      "opt-cache-global","opt-gotify-url","opt-gotify-token"
+    ]);
     await loadOptions();
     await refreshStats();
     setAutoRefresh();
