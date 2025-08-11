@@ -2,30 +2,42 @@
 const $ = (q) => document.querySelector(q);
 const $$ = (q) => Array.from(document.querySelectorAll(q));
 
-function resolvePath(p) {
-  if (/^https?:\/\//i.test(p)) return p;
-  const loc = window.location.pathname;
-  const m = loc.match(/^\/api\/hassio_ingress\/[^/]+/);
-  const base = m ? m[0] : loc.replace(/\/[^/]*$/, "");
-  return `${base}/${p.replace(/^\//, "")}`;
+/**
+ * Build a URL that always works under HA Ingress and direct access.
+ * Using the URL constructor guarantees correct resolution from the current page.
+ */
+function buildUrl(path) {
+  // Accept absolute URLs untouched
+  if (/^https?:\/\//i.test(path)) return path;
+  // Ensure relative resolution against current page (works in ingress)
+  return new URL(path.replace(/^\//, ""), window.location.href).toString();
 }
 
 async function api(path, method = "GET", body = null) {
-  const url = resolvePath(path);
-  const res = await fetch(url, {
-    method,
-    credentials: "same-origin",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : null,
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} @ ${url}`);
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) {
-    const txt = await res.text();
-    throw new Error(`Expected JSON, got ${ct}. First: ${txt.slice(0,120)}`);
+  const url = buildUrl(path); // <-- The final URL we will call
+  try {
+    const res = await fetch(url, {
+      method,
+      credentials: "same-origin",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : null,
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url} :: ${text.slice(0,160)}`);
+    }
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      const txt = await res.text();
+      throw new Error(`Expected JSON, got ${ct} @ ${url}. First: ${txt.slice(0,160)}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.error("FETCH ERROR:", err.message);
+    toast(`Fetch failed: ${err.message}`, "err");
+    throw err;
   }
-  return await res.json();
 }
 
 function toast(msg, cls = "") {
@@ -52,7 +64,7 @@ function bindTabs() {
 let OPTIONS = null;
 
 async function loadOptions() {
-  const js = await api("api/options");
+  const js = await api("api/options");     // relative path → /<ingress>/api/options
   OPTIONS = js.options || { servers: [], cache_builder_list: [] };
   $("#opt-gotify-url").value = OPTIONS.gotify_url || "";
   $("#opt-gotify-token").value = OPTIONS.gotify_token || "";
@@ -117,7 +129,6 @@ function clearServerForm() {
 }
 
 async function saveServer() {
-  // immediate feedback so you know the click worked
   toast("Saving server...", "ok");
   const s = readServerForm();
   if (!s.name) { toast("Display Name is required", "err"); return; }
@@ -188,33 +199,28 @@ async function runSelfCheck() {
   $("#selfcheck-output").textContent = JSON.stringify(js, null, 2);
 }
 
-// --------- STRONG event wiring: delegation + touch + click
+// Delegated click/touch so buttons always fire
 function bindEvents() {
-  // Delegation: works even if elements are re-rendered
   document.body.addEventListener("click", onAction, { passive: false });
   document.body.addEventListener("touchend", onAction, { passive: false });
-
-  // Tabs still get direct listeners
   bindTabs();
 }
 
 async function onAction(e) {
   const btn = e.target.closest("button");
   if (!btn) return;
-
-  // prevent form submissions doing full navigations
   e.preventDefault();
 
   const id = btn.id;
   const act = btn.dataset.action;
 
   try {
-    if (id === "btn-save-server")      return await saveServer();
-    if (id === "btn-clear-form")       return void clearServerForm();
-    if (id === "btn-save-notify")      return await saveNotify();
-    if (id === "btn-save-cache")       return await saveCacheGlobal();
-    if (id === "btn-update-now")       return await refreshStats();
-    if (id === "btn-selfcheck")        return await runSelfCheck();
+    if (id === "btn-save-server") return await saveServer();
+    if (id === "btn-clear-form") return void clearServerForm();
+    if (id === "btn-save-notify") return await saveNotify();
+    if (id === "btn-save-cache") return await saveCacheGlobal();
+    if (id === "btn-update-now") return await refreshStats();
+    if (id === "btn-selfcheck") return await runSelfCheck();
 
     if (act === "edit") {
       const i = parseInt(btn.dataset.idx, 10);
