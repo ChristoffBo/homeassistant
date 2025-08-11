@@ -1,0 +1,190 @@
+<!doctype html>
+<html data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Unified DNS</title>
+  <link rel="icon" href="logo.png" />
+  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2.0.6/css/pico.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <img src="logo.png" alt="Logo" class="logo">
+      <hgroup>
+        <h1>Unified DNS</h1>
+        <p>Manual sync • Soft-color stats • Gotify • Self-Check</p>
+      </hgroup>
+    </header>
+
+    <nav class="tabs">
+      <ul>
+        <li><a href="#tab-dashboard" class="tab-link active">Dashboard</a></li>
+        <li><a href="#tab-sync" class="tab-link">Sync</a></li>
+        <li><a href="#tab-notify" class="tab-link">Notify</a></li>
+        <li><a href="#tab-settings" class="tab-link">Settings</a></li>
+        <li><a href="#tab-selfcheck" class="tab-link">Self-Check</a></li>
+        <li><a href="#tab-logs" class="tab-link">Logs</a></li>
+      </ul>
+    </nav>
+
+    <section id="tab-dashboard" class="tab active">
+      <article>
+        <div class="flex-between">
+          <h2>Unified Overview</h2>
+          <div class="controls">
+            <label>Refresh every
+              <select id="refresh-interval">
+                <option>2</option>
+                <option selected>5</option>
+                <option>10</option>
+                <option>20</option>
+              </select> sec
+            </label>
+            <button id="refresh-now" class="contrast">Update now</button>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi"><span id="kpi-total">0</span><label>Total</label></div>
+          <div class="kpi"><span id="kpi-blocked">0</span><label>Blocked</label></div>
+          <div class="kpi"><span id="kpi-allowed">0</span><label>Allowed</label></div>
+          <div class="kpi"><span id="kpi-percent">0%</span><label>% Blocked</label></div>
+          <div class="kpi"><span id="kpi-busiest">n/a</span><label>Busiest</label></div>
+        </div>
+
+        <div class="chart-wrap">
+          <canvas id="chart-unified" height="160"></canvas>
+        </div>
+
+        <div class="grid">
+          <div>
+            <h3>Top 3 Queried</h3>
+            <ol id="top-queried"></ol>
+          </div>
+          <div>
+            <h3>Top 3 Blocked</h3>
+            <ol id="top-blocked"></ol>
+          </div>
+        </div>
+
+        <h3>Servers</h3>
+        <table id="servers-table">
+          <thead><tr><th>Server</th><th>Type</th><th>Status</th><th>Total</th><th>Blocked</th><th>Allowed</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </article>
+    </section>
+
+    <section id="tab-sync" class="tab">
+      <article>
+        <h2>Sync</h2>
+        <p class="note">Primary is read-only and clearly marked. Manual-only sync. Greyed items mean unsupported.</p>
+        <form id="sync-form">
+          <fieldset class="row">
+            <label><input type="checkbox" id="dry-run" checked> Dry run (preview only)</label>
+            <label><input type="checkbox" id="cache-prep"> Run Cache Prep after sync</label>
+          </fieldset>
+          <fieldset>
+            <legend>Select targets & categories (from Primary)</legend>
+            <table id="sync-matrix">
+              <thead><tr>
+                <th>Server</th>
+                <th>Forwarders</th>
+                <th>Blocklists</th>
+                <th>Upstreams</th>
+                <th>Overrides</th>
+                <th>Cache Builder List</th>
+                <th>Cache Prep</th>
+              </tr></thead>
+              <tbody id="sync-servers"></tbody>
+            </table>
+          </fieldset>
+          <button type="submit">Run Sync</button>
+        </form>
+        <pre id="sync-output" class="code"></pre>
+      </article>
+    </section>
+
+    <section id="tab-notify" class="tab">
+      <article>
+        <h2>Notifications</h2>
+        <form id="notify-form" class="grid">
+          <label>Gotify URL<input name="gotify_url" placeholder="http://10.0.0.99:8091"></label>
+          <label>Gotify Token<input name="gotify_token" placeholder="App token"></label>
+          <label>Priority<select name="priority"><option>5</option><option>7</option><option>10</option></select></label>
+          <button type="submit">Save</button>
+          <button id="notify-test" type="button">Send Test</button>
+        </form>
+        <p id="notify-status"></p>
+      </article>
+    </section>
+
+    <section id="tab-settings" class="tab">
+      <article>
+        <h2>Settings</h2>
+        <form id="server-form">
+          <div class="grid">
+            <label>Display Name<input name="name" required></label>
+            <label>Type
+              <select name="type" required>
+                <option value="technitium">Technitium</option>
+                <option value="adguard">AdGuard</option>
+                <option value="pihole">Pi-hole</option>
+              </select>
+            </label>
+            <label>Base URL<input name="base_url" placeholder="http://10.0.0.2:5380" required></label>
+            <label>DNS Host (optional)<input name="dns_host" placeholder="10.0.0.2"></label>
+            <label>DNS Port (default 53)<input name="dns_port" type="number" min="1" max="65535"></label>
+            <label>DNS Protocol<select name="dns_protocol"><option>udp</option><option>tcp</option></select></label>
+            <label>Username<input name="username"></label>
+            <label>Password<input name="password" type="password"></label>
+            <label>Token<input name="token"></label>
+            <label>Verify TLS?<input type="checkbox" name="verify_tls" checked></label>
+            <label>Primary?<input type="checkbox" name="primary"></label>
+          </div>
+          <button type="submit">Save/Update Server</button>
+        </form>
+
+        <h3>Configured Servers</h3>
+        <table id="settings-servers">
+          <thead><tr><th>Name</th><th>Type</th><th>URL</th><th>Primary</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+
+        <h3>Cache Builder (Global)</h3>
+        <form id="cache-global-form">
+          <label>Domains (one per line)
+            <textarea id="cache-global" rows="6"></textarea>
+          </label>
+          <button type="submit">Save Global List</button>
+        </form>
+
+        <h3>Per-Server Cache Builder</h3>
+        <div id="cache-per-server"></div>
+      </article>
+    </section>
+
+    <section id="tab-selfcheck" class="tab">
+      <article>
+        <h2>Self-Check</h2>
+        <p>Runs connectivity and auth checks for each server. TLS verify status is shown; use Settings to toggle per server.</p>
+        <button id="run-selfcheck">Run Self-Check</button>
+        <pre id="selfcheck-output" class="code"></pre>
+      </article>
+    </section>
+
+    <section id="tab-logs" class="tab">
+      <article>
+        <h2>Logs</h2>
+        <button id="refresh-logs">Refresh</button>
+        <pre id="logs-output" class="code"></pre>
+      </article>
+    </section>
+  </main>
+
+  <script src="charts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

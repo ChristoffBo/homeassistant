@@ -1,0 +1,24 @@
+:root { --ok: #5cb85c; --blk: #d9534f; }
+body { padding-bottom: 2rem; }
+.header { display:flex; gap:1rem; align-items:center; }
+.logo { width:42px; height:42px; border-radius:10px; }
+nav.tabs ul { display:flex; gap:.5rem; flex-wrap: wrap; }
+.tab { display:none; }
+.tab.active { display:block; }
+.tab-link.active { font-weight:700; }
+.flex-between { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap: wrap; }
+.controls{display:flex;gap:.75rem;align-items:center;}
+.controls select{min-width:5rem}
+.kpis { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:1rem; margin:1rem 0; }
+.kpi { background: rgba(255,255,255,.03); padding:1rem; border-radius:12px; text-align:center; }
+.kpi span { display:block; font-size:1.4rem; }
+.chart-wrap { background: rgba(255,255,255,.02); border-radius:12px; padding:1rem; margin-bottom:1rem; }
+.code { background: rgba(255,255,255,.04); padding:1rem; border-radius:12px; max-height:50vh; overflow:auto; }
+table { width:100%; }
+#servers-table td button { margin-right:.5rem; }
+.note { opacity:.8; }
+#sync-matrix th,#sync-matrix td{text-align:center}
+.badge { padding:.15rem .5rem; border-radius:999px; background:rgba(255,255,255,.08); font-size:.8rem; }
+.primary-badge { background: rgba(80,160,255,.15); }
+button.secondary { background: rgba(255,255,255,.08); }
+textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
