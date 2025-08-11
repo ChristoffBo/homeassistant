@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Unified DNS</title>
-  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="assets/style.css"/>
 </head>
 <body>
 <header class="app-header">
@@ -23,7 +23,6 @@
 </header>
 
 <main>
-  <!-- DASHBOARD -->
   <section id="tab-dashboard" class="tab active">
     <div class="card">
       <div class="card-header">
@@ -39,7 +38,7 @@
             </select>
             <span>sec</span>
           </label>
-          <button id="btn-update-now" class="btn">Update now</button>
+          <button id="btn-update-now" class="btn" type="button">Update now</button>
         </div>
       </div>
       <div class="kpis">
@@ -60,15 +59,10 @@
     </div>
   </section>
 
-  <!-- SYNC -->
   <section id="tab-sync" class="tab">
-    <div class="card">
-      <h2>Sync</h2>
-      <p>Manual sync is disabled in this cut; focus is on fixing persistence and stats. (We can re-enable once servers confirm OK.)</p>
-    </div>
+    <div class="card"><h2>Sync</h2><p>Manual sync is disabled in this cut.</p></div>
   </section>
 
-  <!-- NOTIFY -->
   <section id="tab-notify" class="tab">
     <div class="card">
       <h2>Notify</h2>
@@ -76,13 +70,12 @@
         <label>Gotify URL<input id="opt-gotify-url" type="text" placeholder="https://gotify.example.com/"/></label>
         <label>Gotify Token<input id="opt-gotify-token" type="password" placeholder="token"/></label>
         <div class="actions">
-          <button id="btn-save-notify" class="btn">Save</button>
+          <button id="btn-save-notify" class="btn" type="button">Save</button>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- SETTINGS -->
   <section id="tab-settings" class="tab">
     <div class="card">
       <h2>Settings</h2>
@@ -110,8 +103,8 @@
         <label class="switch"><input id="srv-verify" type="checkbox" checked/><span>Verify TLS</span></label>
         <label class="switch"><input id="srv-primary" type="checkbox"/><span>Primary</span></label>
         <div class="actions">
-          <button id="btn-save-server" class="btn">Save/Update Server</button>
-          <button id="btn-clear-form" class="btn btn-secondary">Clear</button>
+          <button id="btn-save-server" class="btn" type="button">Save/Update Server</button>
+          <button id="btn-clear-form" class="btn btn-secondary" type="button">Clear</button>
         </div>
       </div>
 
@@ -124,32 +117,27 @@
       <h3>Cache Builder (Global)</h3>
       <textarea id="opt-cache-global" rows="6" placeholder="one domain per line"></textarea>
       <div class="actions">
-        <button id="btn-save-cache" class="btn">Save</button>
+        <button id="btn-save-cache" class="btn" type="button">Save</button>
       </div>
     </div>
   </section>
 
-  <!-- SELF-CHECK -->
   <section id="tab-selfcheck" class="tab">
     <div class="card">
       <h2>Self-Check</h2>
       <div class="actions">
-        <button id="btn-selfcheck" class="btn">Run Self-Check</button>
+        <button id="btn-selfcheck" class="btn" type="button">Run Self-Check</button>
       </div>
       <pre id="selfcheck-output" class="pre"></pre>
     </div>
   </section>
 
-  <!-- LOGS -->
   <section id="tab-logs" class="tab">
-    <div class="card">
-      <h2>Logs</h2>
-      <p>See Supervisor logs for backend traces. UI will show API errors inline where relevant.</p>
-    </div>
+    <div class="card"><h2>Logs</h2><p>Check Supervisor logs for backend traces.</p></div>
   </section>
 </main>
 
 <div id="toast" class="toast"></div>
-<script src="app.js"></script>
+<script src="assets/app.js"></script>
 </body>
 </html>
