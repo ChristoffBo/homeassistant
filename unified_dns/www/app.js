@@ -3,8 +3,9 @@ const $ = (q) => document.querySelector(q);
 const $$ = (q) => Array.from(document.querySelectorAll(q));
 
 async function api(path, method = "GET", body = null) {
-  // Use simple relative URLs so it works in Ingress
-  const res = await fetch(path.replace(/^\//, ""), {
+  // Relative to ingress base
+  const url = path.replace(/^\//, "");
+  const res = await fetch(url, {
     method,
     credentials: "same-origin",
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -12,6 +13,11 @@ async function api(path, method = "GET", body = null) {
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const txt = await res.text();
+    throw new Error(`Expected JSON, got ${ct} (${txt.slice(0,80)}...)`);
+  }
   return await res.json();
 }
 
@@ -38,8 +44,13 @@ function toast(msg, cls = "") {
 }
 
 async function loadOptions() {
-  const js = await api("api/options");
-  OPTIONS = js.options || {};
+  try {
+    const js = await api("api/options");
+    OPTIONS = js.options || {};
+  } catch (e) {
+    toast("Load options failed: " + e, "err");
+    OPTIONS = { servers: [], cache_builder_list: [] };
+  }
   $("#opt-gotify-url").value = OPTIONS.gotify_url || "";
   $("#opt-gotify-token").value = OPTIONS.gotify_token || "";
   $("#opt-cache-global").value = (OPTIONS.cache_builder_list || []).join("\n");
@@ -135,24 +146,16 @@ function clearServerForm() {
 
 async function saveServer() {
   const s = readServerForm();
-  if (!s.name) {
-    toast("Display Name is required", "err");
-    return;
-  }
-  if (!s.base_url) {
-    toast("Base URL is required", "err");
-    return;
-  }
+  if (!s.name) return toast("Display Name is required", "err");
+  if (!s.base_url) return toast("Base URL is required", "err");
   const list = (OPTIONS.servers || []).slice();
   const ix = list.findIndex((x) => (x.name || "") === s.name);
-  if (ix >= 0) list[ix] = s;
-  else list.push(s);
+  if (ix >= 0) list[ix] = s; else list.push(s);
   try {
     await saveOptions({ servers: list });
     toast("Server saved", "ok");
   } catch (e) {
-    toast(`Save failed: ${e}`, "err");
-    return;
+    return toast(`Save failed: ${e}`, "err");
   }
   await loadOptions();
 }
@@ -170,10 +173,7 @@ async function saveNotify() {
 }
 
 async function saveCacheGlobal() {
-  const lines = $("#opt-cache-global").value
-    .split("\n")
-    .map((x) => x.trim())
-    .filter(Boolean);
+  const lines = $("#opt-cache-global").value.split("\n").map((x) => x.trim()).filter(Boolean);
   try {
     await saveOptions({ cache_builder_list: lines });
     toast("Cache list saved", "ok");
@@ -191,14 +191,8 @@ async function refreshStats() {
     $("#kpi-blocked").textContent = u.blocked;
     $("#kpi-allowed").textContent = u.allowed;
     $("#kpi-pct").textContent = (js.pct_blocked || 0) + "%";
-    let busiest = "n/a";
-    let best = -1;
-    (u.servers || []).forEach((s) => {
-      if (s.ok && s.total > best) {
-        best = s.total;
-        busiest = s.name || s.type;
-      }
-    });
+    let busiest = "n/a", best = -1;
+    (u.servers || []).forEach((s) => { if (s.ok && s.total > best) { best = s.total; busiest = s.name || s.type; } });
     $("#kpi-busiest").textContent = busiest;
 
     const tb = $("#tbl-servers tbody");
@@ -217,7 +211,6 @@ async function refreshStats() {
       tb.appendChild(tr);
     });
   } catch (e) {
-    console.error(e);
     toast(`Stats error: ${e}`, "err");
   }
 }
