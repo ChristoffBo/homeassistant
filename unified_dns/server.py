@@ -69,7 +69,7 @@ def json_bool(val, default=False):
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
 
-# ---------- CORS: allow from anywhere (works in/without Ingress, no cookies needed) ----------
+# ---------- CORS: permissive (works in/without Ingress) ----------
 @app.after_request
 def add_cors_headers(resp: Response):
     resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -77,17 +77,19 @@ def add_cors_headers(resp: Response):
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
     return resp
 
-@app.route("/api/options", methods=["OPTIONS"])
-def api_options_preflight():
+# --------- OPTIONS preflights for our /u/* API ---------
+@app.route("/u/options", methods=["OPTIONS"])
+def u_options_preflight():
     return Response(status=204)
 
-@app.route("/api/options", methods=["GET"])
-def api_get_options():
+# --------- Options (GET/POST) ---------
+@app.route("/u/options", methods=["GET"])
+def u_get_options():
     return json_response({"status": "ok", "options": load_options()})
 
-@app.route("/api/options", methods=["POST"])
-def api_save_options():
-    print("[POST] /api/options")
+@app.route("/u/options", methods=["POST"])
+def u_save_options():
+    print("[POST] /u/options")
     raw = request.get_data(cache=False, as_text=True) or ""
     print(f"  body_len={len(raw)}")
     try:
@@ -124,6 +126,56 @@ def api_save_options():
     print("  OK -> 200")
     return json_response({"status":"ok","options":load_options()})
 
+# --------- Stats ---------
+@app.route("/u/stats", methods=["GET"])
+def u_stats():
+    opts = load_options()
+    servers = opts.get("servers", [])
+    unified = {"total":0,"blocked":0,"allowed":0,"servers":[]}
+    for s in servers:
+        res = fetch_stats_for_server(s)
+        entry = {"name": s.get("name",""), "type": s.get("type",""), **res}
+        unified["servers"].append(entry)
+        if res.get("ok"):
+            unified["total"] += res["total"]
+            unified["blocked"] += res["blocked"]
+            unified["allowed"] += res["allowed"]
+    pct_blocked = round(100.0 * unified["blocked"] / unified["total"], 2) if unified["total"] else 0.0
+    return json_response({
+        "status":"ok",
+        "generated": datetime.now(timezone.utc).isoformat(),
+        "unified": unified,
+        "pct_blocked": pct_blocked
+    })
+
+# --------- Self-check ---------
+@app.route("/u/selfcheck", methods=["GET"])
+def u_selfcheck():
+    opts = load_options()
+    out = []
+    for s in opts.get("servers", []):
+        res = {"name": s.get("name",""), "type": s.get("type",""), "base_url": s.get("base_url","")}
+        try:
+            url = s["base_url"].rstrip("/") + "/"
+            verify = bool(s.get("verify_tls", True))
+            if s["type"] == "technitium":
+                token = s.get("token","")
+                if token: r = requests.get(f"{url}api/user/session/get?token={token}", timeout=6, verify=verify)
+                else:     r = requests.get(url, timeout=6, verify=verify)
+            elif s["type"] == "adguard":
+                r = requests.get(urljoin(url,"control/status"), timeout=6, verify=verify)
+            elif s["type"] == "pihole":
+                r = requests.get(urljoin(url,"admin/api.php?version"), timeout=6, verify=verify)
+            else:
+                r = requests.get(url, timeout=6, verify=verify)
+            res["api_ok"] = (r.status_code == 200)
+        except Exception as e:
+            res["api_ok"] = False
+            res["error"] = str(e)
+        out.append(res)
+    return json_response({"status":"ok","results":out})
+
+# ---- helpers for stats per server type ----
 def _req_json(url, method="GET", headers=None, verify=True, timeout=10, data=None):
     try:
         if method == "POST":
@@ -175,53 +227,6 @@ def fetch_stats_for_server(s):
     else:
         return {"ok": False, "error":"unknown-type"}
 
-@app.route("/api/stats", methods=["GET"])
-def api_stats():
-    opts = load_options()
-    servers = opts.get("servers", [])
-    unified = {"total":0,"blocked":0,"allowed":0,"servers":[]}
-    for s in servers:
-        res = fetch_stats_for_server(s)
-        entry = {"name": s.get("name",""), "type": s.get("type",""), **res}
-        unified["servers"].append(entry)
-        if res.get("ok"):
-            unified["total"] += res["total"]
-            unified["blocked"] += res["blocked"]
-            unified["allowed"] += res["allowed"]
-    pct_blocked = round(100.0 * unified["blocked"] / unified["total"], 2) if unified["total"] else 0.0
-    return json_response({
-        "status":"ok",
-        "generated": datetime.now(timezone.utc).isoformat(),
-        "unified": unified,
-        "pct_blocked": pct_blocked
-    })
-
-@app.route("/api/selfcheck", methods=["GET"])
-def api_selfcheck():
-    opts = load_options()
-    out = []
-    for s in opts.get("servers", []):
-        res = {"name": s.get("name",""), "type": s.get("type",""), "base_url": s.get("base_url","")}
-        try:
-            url = s["base_url"].rstrip("/") + "/"
-            verify = bool(s.get("verify_tls", True))
-            if s["type"] == "technitium":
-                token = s.get("token","")
-                if token: r = requests.get(f"{url}api/user/session/get?token={token}", timeout=6, verify=verify)
-                else:     r = requests.get(url, timeout=6, verify=verify)
-            elif s["type"] == "adguard":
-                r = requests.get(urljoin(url,"control/status"), timeout=6, verify=verify)
-            elif s["type"] == "pihole":
-                r = requests.get(urljoin(url,"admin/api.php?version"), timeout=6, verify=verify)
-            else:
-                r = requests.get(url, timeout=6, verify=verify)
-            res["api_ok"] = (r.status_code == 200)
-        except Exception as e:
-            res["api_ok"] = False
-            res["error"] = str(e)
-        out.append(res)
-    return json_response({"status":"ok","results":out})
-
 # ---- static
 @app.route("/")
 def serve_root():
@@ -233,7 +238,7 @@ def serve_index():
 
 @app.route("/<path:filename>")
 def serve_any(filename: str):
-    if filename.startswith("api/"):
+    if filename.startswith("u/"):
         abort(404)
     full = os.path.abspath(os.path.join(WWW_DIR, filename))
     if not full.startswith(os.path.abspath(WWW_DIR) + os.sep) and full != os.path.abspath(WWW_DIR):
