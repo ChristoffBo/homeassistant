@@ -18,7 +18,7 @@ DEFAULT_OPTIONS = {
 
 app = Flask(__name__, static_folder=None)
 
-# ---------- Options (cached + thread-safe)
+# ---------- options cache
 _options_lock = threading.Lock()
 _options_cache = None
 _options_mtime = 0
@@ -66,7 +66,7 @@ def json_bool(val, default=False):
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
 
-# ---------- Static (no catch-all; only explicit files)
+# ---------- static (explicit; no catch-all)
 @app.route("/")
 def root():
     return send_from_directory(WWW_DIR, "index.html")
@@ -81,7 +81,6 @@ def app_js():
 
 @app.route("/favicon.ico")
 def favicon():
-    # optional; ignore if you don't have one
     return ("", 204)
 
 # ---------- API: options
@@ -118,7 +117,7 @@ def api_save_options():
     save_options(data)
     return jsonify({"status":"ok","options":load_options()})
 
-# ---------- Upstream helpers
+# ---------- upstream helpers
 def _req_json(url, method="GET", headers=None, verify=True, timeout=10, data=None):
     try:
         if method == "POST":
