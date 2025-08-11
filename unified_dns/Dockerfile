@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Best-effort apt (won't fail the build if mirrors are offline)
+# Debian base + venv to avoid PEP 668; keep apt best-effort
 RUN (apt-get update || true) && (apt-get -y upgrade || true) && \
     apt-get install -y --no-install-recommends python3 python3-venv python3-pip curl ca-certificates jq && \
     python3 -m venv /opt/venv && \
@@ -18,9 +18,10 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
 COPY server.py /app/server.py
+COPY www /app/www
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
-COPY www /app/www
 
 EXPOSE 8067
+ENTRYPOINT []
 CMD ["/run.sh"]
