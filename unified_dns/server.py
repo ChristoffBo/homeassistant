@@ -2,7 +2,7 @@
 import os, json, time, threading
 from datetime import datetime, timezone
 from urllib.parse import urljoin
-from flask import Flask, send_from_directory, jsonify, request, abort
+from flask import Flask, send_from_directory, jsonify, request, abort, Response
 import requests
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -65,13 +65,17 @@ def json_bool(val, default=False):
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
 
+def json_response(obj: dict, status: int = 200) -> Response:
+    # Force JSON content-type; avoid any proxy/content-type quirks.
+    payload = json.dumps(obj)
+    return Response(payload, status=status, mimetype="application/json")
+
 @app.route("/api/options", methods=["GET"])
 def api_get_options():
-    return jsonify({"status":"ok","options":load_options()})
+    return json_response({"status":"ok","options":load_options()})
 
 @app.route("/api/options", methods=["POST"])
 def api_save_options():
-    # --- added logging so you can see saves arriving
     print("[OPTIONS] POST /api/options received")
     data = request.get_json(force=True, silent=True) or {}
     if "servers" in data and isinstance(data["servers"], list):
@@ -98,7 +102,8 @@ def api_save_options():
         try: data["listen_port"] = int(data["listen_port"])
         except Exception: data["listen_port"] = 8067
     save_options(data)
-    return jsonify({"status":"ok","options":load_options()})
+    # Explicit JSON
+    return json_response({"status":"ok","options":load_options()})
 
 def _req_json(url, method="GET", headers=None, verify=True, timeout=10, data=None):
     try:
@@ -165,7 +170,7 @@ def api_stats():
             unified["blocked"] += res["blocked"]
             unified["allowed"] += res["allowed"]
     pct_blocked = round(100.0 * unified["blocked"] / unified["total"], 2) if unified["total"] else 0.0
-    return jsonify({
+    return json_response({
         "status":"ok",
         "generated": datetime.now(timezone.utc).isoformat(),
         "unified": unified,
@@ -196,7 +201,7 @@ def api_selfcheck():
             res["api_ok"] = False
             res["error"] = str(e)
         out.append(res)
-    return jsonify({"status":"ok","results":out})
+    return json_response({"status":"ok","results":out})
 
 # ---- static
 @app.route("/")
