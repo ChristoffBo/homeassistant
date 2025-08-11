@@ -1,10 +1,10 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm
 FROM ${BUILD_FROM}
 
-# Set environment variables
-ENV LANG=C.UTF-8
+# Environment
+ENV LANG C.UTF-8
 
-# Install required packages
+# Install dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 \
@@ -17,17 +17,17 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python packages
 RUN pip3 install --no-cache-dir flask flask_cors
 
-# Copy rootfs into container
-COPY rootfs/ /
+# Copy application files
+COPY app/ /app/
 
 # Ensure scripts are executable
-RUN chmod +x /app/run.sh
+RUN chmod +x /app/*.sh || true
 
-# Expose port (adjust to your actual server.py port)
-EXPOSE 8099
+# Expose port (change if needed)
+EXPOSE 8066
 
-# Start the app
-CMD [ "/app/run.sh" ]
+# Start script
+CMD [ "python3", "/app/server.py" ]
