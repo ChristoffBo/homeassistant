@@ -66,6 +66,10 @@ function setVal(id, v) {
   if ("checked" in el) el.checked = !!v;
   else el.value = v ?? "";
 }
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
 
 /* ---------- Tabs ---------- */
 function bindTabs() {
@@ -125,22 +129,28 @@ async function saveOptions(patch) {
 
 /* ---------- Forms ---------- */
 function readServerForm() {
+  const s = (x) => (String(val(x) ?? "")).trim();     // force string + trim (fixes TypeError)
+  const n = (x, d = 53) => {
+    const v = parseInt(val(x, d), 10);
+    return Number.isFinite(v) ? v : d;
+  };
   return {
-    name: val("srv-name").trim(),
-    type: val("srv-type") || "technitium",
-    base_url: val("srv-base").trim(),
-    dns_host: val("srv-dnshost").trim(),
-    dns_port: parseInt(val("srv-dnsport", 53), 10) || 53,
-    dns_protocol: val("srv-dnsproto") || "udp",
-    username: val("srv-user"),
-    password: val("srv-pass"),
-    token: val("srv-token"),
+    name: s("srv-name"),
+    type: s("srv-type") || "technitium",
+    base_url: s("srv-base"),
+    dns_host: s("srv-dnshost"),
+    dns_port: n("srv-dnsport", 53),
+    dns_protocol: s("srv-dnsproto") || "udp",
+    username: s("srv-user"),
+    password: s("srv-pass"),
+    token: s("srv-token"),
     verify_tls: !!val("srv-verify", true),
     primary: !!val("srv-primary", false),
     cache_builder_override: false,
     cache_builder_list: [],
   };
 }
+
 function clearServerForm() {
   setVal("srv-name", "");
   setVal("srv-type", "technitium");
@@ -174,15 +184,15 @@ async function saveServer() {
 async function saveNotify() {
   toast("Saving notify…", "ok");
   await saveOptions({
-    gotify_url: val("opt-gotify-url").trim(),
-    gotify_token: val("opt-gotify-token").trim(),
+    gotify_url: (String(val("opt-gotify-url") ?? "")).trim(),
+    gotify_token: (String(val("opt-gotify-token") ?? "")).trim(),
   });
   toast("Notify saved", "ok");
 }
 
 async function saveCacheGlobal() {
   toast("Saving cache list…", "ok");
-  const lines = val("opt-cache-global")
+  const lines = (String(val("opt-cache-global") ?? ""))
     .split("\n")
     .map((x) => x.trim())
     .filter(Boolean);
@@ -193,9 +203,9 @@ async function saveCacheGlobal() {
 async function refreshStats() {
   const js = await api("api/stats");
   const u = js.unified || { total: 0, blocked: 0, allowed: 0, servers: [] };
-  setVal("kpi-total", u.total);
-  setVal("kpi-blocked", u.blocked);
-  setVal("kpi-allowed", u.allowed);
+  setText("kpi-total", String(u.total));
+  setText("kpi-blocked", String(u.blocked));
+  setText("kpi-allowed", String(u.allowed));
   const pct = (js.pct_blocked || 0) + "%";
   setText("kpi-pct", pct);
 
@@ -222,10 +232,6 @@ async function refreshStats() {
       });
     }
   }
-}
-function setText(id, v) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = v;
 }
 
 function setAutoRefresh() {
@@ -321,7 +327,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     ensureToast();
     bindEvents();
-    // Elements we most commonly use; we wait briefly so mobile rendering is ready
     await waitForElements([
       "srv-name","srv-type","srv-base","srv-dnsproto","srv-dnsport",
       "opt-cache-global","opt-gotify-url","opt-gotify-token"
