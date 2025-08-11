@@ -1,19 +1,12 @@
 /* eslint-disable */
-// ----- tiny helpers
 const $ = (q) => document.querySelector(q);
 const $$ = (q) => Array.from(document.querySelectorAll(q));
 
-// Resolve a path that works in HA Ingress and direct mode
 function resolvePath(p) {
-  if (/^https?:\/\//i.test(p)) return p;           // already absolute URL
-  const base = (function () {
-    // Ingress path looks like /api/hassio_ingress/<token>[/...]
-    const loc = window.location.pathname;
-    const m = loc.match(/^\/api\/hassio_ingress\/[^/]+/);
-    if (m) return m[0];
-    // Fallback: strip trailing filename, keep directory
-    return loc.replace(/\/[^/]*$/, "");
-  })();
+  if (/^https?:\/\//i.test(p)) return p;
+  const loc = window.location.pathname;
+  const m = loc.match(/^\/api\/hassio_ingress\/[^/]+/);
+  const base = m ? m[0] : loc.replace(/\/[^/]*$/, "");
   return `${base}/${p.replace(/^\//, "")}`;
 }
 
@@ -30,9 +23,17 @@ async function api(path, method = "GET", body = null) {
   const ct = res.headers.get("content-type") || "";
   if (!ct.includes("application/json")) {
     const txt = await res.text();
-    throw new Error(`Expected JSON, got ${ct}. First bytes: ${txt.slice(0,120)}`);
+    throw new Error(`Expected JSON, got ${ct}. First: ${txt.slice(0,120)}`);
   }
   return await res.json();
+}
+
+function toast(msg, cls = "") {
+  const t = $("#toast");
+  if (!t) return alert(msg);
+  t.textContent = msg;
+  t.className = `toast show ${cls || ""}`;
+  setTimeout(() => t.classList.remove("show"), 2500);
 }
 
 function bindTabs() {
@@ -44,28 +45,15 @@ function bindTabs() {
       const tab = a.dataset.tab;
       $$(".tab").forEach((s) => s.classList.remove("active"));
       $("#" + tab).classList.add("active");
-    }, { passive: true });
+    }, { passive: false });
   });
 }
 
 let OPTIONS = null;
 
-function toast(msg, cls = "") {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = `toast show ${cls || ""}`;
-  setTimeout(() => t.classList.remove("show"), 2500);
-}
-
 async function loadOptions() {
-  try {
-    const js = await api("api/options");
-    OPTIONS = js.options || {};
-  } catch (e) {
-    console.error("Load options failed:", e);
-    toast("Load options failed", "err");
-    OPTIONS = { servers: [], cache_builder_list: [] };
-  }
+  const js = await api("api/options");
+  OPTIONS = js.options || { servers: [], cache_builder_list: [] };
   $("#opt-gotify-url").value = OPTIONS.gotify_url || "";
   $("#opt-gotify-token").value = OPTIONS.gotify_token || "";
   $("#opt-cache-global").value = (OPTIONS.cache_builder_list || []).join("\n");
@@ -74,6 +62,7 @@ async function loadOptions() {
 
 function renderConfigured() {
   const tb = $("#tbl-configured tbody");
+  if (!tb) return;
   tb.innerHTML = "";
   (OPTIONS.servers || []).forEach((s, idx) => {
     const tr = document.createElement("tr");
@@ -83,42 +72,11 @@ function renderConfigured() {
       <td>${s.base_url || ""}</td>
       <td>${s.primary ? "Yes" : "No"}</td>
       <td class="actions">
-        <button type="button" class="btn btn-xs" data-edit="${idx}">Edit</button>
-        <button type="button" class="btn btn-xs btn-danger" data-del="${idx}">Delete</button>
+        <button type="button" class="btn btn-xs" data-action="edit" data-idx="${idx}">Edit</button>
+        <button type="button" class="btn btn-xs btn-danger" data-action="del" data-idx="${idx}">Delete</button>
       </td>`;
     tb.appendChild(tr);
   });
-  tb.querySelectorAll("[data-edit]").forEach((b) =>
-    b.addEventListener("click", () => {
-      const i = parseInt(b.dataset.edit, 10);
-      const s = OPTIONS.servers[i];
-      $("#srv-name").value = s.name || "";
-      $("#srv-type").value = s.type || "technitium";
-      $("#srv-base").value = s.base_url || "";
-      $("#srv-dnshost").value = s.dns_host || "";
-      $("#srv-dnsport").value = s.dns_port || 53;
-      $("#srv-dnsproto").value = s.dns_protocol || "udp";
-      $("#srv-user").value = s.username || "";
-      $("#srv-pass").value = s.password || "";
-      $("#srv-token").value = s.token || "";
-      $("#srv-verify").checked = !!s.verify_tls;
-      $("#srv-primary").checked = !!s.primary;
-    })
-  );
-  tb.querySelectorAll("[data-del]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const i = parseInt(b.dataset.del, 10);
-      const copy = (OPTIONS.servers || []).slice();
-      copy.splice(i, 1);
-      try {
-        await saveOptions({ servers: copy });
-        toast("Server removed", "ok");
-      } catch (e) {
-        toast(`Delete failed: ${e}`, "err");
-      }
-      await loadOptions();
-    })
-  );
 }
 
 async function saveOptions(patch) {
@@ -159,76 +117,65 @@ function clearServerForm() {
 }
 
 async function saveServer() {
+  // immediate feedback so you know the click worked
+  toast("Saving server...", "ok");
   const s = readServerForm();
-  if (!s.name) return toast("Display Name is required", "err");
-  if (!s.base_url) return toast("Base URL is required", "err");
+  if (!s.name) { toast("Display Name is required", "err"); return; }
+  if (!s.base_url) { toast("Base URL is required", "err"); return; }
+
   const list = (OPTIONS.servers || []).slice();
   const ix = list.findIndex((x) => (x.name || "") === s.name);
   if (ix >= 0) list[ix] = s; else list.push(s);
-  try {
-    await saveOptions({ servers: list });
-    toast("Server saved", "ok");
-  } catch (e) {
-    return toast(`Save failed: ${e}`, "err");
-  }
+
+  await saveOptions({ servers: list });
+  toast("Server saved", "ok");
   await loadOptions();
 }
 
 async function saveNotify() {
-  try {
-    await saveOptions({
-      gotify_url: $("#opt-gotify-url").value.trim(),
-      gotify_token: $("#opt-gotify-token").value.trim(),
-    });
-    toast("Notify settings saved", "ok");
-  } catch (e) {
-    toast(`Save failed: ${e}`, "err");
-  }
+  toast("Saving notify...", "ok");
+  await saveOptions({
+    gotify_url: $("#opt-gotify-url").value.trim(),
+    gotify_token: $("#opt-gotify-token").value.trim(),
+  });
+  toast("Notify saved", "ok");
 }
 
 async function saveCacheGlobal() {
+  toast("Saving cache list...", "ok");
   const lines = $("#opt-cache-global").value.split("\n").map((x) => x.trim()).filter(Boolean);
-  try {
-    await saveOptions({ cache_builder_list: lines });
-    toast("Cache list saved", "ok");
-  } catch (e) {
-    toast(`Save failed: ${e}`, "err");
-  }
+  await saveOptions({ cache_builder_list: lines });
+  toast("Cache list saved", "ok");
+}
+
+async function refreshStats() {
+  const js = await api("api/stats");
+  const u = js.unified || { total: 0, blocked: 0, allowed: 0, servers: [] };
+  $("#kpi-total").textContent = u.total;
+  $("#kpi-blocked").textContent = u.blocked;
+  $("#kpi-allowed").textContent = u.allowed;
+  $("#kpi-pct").textContent = (js.pct_blocked || 0) + "%";
+  let busiest = "n/a", best = -1;
+  (u.servers || []).forEach((s) => { if (s.ok && s.total > best) { best = s.total; busiest = s.name || s.type; } });
+  $("#kpi-busiest").textContent = busiest;
+
+  const tb = $("#tbl-servers tbody");
+  tb.innerHTML = "";
+  (u.servers || []).forEach((s) => {
+    const tr = document.createElement("tr");
+    const status = s.ok ? "OK" : "ERR: " + (s.error || "");
+    tr.innerHTML = `
+      <td>${s.name || ""}</td>
+      <td>${s.type || ""}</td>
+      <td>${status}</td>
+      <td>${s.ok ? s.total : "-"}</td>
+      <td>${s.ok ? s.allowed : "-"}</td>
+      <td>${s.ok ? s.blocked : "-"}</td>`;
+    tb.appendChild(tr);
+  });
 }
 
 let pollTimer = null;
-async function refreshStats() {
-  try {
-    const js = await api("api/stats");
-    const u = js.unified || { total: 0, blocked: 0, allowed: 0, servers: [] };
-    $("#kpi-total").textContent = u.total;
-    $("#kpi-blocked").textContent = u.blocked;
-    $("#kpi-allowed").textContent = u.allowed;
-    $("#kpi-pct").textContent = (js.pct_blocked || 0) + "%";
-    let busiest = "n/a", best = -1;
-    (u.servers || []).forEach((s) => { if (s.ok && s.total > best) { best = s.total; busiest = s.name || s.type; } });
-    $("#kpi-busiest").textContent = busiest;
-
-    const tb = $("#tbl-servers tbody");
-    tb.innerHTML = "";
-    (u.servers || []).forEach((s) => {
-      const tr = document.createElement("tr");
-      const status = s.ok ? "OK" : "ERR: " + (s.error || "");
-      tr.innerHTML = `
-        <td>${s.name || ""}</td>
-        <td>${s.type || ""}</td>
-        <td>${status}</td>
-        <td>${s.ok ? s.total : "-"}</td>
-        <td>${s.ok ? s.allowed : "-"}</td>
-        <td>${s.ok ? s.blocked : "-"}</td>`;
-      tb.appendChild(tr);
-    });
-  } catch (e) {
-    console.error("Stats error:", e);
-    toast(`Stats error`, "err");
-  }
-}
-
 function setAutoRefresh() {
   if (pollTimer) clearInterval(pollTimer);
   const sec = parseInt($("#refresh-every").value, 10);
@@ -237,27 +184,71 @@ function setAutoRefresh() {
 
 async function runSelfCheck() {
   $("#selfcheck-output").textContent = "Running...";
-  try {
-    const js = await api("api/selfcheck");
-    $("#selfcheck-output").textContent = JSON.stringify(js, null, 2);
-  } catch (e) {
-    $("#selfcheck-output").textContent = String(e);
-  }
+  const js = await api("api/selfcheck");
+  $("#selfcheck-output").textContent = JSON.stringify(js, null, 2);
 }
 
+// --------- STRONG event wiring: delegation + touch + click
 function bindEvents() {
-  $("#btn-save-server").addEventListener("click", saveServer);
-  $("#btn-clear-form").addEventListener("click", clearServerForm);
-  $("#btn-save-notify").addEventListener("click", saveNotify);
-  $("#btn-save-cache").addEventListener("click", saveCacheGlobal);
-  $("#btn-update-now").addEventListener("click", refreshStats);
-  $("#refresh-every").addEventListener("change", setAutoRefresh);
-  $("#btn-selfcheck").addEventListener("click", runSelfCheck);
+  // Delegation: works even if elements are re-rendered
+  document.body.addEventListener("click", onAction, { passive: false });
+  document.body.addEventListener("touchend", onAction, { passive: false });
+
+  // Tabs still get direct listeners
+  bindTabs();
+}
+
+async function onAction(e) {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+
+  // prevent form submissions doing full navigations
+  e.preventDefault();
+
+  const id = btn.id;
+  const act = btn.dataset.action;
+
+  try {
+    if (id === "btn-save-server")      return await saveServer();
+    if (id === "btn-clear-form")       return void clearServerForm();
+    if (id === "btn-save-notify")      return await saveNotify();
+    if (id === "btn-save-cache")       return await saveCacheGlobal();
+    if (id === "btn-update-now")       return await refreshStats();
+    if (id === "btn-selfcheck")        return await runSelfCheck();
+
+    if (act === "edit") {
+      const i = parseInt(btn.dataset.idx, 10);
+      const s = (OPTIONS.servers || [])[i] || {};
+      $("#srv-name").value = s.name || "";
+      $("#srv-type").value = s.type || "technitium";
+      $("#srv-base").value = s.base_url || "";
+      $("#srv-dnshost").value = s.dns_host || "";
+      $("#srv-dnsport").value = s.dns_port || 53;
+      $("#srv-dnsproto").value = s.dns_protocol || "udp";
+      $("#srv-user").value = s.username || "";
+      $("#srv-pass").value = s.password || "";
+      $("#srv-token").value = s.token || "";
+      $("#srv-verify").checked = !!s.verify_tls;
+      $("#srv-primary").checked = !!s.primary;
+      toast("Loaded into form", "ok");
+      return;
+    }
+    if (act === "del") {
+      const i = parseInt(btn.dataset.idx, 10);
+      const copy = (OPTIONS.servers || []).slice();
+      copy.splice(i, 1);
+      await saveOptions({ servers: copy });
+      toast("Server removed", "ok");
+      return await loadOptions();
+    }
+  } catch (err) {
+    console.error("Action error:", err);
+    toast(String(err), "err");
+  }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   try {
-    bindTabs();
     bindEvents();
     await loadOptions();
     await refreshStats();
