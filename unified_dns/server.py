@@ -18,7 +18,7 @@ DEFAULT_OPTIONS = {
 
 app = Flask(__name__, static_folder=None)
 
-# -------- options load/save (thread-safe cache)
+# ---------- Options (cached + thread-safe)
 _options_lock = threading.Lock()
 _options_cache = None
 _options_mtime = 0
@@ -66,16 +66,25 @@ def json_bool(val, default=False):
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
 
-# -------- UI files (no catch-all!)
+# ---------- Static (no catch-all; only explicit files)
 @app.route("/")
 def root():
     return send_from_directory(WWW_DIR, "index.html")
 
-@app.route("/assets/<path:path>")
-def assets(path):
-    return send_from_directory(WWW_DIR, path)
+@app.route("/style.css")
+def style_css():
+    return send_from_directory(WWW_DIR, "style.css")
 
-# -------- API: options
+@app.route("/app.js")
+def app_js():
+    return send_from_directory(WWW_DIR, "app.js")
+
+@app.route("/favicon.ico")
+def favicon():
+    # optional; ignore if you don't have one
+    return ("", 204)
+
+# ---------- API: options
 @app.route("/api/options", methods=["GET"])
 def api_get_options():
     return jsonify({"status":"ok","options":load_options()})
@@ -109,7 +118,7 @@ def api_save_options():
     save_options(data)
     return jsonify({"status":"ok","options":load_options()})
 
-# -------- helpers for outbound requests
+# ---------- Upstream helpers
 def _req_json(url, method="GET", headers=None, verify=True, timeout=10, data=None):
     try:
         if method == "POST":
@@ -161,7 +170,7 @@ def fetch_stats_for_server(s):
     else:
         return {"ok": False, "error":"unknown-type"}
 
-# -------- API: stats + selfcheck
+# ---------- API: stats + self-check
 @app.route("/api/stats", methods=["GET"])
 def api_stats():
     opts = load_options()
