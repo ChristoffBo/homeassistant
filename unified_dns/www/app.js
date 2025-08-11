@@ -30,12 +30,10 @@ async function api(path, method = "GET", body = null) {
     const res = await fetch(url, {
       method,
       mode: "cors",
-      credentials: "omit",                   // no cookies; CORS permissive on server
+      credentials: "omit",
       headers: body ? { "Content-Type": "application/json", "Accept":"application/json" } : { "Accept":"application/json" },
       body: body ? JSON.stringify(body) : null,
       cache: "no-store",
-      redirect: "follow",
-      keepalive: false,
     });
     let data = null, txt = "";
     try { data = await res.clone().json(); } catch { try { txt = await res.text(); } catch {} }
@@ -88,7 +86,7 @@ let OPTIONS = { servers: [], cache_builder_list: [] };
 let pollTimer = null;
 
 async function loadOptions() {
-  const js = await api("api/options");
+  const js = await api("u/options");
   OPTIONS = js.options || OPTIONS;
   setVal("opt-gotify-url", OPTIONS.gotify_url || "");
   setVal("opt-gotify-token", OPTIONS.gotify_token || "");
@@ -118,7 +116,7 @@ function renderConfigured() {
 }
 
 async function saveOptionsPatch(patch) {
-  const js = await api("api/options", "POST", patch);
+  const js = await api("u/options", "POST", patch);
   if (js && js.options) OPTIONS = js.options;
 }
 
@@ -189,7 +187,7 @@ async function saveCacheGlobal() {
 }
 
 async function refreshStats() {
-  const js = await api("api/stats");
+  const js = await api("u/stats");
   const u = js.unified || { total: 0, blocked: 0, allowed: 0, servers: [] };
   setText("kpi-total", String(u.total));
   setText("kpi-blocked", String(u.blocked));
@@ -231,7 +229,7 @@ function setAutoRefresh() {
 async function runSelfCheck() {
   const out = document.getElementById("selfcheck-output");
   if (out) out.textContent = "Running…";
-  const js = await api("api/selfcheck");
+  const js = await api("u/selfcheck");
   if (out) out.textContent = JSON.stringify(js, null, 2);
 }
 
