@@ -2,7 +2,7 @@
 import os, json, time, threading
 from datetime import datetime, timezone
 from urllib.parse import urljoin
-from flask import Flask, send_from_directory, jsonify, request
+from flask import Flask, send_from_directory, jsonify, request, abort
 import requests
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -65,23 +65,6 @@ def json_bool(val, default=False):
     if isinstance(val, bool): return val
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
-
-# ---------- static (explicit; no catch-all)
-@app.route("/")
-def root():
-    return send_from_directory(WWW_DIR, "index.html")
-
-@app.route("/style.css")
-def style_css():
-    return send_from_directory(WWW_DIR, "style.css")
-
-@app.route("/app.js")
-def app_js():
-    return send_from_directory(WWW_DIR, "app.js")
-
-@app.route("/favicon.ico")
-def favicon():
-    return ("", 204)
 
 # ---------- API: options
 @app.route("/api/options", methods=["GET"])
@@ -216,6 +199,37 @@ def api_selfcheck():
             res["error"] = str(e)
         out.append(res)
     return jsonify({"status":"ok","results":out})
+
+# ---------- static files
+@app.route("/")
+def serve_root():
+    # index for direct /
+    return send_from_directory(WWW_DIR, "index.html")
+
+@app.route("/index.html")
+def serve_index():
+    # handle explicit /index.html requests (Ingress & browsers often use this)
+    return send_from_directory(WWW_DIR, "index.html")
+
+@app.route("/<path:filename>")
+def serve_any(filename: str):
+    """
+    Serve ANY file that exists under ./www (css/js/images/charts/* etc).
+    Prevent directory traversal; only allow paths within WWW_DIR.
+    """
+    # reject API paths so they hit API routes above
+    if filename.startswith("api/"):
+        abort(404)
+    # secure path resolution
+    full = os.path.abspath(os.path.join(WWW_DIR, filename))
+    if not full.startswith(os.path.abspath(WWW_DIR) + os.sep) and full != os.path.abspath(WWW_DIR):
+        abort(403)
+    if os.path.isfile(full):
+        # serve existing file
+        rel = os.path.relpath(full, WWW_DIR)
+        return send_from_directory(WWW_DIR, rel)
+    # not found
+    abort(404)
 
 if __name__ == "__main__":
     import argparse
