@@ -1,17 +1,18 @@
-#!/usr/bin/env python3
 import os
 import json
 from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 
 CONFIG_PATH = "/data/options.json"
-WWW_PATH = "/www"
 
-app = Flask(__name__, static_folder=WWW_PATH, static_url_path='')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+WWW_DIR = os.path.join(BASE_DIR, "www")
 
-# -------------------------
-# Helpers
-# -------------------------
-def read_config():
+app = Flask(__name__, static_folder=WWW_DIR, static_url_path="")
+CORS(app)
+
+# ======== Helpers ========
+def load_config():
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "r") as f:
             return json.load(f)
@@ -21,36 +22,39 @@ def save_config(data):
     with open(CONFIG_PATH, "w") as f:
         json.dump(data, f, indent=2)
 
-# -------------------------
-# API Routes
-# -------------------------
-@app.route("/api/options", methods=["GET", "POST"])
-def api_options():
-    if request.method == "GET":
-        return jsonify(read_config())
-    elif request.method == "POST":
-        try:
-            payload = request.get_json(force=True)
-            save_config(payload)
-            return jsonify({"status": "ok"})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 400
+# ======== API Endpoints ========
+
+@app.route("/api/options", methods=["GET"])
+def get_options():
+    return jsonify(load_config())
+
+@app.route("/api/options", methods=["POST"])
+def set_options():
+    try:
+        data = request.get_json(force=True)
+        cfg = load_config()
+        cfg.update(data)
+        save_config(cfg)
+        return jsonify({"status": "ok", "message": "Options saved"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
 
 @app.route("/api/stats", methods=["GET"])
-def api_stats():
-    # Placeholder for stats fetch from servers in config
+def get_stats():
+    # Placeholder: Implement actual stats collection later
     return jsonify({"status": "ok", "stats": {}})
 
-# -------------------------
-# Static UI
-# -------------------------
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def serve_ui(path):
-    if path != "" and os.path.exists(os.path.join(WWW_PATH, path)):
-        return send_from_directory(WWW_PATH, path)
-    else:
-        return send_from_directory(WWW_PATH, "index.html")
+# ======== Static Files ========
 
+@app.route("/")
+def index():
+    return send_from_directory(WWW_DIR, "index.html")
+
+@app.route("/<path:path>")
+def static_files(path):
+    return send_from_directory(WWW_DIR, path)
+
+# ======== Main ========
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8067)), debug=True)
+    port = int(os.environ.get("PORT", 8067))
+    app.run(host="0.0.0.0", port=port, debug=True)
