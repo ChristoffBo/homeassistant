@@ -2,7 +2,7 @@
 import os, json, time, threading
 from datetime import datetime, timezone
 from urllib.parse import urljoin
-from flask import Flask, send_from_directory, jsonify, request, abort, Response
+from flask import Flask, send_from_directory, request, abort, Response
 import requests
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,7 +22,11 @@ _options_lock = threading.Lock()
 _options_cache = None
 _options_mtime = 0
 
-def load_options() -> dict:
+def json_response(obj, status=200):
+    payload = json.dumps(obj)
+    return Response(payload, status=status, mimetype="application/json")
+
+def load_options():
     global _options_cache, _options_mtime
     with _options_lock:
         try:
@@ -45,11 +49,11 @@ def load_options() -> dict:
             _options_mtime = time.time()
         return data
 
-def save_options(new_data: dict):
+def save_options(new_data):
     global _options_cache, _options_mtime
     with _options_lock:
         current = load_options()
-        current.update({k:v for k,v in new_data.items() if k != "servers"})
+        current.update({k: v for k, v in new_data.items() if k != "servers"})
         if "servers" in new_data and isinstance(new_data["servers"], list):
             current["servers"] = new_data["servers"]
         with open(OPTIONS_FILE, "w") as f:
@@ -65,18 +69,31 @@ def json_bool(val, default=False):
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
 
-def json_response(obj: dict, status: int = 200) -> Response:
-    # Force JSON content-type; avoid any proxy/content-type quirks.
-    payload = json.dumps(obj)
-    return Response(payload, status=status, mimetype="application/json")
+# ---------- CORS (for Ingress/proxy oddities) ----------
+@app.after_request
+def add_cors_headers(resp: Response):
+    origin = request.headers.get("Origin")
+    if origin:
+        # echo origin for credentialed requests
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+    return resp
+
+@app.route("/api/options", methods=["OPTIONS"])
+def api_options_preflight():
+    # explicit 204 for preflight
+    return Response(status=204)
 
 @app.route("/api/options", methods=["GET"])
 def api_get_options():
-    return json_response({"status":"ok","options":load_options()})
+    return json_response({"status": "ok", "options": load_options()})
 
 @app.route("/api/options", methods=["POST"])
 def api_save_options():
-    print("[OPTIONS] POST /api/options received")
+    print("[POST] /api/options")
     data = request.get_json(force=True, silent=True) or {}
     if "servers" in data and isinstance(data["servers"], list):
         norm = []
@@ -102,8 +119,7 @@ def api_save_options():
         try: data["listen_port"] = int(data["listen_port"])
         except Exception: data["listen_port"] = 8067
     save_options(data)
-    # Explicit JSON
-    return json_response({"status":"ok","options":load_options()})
+    return json_response({"status": "ok", "options": load_options()})
 
 def _req_json(url, method="GET", headers=None, verify=True, timeout=10, data=None):
     try:
