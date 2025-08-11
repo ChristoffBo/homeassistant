@@ -18,7 +18,6 @@ DEFAULT_OPTIONS = {
 
 app = Flask(__name__, static_folder=None)
 
-# ---------- options cache
 _options_lock = threading.Lock()
 _options_cache = None
 _options_mtime = 0
@@ -66,13 +65,14 @@ def json_bool(val, default=False):
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
 
-# ---------- API: options
 @app.route("/api/options", methods=["GET"])
 def api_get_options():
     return jsonify({"status":"ok","options":load_options()})
 
 @app.route("/api/options", methods=["POST"])
 def api_save_options():
+    # --- added logging so you can see saves arriving
+    print("[OPTIONS] POST /api/options received")
     data = request.get_json(force=True, silent=True) or {}
     if "servers" in data and isinstance(data["servers"], list):
         norm = []
@@ -100,7 +100,6 @@ def api_save_options():
     save_options(data)
     return jsonify({"status":"ok","options":load_options()})
 
-# ---------- upstream helpers
 def _req_json(url, method="GET", headers=None, verify=True, timeout=10, data=None):
     try:
         if method == "POST":
@@ -152,7 +151,6 @@ def fetch_stats_for_server(s):
     else:
         return {"ok": False, "error":"unknown-type"}
 
-# ---------- API: stats + self-check
 @app.route("/api/stats", methods=["GET"])
 def api_stats():
     opts = load_options()
@@ -200,35 +198,25 @@ def api_selfcheck():
         out.append(res)
     return jsonify({"status":"ok","results":out})
 
-# ---------- static files
+# ---- static
 @app.route("/")
 def serve_root():
-    # index for direct /
     return send_from_directory(WWW_DIR, "index.html")
 
 @app.route("/index.html")
 def serve_index():
-    # handle explicit /index.html requests (Ingress & browsers often use this)
     return send_from_directory(WWW_DIR, "index.html")
 
 @app.route("/<path:filename>")
 def serve_any(filename: str):
-    """
-    Serve ANY file that exists under ./www (css/js/images/charts/* etc).
-    Prevent directory traversal; only allow paths within WWW_DIR.
-    """
-    # reject API paths so they hit API routes above
     if filename.startswith("api/"):
         abort(404)
-    # secure path resolution
     full = os.path.abspath(os.path.join(WWW_DIR, filename))
     if not full.startswith(os.path.abspath(WWW_DIR) + os.sep) and full != os.path.abspath(WWW_DIR):
         abort(403)
     if os.path.isfile(full):
-        # serve existing file
         rel = os.path.relpath(full, WWW_DIR)
         return send_from_directory(WWW_DIR, rel)
-    # not found
     abort(404)
 
 if __name__ == "__main__":
