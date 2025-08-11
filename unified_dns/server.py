@@ -69,22 +69,16 @@ def json_bool(val, default=False):
     if isinstance(val, str): return val.lower() in ("1","true","yes","on")
     return default
 
-# ---------- CORS (for Ingress/proxy oddities) ----------
+# ---------- CORS: allow from anywhere (works in/without Ingress, no cookies needed) ----------
 @app.after_request
 def add_cors_headers(resp: Response):
-    origin = request.headers.get("Origin")
-    if origin:
-        # echo origin for credentialed requests
-        resp.headers["Access-Control-Allow-Origin"] = origin
-        resp.headers["Vary"] = "Origin"
-        resp.headers["Access-Control-Allow-Credentials"] = "true"
+    resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
     return resp
 
 @app.route("/api/options", methods=["OPTIONS"])
 def api_options_preflight():
-    # explicit 204 for preflight
     return Response(status=204)
 
 @app.route("/api/options", methods=["GET"])
@@ -94,7 +88,14 @@ def api_get_options():
 @app.route("/api/options", methods=["POST"])
 def api_save_options():
     print("[POST] /api/options")
-    data = request.get_json(force=True, silent=True) or {}
+    raw = request.get_data(cache=False, as_text=True) or ""
+    print(f"  body_len={len(raw)}")
+    try:
+        data = json.loads(raw) if raw else {}
+    except Exception as e:
+        print("  JSON parse error:", e)
+        return json_response({"status":"error","error":"json-parse","detail":str(e)}, 400)
+
     if "servers" in data and isinstance(data["servers"], list):
         norm = []
         for s in data["servers"]:
@@ -118,8 +119,10 @@ def api_save_options():
     if "listen_port" in data:
         try: data["listen_port"] = int(data["listen_port"])
         except Exception: data["listen_port"] = 8067
+
     save_options(data)
-    return json_response({"status": "ok", "options": load_options()})
+    print("  OK -> 200")
+    return json_response({"status":"ok","options":load_options()})
 
 def _req_json(url, method="GET", headers=None, verify=True, timeout=10, data=None):
     try:
@@ -245,4 +248,4 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=int(load_options().get("listen_port",8067)))
     args = ap.parse_args()
-    app.run(host="0.0.0.0", port=args.port)
+    app.run(host="0.0.0.0", port=args.port, threaded=True)
