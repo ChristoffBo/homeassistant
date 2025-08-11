@@ -10,14 +10,14 @@
 <header class="app-header">
   <div class="title">
     <h1>Unified DNS</h1>
-    <p>Manual sync · Soft‑color stats · Gotify · Self‑Check</p>
+    <p>Manual sync · Soft-color stats · Gotify · Self-Check</p>
   </div>
   <nav class="tabs">
     <a class="tab-link active" data-tab="tab-dashboard">Dashboard</a>
     <a class="tab-link" data-tab="tab-sync">Sync</a>
     <a class="tab-link" data-tab="tab-notify">Notify</a>
     <a class="tab-link" data-tab="tab-settings">Settings</a>
-    <a class="tab-link" data-tab="tab-selfcheck">Self‑Check</a>
+    <a class="tab-link" data-tab="tab-selfcheck">Self-Check</a>
     <a class="tab-link" data-tab="tab-logs">Logs</a>
   </nav>
 </header>
@@ -60,11 +60,11 @@
     </div>
   </section>
 
-  <!-- SYNC (placeholder text; manual sync logic to be added later) -->
+  <!-- SYNC -->
   <section id="tab-sync" class="tab">
     <div class="card">
       <h2>Sync</h2>
-      <p>Manual sync is disabled in this cut; focus is on fixing persistence and stats. (We can re‑enable once servers confirm OK.)</p>
+      <p>Manual sync is disabled in this cut; focus is on fixing persistence and stats. (We can re-enable once servers confirm OK.)</p>
     </div>
   </section>
 
@@ -132,15 +132,15 @@
   <!-- SELF-CHECK -->
   <section id="tab-selfcheck" class="tab">
     <div class="card">
-      <h2>Self‑Check</h2>
+      <h2>Self-Check</h2>
       <div class="actions">
-        <button id="btn-selfcheck" class="btn">Run Self‑Check</button>
+        <button id="btn-selfcheck" class="btn">Run Self-Check</button>
       </div>
       <pre id="selfcheck-output" class="pre"></pre>
     </div>
   </section>
 
-  <!-- LOGS (placeholder) -->
+  <!-- LOGS -->
   <section id="tab-logs" class="tab">
     <div class="card">
       <h2>Logs</h2>
@@ -149,6 +149,7 @@
   </section>
 </main>
 
+<div id="toast" class="toast"></div>
 <script src="app.js"></script>
 </body>
 </html>
