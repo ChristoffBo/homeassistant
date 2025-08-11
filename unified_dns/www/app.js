@@ -2,7 +2,6 @@
 const $ = (q, root = document) => root.querySelector(q);
 const $$ = (q, root = document) => Array.from(root.querySelectorAll(q));
 
-/* ---------- Utilities ---------- */
 function ensureToast() {
   let t = $("#toast");
   if (!t) {
@@ -13,7 +12,6 @@ function ensureToast() {
   }
   return t;
 }
-
 function toast(msg, cls = "") {
   const t = ensureToast();
   t.textContent = msg;
@@ -22,8 +20,8 @@ function toast(msg, cls = "") {
 }
 
 function buildUrl(path) {
-  if (/^https?:\/\//i.test(path)) return path;                    // absolute
-  return new URL(path.replace(/^\//, ""), window.location.href).toString(); // relative to ingress page
+  if (/^https?:\/\//i.test(path)) return path;
+  return new URL(path.replace(/^\//, ""), window.location.href).toString();
 }
 
 async function api(path, method = "GET", body = null) {
@@ -32,20 +30,23 @@ async function api(path, method = "GET", body = null) {
     const res = await fetch(url, {
       method,
       credentials: "same-origin",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      headers: body ? { "Content-Type": "application/json", "Accept":"application/json" } : { "Accept":"application/json" },
       body: body ? JSON.stringify(body) : null,
       cache: "no-store",
     });
+    // try JSON first; if fails but 200, treat as empty success object
+    let data = null, txt = "";
+    try { data = await res.clone().json(); } catch { try { txt = await res.text(); } catch {} }
     if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url} :: ${txt.slice(0,160)}`);
+      throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url} :: ${(txt||"").slice(0,160)}`);
     }
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      const txt = await res.text();
-      throw new Error(`Expected JSON, got ${ct} @ ${url}. First: ${txt.slice(0,160)}`);
+    if (data == null) {
+      if (txt && txt.trim().startsWith("{")) {
+        try { data = JSON.parse(txt); } catch { /* ignore */ }
+      }
+      if (data == null) data = {}; // accept empty body on 200
     }
-    return await res.json();
+    return data;
   } catch (err) {
     console.error("FETCH ERROR:", err);
     toast(`Fetch failed: ${err.message}`, "err");
@@ -53,7 +54,6 @@ async function api(path, method = "GET", body = null) {
   }
 }
 
-/* ---------- Safe element reads ---------- */
 function val(id, def = "") {
   const el = document.getElementById(id);
   if (!el) return def;
@@ -71,7 +71,6 @@ function setText(id, v) {
   if (el) el.textContent = v;
 }
 
-/* ---------- Tabs ---------- */
 function bindTabs() {
   $$(".tab-link").forEach((a) => {
     a.addEventListener("click", (e) => {
@@ -87,11 +86,9 @@ function bindTabs() {
   });
 }
 
-/* ---------- State ---------- */
 let OPTIONS = { servers: [], cache_builder_list: [] };
 let pollTimer = null;
 
-/* ---------- Options ---------- */
 async function loadOptions() {
   const js = await api("api/options");
   OPTIONS = js.options || OPTIONS;
@@ -103,7 +100,7 @@ async function loadOptions() {
 
 function renderConfigured() {
   const table = document.getElementById("tbl-configured");
-  if (!table) return; // mobile layout might hide it
+  if (!table) return;
   const tb = $("tbody", table);
   if (!tb) return;
   tb.innerHTML = "";
@@ -122,18 +119,18 @@ function renderConfigured() {
   });
 }
 
-async function saveOptions(patch) {
+async function saveOptionsPatch(patch) {
   const js = await api("api/options", "POST", patch);
-  OPTIONS = js.options || OPTIONS;
+  // if backend sent merged options, use them; else keep ours
+  if (js && js.options) OPTIONS = js.options;
 }
 
-/* ---------- Forms ---------- */
 function readServerForm() {
-  const s = (x) => (String(val(x) ?? "")).trim();     // force string + trim (fixes TypeError)
+  const s = (x) => (String(val(x) ?? "")).trim();
   const n = (x, d = 53) => {
     const v = parseInt(val(x, d), 10);
     return Number.isFinite(v) ? v : d;
-  };
+    };
   return {
     name: s("srv-name"),
     type: s("srv-type") || "technitium",
@@ -150,7 +147,6 @@ function readServerForm() {
     cache_builder_list: [],
   };
 }
-
 function clearServerForm() {
   setVal("srv-name", "");
   setVal("srv-type", "technitium");
@@ -165,25 +161,22 @@ function clearServerForm() {
   setVal("srv-primary", false);
 }
 
-/* ---------- Actions ---------- */
 async function saveServer() {
   toast("Saving server…", "ok");
   const s = readServerForm();
   if (!s.name) { toast("Display Name is required", "err"); return; }
   if (!s.base_url) { toast("Base URL is required", "err"); return; }
-
   const list = (OPTIONS.servers || []).slice();
   const ix = list.findIndex((x) => (x.name || "") === s.name);
   if (ix >= 0) list[ix] = s; else list.push(s);
-
-  await saveOptions({ servers: list });
+  await saveOptionsPatch({ servers: list });
   toast("Server saved", "ok");
   await loadOptions();
 }
 
 async function saveNotify() {
   toast("Saving notify…", "ok");
-  await saveOptions({
+  await saveOptionsPatch({
     gotify_url: (String(val("opt-gotify-url") ?? "")).trim(),
     gotify_token: (String(val("opt-gotify-token") ?? "")).trim(),
   });
@@ -193,10 +186,8 @@ async function saveNotify() {
 async function saveCacheGlobal() {
   toast("Saving cache list…", "ok");
   const lines = (String(val("opt-cache-global") ?? ""))
-    .split("\n")
-    .map((x) => x.trim())
-    .filter(Boolean);
-  await saveOptions({ cache_builder_list: lines });
+    .split("\n").map((x) => x.trim()).filter(Boolean);
+  await saveOptionsPatch({ cache_builder_list: lines });
   toast("Cache list saved", "ok");
 }
 
@@ -206,9 +197,7 @@ async function refreshStats() {
   setText("kpi-total", String(u.total));
   setText("kpi-blocked", String(u.blocked));
   setText("kpi-allowed", String(u.allowed));
-  const pct = (js.pct_blocked || 0) + "%";
-  setText("kpi-pct", pct);
-
+  setText("kpi-pct", ((js.pct_blocked || 0) + "%"));
   let busiest = "n/a", best = -1;
   (u.servers || []).forEach((s) => { if (s.ok && s.total > best) { best = s.total; busiest = s.name || s.type; } });
   setText("kpi-busiest", busiest);
@@ -249,12 +238,10 @@ async function runSelfCheck() {
   if (out) out.textContent = JSON.stringify(js, null, 2);
 }
 
-/* ---------- Strong event wiring (works on mobile/ingress) ---------- */
 function bindEvents() {
   document.body.addEventListener("click", onAction, { passive: false });
   document.body.addEventListener("touchend", onAction, { passive: false });
   bindTabs();
-
   const sel = document.getElementById("refresh-every");
   if (sel) sel.addEventListener("change", () => setAutoRefresh(), { passive: true });
 }
@@ -263,10 +250,8 @@ async function onAction(e) {
   const btn = e.target.closest("button");
   if (!btn) return;
   e.preventDefault();
-
   const id = btn.id;
   const act = btn.dataset.action;
-
   try {
     if (id === "btn-save-server") return await saveServer();
     if (id === "btn-clear-form") return void clearServerForm();
@@ -274,7 +259,6 @@ async function onAction(e) {
     if (id === "btn-save-cache") return await saveCacheGlobal();
     if (id === "btn-update-now") return await refreshStats();
     if (id === "btn-selfcheck") return await runSelfCheck();
-
     if (act === "edit") {
       const i = parseInt(btn.dataset.idx, 10);
       const s = (OPTIONS.servers || [])[i] || {};
@@ -296,7 +280,7 @@ async function onAction(e) {
       const i = parseInt(btn.dataset.idx, 10);
       const copy = (OPTIONS.servers || []).slice();
       copy.splice(i, 1);
-      await saveOptions({ servers: copy });
+      await saveOptionsPatch({ servers: copy });
       toast("Server removed", "ok");
       return await loadOptions();
     }
@@ -306,17 +290,13 @@ async function onAction(e) {
   }
 }
 
-/* ---------- Boot sequence with element wait ---------- */
 function waitForElements(ids, timeoutMs = 2500) {
   const start = performance.now();
   return new Promise((resolve) => {
     function check() {
       const missing = ids.filter((id) => document.getElementById(id) == null);
       if (missing.length === 0) return resolve(true);
-      if (performance.now() - start > timeoutMs) {
-        console.warn("Missing elements after wait:", missing);
-        return resolve(false); // continue anyway, code is null-safe
-      }
+      if (performance.now() - start > timeoutMs) return resolve(false);
       requestAnimationFrame(check);
     }
     check();
@@ -326,6 +306,8 @@ function waitForElements(ids, timeoutMs = 2500) {
 document.addEventListener("DOMContentLoaded", async () => {
   try {
     ensureToast();
+    document.body.classList.add("js-ready");
+    document.addEventListener("click", () => {}, { passive: false });
     bindEvents();
     await waitForElements([
       "srv-name","srv-type","srv-base","srv-dnsproto","srv-dnsport",
