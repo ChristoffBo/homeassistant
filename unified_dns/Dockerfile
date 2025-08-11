@@ -1,27 +1,33 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm
+ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base/10.2.3
 FROM ${BUILD_FROM}
 
+# Set shell to bash with pipefail for better error handling
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
 
-# Debian base + venv to avoid PEP 668; keep apt best-effort
-RUN (apt-get update || true) && (apt-get -y upgrade || true) && \
-    apt-get install -y --no-install-recommends python3 python3-venv python3-pip curl ca-certificates jq && \
-    python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/venv/bin/pip install --no-cache-dir flask requests waitress dnspython && \
-    apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3 \
+       python3-pip \
+       python3-venv \
+       python3-dev \
+       build-essential \
+       curl \
+       ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/opt/venv/bin:${PATH}"
+# Install Python dependencies (Flask + CORS support)
+RUN pip3 install --no-cache-dir flask flask_cors
 
-WORKDIR /app
-COPY server.py /app/server.py
-COPY www /app/www
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
+# Copy application files
+COPY rootfs/ /app/
 
+# Make sure scripts are executable
+RUN chmod a+x /app/run.sh
+
+# Expose port (matches config.json listen_port)
 EXPOSE 8067
-ENTRYPOINT []
-CMD ["/run.sh"]
+
+# Entrypoint
+CMD ["/app/run.sh"]
