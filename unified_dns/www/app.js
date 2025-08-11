@@ -2,8 +2,11 @@
 const $ = (q) => document.querySelector(q);
 const $$ = (q) => Array.from(document.querySelectorAll(q));
 
+const API_BASE = new URL('.', window.location.href); // Ingress-aware
+
 async function api(path, method="GET", body=null) {
-  const res = await fetch(path, {
+  const url = new URL(path.replace(/^\//,''), API_BASE).toString();
+  const res = await fetch(url, {
     method,
     headers: body ? {"Content-Type":"application/json"} : undefined,
     body: body ? JSON.stringify(body) : null,
@@ -25,15 +28,20 @@ function bindTabs(){
 }
 
 let OPTIONS = null;
+
+function toast(msg, cls=''){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = `toast show ${cls||""}`;
+  setTimeout(()=>t.classList.remove("show"), 2500);
+}
+
 async function loadOptions(){
-  const js = await api("/api/options");
+  const js = await api("api/options");
   OPTIONS = js.options || {};
-  // notify
   $("#opt-gotify-url").value = OPTIONS.gotify_url||"";
   $("#opt-gotify-token").value = OPTIONS.gotify_token||"";
-  // global cache builder
   $("#opt-cache-global").value = (OPTIONS.cache_builder_list||[]).join("\n");
-  // table of configured servers
   renderConfigured();
 }
 
@@ -54,7 +62,6 @@ function renderConfigured(){
     `;
     tb.appendChild(tr);
   });
-  // wire buttons
   tb.querySelectorAll("[data-edit]").forEach(b=>{
     b.addEventListener("click", ()=>{
       const i = parseInt(b.dataset.edit,10);
@@ -77,14 +84,17 @@ function renderConfigured(){
       const i = parseInt(b.dataset.del,10);
       const copy = (OPTIONS.servers||[]).slice();
       copy.splice(i,1);
-      await saveOptions({servers: copy});
+      try{
+        await saveOptions({servers: copy});
+        toast("Server removed","ok");
+      }catch(e){ toast(`Delete failed: ${e}`,"err"); }
       await loadOptions();
     });
   });
 }
 
 async function saveOptions(patch){
-  const js = await api("/api/options", "POST", patch);
+  const js = await api("api/options", "POST", patch);
   OPTIONS = js.options || OPTIONS;
 }
 
@@ -122,37 +132,49 @@ function clearServerForm(){
 
 async function saveServer(){
   const s = readServerForm();
-  // upsert by name
+  if(!s.name){ toast("Display Name is required","err"); return; }
+  if(!s.base_url){ toast("Base URL is required","err"); return; }
   const list = (OPTIONS.servers||[]).slice();
   const ix = list.findIndex(x=> (x.name||"") === s.name);
   if (ix >= 0) list[ix] = s; else list.push(s);
-  await saveOptions({servers: list});
+  try{
+    await saveOptions({servers: list});
+    toast("Server saved","ok");
+  }catch(e){
+    toast(`Save failed: ${e}`,"err");
+    return;
+  }
   await loadOptions();
 }
 
 async function saveNotify(){
-  await saveOptions({
-    gotify_url: $("#opt-gotify-url").value.trim(),
-    gotify_token: $("#opt-gotify-token").value.trim()
-  });
+  try{
+    await saveOptions({
+      gotify_url: $("#opt-gotify-url").value.trim(),
+      gotify_token: $("#opt-gotify-token").value.trim()
+    });
+    toast("Notify settings saved","ok");
+  }catch(e){ toast(`Save failed: ${e}`,"err"); }
 }
 
 async function saveCacheGlobal(){
   const lines = $("#opt-cache-global").value
     .split("\n").map(x=>x.trim()).filter(Boolean);
-  await saveOptions({cache_builder_list: lines});
+  try{
+    await saveOptions({cache_builder_list: lines});
+    toast("Cache list saved","ok");
+  }catch(e){ toast(`Save failed: ${e}`,"err"); }
 }
 
 let pollTimer = null;
 async function refreshStats(){
   try {
-    const js = await api("/api/stats");
+    const js = await api("api/stats");
     const u = js.unified || {total:0,blocked:0,allowed:0,servers:[]};
     $("#kpi-total").textContent = u.total;
     $("#kpi-blocked").textContent = u.blocked;
     $("#kpi-allowed").textContent = u.allowed;
     $("#kpi-pct").textContent = (js.pct_blocked||0) + "%";
-    // busiest server
     let busiest = "n/a"; let best = -1;
     (u.servers||[]).forEach(s=>{
       if (s.ok && s.total > best){ best = s.total; busiest = s.name || s.type; }
@@ -169,13 +191,14 @@ async function refreshStats(){
         <td>${s.type||""}</td>
         <td>${status}</td>
         <td>${s.ok ? s.total : "-"}</td>
-        <td>${s.ok ? s.allowed : "-"}</td>
+        <td>${s.ok ? s.allowed : "-""}</td>
         <td>${s.ok ? s.blocked : "-"}</td>
       `;
       tb.appendChild(tr);
     });
   } catch(e) {
     console.error(e);
+    toast(`Stats error: ${e}`,"err");
   }
 }
 
@@ -188,7 +211,7 @@ function setAutoRefresh(){
 async function runSelfCheck(){
   $("#selfcheck-output").textContent = "Running...";
   try{
-    const js = await api("/api/selfcheck");
+    const js = await api("api/selfcheck");
     $("#selfcheck-output").textContent = JSON.stringify(js, null, 2);
   }catch(e){
     $("#selfcheck-output").textContent = String(e);
