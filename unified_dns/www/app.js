@@ -29,22 +29,20 @@ async function api(path, method = "GET", body = null) {
   try {
     const res = await fetch(url, {
       method,
-      credentials: "same-origin",
+      mode: "cors",
+      credentials: "omit",                   // no cookies; CORS permissive on server
       headers: body ? { "Content-Type": "application/json", "Accept":"application/json" } : { "Accept":"application/json" },
       body: body ? JSON.stringify(body) : null,
       cache: "no-store",
+      redirect: "follow",
+      keepalive: false,
     });
-    // try JSON first; if fails but 200, treat as empty success object
     let data = null, txt = "";
     try { data = await res.clone().json(); } catch { try { txt = await res.text(); } catch {} }
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} ${res.statusText} @ ${url} :: ${(txt||"").slice(0,160)}`);
-    }
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} :: ${(txt||"").slice(0,160)}`);
     if (data == null) {
-      if (txt && txt.trim().startsWith("{")) {
-        try { data = JSON.parse(txt); } catch { /* ignore */ }
-      }
-      if (data == null) data = {}; // accept empty body on 200
+      if (txt && txt.trim().startsWith("{")) { try { data = JSON.parse(txt); } catch {} }
+      if (data == null) data = {};
     }
     return data;
   } catch (err) {
@@ -121,7 +119,6 @@ function renderConfigured() {
 
 async function saveOptionsPatch(patch) {
   const js = await api("api/options", "POST", patch);
-  // if backend sent merged options, use them; else keep ours
   if (js && js.options) OPTIONS = js.options;
 }
 
@@ -130,7 +127,7 @@ function readServerForm() {
   const n = (x, d = 53) => {
     const v = parseInt(val(x, d), 10);
     return Number.isFinite(v) ? v : d;
-    };
+  };
   return {
     name: s("srv-name"),
     type: s("srv-type") || "technitium",
@@ -306,8 +303,6 @@ function waitForElements(ids, timeoutMs = 2500) {
 document.addEventListener("DOMContentLoaded", async () => {
   try {
     ensureToast();
-    document.body.classList.add("js-ready");
-    document.addEventListener("click", () => {}, { passive: false });
     bindEvents();
     await waitForElements([
       "srv-name","srv-type","srv-base","srv-dnsproto","srv-dnsport",
