@@ -27,7 +27,7 @@
   "panel_title": "Zoraxy",
   "ingress": true,
   "ingress_port": 8000,
-  "ingress_entry": "/",
+  "ingress_entry": "<PUT_THE_200_PATH_HERE>",
   "ingress_stream": true,
   "host_network": false,
   "privileged": [],
