@@ -5,7 +5,10 @@
   "description": "A reverse proxy and dashboard powered by Docker.",
   "startup": "services",
   "boot": "auto",
-  "arch": ["amd64", "aarch64"],
+  "arch": [
+    "amd64",
+    "aarch64"
+  ],
   "url": "https://github.com/tobychui/zoraxy",
   "ports": {
     "443/tcp": 443,
@@ -17,7 +20,9 @@
     "80/tcp": "HTTP Web UI (optional direct)",
     "80/udp": "HTTP Web UI (UDP)"
   },
-  "map": ["config:rw"],
+  "map": [
+    "config:rw"
+  ],
   "panel_icon": "mdi:reverse",
   "panel_title": "Zoraxy",
   "ingress": true,
