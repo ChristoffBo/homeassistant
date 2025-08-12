@@ -11,24 +11,24 @@
   ],
   "url": "https://github.com/tobychui/zoraxy",
   "ports": {
-    "8000/tcp": 18080,
     "443/tcp": 443,
     "80/tcp": 80,
     "80/udp": 80
   },
   "ports_description": {
-    "8000/tcp": "Zoraxy UI (mapped to host 18080)",
-    "443/tcp": "HTTPS Web UI (optional direct)",
-    "80/tcp": "HTTP Web UI (optional direct)",
-    "80/udp": "HTTP Web UI (UDP)"
+    "443/tcp": "HTTPS (optional direct)",
+    "80/tcp": "HTTP (optional direct)",
+    "80/udp": "HTTP (UDP)"
   },
   "map": [
     "config:rw"
   ],
   "panel_icon": "mdi:reverse",
   "panel_title": "Zoraxy",
-  "webui": "http://[HOST]:[PORT:18080]",
-  "ingress": false,
+  "ingress": true,
+  "ingress_port": 8000,
+  "ingress_entry": "/",
+  "ingress_stream": true,
   "host_network": false,
   "privileged": [],
   "environment": {},
