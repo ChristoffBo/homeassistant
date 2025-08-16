@@ -4,5 +4,5 @@
     "aarch64": "linuxserver/heimdall",
     "amd64": "linuxserver/heimdall"
   },
-  "version": "v2.7.4-ls318"
+  "version": "v2.7.4-ls319"
 }

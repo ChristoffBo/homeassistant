@@ -1,3 +1,7 @@
+## 1.24.5 (2025-08-16 04:00:34)
+- Update from 1.24.4 to 1.24.5
+- Docker Image: [ghcr.io/alexbelgium/gitea-{arch}:1.24.5](https://github.com/orgs/alexbelgium/gitea-{arch}/packages)
+
 ## 1.24.4 (2025-08-09 04:00:32)
 - Update from 1.24.3 to 1.24.4
 - Docker Image: [ghcr.io/alexbelgium/gitea-{arch}:1.24.4](https://github.com/orgs/alexbelgium/gitea-{arch}/packages)
