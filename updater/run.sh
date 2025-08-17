@@ -550,143 +550,72 @@ Updated $update_count add-on(s):"
   fi
 }
 
-# Enhanced parallel processing with job control and better resource management
+# Simplified parallel processing with better error handling
 process_addons_parallel() {
   local repo_dir="$1"
   local -a addon_paths=()
   
-  # Collect addon directories
+  # Collect addon directories that have config files
   for path in "$repo_dir"/*; do
-    [[ -d "$path" && -f "$path/config.json" ]] && addon_paths+=("$path")
+    if [[ -d "$path" && -f "$path/config.json" ]]; then
+      addon_paths+=("$path")
+    fi
   done
   
   local total_addons=${#addon_paths[@]}
-  log "$COLOR_BLUE" "📦 Processing $total_addons add-ons with up to $MAX_PARALLEL_JOBS parallel jobs"
+  log "$COLOR_BLUE" "📦 Found $total_addons add-ons to process"
   
-  # Reduce parallel jobs if system is under stress or in container
-  local available_memory
-  available_memory=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "1024")
-  
-  if [[ $available_memory -lt 512 ]]; then
-    MAX_PARALLEL_JOBS=1
-    log "$COLOR_YELLOW" "⚠️ Low memory detected (${available_memory}MB), using sequential processing"
-  elif [[ -f /.dockerenv ]] || [[ -n "${HASSIO_TOKEN:-}" ]]; then
-    # We're in a container environment, be more conservative
-    MAX_PARALLEL_JOBS=2
-    log "$COLOR_BLUE" "🐳 Container environment detected, using $MAX_PARALLEL_JOBS parallel jobs"
+  # Container environment detection and adjustment
+  if [[ -f /.dockerenv ]] || [[ -n "${HASSIO_TOKEN:-}" ]]; then
+    MAX_PARALLEL_JOBS=1  # Use sequential processing in containers
+    log "$COLOR_BLUE" "🐳 Container environment detected, using sequential processing"
   fi
   
-  # Process addons in parallel batches with better job management
-  local job_count=0
-  local -a pids=()
-  local -a job_names=()
+  # Process addons with simple job control
+  local processed=0
+  local -a current_jobs=()
   
   for addon_path in "${addon_paths[@]}"; do
     local addon_name
     addon_name=$(basename "$addon_path")
     
-    # Wait for available slot with timeout protection
-    local wait_cycles=0
-    while [[ ${#pids[@]} -ge $MAX_PARALLEL_JOBS ]]; do
-      # Check for completed jobs
-      local new_pids=()
-      local new_names=()
-      
-      for i in "${!pids[@]}"; do
-        if ! kill -0 "${pids[$i]}" 2>/dev/null; then
-          # Job completed
-          wait "${pids[$i]}" 2>/dev/null || true
-          log "$COLOR_CYAN" "✅ Completed processing ${job_names[$i]}"
+    # Wait for available slot
+    while [[ ${#current_jobs[@]} -ge $MAX_PARALLEL_JOBS ]]; do
+      local new_jobs=()
+      for pid in "${current_jobs[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+          new_jobs+=("$pid")
         else
-          new_pids+=("${pids[$i]}")
-          new_names+=("${job_names[$i]}")
+          wait "$pid" 2>/dev/null || true
+          ((processed++))
         fi
       done
-      
-      pids=("${new_pids[@]}")
-      job_names=("${new_names[@]}")
-      
-      # Prevent infinite waiting with shorter cycles
-      if [[ ${#pids[@]} -ge $MAX_PARALLEL_JOBS ]]; then
-        ((wait_cycles++))
-        if [[ $wait_cycles -gt 100 ]]; then  # 10 seconds timeout
-          log "$COLOR_YELLOW" "⚠️ Killing stuck jobs due to timeout"
-          for pid in "${pids[@]}"; do
-            kill -TERM "$pid" 2>/dev/null || true
-          done
-          sleep 1
-          for pid in "${pids[@]}"; do
-            kill -KILL "$pid" 2>/dev/null || true
-          done
-          pids=()
-          job_names=()
-          break
-        fi
-        sleep 0.1
-      fi
+      current_jobs=("${new_jobs[@]}")
+      [[ ${#current_jobs[@]} -ge $MAX_PARALLEL_JOBS ]] && sleep 0.5
     done
     
-    # Start new job with timeout protection and resource limits
-    log "$COLOR_DARK_BLUE" "🚀 Starting processing of $addon_name"
-    (
-      # Set resource limits for container environments
-      ulimit -v 524288 2>/dev/null || true  # 512MB virtual memory limit
-      ulimit -t 120 2>/dev/null || true     # 2 minute CPU time limit
-      
-      # Set timeout for individual addon processing
-      timeout 90 bash -c "update_addon '$addon_path'" 2>/dev/null || {
-        log "$COLOR_RED" "❌ Timeout processing $addon_name"
-        UNCHANGED_ADDONS["$addon_name"]="Processing timeout"
-      }
-    ) &
+    # Start processing addon
+    log "$COLOR_DARK_BLUE" "🔍 Processing $addon_name ($((processed + 1))/$total_addons)"
     
-    pids+=($!)
-    job_names+=("$addon_name")
-    ((job_count++))
-    
-    # Small delay to prevent overwhelming the system
-    sleep 0.2
-  done
-  
-  # Wait for all remaining jobs with timeout
-  log "$COLOR_BLUE" "⏳ Waiting for remaining ${#pids[@]} jobs to complete..."
-  local remaining_wait=0
-  
-  while [[ ${#pids[@]} -gt 0 && $remaining_wait -lt 600 ]]; do  # 60 second timeout
-    local new_pids=()
-    local new_names=()
-    
-    for i in "${!pids[@]}"; do
-      if ! kill -0 "${pids[$i]}" 2>/dev/null; then
-        wait "${pids[$i]}" 2>/dev/null || true
-        log "$COLOR_CYAN" "✅ Completed processing ${job_names[$i]}"
-      else
-        new_pids+=("${pids[$i]}")
-        new_names+=("${job_names[$i]}")
-      fi
-    done
-    
-    pids=("${new_pids[@]}")
-    job_names=("${new_names[@]}")
-    
-    if [[ ${#pids[@]} -gt 0 ]]; then
-      sleep 1
-      ((remaining_wait++))
+    if [[ $MAX_PARALLEL_JOBS -eq 1 ]]; then
+      # Sequential processing
+      update_addon "$addon_path"
+      ((processed++))
+    else
+      # Parallel processing
+      update_addon "$addon_path" &
+      current_jobs+=($!)
     fi
+    
+    # Small delay to prevent system overload
+    sleep 0.1
   done
   
-  # Kill any remaining stuck processes
-  if [[ ${#pids[@]} -gt 0 ]]; then
-    log "$COLOR_YELLOW" "⚠️ Terminating ${#pids[@]} remaining jobs due to timeout"
-    for i in "${!pids[@]}"; do
-      log "$COLOR_YELLOW" "⚠️ Killing stuck job: ${job_names[$i]}"
-      kill -TERM "${pids[$i]}" 2>/dev/null || true
-    done
-    sleep 2
-    for pid in "${pids[@]}"; do
-      kill -KILL "$pid" 2>/dev/null || true
-    done
-  fi
+  # Wait for remaining jobs
+  for pid in "${current_jobs[@]}"; do
+    wait "$pid" 2>/dev/null || true
+    ((processed++))
+  done
   
   log "$COLOR_BLUE" "✅ Completed processing all $total_addons add-ons"
 }
@@ -766,7 +695,7 @@ cleanup() {
   exit "$exit_code"
 }
 
-# Set up signal handlers
+# Set up signal handlers for graceful shutdown only
 trap 'cleanup 130' INT TERM
 
 main() {
@@ -844,11 +773,12 @@ main() {
   # Update REPO_DIR to point to the actual cloned directory
   REPO_DIR="$actual_repo_dir"
 
-  # Export functions for parallel processing
-  export -f update_addon get_latest_tag safe_jq log get_ghcr_token update_config_files update_changelog
-  export -f get_dockerhub_tags
-  export CONFIG_PATH CACHE_DIR COLOR_RESET COLOR_GREEN COLOR_BLUE COLOR_DARK_BLUE
-  export COLOR_YELLOW COLOR_RED COLOR_PURPLE COLOR_CYAN LOG_FILE DRY_RUN DEBUG
+  # Export functions for parallel processing (simplified)
+  export -f update_addon get_latest_tag safe_jq log 
+  export -f get_dockerhub_tags update_config_files update_changelog
+  export CONFIG_PATH CACHE_DIR LOG_FILE DRY_RUN DEBUG
+  export COLOR_RESET COLOR_GREEN COLOR_BLUE COLOR_DARK_BLUE
+  export COLOR_YELLOW COLOR_RED COLOR_PURPLE COLOR_CYAN
 
   # Process addons in parallel
   process_addons_parallel "$REPO_DIR"
@@ -874,7 +804,10 @@ main() {
   
   log "$COLOR_BLUE" "🎉 Update process completed successfully in ${duration}s"
   
-  # Cleanup
+  # Clean up lock file
+  rm -f "$lockfile"
+  
+  # Final cleanup
   cd / && rm -rf "$temp_dir" 2>/dev/null || true
 }
 
