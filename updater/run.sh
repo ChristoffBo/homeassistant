@@ -8,7 +8,7 @@ CONFIG_PATH="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
 CACHE_DIR="/tmp/addon_updater_cache"
-MAX_PARALLEL_JOBS=5
+MAX_PARALLEL_JOBS=2  # Reduced to prevent system overload
 
 # ======================
 # COLOR DEFINITIONS
@@ -563,12 +563,17 @@ process_addons_parallel() {
   local total_addons=${#addon_paths[@]}
   log "$COLOR_BLUE" "📦 Processing $total_addons add-ons with up to $MAX_PARALLEL_JOBS parallel jobs"
   
-  # Reduce parallel jobs if system is under stress
-  local load_avg
-  load_avg=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo "0")
-  if (( $(echo "$load_avg > 2.0" | bc -l 2>/dev/null || echo "0") )); then
+  # Reduce parallel jobs if system is under stress or in container
+  local available_memory
+  available_memory=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "1024")
+  
+  if [[ $available_memory -lt 512 ]]; then
+    MAX_PARALLEL_JOBS=1
+    log "$COLOR_YELLOW" "⚠️ Low memory detected (${available_memory}MB), using sequential processing"
+  elif [[ -f /.dockerenv ]] || [[ -n "${HASSIO_TOKEN:-}" ]]; then
+    # We're in a container environment, be more conservative
     MAX_PARALLEL_JOBS=2
-    log "$COLOR_YELLOW" "⚠️ High system load detected ($load_avg), reducing parallel jobs to $MAX_PARALLEL_JOBS"
+    log "$COLOR_BLUE" "🐳 Container environment detected, using $MAX_PARALLEL_JOBS parallel jobs"
   fi
   
   # Process addons in parallel batches with better job management
@@ -601,15 +606,15 @@ process_addons_parallel() {
       pids=("${new_pids[@]}")
       job_names=("${new_names[@]}")
       
-      # Prevent infinite waiting
+      # Prevent infinite waiting with shorter cycles
       if [[ ${#pids[@]} -ge $MAX_PARALLEL_JOBS ]]; then
         ((wait_cycles++))
-        if [[ $wait_cycles -gt 300 ]]; then  # 30 seconds timeout
+        if [[ $wait_cycles -gt 100 ]]; then  # 10 seconds timeout
           log "$COLOR_YELLOW" "⚠️ Killing stuck jobs due to timeout"
           for pid in "${pids[@]}"; do
             kill -TERM "$pid" 2>/dev/null || true
           done
-          sleep 2
+          sleep 1
           for pid in "${pids[@]}"; do
             kill -KILL "$pid" 2>/dev/null || true
           done
@@ -621,11 +626,15 @@ process_addons_parallel() {
       fi
     done
     
-    # Start new job with timeout protection
+    # Start new job with timeout protection and resource limits
     log "$COLOR_DARK_BLUE" "🚀 Starting processing of $addon_name"
     (
+      # Set resource limits for container environments
+      ulimit -v 524288 2>/dev/null || true  # 512MB virtual memory limit
+      ulimit -t 120 2>/dev/null || true     # 2 minute CPU time limit
+      
       # Set timeout for individual addon processing
-      timeout 120 bash -c "update_addon '$addon_path'" || {
+      timeout 90 bash -c "update_addon '$addon_path'" 2>/dev/null || {
         log "$COLOR_RED" "❌ Timeout processing $addon_name"
         UNCHANGED_ADDONS["$addon_name"]="Processing timeout"
       }
@@ -636,7 +645,7 @@ process_addons_parallel() {
     ((job_count++))
     
     # Small delay to prevent overwhelming the system
-    sleep 0.05
+    sleep 0.2
   done
   
   # Wait for all remaining jobs with timeout
@@ -763,6 +772,24 @@ trap 'cleanup 130' INT TERM
 main() {
   local start_time
   start_time=$(date +%s)
+  
+  # Check if another instance is running
+  local lockfile="/tmp/addon_updater.lock"
+  if [[ -f "$lockfile" ]]; then
+    local existing_pid
+    existing_pid=$(cat "$lockfile" 2>/dev/null || echo "")
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      log "$COLOR_YELLOW" "⚠️ Another instance is already running (PID: $existing_pid)"
+      exit 0
+    else
+      log "$COLOR_YELLOW" "⚠️ Removing stale lock file"
+      rm -f "$lockfile"
+    fi
+  fi
+  
+  # Create lock file
+  echo $ > "$lockfile"
+  trap 'rm -f "$lockfile"; cleanup 130' INT TERM EXIT
   
   # Initialize log
   echo "=== Home Assistant Add-on Updater Started ===" > "$LOG_FILE"
