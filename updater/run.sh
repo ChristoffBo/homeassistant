@@ -481,6 +481,10 @@ commit_and_push() {
   git config user.name "HA Add-on Updater"
   git config pull.rebase true
   git config push.default simple
+  
+  # Detect current branch name
+  local current_branch
+  current_branch=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
   # Check for changes first
   if [[ -z "$(git status --porcelain)" ]]; then
@@ -523,19 +527,19 @@ Updated $update_count add-on(s):"
     return 1
   fi
   
-  # Push changes
+  # Push changes to the correct branch
   if [[ "$SKIP_PUSH" == "true" ]]; then
     PUSH_STATUS="⏭️ Git push skipped (skip_push enabled)"
     log "$COLOR_YELLOW" "$PUSH_STATUS"
   else
     local push_attempts=3
     for ((i=1; i<=push_attempts; i++)); do
-      if git push "$GIT_AUTH_REPO" main; then
-        PUSH_STATUS="✅ Git push succeeded"
+      if git push "$GIT_AUTH_REPO" "$current_branch"; then
+        PUSH_STATUS="✅ Git push succeeded to branch '$current_branch'"
         log "$COLOR_GREEN" "$PUSH_STATUS"
         return 0
       else
-        log "$COLOR_YELLOW" "⚠️ Git push attempt $i failed"
+        log "$COLOR_YELLOW" "⚠️ Git push attempt $i failed for branch '$current_branch'"
         [[ $i -lt $push_attempts ]] && sleep $((i * 2))
       fi
     done
@@ -673,13 +677,37 @@ main() {
   
   cd "$temp_dir" || exit 1
   
+  # Create unique repo directory name to avoid conflicts
+  local repo_name="homeassistant_$(date +%s)_$"
+  local actual_repo_dir="$temp_dir/$repo_name"
+  
+  # Clean up any existing repository directory first
+  if [[ -d "$REPO_DIR" ]]; then
+    log "$COLOR_YELLOW" "🧹 Cleaning existing repository directory..."
+    rm -rf "$REPO_DIR" || {
+      log "$COLOR_RED" "❌ Failed to remove existing repository directory"
+      cleanup 1
+    }
+  fi
+  
   # Clone repository with optimizations
   log "$COLOR_BLUE" "📥 Cloning repository..."
-  if ! git clone --depth 1 --single-branch --branch main "$GIT_AUTH_REPO" "$REPO_DIR"; then
-    log "$COLOR_RED" "❌ Git clone failed"
-    notify "Updater Error" "Git clone failed" 5
-    cleanup 1
+  if ! git clone --depth 1 --single-branch --branch main "$GIT_AUTH_REPO" "$actual_repo_dir"; then
+    # Try different branch names if main fails
+    log "$COLOR_YELLOW" "⚠️ Failed to clone 'main' branch, trying 'master'..."
+    if ! git clone --depth 1 --single-branch --branch master "$GIT_AUTH_REPO" "$actual_repo_dir"; then
+      # Try default branch
+      log "$COLOR_YELLOW" "⚠️ Failed to clone 'master' branch, trying default branch..."
+      if ! git clone --depth 1 "$GIT_AUTH_REPO" "$actual_repo_dir"; then
+        log "$COLOR_RED" "❌ Git clone failed on all attempts"
+        notify "Updater Error" "Git clone failed - tried main, master, and default branches" 5
+        cleanup 1
+      fi
+    fi
   fi
+  
+  # Update REPO_DIR to point to the actual cloned directory
+  REPO_DIR="$actual_repo_dir"
 
   # Export functions for parallel processing
   export -f update_addon get_latest_tag safe_jq log get_ghcr_token update_config_files update_changelog
