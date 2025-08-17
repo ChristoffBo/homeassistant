@@ -335,11 +335,11 @@ update_addon() {
     return
   fi
 
-  # Get latest version with timeout
+  # Get latest version with timeout and better error handling
   local latest
-  if ! latest=$(timeout 30 bash -c "get_latest_tag '$image'"); then
-    log "$COLOR_YELLOW" "⚠️ Timeout getting version for $image"
-    UNCHANGED_ADDONS["$name"]="Timeout"
+  if ! latest=$(timeout 60 bash -c "get_latest_tag '$image'" 2>/dev/null); then
+    log "$COLOR_YELLOW" "⚠️ Timeout or error getting version for $image"
+    UNCHANGED_ADDONS["$name"]="Version check failed"
     ADDON_STATUS["$name"]="timeout"
     return
   fi
@@ -550,46 +550,134 @@ Updated $update_count add-on(s):"
   fi
 }
 
-# Enhanced parallel processing with job control
+# Enhanced parallel processing with job control and better resource management
 process_addons_parallel() {
   local repo_dir="$1"
   local -a addon_paths=()
   
   # Collect addon directories
   for path in "$repo_dir"/*; do
-    [[ -d "$path" ]] && addon_paths+=("$path")
+    [[ -d "$path" && -f "$path/config.json" ]] && addon_paths+=("$path")
   done
   
   local total_addons=${#addon_paths[@]}
   log "$COLOR_BLUE" "📦 Processing $total_addons add-ons with up to $MAX_PARALLEL_JOBS parallel jobs"
   
-  # Process addons in parallel batches
+  # Reduce parallel jobs if system is under stress
+  local load_avg
+  load_avg=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo "0")
+  if (( $(echo "$load_avg > 2.0" | bc -l 2>/dev/null || echo "0") )); then
+    MAX_PARALLEL_JOBS=2
+    log "$COLOR_YELLOW" "⚠️ High system load detected ($load_avg), reducing parallel jobs to $MAX_PARALLEL_JOBS"
+  fi
+  
+  # Process addons in parallel batches with better job management
   local job_count=0
   local -a pids=()
+  local -a job_names=()
   
   for addon_path in "${addon_paths[@]}"; do
-    # Wait for available slot
+    local addon_name
+    addon_name=$(basename "$addon_path")
+    
+    # Wait for available slot with timeout protection
+    local wait_cycles=0
     while [[ ${#pids[@]} -ge $MAX_PARALLEL_JOBS ]]; do
+      # Check for completed jobs
+      local new_pids=()
+      local new_names=()
+      
       for i in "${!pids[@]}"; do
         if ! kill -0 "${pids[$i]}" 2>/dev/null; then
-          wait "${pids[$i]}"
-          unset "pids[$i]"
+          # Job completed
+          wait "${pids[$i]}" 2>/dev/null || true
+          log "$COLOR_CYAN" "✅ Completed processing ${job_names[$i]}"
+        else
+          new_pids+=("${pids[$i]}")
+          new_names+=("${job_names[$i]}")
         fi
       done
-      pids=("${pids[@]}")  # Reindex array
-      [[ ${#pids[@]} -ge $MAX_PARALLEL_JOBS ]] && sleep 0.1
+      
+      pids=("${new_pids[@]}")
+      job_names=("${new_names[@]}")
+      
+      # Prevent infinite waiting
+      if [[ ${#pids[@]} -ge $MAX_PARALLEL_JOBS ]]; then
+        ((wait_cycles++))
+        if [[ $wait_cycles -gt 300 ]]; then  # 30 seconds timeout
+          log "$COLOR_YELLOW" "⚠️ Killing stuck jobs due to timeout"
+          for pid in "${pids[@]}"; do
+            kill -TERM "$pid" 2>/dev/null || true
+          done
+          sleep 2
+          for pid in "${pids[@]}"; do
+            kill -KILL "$pid" 2>/dev/null || true
+          done
+          pids=()
+          job_names=()
+          break
+        fi
+        sleep 0.1
+      fi
     done
     
-    # Start new job
-    (update_addon "$addon_path") &
+    # Start new job with timeout protection
+    log "$COLOR_DARK_BLUE" "🚀 Starting processing of $addon_name"
+    (
+      # Set timeout for individual addon processing
+      timeout 120 bash -c "update_addon '$addon_path'" || {
+        log "$COLOR_RED" "❌ Timeout processing $addon_name"
+        UNCHANGED_ADDONS["$addon_name"]="Processing timeout"
+      }
+    ) &
+    
     pids+=($!)
+    job_names+=("$addon_name")
     ((job_count++))
+    
+    # Small delay to prevent overwhelming the system
+    sleep 0.05
   done
   
-  # Wait for all remaining jobs
-  for pid in "${pids[@]}"; do
-    wait "$pid" || true
+  # Wait for all remaining jobs with timeout
+  log "$COLOR_BLUE" "⏳ Waiting for remaining ${#pids[@]} jobs to complete..."
+  local remaining_wait=0
+  
+  while [[ ${#pids[@]} -gt 0 && $remaining_wait -lt 600 ]]; do  # 60 second timeout
+    local new_pids=()
+    local new_names=()
+    
+    for i in "${!pids[@]}"; do
+      if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+        wait "${pids[$i]}" 2>/dev/null || true
+        log "$COLOR_CYAN" "✅ Completed processing ${job_names[$i]}"
+      else
+        new_pids+=("${pids[$i]}")
+        new_names+=("${job_names[$i]}")
+      fi
+    done
+    
+    pids=("${new_pids[@]}")
+    job_names=("${new_names[@]}")
+    
+    if [[ ${#pids[@]} -gt 0 ]]; then
+      sleep 1
+      ((remaining_wait++))
+    fi
   done
+  
+  # Kill any remaining stuck processes
+  if [[ ${#pids[@]} -gt 0 ]]; then
+    log "$COLOR_YELLOW" "⚠️ Terminating ${#pids[@]} remaining jobs due to timeout"
+    for i in "${!pids[@]}"; do
+      log "$COLOR_YELLOW" "⚠️ Killing stuck job: ${job_names[$i]}"
+      kill -TERM "${pids[$i]}" 2>/dev/null || true
+    done
+    sleep 2
+    for pid in "${pids[@]}"; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+  fi
   
   log "$COLOR_BLUE" "✅ Completed processing all $total_addons add-ons"
 }
@@ -641,12 +729,32 @@ generate_summary() {
 
 # Cleanup function for graceful shutdown
 cleanup() {
+  local exit_code="${1:-0}"
   log "$COLOR_BLUE" "🧹 Cleaning up..."
-  # Kill any background jobs
-  jobs -p | xargs -r kill 2>/dev/null || true
-  # Clean old cache files (older than 24 hours)
-  find "$CACHE_DIR" -type f -mtime +1 -delete 2>/dev/null || true
-  exit "${1:-0}"
+  
+  # Kill any background jobs gracefully
+  local pids
+  pids=$(jobs -p 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    log "$COLOR_YELLOW" "⚠️ Terminating background jobs..."
+    echo "$pids" | xargs -r kill -TERM 2>/dev/null || true
+    sleep 2
+    # Force kill if still running
+    echo "$pids" | xargs -r kill -KILL 2>/dev/null || true
+  fi
+  
+  # Clean old cache files (older than 24 hours) in background
+  (find "$CACHE_DIR" -type f -mtime +1 -delete 2>/dev/null || true) &
+  
+  # Final summary if we have data
+  if [[ ${#UPDATED_ADDONS[@]} -gt 0 || ${#UNCHANGED_ADDONS[@]} -gt 0 ]]; then
+    local final_summary
+    final_summary=$(generate_summary)
+    log "$COLOR_BLUE" "📊 Final Summary:"
+    echo "$final_summary"
+  fi
+  
+  exit "$exit_code"
 }
 
 # Set up signal handlers
