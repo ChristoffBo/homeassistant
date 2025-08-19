@@ -7,10 +7,7 @@
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": [
-    "config:rw",
-    "ssl:ro"
-  ],
+  "map": ["config:rw", "ssl:ro"],
   "options": {
     "port": 10443,
     "admin_user": "admin",
@@ -48,6 +45,5 @@
     "LOG_LEVEL": "info"
   },
   "backup": "cold",
-  "stage": "stable",
-  "image": "semaphoreui/semaphore:2.9.37-debian"
+  "stage": "stable"
 }
