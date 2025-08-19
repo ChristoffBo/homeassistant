@@ -2,7 +2,7 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation (BoltDB). Ingress-enabled. Data persists under /share/ansible_semaphore.",
+  "description": "Modern web UI for Ansible (BoltDB). Ingress-enabled. Data persists under /share/ansible_semaphore.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
