@@ -9,7 +9,8 @@
   "boot": "auto",
   "map": [
     "config:rw",
-    "ssl:ro"
+    "ssl:ro",
+    "share:rw"
   ],
   "options": {
     "port": 10443,
@@ -47,12 +48,14 @@
   "environment": {
     "LOG_LEVEL": "info",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/data/semaphore.db",
+    "SEMAPHORE_DB": "/share/semaphore/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
-    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/semaphore/playbooks",
+    "SEMAPHORE_TMP_PATH": "/share/semaphore/tmp"
   },
-  "backup": "cold",
+  "backup": "hot",
   "stage": "stable",
   "image": "semaphoreui/semaphore"
 }
