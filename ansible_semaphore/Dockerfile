@@ -1,13 +1,13 @@
-# Home Assistant add-on for Ansible Semaphore
-# Base: official upstream image
+# Home Assistant add-on for Ansible Semaphore (official upstream image)
 FROM semaphoreui/semaphore:latest
 
+# We need root so we can ensure /share subdirs exist and are writable
 USER root
 
-# Copy wrapper; we'll execute it with /bin/sh, so no chmod needed
+# Wrapper entrypoint (no chmod layer needed; we exec with /bin/sh)
 COPY run.sh /usr/local/bin/run.sh
 
-# Where we keep persistent data (mounted by HA Supervisor via "map": ["share:rw"])
+# Convenience only; HA persistence is through /share mount
 WORKDIR /share/ansible_semaphore
 
 # Start wrapper
