@@ -1,13 +1,16 @@
 {
   "name": "Ansible Semaphore",
-  "version": "2.9.37",
+  "version": "1.0.0",
   "slug": "ansible_semaphore",
   "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": ["config:rw", "ssl:ro"],
+  "map": [
+    "config:rw",
+    "ssl:ro"
+  ],
   "options": {
     "port": 10443,
     "admin_user": "admin",
