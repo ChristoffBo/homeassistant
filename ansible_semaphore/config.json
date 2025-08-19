@@ -2,7 +2,7 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Ansible Semaphore UI using the official image with BoltDB. Persistent under /share/ansible_semaphore. Ingress enabled.",
+  "description": "Ansible Semaphore UI (official image) using BoltDB. Persistent under /share/ansible_semaphore. Ingress enabled.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
@@ -26,16 +26,10 @@
   },
 
   "environment": {
-    "LOG_LEVEL": "{log_level}",
-
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
-
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-
-    "SEMAPHORE_PORT": "{port}",
-    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": ""
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks"
   },
 
   "backup": "hot",
