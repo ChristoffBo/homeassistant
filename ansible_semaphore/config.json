@@ -25,7 +25,7 @@
 
   "environment": {
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
+    "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
     "SEMAPHORE_PORT": "3000",
