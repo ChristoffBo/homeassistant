@@ -54,5 +54,5 @@
   },
   "backup": "cold",
   "stage": "stable",
-  "image": "semaphoreui/semaphore:2.16.17"
+  "image": "semaphoreui/semaphore:v2.16.17"
 }
