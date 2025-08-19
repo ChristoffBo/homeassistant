@@ -2,7 +2,7 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Ansible Semaphore with BoltDB. Ingress-enabled. Persists under /share/ansible_semaphore.",
+  "description": "Ansible Semaphore UI using the official image with BoltDB. Fully persistent under /share/ansible_semaphore. Ingress enabled.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
@@ -17,20 +17,19 @@
   "map": ["share:rw"],
 
   "options": {
-    "admin_user": "admin",
-    "admin_name": "Administrator",
-    "admin_email": "admin@example.com",
-    "admin_password": "changeme",
-    "port": 3000,
-    "log_level": "info"
+    "port": 3000
   },
   "schema": {
-    "admin_user": "str",
-    "admin_name": "str",
-    "admin_email": "email",
-    "admin_password": "str",
-    "port": "int(1024,65535)",
-    "log_level": "list(debug|info|warn|error)?"
+    "port": "int(1024,65535)"
+  },
+
+  "environment": {
+    "SEMAPHORE_DB_DIALECT": "bolt",
+    "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
+    "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
+    "SEMAPHORE_PORT": "3000",
+    "LOG_LEVEL": "info"
   },
 
   "watchdog": "http://[HOST]:[PORT:3000]",
