@@ -7,7 +7,7 @@
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": ["share:rw", "data:rw"],
+  "map": ["config:rw", "share:rw"],
   "options": {
     "port": 10443,
     "admin_user": "admin",
@@ -38,12 +38,12 @@
   "environment": {
     "LOG_LEVEL": "info",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/data/semaphore/semaphore.db",
+    "SEMAPHORE_DB": "/config/semaphore/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "changeme",
-    "SEMAPHORE_PLAYBOOK_PATH": "/data/semaphore/playbooks",
-    "SEMAPHORE_TMP_PATH": "/data/semaphore/tmp"
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/semaphore/playbooks",
+    "SEMAPHORE_TMP_PATH": "/config/semaphore/tmp"
   },
   "backup": "hot",
   "stage": "stable"
