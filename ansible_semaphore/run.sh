@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Use /data (Supervisor persistent storage) instead of /config or /share
+# Use /data (Supervisor persistent storage)
 cd /data
 
 # Launch Semaphore
