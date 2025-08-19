@@ -1,33 +1,35 @@
-
 {
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation using built-in BoltDB. Ingress-enabled.",
-  "url": "https://docs.semaphoreui.com/",
+  "description": "Modern web UI for Ansible automation with SQLite (BoltDB) backend. Manage playbooks, inventories, and projects.",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
+  "map": [
+    "share:rw"
+  ],
+  "options": {
+    "admin_user": "admin",
+    "admin_email": "admin@example.com",
+    "admin_password": "changeme"
+  },
+  "schema": {
+    "admin_user": "str",
+    "admin_email": "email",
+    "admin_password": "str"
+  },
+  "ports": {
+    "3000/tcp": null
+  },
+  "ports_description": {
+    "3000/tcp": "Semaphore Web UI"
+  },
   "ingress": true,
   "ingress_port": 3000,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
-  "map": ["share:rw"],
-  "options": {
-    "admin_user": "admin",
-    "admin_email": "admin@example.com",
-    "admin_password": "changeme",
-    "log_level": "info",
-    "access_key_encryption": ""
-  },
-  "schema": {
-    "admin_user": "str",
-    "admin_email": "email",
-    "admin_password": "str",
-    "log_level": "list(debug|info|warn|error)?",
-    "access_key_encryption": "str?"
-  },
-  "watchdog": "http://[HOST]:[PORT:3000]",
+  "stage": "stable",
   "backup": "hot"
 }
