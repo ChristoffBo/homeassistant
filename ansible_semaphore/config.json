@@ -7,26 +7,20 @@
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": ["share:rw"],
+  "map": ["share:rw", "data:rw"],
   "options": {
     "port": 10443,
     "admin_user": "admin",
     "admin_email": "admin@example.com",
     "admin_password": "changeme",
-    "log_level": "info",
-    "ssl": false,
-    "certfile": "fullchain.pem",
-    "keyfile": "privkey.pem"
+    "log_level": "info"
   },
   "schema": {
     "port": "int(1024,65535)",
     "admin_user": "str",
     "admin_email": "email",
     "admin_password": "str",
-    "log_level": "list(debug|info|warn|error)?",
-    "ssl": "bool?",
-    "certfile": "str?",
-    "keyfile": "str?"
+    "log_level": "list(debug|info|warn|error)?"
   },
   "ports": {
     "3000/tcp": 10443
