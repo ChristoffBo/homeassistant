@@ -2,7 +2,7 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
+  "description": "Modern web UI for Ansible automation with SQLite/Bolt backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
@@ -47,7 +47,9 @@
   "environment": {
     "LOG_LEVEL": "info",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/data/semaphore.db",
+    "SEMAPHORE_CONFIG_PATH": "/config/semaphore",
+    "SEMAPHORE_TMP_PATH": "/config/semaphore-tmp",
+    "SEMAPHORE_DB": "/config/semaphore/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "changeme"
