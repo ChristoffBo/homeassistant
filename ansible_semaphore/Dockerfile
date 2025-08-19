@@ -1,39 +1,58 @@
 FROM debian:stable-slim
 
-# Install dependencies
+# Set Semaphore version as build arg for flexibility
+ARG SEMAPHORE_VERSION=2.9.34
+
+# Install dependencies in a single layer and clean up
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     sqlite3 \
     curl \
     uuid-runtime \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Set Semaphore version
-ENV SEMAPHORE_VERSION=2.9.34
+# Download arch-specific Semaphore binary with better error handling
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    case "$ARCH" in \
+        amd64) \
+            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_${SEMAPHORE_VERSION}_linux_amd64"; \
+            ;; \
+        arm64) \
+            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_${SEMAPHORE_VERSION}_linux_arm64"; \
+            ;; \
+        *) \
+            echo >&2 "Unsupported architecture: $ARCH"; \
+            exit 1; \
+            ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/semaphore "$URL"; \
+    chmod +x /usr/local/bin/semaphore; \
+    # Verify the binary works
+    /usr/local/bin/semaphore version || (echo "Binary verification failed" && exit 1)
 
-# Download arch-specific Semaphore binary
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "amd64" ]; then \
-      URL=https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_${SEMAPHORE_VERSION}_linux_amd64 ; \
-    elif [ "$ARCH" = "arm64" ]; then \
-      URL=https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_${SEMAPHORE_VERSION}_linux_arm64 ; \
-    else \
-      echo "Unsupported architecture: $ARCH" && exit 1 ; \
-    fi && \
-    curl -L -o /usr/local/bin/semaphore $URL && \
-    chmod +x /usr/local/bin/semaphore
+# Create semaphore user with specific UID/GID for consistency
+RUN groupadd -r -g 1000 semaphore && \
+    useradd -r -u 1000 -g semaphore -d /data -s /bin/bash semaphore
 
-# Create semaphore user
-RUN useradd -m -d /data semaphore
-
-# Copy entrypoint before switching user
-COPY run.sh /run.sh
+# Copy entrypoint script with proper ownership
+COPY --chown=semaphore:semaphore run.sh /run.sh
 RUN chmod +x /run.sh
 
 # Switch to semaphore user
 USER semaphore
 WORKDIR /data
 
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:3000/ || exit 1
+
+# Expose default port
+EXPOSE 3000
+
+# Set volume
 VOLUME ["/data"]
 
+# Use exec form for better signal handling
 CMD ["/run.sh"]
