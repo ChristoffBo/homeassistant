@@ -23,7 +23,7 @@
     "SEMAPHORE_PORT": "8055",
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
-    "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
+    "SEMAPHORE_TMP_PATH": "/tmp/semaphore",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_NAME": "Admin",
