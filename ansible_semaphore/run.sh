@@ -7,7 +7,7 @@ CONFIG_FILE="$DATA_DIR/config.json"
 echo "[INFO] Ensuring persistent directories in $DATA_DIR ..."
 mkdir -p "$DATA_DIR/tmp" "$DATA_DIR/playbooks"
 
-# Generate config.json on first run
+# Initialize on first run
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "[INFO] First run detected. Generating config.json..."
   /usr/local/bin/semaphore setup \
@@ -17,10 +17,10 @@ if [ ! -f "$CONFIG_FILE" ]; then
     --tmp-path="$DATA_DIR/tmp" \
     --playbook-path="$DATA_DIR/playbooks" \
     --port=3000 \
-    --admin="admin" \
-    --admin-name="admin" \
-    --admin-email="admin@example.com" \
-    --admin-password="changeme"
+    --admin="$(bashio::config 'admin_user')" \
+    --admin-name="$(bashio::config 'admin_user')" \
+    --admin-email="$(bashio::config 'admin_email')" \
+    --admin-password="$(bashio::config 'admin_password')"
 fi
 
 echo "[INFO] Starting Semaphore with persistent paths..."
