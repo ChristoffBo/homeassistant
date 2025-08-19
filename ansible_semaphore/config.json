@@ -1,18 +1,16 @@
 {
   "name": "Ansible Semaphore",
-  "version": "2.16.17",
+  "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation with persistent storage under /data.",
+  "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "ingress": true,
-  "ingress_port": 3000,
-  "panel_icon": "mdi:ansible",
-  "panel_title": "Semaphore",
-  "panel_admin": true,
-  "map": ["ssl:ro"],
+  "map": [
+    "data:rw",
+    "ssl:ro"
+  ],
   "options": {
     "port": 10443,
     "admin_user": "admin",
@@ -39,18 +37,24 @@
   "ports_description": {
     "3000/tcp": "Semaphore Web UI"
   },
+  "ingress": true,
+  "ingress_port": 3000,
+  "panel_icon": "mdi:ansible",
+  "panel_title": "Semaphore",
+  "panel_admin": true,
   "webui": "http://[HOST]:[PORT:10443]",
   "watchdog": "http://[HOST]:[PORT:10443]",
-  "ingress_entry": "/",
   "environment": {
     "LOG_LEVEL": "info",
-    "TINI_SUBREAPER": "1",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/data/semaphore.db",
+    "SEMAPHORE_DB": "/data/semaphore/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
-    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
+    "SEMAPHORE_PLAYBOOK_PATH": "/data/semaphore/playbooks",
+    "SEMAPHORE_TMP_PATH": "/data/semaphore/tmp"
   },
   "backup": "hot",
-  "stage": "stable"
+  "stage": "stable",
+  "image": "local/ansible_semaphore"
 }
