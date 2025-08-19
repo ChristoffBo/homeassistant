@@ -1,14 +1,15 @@
 {
   "name": "Ansible Semaphore",
-  "version": "2.16.17",
+  "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation with SQLite backend. Persistent under /data.",
+  "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": ["data:rw", "ssl:ro"],
+  "map": ["config:rw", "ssl:ro", "share:rw"],
   "options": {
+    "port": 10443,
     "admin_user": "admin",
     "admin_email": "admin@example.com",
     "admin_password": "changeme",
@@ -18,6 +19,7 @@
     "keyfile": "privkey.pem"
   },
   "schema": {
+    "port": "int(1024,65535)",
     "admin_user": "str",
     "admin_email": "email",
     "admin_password": "str",
@@ -46,10 +48,9 @@
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "changeme",
-    "SEMAPHORE_PLAYBOOK_PATH": "/data/semaphore/playbooks",
-    "SEMAPHORE_TMP_PATH": "/data/semaphore/tmp"
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/semaphore/playbooks",
+    "SEMAPHORE_TMP_PATH": "/share/semaphore/tmp"
   },
   "backup": "hot",
-  "stage": "stable",
-  "image": "ansible_semaphore:latest"
+  "stage": "stable"
 }
