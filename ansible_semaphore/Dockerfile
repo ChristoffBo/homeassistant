@@ -1,11 +1,7 @@
-# Use official Semaphore image
-FROM semaphoreui/semaphore:2.9.34
+FROM semaphoreui/semaphore:2.9.37-debian
 
-# Copy wrapper script (make sure it is chmod +x locally before build)
-COPY run.sh /run.sh
-
-# Set working directory
 WORKDIR /data
+COPY run.sh /run.sh
+RUN chmod +x /run.sh
 
-# Override entrypoint with our wrapper
-ENTRYPOINT ["/run.sh"]
+CMD ["/run.sh"]
