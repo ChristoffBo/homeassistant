@@ -1,0 +1,6 @@
+{
+  "build_from": {
+    "amd64": "semaphoreui/semaphore:2.16.17",
+    "aarch64": "semaphoreui/semaphore:2.16.17"
+  }
+}
