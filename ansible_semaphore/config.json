@@ -7,13 +7,11 @@
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": [
-    "config:rw",
-    "ssl:ro",
-    "share:rw"
-  ],
   "init": false,
-  "privileged": ["SYS_ADMIN"],
+  "map": [
+    "config:rw"
+  ],
+  "tmpfs": "size=100m,uid=1000,rw,noexec,nosuid,nodev",
   "options": {
     "port": 10443,
     "admin_user": "admin",
@@ -48,14 +46,15 @@
   "webui": "http://[HOST]:[PORT:10443]",
   "watchdog": "http://[HOST]:[PORT:10443]",
   "environment": {
-    "LOG_LEVEL": "info",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/config/semaphore.db",
+    "SEMAPHORE_DB": "/config/database.boltdb",
+    "SEMAPHORE_CONFIG_PATH": "/config/config.json",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "changeme",
     "SEMAPHORE_PLAYBOOK_PATH": "/config/playbooks",
-    "SEMAPHORE_TMP_PATH": "/config/tmp"
+    "SEMAPHORE_TMP_PATH": "/tmp/semaphore",
+    "TINI_SUBREAPER": "1"
   },
   "backup": "hot",
   "stage": "stable",
