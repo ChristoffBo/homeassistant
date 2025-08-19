@@ -1,15 +1,14 @@
 # Home Assistant add-on for Ansible Semaphore
-# Base: official upstream image (no package installs, no chmod)
+# Base: official upstream image
 FROM semaphoreui/semaphore:latest
 
 USER root
 
-# Copy a tiny wrapper that ensures persistent dirs then execs semaphore
-# We will invoke it with /bin/sh, so executable bit is not required.
+# Copy wrapper; we'll execute it with /bin/sh, so no chmod needed
 COPY run.sh /usr/local/bin/run.sh
 
-# Workdir points to where we persist, but semaphore uses env paths below
+# Where we keep persistent data (mounted by HA Supervisor via "map": ["share:rw"])
 WORKDIR /share/ansible_semaphore
 
-# No ENTRYPOINT change; just run our wrapper with sh (no chmod)
+# Start wrapper
 CMD ["/bin/sh", "/usr/local/bin/run.sh"]
