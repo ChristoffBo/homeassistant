@@ -1,8 +1,8 @@
 {
   "name": "Semaphore UI",
   "version": "v2.16.17",
-  "slug": "semaphore",
-  "description": "Ansible/Terraform/OpenTofu UI (Semaphore) as a Home Assistant add-on.",
+  "slug": "ansible_semaphore",
+  "description": "Ansible/Terraform/OpenTofu UI (Semaphore) as a Home Assistant add-on with persistent config under /config.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
@@ -11,14 +11,18 @@
   "ingress_port": 3000,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
-  "map": ["config:rw"],
+  "panel_admin": true,
+  "map": ["config:rw", "ssl:ro"],
   "options": {
     "admin_user": "admin",
     "admin_password": "changeme",
     "admin_name": "Admin",
     "admin_email": "admin@localhost",
     "db_dialect": "bolt",
-    "timezone": "Etc/UTC"
+    "timezone": "Africa/Johannesburg",
+    "ssl": false,
+    "certfile": "fullchain.pem",
+    "keyfile": "privkey.pem"
   },
   "schema": {
     "admin_user": "str",
@@ -26,20 +30,30 @@
     "admin_name": "str",
     "admin_email": "str",
     "db_dialect": "list(bolt|sqlite|mysql|postgres)",
-    "timezone": "str"
+    "timezone": "str",
+    "ssl": "bool?",
+    "certfile": "str?",
+    "keyfile": "str?"
   },
   "environment": {
+    "LOG_LEVEL": "info",
+    "TINI_SUBREAPER": "1",
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_CONFIG_PATH": "/config/semaphore",
     "SEMAPHORE_DB_PATH": "/config/semaphore-data",
     "SEMAPHORE_TMP_PATH": "/config/semaphore-tmp",
-    "SEMAPHORE_DB": "/config/semaphore/semaphore.db"
+    "SEMAPHORE_DB": "/config/semaphore/semaphore.db",
+    "SEMAPHORE_ADMIN": "admin",
+    "SEMAPHORE_ADMIN_EMAIL": "admin@localhost",
+    "SEMAPHORE_ADMIN_NAME": "Admin",
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
   },
   "ports": {
     "3000/tcp": null
   },
   "ports_description": {
-    "3000/tcp": "Semaphore Web UI"
+    "3000/tcp": "Semaphore Web UI (optional direct port when not using Ingress)"
   },
-  "image": "semaphoreui/semaphore"
+  "backup": "cold",
+  "stage": "stable"
 }
