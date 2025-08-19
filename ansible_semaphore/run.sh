@@ -1,40 +1,30 @@
 #!/usr/bin/env sh
 set -eu
 
-# ---------- Defaults; overridable via /data/options.json ----------
+# -------- Defaults (overridable by /data/options.json) --------
 SEMAPHORE_DB_DIALECT="${SEMAPHORE_DB_DIALECT:-bolt}"
 SEMAPHORE_DB="${SEMAPHORE_DB:-/share/ansible_semaphore/database.boltdb}"
 SEMAPHORE_TMP_PATH="${SEMAPHORE_TMP_PATH:-/share/ansible_semaphore/tmp}"
 SEMAPHORE_PLAYBOOK_PATH="${SEMAPHORE_PLAYBOOK_PATH:-/share/ansible_semaphore/playbooks}"
-SEMAPHORE_PORT="${SEMAPHORE_PORT:-3000}"
-LOG_LEVEL="${LOG_LEVEL:-info}"
+SEMAPHORE_PORT="3000"
+LOG_LEVEL="info"
 
-# ---------- Read HA add-on options (no jq; parse minimally) ----------
+# Read HA options without jq (keep it simple)
 if [ -f /data/options.json ]; then
   PORT_FROM_OPTIONS="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9]\+\).*/\1/p' /data/options.json | head -n1 || true)"
   [ -n "${PORT_FROM_OPTIONS:-}" ] && SEMAPHORE_PORT="$PORT_FROM_OPTIONS"
-
-  LOG_FROM_OPTIONS="$(sed -n 's/.*"log_level"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /data/options.json | head -n1 || true)"
-  [ -n "${LOG_FROM_OPTIONS:-}" ] && LOG_LEVEL="$LOG_FROM_OPTIONS"
+  LVL_FROM_OPTIONS="$(sed -n 's/.*"log_level"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /data/options.json | head -n1 || true)"
+  [ -n "${LVL_FROM_OPTIONS:-}" ] && LOG_LEVEL="$LVL_FROM_OPTIONS"
 fi
 
-# ---------- Validate values ----------
-case "$SEMAPHORE_PORT" in
-  ''|*[!0-9]*)
-    echo "[ERROR] Invalid port value: '$SEMAPHORE_PORT' — must be numeric." >&2
-    exit 1
-    ;;
+case "$SEMAPHORE_PORT" in ''|*[!0-9]*)
+  echo "[ERROR] Invalid port value: '$SEMAPHORE_PORT' — must be numeric." >&2
+  exit 1
 esac
 
-if [ -z "${SEMAPHORE_DB:-}" ]; then
-  echo "[ERROR] SEMAPHORE_DB empty; aborting." >&2
-  exit 1
-fi
-
-# ---------- Ensure persistence directories under /share ----------
+# -------- Ensure persistence directories under /share --------
 PERSIST_DIR="/share/ansible_semaphore"
 DB_DIR="$(dirname "$SEMAPHORE_DB")"
-
 mkdir -p "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PATH"
 
 for d in "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PATH"; do
@@ -43,7 +33,7 @@ for d in "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PAT
   rm -f "$d/.ha-writetest" || true
 done
 
-# ---------- Generate encryption key if not set ----------
+# -------- Generate encryption key if not set --------
 : "${SEMAPHORE_ACCESS_KEY_ENCRYPTION:=}"
 if [ -z "$SEMAPHORE_ACCESS_KEY_ENCRYPTION" ]; then
   if command -v openssl >/dev/null 2>&1; then
@@ -53,7 +43,7 @@ if [ -z "$SEMAPHORE_ACCESS_KEY_ENCRYPTION" ]; then
   fi
 fi
 
-# ---------- Locate semaphore binary (official image) ----------
+# -------- Locate Semaphore binary from image --------
 BIN="$(command -v semaphore || true)"
 [ -z "$BIN" ] && [ -x /usr/local/bin/semaphore ] && BIN="/usr/local/bin/semaphore"
 [ -z "$BIN" ] && [ -x /usr/bin/semaphore ] && BIN="/usr/bin/semaphore"
@@ -64,18 +54,32 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
   exit 1
 fi
 
-# ---------- Log effective configuration ----------
+# -------- Write a proper config.json for Semaphore --------
+CFG="/share/ansible_semaphore/config.json"
+cat > "$CFG" <<EOF
+{
+  "db": {
+    "dialect": "bolt"
+  },
+  "bolt": {
+    "host": "${SEMAPHORE_DB}"
+  },
+  "tmp_path": "${SEMAPHORE_TMP_PATH}",
+  "playbook_path": "${SEMAPHORE_PLAYBOOK_PATH}",
+  "access_key_encryption": "${SEMAPHORE_ACCESS_KEY_ENCRYPTION}",
+  "web_host": "0.0.0.0",
+  "port": "${SEMAPHORE_PORT}",
+  "log_level": "${LOG_LEVEL}"
+}
+EOF
+
 echo "[INFO] Persistence:"
 echo "  DB        : $SEMAPHORE_DB"
 echo "  TMP       : $SEMAPHORE_TMP_PATH"
 echo "  PLAYBOOKS : $SEMAPHORE_PLAYBOOK_PATH"
 echo "  Port      : $SEMAPHORE_PORT"
 echo "  LogLevel  : $LOG_LEVEL"
+echo "[INFO] Config     : $CFG"
 
-# ---------- Export for server ----------
-export SEMAPHORE_DB_DIALECT SEMAPHORE_DB SEMAPHORE_TMP_PATH SEMAPHORE_PLAYBOOK_PATH
-export SEMAPHORE_PORT LOG_LEVEL SEMAPHORE_ACCESS_KEY_ENCRYPTION
-
-# ---------- Start server using envs only ----------
-echo "[INFO] Starting Semaphore (env-mode, --no-config) ..."
-exec "$BIN" server --no-config
+# -------- Start server with explicit config --------
+exec "$BIN" server --config "$CFG"
