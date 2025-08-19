@@ -3,11 +3,11 @@ set -e
 
 echo "[INFO] Starting Semaphore with persistent paths..."
 
-# Ensure directories exist
-mkdir -p /data/semaphore/tmp
-mkdir -p /data/semaphore/playbooks
-mkdir -p /data/semaphore
+# Ensure directories exist in writable HA paths
+mkdir -p /config/semaphore/tmp
+mkdir -p /config/semaphore
+mkdir -p /share/semaphore/playbooks
 
-# Start semaphore server
+# Launch semaphore server
 exec /usr/local/bin/semaphore server \
-  --config /data/semaphore/config.json
+  --config /config/semaphore/config.json
