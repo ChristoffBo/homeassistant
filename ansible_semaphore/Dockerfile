@@ -7,7 +7,7 @@ USER root
 # Wrapper entrypoint
 COPY run.sh /usr/local/bin/run.sh
 
-# Convenience only; persistence is via /share at runtime
+# Convenience; persistence is via /share at runtime
 WORKDIR /share/ansible_semaphore
 
 # Start wrapper
