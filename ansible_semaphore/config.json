@@ -1,7 +1,7 @@
 {
   "name": "Ansible Semaphore",
-  "slug": "ansible_semaphore",
   "version": "v2.16.17",
+  "slug": "ansible_semaphore",
   "description": "Ansible Semaphore UI using the official image with BoltDB. Persistent under /share/ansible_semaphore.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
@@ -9,6 +9,13 @@
   "boot": "auto",
 
   "ingress": false,
+  "ports": {
+    "8055/tcp": 3000
+  },
+  "ports_description": {
+    "8055/tcp": "Semaphore Web UI"
+  },
+  "webui": "http://[HOST]:[PORT:8055]",
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
@@ -16,29 +23,24 @@
   "map": ["share:rw"],
 
   "options": {
-    "port": 8055,
     "log_level": "info"
   },
   "schema": {
-    "port": "int(1024,65535)",
     "log_level": "list(debug|info|warn|error)?"
   },
 
   "environment": {
+    "LOG_LEVEL": "info",
+
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
+
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_PORT": "8055",
+    "SEMAPHORE_PORT": "3000",
+    "SEMAPHORE_WEB_ROOT": "/",
+
     "SEMAPHORE_ACCESS_KEY_ENCRYPTION": ""
-  },
-
-  "ports": {
-    "8055/tcp": 8055
-  },
-
-  "ports_description": {
-    "8055/tcp": "Web interface"
   },
 
   "watchdog": "http://[HOST]:[PORT:8055]",
