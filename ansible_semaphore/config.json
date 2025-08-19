@@ -1,0 +1,32 @@
+{
+  "name": "Ansible Semaphore",
+  "version": "1.0.0",
+  "slug": "ansible_semaphore",
+  "description": "Run Ansible Semaphore UI inside Home Assistant (SQLite backend).",
+  "arch": ["amd64", "aarch64"],
+  "startup": "services",
+  "boot": "auto",
+  "map": ["config:rw"],
+  "options": {
+    "port": 3000,
+    "admin_user": "admin",
+    "admin_email": "admin@example.com",
+    "admin_password": "changeme"
+  },
+  "schema": {
+    "port": "int",
+    "admin_user": "str",
+    "admin_email": "str",
+    "admin_password": "str"
+  },
+  "ports": {
+    "3000/tcp": 3000
+  },
+  "ports_description": {
+    "3000/tcp": "Web UI port"
+  },
+  "ingress": true,
+  "ingress_port": 3000,
+  "panel_icon": "mdi:console",
+  "panel_title": "Semaphore"
+}
