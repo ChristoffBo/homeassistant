@@ -1,23 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-echo "[INFO] Starting Ansible Semaphore add-on..."
+echo "[INFO] Starting Semaphore with persistent paths..."
 
-# Ensure persistent folders exist
-mkdir -p /data/semaphore/playbooks /data/semaphore/tmp
+# Make sure persistent directories exist
+mkdir -p /data/semaphore
+mkdir -p /share/semaphore/tmp
+mkdir -p /share/semaphore/playbooks
 
-# Bootstrap only if database doesn’t exist
-if [ ! -f /data/semaphore/semaphore.db ]; then
-    echo "[INFO] Initializing Semaphore for first run..."
-    semaphore setup \
-      --admin "$SEMAPHORE_ADMIN" \
-      --email "$SEMAPHORE_ADMIN_EMAIL" \
-      --name "Home Assistant Admin" \
-      --password "$SEMAPHORE_ADMIN_PASSWORD" \
-      --db "$SEMAPHORE_DB"
-else
-    echo "[INFO] Found existing Semaphore database, reusing it..."
-fi
+# Fix permissions to allow semaphore to write
+chown -R root:root /data/semaphore /share/semaphore || true
 
-# Start server with persistent config
-exec semaphore server --config /data/semaphore/config.json
+# Launch semaphore using persistent config
+exec /usr/bin/semaphore server \
+  --config /data/semaphore/config.json
