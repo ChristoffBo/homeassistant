@@ -16,14 +16,16 @@ RUN curl -L -o /usr/local/bin/semaphore https://github.com/semaphoreui/semaphore
 
 # Create semaphore user
 RUN useradd -m -d /data semaphore
+
+# Copy entrypoint script before dropping privileges
+COPY run.sh /run.sh
+RUN chmod +x /run.sh
+
+# Switch to semaphore user
 USER semaphore
 WORKDIR /data
 
 # Persistent storage
 VOLUME ["/data"]
-
-# Entrypoint
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
 
 CMD ["/run.sh"]
