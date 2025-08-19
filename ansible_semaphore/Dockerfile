@@ -1,8 +1,10 @@
-# Use official Semaphore image as base
+# Home Assistant add-on Dockerfile for Semaphore
+
+# Supervisor injects the base from build.json
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
-# Ensure working directory
+# Workdir for persistent storage
 WORKDIR /data
 
 # Copy startup script with correct permissions
