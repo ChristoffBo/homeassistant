@@ -7,7 +7,6 @@
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "init": false,
   "map": [
     "config:rw",
     "ssl:ro"
@@ -38,16 +37,8 @@
   "ports_description": {
     "10443/tcp": "Semaphore Web UI"
   },
-  "host_network": false,
-  "privileged": ["SYS_ADMIN"],
-  "full_access": false,
-  "homeassistant_api": true,
-  "hassio_api": true,
-  "hassio_role": "default",
-  "auth_api": true,
   "ingress": true,
   "ingress_port": 10443,
-  "ingress_stream": false,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
@@ -56,19 +47,6 @@
   "environment": {
     "LOG_LEVEL": "info"
   },
-  "services": [
-    "mqtt:need?"
-  ],
   "backup": "cold",
-  "stdin": false,
-  "gpio": false,
-  "usb": false,
-  "uart": false,
-  "kernel_modules": false,
-  "devicetree": false,
-  "docker_api": false,
-  "video": false,
-  "audio": false,
   "stage": "stable"
-  
 }
