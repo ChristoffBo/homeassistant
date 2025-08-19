@@ -1,12 +1,13 @@
-# Home Assistant Add-on: Ansible Semaphore
-FROM semaphoreui/semaphore:latest
+# Dockerfile – Home Assistant Ansible Semaphore Add-on
+ARG BUILD_FROM
+FROM $BUILD_FROM
 
-# Copy our startup script
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
+# Copy startup script
+COPY run.sh /usr/local/bin/run.sh
+RUN chmod 0755 /usr/local/bin/run.sh
 
-# Work in /data which HA persists
+# Workdir for persistent data
 WORKDIR /data
 
-# Entrypoint
-CMD ["/run.sh"]
+# Start
+ENTRYPOINT ["/usr/local/bin/run.sh"]
