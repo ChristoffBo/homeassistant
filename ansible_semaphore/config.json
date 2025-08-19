@@ -1,6 +1,6 @@
 {
   "name": "Ansible Semaphore",
-  "version": "1.0.0",
+  "version": "2.9.37",
   "slug": "ansible_semaphore",
   "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
   "url": "https://github.com/semaphoreui/semaphore",
@@ -48,5 +48,6 @@
     "LOG_LEVEL": "info"
   },
   "backup": "cold",
-  "stage": "stable"
+  "stage": "stable",
+  "image": "semaphoreui/semaphore:2.9.37-debian"
 }
