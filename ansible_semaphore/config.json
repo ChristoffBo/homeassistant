@@ -49,5 +49,5 @@
   },
   "backup": "cold",
   "stage": "stable",
-  "image": "docker.io/semaphoreui/semaphore-{arch}:2.9.37"
+  "image": "semaphoreui/semaphore"
 }
