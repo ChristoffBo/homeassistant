@@ -6,7 +6,7 @@ It uses BoltDB stored under /share/ansible_semaphore.
 It auto-creates the admin user on first boot.
 
 ✅ Features
-- Semaphore v2.16.17 web UI
+- Semaphore web UI
 - Persistent DB and playbooks under /share
 - Auto admin creation on first boot
 - Direct port access on 8055
