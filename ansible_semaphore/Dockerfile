@@ -1,16 +1,15 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
-FROM ${BUILD_FROM}
+# Use official Semaphore image
+FROM semaphoreui/semaphore:latest
 
-# Install Semaphore
-RUN apk add --no-cache curl ca-certificates sqlite bash && \
-    curl -L https://github.com/semaphoreui/semaphore/releases/download/v2.16.17/semaphore_linux_amd64 \
-      -o /usr/local/bin/semaphore && \
-    chmod +x /usr/local/bin/semaphore
-
-# Copy startup script
+# Copy wrapper startup script
 COPY run.sh /usr/local/bin/run.sh
-RUN chmod 0755 /usr/local/bin/run.sh
 
+# Make sure it’s executable
+USER root
+RUN chmod 0755 /usr/local/bin/run.sh
+USER 1001
+
+# Persistent working directory
 WORKDIR /data
 
-ENTRYPOINT [ "/usr/local/bin/run.sh" ]
+ENTRYPOINT ["/usr/local/bin/run.sh"]
