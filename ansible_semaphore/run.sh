@@ -1,12 +1,13 @@
-#!/bin/sh
+#!/usr/bin/env sh
 set -eu
 
-# ----- Required envs (Supervisor injects from config.json) -----
+# ---------- Required envs ----------
 : "${SEMAPHORE_DB_DIALECT:=bolt}"
-: "${SEMAPHORE_DB:=/share/ansible_semaphore/database.boltdb}"    # << correct var for BoltDB path
+: "${SEMAPHORE_DB:=/share/ansible_semaphore/database.boltdb}"
 : "${SEMAPHORE_TMP_PATH:=/share/ansible_semaphore/tmp}"
 : "${SEMAPHORE_PLAYBOOK_PATH:=/share/ansible_semaphore/playbooks}"
 : "${SEMAPHORE_PORT:=3000}"
+: "${LOG_LEVEL:=info}"
 
 # Generate encryption key if not set
 : "${SEMAPHORE_ACCESS_KEY_ENCRYPTION:=}"
@@ -18,21 +19,18 @@ if [ -z "$SEMAPHORE_ACCESS_KEY_ENCRYPTION" ]; then
   fi
 fi
 
-# ----- Validate DB path (avoid 'open : no such file or directory') -----
+# Validate DB path
 if [ -z "${SEMAPHORE_DB:-}" ]; then
   echo "[ERROR] SEMAPHORE_DB resolved empty. Aborting." >&2
   env | grep -E '^SEMAPHORE_' || true
   exit 1
 fi
 
-# ----- Ensure persistence directories -----
+# ---------- Ensure persistence directories under /share ----------
 PERSIST_DIR="/share/ansible_semaphore"
 DB_DIR="$(dirname "$SEMAPHORE_DB")"
 
-mkdir -p "$PERSIST_DIR" \
-         "$DB_DIR" \
-         "$SEMAPHORE_TMP_PATH" \
-         "$SEMAPHORE_PLAYBOOK_PATH"
+mkdir -p "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PATH"
 
 # Writability checks
 for d in "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PATH"; do
@@ -40,14 +38,14 @@ for d in "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PAT
     echo "[ERROR] Required directory not present or not creatable: $d" >&2
     exit 1
   fi
-  touch "$d/.ha-writetest" 2>/dev/null || {
+  if ! touch "$d/.ha-writetest" 2>/dev/null; then
     echo "[ERROR] Directory not writable: $d" >&2
     exit 1
-  }
+  fi
   rm -f "$d/.ha-writetest" 2>/dev/null || true
 done
 
-# ----- Locate semaphore binary from the official image -----
+# ---------- Locate semaphore binary (official image) ----------
 BIN="$(command -v semaphore || true)"
 if [ -z "$BIN" ]; then
   if [ -x /usr/local/bin/semaphore ]; then
@@ -57,27 +55,24 @@ if [ -z "$BIN" ]; then
   fi
 fi
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
-  echo "[ERROR] 'semaphore' binary not found in image." >&2
+  echo "[ERROR] 'semaphore' binary not found in the image." >&2
   which semaphore || true
   ls -l /usr/bin /usr/local/bin 2>/dev/null || true
   exit 1
 fi
 
-# ----- Log effective configuration -----
+# ---------- Log effective configuration ----------
 echo "[INFO] Persistence:"
 echo "  DB        : $SEMAPHORE_DB"
 echo "  TMP       : $SEMAPHORE_TMP_PATH"
 echo "  PLAYBOOKS : $SEMAPHORE_PLAYBOOK_PATH"
 echo "  Port      : $SEMAPHORE_PORT"
+echo "  LogLevel  : $LOG_LEVEL"
 
-# ----- Export envs for server -----
-export SEMAPHORE_DB_DIALECT
-export SEMAPHORE_DB
-export SEMAPHORE_TMP_PATH
-export SEMAPHORE_PLAYBOOK_PATH
-export SEMAPHORE_PORT
-export SEMAPHORE_ACCESS_KEY_ENCRYPTION
+# ---------- Export for server ----------
+export SEMAPHORE_DB_DIALECT SEMAPHORE_DB SEMAPHORE_TMP_PATH SEMAPHORE_PLAYBOOK_PATH SEMAPHORE_PORT
+export SEMAPHORE_ACCESS_KEY_ENCRYPTION LOG_LEVEL
 
-# ----- Start server using envs only -----
+# ---------- Start server using envs only ----------
 echo "[INFO] Starting Semaphore (env-mode, --no-config) ..."
 exec "$BIN" server --no-config
