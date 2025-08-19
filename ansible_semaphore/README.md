@@ -18,7 +18,7 @@ It uses a built-in SQLite database and is fully self-contained.
 ⚙️ Configuration
 ```json
 {
-  "port": 3000,
+  "port": 10443,
   "admin_user": "admin",
   "admin_email": "admin@example.com",
   "admin_password": "changeme"
