@@ -12,6 +12,8 @@
     "ssl:ro",
     "share:rw"
   ],
+  "init": false,
+  "privileged": ["SYS_ADMIN"],
   "options": {
     "port": 10443,
     "admin_user": "admin",
@@ -48,12 +50,12 @@
   "environment": {
     "LOG_LEVEL": "info",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/share/semaphore/semaphore.db",
+    "SEMAPHORE_DB": "/config/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "changeme",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/semaphore/playbooks",
-    "SEMAPHORE_TMP_PATH": "/share/semaphore/tmp"
+    "SEMAPHORE_PLAYBOOK_PATH": "/config/playbooks",
+    "SEMAPHORE_TMP_PATH": "/config/tmp"
   },
   "backup": "hot",
   "stage": "stable",
