@@ -50,7 +50,8 @@
     "SEMAPHORE_DB": "/data/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
-    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
+    "SEMAPHORE_PORT": "10443"
   },
   "backup": "cold",
   "stage": "stable",
