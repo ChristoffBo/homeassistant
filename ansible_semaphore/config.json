@@ -17,19 +17,22 @@
   "map": ["share:rw"],
 
   "options": {
-    "port": 3000
+    "port": 3000,
+    "log_level": "info"
   },
   "schema": {
-    "port": "int(1024,65535)"
+    "port": "int(1024,65535)",
+    "log_level": "list(debug|info|warn|error)?"
   },
 
   "environment": {
+    "LOG_LEVEL": "!secret log_level",
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_PORT": "3000",
-    "LOG_LEVEL": "info"
+    "SEMAPHORE_PORT": "!secret port",
+    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": ""
   },
 
   "watchdog": "http://[HOST]:[PORT:3000]",
