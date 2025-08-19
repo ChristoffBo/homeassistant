@@ -1,26 +1,56 @@
 {
   "name": "Ansible Semaphore",
-  "version": "2.16.17",
+  "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Web UI for Ansible playbooks",
+  "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
+  "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "ports": {
-    "3000/tcp": 3000
-  },
-  "webui": "http://[HOST]:[PORT:3000]",
-  "ingress": false,
-  "map": ["config", "share", "ssl"],
+  "map": ["share:rw"],
   "options": {
-    "admin_username": "admin",
+    "port": 10443,
+    "admin_user": "admin",
+    "admin_email": "admin@example.com",
     "admin_password": "changeme",
-    "admin_email": "admin@example.com"
+    "log_level": "info",
+    "ssl": false,
+    "certfile": "fullchain.pem",
+    "keyfile": "privkey.pem"
   },
   "schema": {
-    "admin_username": "str",
+    "port": "int(1024,65535)",
+    "admin_user": "str",
+    "admin_email": "email",
     "admin_password": "str",
-    "admin_email": "str"
+    "log_level": "list(debug|info|warn|error)?",
+    "ssl": "bool?",
+    "certfile": "str?",
+    "keyfile": "str?"
   },
+  "ports": {
+    "3000/tcp": 10443
+  },
+  "ports_description": {
+    "3000/tcp": "Semaphore Web UI"
+  },
+  "ingress": true,
+  "ingress_port": 3000,
+  "panel_icon": "mdi:ansible",
+  "panel_title": "Semaphore",
+  "panel_admin": true,
+  "webui": "http://[HOST]:[PORT:10443]",
+  "watchdog": "http://[HOST]:[PORT:10443]",
+  "environment": {
+    "LOG_LEVEL": "info",
+    "SEMAPHORE_DB_DIALECT": "bolt",
+    "SEMAPHORE_DB": "/data/semaphore/semaphore.db",
+    "SEMAPHORE_ADMIN": "admin",
+    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
+    "SEMAPHORE_PLAYBOOK_PATH": "/data/semaphore/playbooks",
+    "SEMAPHORE_TMP_PATH": "/data/semaphore/tmp"
+  },
+  "backup": "hot",
   "stage": "stable"
 }
