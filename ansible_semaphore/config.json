@@ -2,25 +2,25 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation with SQLite (BoltDB) backend. Manage playbooks, inventories, and projects.",
+  "description": "Modern UI for Ansible automation (SQLite backend).",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": [
-    "share:rw"
-  ],
+  "map": ["share:rw"],
   "options": {
     "admin_user": "admin",
     "admin_email": "admin@example.com",
-    "admin_password": "changeme"
+    "admin_password": "changeme",
+    "log_level": "info"
   },
   "schema": {
     "admin_user": "str",
     "admin_email": "email",
-    "admin_password": "str"
+    "admin_password": "str",
+    "log_level": "list(debug|info|warn|error)?"
   },
   "ports": {
-    "3000/tcp": null
+    "3000/tcp": 3000
   },
   "ports_description": {
     "3000/tcp": "Semaphore Web UI"
@@ -30,6 +30,17 @@
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
-  "stage": "stable",
-  "backup": "hot"
+  "webui": "http://[HOST]:[PORT:3000]",
+  "watchdog": "http://[HOST]:[PORT:3000]",
+  "environment": {
+    "SEMAPHORE_DB_DIALECT": "bolt",
+    "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
+    "SEMAPHORE_ADMIN": "admin",
+    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
+    "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp"
+  },
+  "backup": "hot",
+  "stage": "stable"
 }
