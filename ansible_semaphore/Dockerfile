@@ -1,9 +1,12 @@
 # Use official Semaphore image
 FROM semaphoreui/semaphore:latest
 
-# Provide our entrypoint so Supervisor can build and control it
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
+# Switch to root to modify filesystem during build
+USER root
+
+# Install our entrypoint
+COPY run.sh /usr/local/bin/run.sh
+RUN chmod 0755 /usr/local/bin/run.sh
 
 WORKDIR /data
-CMD ["/run.sh"]
+ENTRYPOINT ["/usr/local/bin/run.sh"]
