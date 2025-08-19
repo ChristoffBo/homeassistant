@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 # Set Semaphore version
 ENV SEMAPHORE_VERSION=2.9.34
 
-# Detect architecture and download correct binary
+# Download arch-specific Semaphore binary
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then \
       URL=https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_${SEMAPHORE_VERSION}_linux_amd64 ; \
