@@ -1,5 +1,12 @@
-# Dockerfile – ensure we are root to create symlinks and install entrypoint
-USER root
-COPY run.sh /usr/local/bin/run.sh
-RUN chmod 0755 /usr/local/bin/run.sh
-ENTRYPOINT ["/usr/local/bin/run.sh"]
+# Home Assistant Add-on: Ansible Semaphore
+FROM semaphoreui/semaphore:latest
+
+# Copy our startup script
+COPY run.sh /run.sh
+RUN chmod +x /run.sh
+
+# Work in /data which HA persists
+WORKDIR /data
+
+# Entrypoint
+CMD ["/run.sh"]
