@@ -1,24 +1,12 @@
-# Home Assistant add-on Dockerfile for Ansible Semaphore
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+# Home Assistant add-on Dockerfile for Semaphore
+FROM semaphoreui/semaphore:latest
 
-# Install requirements
-RUN apk add --no-cache bash jq curl ca-certificates
+# Copy startup wrapper
+COPY run.sh /usr/local/bin/run.sh
+RUN chmod +x /usr/local/bin/run.sh
 
-# Semaphore version
-ARG SEMAPHORE_VERSION=v2.16.17
-
-# Download Semaphore binary
-RUN curl -L -o /usr/local/bin/semaphore \
-    https://github.com/semaphoreui/semaphore/releases/download/${SEMAPHORE_VERSION}/semaphore_linux_amd64 && \
-    chmod +x /usr/local/bin/semaphore
-
-# Copy startup script
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
-
-# Set workdir
+# Workdir for persistent storage
 WORKDIR /share/ansible_semaphore
 
 # Entrypoint
-CMD [ "/run.sh" ]
+CMD ["/usr/local/bin/run.sh"]
