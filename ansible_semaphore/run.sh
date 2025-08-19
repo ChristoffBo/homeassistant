@@ -1,5 +1,8 @@
-# Use official Semaphore image
-FROM semaphoreui/semaphore:latest
+#!/usr/bin/env bash
+set -e
 
-# No run.sh override needed
-WORKDIR /data
+# Use /data (Supervisor persistent storage) instead of /config or /share
+cd /data
+
+# Launch Semaphore
+exec /usr/bin/semaphore server
