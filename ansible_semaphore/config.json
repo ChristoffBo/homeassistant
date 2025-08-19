@@ -1,6 +1,6 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.16.17-ha12",
+  "version": "v2.16.17",
   "slug": "ansible_semaphore",
   "description": "Ansible Semaphore UI using the official image with BoltDB. Persistent under /share/ansible_semaphore. Ingress enabled.",
   "url": "https://github.com/semaphoreui/semaphore",
