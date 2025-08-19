@@ -2,25 +2,25 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
+  "description": "Modern web UI for Ansible automation with a BoltDB (SQLite-like) backend. Persistent storage under /share/semaphore.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": ["config:rw", "share:rw"],
+  "map": ["share:rw", "ssl:ro"],
   "options": {
-    "port": 10443,
     "admin_user": "admin",
     "admin_email": "admin@example.com",
     "admin_password": "changeme",
-    "log_level": "info"
+    "log_level": "info",
+    "port": 10443
   },
   "schema": {
-    "port": "int(1024,65535)",
     "admin_user": "str",
     "admin_email": "email",
     "admin_password": "str",
-    "log_level": "list(debug|info|warn|error)?"
+    "log_level": "list(debug|info|warn|error)?",
+    "port": "int(1024,65535)"
   },
   "ports": {
     "3000/tcp": 10443
@@ -38,12 +38,12 @@
   "environment": {
     "LOG_LEVEL": "info",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/config/semaphore/semaphore.db",
+    "SEMAPHORE_DB": "/share/semaphore/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "changeme",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/semaphore/playbooks",
-    "SEMAPHORE_TMP_PATH": "/config/semaphore/tmp"
+    "SEMAPHORE_TMP_PATH": "/share/semaphore/tmp"
   },
   "backup": "hot",
   "stage": "stable"
