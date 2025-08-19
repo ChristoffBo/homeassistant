@@ -1,5 +1,5 @@
 # Home Assistant add-on for Ansible Semaphore (official upstream image)
-FROM semaphoreui/semaphore:latest
+FROM
 
 # Ensure we can write to /share
 USER root
