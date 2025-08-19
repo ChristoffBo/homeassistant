@@ -2,14 +2,14 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Ansible Semaphore UI using the official image with BoltDB. Persistent under /share/ansible_semaphore.",
+  "description": "Ansible Semaphore UI (official image) using BoltDB under /share/ansible_semaphore.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
 
-  "ingress": true,
-  "ingress_port": 3000,
+  "ingress": false,
+
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
@@ -27,24 +27,24 @@
   "schema": {
     "port": "int(1024,65535)",
     "log_level": "list(debug|info|warn|error)?",
-    "admin_user": "str",
-    "admin_name": "str",
-    "admin_email": "email",
-    "admin_password": "str"
+    "admin_user": "str?",
+    "admin_name": "str?",
+    "admin_email": "email?",
+    "admin_password": "password?"
   },
 
   "environment": {
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_PORT": "{port}",
-    "LOG_LEVEL": "{log_level}",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks"
+  },
 
-    "SEED_ADMIN_USER": "{admin_user}",
-    "SEED_ADMIN_NAME": "{admin_name}",
-    "SEED_ADMIN_EMAIL": "{admin_email}",
-    "SEED_ADMIN_PASSWORD": "{admin_password}"
+  "ports": {
+    "8055/tcp": 8055
+  },
+  "ports_description": {
+    "8055/tcp": "Semaphore Web UI (container listens on the same port)"
   },
 
   "watchdog": "http://[HOST]:[PORT:8055]",
