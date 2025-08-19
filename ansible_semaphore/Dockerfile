@@ -1,7 +1,11 @@
-FROM semaphoreui/semaphore:2.9.37-debian
+# Always track the latest Semaphore release
+FROM semaphoreui/semaphore:latest
 
-WORKDIR /data
+# Copy wrapper script (make sure it has +x permissions locally before build)
 COPY run.sh /run.sh
-RUN chmod +x /run.sh
 
-CMD ["/run.sh"]
+# Workdir for config/db
+WORKDIR /data
+
+# Entrypoint for HA wrapper
+ENTRYPOINT ["/run.sh"]
