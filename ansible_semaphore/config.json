@@ -32,10 +32,10 @@
     "keyfile": "str?"
   },
   "ports": {
-    "10443/tcp": 10443
+    "3000/tcp": 10443
   },
   "ports_description": {
-    "10443/tcp": "Semaphore Web UI"
+    "3000/tcp": "Semaphore Web UI"
   },
   "ingress": true,
   "ingress_port": 10443,
@@ -50,8 +50,7 @@
     "SEMAPHORE_DB": "/data/semaphore.db",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
-    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
-    "SEMAPHORE_PORT": "10443"
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
   },
   "backup": "cold",
   "stage": "stable",
