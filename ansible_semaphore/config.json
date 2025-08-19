@@ -22,6 +22,5 @@
     "admin_password": "str",
     "admin_email": "str"
   },
-  "image": "local/ansible_semaphore",
   "stage": "stable"
 }
