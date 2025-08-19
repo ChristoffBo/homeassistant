@@ -4,10 +4,10 @@ FROM semaphoreui/semaphore:latest
 # Ensure we can write to /share
 USER root
 
-# Wrapper entrypoint (we call with /bin/sh so no chmod layer needed)
+# Wrapper entrypoint
 COPY run.sh /usr/local/bin/run.sh
 
-# Workdir only for convenience; HA persistence is via /share mount
+# Convenience only; persistence is via /share at runtime
 WORKDIR /share/ansible_semaphore
 
 # Start wrapper
