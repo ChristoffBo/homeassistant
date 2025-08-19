@@ -1,56 +1,27 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.16.17",
+  "version": "2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
-  "url": "https://github.com/semaphoreui/semaphore",
-  "arch": ["amd64", "aarch64"],
+  "description": "Web UI for Ansible playbooks",
+  "arch": ["amd64", "arm64"],
   "startup": "services",
   "boot": "auto",
-  "map": ["config:rw", "ssl:ro", "share:rw"],
+  "ports": {
+    "3000/tcp": 3000
+  },
+  "webui": "http://[HOST]:[PORT:3000]",
+  "ingress": false,
+  "map": ["config", "share", "ssl"],
   "options": {
-    "port": 10443,
-    "admin_user": "admin",
-    "admin_email": "admin@example.com",
+    "admin_username": "admin",
     "admin_password": "changeme",
-    "log_level": "info",
-    "ssl": false,
-    "certfile": "fullchain.pem",
-    "keyfile": "privkey.pem"
+    "admin_email": "admin@example.com"
   },
   "schema": {
-    "port": "int(1024,65535)",
-    "admin_user": "str",
-    "admin_email": "email",
+    "admin_username": "str",
     "admin_password": "str",
-    "log_level": "list(debug|info|warn|error)?",
-    "ssl": "bool?",
-    "certfile": "str?",
-    "keyfile": "str?"
+    "admin_email": "str"
   },
-  "ports": {
-    "3000/tcp": 10443
-  },
-  "ports_description": {
-    "3000/tcp": "Semaphore Web UI"
-  },
-  "ingress": true,
-  "ingress_port": 3000,
-  "panel_icon": "mdi:ansible",
-  "panel_title": "Semaphore",
-  "panel_admin": true,
-  "webui": "http://[HOST]:[PORT:10443]",
-  "watchdog": "http://[HOST]:[PORT:10443]",
-  "environment": {
-    "LOG_LEVEL": "info",
-    "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/data/semaphore/semaphore.db",
-    "SEMAPHORE_ADMIN": "admin",
-    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
-    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/semaphore/playbooks",
-    "SEMAPHORE_TMP_PATH": "/share/semaphore/tmp"
-  },
-  "backup": "hot",
+  "image": "local/ansible_semaphore",
   "stage": "stable"
 }
