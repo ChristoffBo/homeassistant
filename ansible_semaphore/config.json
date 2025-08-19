@@ -48,5 +48,6 @@
     "LOG_LEVEL": "info"
   },
   "backup": "cold",
-  "stage": "stable"
+  "stage": "stable",
+  "image": "semaphoreui/semaphore:latest"
 }
