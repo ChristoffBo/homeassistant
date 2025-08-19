@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Use environment variables passed from config.json instead of bashio
+# Config from environment variables (set by HA options.json)
 PORT=${PORT:-10443}
 ADMIN_USER=${ADMIN_USER:-admin}
 ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
