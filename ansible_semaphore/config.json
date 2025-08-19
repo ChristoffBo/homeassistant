@@ -1,6 +1,6 @@
 {
   "name": "Ansible Semaphore",
-  "version": "0.1.4",
+  "version": "v2.16.17",
   "slug": "ansible_semaphore",
   "description": "Semaphore UI inside Home Assistant (no ingress; direct port).",
   "arch": ["aarch64", "amd64", "armv7"],
@@ -11,7 +11,7 @@
   "ingress": false,
   "panel_admin": false,
   "map": ["share:rw"],
-  "image": "semaphoreui/semaphore:v2.16.17",
+  "image": "semaphoreui/semaphore",
   "ports": {
     "8055/tcp": 8055
   },
@@ -24,6 +24,7 @@
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_NAME": "Admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
