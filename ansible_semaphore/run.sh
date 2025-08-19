@@ -1,94 +1,71 @@
 #!/bin/sh
 set -eu
 
-# ---------- Paths & options ----------
-PERSIST="/share/ansible_semaphore"
-PORT="${PORT:-$(bashio::config 'port' 2>/dev/null || echo 3000)}"
+# ----- Required envs injected by Supervisor from config.json -----
+: "${SEMAPHORE_DB_DIALECT:=bolt}"
+: "${SEMAPHORE_DB:=/share/ansible_semaphore/database.boltdb}"
+: "${SEMAPHORE_TMP_PATH:=/share/ansible_semaphore/tmp}"
+: "${SEMAPHORE_PLAYBOOK_PATH:=/share/ansible_semaphore/playbooks}"
+: "${SEMAPHORE_PORT:=3000}"
 
-ADMIN_USER="${SEMAPHORE_ADMIN:-$(bashio::config 'admin_user' 2>/dev/null || echo admin)}"
-ADMIN_NAME="${SEMAPHORE_ADMIN_NAME:-$(bashio::config 'admin_name' 2>/dev/null || echo Administrator)}"
-ADMIN_EMAIL="${SEMAPHORE_ADMIN_EMAIL:-$(bashio::config 'admin_email' 2>/dev/null || echo admin@example.com)}"
-ADMIN_PASS="${SEMAPHORE_ADMIN_PASSWORD:-$(bashio::config 'admin_password' 2>/dev/null || echo changeme)}"
+# ----- Validate DB path (fail fast if empty to avoid 'open : no such file') -----
+if [ -z "$SEMAPHORE_DB" ]; then
+  echo "[ERROR] SEMAPHORE_DB resolved empty. Aborting." >&2
+  exit 1
+fi
 
-TMP="${SEMAPHORE_TMP_PATH:-$PERSIST/tmp}"
-PROJECTS="${SEMAPHORE_PLAYBOOK_PATH:-$PERSIST/playbooks}"
-DB_FILE_DEFAULT="$PERSIST/database.boltdb"
+# ----- Ensure persistence directories exist -----
+PERSIST_DIR="/share/ansible_semaphore"
+DB_DIR="$(dirname "$SEMAPHORE_DB")"
 
-# Prefer explicit envs if set; otherwise default
-DB_FILE="${SEMAPHORE_DB_FILE:-${SEMAPHORE_DB:-$DB_FILE_DEFAULT}}"
-CFG="$PERSIST/config.json"
+mkdir -p "$PERSIST_DIR" \
+         "$DB_DIR" \
+         "$SEMAPHORE_TMP_PATH" \
+         "$SEMAPHORE_PLAYBOOK_PATH"
 
-# Resolve binary
-BIN="$(command -v semaphore || true)"
-[ -n "$BIN" ] || BIN="/usr/local/bin/semaphore"
+# Extra safety: if any mkdir failed due to RO share, bail clearly
+for d in "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PATH"; do
+  if [ ! -d "$d" ]; then
+    echo "[ERROR] Required directory not present or not creatable: $d" >&2
+    exit 1
+  fi
+  # quick writability check
+  touch "$d/.ha-writetest" 2>/dev/null || {
+    echo "[ERROR] Directory not writable: $d" >&2
+    exit 1
+  }
+  rm -f "$d/.ha-writetest" 2>/dev/null || true
+done
 
+# ----- Log what we will use -----
 echo "[INFO] Persistence:"
-echo "  DB        : $DB_FILE"
-echo "  TMP       : $TMP"
-echo "  PLAYBOOKS : $PROJECTS"
-echo "  Port      : $PORT"
-echo "  Admin     : $ADMIN_USER <$ADMIN_EMAIL>"
+echo "  DB        : $SEMAPHORE_DB"
+echo "  TMP       : $SEMAPHORE_TMP_PATH"
+echo "  PLAYBOOKS : $SEMAPHORE_PLAYBOOK_PATH"
+echo "  Port      : $SEMAPHORE_PORT"
 
-# ---------- Ensure persistent dirs ----------
-mkdir -p "$PERSIST" "$TMP" "$PROJECTS"
-
-# ---------- Generate config.json on first run ----------
-if [ ! -f "$CFG" ]; then
-  echo "[INFO] First run: generating $CFG"
-
-  # Secrets (32 bytes hex)
-  gen_hex() { hexdump -vn32 -e '32/1 "%02x"' /dev/urandom 2>/dev/null || uuidgen | tr -d '-'; }
-  COOKIE_HASH="$(gen_hex)"
-  COOKIE_ENC="$(gen_hex)"
-  ACCESS_KEY_ENC="$(gen_hex)"
-
-  # Write both keys ('host' and 'file') to cover image variants
-  cat > "$CFG" <<EOF
-{
-  "dialect": "bolt",
-  "bolt": {
-    "host": "$DB_FILE",
-    "file": "$DB_FILE"
-  },
-  "tmp_path": "$TMP",
-  "projects_path": "$PROJECTS",
-  "cookie_hash": "$COOKIE_HASH",
-  "cookie_encryption": "$COOKIE_ENC",
-  "access_key_encryption": "$ACCESS_KEY_ENC",
-  "server": { "port": "$PORT" }
-}
-EOF
-  echo "[INFO] Wrote $CFG"
+# ----- Locate semaphore binary inside the official image -----
+BIN="$(command -v semaphore || true)"
+if [ -z "$BIN" ]; then
+  # Some tags place it under /usr/local/bin
+  if [ -x /usr/local/bin/semaphore ]; then
+    BIN="/usr/local/bin/semaphore"
+  fi
 fi
-
-# ---------- Force envs the official image reads (guards against empty) ----------
-export SEMAPHORE_DB_DIALECT="bolt"
-export SEMAPHORE_DB="$DB_FILE"                # legacy/primary env consumed by image
-export SEMAPHORE_TMP_PATH="$TMP"
-export SEMAPHORE_PLAYBOOK_PATH="$PROJECTS"
-export SEMAPHORE_PORT="$PORT"
-
-# Optional admin bootstrap (only if CLI supports it). If unsupported, UI can create.
-# Uncomment if your image has this command:
-# semaphore user add --login "$ADMIN_USER" --name "$ADMIN_NAME" --email "$ADMIN_EMAIL" --password "$ADMIN_PASS" --admin || true
-
-# ---------- Sanity ----------
-if [ ! -x "$BIN" ]; then
-  echo "[ERROR] semaphore binary not found at: $BIN" >&2
+if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
+  echo "[ERROR] 'semaphore' binary not found in image." >&2
   which semaphore || true
-  ls -l /usr/local/bin || true
+  ls -l /usr/bin /usr/local/bin 2>/dev/null || true
   exit 1
 fi
 
-# If DB path somehow resolved empty, fail fast (prevents 'open : no such file')
-if [ -z "$DB_FILE" ]; then
-  echo "[ERROR] DB_FILE resolved empty. Aborting." >&2
-  exit 1
-fi
+# ----- Export envs for the server process (image respects these) -----
+export SEMAPHORE_DB_DIALECT
+export SEMAPHORE_DB
+export SEMAPHORE_TMP_PATH
+export SEMAPHORE_PLAYBOOK_PATH
+export SEMAPHORE_PORT
 
-# Ensure parent dir of DB exists (just in case)
-mkdir -p "$(dirname "$DB_FILE")"
-
-# ---------- Start ----------
-echo "[INFO] Starting Semaphore ..."
-exec "$BIN" server --config="$CFG"
+# ----- Start server WITHOUT a --config file to avoid empty bolt path bugs -----
+echo "[INFO] Starting Semaphore (env-mode, no config file) ..."
+exec "$BIN" server
