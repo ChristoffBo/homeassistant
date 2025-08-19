@@ -1,12 +1,11 @@
-# Dockerfile for Home Assistant Ansible Semaphore add-on
+# Home Assistant add-on: Ansible Semaphore (official image, no package installs)
 FROM semaphoreui/semaphore:latest
 
-# Copy startup wrapper
+# Copy startup wrapper (no chmod inside container; we invoke with /bin/sh)
 COPY run.sh /usr/local/bin/run.sh
-USER root
-RUN chmod 0755 /usr/local/bin/run.sh
 
-# Workdir for persistent storage
+# Persistent working directory (mounted via "map": ["share:rw"])
 WORKDIR /share/ansible_semaphore
 
-ENTRYPOINT ["/usr/local/bin/run.sh"]
+# Always call with sh to avoid executable-bit requirements
+CMD ["/bin/sh", "/usr/local/bin/run.sh"]
