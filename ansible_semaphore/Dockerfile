@@ -17,10 +17,10 @@ RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     case "$ARCH" in \
         amd64) \
-            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_linux_amd64"; \
+            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore"; \
             ;; \
         arm64) \
-            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_linux_arm64"; \
+            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_arm64"; \
             ;; \
         *) \
             echo >&2 "Unsupported architecture: $ARCH"; \
