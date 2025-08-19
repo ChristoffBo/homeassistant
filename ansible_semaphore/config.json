@@ -3,7 +3,7 @@
   "version": "2.16.17",
   "slug": "ansible_semaphore",
   "description": "Web UI for Ansible playbooks",
-  "arch": ["amd64", "arm64"],
+  "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
   "ports": {
