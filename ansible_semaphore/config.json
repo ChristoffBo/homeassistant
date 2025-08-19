@@ -38,7 +38,7 @@
     "3000/tcp": "Semaphore Web UI"
   },
   "ingress": true,
-  "ingress_port": 10443,
+  "ingress_port": 3000,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
