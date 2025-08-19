@@ -1,41 +1,37 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.16.17",
+  "version": "2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Ansible Semaphore UI using the official image with BoltDB. Fully persistent under /share/ansible_semaphore. Ingress enabled.",
+  "description": "Modern web UI for Ansible automation using the official Semaphore image with BoltDB. Data persisted in /share/ansible_semaphore.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-
   "ingress": true,
   "ingress_port": 3000,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
-
   "map": ["share:rw"],
-
-  "options": {
-    "port": 3000,
-    "log_level": "info"
-  },
-  "schema": {
-    "port": "int(1024,65535)",
-    "log_level": "list(debug|info|warn|error)?"
-  },
-
+  "host_network": false,
+  "homeassistant_api": false,
+  "docker_api": false,
+  "uart": false,
+  "gpio": false,
+  "tmpfs": false,
+  "audio": false,
+  "stdin": false,
+  "ports": {},
+  "ports_description": {},
+  "schema": {},
+  "options": {},
   "environment": {
-    "LOG_LEVEL": "!secret log_level",
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
+    "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_PORT": "!secret port",
-    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": ""
+    "SEMAPHORE_PORT": "3000",
+    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": "CHANGE_ME_LONG_RANDOM_STRING"
   },
-
-  "watchdog": "http://[HOST]:[PORT:3000]",
-  "backup": "hot",
-  "stage": "stable"
+  "image": null
 }
