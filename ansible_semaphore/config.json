@@ -42,12 +42,17 @@
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
-  "webui": "[PROTO:ssl]://[HOST]:[PORT:10443]",
+  "webui": "http://[HOST]:[PORT:10443]",
   "watchdog": "http://[HOST]:[PORT:10443]",
   "environment": {
-    "LOG_LEVEL": "info"
+    "LOG_LEVEL": "info",
+    "SEMAPHORE_DB_DIALECT": "bolt",
+    "SEMAPHORE_DB": "/data/semaphore.db",
+    "SEMAPHORE_ADMIN": "admin",
+    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
   },
   "backup": "cold",
   "stage": "stable",
-  "image": "semaphoreui/semaphore:2.16.17"
+  "image": "semaphoreui/semaphore"
 }
