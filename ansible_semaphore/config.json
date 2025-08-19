@@ -1,6 +1,6 @@
 {
   "name": "Ansible Semaphore",
-  "version": "2.16.17-4",
+  "version": "2.16.17",
   "slug": "ansible_semaphore",
   "description": "Modern web UI for Ansible automation with persistent storage under /data.",
   "url": "https://github.com/semaphoreui/semaphore",
