@@ -1,11 +1,11 @@
 # Use official Semaphore image
-FROM semaphoreui/semaphore:latest
+FROM semaphoreui/semaphore:2.9.34
 
-# Copy Home Assistant wrapper script
+# Copy wrapper script (make sure it is chmod +x locally before build)
 COPY run.sh /run.sh
-RUN chmod +x /run.sh
 
+# Set working directory
 WORKDIR /data
 
-# Start with HA wrapper
-CMD ["/run.sh"]
+# Override entrypoint with our wrapper
+ENTRYPOINT ["/run.sh"]
