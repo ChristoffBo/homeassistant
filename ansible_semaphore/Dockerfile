@@ -1,16 +1,11 @@
-# Home Assistant add-on: Semaphore UI
-# Uses official Semaphore image as base
-FROM semaphoreui/semaphore:v2.16.17
+# Always track the latest Semaphore release
+FROM semaphoreui/semaphore:latest
 
-USER root
+# Copy wrapper script (make sure it has +x permissions locally before build)
+COPY run.sh /run.sh
 
-# Install jq and tzdata for option parsing and timezone
-RUN apk add --no-cache jq tzdata
+# Workdir for config/db
+WORKDIR /data
 
-# Copy wrapper
-COPY ha-wrapper.sh /usr/local/bin/ha-wrapper.sh
-RUN chmod +x /usr/local/bin/ha-wrapper.sh
-
-EXPOSE 3000
-
-ENTRYPOINT ["/usr/local/bin/ha-wrapper.sh"]
+# Entrypoint for HA wrapper
+ENTRYPOINT ["/run.sh"]
