@@ -3,17 +3,16 @@ set -euo pipefail
 
 echo "[INFO] Starting Ansible Semaphore add-on..."
 
-# Persistent base (writable in HA add-ons)
+# Writable, persistent base in HA add-ons
 BASE="/share/semaphore"
 TMP="$BASE/tmp"
 PLAYBOOKS="$BASE/playbooks"
 DB="$BASE/semaphore.db"
-CFG="$BASE/config.json"
 
 # Ensure persistence dirs exist
 mkdir -p "$BASE" "$TMP" "$PLAYBOOKS"
 
-# Read options passed by Supervisor
+# Pull options from Supervisor (if present)
 OPTS="/data/options.json"
 if [ -f "$OPTS" ]; then
   ADMIN_USER=$(jq -r '.admin_user // "admin"' "$OPTS")
@@ -29,41 +28,24 @@ else
   PORT="${PORT:-10443}"
 fi
 
+# Export the environment variables the official container uses to do first-run init
 export LOG_LEVEL
 export SEMAPHORE_DB_DIALECT="bolt"
 export SEMAPHORE_DB="$DB"
 export SEMAPHORE_ADMIN="$ADMIN_USER"
-export SEMAPHORE_ADMIN_EMAIL="$ADMIN_EMAIL"
 export SEMAPHORE_ADMIN_PASSWORD="$ADMIN_PASS"
+export SEMAPHORE_ADMIN_NAME="Admin"
+export SEMAPHORE_ADMIN_EMAIL="$ADMIN_EMAIL"
 export SEMAPHORE_PLAYBOOK_PATH="$PLAYBOOKS"
 export SEMAPHORE_TMP_PATH="$TMP"
 
-# First-run bootstrap: create config and admin if DB missing
-if [ ! -f "$DB" ]; then
-  echo "[INFO] First run detected. Initializing Semaphore database & config..."
-  semaphore setup \
-    --admin "$SEMAPHORE_ADMIN" \
-    --email "$SEMAPHORE_ADMIN_EMAIL" \
-    --name "Home Assistant Admin" \
-    --password "$SEMAPHORE_ADMIN_PASSWORD" \
-    --db "$DB" \
-    --tmp-path "$TMP" \
-    --playbook-path "$PLAYBOOKS" \
-    --config "$CFG"
-else
-  echo "[INFO] Existing DB found at $DB. Skipping setup."
-  # Ensure config file exists (older versions may not have created it)
-  if [ ! -f "$CFG" ]; then
-    echo "[INFO] Generating missing config.json..."
-    semaphore config \
-      --db "$DB" \
-      --tmp-path "$TMP" \
-      --playbook-path "$PLAYBOOKS" > "$CFG"
-  fi
-fi
+echo "[INFO] DB: $SEMAPHORE_DB"
+echo "[INFO] TMP: $SEMAPHORE_TMP_PATH"
+echo "[INFO] PLAYBOOKS: $SEMAPHORE_PLAYBOOK_PATH"
+echo "[INFO] Admin: $SEMAPHORE_ADMIN ($SEMAPHORE_ADMIN_EMAIL)"
+echo "[INFO] Launching on port ${PORT} ..."
 
-# Ensure port in config if needed (fallback: --port via env to server)
-export PORT
-
-echo "[INFO] Launching Semaphore on port ${PORT}..."
-exec semaphore server --config "$CFG" --port "$PORT"
+# Do NOT call `semaphore setup` (there is no --admin flag).
+# The official image will auto-initialize on first run using the env vars above.
+exec semaphore server --port "$PORT"
+```0
