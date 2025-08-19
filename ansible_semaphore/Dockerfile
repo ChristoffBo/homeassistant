@@ -1,27 +1,20 @@
+# Use official Semaphore image
 FROM semaphoreui/semaphore:latest
 
-# Use a non-root user if needed (image already runs as root by default)
-# Create /data directory for persistence
-RUN mkdir -p /data && chown 1000:1000 /data
+# Install additional dependencies if needed
+RUN apt-get update && apt-get install -y \
+    sqlite3 \
+    curl \
+    uuid-runtime \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Switch to non-root user (Semaphore image runs as root, but for HA safety)
-USER root
-
-# Copy the startup script into the image
+# Copy run script if you need to override entrypoint behavior
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
-# Switch to non-root environment if desired
-# (Semaphore image handles permissions internally)
-# USER semaphore (if exists)
+# Switch to workdir
+WORKDIR /data
 
-WORKDIR /
-
-# Use healthcheck if needed
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD curl -fk http://localhost:10443/ || exit 1
-
-# Expose the default port
-EXPOSE 3000  # Internal image default
-
+# Use exec form for better signal handling
 CMD ["/run.sh"]
