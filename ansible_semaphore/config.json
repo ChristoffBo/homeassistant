@@ -26,19 +26,18 @@
   },
 
   "environment": {
-    "LOG_LEVEL": "!secret log_level",
+    "LOG_LEVEL": "{log_level}",
 
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
 
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_PORT": "!secret port",
 
+    "SEMAPHORE_PORT": "{port}",
     "SEMAPHORE_ACCESS_KEY_ENCRYPTION": ""
   },
 
-  "watchdog": "http://[HOST]:[PORT:3000]",
   "backup": "hot",
   "stage": "stable"
 }
