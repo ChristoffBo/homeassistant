@@ -1,59 +1,58 @@
 {
-  "name": "Semaphore UI",
+  "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Ansible/Terraform/OpenTofu UI (Semaphore) as a Home Assistant add-on with persistent config under /config.",
+  "description": "Modern web UI for Ansible automation with SQLite backend. Manage your Ansible playbooks, inventories, and deployments through an intuitive interface.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "ingress": true,
-  "ingress_port": 3000,
-  "panel_icon": "mdi:ansible",
-  "panel_title": "Semaphore",
-  "panel_admin": true,
-  "map": ["config:rw", "ssl:ro"],
+  "map": [
+    "config:rw",
+    "ssl:ro"
+  ],
   "options": {
+    "port": 10443,
     "admin_user": "admin",
+    "admin_email": "admin@example.com",
     "admin_password": "changeme",
-    "admin_name": "Admin",
-    "admin_email": "admin@localhost",
-    "db_dialect": "bolt",
-    "timezone": "Africa/Johannesburg",
+    "log_level": "info",
     "ssl": false,
     "certfile": "fullchain.pem",
     "keyfile": "privkey.pem"
   },
   "schema": {
+    "port": "int(1024,65535)",
     "admin_user": "str",
-    "admin_password": "password",
-    "admin_name": "str",
-    "admin_email": "str",
-    "db_dialect": "list(bolt|sqlite|mysql|postgres)",
-    "timezone": "str",
+    "admin_email": "email",
+    "admin_password": "str",
+    "log_level": "list(debug|info|warn|error)?",
     "ssl": "bool?",
     "certfile": "str?",
     "keyfile": "str?"
   },
-  "environment": {
-    "LOG_LEVEL": "info",
-    "TINI_SUBREAPER": "1",
-    "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_CONFIG_PATH": "/config/semaphore",
-    "SEMAPHORE_DB_PATH": "/config/semaphore-data",
-    "SEMAPHORE_TMP_PATH": "/config/semaphore-tmp",
-    "SEMAPHORE_DB": "/config/semaphore/semaphore.db",
-    "SEMAPHORE_ADMIN": "admin",
-    "SEMAPHORE_ADMIN_EMAIL": "admin@localhost",
-    "SEMAPHORE_ADMIN_NAME": "Admin",
-    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
-  },
   "ports": {
-    "3000/tcp": null
+    "3000/tcp": 10443
   },
   "ports_description": {
-    "3000/tcp": "Semaphore Web UI (optional direct port when not using Ingress)"
+    "3000/tcp": "Semaphore Web UI"
+  },
+  "ingress": true,
+  "ingress_port": 3000,
+  "panel_icon": "mdi:ansible",
+  "panel_title": "Semaphore",
+  "panel_admin": true,
+  "webui": "http://[HOST]:[PORT:10443]",
+  "watchdog": "http://[HOST]:[PORT:10443]",
+  "environment": {
+    "LOG_LEVEL": "info",
+    "SEMAPHORE_DB_DIALECT": "bolt",
+    "SEMAPHORE_DB": "/data/semaphore.db",
+    "SEMAPHORE_ADMIN": "admin",
+    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
+    "SEMAPHORE_ADMIN_PASSWORD": "changeme"
   },
   "backup": "cold",
-  "stage": "stable"
+  "stage": "stable",
+  "image": "semaphoreui/semaphore"
 }
