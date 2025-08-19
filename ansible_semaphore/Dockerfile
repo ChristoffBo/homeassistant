@@ -1,15 +1,16 @@
-# Home Assistant add-on Dockerfile for Semaphore
-ARG BUILD_FROM
-FROM $BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
+FROM ${BUILD_FROM}
 
-USER root
+# Install Semaphore
+RUN apk add --no-cache curl ca-certificates sqlite bash && \
+    curl -L https://github.com/semaphoreui/semaphore/releases/download/v2.16.17/semaphore_linux_amd64 \
+      -o /usr/local/bin/semaphore && \
+    chmod +x /usr/local/bin/semaphore
 
-# Copy startup script with permissions
-COPY --chmod=0755 run.sh /usr/local/bin/run.sh
+# Copy startup script
+COPY run.sh /usr/local/bin/run.sh
+RUN chmod 0755 /usr/local/bin/run.sh
 
-# Make sure jq is installed (needed by HA add-ons)
-RUN apk add --no-cache bash jq
+WORKDIR /data
 
-WORKDIR /config/ansible_semaphore
-
-ENTRYPOINT ["/usr/local/bin/run.sh"]
+ENTRYPOINT [ "/usr/local/bin/run.sh" ]
