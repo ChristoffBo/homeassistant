@@ -1,53 +1,39 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.16.17",
+  "version": "0.1.3",
   "slug": "ansible_semaphore",
-  "description": "Ansible Semaphore UI (official image) using BoltDB under /share/ansible_semaphore.",
-  "url": "https://github.com/semaphoreui/semaphore",
-  "arch": ["amd64", "aarch64"],
+  "description": "Run Ansible Semaphore inside Home Assistant (no ingress, direct port).",
+  "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
-
+  "init": false,
+  "host_network": false,
   "ingress": false,
-
-  "panel_icon": "mdi:ansible",
-  "panel_title": "Semaphore",
-  "panel_admin": true,
-
-  "map": ["share:rw"],
-
-  "options": {
-    "port": 8055,
-    "log_level": "info",
-    "admin_user": "admin",
-    "admin_name": "Admin User",
-    "admin_email": "admin@example.com",
-    "admin_password": "changeme"
-  },
-  "schema": {
-    "port": "int(1024,65535)",
-    "log_level": "list(debug|info|warn|error)?",
-    "admin_user": "str?",
-    "admin_name": "str?",
-    "admin_email": "email?",
-    "admin_password": "password?"
-  },
-
-  "environment": {
-    "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
-    "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks"
-  },
-
+  "panel_admin": false,
+  "map": ["config:rw", "share:rw"],
   "ports": {
-    "8055/tcp": 8055
+    "3000/tcp": 3000
   },
   "ports_description": {
-    "8055/tcp": "Semaphore Web UI (container listens on the same port)"
+    "3000/tcp": "Semaphore Web UI"
   },
-
-  "watchdog": "http://[HOST]:[PORT:8055]",
-  "backup": "hot",
-  "stage": "stable"
+  "webui": "http://[HOST]:[PORT:3000]",
+  "options": {
+    "port": 3000,
+    "config_path": "/etc/semaphore/config.json",
+    "data_dir": "/var/lib/semaphore",
+    "admin_login": "admin",
+    "admin_email": "admin@example.com",
+    "admin_name": "Admin",
+    "admin_password": "ChangeMe!123"
+  },
+  "schema": {
+    "port": "int(1,65535)",
+    "config_path": "str",
+    "data_dir": "str",
+    "admin_login": "str",
+    "admin_email": "str",
+    "admin_name": "str",
+    "admin_password": "password"
+  }
 }
