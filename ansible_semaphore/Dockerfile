@@ -1,14 +1,9 @@
-# Home Assistant add-on for Ansible Semaphore (official upstream image)
+# Use the official upstream Semaphore container
 FROM semaphoreui/semaphore:latest
 
-# We need root so we can ensure /share subdirs exist and are writable
-USER root
+# Add a minimal wrapper that prepares /share persistence and then execs Semaphore
+# Use BuildKit COPY mode to avoid chmod issues in HA build env
+COPY --chmod=0755 run.sh /usr/local/bin/run.sh
 
-# Wrapper entrypoint (no chmod layer needed; we exec with /bin/sh)
-COPY run.sh /usr/local/bin/run.sh
-
-# Convenience only; HA persistence is through /share mount
-WORKDIR /share/ansible_semaphore
-
-# Start wrapper
-CMD ["/bin/sh", "/usr/local/bin/run.sh"]
+# Run our wrapper (it execs 'semaphore server --no-config')
+ENTRYPOINT ["/usr/local/bin/run.sh"]
