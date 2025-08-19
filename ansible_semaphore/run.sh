@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Debug mode
-if [[ "${DEBUG:-}" == "true" ]]; then
-    set -x
-fi
-
-readonly PORT="${PORT:-10443}"
-readonly ADMIN_USER="${ADMIN_USER:-admin}"
-readonly ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
-readonly ADMIN_PASSWORD="${ADMIN_PASSWORD:-changeme}"
-readonly DB_PATH="${DB_PATH:-/data/semaphore.db}"
-readonly CONFIG_PATH="${CONFIG_PATH:-/data/semaphore_config.json}"
-readonly PLAYBOOK_PATH="${PLAYBOOK_PATH:-/data/playbooks}"
-readonly TMP_PATH="${TMP_PATH:-/tmp/semaphore}"
-
 log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >&2; }
+
+# Configuration via env variables
+PORT="${PORT:-3000}"
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-changeme}"
+DB_PATH="${DB_PATH:-/data/semaphore.db}"
+CONFIG_PATH="${CONFIG_PATH:-/data/semaphore_config.json}"
+PLAYBOOK_PATH="${PLAYBOOK_PATH:-/data/playbooks}"
+TMP_PATH="${TMP_PATH:-/tmp/semaphore}"
 
 trap 'exit_code=$?; (( exit_code != 0 )) && log "ERROR: Exit $exit_code"; exit $exit_code' EXIT
 
@@ -23,18 +19,15 @@ if [[ "$ADMIN_PASSWORD" == "changeme" ]]; then
     log "WARNING: Default password in use."
 fi
 
-log "Creating necessary directories..."
+log "Preparing directories..."
 mkdir -p /data "$PLAYBOOK_PATH" "$TMP_PATH"
 
-if [[ ! -x "/usr/local/bin/semaphore" ]]; then
-    log "ERROR: Semaphore binary not found"
-    exit 1
-fi
-
+# Initialize if needed
 if [[ ! -f "$CONFIG_PATH" ]]; then
-    log "Initializing Semaphore (SQLite)..."
+    log "Initializing Semaphore with SQLite..."
     ACCESS_KEY=$(uuidgen)
-    if ! /usr/local/bin/semaphore setup \
+
+    if ! /bin/semaphore setup \
         --config "$CONFIG_PATH" \
         --db "sqlite3 $DB_PATH" \
         --admin "$ADMIN_USER" \
@@ -47,18 +40,10 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
         log "ERROR: Setup failed"
         exit 1
     fi
-    log "Initialized: admin=${ADMIN_USER}, email=${ADMIN_EMAIL}, port=${PORT}"
+    log "Initialized with admin=$ADMIN_USER, email=$ADMIN_EMAIL, port=$PORT"
 else
-    log "Existing config found: $CONFIG_PATH"
-fi
-
-if [[ -f "$DB_PATH" ]]; then
-    if ! sqlite3 "$DB_PATH" "SELECT 1;" >/dev/null 2>&1; then
-        log "ERROR: DB appears corrupted"
-        exit 1
-    fi
-    log "Database healthy"
+    log "Using existing configuration."
 fi
 
 log "Starting Semaphore server..."
-exec /usr/local/bin/semaphore server --config "$CONFIG_PATH"
+exec /bin/semaphore server --config "$CONFIG_PATH"
