@@ -2,45 +2,35 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern UI for Ansible automation (SQLite backend).",
+  "description": "Modern web UI for Ansible automation using built-in BoltDB. Ingress-enabled. Data persists under /share/ansible_semaphore.",
+  "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
-  "map": ["share:rw"],
-  "options": {
-    "admin_user": "admin",
-    "admin_email": "admin@example.com",
-    "admin_password": "changeme",
-    "log_level": "info"
-  },
-  "schema": {
-    "admin_user": "str",
-    "admin_email": "email",
-    "admin_password": "str",
-    "log_level": "list(debug|info|warn|error)?"
-  },
-  "ports": {
-    "3000/tcp": 3000
-  },
-  "ports_description": {
-    "3000/tcp": "Semaphore Web UI"
-  },
+
   "ingress": true,
   "ingress_port": 3000,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
-  "webui": "http://[HOST]:[PORT:3000]",
-  "watchdog": "http://[HOST]:[PORT:3000]",
+
+  "map": ["share:rw"],
+
   "environment": {
     "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
+    "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
+    "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
+    "SEMAPHORE_PORT": "3000",
+
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "changeme",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp"
+
+    "LOG_LEVEL": "info"
   },
+
+  "watchdog": "http://[HOST]:[PORT:3000]",
   "backup": "hot",
   "stage": "stable"
 }
