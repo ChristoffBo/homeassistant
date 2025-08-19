@@ -1,0 +1,7 @@
+{
+  "build_from": {
+    "amd64": "semaphoreui/semaphore:latest",
+    "aarch64": "semaphoreui/semaphore:latest"
+  },
+  "args": {}
+}
