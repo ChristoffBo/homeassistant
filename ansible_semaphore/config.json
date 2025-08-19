@@ -56,5 +56,4 @@
   },
   "backup": "hot",
   "stage": "stable",
-  "image": "local/ansible_semaphore"
 }
