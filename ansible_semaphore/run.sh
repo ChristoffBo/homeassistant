@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Enable debug mode if DEBUG is set
+# Debug mode
 if [[ "${DEBUG:-}" == "true" ]]; then
     set -x
 fi
 
-# Configuration from environment variables
 readonly PORT="${PORT:-10443}"
 readonly ADMIN_USER="${ADMIN_USER:-admin}"
 readonly ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
@@ -16,46 +15,25 @@ readonly CONFIG_PATH="${CONFIG_PATH:-/data/semaphore_config.json}"
 readonly PLAYBOOK_PATH="${PLAYBOOK_PATH:-/data/playbooks}"
 readonly TMP_PATH="${TMP_PATH:-/tmp/semaphore}"
 
-# Logging function
-log() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >&2
-}
+log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >&2; }
 
-# Error handling function
-cleanup() {
-    local exit_code=$?
-    if [[ $exit_code -ne 0 ]]; then
-        log "ERROR: Script failed with exit code $exit_code"
-    fi
-    exit $exit_code
-}
+trap 'exit_code=$?; (( exit_code != 0 )) && log "ERROR: Exit $exit_code"; exit $exit_code' EXIT
 
-# Set up error handling
-trap cleanup EXIT
-
-# Validate required environment variables
 if [[ "$ADMIN_PASSWORD" == "changeme" ]]; then
-    log "WARNING: Using default password 'changeme'. Please set ADMIN_PASSWORD environment variable!"
+    log "WARNING: Default password in use."
 fi
 
-# Create necessary directories
-log "Creating required directories..."
+log "Creating necessary directories..."
 mkdir -p /data "$PLAYBOOK_PATH" "$TMP_PATH"
 
-# Check if Semaphore binary exists and is executable
 if [[ ! -x "/usr/local/bin/semaphore" ]]; then
-    log "ERROR: Semaphore binary not found or not executable at /usr/local/bin/semaphore"
+    log "ERROR: Semaphore binary not found"
     exit 1
 fi
 
-# Initialize Semaphore if config doesn't exist
 if [[ ! -f "$CONFIG_PATH" ]]; then
-    log "Configuration file not found. Initializing Semaphore with SQLite..."
-    
-    # Generate access key
+    log "Initializing Semaphore (SQLite)..."
     ACCESS_KEY=$(uuidgen)
-    
-    # Run semaphore setup with better error handling
     if ! /usr/local/bin/semaphore setup \
         --config "$CONFIG_PATH" \
         --db "sqlite3 $DB_PATH" \
@@ -66,42 +44,21 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
         --tmp-path "$TMP_PATH" \
         --playbook-path "$PLAYBOOK_PATH" \
         --port "$PORT"; then
-        log "ERROR: Failed to initialize Semaphore"
+        log "ERROR: Setup failed"
         exit 1
     fi
-    
-    log "Semaphore initialized successfully!"
-    log "Admin user: $ADMIN_USER"
-    log "Admin email: $ADMIN_EMAIL"
-    log "Access key: $ACCESS_KEY"
-    log "Port: $PORT"
+    log "Initialized: admin=${ADMIN_USER}, email=${ADMIN_EMAIL}, port=${PORT}"
 else
-    log "Found existing configuration at $CONFIG_PATH"
+    log "Existing config found: $CONFIG_PATH"
 fi
 
-# Validate configuration file
-if [[ ! -r "$CONFIG_PATH" ]]; then
-    log "ERROR: Configuration file $CONFIG_PATH is not readable"
-    exit 1
-fi
-
-# Check database connectivity (basic check)
 if [[ -f "$DB_PATH" ]]; then
     if ! sqlite3 "$DB_PATH" "SELECT 1;" >/dev/null 2>&1; then
-        log "ERROR: Database file $DB_PATH appears to be corrupted"
+        log "ERROR: DB appears corrupted"
         exit 1
     fi
-    log "Database connectivity check passed"
+    log "Database healthy"
 fi
 
-# Display configuration summary
-log "Starting Ansible Semaphore with the following configuration:"
-log "  Config file: $CONFIG_PATH"
-log "  Database: $DB_PATH"
-log "  Playbook path: $PLAYBOOK_PATH"
-log "  Temporary path: $TMP_PATH"
-log "  Port: $PORT"
-
-# Start Semaphore server
 log "Starting Semaphore server..."
 exec /usr/local/bin/semaphore server --config "$CONFIG_PATH"
