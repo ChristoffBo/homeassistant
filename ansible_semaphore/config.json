@@ -1,15 +1,14 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Ansible Semaphore UI using the official image with BoltDB. Persistent under /share/ansible_semaphore. Ingress enabled.",
+  "version": "v2.16.17",
+  "description": "Ansible Semaphore UI using the official image with BoltDB. Persistent under /share/ansible_semaphore.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
   "boot": "auto",
 
-  "ingress": true,
-  "ingress_port": 8055,
+  "ingress": false,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
@@ -30,11 +29,19 @@
     "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_PORT": "8055"
+    "SEMAPHORE_PORT": "8055",
+    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": ""
+  },
+
+  "ports": {
+    "8055/tcp": 8055
+  },
+
+  "ports_description": {
+    "8055/tcp": "Web interface"
   },
 
   "watchdog": "http://[HOST]:[PORT:8055]",
-  "webui": "http://[HOST]:[PORT:8055]",
   "backup": "hot",
   "stage": "stable"
 }
