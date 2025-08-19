@@ -2,7 +2,7 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Modern web UI for Ansible automation with a BoltDB (SQLite-like) backend. Persistent storage under /share/semaphore.",
+  "description": "Modern web UI for Ansible automation with a BoltDB backend. Persistent storage under /share/semaphore.",
   "url": "https://github.com/semaphoreui/semaphore",
   "arch": ["amd64", "aarch64"],
   "startup": "services",
@@ -32,19 +32,4 @@
   "ingress_port": 3000,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
-  "panel_admin": true,
-  "webui": "http://[HOST]:[PORT:10443]",
-  "watchdog": "http://[HOST]:[PORT:10443]",
-  "environment": {
-    "LOG_LEVEL": "info",
-    "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB": "/share/semaphore/semaphore.db",
-    "SEMAPHORE_ADMIN": "admin",
-    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
-    "SEMAPHORE_ADMIN_PASSWORD": "changeme",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/semaphore/playbooks",
-    "SEMAPHORE_TMP_PATH": "/share/semaphore/tmp"
-  },
-  "backup": "hot",
-  "stage": "stable"
-}
+  "panel_admin": true
