@@ -1,21 +1,32 @@
 #!/bin/sh
 set -eu
 
-# ---------- Required env ----------
+# ---------- defaults ----------
 : "${SEMAPHORE_DB_DIALECT:=bolt}"
 : "${SEMAPHORE_DB:=/share/ansible_semaphore/database.boltdb}"
 : "${SEMAPHORE_TMP_PATH:=/share/ansible_semaphore/tmp}"
 : "${SEMAPHORE_PLAYBOOK_PATH:=/share/ansible_semaphore/playbooks}"
-: "${SEMAPHORE_PORT:=3000}"
-: "${LOG_LEVEL:=info}"
 
-# Admin seed (from config.json -> environment)
-: "${SEED_ADMIN_USER:=admin}"
-: "${SEED_ADMIN_NAME:=Admin User}"
-: "${SEED_ADMIN_EMAIL:=admin@example.com}"
-: "${SEED_ADMIN_PASSWORD:=changeme}"
+# Read options.json (HA injects add-on options here)
+PORT_FROM_OPTIONS="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9]\{1,5\}\).*/\1/p' /data/options.json 2>/dev/null | head -n1 || true)"
+LOG_FROM_OPTIONS="$(sed -n 's/.*"log_level"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /data/options.json 2>/dev/null | head -n1 || true)"
+ADMIN_USER="$(sed -n 's/.*"admin_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /data/options.json 2>/dev/null | head -n1 || true)"
+ADMIN_NAME="$(sed -n 's/.*"admin_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /data/options.json 2>/dev/null | head -n1 || true)"
+ADMIN_EMAIL="$(sed -n 's/.*"admin_email"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /data/options.json 2>/dev/null | head -n1 || true)"
+ADMIN_PASS="$(sed -n 's/.*"admin_password"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /data/options.json 2>/dev/null | head -n1 || true)"
 
-# Encryption key (generate if empty)
+# Port & log level with sane fallbacks
+SEMAPHORE_PORT="$PORT_FROM_OPTIONS"
+echo "$SEMAPHORE_PORT" | grep -Eq '^[0-9]{1,5}$' || SEMAPHORE_PORT=3000
+LOG_LEVEL="${LOG_FROM_OPTIONS:-info}"
+
+# Seed admin defaults if blanks
+: "${ADMIN_USER:=admin}"
+: "${ADMIN_NAME:=Admin User}"
+: "${ADMIN_EMAIL:=admin@example.com}"
+: "${ADMIN_PASS:=changeme}"
+
+# Encryption key
 : "${SEMAPHORE_ACCESS_KEY_ENCRYPTION:=}"
 if [ -z "$SEMAPHORE_ACCESS_KEY_ENCRYPTION" ]; then
   if command -v openssl >/dev/null 2>&1; then
@@ -25,21 +36,20 @@ if [ -z "$SEMAPHORE_ACCESS_KEY_ENCRYPTION" ]; then
   fi
 fi
 
-# ---------- Ensure persistence ----------
+# ---------- persistence ----------
 PERSIST_DIR="/share/ansible_semaphore"
 DB_DIR="$(dirname "$SEMAPHORE_DB")"
-
 mkdir -p "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PATH"
 for d in "$PERSIST_DIR" "$DB_DIR" "$SEMAPHORE_TMP_PATH" "$SEMAPHORE_PLAYBOOK_PATH"; do
   touch "$d/.w" 2>/dev/null || { echo "[ERROR] Not writable: $d"; exit 1; }
   rm -f "$d/.w" || true
 done
 
-# ---------- Find semaphore binary ----------
+# ---------- find binary ----------
 BIN="$(command -v semaphore || true)"
 [ -n "$BIN" ] || { echo "[ERROR] semaphore binary not found in image"; exit 1; }
 
-# ---------- Generate minimal config.json for CLI & server ----------
+# ---------- write fresh config.json (never leaves placeholders) ----------
 CFG="$PERSIST_DIR/config.json"
 cat > "$CFG" <<EOF
 {
@@ -47,9 +57,7 @@ cat > "$CFG" <<EOF
   "port": "$SEMAPHORE_PORT",
   "tmp_path": "$SEMAPHORE_TMP_PATH",
   "projects_home": "$SEMAPHORE_TMP_PATH",
-  "bolt": {
-    "host": "$SEMAPHORE_DB"
-  },
+  "bolt": { "host": "$SEMAPHORE_DB" },
   "db_dialect": "$SEMAPHORE_DB_DIALECT",
   "dialect": "$SEMAPHORE_DB_DIALECT",
   "access_key_encryption": "$SEMAPHORE_ACCESS_KEY_ENCRYPTION",
@@ -65,39 +73,29 @@ echo "[INFO] Persistence:
   LogLevel  : $LOG_LEVEL
 [INFO] Config     : $CFG"
 
-# ---------- Seed admin once (no terminal needed) ----------
+# ---------- first-boot admin seed ----------
 DB_NEW=0
 [ ! -s "$SEMAPHORE_DB" ] && DB_NEW=1
 
 if [ "$DB_NEW" -eq 1 ]; then
-  echo "[INFO] First boot: creating admin user '$SEED_ADMIN_USER'"
-  # start server in the background so CLI can talk to DB layer if needed
+  echo "[INFO] First boot: creating admin user '$ADMIN_USER'"
   "$BIN" server --config "$CFG" >/tmp/semaphore-seed.log 2>&1 &
   SRV_PID=$!
-
-  # wait until TCP is listening
   for i in $(seq 1 40); do
-    sleep 0.5
-    # if DB file appeared, we can try CLI directly via config
     [ -s "$SEMAPHORE_DB" ] && break
+    sleep 0.5
   done
-
-  # create admin (idempotent: will fail if exists, which is fine)
   "$BIN" user add --admin \
-    --login "$SEED_ADMIN_USER" \
-    --name "$SEED_ADMIN_NAME" \
-    --email "$SEED_ADMIN_EMAIL" \
-    --password "$SEED_ADMIN_PASSWORD" \
+    --login "$ADMIN_USER" \
+    --name "$ADMIN_NAME" \
+    --email "$ADMIN_EMAIL" \
+    --password "$ADMIN_PASS" \
     --config "$CFG" >/tmp/semaphore-useradd.log 2>&1 || true
-
-  # stop the background server cleanly
   kill "$SRV_PID" >/dev/null 2>&1 || true
   wait "$SRV_PID" 2>/dev/null || true
 fi
 
-# ---------- Export env (server also reads config) ----------
+# ---------- start ----------
 export SEMAPHORE_DB_DIALECT SEMAPHORE_DB SEMAPHORE_TMP_PATH \
        SEMAPHORE_PLAYBOOK_PATH SEMAPHORE_PORT SEMAPHORE_ACCESS_KEY_ENCRYPTION
-
-# ---------- Run server ----------
 exec "$BIN" server --config "$CFG"
