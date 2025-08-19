@@ -1,41 +1,48 @@
 FROM debian:stable-slim
 
-# Set Semaphore version as build arg for flexibility
+# Set Semaphore version as build arg
 ARG SEMAPHORE_VERSION=2.9.34
 
-# Install dependencies in a single layer and clean up
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     sqlite3 \
     curl \
+    tar \
     uuid-runtime \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Download arch-specific Semaphore binary with correct names
+# Download and extract Semaphore binary correctly
 RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     case "$ARCH" in \
         amd64) \
-            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore"; \
+            FILE="semaphore_amd64.tar.gz"; \
             ;; \
         arm64) \
-            URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/semaphore_arm64"; \
+            FILE="semaphore_arm64.tar.gz"; \
+            ;; \
+        armhf|armv7l) \
+            FILE="semaphore_armv7.tar.gz"; \
             ;; \
         *) \
             echo >&2 "Unsupported architecture: $ARCH"; \
             exit 1; \
             ;; \
     esac; \
-    curl -fsSL -o /usr/local/bin/semaphore "$URL"; \
+    URL="https://github.com/semaphoreui/semaphore/releases/download/v${SEMAPHORE_VERSION}/${FILE}"; \
+    curl -fsSL -o /tmp/semaphore.tar.gz "$URL"; \
+    tar -xzf /tmp/semaphore.tar.gz -C /usr/local/bin semaphore; \
+    rm /tmp/semaphore.tar.gz; \
     chmod +x /usr/local/bin/semaphore; \
     /usr/local/bin/semaphore version || (echo "Binary verification failed" && exit 1)
 
-# Create semaphore user with specific UID/GID for consistency
+# Create semaphore user
 RUN groupadd -r -g 1000 semaphore && \
     useradd -r -u 1000 -g semaphore -d /data -s /bin/bash semaphore
 
-# Copy entrypoint script with proper ownership
+# Copy entrypoint script
 COPY run.sh /run.sh
 RUN chown semaphore:semaphore /run.sh && chmod +x /run.sh
 
@@ -43,15 +50,11 @@ RUN chown semaphore:semaphore /run.sh && chmod +x /run.sh
 USER semaphore
 WORKDIR /data
 
-# Add health check on default port 10443
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -fk http://localhost:10443/ || exit 1
 
-# Expose default port
 EXPOSE 10443
-
-# Set volume
 VOLUME ["/data"]
 
-# Use exec form for better signal handling
 CMD ["/run.sh"]
