@@ -8,14 +8,8 @@
   "startup": "services",
   "boot": "auto",
 
-  "ingress": false,
-  "ports": {
-    "8055/tcp": 3000
-  },
-  "ports_description": {
-    "8055/tcp": "Semaphore Web UI"
-  },
-  "webui": "http://[HOST]:[PORT:8055]",
+  "ingress": true,
+  "ingress_port": 3000,
   "panel_icon": "mdi:ansible",
   "panel_title": "Semaphore",
   "panel_admin": true,
@@ -23,24 +17,34 @@
   "map": ["share:rw"],
 
   "options": {
-    "log_level": "info"
+    "port": 8055,
+    "log_level": "info",
+    "admin_user": "admin",
+    "admin_name": "Admin User",
+    "admin_email": "admin@example.com",
+    "admin_password": "changeme"
   },
   "schema": {
-    "log_level": "list(debug|info|warn|error)?"
+    "port": "int(1024,65535)",
+    "log_level": "list(debug|info|warn|error)?",
+    "admin_user": "str",
+    "admin_name": "str",
+    "admin_email": "email",
+    "admin_password": "str"
   },
 
   "environment": {
-    "LOG_LEVEL": "info",
-
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB": "/share/ansible_semaphore/database.boltdb",
-
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_PORT": "3000",
-    "SEMAPHORE_WEB_ROOT": "/",
+    "SEMAPHORE_PORT": "{port}",
+    "LOG_LEVEL": "{log_level}",
 
-    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": ""
+    "SEED_ADMIN_USER": "{admin_user}",
+    "SEED_ADMIN_NAME": "{admin_name}",
+    "SEED_ADMIN_EMAIL": "{admin_email}",
+    "SEED_ADMIN_PASSWORD": "{admin_password}"
   },
 
   "watchdog": "http://[HOST]:[PORT:8055]",
