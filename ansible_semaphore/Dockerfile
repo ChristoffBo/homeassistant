@@ -1,11 +1,9 @@
-# Always track the latest Semaphore release
+# Use official Semaphore image
 FROM semaphoreui/semaphore:latest
 
-# Copy wrapper script (make sure it has +x permissions locally before build)
+# No run.sh override needed — but if you want Supervisor to control entrypoint, copy it in:
 COPY run.sh /run.sh
+RUN chmod +x /run.sh
 
-# Workdir for config/db
 WORKDIR /data
-
-# Entrypoint for HA wrapper
-ENTRYPOINT ["/run.sh"]
+CMD ["/run.sh"]
