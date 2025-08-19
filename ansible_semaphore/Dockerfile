@@ -1,11 +1,14 @@
-# Home Assistant add-on: Ansible Semaphore (official image, no package installs)
+# Home Assistant add-on: Ansible Semaphore (official upstream image)
 FROM semaphoreui/semaphore:latest
 
-# Copy startup wrapper (no chmod inside container; we invoke with /bin/sh)
+# Use root so we can create /share/ansible_semaphore (Supervisor maps /share:rw)
+USER root
+
+# Copy startup wrapper; we will invoke it via /bin/sh (no chmod inside image needed)
 COPY run.sh /usr/local/bin/run.sh
 
-# Persistent working directory (mounted via "map": ["share:rw"])
+# Persistent working directory (mounted via "map": ["share:rw"] in config.json)
 WORKDIR /share/ansible_semaphore
 
-# Always call with sh to avoid executable-bit requirements
+# Always call with sh to avoid needing the executable bit from GitHub
 CMD ["/bin/sh", "/usr/local/bin/run.sh"]
