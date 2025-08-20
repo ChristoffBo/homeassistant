@@ -1,86 +1,73 @@
-#!/usr/bin/env bash
-# shellcheck shell=bash
-set -euo pipefail
-
-# Log helper
-log() { echo "[semaphore-addon] $*"; }
-
-# Wait for /data/options.json (bashio) to be ready
-if ! command -v bashio >/dev/null 2>&1; then
-  log "bashio not found; this must be a HA add-on base image. Exiting."
-  exit 1
-fi
-
-# Best-effort package refresh on boot (won't fail if offline)
-if command -v apt-get >/dev/null 2>&1; then
-  (apt-get update || true) && (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
-fi
-
-# Read options
-ADMIN_LOGIN="$(bashio::config 'admin_login')"
-ADMIN_EMAIL="$(bashio::config 'admin_email')"
-ADMIN_NAME="$(bashio::config 'admin_name')"
-ADMIN_PASSWORD="$(bashio::config 'admin_password')"
-CONF_PATH="$(bashio::config 'config_path')"
-DATA_DIR="$(bashio::config 'data_dir')"
-PORT="$(bashio::config 'port')"
-
-# Basic sanity
-: "${ADMIN_LOGIN:?admin_login missing in options}"
-: "${ADMIN_PASSWORD:?admin_password missing in options}"
-: "${CONF_PATH:?config_path missing in options}"
-: "${DATA_DIR:?data_dir missing in options}"
-: "${PORT:?port missing in options}"
-
-# Ensure data dir exists and is writable
-mkdir -p "${DATA_DIR}"
-chown -R root:root "${DATA_DIR}" || true
-
-# Show current config path
-log "Config: ${CONF_PATH}"
-log "Data  : ${DATA_DIR}"
-log "Port  : ${PORT}"
-
-# Ensure a minimal config exists if one isn't provided (BoltDB with HTTP on :3000)
-if [ ! -s "${CONF_PATH}" ]; then
-  log "No config file found; generating minimal BoltDB config."
-  mkdir -p "$(dirname "${CONF_PATH}")"
-  cat > "${CONF_PATH}" <<'JSON'
 {
-  "bolt": {
-    "file": "/var/lib/semaphore/database.boltdb"
+  "name": "Ansible Semaphore",
+  "version": "2.9.46-runsh.1",
+  "slug": "ansible_semaphore",
+  "description": "Semaphore UI for Ansible (official image) — run.sh bootstrap, persistent under /share/ansible_semaphore",
+  "url": "https://github.com/ansible-semaphore/semaphore",
+  "arch": ["aarch64", "amd64"],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "homeassistant_api": false,
+  "host_network": false,
+  "ingress": false,
+  "panel_admin": false,
+  "map": ["share:rw"],
+  "ports": {
+    "8055/tcp": 8055
   },
-  "tmp_path": "/tmp/semaphore",
-  "cookie_hash": "change-me-cookie-hash",
-  "cookie_encryption": "change-me-cookie-key",
-  "access_key_encryption": "change-me-access-key",
-  "web_host": "",
-  "web_port": "3000",
-  "non_auth": false
+  "ports_description": {
+    "8055/tcp": "Semaphore Web UI"
+  },
+  "webui": "http://[HOST]:[PORT:8055]/",
+  "options": {
+    "SEMAPHORE_DB_DIALECT": "bolt",
+    "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
+    "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
+
+    "SEMAPHORE_ADMIN": "admin",
+    "SEMAPHORE_ADMIN_NAME": "Admin",
+    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
+    "SEMAPHORE_ADMIN_PASSWORD": "ChangeMe!123",
+
+    "SEMAPHORE_COOKIE_HASH": "change-me-cookie-hash",
+    "SEMAPHORE_COOKIE_ENCRYPTION": "change-me-cookie-key",
+    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": "d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1",
+
+    "SEMAPHORE_LDAP_ACTIVATED": "no",
+    "SEMAPHORE_LDAP_HOST": "",
+    "SEMAPHORE_LDAP_PORT": "636",
+    "SEMAPHORE_LDAP_NEEDTLS": "yes",
+    "SEMAPHORE_LDAP_DN_BIND": "",
+    "SEMAPHORE_LDAP_PASSWORD": "",
+    "SEMAPHORE_LDAP_DN_SEARCH": "",
+    "SEMAPHORE_LDAP_SEARCH_FILTER": "",
+
+    "SEMAPHORE_PORT": "8055",
+    "TZ": "Africa/Johannesburg"
+  },
+  "schema": {
+    "SEMAPHORE_DB_DIALECT": "str",
+    "SEMAPHORE_DB_HOST": "str",
+    "SEMAPHORE_PLAYBOOK_PATH": "str",
+    "SEMAPHORE_TMP_PATH": "str",
+    "SEMAPHORE_ADMIN_PASSWORD": "password",
+    "SEMAPHORE_ADMIN_NAME": "str",
+    "SEMAPHORE_ADMIN_EMAIL": "str",
+    "SEMAPHORE_ADMIN": "str",
+    "SEMAPHORE_COOKIE_HASH": "str",
+    "SEMAPHORE_COOKIE_ENCRYPTION": "str",
+    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": "password",
+    "SEMAPHORE_LDAP_ACTIVATED": "str",
+    "SEMAPHORE_LDAP_HOST": "str?",
+    "SEMAPHORE_LDAP_PORT": "str",
+    "SEMAPHORE_LDAP_NEEDTLS": "str",
+    "SEMAPHORE_LDAP_DN_BIND": "str?",
+    "SEMAPHORE_LDAP_PASSWORD": "password?",
+    "SEMAPHORE_LDAP_DN_SEARCH": "str?",
+    "SEMAPHORE_LDAP_SEARCH_FILTER": "str?",
+    "SEMAPHORE_PORT": "str",
+    "TZ": "str"
+  }
 }
-JSON
-fi
-
-# Make sure DB parent exists
-mkdir -p /var/lib/semaphore
-
-# Auto-provision / reset admin user from options
-log "Ensuring admin user exists (or resetting password)..."
-if ! semaphore user change-by-login \
-  --login "${ADMIN_LOGIN}" \
-  --password "${ADMIN_PASSWORD}" \
-  --config "${CONF_PATH}"; then
-  semaphore user add \
-    --admin \
-    --login "${ADMIN_LOGIN}" \
-    --email "${ADMIN_EMAIL}" \
-    --name  "${ADMIN_NAME}" \
-    --password "${ADMIN_PASSWORD}" \
-    --config "${CONF_PATH}"
-fi
-log "Admin ready: ${ADMIN_LOGIN}"
-
-# Start server on configured port (override if needed)
-export SEMAPHORE_PORT="${PORT}"
-log "Starting Semaphore on :${PORT}"
-exec semaphore server --config "${CONF_PATH}"
