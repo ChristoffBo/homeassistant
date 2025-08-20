@@ -1,75 +1,86 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
 set -euo pipefail
+
+# Log helper
 log() { echo "[semaphore-addon] $*"; }
 
-# Ensure persistence dirs
-mkdir -p /share/ansible_semaphore/{playbooks,tmp,keys,logs,config}
-chmod -R 755 /share/ansible_semaphore || true
+# Wait for /data/options.json (bashio) to be ready
+if ! command -v bashio >/dev/null 2>&1; then
+  log "bashio not found; this must be a HA add-on base image. Exiting."
+  exit 1
+fi
 
-OPTS="/data/options.json"
-jq -e . "$OPTS" >/dev/null 2>&1 || { log "options.json not ready"; exit 1; }
+# Best-effort package refresh on boot (won't fail if offline)
+if command -v apt-get >/dev/null 2>&1; then
+  (apt-get update || true) && (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
+fi
 
 # Read options
-export SEMAPHORE_DB_DIALECT="$(jq -r '.SEMAPHORE_DB_DIALECT' "$OPTS")"
-export SEMAPHORE_DB_HOST="$(jq -r '.SEMAPHORE_DB_HOST' "$OPTS")"
-export SEMAPHORE_PLAYBOOK_PATH="$(jq -r '.SEMAPHORE_PLAYBOOK_PATH' "$OPTS")"
-export SEMAPHORE_TMP_PATH="$(jq -r '.SEMAPHORE_TMP_PATH' "$OPTS")"
+ADMIN_LOGIN="$(bashio::config 'admin_login')"
+ADMIN_EMAIL="$(bashio::config 'admin_email')"
+ADMIN_NAME="$(bashio::config 'admin_name')"
+ADMIN_PASSWORD="$(bashio::config 'admin_password')"
+CONF_PATH="$(bashio::config 'config_path')"
+DATA_DIR="$(bashio::config 'data_dir')"
+PORT="$(bashio::config 'port')"
 
-export SEMAPHORE_ADMIN="$(jq -r '.SEMAPHORE_ADMIN' "$OPTS")"
-export SEMAPHORE_ADMIN_NAME="$(jq -r '.SEMAPHORE_ADMIN_NAME' "$OPTS")"
-export SEMAPHORE_ADMIN_EMAIL="$(jq -r '.SEMAPHORE_ADMIN_EMAIL' "$OPTS")"
-export SEMAPHORE_ADMIN_PASSWORD="$(jq -r '.SEMAPHORE_ADMIN_PASSWORD' "$OPTS")"
+# Basic sanity
+: "${ADMIN_LOGIN:?admin_login missing in options}"
+: "${ADMIN_PASSWORD:?admin_password missing in options}"
+: "${CONF_PATH:?config_path missing in options}"
+: "${DATA_DIR:?data_dir missing in options}"
+: "${PORT:?port missing in options}"
 
-export SEMAPHORE_COOKIE_HASH="$(jq -r '.SEMAPHORE_COOKIE_HASH' "$OPTS")"
-export SEMAPHORE_COOKIE_ENCRYPTION="$(jq -r '.SEMAPHORE_COOKIE_ENCRYPTION' "$OPTS")"
-export SEMAPHORE_ACCESS_KEY_ENCRYPTION="$(jq -r '.SEMAPHORE_ACCESS_KEY_ENCRYPTION' "$OPTS")"
+# Ensure data dir exists and is writable
+mkdir -p "${DATA_DIR}"
+chown -R root:root "${DATA_DIR}" || true
 
-export SEMAPHORE_PORT="$(jq -r '.SEMAPHORE_PORT' "$OPTS")"
-export TZ="$(jq -r '.TZ' "$OPTS")"
+# Show current config path
+log "Config: ${CONF_PATH}"
+log "Data  : ${DATA_DIR}"
+log "Port  : ${PORT}"
 
-# LDAP (optional)
-LDAP_ENABLED_RAW="$(jq -r '.SEMAPHORE_LDAP_ACTIVATED // "no"' "$OPTS")"
-export SEMAPHORE_LDAP_ENABLE=$( [ "$LDAP_ENABLED_RAW" = "yes" ] && echo "true" || echo "false" )
-export SEMAPHORE_LDAP_SERVER="$(jq -r '.SEMAPHORE_LDAP_HOST // ""' "$OPTS")"
-export SEMAPHORE_LDAP_NEEDTLS="$(jq -r '.SEMAPHORE_LDAP_NEEDTLS // "no"' "$OPTS")"
-export SEMAPHORE_LDAP_BIND_DN="$(jq -r '.SEMAPHORE_LDAP_DN_BIND // ""' "$OPTS")"
-export SEMAPHORE_LDAP_BIND_PASSWORD="$(jq -r '.SEMAPHORE_LDAP_PASSWORD // ""' "$OPTS")"
-export SEMAPHORE_LDAP_SEARCH_DN="$(jq -r '.SEMAPHORE_LDAP_DN_SEARCH // ""' "$OPTS")"
-export SEMAPHORE_LDAP_SEARCH_FILTER="$(jq -r '.SEMAPHORE_LDAP_SEARCH_FILTER // ""' "$OPTS")"
-
-mkdir -p "$(dirname "$SEMAPHORE_DB_HOST")"
-
-log "DB file: $SEMAPHORE_DB_HOST"
-log "Admin user: $SEMAPHORE_ADMIN"
-
-# --- Admin reset against old DB ---
-RESET_CFG="/share/ansible_semaphore/config/reset-config.json"
-cat > "$RESET_CFG" <<JSON
+# Ensure a minimal config exists if one isn't provided (BoltDB with HTTP on :3000)
+if [ ! -s "${CONF_PATH}" ]; then
+  log "No config file found; generating minimal BoltDB config."
+  mkdir -p "$(dirname "${CONF_PATH}")"
+  cat > "${CONF_PATH}" <<'JSON'
 {
-  "bolt": { "file": "${SEMAPHORE_DB_HOST}" },
-  "tmp_path": "${SEMAPHORE_TMP_PATH}",
-  "cookie_hash": "${SEMAPHORE_COOKIE_HASH}",
-  "cookie_encryption": "${SEMAPHORE_COOKIE_ENCRYPTION}",
-  "access_key_encryption": "${SEMAPHORE_ACCESS_KEY_ENCRYPTION}",
+  "bolt": {
+    "file": "/var/lib/semaphore/database.boltdb"
+  },
+  "tmp_path": "/tmp/semaphore",
+  "cookie_hash": "change-me-cookie-hash",
+  "cookie_encryption": "change-me-cookie-key",
+  "access_key_encryption": "change-me-access-key",
   "web_host": "",
-  "web_port": "${SEMAPHORE_PORT}",
+  "web_port": "3000",
   "non_auth": false
 }
 JSON
+fi
 
+# Make sure DB parent exists
+mkdir -p /var/lib/semaphore
+
+# Auto-provision / reset admin user from options
+log "Ensuring admin user exists (or resetting password)..."
 if ! semaphore user change-by-login \
-  --login "${SEMAPHORE_ADMIN}" \
-  --password "${SEMAPHORE_ADMIN_PASSWORD}" \
-  --config "$RESET_CFG"; then
+  --login "${ADMIN_LOGIN}" \
+  --password "${ADMIN_PASSWORD}" \
+  --config "${CONF_PATH}"; then
   semaphore user add \
     --admin \
-    --login "${SEMAPHORE_ADMIN}" \
-    --email "${SEMAPHORE_ADMIN_EMAIL}" \
-    --name  "${SEMAPHORE_ADMIN_NAME}" \
-    --password "${SEMAPHORE_ADMIN_PASSWORD}" \
-    --config "$RESET_CFG" || true
+    --login "${ADMIN_LOGIN}" \
+    --email "${ADMIN_EMAIL}" \
+    --name  "${ADMIN_NAME}" \
+    --password "${ADMIN_PASSWORD}" \
+    --config "${CONF_PATH}"
 fi
-log "Admin ensured/reset: ${SEMAPHORE_ADMIN}"
+log "Admin ready: ${ADMIN_LOGIN}"
 
-# Start Semaphore server
-exec /usr/local/bin/server-wrapper
+# Start server on configured port (override if needed)
+export SEMAPHORE_PORT="${PORT}"
+log "Starting Semaphore on :${PORT}"
+exec semaphore server --config "${CONF_PATH}"
