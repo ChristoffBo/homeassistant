@@ -1,6 +1,6 @@
 {
   "name": "Ansible Semaphore",
-  "version": "2.9.46-runsh.1",
+  "version": "2.9.46",
   "slug": "ansible_semaphore",
   "description": "Semaphore UI for Ansible (official image) — run.sh bootstrap, persistent under /share/ansible_semaphore",
   "url": "https://github.com/ansible-semaphore/semaphore",
