@@ -2,14 +2,14 @@
 set -euo pipefail
 log() { echo "[semaphore-addon] $*"; }
 
-# Ensure persistence directories exist
+# Ensure persistence dirs
 mkdir -p /share/ansible_semaphore/{playbooks,tmp,keys,logs,config}
 chmod -R 755 /share/ansible_semaphore || true
 
 OPTS="/data/options.json"
 jq -e . "$OPTS" >/dev/null 2>&1 || { log "options.json not ready"; exit 1; }
 
-# Core settings
+# Read options
 export SEMAPHORE_DB_DIALECT="$(jq -r '.SEMAPHORE_DB_DIALECT' "$OPTS")"
 export SEMAPHORE_DB_HOST="$(jq -r '.SEMAPHORE_DB_HOST' "$OPTS")"
 export SEMAPHORE_PLAYBOOK_PATH="$(jq -r '.SEMAPHORE_PLAYBOOK_PATH' "$OPTS")"
@@ -27,7 +27,7 @@ export SEMAPHORE_ACCESS_KEY_ENCRYPTION="$(jq -r '.SEMAPHORE_ACCESS_KEY_ENCRYPTIO
 export SEMAPHORE_PORT="$(jq -r '.SEMAPHORE_PORT' "$OPTS")"
 export TZ="$(jq -r '.TZ' "$OPTS")"
 
-# LDAP mapping
+# LDAP (optional)
 LDAP_ENABLED_RAW="$(jq -r '.SEMAPHORE_LDAP_ACTIVATED // "no"' "$OPTS")"
 export SEMAPHORE_LDAP_ENABLE=$( [ "$LDAP_ENABLED_RAW" = "yes" ] && echo "true" || echo "false" )
 export SEMAPHORE_LDAP_SERVER="$(jq -r '.SEMAPHORE_LDAP_HOST // ""' "$OPTS")"
@@ -37,21 +37,39 @@ export SEMAPHORE_LDAP_BIND_PASSWORD="$(jq -r '.SEMAPHORE_LDAP_PASSWORD // ""' "$
 export SEMAPHORE_LDAP_SEARCH_DN="$(jq -r '.SEMAPHORE_LDAP_DN_SEARCH // ""' "$OPTS")"
 export SEMAPHORE_LDAP_SEARCH_FILTER="$(jq -r '.SEMAPHORE_LDAP_SEARCH_FILTER // ""' "$OPTS")"
 
-# Ensure DB dir exists
 mkdir -p "$(dirname "$SEMAPHORE_DB_HOST")"
 
-# Log summary
-log "DB dialect  : ${SEMAPHORE_DB_DIALECT}"
-log "DB file/host: ${SEMAPHORE_DB_HOST}"
-log "Playbooks   : ${SEMAPHORE_PLAYBOOK_PATH}"
-log "TMP path    : ${SEMAPHORE_TMP_PATH}"
-log "Web port    : ${SEMAPHORE_PORT}"
-log "Admin user  : ${SEMAPHORE_ADMIN}"
+log "DB file: $SEMAPHORE_DB_HOST"
+log "Admin user: $SEMAPHORE_ADMIN"
 
-# Set defaults for Ansible
-export ANSIBLE_HOST_KEY_CHECKING=false
-export ANSIBLE_FORCE_COLOR=false
-export ANSIBLE_LOG_PATH="/share/ansible_semaphore/logs/ansible.log"
+# --- Admin reset against old DB ---
+RESET_CFG="/share/ansible_semaphore/config/reset-config.json"
+cat > "$RESET_CFG" <<JSON
+{
+  "bolt": { "file": "${SEMAPHORE_DB_HOST}" },
+  "tmp_path": "${SEMAPHORE_TMP_PATH}",
+  "cookie_hash": "${SEMAPHORE_COOKIE_HASH}",
+  "cookie_encryption": "${SEMAPHORE_COOKIE_ENCRYPTION}",
+  "access_key_encryption": "${SEMAPHORE_ACCESS_KEY_ENCRYPTION}",
+  "web_host": "",
+  "web_port": "${SEMAPHORE_PORT}",
+  "non_auth": false
+}
+JSON
 
-# Start Semaphore using official wrapper
+if ! semaphore user change-by-login \
+  --login "${SEMAPHORE_ADMIN}" \
+  --password "${SEMAPHORE_ADMIN_PASSWORD}" \
+  --config "$RESET_CFG"; then
+  semaphore user add \
+    --admin \
+    --login "${SEMAPHORE_ADMIN}" \
+    --email "${SEMAPHORE_ADMIN_EMAIL}" \
+    --name  "${SEMAPHORE_ADMIN_NAME}" \
+    --password "${SEMAPHORE_ADMIN_PASSWORD}" \
+    --config "$RESET_CFG" || true
+fi
+log "Admin ensured/reset: ${SEMAPHORE_ADMIN}"
+
+# Start Semaphore server
 exec /usr/local/bin/server-wrapper
