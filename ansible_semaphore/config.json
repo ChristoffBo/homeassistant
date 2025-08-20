@@ -2,7 +2,7 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.17",
   "slug": "ansible_semaphore",
-  "description": "Semaphore UI inside Home Assistant (no ingress; direct port).",
+  "description": "Semaphore UI inside Home Assistant.",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
