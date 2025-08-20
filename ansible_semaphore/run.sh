@@ -5,6 +5,26 @@ set -euo pipefail
 # Log helper
 log() { echo "[semaphore-addon] $*"; }
 
+# -----------------------------
+# Setup log rotation
+LOGFILE="/var/log/semaphore-addon.log"
+touch "$LOGFILE"
+logrotate_conf="/etc/logrotate.d/semaphore-addon"
+cat > "$logrotate_conf" <<EOF
+$LOGFILE {
+    size 50M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+
+# Redirect all output to logfile + stdout
+exec > >(tee -a "$LOGFILE") 2>&1
+# -----------------------------
+
 # Wait for /data/options.json (bashio) to be ready
 if ! command -v bashio >/dev/null 2>&1; then
   log "bashio not found; this must be a HA add-on base image. Exiting."
