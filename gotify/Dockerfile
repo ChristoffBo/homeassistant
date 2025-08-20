@@ -2,8 +2,9 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
-
-
+# Copy our run script into container
+COPY run.sh /usr/local/bin/run.sh
+RUN chmod +x /usr/local/bin/run.sh
 
 ARG BUILD_ARCH
 ARG BUILD_DATE
@@ -31,3 +32,6 @@ LABEL \
     org.opencontainers.image.created=${BUILD_DATE} \
     org.opencontainers.image.revision=${BUILD_REF} \
     org.opencontainers.image.version=${BUILD_VERSION}
+
+# Set entrypoint to our wrapper
+ENTRYPOINT ["/usr/local/bin/run.sh"]
