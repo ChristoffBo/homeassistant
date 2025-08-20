@@ -11,5 +11,5 @@ export GOTIFY_UPLOADEDIMAGESDIR=/config/gotify/images
 export GOTIFY_PLUGINSDIR=/config/gotify/plugins
 export GOTIFY_SERVER_PORT=80
 
-# Start Gotify (official image binary path)
+# Start Gotify (correct binary for gotify/server)
 exec /app/gotify-app
