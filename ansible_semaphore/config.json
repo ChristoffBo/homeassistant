@@ -1,6 +1,6 @@
 {
   "name": "Ansible Semaphore",
-  "version": "2.9.46",
+  "version": "2.9.46-runsh.2",
   "slug": "ansible_semaphore",
   "description": "Semaphore UI for Ansible (official image) — run.sh bootstrap, persistent under /share/ansible_semaphore",
   "url": "https://github.com/ansible-semaphore/semaphore",
@@ -13,28 +13,21 @@
   "ingress": false,
   "panel_admin": false,
   "map": ["share:rw"],
-  "ports": {
-    "8055/tcp": 8055
-  },
-  "ports_description": {
-    "8055/tcp": "Semaphore Web UI"
-  },
+  "ports": { "8055/tcp": 8055 },
+  "ports_description": { "8055/tcp": "Semaphore Web UI" },
   "webui": "http://[HOST]:[PORT:8055]/",
   "options": {
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
     "SEMAPHORE_TMP_PATH": "/share/ansible_semaphore/tmp",
-
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_NAME": "Admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "ChangeMe!123",
-
     "SEMAPHORE_COOKIE_HASH": "change-me-cookie-hash",
     "SEMAPHORE_COOKIE_ENCRYPTION": "change-me-cookie-key",
     "SEMAPHORE_ACCESS_KEY_ENCRYPTION": "d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1",
-
     "SEMAPHORE_LDAP_ACTIVATED": "no",
     "SEMAPHORE_LDAP_HOST": "",
     "SEMAPHORE_LDAP_PORT": "636",
@@ -43,7 +36,6 @@
     "SEMAPHORE_LDAP_PASSWORD": "",
     "SEMAPHORE_LDAP_DN_SEARCH": "",
     "SEMAPHORE_LDAP_SEARCH_FILTER": "",
-
     "SEMAPHORE_PORT": "8055",
     "TZ": "Africa/Johannesburg"
   },
