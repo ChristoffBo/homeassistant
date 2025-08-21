@@ -1,5 +1,11 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.3.3
-FROM ${BUILD_FROM}
+# Home Assistant add-on that uses klutchell/dnscrypt-proxy
+FROM klutchell/dnscrypt-proxy:latest
 
-# No build step — we just run the klutchell/dnscrypt-proxy image
-# Supervisor will handle pulling it.
+# Add jq + bash for option parsing
+RUN apk add --no-cache jq bash
+
+# Copy entry script
+COPY run.sh /usr/local/bin/run.sh
+RUN chmod +x /usr/local/bin/run.sh
+
+ENTRYPOINT ["/usr/local/bin/run.sh"]
