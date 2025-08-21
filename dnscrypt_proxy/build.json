@@ -1,8 +1,3 @@
 {
-  "build_from": {
-    "amd64": "klutchell/dnscrypt-proxy:latest",
-    "aarch64": "klutchell/dnscrypt-proxy:latest",
-    "armv7": "klutchell/dnscrypt-proxy:latest"
-  },
   "args": {}
 }
