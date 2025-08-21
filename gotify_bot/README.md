@@ -1,38 +1,85 @@
-# Gotify Bot — Home Assistant Add-on
+# 🧩 Gotify Bot — Home Assistant Add-on
 
-Smart filter/sidecar for [Gotify](https://gotify.net): quiet hours, escalation, deduplication, optional immediate delete of the raw message after beautified repost, JSON logs, and a built-in **Help** page and **Self-Test**.
+This add-on runs a lightweight Gotify companion service inside Home Assistant.  
+It connects to your Gotify server, listens for messages, applies rules (quiet hours, deduplication, beautify, tagging), and can optionally act as a reverse proxy for Gotify.  
 
-## Install
+It exposes a small help/health web server on port **8080**.  
+It requires valid Gotify credentials (Basic Auth or App Token).  
 
-1. Place this folder in your repo, e.g. `homeassistant/addons/gotify-bot/`.
-2. In Home Assistant: Settings → Add-ons → Add-on Store → (three dots) → Reload.
-3. Install **Gotify Bot** → Configure → Start.
-4. Open Web UI → `/help` shows all options with current values.
-5. Logs show `ws_connected`, `self_test_ok`, and actions taken.
+## What it is and what it is used for
 
-## Key Options (GUI)
+Gotify Bot extends your Gotify setup with smart filtering and message processing.  
+It can:
 
-- **Connectivity**
-  - `gotify_url` (e.g. `http://192.168.1.10:8091`)
-  - `gotify_app_token` (Application token; required)
-  - `gotify_user_token` (User token; required for delete/retention)
-- **Beautify & Dedupe**
-  - `tag_rules` (list of `{match, tag}`), `priority_raise_regex`, `priority_lower_regex`
-  - `dedup_window_sec`, `suppress_regex`
-- **Quiet Hours**
-  - `quiet_hours` (e.g. `22-06`), `quiet_min_priority`
-- **Avoid Duplicates**
-  - `delete_original_after_repost` = `true` (requires `gotify_user_token`)
-  - `post_as_app_token` (optional second Application token for a Clean Feed app)
-- **Retention (optional)**
-  - `retention_enabled`, `retention_*`
-- **Logging/Health**
-  - `json_logs`, `log_level`, `healthcheck_enabled`
-- **Self-Test**
-  - `self_test_on_start`, `self_test_message`, `self_test_priority`, `self_test_target` (`raw` or `clean`)
+- Beautify incoming messages (add tags, raise/lower priority).  
+- Suppress noisy or duplicate alerts.  
+- Apply YAML-defined rules for advanced matching.  
+- Enforce quiet hours.  
+- Retain or auto-delete messages.  
+- Archive messages locally.  
+- Act as a proxy to forward old Gotify endpoints to a new Gotify server (useful if you move Gotify and don’t want to reconfigure 30+ clients).  
 
-## Notes
+Running Gotify Bot in Home Assistant makes sense because Home Assistant already centralizes automation and alerting. The bot lets you fine-tune the flood of Gotify notifications, without editing each app.
 
-- Gotify has no “edit” API. The add-on **reposts** beautified messages and can **delete** the raw original immediately if allowed.
-- Loop guard prevents the bot from reprocessing its own reposts.
-- If archiving is disabled, dedup still works via in-memory guard.
+## Features
+
+- Beautify and tag messages  
+- Quiet hours and suppression  
+- Deduplication window  
+- Retention and auto-cleanup  
+- Optional archiving to disk  
+- Optional proxy forwarder  
+- Health check endpoint on port **8080**  
+- Based on `python:3.12-slim`
+
+## Paths
+
+- **Rules (YAML)**: `/app/rules.yaml`  
+- **Archive (if enabled)**: `/share/gotify_bot/archive`  
+- **Logs**: visible in Home Assistant Supervisor logs  
+
+## Options
+
+All options are set in the add-on GUI.
+
+| Option | Description |
+|--------|-------------|
+| `gotify_url` | Full URL of your Gotify server (http/https). |
+| `gotify_username` | Gotify user for Basic Auth. |
+| `gotify_password` | Password for above. |
+| `post_as_app_token` | App token to repost beautified messages. |
+| `quiet_hours` | e.g. `22-07` (suppress low priority messages overnight). |
+| `quiet_min_priority` | Priority required to bypass quiet hours. |
+| `dedup_window_sec` | Suppress duplicate messages seen in this timeframe. |
+| `suppress_regex` | Comma-separated regex patterns to block messages. |
+| `priority_raise_regex` | Regex to force priority high. |
+| `priority_lower_regex` | Regex to force priority low. |
+| `tag_rules_json` | JSON list of `{ "match": "text", "tag": "[TAG]" }`. |
+| `delete_after_repost` | Delete original after repost. |
+| `retention_enabled` | Enable periodic deletion of old messages. |
+| `retention_max_age_hours` | Age in hours before old messages are removed. |
+| `retention_min_priority_keep` | Priority to always keep. |
+| `enable_archiving` | Archive all messages to `/share/gotify_bot/archive`. |
+| `archive_max_mb` | Max archive size before pruning. |
+| `proxy_enabled` | Enable proxy forwarder. |
+| `proxy_listen_port` | Local port to listen for legacy Gotify apps. |
+| `proxy_forward_base_url` | Target Gotify base URL to forward requests. |
+
+## First-Time Setup (required)
+
+1. Create a Gotify user and password (or App Token).  
+2. Enter credentials in the add-on Options panel.  
+3. (Optional) Add a `rules.yaml` in `/share/gotify_bot/rules.yaml` for advanced matching.  
+
+## Default Behavior
+
+- On boot, the add-on connects to Gotify using Basic Auth.  
+- It starts the rule processor and a `/health` endpoint on **8080**.  
+- If enabled, it also starts the proxy forwarder.  
+
+## Force Fresh First Boot
+
+To reset the bot (clear state and archive):
+
+```bash
+rm -rf /share/gotify_bot/*
