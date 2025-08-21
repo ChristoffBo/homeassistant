@@ -1,6 +1,6 @@
 {
   "name": "DNSCrypt Proxy (klutchell)",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "slug": "dnscrypt_proxy",
   "description": "Home Assistant add-on wrapping klutchell/dnscrypt-proxy with configurable options.",
   "arch": ["aarch64", "amd64", "armv7"],
@@ -69,4 +69,3 @@
     "log_level": "int"
   }
 }
-```0
