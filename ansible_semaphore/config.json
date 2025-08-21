@@ -8,7 +8,7 @@
   "boot": "auto",
   "init": false,
   "host_network": false,
-  "ingress": true,
+  "ingress": false,
   "panel_admin": false,
   "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
@@ -21,7 +21,6 @@
   "webui": "http://[HOST]:[PORT:8055]",
   "environment": {
     "SEMAPHORE_PORT": "8055",
-    "SEMAPHORE_WEB_HOST": "0.0.0.0"
     "SEMAPHORE_DB_DIALECT": "bolt",
     "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
     "SEMAPHORE_TMP_PATH": "/tmp/semaphore",
