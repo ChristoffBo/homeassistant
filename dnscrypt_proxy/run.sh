@@ -46,7 +46,6 @@ keepalive = ${KEEPALIVE}
 bootstrap_resolvers = ${BOOTSTRAP_JSON}
 log_level = ${LOG_LEVEL}
 
-# ----- Sources: use the canonical host only to avoid GitHub HTML/rate-limit -----
 [sources]
 
   [sources.public-resolvers]
@@ -54,7 +53,7 @@ log_level = ${LOG_LEVEL}
     "https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md"
   ]
   cache_file = "/config/public-resolvers.md"
-  minisign_key = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh2+5SIQTa7ikI9S4Gbm"
+  minisign_key = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"
   refresh_delay = 72
   prefix = ""
 
@@ -63,11 +62,10 @@ log_level = ${LOG_LEVEL}
     "https://download.dnscrypt.info/resolvers-list/v3/relays.md"
   ]
   cache_file = "/config/relays.md"
-  minisign_key = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh2+5SIQTa7ikI9S4Gbm"
+  minisign_key = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"
   refresh_delay = 72
   prefix = ""
 
-# ----- Anonymized DNS routes -----
 [anonymized_dns]
 routes = [
   { server_name = "${SERVER0}", via = ${RELAYS_JSON} }
