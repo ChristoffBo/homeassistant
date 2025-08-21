@@ -1,7 +1,8 @@
-# Home Assistant add-on that uses klutchell/dnscrypt-proxy
-FROM klutchell/dnscrypt-proxy:latest
+# Base image is defined in build.json
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
 
-# Add jq + bash for option parsing
+# Add tools for option parsing
 RUN apk add --no-cache jq bash
 
 # Copy entry script
