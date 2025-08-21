@@ -1,8 +1,8 @@
 {
   "name": "Gotify Bot",
   "slug": "gotify_bot",
-  "version": "1.3.1",
-  "description": "Smart filter for Gotify: beautify/repost, optional immediate delete, quiet hours, dedup, JSON logs, help page, startup self-test.",
+  "version": "1.4.0",
+  "description": "Smart filter for Gotify + simple proxy for legacy clients (POST /message). Quiet hours, dedup, tagging, JSON logs, help page, startup self-test.",
   "url": "https://gotify.net",
   "startup": "services",
   "boot": "auto",
@@ -12,14 +12,16 @@
   "panel_admin": false,
   "map": ["data:rw"],
   "ports": {
-    "8080/tcp": 8080
+    "8080/tcp": 8080,
+    "8091/tcp": 8091
   },
   "ports_description": {
-    "8080/tcp": "Help & health endpoints (/help, /health)"
+    "8080/tcp": "Help & health endpoints (/help, /health)",
+    "8091/tcp": "Proxy listener for legacy clients (POST /message)"
   },
   "webui": "http://[HOST]:[PORT:8080]/help",
   "options": {
-    "gotify_url": "http://127.0.0.1:8091",
+    "gotify_url": "http://10.0.0.100:8091",
     "gotify_app_token": "",
     "gotify_user_token": "",
     "quiet_hours": "",
@@ -28,22 +30,19 @@
     "suppress_regex": [],
     "priority_raise_regex": ["(?i)(failed|error|panic|critical|oom|segfault)"],
     "priority_lower_regex": [],
-    "tag_rules": [
-      { "match": "OPNsense", "tag": "[SEC]" },
-      { "match": "Watchtower", "tag": "[INFRA]" }
-    ],
+    "tag_rules": [],
     "retention_enabled": false,
     "retention_interval_sec": 900,
     "retention_max_age_hours": 24,
     "retention_min_priority_keep": 8,
-    "retention_keep_apps": ["ansible", "watchtower", "opnsense"],
+    "retention_keep_apps": [],
     "retention_dry_run": true,
     "enable_archiving": false,
     "archive_max_mb": 512,
     "archive_ttl_hours_default": 168,
     "archive_ttl_hours_high": 4320,
     "archive_ttl_hours_keep_apps": 720,
-    "archive_keep_apps": ["ansible", "watchtower", "opnsense"],
+    "archive_keep_apps": [],
     "archive_prune_interval_sec": 900,
     "log_level": "INFO",
     "healthcheck_enabled": true,
@@ -54,7 +53,11 @@
     "self_test_on_start": true,
     "self_test_message": "Gotify Bot self-test \u2705",
     "self_test_priority": 6,
-    "self_test_target": "clean"
+    "self_test_target": "clean",
+    "proxy_enabled": true,
+    "proxy_listen_port": 8091,
+    "proxy_forward_base_url": "http://10.0.0.100:8091",
+    "proxy_log_bodies": false
   },
   "schema": {
     "gotify_url": "str",
@@ -67,10 +70,7 @@
     "priority_raise_regex": ["str"],
     "priority_lower_regex": ["str"],
     "tag_rules": [
-      {
-        "match": "str",
-        "tag": "str"
-      }
+      { "match": "str", "tag": "str" }
     ],
     "retention_enabled": "bool",
     "retention_interval_sec": "int",
@@ -94,6 +94,10 @@
     "self_test_on_start": "bool",
     "self_test_message": "str",
     "self_test_priority": "int",
-    "self_test_target": "str"
+    "self_test_target": "str",
+    "proxy_enabled": "bool",
+    "proxy_listen_port": "int",
+    "proxy_forward_base_url": "str",
+    "proxy_log_bodies": "bool"
   }
 }
