@@ -4,11 +4,9 @@ set -euo pipefail
 OPTIONS=/data/options.json
 CONF=/config/dnscrypt-proxy.toml
 
-# Basic options
 LISTEN_ADDR=$(jq -r '.listen_address' "$OPTIONS")
 LISTEN_PORT=$(jq -r '.listen_port' "$OPTIONS")
 
-# Arrays emitted as JSON (valid TOML syntax for arrays)
 SERVERS_JSON=$(jq -c '.server_names' "$OPTIONS")
 RELAYS_JSON=$(jq -c '.relays' "$OPTIONS")
 SERVER0=$(jq -r '.server_names[0]' "$OPTIONS")
@@ -24,29 +22,36 @@ TIMEOUT_MS=$(jq -r '.timeout_ms' "$OPTIONS")
 KEEPALIVE=$(jq -r '.keepalive_sec' "$OPTIONS")
 BOOTSTRAP_JSON=$(jq -c '.bootstrap_resolvers' "$OPTIONS")
 LOG_LEVEL=$(jq -r '.log_level' "$OPTIONS")
+MAX_CLIENTS=$(jq -r '.max_clients // 250' "$OPTIONS")
 
 mkdir -p /config
 
 cat > "$CONF" <<EOF
-server_names = ${SERVERS_JSON}
+# Listener
 listen_addresses = ["${LISTEN_ADDR}:${LISTEN_PORT}"]
+max_clients = ${MAX_CLIENTS}
 
+# Resolver selection
+server_names = ${SERVERS_JSON}
+
+# Policies
 require_dnssec   = ${REQUIRE_DNSSEC}
 require_nolog    = ${REQUIRE_NOLOG}
 require_nofilter = ${REQUIRE_NOFILTER}
 
+# Performance
 cache = ${CACHE}
 cache_size = ${CACHE_SIZE}
 cache_min_ttl = ${CACHE_MIN_TTL}
 cache_max_ttl = ${CACHE_MAX_TTL}
-
 timeout = ${TIMEOUT_MS}
 keepalive = ${KEEPALIVE}
 
+# Bootstrap for DoH hostnames & lists
 bootstrap_resolvers = ${BOOTSTRAP_JSON}
 log_level = ${LOG_LEVEL}
 
-# ----- Sources: use the canonical host only to avoid HTML/rate-limit; v3 minisign key -----
+# Sources (canonical)
 [sources]
 
   [sources.public-resolvers]
@@ -67,8 +72,9 @@ log_level = ${LOG_LEVEL}
   refresh_delay = 72
   prefix = ""
 
-# ----- Anonymized DNS routes -----
+# Anonymized DNS
 [anonymized_dns]
+skip_incompatible = true
 routes = [
   { server_name = "${SERVER0}", via = ${RELAYS_JSON} }
 ]
