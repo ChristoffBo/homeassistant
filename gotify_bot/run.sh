@@ -13,6 +13,8 @@ export GY_USERNAME="$(get_str gotify_username)"
 export GY_PASSWORD="$(get_str gotify_password)"
 export POST_AS_APP_TOKEN="$(get_str post_as_app_token)"
 
+export POLL_INTERVAL_SEC="$(get_int poll_interval_sec)"
+
 export QUIET_HOURS="$(get_str quiet_hours)"
 export QUIET_MIN_PRIORITY="$(get_int quiet_min_priority)"
 export DEDUP_WINDOW_SEC="$(get_int dedup_window_sec)"
@@ -21,7 +23,7 @@ export PRIORITY_RAISE_REGEX="$(get_list priority_raise_regex)"
 export PRIORITY_LOWER_REGEX="$(get_list priority_lower_regex)"
 export TAG_RULES_JSON="${TAG_RULES_RAW:-[]}"
 
-export DELETE_AFTER_REPOST="$(get_bool delete_original_after_repost)"
+export DELETE_AFTER_REPOST="$(get_bool delete_after_repost)"
 
 export RETENTION_ENABLED="$(get_bool retention_enabled)"
 export RETENTION_INTERVAL_SEC="$(get_int retention_interval_sec)"
