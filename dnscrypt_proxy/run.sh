@@ -46,12 +46,11 @@ keepalive = ${KEEPALIVE}
 bootstrap_resolvers = ${BOOTSTRAP_JSON}
 log_level = ${LOG_LEVEL}
 
-# ----- Sources: resolvers and relays (required so names are recognized) -----
+# ----- Sources: use the canonical host only to avoid GitHub HTML/rate-limit -----
 [sources]
 
   [sources.public-resolvers]
   urls = [
-    "https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/public-resolvers.md",
     "https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md"
   ]
   cache_file = "/config/public-resolvers.md"
@@ -61,7 +60,6 @@ log_level = ${LOG_LEVEL}
 
   [sources.relays]
   urls = [
-    "https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/relays.md",
     "https://download.dnscrypt.info/resolvers-list/v3/relays.md"
   ]
   cache_file = "/config/relays.md"
