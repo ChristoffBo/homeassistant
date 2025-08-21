@@ -40,6 +40,5 @@
     "dns_port": "int",
     "setup_port": "int",
     "web_port": "int"
-  },
-  "image": "adguard/adguardhome"
+  }
 }
