@@ -7,8 +7,12 @@ CONF=/config/dnscrypt-proxy.toml
 # Read options from Supervisor
 LISTEN_ADDR=$(jq -r '.listen_address' "$OPTIONS")
 LISTEN_PORT=$(jq -r '.listen_port' "$OPTIONS")
-SERVERS=$(jq -r '.server_names | join("\\', \\'")' "$OPTIONS")
-RELAYS=$(jq -r '.relays | join("\\', \\'")' "$OPTIONS")
+
+# Use raw JSON to avoid shell-quoting issues; TOML accepts JSON-style arrays.
+SERVERS_JSON=$(jq -c '.server_names' "$OPTIONS")      # e.g. ["quad9-doh-ip4-port443","cloudflare","cisco"]
+RELAYS_JSON=$(jq -c '.relays' "$OPTIONS")             # e.g. ["anon-cs-de","anon-cs-fr","anon-scaleway-nl"]
+SERVER0=$(jq -r '.server_names[0]' "$OPTIONS")        # e.g. quad9-doh-ip4-port443
+
 REQUIRE_DNSSEC=$(jq -r '.require_dnssec' "$OPTIONS")
 REQUIRE_NOLOG=$(jq -r '.require_nolog' "$OPTIONS")
 REQUIRE_NOFILTER=$(jq -r '.require_nofilter' "$OPTIONS")
@@ -24,8 +28,8 @@ LOG_LEVEL=$(jq -r '.log_level' "$OPTIONS")
 mkdir -p /config
 
 cat > "$CONF" <<EOF
-server_names = ['${SERVERS}']
-listen_addresses = ['${LISTEN_ADDR}:${LISTEN_PORT}']
+server_names = ${SERVERS_JSON}
+listen_addresses = ["${LISTEN_ADDR}:${LISTEN_PORT}"]
 
 require_dnssec   = ${REQUIRE_DNSSEC}
 require_nolog    = ${REQUIRE_NOLOG}
@@ -39,12 +43,12 @@ cache_max_ttl = ${CACHE_MAX_TTL}
 timeout = ${TIMEOUT_MS}
 keepalive = ${KEEPALIVE}
 
-fallback_resolver = '${FALLBACK}'
+fallback_resolver = "${FALLBACK}"
 log_level = ${LOG_LEVEL}
 
 [anonymized_dns]
 routes = [
-  { server_name='$(jq -r '.server_names[0]' "$OPTIONS")', via=['${RELAYS}'] }
+  { server_name = "${SERVER0}", via = ${RELAYS_JSON} }
 ]
 EOF
 
