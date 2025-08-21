@@ -1,7 +1,7 @@
 {
   "name": "Gotify Bot",
   "slug": "gotify_bot",
-  "version": "1.5.1",
+  "version": "1.5.3",
   "description": "Smart filter for Gotify with beautify/dedup/quiet hours + optional legacy /message proxy. Uses Gotify username/password for global stream subscription.",
   "url": "https://gotify.net",
   "startup": "services",
@@ -50,7 +50,7 @@
     "json_logs": true,
     "healthcheck_enabled": true,
     "self_test_on_start": true,
-    "self_test_message": "Gotify Bot self-test \u2705",
+    "self_test_message": "Gotify Bot self-test ✅",
     "self_test_priority": 6,
     "self_test_target": "clean",
     "proxy_enabled": false,
