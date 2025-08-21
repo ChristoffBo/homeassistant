@@ -9,7 +9,6 @@
   "init": false,
   "host_network": false,
   "ingress": true,
-  "ingress_entry": "/",
   "panel_admin": false,
   "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
