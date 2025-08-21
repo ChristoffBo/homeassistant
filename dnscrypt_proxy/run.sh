@@ -8,7 +8,7 @@ CONF=/config/dnscrypt-proxy.toml
 LISTEN_ADDR=$(jq -r '.listen_address' "$OPTIONS")
 LISTEN_PORT=$(jq -r '.listen_port' "$OPTIONS")
 
-# Arrays emitted as JSON (valid in TOML): ["a","b"]
+# Arrays emitted as JSON (valid TOML syntax for arrays)
 SERVERS_JSON=$(jq -c '.server_names' "$OPTIONS")
 RELAYS_JSON=$(jq -c '.relays' "$OPTIONS")
 SERVER0=$(jq -r '.server_names[0]' "$OPTIONS")
@@ -46,6 +46,7 @@ keepalive = ${KEEPALIVE}
 bootstrap_resolvers = ${BOOTSTRAP_JSON}
 log_level = ${LOG_LEVEL}
 
+# ----- Sources: use the canonical host only to avoid HTML/rate-limit; v3 minisign key -----
 [sources]
 
   [sources.public-resolvers]
@@ -66,6 +67,7 @@ log_level = ${LOG_LEVEL}
   refresh_delay = 72
   prefix = ""
 
+# ----- Anonymized DNS routes -----
 [anonymized_dns]
 routes = [
   { server_name = "${SERVER0}", via = ${RELAYS_JSON} }
