@@ -1,6 +1,6 @@
 {
   "name": "DNSCrypt Proxy (klutchell)",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "slug": "dnscrypt_proxy",
   "description": "Home Assistant add-on wrapping klutchell/dnscrypt-proxy with configurable options.",
   "arch": ["aarch64", "amd64", "armv7"],
@@ -33,7 +33,7 @@
     "cache_max_ttl": 86400,
     "timeout_ms": 5000,
     "keepalive_sec": 30,
-    "fallback_resolver": "9.9.9.9:53",
+    "bootstrap_resolvers": ["9.9.9.9:53", "1.1.1.1:53"],
     "log_level": 2
   },
   "schema": {
@@ -50,7 +50,7 @@
     "cache_max_ttl": "int",
     "timeout_ms": "int",
     "keepalive_sec": "int",
-    "fallback_resolver": "str",
+    "bootstrap_resolvers": ["str"],
     "log_level": "int"
   }
 }
