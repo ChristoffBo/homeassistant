@@ -4,11 +4,11 @@ set -euo pipefail
 OPTIONS=/data/options.json
 CONF=/config/dnscrypt-proxy.toml
 
-# Read options from Supervisor
+# Basic options
 LISTEN_ADDR=$(jq -r '.listen_address' "$OPTIONS")
 LISTEN_PORT=$(jq -r '.listen_port' "$OPTIONS")
 
-# Emit JSON arrays directly; TOML accepts JSON-like arrays
+# Arrays emitted as JSON (valid in TOML): ["a","b"]
 SERVERS_JSON=$(jq -c '.server_names' "$OPTIONS")
 RELAYS_JSON=$(jq -c '.relays' "$OPTIONS")
 SERVER0=$(jq -r '.server_names[0]' "$OPTIONS")
@@ -46,6 +46,30 @@ keepalive = ${KEEPALIVE}
 bootstrap_resolvers = ${BOOTSTRAP_JSON}
 log_level = ${LOG_LEVEL}
 
+# ----- Sources: resolvers and relays (required so names are recognized) -----
+[sources]
+
+  [sources.public-resolvers]
+  urls = [
+    "https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/public-resolvers.md",
+    "https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md"
+  ]
+  cache_file = "/config/public-resolvers.md"
+  minisign_key = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh2+5SIQTa7ikI9S4Gbm"
+  refresh_delay = 72
+  prefix = ""
+
+  [sources.relays]
+  urls = [
+    "https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/relays.md",
+    "https://download.dnscrypt.info/resolvers-list/v3/relays.md"
+  ]
+  cache_file = "/config/relays.md"
+  minisign_key = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh2+5SIQTa7ikI9S4Gbm"
+  refresh_delay = 72
+  prefix = ""
+
+# ----- Anonymized DNS routes -----
 [anonymized_dns]
 routes = [
   { server_name = "${SERVER0}", via = ${RELAYS_JSON} }
