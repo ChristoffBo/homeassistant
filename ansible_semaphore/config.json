@@ -8,7 +8,7 @@
   "boot": "auto",
   "init": false,
   "host_network": false,
-  "ingress": false,
+  "ingress": true,
   "panel_admin": false,
   "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
