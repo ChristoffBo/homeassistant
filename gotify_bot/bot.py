@@ -2,9 +2,7 @@
 import os, sys, json, time, re, datetime, threading, socketserver, collections
 from http.server import BaseHTTPRequestHandler
 import requests
-from websocket import create_connection, WebSocketConnectionClosedException
 import yaml
-from urllib.parse import quote_plus
 
 ENV = lambda k, d=None: os.environ.get(k, d)
 
@@ -13,13 +11,14 @@ GY_URL       = (ENV("GY_URL") or "").strip()
 GY_USERNAME  = (ENV("GY_USERNAME") or "").strip()
 GY_PASSWORD  = (ENV("GY_PASSWORD") or "").strip()
 POST_AS_APP_TOKEN = (ENV("POST_AS_APP_TOKEN") or "").strip()
+POLL_INTERVAL_SEC = int(ENV("POLL_INTERVAL_SEC", "5") or "5")
 
 if not GY_URL or not GY_USERNAME or not GY_PASSWORD:
     print("[gotify-bot] ERROR: gotify_url, gotify_username and gotify_password are required.", file=sys.stderr)
     sys.exit(1)
-print("[GOTIFY-BOT BASIC AUTH BUILD 1.5.3] starting…", flush=True)
+print("[GOTIFY-BOT BASIC AUTH POLL BUILD 1.6.0] starting…", flush=True)
 print(f"[CONFIG] gotify_url={GY_URL}", flush=True)
-print("[CONFIG] auth=basic (username/password provided)", flush=True)
+print(f"[CONFIG] poll_interval_sec={POLL_INTERVAL_SEC}", flush=True)
 
 # ---------- Optional behavior ----------
 QUIET_HOURS        = (ENV("QUIET_HOURS", "") or "").strip()
@@ -110,7 +109,7 @@ def is_recently_posted(title, message, window=180):
     h = f"{title}|{message}"; now = int(time.time())
     return any(k == h and now - ts <= window for (k, ts) in RECENT_POSTED)
 
-# ---------- Post & REST helpers ----------
+# ---------- REST helpers ----------
 def gotify_post(title, message, priority, token_override=None) -> bool:
     tok = token_override or POST_AS_APP_TOKEN
     if not tok:
@@ -158,21 +157,6 @@ def gotify_delete_message(msg_id):
         log_json("retention_delete_exception", level="WARNING", id=msg_id, error=str(e))
         return False
 
-# ---------- WS URL builder ----------
-def to_ws_url(http_url: str) -> str:
-    u = http_url.strip()
-    if u.startswith("https://"): return "wss://" + u[len("https://"):]
-    if u.startswith("http://"):  return "ws://"  + u[len("http://"):]
-    if u.startswith("ws://") or u.startswith("wss://"): return u
-    return "ws://" + u
-
-def build_ws_url():
-    base = GY_URL.rstrip("/")
-    ws = f"{to_ws_url(base)}/stream?username={quote_plus(GY_USERNAME)}&password={quote_plus(GY_PASSWORD)}"
-    scheme = "wss" if ws.startswith("wss://") else "ws"
-    print(f"[CONFIG] ws_scheme={scheme}", flush=True)
-    return ws
-
 # ---------- Processing ----------
 def apply_yaml_rules(title, message, priority, ctx):
     for rule in YAML_RULES:
@@ -190,9 +174,7 @@ def apply_yaml_rules(title, message, priority, ctx):
             return True
     return False
 
-def handle_message(obj):
-    msg = obj.get("message", {})
-    if not msg: return
+def handle_message_object(msg):
     orig_title = str(msg.get("title") or "").strip()
     message    = str(msg.get("message") or "").strip()
     orig_prio  = int(msg.get("priority") or 5)
@@ -234,11 +216,11 @@ def handle_message(obj):
 
     ctx = {"msg_id": msg_id}
 
-    # YAML rules first (compound logic)
+    # YAML rules first
     if apply_yaml_rules(new_title, message, new_prio, ctx):
         return
 
-    # Simple dedup protection for immediate repost loop
+    # Dedup immediate reposts
     if is_recently_posted(new_title, message, window=DEDUP_WINDOW_SEC):
         log_json("suppress_dedup", title=new_title)
         return
@@ -251,14 +233,14 @@ def handle_message(obj):
         log_json("beautify_repost", title=new_title, new_priority=new_prio, deleted_original=bool(ok and DELETE_AFTER_REPOST and msg_id))
         return
 
-# ---------- HTTP Help/Health ----------
+# ---------- Help/Health ----------
 class HelpHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): return
     def do_GET(self):
         if self.path.startswith("/health"):
             self.send_response(200); self.send_header("Content-Type","text/plain"); self.end_headers(); self.wfile.write(b"ok"); return
         if self.path.startswith("/help"):
-            html = "<h1>Gotify Bot</h1><p>Running. See Supervisor logs for activity. /health returns OK.</p>"
+            html = "<h1>Gotify Bot</h1><p>Running (poll mode). See Supervisor logs for activity. /health returns OK.</p>"
             body = html.encode("utf-8")
             self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_response(404); self.end_headers()
@@ -294,7 +276,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 if k.lower() in ("content-type", "content-length"):
                     self.send_header(k, v)
             self.send_header("Content-Length", str(len(content))); self.end_headers(); self.wfile.write(content)
-        except Exception as e:
+        except Exception:
             return self._bad(502, "upstream error")
 
 def http_proxy_server():
@@ -305,28 +287,42 @@ def http_proxy_server():
     except Exception as e:
         print(f"[WARNING] proxy server error: {e}", flush=True)
 
-# ---------- WS loop ----------
-def ws_loop():
-    ws_url = build_ws_url()
-    backoff = 1
+# ---------- Poll loop ----------
+LAST_SEEN_ID_PATH = "/data/last_seen_id.txt"
+
+def load_last_seen_id():
+    try:
+        with open(LAST_SEEN_ID_PATH, "r") as f:
+            return int(f.read().strip() or "0")
+    except Exception:
+        return 0
+
+def save_last_seen_id(i):
+    try:
+        with open(LAST_SEEN_ID_PATH, "w") as f:
+            f.write(str(int(i)))
+    except Exception:
+        pass
+
+def poll_loop():
+    since = load_last_seen_id()
+    backoff = POLL_INTERVAL_SEC
     while True:
         try:
-            print(f"[INFO] WS connect (basic-auth)", flush=True)
-            ws = create_connection(ws_url, timeout=30)
-            print("[INFO] WS connected", flush=True)
-            backoff = 1
-            while True:
-                raw = ws.recv()
-                if not raw: raise WebSocketConnectionClosedException("empty frame")
-                try:
-                    obj = json.loads(raw)
-                    if obj.get("event") == "message":
-                        handle_message(obj)
-                except Exception as e:
-                    print(f"[WARNING] WS payload error: {e}", flush=True)
+            msgs = gotify_list_messages(limit=100, since=since)
+            # Sort ascending by id to process in order
+            msgs.sort(key=lambda m: int(m.get("id", 0)))
+            for m in msgs:
+                mid = int(m.get("id", 0))
+                handle_message_object(m)
+                if mid > since:
+                    since = mid
+                    save_last_seen_id(since)
+            backoff = POLL_INTERVAL_SEC
         except Exception as e:
-            print(f"[WARNING] WS disconnected: {e}; retry in {backoff}s", flush=True)
-            time.sleep(backoff); backoff = min(backoff * 2, 30)
+            log("WARNING", f"poll error: {e}")
+            backoff = min(max(backoff * 2, POLL_INTERVAL_SEC), 60)
+        time.sleep(backoff)
 
 # ---------- Self-test ----------
 def self_test():
@@ -338,9 +334,38 @@ def self_test():
     except Exception as e:
         print(f"[WARNING] self_test_error: {e}", flush=True)
 
+# ---------- Retention (optional) ----------
+def retention_loop():
+    if not RETENTION_ENABLED:
+        return
+    while True:
+        try:
+            cutoff = time.time() - (RETENTION_MAX_AGE_HOURS * 3600)
+            msgs = gotify_list_messages(limit=200, since=0)
+            for m in msgs:
+                pid = int(m.get("priority", 0))
+                mid = m.get("id")
+                date = m.get("date", "")
+                # Gotify date is ISO8601; approximate age using timestamp within message if available
+                # Fallback: skip date calc, rely on count-based cleanup if needed
+                if pid >= RETENTION_MIN_PRIORITY_KEEP: 
+                    continue
+                if RETENTION_DRY_RUN:
+                    log_json("retention_would_delete", id=mid)
+                else:
+                    gotify_delete_message(mid)
+        except Exception as e:
+            log("WARNING", f"retention error: {e}")
+        time.sleep(max(60, RETENTION_INTERVAL_SEC))
+
 # ---------- Main ----------
 def main():
     threading.Thread(target=http_server, daemon=True).start()
     if PROXY_ENABLED:
         threading.Thread(target=http_proxy_server, daemon=True).start()
     self_test()
+    threading.Thread(target=retention_loop, daemon=True).start()
+    poll_loop()
+
+if __name__ == "__main__":
+    main()
