@@ -8,10 +8,10 @@ CONF=/config/dnscrypt-proxy.toml
 LISTEN_ADDR=$(jq -r '.listen_address' "$OPTIONS")
 LISTEN_PORT=$(jq -r '.listen_port' "$OPTIONS")
 
-# Use raw JSON to avoid shell-quoting issues; TOML accepts JSON-style arrays.
-SERVERS_JSON=$(jq -c '.server_names' "$OPTIONS")      # e.g. ["quad9-doh-ip4-port443","cloudflare","cisco"]
-RELAYS_JSON=$(jq -c '.relays' "$OPTIONS")             # e.g. ["anon-cs-de","anon-cs-fr","anon-scaleway-nl"]
-SERVER0=$(jq -r '.server_names[0]' "$OPTIONS")        # e.g. quad9-doh-ip4-port443
+# Emit JSON arrays directly; TOML accepts JSON-like arrays
+SERVERS_JSON=$(jq -c '.server_names' "$OPTIONS")
+RELAYS_JSON=$(jq -c '.relays' "$OPTIONS")
+SERVER0=$(jq -r '.server_names[0]' "$OPTIONS")
 
 REQUIRE_DNSSEC=$(jq -r '.require_dnssec' "$OPTIONS")
 REQUIRE_NOLOG=$(jq -r '.require_nolog' "$OPTIONS")
@@ -22,7 +22,7 @@ CACHE_MIN_TTL=$(jq -r '.cache_min_ttl' "$OPTIONS")
 CACHE_MAX_TTL=$(jq -r '.cache_max_ttl' "$OPTIONS")
 TIMEOUT_MS=$(jq -r '.timeout_ms' "$OPTIONS")
 KEEPALIVE=$(jq -r '.keepalive_sec' "$OPTIONS")
-FALLBACK=$(jq -r '.fallback_resolver' "$OPTIONS")
+BOOTSTRAP_JSON=$(jq -c '.bootstrap_resolvers' "$OPTIONS")
 LOG_LEVEL=$(jq -r '.log_level' "$OPTIONS")
 
 mkdir -p /config
@@ -43,7 +43,7 @@ cache_max_ttl = ${CACHE_MAX_TTL}
 timeout = ${TIMEOUT_MS}
 keepalive = ${KEEPALIVE}
 
-fallback_resolver = "${FALLBACK}"
+bootstrap_resolvers = ${BOOTSTRAP_JSON}
 log_level = ${LOG_LEVEL}
 
 [anonymized_dns]
