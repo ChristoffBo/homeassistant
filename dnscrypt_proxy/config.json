@@ -1,0 +1,56 @@
+{
+  "name": "DNSCrypt Proxy (klutchell base)",
+  "version": "1.0.0",
+  "slug": "dnscrypt_proxy",
+  "description": "Home Assistant add-on using klutchell/dnscrypt-proxy as the base image with HA-configurable options.",
+  "arch": ["aarch64", "amd64", "armv7"],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "host_network": false,
+  "ingress": false,
+  "panel_admin": false,
+  "map": ["config:rw"],
+  "ports": {
+    "5353/udp": 5353,
+    "5353/tcp": 5353
+  },
+  "ports_description": {
+    "5353/udp": "DNSCrypt-Proxy UDP listener",
+    "5353/tcp": "DNSCrypt-Proxy TCP listener"
+  },
+  "options": {
+    "listen_address": "0.0.0.0",
+    "listen_port": 5353,
+    "server_names": ["quad9-doh-ip4-port443", "cloudflare", "cisco"],
+    "relays": ["anon-cs-de", "anon-cs-fr", "anon-scaleway-nl"],
+    "require_dnssec": true,
+    "require_nolog": true,
+    "require_nofilter": true,
+    "cache": true,
+    "cache_size": 4096,
+    "cache_min_ttl": 240,
+    "cache_max_ttl": 86400,
+    "timeout_ms": 5000,
+    "keepalive_sec": 30,
+    "fallback_resolver": "9.9.9.9:53",
+    "log_level": 2
+  },
+  "schema": {
+    "listen_address": "str",
+    "listen_port": "int",
+    "server_names": ["str"],
+    "relays": ["str"],
+    "require_dnssec": "bool",
+    "require_nolog": "bool",
+    "require_nofilter": "bool",
+    "cache": "bool",
+    "cache_size": "int",
+    "cache_min_ttl": "int",
+    "cache_max_ttl": "int",
+    "timeout_ms": "int",
+    "keepalive_sec": "int",
+    "fallback_resolver": "str",
+    "log_level": "int"
+  }
+}
