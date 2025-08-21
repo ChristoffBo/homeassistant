@@ -1,8 +1,8 @@
 {
-  "name": "DNSCrypt Proxy (klutchell base)",
+  "name": "DNSCrypt Proxy (klutchell)",
   "version": "1.0.0",
   "slug": "dnscrypt_proxy",
-  "description": "Home Assistant add-on using klutchell/dnscrypt-proxy as the base image with HA-configurable options.",
+  "description": "Home Assistant add-on wrapping klutchell/dnscrypt-proxy with configurable options.",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
@@ -19,6 +19,7 @@
     "5353/udp": "DNSCrypt-Proxy UDP listener",
     "5353/tcp": "DNSCrypt-Proxy TCP listener"
   },
+  "image": "klutchell/dnscrypt-proxy:latest",
   "options": {
     "listen_address": "0.0.0.0",
     "listen_port": 5353,
