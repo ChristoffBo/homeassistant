@@ -11,6 +11,7 @@
   "ingress": true,
   "ingress_port": 8055,
   "ingress_stream": true,
+  "ingress_entry": "/",
   "panel_admin": false,
   "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
