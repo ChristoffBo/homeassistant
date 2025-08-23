@@ -40,39 +40,73 @@ def send_message(title, message, priority=5):
 # Delete individual message by ID
 # -----------------------------
 def delete_message(message_id):
-    """Delete a specific message by its ID using CLIENT token"""
+    """Delete a specific message by its ID using CLIENT token - tries multiple methods"""
     if not message_id:
         print(f"[{BOT_NAME}] No message ID provided for deletion")
         return False
     
-    # Try both authentication methods for Gotify message deletion
-    url = f"{GOTIFY_URL}/message/{message_id}?token={CLIENT_TOKEN}"
+    print(f"[{BOT_NAME}] Attempting to delete message ID: {message_id}")
     
+    # Method 1: Query parameter (most common for Gotify)
     try:
-        # First try with query parameter (most common)
+        url = f"{GOTIFY_URL}/message/{message_id}?token={CLIENT_TOKEN}"
+        print(f"[{BOT_NAME}] DELETE attempt 1 - URL: {url[:50]}...")
+        
         r = requests.delete(url, timeout=10)
-        if r.status_code == 200:
-            print(f"[{BOT_NAME}] Successfully deleted message ID {message_id}")
-            return True
-        
-        # If that fails, try with header authentication
-        url_no_token = f"{GOTIFY_URL}/message/{message_id}"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.delete(url_no_token, headers=headers, timeout=10)
+        print(f"[{BOT_NAME}] DELETE response: {r.status_code} - {r.text}")
         
         if r.status_code == 200:
-            print(f"[{BOT_NAME}] Successfully deleted message ID {message_id} (via header)")
+            print(f"[{BOT_NAME}] ✅ Successfully deleted message ID {message_id} (query param)")
             return True
-        else:
-            print(f"[{BOT_NAME}] Failed to delete message {message_id}: {r.status_code} {r.text}")
-            # Debug: Print the exact URL and token being used
-            print(f"[{BOT_NAME}] Debug - URL: {url_no_token}")
-            print(f"[{BOT_NAME}] Debug - CLIENT_TOKEN length: {len(CLIENT_TOKEN) if CLIENT_TOKEN else 'None'}")
-            return False
+        elif r.status_code == 404:
+            print(f"[{BOT_NAME}] ⚠️ Message {message_id} not found (already deleted?)")
+            return True  # Consider this success since message is gone
             
     except Exception as e:
-        print(f"[{BOT_NAME}] Error deleting message {message_id}: {e}")
-        return False
+        print(f"[{BOT_NAME}] Method 1 failed: {e}")
+    
+    # Method 2: Header authentication
+    try:
+        url = f"{GOTIFY_URL}/message/{message_id}"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        print(f"[{BOT_NAME}] DELETE attempt 2 - URL: {url} with header")
+        
+        r = requests.delete(url, headers=headers, timeout=10)
+        print(f"[{BOT_NAME}] DELETE response (header): {r.status_code} - {r.text}")
+        
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] ✅ Successfully deleted message ID {message_id} (header)")
+            return True
+        elif r.status_code == 404:
+            print(f"[{BOT_NAME}] ⚠️ Message {message_id} not found (already deleted?)")
+            return True
+            
+    except Exception as e:
+        print(f"[{BOT_NAME}] Method 2 failed: {e}")
+    
+    # Method 3: Check if we can get message first (for debugging)
+    try:
+        get_url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
+        r = requests.get(get_url, timeout=5)
+        if r.status_code == 200:
+            messages = r.json().get('messages', [])
+            message_exists = any(msg.get('id') == message_id for msg in messages)
+            print(f"[{BOT_NAME}] Message {message_id} exists in API: {message_exists}")
+            if not message_exists:
+                print(f"[{BOT_NAME}] Message {message_id} doesn't exist, considering deleted")
+                return True
+        else:
+            print(f"[{BOT_NAME}] Cannot verify message existence: {r.status_code}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] Cannot check message existence: {e}")
+    
+    print(f"[{BOT_NAME}] ❌ All deletion methods failed for message {message_id}")
+    print(f"[{BOT_NAME}] Debug info:")
+    print(f"[{BOT_NAME}]   - GOTIFY_URL: {GOTIFY_URL}")
+    print(f"[{BOT_NAME}]   - CLIENT_TOKEN length: {len(CLIENT_TOKEN) if CLIENT_TOKEN else 'None'}")
+    print(f"[{BOT_NAME}]   - CLIENT_TOKEN starts with: {CLIENT_TOKEN[:10] if CLIENT_TOKEN else 'None'}...")
+    
+    return False
 
 # -----------------------------
 # Bulk purge all messages for an app (keep this for cleanup)
@@ -91,9 +125,40 @@ def purge_app_messages(appid):
     except Exception as e:
         print(f"[{BOT_NAME}] Purge error for app {appid}: {e}")
 
-# -----------------------------
-# Resolve numeric app_id for Jarvis app
-# -----------------------------
+def test_token_permissions():
+    """Test if CLIENT_TOKEN has proper permissions"""
+    try:
+        # Test getting messages
+        print(f"[{BOT_NAME}] Testing CLIENT_TOKEN permissions...")
+        
+        url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
+        r = requests.get(url, timeout=5)
+        
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] ✅ CLIENT_TOKEN can read messages")
+            messages = r.json().get('messages', [])
+            print(f"[{BOT_NAME}] Found {len(messages)} messages")
+            
+            # Try to find a message to test deletion on
+            if messages:
+                test_msg = messages[0]
+                print(f"[{BOT_NAME}] Test message: ID={test_msg.get('id')}, Title='{test_msg.get('title', '')[:30]}...'")
+        else:
+            print(f"[{BOT_NAME}] ❌ CLIENT_TOKEN cannot read messages: {r.status_code} {r.text}")
+            
+        # Test getting applications  
+        app_url = f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}"
+        r = requests.get(app_url, timeout=5)
+        
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] ✅ CLIENT_TOKEN can read applications")
+        else:
+            print(f"[{BOT_NAME}] ❌ CLIENT_TOKEN cannot read applications: {r.status_code}")
+            
+    except Exception as e:
+        print(f"[{BOT_NAME}] Error testing token permissions: {e}")
+
+# Test token permissions on startup
 def resolve_app_id():
     global jarvis_app_id
     try:
@@ -246,6 +311,9 @@ async def listen():
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on...")
 
+    # Test token permissions first
+    test_token_permissions()
+    
     resolve_app_id()
 
     startup_msg = random.choice([
