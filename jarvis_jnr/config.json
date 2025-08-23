@@ -35,7 +35,9 @@
     "sonarr_enabled": false,
     "sonarr_url": "",
     "sonarr_api_key": "",
-    "sonarr_time": "07:30"
+    "sonarr_time": "07:30",
+    "silent_repost": true,
+    "enable_bulk_purge": false
   },
   "schema": {
     "bot_name": "str",
@@ -63,6 +65,8 @@
     "sonarr_enabled": "bool",
     "sonarr_url": "str?",
     "sonarr_api_key": "str?",
-    "sonarr_time": "str?"
+    "sonarr_time": "str?",
+    "silent_repost": "bool",
+    "enable_bulk_purge": "bool"
   }
 }
