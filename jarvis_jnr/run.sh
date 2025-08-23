@@ -2,13 +2,12 @@
 # shellcheck shell=bash
 set -euo pipefail
 
-# Log helper
-log() { echo "[$BOT_NAME] $*"; }
-
 CONFIG_PATH=/data/options.json
 
+log() { echo "[$(jq -r '.bot_name' $CONFIG_PATH)] $*"; }
+
 # -----------------------------------------------------------
-# Export bot environment variables from options.json
+# Export bot environment variables
 # -----------------------------------------------------------
 export BOT_NAME=$(jq -r '.bot_name' $CONFIG_PATH)
 export BOT_ICON=$(jq -r '.bot_icon' $CONFIG_PATH)
@@ -19,10 +18,7 @@ export JARVIS_APP_NAME=$(jq -r '.jarvis_app_name' $CONFIG_PATH)
 
 export RETENTION_HOURS=$(jq -r '.retention_hours' $CONFIG_PATH)
 export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' $CONFIG_PATH)
-export COMMANDS_ENABLED=$(jq -r '.commands_enabled' $CONFIG_PATH)
-
-export QUIET_HOURS_ENABLED=$(jq -r '.quiet_hours_enabled' $CONFIG_PATH)
-export QUIET_HOURS=$(jq -r '.quiet_hours' $CONFIG_PATH)
+export SILENT_REPOST=$(jq -r '.silent_repost' $CONFIG_PATH)
 
 export WEATHER_ENABLED=$(jq -r '.weather_enabled' $CONFIG_PATH)
 export WEATHER_API=$(jq -r '.weather_api' $CONFIG_PATH)
@@ -43,18 +39,6 @@ export SONARR_URL=$(jq -r '.sonarr_url' $CONFIG_PATH)
 export SONARR_API_KEY=$(jq -r '.sonarr_api_key' $CONFIG_PATH)
 export SONARR_TIME=$(jq -r '.sonarr_time' $CONFIG_PATH)
 
-# -----------------------------------------------------------
-# Newly added toggles
-# -----------------------------------------------------------
-export SILENT_REPOST=$(jq -r '.silent_repost' $CONFIG_PATH)
-export ENABLE_BULK_PURGE=$(jq -r '.enable_bulk_purge' $CONFIG_PATH)
-
-# -----------------------------------------------------------
-# Log start with dynamic bot name
-# -----------------------------------------------------------
 log "Starting add-on..."
 
-# -----------------------------------------------------------
-# Launch bot
-# -----------------------------------------------------------
 exec python3 /app/bot.py
