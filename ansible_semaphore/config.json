@@ -13,7 +13,7 @@
   "init": false,
   "host_network": false,
   "ingress": true,
-  "ingress_port": 8055,
+  "ingress_port": 3000,
   "ingress_stream": false,
   "panel_admin": false,
   "map": [
