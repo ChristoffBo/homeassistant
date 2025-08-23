@@ -25,7 +25,7 @@ BEAUTIFY_ENABLED = config.get("beautify_enabled", True)
 HEADERS_CLIENT = {"X-Gotify-Key": CLIENT_TOKEN}
 HEADERS_APP = {"X-Gotify-Key": APP_TOKEN}
 
-# --- Random AI-like footers ---
+# --- Dynamic AI-like footers ---
 FOOTERS = [
     "With regards, {BOT_NAME}",
     "At your service, {BOT_NAME}",
@@ -140,7 +140,7 @@ def handle_message(msg):
         send_message(title, pretty, msg.get("priority", 5))
         delete_message(msg_id)
 
-# --- Websocket listener ---
+# --- Websocket events ---
 def on_message(ws, message):
     data = json.loads(message)
     if data.get("event") == "message":
@@ -155,7 +155,11 @@ def on_close(ws, close_status_code, close_msg):
 def on_open(ws):
     print(f"[{BOT_NAME}] Connected to Gotify stream")
 
-def start_ws():
+# --- Startup ---
+def main():
+    print(f"[{BOT_NAME}] Starting add-on...")
+    send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
+
     ws_url = f"{GOTIFY_URL.replace('http', 'ws')}/stream?token={CLIENT_TOKEN}"
     ws = websocket.WebSocketApp(
         ws_url,
@@ -165,12 +169,6 @@ def start_ws():
         on_open=on_open,
     )
     ws.run_forever()
-
-# --- Startup ---
-def main():
-    print(f"[{BOT_NAME}] Starting add-on...")
-    send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
-    start_ws()
 
 if __name__ == "__main__":
     main()
