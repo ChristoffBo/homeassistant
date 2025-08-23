@@ -147,12 +147,17 @@ def get_upcoming_movies(days=7):
         now = time.time()
         if cache["movies"] and now < cache["movies_expiry"]:
             return cache["movies"]
+
         start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-        end = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        end = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+
         url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}&apikey={RADARR_KEY}"
+        print(f"[DEBUG] Fetching Radarr upcoming movies: {url}")
         data = requests.get(url, timeout=10).json()
+        print(f"[DEBUG] Radarr returned {len(data)} items")
+
         cache["movies"] = data
-        cache["movies_expiry"] = now + 300  # cache 5 minutes
+        cache["movies_expiry"] = now + 300
         return data
     except Exception as e:
         print("Radarr error:", e)
@@ -163,10 +168,15 @@ def get_upcoming_episodes(days=7):
         now = time.time()
         if cache["series"] and now < cache["series_expiry"]:
             return cache["series"]
+
         start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-        end = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        end = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+
         url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}&apikey={SONARR_KEY}"
+        print(f"[DEBUG] Fetching Sonarr upcoming episodes: {url}")
         data = requests.get(url, timeout=10).json()
+        print(f"[DEBUG] Sonarr returned {len(data)} items")
+
         cache["series"] = data
         cache["series_expiry"] = now + 300
         return data
@@ -177,28 +187,36 @@ def get_upcoming_episodes(days=7):
 def get_movie_count():
     try:
         url = f"{RADARR_URL}/api/v3/movie?apikey={RADARR_KEY}"
-        return len(requests.get(url, timeout=10).json())
+        movies = requests.get(url, timeout=10).json()
+        return len(movies)
     except: return 0
 
 def get_series_count():
     try:
         url = f"{SONARR_URL}/api/v3/series?apikey={SONARR_KEY}"
-        return len(requests.get(url, timeout=10).json())
+        shows = requests.get(url, timeout=10).json()
+        return len(shows)
     except: return 0
 
 def get_longest_movie():
     try:
-        movies = requests.get(f"{RADARR_URL}/api/v3/movie?apikey={RADARR_KEY}", timeout=10).json()
+        url = f"{RADARR_URL}/api/v3/movie?apikey={RADARR_KEY}"
+        movies = requests.get(url, timeout=10).json()
         m = max(movies, key=lambda x: x.get("runtime",0))
         return f"🎬 Longest movie: {m.get('title')} ({m.get('runtime')} mins)"
-    except: return "🎬 Could not fetch longest movie."
+    except Exception as e:
+        print("Radarr error:", e)
+        return "🎬 Could not fetch longest movie."
 
 def get_longest_series():
     try:
-        shows = requests.get(f"{SONARR_URL}/api/v3/series?apikey={SONARR_KEY}", timeout=10).json()
+        url = f"{SONARR_URL}/api/v3/series?apikey={SONARR_KEY}"
+        shows = requests.get(url, timeout=10).json()
         s = max(shows, key=lambda x: x.get("episodeCount",0))
         return f"📺 Longest series: {s.get('title')} ({s.get('episodeCount')} episodes)"
-    except: return "📺 Could not fetch longest series."
+    except Exception as e:
+        print("Sonarr error:", e)
+        return "📺 Could not fetch longest series."
 
 # -----------------------------
 # Weather
