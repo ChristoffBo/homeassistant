@@ -34,6 +34,8 @@ SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
 SONARR_TIME = os.getenv("SONARR_TIME", "07:30")
 
 jarvis_app_id = None
+series_cache = {}
+movie_cache = {}
 
 # -----------------------------
 # Randomized AI-like responses
@@ -123,6 +125,37 @@ def beautify_message(title, raw):
     return f"{prefix} {raw.strip()}\n\n{random.choice(closings)}"
 
 # -----------------------------
+# Cache loaders
+# -----------------------------
+def load_sonarr_series():
+    global series_cache
+    try:
+        url = f"{SONARR_URL}/api/v3/series"
+        r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            series_cache = {s["id"]: s["title"] for s in data}
+            print(f"[{BOT_NAME}] ✅ Loaded {len(series_cache)} Sonarr series")
+        else:
+            print(f"[{BOT_NAME}] ❌ Failed to load Sonarr series: {r.status_code}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Sonarr series load error: {e}")
+
+def load_radarr_movies():
+    global movie_cache
+    try:
+        url = f"{RADARR_URL}/api/v3/movie"
+        r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            movie_cache = {m["id"]: m["title"] for m in data}
+            print(f"[{BOT_NAME}] ✅ Loaded {len(movie_cache)} Radarr movies")
+        else:
+            print(f"[{BOT_NAME}] ❌ Failed to load Radarr movies: {r.status_code}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Radarr movie load error: {e}")
+
+# -----------------------------
 # Modules
 # -----------------------------
 def fetch_weather():
@@ -143,15 +176,20 @@ def fetch_radarr_upcoming(days=7):
         start = datetime.now().strftime("%Y-%m-%d")
         end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}"
-        print(f"[{BOT_NAME}] 🔎 Fetching Radarr: {url}")
         r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
-        print(f"[{BOT_NAME}] 🔎 Radarr status={r.status_code}, length={len(r.text)}")
         if r.status_code != 200:
             return f"🎬 Radarr API error {r.status_code}: {r.text[:100]}"
+
         data = r.json()
-        if not data:
+        items = []
+        for e in data:
+            mid = e.get("movieId")
+            title = movie_cache.get(mid, e.get("title", "Unknown Movie"))
+            in_cinemas = e.get("inCinemas") or "TBA"
+            items.append(f"• {title} ({in_cinemas[:10]})")
+
+        if not items:
             return random.choice(no_movies_responses).format(days=days)
-        items = [f"• {m['title']} ({m.get('inCinemas','TBA')[:10]})" for m in data]
         return "🎬 Upcoming movies:\n" + "\n".join(items[:5])
     except Exception as e:
         return f"🎬 Radarr fetch failed: {e}"
@@ -163,33 +201,23 @@ def fetch_sonarr_upcoming(days=7):
         start = datetime.now().strftime("%Y-%m-%d")
         end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}"
-        print(f"[{BOT_NAME}] 🔎 Fetching Sonarr: {url}")
         r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
-        print(f"[{BOT_NAME}] 🔎 Sonarr status={r.status_code}, length={len(r.text)}")
-
         if r.status_code != 200:
             return f"📺 Sonarr API error {r.status_code}: {r.text[:100]}"
 
-        try:
-            data = r.json()
-        except Exception:
-            return f"📺 Sonarr did not return JSON. Response starts with: {r.text[:100]}"
-
+        data = r.json()
         items = []
         for e in data:
-            try:
-                title = e.get("series", {}).get("title") or e.get("seriesTitle", "Unknown Show")
-                season = e.get("seasonNumber", "?")
-                episode = e.get("episodeNumber", "?")
-                airdate = e.get("airDate", "TBA")
-                items.append(f"• {title} - S{season}E{episode} ({airdate})")
-            except Exception as ex:
-                print(f"[{BOT_NAME}] ⚠️ Could not parse episode: {ex}")
+            sid = e.get("seriesId")
+            title = series_cache.get(sid, e.get("seriesTitle", "Unknown Show"))
+            season = e.get("seasonNumber", "?")
+            episode = e.get("episodeNumber", "?")
+            airdate = e.get("airDate", "TBA")
+            items.append(f"• {title} - S{season}E{episode} ({airdate})")
 
         if not items:
             return random.choice(no_series_responses).format(days=days)
         return "📺 Upcoming episodes:\n" + "\n".join(items[:5])
-
     except Exception as e:
         return f"📺 Sonarr fetch failed: {e}"
 
@@ -288,6 +316,10 @@ async def listen():
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] 🚀 Starting...")
     resolve_app_id()
+    if SONARR_ENABLED:
+        load_sonarr_series()
+    if RADARR_ENABLED:
+        load_radarr_movies()
     startup_msg = random.choice(startup_messages)
     send_message("Startup", startup_msg, priority=5)
     loop = asyncio.new_event_loop()
