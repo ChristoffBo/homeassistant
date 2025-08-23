@@ -16,60 +16,72 @@ if command -v apt-get >/dev/null 2>&1; then
   (apt-get update || true) && (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
 fi
 
-# Read options
-ADMIN_LOGIN="$(bashio::config 'admin_login')"
-ADMIN_EMAIL="$(bashio::config 'admin_email')"
-ADMIN_NAME="$(bashio::config 'admin_name')"
-ADMIN_PASSWORD="$(bashio::config 'admin_password')"
-CONF_PATH="$(bashio::config 'config_path')"
-DATA_DIR="$(bashio::config 'data_dir')"
-PORT="$(bashio::config 'port')"
+# Read options with defaults for ingress compatibility
+ADMIN_LOGIN="$(bashio::config 'admin_login' 'admin')"
+ADMIN_EMAIL="$(bashio::config 'admin_email' 'admin@example.com')"
+ADMIN_NAME="$(bashio::config 'admin_name' 'Admin')"
+ADMIN_PASSWORD="$(bashio::config 'admin_password' 'ChangeMe!123')"
+CONF_PATH="$(bashio::config 'config_path' '/share/ansible_semaphore/config.json')"
+DATA_DIR="$(bashio::config 'data_dir' '/share/ansible_semaphore')"
+
+# Determine if ingress is enabled
+if bashio::config.true 'ingress'; then
+    PORT="8099"
+    WEB_HOST=""
+    log "Ingress mode enabled - using port ${PORT}"
+else
+    PORT="$(bashio::config 'port' '8055')"
+    WEB_HOST=""
+    log "Direct access mode - using port ${PORT}"
+fi
 
 # Basic sanity
-: "${ADMIN_LOGIN:?admin_login missing in options}"
-: "${ADMIN_PASSWORD:?admin_password missing in options}"
-: "${CONF_PATH:?config_path missing in options}"
-: "${DATA_DIR:?data_dir missing in options}"
-: "${PORT:?port missing in options}"
+: "${ADMIN_LOGIN:?admin_login missing}"
+: "${ADMIN_PASSWORD:?admin_password missing}"
+: "${CONF_PATH:?config_path missing}"
+: "${DATA_DIR:?data_dir missing}"
+: "${PORT:?port missing}"
 
 # Ensure data dir exists and is writable
 mkdir -p "${DATA_DIR}"
+mkdir -p "$(dirname "${CONF_PATH}")"
+mkdir -p /var/lib/semaphore
 chown -R root:root "${DATA_DIR}" || true
 
-# Show current config path
+# Show current config
 log "Config: ${CONF_PATH}"
 log "Data  : ${DATA_DIR}"
 log "Port  : ${PORT}"
 
-# Ensure a minimal config exists if one isn't provided (BoltDB with HTTP on :3000)
-if [ ! -s "${CONF_PATH}" ]; then
-  log "No config file found; generating minimal BoltDB config."
-  mkdir -p "$(dirname "${CONF_PATH}")"
-  cat > "${CONF_PATH}" <<'JSON'
+# Generate secure keys if not provided
+COOKIE_HASH="$(bashio::config 'cookie_hash' "$(openssl rand -hex 32)")"
+COOKIE_ENCRYPTION="$(bashio::config 'cookie_encryption' "$(openssl rand -hex 32)")"
+ACCESS_KEY_ENCRYPTION="$(bashio::config 'access_key_encryption' "$(openssl rand -hex 32)")"
+
+# Create config file with proper settings for ingress
+log "Generating Semaphore config..."
+cat > "${CONF_PATH}" <<JSON
 {
   "bolt": {
-    "file": "/var/lib/semaphore/database.boltdb"
+    "file": "${DATA_DIR}/database.boltdb"
   },
   "tmp_path": "/tmp/semaphore",
-  "cookie_hash": "change-me-cookie-hash",
-  "cookie_encryption": "change-me-cookie-key",
-  "access_key_encryption": "change-me-access-key",
-  "web_host": "",
-  "web_port": "3000",
+  "cookie_hash": "${COOKIE_HASH}",
+  "cookie_encryption": "${COOKIE_ENCRYPTION}",
+  "access_key_encryption": "${ACCESS_KEY_ENCRYPTION}",
+  "web_host": "${WEB_HOST}",
+  "web_port": "${PORT}",
   "non_auth": false
 }
 JSON
-fi
-
-# Make sure DB parent exists
-mkdir -p /var/lib/semaphore
 
 # Auto-provision / reset admin user from options
 log "Ensuring admin user exists (or resetting password)..."
 if ! semaphore user change-by-login \
   --login "${ADMIN_LOGIN}" \
   --password "${ADMIN_PASSWORD}" \
-  --config "${CONF_PATH}"; then
+  --config "${CONF_PATH}" 2>/dev/null; then
+  log "Creating new admin user..."
   semaphore user add \
     --admin \
     --login "${ADMIN_LOGIN}" \
@@ -78,9 +90,13 @@ if ! semaphore user change-by-login \
     --password "${ADMIN_PASSWORD}" \
     --config "${CONF_PATH}"
 fi
+
 log "Admin ready: ${ADMIN_LOGIN}"
 
-# Start server on configured port (override if needed)
+# Set environment variables
 export SEMAPHORE_PORT="${PORT}"
+export SEMAPHORE_CONFIG_PATH="${CONF_PATH}"
+
+# Start server
 log "Starting Semaphore on :${PORT}"
 exec semaphore server --config "${CONF_PATH}"
