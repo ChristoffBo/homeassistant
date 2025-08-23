@@ -3,8 +3,8 @@ import os, json, time, asyncio, requests, websockets, schedule, datetime
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
-APP_TOKEN = os.getenv("APP_TOKEN")       # FIXED naming
-CLIENT_TOKEN = os.getenv("CLIENT_TOKEN") # FIXED naming
+APP_TOKEN = os.getenv("APP_TOKEN")       # for posting
+CLIENT_TOKEN = os.getenv("CLIENT_TOKEN") # for reading/deleting
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
 def send_message(title, message, priority=5):
@@ -20,6 +20,12 @@ def send_message(title, message, priority=5):
         print(f"[{BOT_NAME}] Sent message: {title}")
     except Exception as e:
         print(f"[{BOT_NAME}] Failed to send message:", e)
+
+def log_action(action, details=""):
+    """Log an action both to stdout and Gotify feed."""
+    msg = f"{action} {details}".strip()
+    print(f"[{BOT_NAME}] {msg}")
+    send_message("Log", msg, priority=3)
 
 async def listen():
     """Listen to Gotify WebSocket stream for new messages."""
@@ -39,24 +45,26 @@ async def listen():
 
                     # Ignore Jarvis’ own reposts (prevents infinite loop)
                     if title.startswith(f"{BOT_NAME}:") or title.startswith(f"{BOT_ICON} {BOT_NAME}:"):
+                        log_action("Ignored own message", f"id={mid}")
                         continue
 
                     # Beautify + repost
                     if os.getenv("BEAUTIFY_ENABLED", "true") == "true":
                         new = f"✨ {message.capitalize()}"
                         send_message(title, new)
+                        log_action("Beautified message", f"id={mid}")
 
                         # delete original with CLIENT token
                         try:
                             requests.delete(f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}")
-                            print(f"[{BOT_NAME}] Deleted original message {mid}")
+                            log_action("Deleted original", f"id={mid}")
                         except Exception as e:
-                            print(f"[{BOT_NAME}] Failed to delete original message {mid}: {e}")
+                            log_action("Failed to delete original", f"id={mid} error={e}")
 
                 except Exception as e:
-                    print(f"[{BOT_NAME}] Error processing message:", e)
+                    log_action("Error processing message", str(e))
     except Exception as e:
-        print(f"[{BOT_NAME}] WebSocket connection failed:", e)
+        log_action("WebSocket connection failed", str(e))
         await asyncio.sleep(10)
         await listen()  # retry
 
@@ -72,9 +80,9 @@ def retention_cleanup():
             ts = datetime.datetime.fromisoformat(msg["date"].replace("Z","+00:00")).timestamp()
             if ts < cutoff:
                 requests.delete(f"{GOTIFY_URL}/message/{msg['id']}?token={CLIENT_TOKEN}")
-                print(f"[{BOT_NAME}] Deleted old message {msg['id']}")
+                log_action("Deleted old message", f"id={msg['id']}")
     except Exception as e:
-        print(f"[{BOT_NAME}] Retention cleanup failed:", e)
+        log_action("Retention cleanup failed", str(e))
 
 def run_scheduler():
     """Run scheduled jobs like retention cleanup."""
@@ -86,6 +94,7 @@ def run_scheduler():
 if __name__ == "__main__":
     # Startup message
     send_message("Startup", "Good Day, I am Jarvis ready to assist.")
+    log_action("Bot started")
 
     # Explicitly create new asyncio loop (fixes DeprecationWarning)
     loop = asyncio.new_event_loop()
