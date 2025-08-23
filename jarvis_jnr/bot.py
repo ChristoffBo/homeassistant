@@ -146,7 +146,6 @@ def fetch_radarr_upcoming(days=7):
         print(f"[{BOT_NAME}] 🔎 Fetching Radarr: {url}")
         r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
         print(f"[{BOT_NAME}] 🔎 Radarr status={r.status_code}, length={len(r.text)}")
-        print(f"[{BOT_NAME}] 🔎 Radarr response (first 300): {r.text[:300]}")
         if r.status_code != 200:
             return f"🎬 Radarr API error {r.status_code}: {r.text[:100]}"
         data = r.json()
@@ -166,9 +165,7 @@ def fetch_sonarr_upcoming(days=7):
         url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}"
         print(f"[{BOT_NAME}] 🔎 Fetching Sonarr: {url}")
         r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
-
         print(f"[{BOT_NAME}] 🔎 Sonarr status={r.status_code}, length={len(r.text)}")
-        print(f"[{BOT_NAME}] 🔎 Sonarr response preview: {r.text[:300]}")
 
         if r.status_code != 200:
             return f"📺 Sonarr API error {r.status_code}: {r.text[:100]}"
@@ -178,10 +175,19 @@ def fetch_sonarr_upcoming(days=7):
         except Exception:
             return f"📺 Sonarr did not return JSON. Response starts with: {r.text[:100]}"
 
-        if not data:
-            return random.choice(no_series_responses).format(days=days)
+        items = []
+        for e in data:
+            try:
+                title = e.get("series", {}).get("title") or e.get("seriesTitle", "Unknown Show")
+                season = e.get("seasonNumber", "?")
+                episode = e.get("episodeNumber", "?")
+                airdate = e.get("airDate", "TBA")
+                items.append(f"• {title} - S{season}E{episode} ({airdate})")
+            except Exception as ex:
+                print(f"[{BOT_NAME}] ⚠️ Could not parse episode: {ex}")
 
-        items = [f"• {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in data]
+        if not items:
+            return random.choice(no_series_responses).format(days=days)
         return "📺 Upcoming episodes:\n" + "\n".join(items[:5])
 
     except Exception as e:
