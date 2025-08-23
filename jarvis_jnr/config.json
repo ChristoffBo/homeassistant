@@ -9,7 +9,6 @@
   "init": false,
   "ingress": false,
   "map": ["share:rw"],
-  "image": "local/jarvis_jnr",
   "options": {
     "bot_name": "Jarvis Jnr",
     "bot_icon": "🤖",
