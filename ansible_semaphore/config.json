@@ -12,9 +12,9 @@
   "boot": "auto",
   "init": false,
   "host_network": false,
-  "ingress": true,
+  "ingress": false,
   "ingress_port": 8055,
-  "ingress_stream": true,
+  "ingress_stream": false,
   "panel_admin": false,
   "map": [
     "share:rw"
@@ -26,7 +26,7 @@
   "ports_description": {
     "8055/tcp": "Semaphore Web UI"
   },
-  "webui": "http://[HOST]:[PORT:18055]",
+  "webui": "http://[HOST]:[PORT:8055]",
   "environment": {
     "SEMAPHORE_PORT": "8055",
     "SEMAPHORE_DB_DIALECT": "bolt",
