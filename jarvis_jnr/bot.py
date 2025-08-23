@@ -15,20 +15,29 @@ BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")      # for posting
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")  # for reading/deleting
-SELF_APP_ID = os.getenv("SELF_APP_ID")         # numeric appid of Jarvis
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() == "true"
 
+# Marker used to detect Jarvis' own messages
+SELF_MARKER = "[X-JARVIS]"
+
 # -------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------
-def send_message(title, message, priority=5):
+def send_message(title, message, priority=5, silent=False):
     """Send a message to Gotify using the APP token."""
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
+    payload = {
+        "title": f"{BOT_ICON} {BOT_NAME}: {title}",
+        "message": f"{message}\n{SELF_MARKER}",   # tag message with marker
+        "priority": priority,
+    }
+    if silent:
+        payload["extras"] = {"client::notification": {"silent": True}}
+
     try:
-        r = requests.post(url, json=data, timeout=5)
+        r = requests.post(url, json=payload, timeout=5)
         r.raise_for_status()
         print(f"[{BOT_NAME}] Sent message: {title}")
     except Exception as e:
@@ -81,17 +90,16 @@ async def listen():
                     title = data.get("title", "")
                     message = data.get("message", "")
                     mid = data.get("id")
-                    appid = data.get("appid")
 
-                    # Skip Jarvis' own messages (avoid infinite loop)
-                    if SELF_APP_ID and str(appid) == str(SELF_APP_ID):
+                    # Skip messages Jarvis has created (marked with SELF_MARKER)
+                    if message and SELF_MARKER in message:
                         print(f"[{BOT_NAME}] Ignored own message id={mid}")
                         continue
 
                     # Beautify + repost + delete
                     if BEAUTIFY_ENABLED:
-                        new = f"✨ {message.capitalize()}"
-                        send_message(title, new)
+                        new = f"✨ {message.strip().capitalize()}"
+                        send_message(title, new, silent=True)
                         await asyncio.sleep(0.5)  # give Gotify time to commit
                         delete_message(mid)
 
@@ -106,7 +114,7 @@ async def listen():
 # Main
 # -------------------------------------------------------------------
 if __name__ == "__main__":
-    # Startup announcement
+    # Startup announcement (silent false so user sees it once)
     send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
 
     # Scheduler for cleanup
