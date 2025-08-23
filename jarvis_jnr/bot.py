@@ -3,15 +3,14 @@ import os, json, time, asyncio, requests, websockets, schedule, datetime
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
-APP_TOKEN = os.getenv("APP_TOKEN")       # for posting
-CLIENT_TOKEN = os.getenv("CLIENT_TOKEN") # for reading/deleting
+CLIENT_TOKEN = os.getenv("CLIENT_TOKEN")
+APP_TOKEN = os.getenv("APP_TOKEN")
+GOTIFY_APP_ID = int(os.getenv("GOTIFY_APP_ID", "0"))
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
+BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() == "true"
 
 def send_message(title, message, priority=5):
-    """Send a message back to Gotify (using APP token)."""
-    if not APP_TOKEN:
-        print(f"[{BOT_NAME}] No APP_TOKEN configured, cannot send messages")
-        return
+    """Send a message back to Gotify using the App Token."""
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
     try:
@@ -19,19 +18,10 @@ def send_message(title, message, priority=5):
         r.raise_for_status()
         print(f"[{BOT_NAME}] Sent message: {title}")
     except Exception as e:
-        print(f"[{BOT_NAME}] Failed to send message:", e)
-
-def log_action(action, details=""):
-    """Log an action both to stdout and Gotify feed."""
-    msg = f"{action} {details}".strip()
-    print(f"[{BOT_NAME}] {msg}")
-    send_message("Log", msg, priority=3)
+        print(f"[{BOT_NAME}] Failed to send message: {e}")
 
 async def listen():
-    """Listen to Gotify WebSocket stream for new messages."""
-    if not CLIENT_TOKEN:
-        print(f"[{BOT_NAME}] No CLIENT_TOKEN configured, cannot listen")
-        return
+    """Listen to Gotify WebSocket stream (using client token)."""
     ws_url = f"{GOTIFY_URL.replace('http', 'ws')}/stream?token={CLIENT_TOKEN}"
     print(f"[{BOT_NAME}] Connecting to {ws_url}...")
     try:
@@ -39,39 +29,34 @@ async def listen():
             async for msg in ws:
                 try:
                     data = json.loads(msg)
+                    mid = data.get("id")
+                    appid = data.get("appid")
                     title = data.get("title", "")
                     message = data.get("message", "")
-                    mid = data.get("id")
 
-                    # Ignore Jarvis’ own reposts (prevents infinite loop)
-                    if title.startswith(f"{BOT_NAME}:") or title.startswith(f"{BOT_ICON} {BOT_NAME}:"):
-                        log_action("Ignored own message", f"id={mid}")
+                    # ✅ Skip Jarvis’ own messages
+                    if appid == GOTIFY_APP_ID:
+                        print(f"[{BOT_NAME}] Ignored own message id={mid}")
                         continue
 
-                    # Beautify + repost
-                    if os.getenv("BEAUTIFY_ENABLED", "true") == "true":
+                    if BEAUTIFY_ENABLED:
                         new = f"✨ {message.capitalize()}"
                         send_message(title, new)
-                        log_action("Beautified message", f"id={mid}")
-
-                        # delete original with CLIENT token
                         try:
                             requests.delete(f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}")
-                            log_action("Deleted original", f"id={mid}")
+                            print(f"[{BOT_NAME}] Deleted original id={mid}")
                         except Exception as e:
-                            log_action("Failed to delete original", f"id={mid} error={e}")
+                            print(f"[{BOT_NAME}] Failed to delete message {mid}: {e}")
 
                 except Exception as e:
-                    log_action("Error processing message", str(e))
+                    print(f"[{BOT_NAME}] Error processing message: {e}")
     except Exception as e:
-        log_action("WebSocket connection failed", str(e))
+        print(f"[{BOT_NAME}] WebSocket connection failed: {e}")
         await asyncio.sleep(10)
-        await listen()  # retry
+        await listen()
 
 def retention_cleanup():
-    """Delete old messages past retention_hours (uses CLIENT token)."""
-    if not CLIENT_TOKEN:
-        return
+    """Delete old messages past retention_hours."""
     try:
         url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
         r = requests.get(url, timeout=5).json()
@@ -80,9 +65,9 @@ def retention_cleanup():
             ts = datetime.datetime.fromisoformat(msg["date"].replace("Z","+00:00")).timestamp()
             if ts < cutoff:
                 requests.delete(f"{GOTIFY_URL}/message/{msg['id']}?token={CLIENT_TOKEN}")
-                log_action("Deleted old message", f"id={msg['id']}")
+                print(f"[{BOT_NAME}] Deleted old message {msg['id']}")
     except Exception as e:
-        log_action("Retention cleanup failed", str(e))
+        print(f"[{BOT_NAME}] Retention cleanup failed: {e}")
 
 def run_scheduler():
     """Run scheduled jobs like retention cleanup."""
@@ -92,15 +77,10 @@ def run_scheduler():
         time.sleep(1)
 
 if __name__ == "__main__":
-    # Startup message
     send_message("Startup", "Good Day, I am Jarvis ready to assist.")
-    log_action("Bot started")
 
-    # Explicitly create new asyncio loop (fixes DeprecationWarning)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
-    # Start listener + scheduler
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
 
