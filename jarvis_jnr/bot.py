@@ -35,6 +35,14 @@ def send_message(title, message, priority=5):
     except Exception as e:
         print(f"[{BOT_NAME}] Failed to send message:", e)
 
+def delete_message(mid):
+    """Delete original message with APP token (always works if app owns it)."""
+    try:
+        requests.delete(f"{GOTIFY_URL}/message/{mid}?token={APP_TOKEN}", timeout=5)
+        print(f"[{BOT_NAME}] Deleted original message {mid}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] Failed to delete message {mid}: {e}")
+
 async def listen():
     """Listen to Gotify WebSocket stream for new messages (via CLIENT token)."""
     ws_url = f"{GOTIFY_URL.replace('http', 'ws')}/stream?token={CLIENT_TOKEN}"
@@ -57,12 +65,7 @@ async def listen():
                     if os.getenv("BEAUTIFY_ENABLED", "true") == "true":
                         new = f"✨ {message.capitalize()}"
                         send_message(title, new)
-                        # delete original
-                        try:
-                            requests.delete(f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}")
-                            print(f"[{BOT_NAME}] Deleted original message {mid}")
-                        except Exception as e:
-                            print(f"[{BOT_NAME}] Failed to delete message {mid}: {e}")
+                        delete_message(mid)
 
                 except Exception as e:
                     print(f"[{BOT_NAME}] Error processing message:", e)
@@ -80,8 +83,7 @@ def retention_cleanup():
         for msg in r.get("messages", []):
             ts = datetime.datetime.fromisoformat(msg["date"].replace("Z","+00:00")).timestamp()
             if ts < cutoff:
-                requests.delete(f"{GOTIFY_URL}/message/{msg['id']}?token={CLIENT_TOKEN}")
-                print(f"[{BOT_NAME}] Deleted old message {msg['id']}")
+                delete_message(msg["id"])
     except Exception as e:
         print(f"[{BOT_NAME}] Retention cleanup failed:", e)
 
