@@ -66,9 +66,6 @@ log "Generating Semaphore config..."
 cat > "${CONF_PATH}" <<JSON
 {
   "dialect": "bolt",
-  "bolt": {
-    "file": "${DATA_DIR}/database.boltdb"
-  },
   "tmp_path": "/tmp/semaphore",
   "cookie_hash": "${COOKIE_HASH}",
   "cookie_encryption": "${COOKIE_ENCRYPTION}",
@@ -76,18 +73,25 @@ cat > "${CONF_PATH}" <<JSON
   "web_host": "${WEB_HOST}",
   "web_port": "${PORT}",
   "non_auth": false,
-  "runner": {
-    "api_url": "http://127.0.0.1:${PORT}",
-    "config_file": "${CONF_PATH}",
-    "max_parallel_tasks": 5
-  }
+  "git_client": "go_git",
+  "max_tasks_per_template": 5
 }
 JSON
 
 # Initialize database if it doesn't exist
+log "Checking database initialization..."
 if [ ! -f "${DATA_DIR}/database.boltdb" ]; then
-  log "Initializing BoltDB database..."
-  semaphore setup --config "${CONF_PATH}" || true
+  log "Running Semaphore setup with BoltDB..."
+  
+  # Run setup with environment variables to ensure BoltDB
+  SEMAPHORE_DB_DIALECT="bolt" \
+  SEMAPHORE_DB_PATH="${DATA_DIR}/database.boltdb" \
+  SEMAPHORE_ADMIN="${ADMIN_LOGIN}" \
+  SEMAPHORE_ADMIN_EMAIL="${ADMIN_EMAIL}" \
+  SEMAPHORE_ADMIN_NAME="${ADMIN_NAME}" \
+  SEMAPHORE_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
+  SEMAPHORE_CONFIG="${CONF_PATH}" \
+    semaphore setup --config "${CONF_PATH}" || log "Setup failed, continuing..."
 fi
 
 # Auto-provision / reset admin user from options
@@ -112,11 +116,14 @@ log "Admin ready: ${ADMIN_LOGIN}"
 export SEMAPHORE_PORT="${PORT}"
 export SEMAPHORE_CONFIG_PATH="${CONF_PATH}"
 export SEMAPHORE_DB_DIALECT="bolt"
-export SEMAPHORE_DB_HOST=""
-export SEMAPHORE_DB_NAME=""
-export SEMAPHORE_DB_USER=""
-export SEMAPHORE_DB_PASS=""
+export SEMAPHORE_DB_PATH="${DATA_DIR}/database.boltdb"
 export SEMAPHORE_TMP_PATH="/tmp/semaphore"
+
+# Clear any MySQL environment variables that might interfere
+unset SEMAPHORE_DB_HOST
+unset SEMAPHORE_DB_USER
+unset SEMAPHORE_DB_PASS
+unset SEMAPHORE_DB_NAME
 
 # Start server
 log "Starting Semaphore on :${PORT}"
