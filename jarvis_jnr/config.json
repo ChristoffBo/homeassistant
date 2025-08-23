@@ -2,7 +2,7 @@
   "name": "Jarvis Jnr",
   "version": "1.0.0",
   "slug": "jarvis_jnr",
-  "description": "Gotify Smart Bot assistant for beautifying, cleaning, summarizing, and managing notifications.",
+  "description": "Gotify Smart Bot assistant for beautifying, cleaning, summarizing, and managing notifications (with Weather, Radarr, Sonarr integrations).",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
@@ -18,9 +18,7 @@
     "jarvis_app_name": "Jarvis",
     "retention_hours": 24,
     "beautify_enabled": true,
-    "commands_enabled": true,
-    "quiet_hours_enabled": true,
-    "quiet_hours": "22:00-06:00",
+    "silent_repost": true,
     "weather_enabled": false,
     "weather_api": "openweathermap",
     "weather_api_key": "",
@@ -35,9 +33,7 @@
     "sonarr_enabled": false,
     "sonarr_url": "",
     "sonarr_api_key": "",
-    "sonarr_time": "07:30",
-    "silent_repost": true,
-    "enable_bulk_purge": false
+    "sonarr_time": "07:30"
   },
   "schema": {
     "bot_name": "str",
@@ -48,9 +44,7 @@
     "jarvis_app_name": "str",
     "retention_hours": "int",
     "beautify_enabled": "bool",
-    "commands_enabled": "bool",
-    "quiet_hours_enabled": "bool",
-    "quiet_hours": "str",
+    "silent_repost": "bool",
     "weather_enabled": "bool",
     "weather_api": "str",
     "weather_api_key": "str?",
@@ -65,8 +59,6 @@
     "sonarr_enabled": "bool",
     "sonarr_url": "str?",
     "sonarr_api_key": "str?",
-    "sonarr_time": "str?",
-    "silent_repost": "bool",
-    "enable_bulk_purge": "bool"
+    "sonarr_time": "str?"
   }
 }
