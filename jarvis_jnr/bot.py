@@ -7,13 +7,15 @@ CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
 APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
-# Fetch Jarvis appid at startup (so we can filter out its own posts)
+# Fetch Jarvis appid at startup
 JARVIS_APPID = None
 try:
     apps = requests.get(f"{GOTIFY_URL}/application?token={APP_TOKEN}", timeout=5).json()
-    if isinstance(apps, list) and len(apps) > 0:
-        JARVIS_APPID = apps[0].get("id")
-        print(f"[Jarvis Jnr] Detected own appid = {JARVIS_APPID}")
+    for app in apps:
+        if app.get("token") == APP_TOKEN:
+            JARVIS_APPID = app.get("id")
+            print(f"[Jarvis Jnr] Detected own appid = {JARVIS_APPID}")
+            break
 except Exception as e:
     print("[Jarvis Jnr] Failed to detect appid:", e)
 
@@ -41,8 +43,12 @@ async def listen():
                     mid = data.get("id")
                     appid = data.get("appid")
 
-                    # Skip Jarvis’ own posts
+                    # --- Prevent infinite loop ---
+                    # Skip if posted by Jarvis appid
                     if JARVIS_APPID and appid == JARVIS_APPID:
+                        continue
+                    # Skip if title already starts with Jarvis
+                    if title.startswith(f"{BOT_ICON} {BOT_NAME}"):
                         continue
 
                     # Beautify
