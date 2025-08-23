@@ -1,4 +1,4 @@
-import os, json, time, asyncio, requests, websockets, schedule, datetime
+import os, json, time, asyncio, requests, websockets, schedule, datetime, random
 
 # -----------------------------
 # Config from environment (set in run.sh from options.json)
@@ -21,7 +21,7 @@ def send_message(title, message, priority=5):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {
         "title": f"{BOT_ICON} {BOT_NAME}: {title}",
-        "message": f"✨ {message.strip()}\n\n{BOT_ICON} With regards, {BOT_NAME}",
+        "message": message,
         "priority": priority,
     }
     try:
@@ -32,15 +32,16 @@ def send_message(title, message, priority=5):
         print(f"[{BOT_NAME}] Failed to send message: {e}")
 
 # -----------------------------
-# Delete message with retries
+# Delete message with retries (using headers)
 # -----------------------------
 def delete_message(mid):
     if not mid:
         return
-    url = f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}"
+    url = f"{GOTIFY_URL}/message/{mid}"
+    headers = {"X-Gotify-Key": CLIENT_TOKEN}
     for attempt in range(3):
         try:
-            r = requests.delete(url, timeout=5)
+            r = requests.delete(url, headers=headers, timeout=5)
             if r.status_code == 200:
                 print(f"[{BOT_NAME}] Deleted original message {mid}")
                 return True
@@ -51,7 +52,7 @@ def delete_message(mid):
                 print(f"[{BOT_NAME}] Delete {mid} failed: {r.status_code} {r.text}")
         except Exception as e:
             print(f"[{BOT_NAME}] Delete attempt {attempt+1} error: {e}")
-        time.sleep(2 ** attempt)  # backoff
+        time.sleep(2 ** attempt)  # exponential backoff
     return False
 
 # -----------------------------
@@ -60,7 +61,7 @@ def delete_message(mid):
 def resolve_app_id():
     global jarvis_app_id
     try:
-        r = requests.get(f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}", timeout=5)
+        r = requests.get(f"{GOTIFY_URL}/application", headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
         r.raise_for_status()
         apps = r.json()
         for app in apps:
@@ -73,12 +74,43 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] Failed to resolve app id: {e}")
 
 # -----------------------------
+# AI-like beautifier
+# -----------------------------
+def beautify_message(title, raw):
+    text = raw.strip()
+    lower = text.lower()
+
+    # Choose emoji prefix based on keywords
+    prefix = "💡"
+    if "error" in lower or "failed" in lower:
+        prefix = "💀"
+    elif "success" in lower or "completed" in lower or "done" in lower:
+        prefix = "✅"
+    elif "warning" in lower:
+        prefix = "⚠️"
+    elif "start" in lower or "starting" in lower:
+        prefix = "🚀"
+
+    # Rotating closing signatures
+    closings = [
+        f"{BOT_ICON} With regards, {BOT_NAME}",
+        f"✨ Processed intelligently by {BOT_NAME}",
+        f"🧩 Ever at your service, {BOT_NAME}",
+        f"🤖 Yours truly, {BOT_NAME}",
+    ]
+    closing = random.choice(closings)
+
+    # Build beautified message
+    beautified = f"{prefix} {text}\n\n{closing}"
+    return beautified
+
+# -----------------------------
 # Retention cleanup
 # -----------------------------
 def retention_cleanup():
     try:
-        url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
-        r = requests.get(url, timeout=5)
+        url = f"{GOTIFY_URL}/message"
+        r = requests.get(url, headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
         r.raise_for_status()
         msgs = r.json().get("messages", [])
         cutoff = time.time() - (RETENTION_HOURS * 3600)
@@ -125,7 +157,7 @@ async def listen():
                     print(f"[{BOT_NAME}] Processing message id={mid} title='{title}'")
 
                     # Beautify + repost (silent if enabled)
-                    beautified = f"✨ {message.strip().capitalize()}"
+                    beautified = beautify_message(title, message)
                     repost_priority = 0 if SILENT_REPOST else 5
                     send_message(title, beautified, priority=repost_priority)
 
@@ -147,8 +179,14 @@ if __name__ == "__main__":
 
     resolve_app_id()
 
-    # Startup message always normal priority
-    send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.", priority=5)
+    # Startup message (normal priority)
+    startup_msg = random.choice([
+        f"Good Day, I am {BOT_NAME}, ready to assist.",
+        f"Greetings, {BOT_NAME} is now online and standing by.",
+        f"🚀 {BOT_NAME} systems initialized and operational.",
+        f"{BOT_NAME} reporting for duty.",
+    ])
+    send_message("Startup", startup_msg, priority=5)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
