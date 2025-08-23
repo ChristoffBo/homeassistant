@@ -22,11 +22,13 @@
   "options": {
     "admin_login": "admin",
     "admin_password": "changeme",
-    "config_path": "/share/ansible_semaphore"
+    "config_path": "/share/ansible_semaphore",
+    "schedule_timezone": "Africa/Johannesburg"
   },
   "schema": {
     "admin_login": "str",
     "admin_password": "password",
-    "config_path": "str"
+    "config_path": "str",
+    "schedule_timezone": "str"
   }
 }
