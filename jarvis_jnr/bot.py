@@ -1,4 +1,4 @@
-import os, json, time, asyncio, requests, websockets, schedule, datetime, random, difflib
+import os, json, time, asyncio, requests, websockets, schedule, datetime, random
 
 # -----------------------------
 # Config from environment
@@ -14,17 +14,17 @@ APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
 # Radarr
-RADARR_ENABLED = os.getenv("RADARR_ENABLED", "false").lower() in ("1", "true", "yes")
+RADARR_ENABLED = os.getenv("RADARR_ENABLED", "false").lower() in ("1","true","yes")
 RADARR_URL = os.getenv("RADARR_URL", "")
 RADARR_API_KEY = os.getenv("RADARR_API_KEY", "")
 
 # Sonarr
-SONARR_ENABLED = os.getenv("SONARR_ENABLED", "false").lower() in ("1", "true", "yes")
+SONARR_ENABLED = os.getenv("SONARR_ENABLED", "false").lower() in ("1","true","yes")
 SONARR_URL = os.getenv("SONARR_URL", "")
 SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
 
-# Weather (Norwegian Met API – no API key needed)
-WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() in ("1", "true", "yes")
+# Weather (MET Norway API)
+WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() in ("1","true","yes")
 WEATHER_LAT = os.getenv("WEATHER_LAT", "")
 WEATHER_LON = os.getenv("WEATHER_LON", "")
 
@@ -32,15 +32,11 @@ jarvis_app_id = None
 radarr_cache, sonarr_cache = {}, {}
 
 # -----------------------------
-# Send message
+# Gotify Messaging
 # -----------------------------
 def send_message(title, message, priority=5):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    data = {
-        "title": f"{BOT_ICON} {BOT_NAME}: {title}",
-        "message": message,
-        "priority": priority,
-    }
+    data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
     try:
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
@@ -49,9 +45,6 @@ def send_message(title, message, priority=5):
         print(f"[{BOT_NAME}] Send failed: {e}")
         return False
 
-# -----------------------------
-# Delete message
-# -----------------------------
 def delete_message(msg_id):
     if not msg_id: return False
     try:
@@ -59,6 +52,23 @@ def delete_message(msg_id):
         r = requests.delete(url, timeout=5)
         return r.status_code == 200
     except: return False
+
+# -----------------------------
+# Resolve Jarvis App ID
+# -----------------------------
+def resolve_app_id():
+    global jarvis_app_id
+    try:
+        url = f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}"
+        r = requests.get(url, timeout=5)
+        r.raise_for_status()
+        for app in r.json():
+            if app.get("name") == APP_NAME:
+                jarvis_app_id = app.get("id")
+                print(f"[{BOT_NAME}] Resolved {APP_NAME} → id {jarvis_app_id}")
+                return
+    except Exception as e:
+        print(f"[{BOT_NAME}] Failed to resolve app id: {e}")
 
 # -----------------------------
 # Beautify
@@ -105,7 +115,7 @@ def cleanup_old_jarvis():
     except: pass
 
 # -----------------------------
-# Radarr / Sonarr Functions
+# Radarr / Sonarr
 # -----------------------------
 def get_radarr_movies():
     global radarr_cache
@@ -127,20 +137,24 @@ def get_sonarr_series():
         return data
     except: return list(sonarr_cache.values())
 
-def get_upcoming_movies():
+def get_upcoming_movies(days=7):
     try:
-        url = f"{RADARR_URL.rstrip('/')}/api/v3/calendar?apikey={RADARR_API_KEY}"
+        start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        end = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"{RADARR_URL.rstrip('/')}/api/v3/calendar?apikey={RADARR_API_KEY}&start={start}&end={end}"
         return requests.get(url, timeout=10).json()
     except: return []
 
-def get_upcoming_episodes():
+def get_upcoming_episodes(days=7):
     try:
-        url = f"{SONARR_URL.rstrip('/')}/api/v3/calendar?apikey={SONARR_API_KEY}"
+        start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        end = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"{SONARR_URL.rstrip('/')}/api/v3/calendar?apikey={SONARR_API_KEY}&start={start}&end={end}"
         return requests.get(url, timeout=10).json()
     except: return []
 
 # -----------------------------
-# Weather (MET Norway API)
+# Weather
 # -----------------------------
 def get_weather():
     if not WEATHER_ENABLED: return "Weather disabled."
@@ -148,10 +162,9 @@ def get_weather():
         url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={WEATHER_LAT}&lon={WEATHER_LON}"
         r = requests.get(url, headers={"User-Agent":"JarvisBot/1.0"}, timeout=10).json()
         d = r["properties"]["timeseries"][0]["data"]["instant"]["details"]
-        temp, wind = d["air_temperature"], d["wind_speed"]
-        return f"🌤 Current weather: {temp}°C, wind {wind} km/h"
+        return f"🌤 {d['air_temperature']}°C, wind {d['wind_speed']} km/h"
     except Exception as e:
-        return f"Weather fetch failed: {e}"
+        return f"Weather error: {e}"
 
 # -----------------------------
 # Command Handler
@@ -159,48 +172,37 @@ def get_weather():
 def handle_command(msg):
     q = msg.lower()
 
-    # Movies & Series Counts
-    if "how many movies" in q or "movie count" in q:
-        return f"🎬 You have {len(get_radarr_movies())} movies."
-    if "how many series" in q or "series count" in q:
-        return f"📺 You have {len(get_sonarr_series())} series."
+    # Counts
+    if "movie count" in q or "how many movies" in q:
+        return f"🎬 {len(get_radarr_movies())} movies in collection."
+    if "series count" in q or "how many series" in q:
+        return f"📺 {len(get_sonarr_series())} series in collection."
 
-    # Longest / Shortest Movies
+    # Movies longest/shortest
     if "longest movie" in q:
-        movies = get_radarr_movies()
-        if not movies: return "No movies found."
-        m = max(movies, key=lambda x:x.get("runtime",0) or 0)
-        return f"🎬 Longest movie: {m['title']} ({m.get('runtime',0)} mins)"
+        m = max(get_radarr_movies(), key=lambda x:x.get("runtime",0), default=None)
+        return f"🎬 Longest movie: {m['title']} ({m.get('runtime',0)} mins)" if m else "No movies."
     if "shortest movie" in q:
-        movies = get_radarr_movies()
-        if not movies: return "No movies found."
-        m = min(movies, key=lambda x:x.get("runtime",9999) or 9999)
-        return f"🎬 Shortest movie: {m['title']} ({m.get('runtime',0)} mins)"
+        m = min(get_radarr_movies(), key=lambda x:x.get("runtime",9999), default=None)
+        return f"🎬 Shortest movie: {m['title']} ({m.get('runtime',0)} mins)" if m else "No movies."
 
-    # Largest / Longest Series
-    if "largest series" in q or "most episodes" in q:
-        series = get_sonarr_series()
-        if not series: return "No series found."
-        s = max(series, key=lambda x:x.get("episodeCount",0))
-        return f"📺 Largest series: {s['title']} ({s.get('episodeCount',0)} episodes)"
+    # Series largest/longest
+    if "largest series" in q:
+        s = max(get_sonarr_series(), key=lambda x:x.get("episodeCount",0), default=None)
+        return f"📺 Largest series: {s['title']} ({s.get('episodeCount',0)} episodes)" if s else "No series."
     if "longest series" in q:
-        series = get_sonarr_series()
-        if not series: return "No series found."
-        s = max(series, key=lambda x:x.get("seasonCount",0))
-        return f"📺 Longest series: {s['title']} ({s.get('seasonCount',0)} seasons)"
+        s = max(get_sonarr_series(), key=lambda x:x.get("seasonCount",0), default=None)
+        return f"📺 Longest series: {s['title']} ({s.get('seasonCount',0)} seasons)" if s else "No series."
 
-    # Upcoming Movies / Series
-    if "upcoming movies" in q:
+    # Upcoming
+    if "upcoming movie" in q:
         items = get_upcoming_movies()
-        if not items: return "No upcoming movies this week."
-        lines = [f"• {m['title']} ({m['inCinemas'][:10]})" for m in items[:5]]
-        return "🎬 Upcoming movies:\n" + "\n".join(lines)
-    if "upcoming series" in q or "upcoming shows" in q:
+        if not items: return "🎬 No upcoming movies."
+        return "🎬 Upcoming movies:\n" + "\n".join([f"• {m['title']} ({m['inCinemas'][:10]})" for m in items[:5]])
+    if "upcoming series" in q or "upcoming show" in q:
         items = get_upcoming_episodes()
-        if not items: return "No upcoming episodes this week."
-        lines = [f"• {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})"
-                 for e in items[:5] if e.get("series")]
-        return "📺 Upcoming episodes:\n" + "\n".join(lines)
+        if not items: return "📺 No upcoming episodes."
+        return "📺 Upcoming episodes:\n" + "\n".join([f"• {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in items[:5] if e.get('series')])
 
     # Weather
     if "weather" in q:
@@ -210,14 +212,14 @@ def handle_command(msg):
     if "help" in q:
         return (
             "🤖 Commands:\n"
-            "- Upcoming movies / series\n"
-            "- Movie count / Series count\n"
-            "- Longest / Shortest movie\n"
-            "- Longest / Largest series\n"
-            "- Weather\n"
+            "- movie count / series count\n"
+            "- longest movie / shortest movie\n"
+            "- largest series / longest series\n"
+            "- upcoming movies / upcoming series\n"
+            "- weather"
         )
 
-    return f"I didn’t understand. Try '{BOT_NAME} help' for commands."
+    return f"🤖 Unknown. Try '{BOT_NAME} help'."
 
 # -----------------------------
 # Scheduler
@@ -230,34 +232,29 @@ def run_scheduler():
         time.sleep(1)
 
 # -----------------------------
-# Websocket Listener
+# Listener
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         async for raw in ws:
-            try:
-                data = json.loads(raw)
-                msg_id, appid, title, message = data["id"], data["appid"], data["title"], data["message"]
-
-                if appid == jarvis_app_id: continue
-                if not msg_id: continue
-
+            data = json.loads(raw)
+            mid, appid, title, message = data["id"], data["appid"], data["title"], data["message"]
+            if appid == jarvis_app_id: continue
+            if BOT_NAME.lower() in (title+message).lower():
                 resp = handle_command(message)
-                if resp:
-                    send_message("Command Response", beautify_message(resp))
-                    delete_message(msg_id)
-
-            except Exception as e:
-                print(f"[{BOT_NAME}] WS error: {e}")
+                send_message("Response", beautify_message(resp))
+                delete_message(mid)
+            else:
+                send_message(title, beautify_message(message))
+                delete_message(mid)
 
 # -----------------------------
 # Main
 # -----------------------------
 if __name__ == "__main__":
     resolve_app_id()
-    send_message("Startup", f"🚀 {BOT_NAME} systems online.", priority=5)
-
+    send_message("Startup", f"🚀 {BOT_NAME} is online.", 5)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
