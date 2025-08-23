@@ -16,7 +16,8 @@ SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
 WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() in ("1", "true", "yes")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
+WEATHER_LAT = float(os.getenv("WEATHER_LAT", "-26.2041"))
+WEATHER_LON = float(os.getenv("WEATHER_LON", "28.0473"))
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Johannesburg")
 WEATHER_TIME = os.getenv("WEATHER_TIME", "07:00")
 
@@ -159,15 +160,28 @@ def load_radarr_movies():
 # Modules
 # -----------------------------
 def fetch_weather():
-    if not WEATHER_ENABLED or not WEATHER_API_KEY: 
+    if not WEATHER_ENABLED:
         return None
     try:
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={WEATHER_CITY}&appid={WEATHER_API_KEY}&units=metric"
-        r = requests.get(url, timeout=5).json()
-        return f"🌤 The weather in {WEATHER_CITY}: {r['main']['temp']}°C, {r['weather'][0]['description']}."
+        url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={WEATHER_LAT}&lon={WEATHER_LON}"
+        headers = {"User-Agent": f"{BOT_NAME}/1.0"}
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        timeseries = data.get("properties", {}).get("timeseries", [])
+        if not timeseries:
+            return "🌤 Sorry, I couldn’t fetch weather data right now."
+
+        current = timeseries[0]["data"]["instant"]["details"]
+        temp = current.get("air_temperature")
+        humidity = current.get("relative_humidity")
+        wind = current.get("wind_speed")
+
+        return f"🌤 The weather in {WEATHER_CITY}: {temp}°C, {humidity}% humidity, wind {wind} m/s."
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Weather error: {e}")
-        return "🌤 Sorry, I couldn’t fetch the weather right now."
+        return "🌤 Sorry, I couldn’t fetch weather right now."
 
 def fetch_radarr_upcoming(days=7):
     if not RADARR_ENABLED or not RADARR_API_KEY: 
@@ -316,10 +330,8 @@ async def listen():
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] 🚀 Starting...")
     resolve_app_id()
-    if SONARR_ENABLED:
-        load_sonarr_series()
-    if RADARR_ENABLED:
-        load_radarr_movies()
+    if SONARR_ENABLED: load_sonarr_series()
+    if RADARR_ENABLED: load_radarr_movies()
     startup_msg = random.choice(startup_messages)
     send_message("Startup", startup_msg, priority=5)
     loop = asyncio.new_event_loop()
