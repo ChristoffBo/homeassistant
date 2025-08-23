@@ -1,105 +1,40 @@
 #!/usr/bin/env bash
-# shellcheck shell=bash
-set -euo pipefail
+set -e
 
-# Log helper
-log() { echo "[semaphore-addon] $*"; }
-
-# Wait for /data/options.json (bashio) to be ready
-if ! command -v bashio >/dev/null 2>&1; then
-  log "bashio not found; this must be a HA add-on base image. Exiting."
-  exit 1
-fi
-
-# Best-effort package refresh on boot (won't fail if offline)
-if command -v apt-get >/dev/null 2>&1; then
-  (apt-get update || true) && (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
-fi
-
-# Read options
-ADMIN_LOGIN="$(bashio::config 'admin_login')"
-ADMIN_EMAIL="$(bashio::config 'admin_email')"
-ADMIN_NAME="$(bashio::config 'admin_name')"
-ADMIN_PASSWORD="$(bashio::config 'admin_password')"
-CONF_PATH="$(bashio::config 'config_path')"
-DATA_DIR="$(bashio::config 'data_dir')"
-PORT="$(bashio::config 'port')"
-
-# Basic sanity
-: "${ADMIN_LOGIN:?admin_login missing in options}"
-: "${ADMIN_PASSWORD:?admin_password missing in options}"
-: "${CONF_PATH:?config_path missing in options}"
-: "${DATA_DIR:?data_dir missing in options}"
-: "${PORT:?port missing in options}"
-
-# Ensure data dir exists and is writable
-mkdir -p "${DATA_DIR}"
-chown -R root:root "${DATA_DIR}" || true
-
-# Show current config path
-log "Config: ${CONF_PATH}"
-log "Data  : ${DATA_DIR}"
-log "Port  : ${PORT}"
-
-# Ensure a minimal config exists if one isn't provided (BoltDB with HTTP on :8055)
-if [ ! -s "${CONF_PATH}" ]; then
-  log "No config file found; generating minimal BoltDB config."
-  mkdir -p "$(dirname "${CONF_PATH}")"
-  cat > "${CONF_PATH}" <<'JSON'
-{
-  "bolt": {
-    "file": "/var/lib/semaphore/database.boltdb"
-  },
-  "tmp_path": "/tmp/semaphore",
-  "cookie_hash": "change-me-cookie-hash",
-  "cookie_encryption": "change-me-cookie-key",
-  "access_key_encryption": "change-me-access-key",
-  "web_host": "0.0.0.0",
-  "web_port": "8055",
-  "web_root": "",
-  "non_auth": false
-}
-JSON
-fi
-
-# Make sure DB parent exists
-mkdir -p /var/lib/semaphore
-
-# Auto-provision / reset admin user from options
-log "Ensuring admin user exists (or resetting password)..."
-if ! semaphore user change-by-login \
-  --login "${ADMIN_LOGIN}" \
-  --password "${ADMIN_PASSWORD}" \
-  --config "${CONF_PATH}"; then
-  semaphore user add \
-    --admin \
-    --login "${ADMIN_LOGIN}" \
-    --email "${ADMIN_EMAIL}" \
-    --name  "${ADMIN_NAME}" \
-    --password "${ADMIN_PASSWORD}" \
-    --config "${CONF_PATH}"
-fi
-log "Admin ready: ${ADMIN_LOGIN}"
-
-# Start Semaphore on configured port
-export SEMAPHORE_PORT="${PORT}"
-export SEMAPHORE_WEB_ROOT=""
-log "Starting Semaphore on :${PORT}"
-
-# ------------------------------------------------------------------
-# Jarvis Jnr Bot Integration
-# ------------------------------------------------------------------
 CONFIG_PATH=/data/options.json
-BOT_NAME=$(jq -r '.bot_name // "Jarvis Jnr"' $CONFIG_PATH)
-GOTIFY_URL=$(jq -r '.gotify_url // empty' $CONFIG_PATH)
-GOTIFY_TOKEN=$(jq -r '.gotify_token // empty' $CONFIG_PATH)
 
-if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-  echo "[${BOT_NAME}] Launching Gotify bot..."
-  python3 /app/bot.py &
-else
-  echo "[${BOT_NAME}] Skipping bot startup (missing gotify_url or gotify_token)"
-fi
+echo "[Jarvis Jnr] Starting bot..."
 
-# Start semaphore server (kept intact)
-exec semaphore server --config "${CONF_PATH}"
+# Export options as env vars
+export BOT_NAME=$(jq -r '.bot_name' $CONFIG_PATH)
+export BOT_ICON=$(jq -r '.bot_icon' $CONFIG_PATH)
+export GOTIFY_URL=$(jq -r '.gotify_url' $CONFIG_PATH)
+export GOTIFY_TOKEN=$(jq -r '.gotify_token' $CONFIG_PATH)
+export RETENTION_HOURS=$(jq -r '.retention_hours' $CONFIG_PATH)
+
+export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' $CONFIG_PATH)
+export COMMANDS_ENABLED=$(jq -r '.commands_enabled' $CONFIG_PATH)
+
+export QUIET_HOURS_ENABLED=$(jq -r '.quiet_hours_enabled' $CONFIG_PATH)
+export QUIET_HOURS=$(jq -r '.quiet_hours' $CONFIG_PATH)
+
+export WEATHER_ENABLED=$(jq -r '.weather_enabled' $CONFIG_PATH)
+export WEATHER_API=$(jq -r '.weather_api' $CONFIG_PATH)
+export WEATHER_API_KEY=$(jq -r '.weather_api_key' $CONFIG_PATH)
+export WEATHER_CITY=$(jq -r '.weather_city' $CONFIG_PATH)
+export WEATHER_TIME=$(jq -r '.weather_time' $CONFIG_PATH)
+
+export DIGEST_ENABLED=$(jq -r '.digest_enabled' $CONFIG_PATH)
+export DIGEST_TIME=$(jq -r '.digest_time' $CONFIG_PATH)
+
+export RADARR_ENABLED=$(jq -r '.radarr_enabled' $CONFIG_PATH)
+export RADARR_URL=$(jq -r '.radarr_url' $CONFIG_PATH)
+export RADARR_API_KEY=$(jq -r '.radarr_api_key' $CONFIG_PATH)
+export RADARR_TIME=$(jq -r '.radarr_time' $CONFIG_PATH)
+
+export SONARR_ENABLED=$(jq -r '.sonarr_enabled' $CONFIG_PATH)
+export SONARR_URL=$(jq -r '.sonarr_url' $CONFIG_PATH)
+export SONARR_API_KEY=$(jq -r '.sonarr_api_key' $CONFIG_PATH)
+export SONARR_TIME=$(jq -r '.sonarr_time' $CONFIG_PATH)
+
+exec python3 /app/bot.py
