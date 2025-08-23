@@ -1,4 +1,5 @@
-import os, json, time, asyncio, requests, websockets, schedule, datetime, random
+import os, json, time, asyncio, requests, websockets, schedule, random
+from datetime import datetime, timedelta
 
 # -----------------------------
 # Config
@@ -36,7 +37,7 @@ SONARR_TIME = os.getenv("SONARR_TIME", "07:30")
 jarvis_app_id = None
 
 # -----------------------------
-# Send message
+# Helpers
 # -----------------------------
 def send_message(title, message, priority=5):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -47,9 +48,6 @@ def send_message(title, message, priority=5):
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Failed send: {e}")
 
-# -----------------------------
-# Purge non-Jarvis apps
-# -----------------------------
 def purge_non_jarvis_apps():
     global jarvis_app_id
     try:
@@ -73,9 +71,6 @@ def resolve_app_id():
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Resolve app_id failed: {e}")
 
-# -----------------------------
-# Beautifier
-# -----------------------------
 def beautify_message(title, raw):
     prefix = "💡"
     lower = raw.lower()
@@ -91,7 +86,7 @@ def beautify_message(title, raw):
     return f"{prefix} {raw.strip()}\n\n{random.choice(closings)}"
 
 # -----------------------------
-# Weather
+# Modules
 # -----------------------------
 def fetch_weather():
     if not WEATHER_ENABLED or not WEATHER_API_KEY: return None
@@ -103,73 +98,88 @@ def fetch_weather():
         print(f"[{BOT_NAME}] ❌ Weather error: {e}")
         return None
 
-# -----------------------------
-# Radarr
-# -----------------------------
-def fetch_radarr():
+def fetch_radarr_upcoming(days=7):
     if not RADARR_ENABLED or not RADARR_API_KEY: return None
     try:
-        r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_API_KEY}, timeout=5).json()
-        return f"🎬 Radarr Movies: {len(r)} tracked"
+        start = datetime.now().strftime("%Y-%m-%d")
+        end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}"
+        r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=5).json()
+        if not r: return "🎬 No upcoming movies"
+        items = [f"{m['title']} ({m['inCinemas'][:10] if m.get('inCinemas') else 'TBA'})" for m in r]
+        return "🎬 Upcoming Movies:\n" + "\n".join(items[:5])
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Radarr error: {e}")
+        print(f"[{BOT_NAME}] ❌ Radarr upcoming error: {e}")
         return None
 
-# -----------------------------
-# Sonarr
-# -----------------------------
-def fetch_sonarr():
+def fetch_sonarr_upcoming(days=7):
     if not SONARR_ENABLED or not SONARR_API_KEY: return None
     try:
-        r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_API_KEY}, timeout=5).json()
-        return f"📺 Sonarr Series: {len(r)} tracked"
+        start = datetime.now().strftime("%Y-%m-%d")
+        end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}"
+        r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=5).json()
+        if not r: return "📺 No upcoming episodes"
+        items = [f"{e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in r]
+        return "📺 Upcoming Episodes:\n" + "\n".join(items[:5])
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Sonarr error: {e}")
+        print(f"[{BOT_NAME}] ❌ Sonarr upcoming error: {e}")
         return None
 
-# -----------------------------
-# Digest
-# -----------------------------
 def send_digest():
     if not DIGEST_ENABLED: return
-    print(f"[{BOT_NAME}] 📝 Building daily digest...")
     parts = []
-    if WEATHER_ENABLED: 
-        w = fetch_weather()
-        if w: parts.append(w)
-    if RADARR_ENABLED: 
-        r = fetch_radarr()
-        if r: parts.append(r)
-    if SONARR_ENABLED: 
-        s = fetch_sonarr()
-        if s: parts.append(s)
-    if not parts:
-        print(f"[{BOT_NAME}] No modules enabled for digest")
-        return
+    if WEATHER_ENABLED: w = fetch_weather();  parts.append(w) if w else None
+    if RADARR_ENABLED:  r = fetch_radarr_upcoming(7); parts.append(r) if r else None
+    if SONARR_ENABLED:  s = fetch_sonarr_upcoming(7); parts.append(s) if s else None
+    if not parts: return
     digest_msg = "🗞 Daily Digest\n\n" + "\n".join(parts)
-    send_message("Daily Digest", beautify_message("Digest", digest_msg), priority=5)
+    send_message("Daily Digest", beautify_message("Digest", digest_msg))
+
+# -----------------------------
+# Command Parser
+# -----------------------------
+def parse_command(raw):
+    text = raw.strip().lower()
+    if not text.startswith("jarvis"):
+        return None
+
+    if "help" in text: return "help"
+    if "media" in text: return "media"
+    if "radarr" in text or "movie" in text or "movies" in text: return "radarr_upcoming"
+    if "sonarr" in text or "show" in text or "shows" in text or "series" in text: return "sonarr_upcoming"
+    if "weather" in text: return "weather"
+    if "digest" in text or "summary" in text: return "digest"
+    return None
+
+def handle_command(command):
+    if command == "radarr_upcoming": return fetch_radarr_upcoming(7)
+    if command == "sonarr_upcoming": return fetch_sonarr_upcoming(7)
+    if command == "media": return f"{fetch_radarr_upcoming(7)}\n\n{fetch_sonarr_upcoming(7)}"
+    if command == "weather": return fetch_weather()
+    if command == "digest": 
+        send_digest()
+        return "🗞 Digest sent"
+    if command == "help":
+        return (
+            "🤖 Jarvis Command Help:\n\n"
+            "• Jarvis weather → Get current weather\n"
+            "• Jarvis digest → Get full daily digest now\n"
+            "• Jarvis radarr / Jarvis movies → Upcoming Radarr movies\n"
+            "• Jarvis sonarr / Jarvis shows / Jarvis series → Upcoming Sonarr episodes\n"
+            "• Jarvis media → Combined Radarr + Sonarr upcoming"
+        )
+    return "🤖 I didn’t understand that."
 
 # -----------------------------
 # Scheduler
 # -----------------------------
 def run_scheduler():
     schedule.every(5).minutes.do(purge_non_jarvis_apps)
-
-    if WEATHER_ENABLED:
-        schedule.every().day.at(WEATHER_TIME).do(
-            lambda: send_message("Weather Update", beautify_message("Weather", fetch_weather()))
-        )
-    if RADARR_ENABLED:
-        schedule.every().day.at(RADARR_TIME).do(
-            lambda: send_message("Radarr Update", beautify_message("Radarr", fetch_radarr()))
-        )
-    if SONARR_ENABLED:
-        schedule.every().day.at(SONARR_TIME).do(
-            lambda: send_message("Sonarr Update", beautify_message("Sonarr", fetch_sonarr()))
-        )
-    if DIGEST_ENABLED:
-        schedule.every().day.at(DIGEST_TIME).do(send_digest)
-
+    if WEATHER_ENABLED: schedule.every().day.at(WEATHER_TIME).do(lambda: send_message("Weather Update", beautify_message("Weather", fetch_weather())))
+    if RADARR_ENABLED: schedule.every().day.at(RADARR_TIME).do(lambda: send_message("Radarr Update", beautify_message("Radarr", fetch_radarr_upcoming())))
+    if SONARR_ENABLED: schedule.every().day.at(SONARR_TIME).do(lambda: send_message("Sonarr Update", beautify_message("Sonarr", fetch_sonarr_upcoming())))
+    if DIGEST_ENABLED: schedule.every().day.at(DIGEST_TIME).do(send_digest)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -182,8 +192,19 @@ async def listen():
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         async for msg in ws:
             data = json.loads(msg)
-            if data.get("appid") == jarvis_app_id: continue
+            mid, appid = data.get("id"), data.get("appid")
             title, message = data.get("title",""), data.get("message","")
+
+            if appid == jarvis_app_id: continue  # skip own
+
+            command = parse_command(message)
+            if command:
+                reply = handle_command(command)
+                if reply: send_message("Jarvis Command", beautify_message("Jarvis", reply))
+                requests.delete(f"{GOTIFY_URL}/message/{mid}", headers={"X-Gotify-Key": CLIENT_TOKEN})
+                continue
+
+            # Normal beautify flow
             if BEAUTIFY_ENABLED: message = beautify_message(title, message)
             send_message(title, message, priority=(0 if SILENT_REPOST else 5))
             purge_non_jarvis_apps()
