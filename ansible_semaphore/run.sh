@@ -1,53 +1,86 @@
 #!/usr/bin/env bash
-set -e
+# shellcheck shell=bash
+set -euo pipefail
 
-CONFIG_PATH=/data/options.json
+# Log helper
+log() { echo "[semaphore-addon] $*"; }
 
-# Read options from Home Assistant
-ADMIN_LOGIN=$(jq -r '.admin_login // "admin"' $CONFIG_PATH)
-ADMIN_PASSWORD=$(jq -r '.admin_password // "changeme"' $CONFIG_PATH)
-CONFIG_DIR=$(jq -r '.config_path // "/share/ansible_semaphore"' $CONFIG_PATH)
-SCHEDULE_TZ=$(jq -r '.schedule_timezone // "Africa/Johannesburg"' $CONFIG_PATH)
+# Wait for /data/options.json (bashio) to be ready
+if ! command -v bashio >/dev/null 2>&1; then
+  log "bashio not found; this must be a HA add-on base image. Exiting."
+  exit 1
+fi
 
-mkdir -p "$CONFIG_DIR"
+# Best-effort package refresh on boot (won't fail if offline)
+if command -v apt-get >/dev/null 2>&1; then
+  (apt-get update || true) && (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
+fi
 
-SEMAPHORE_CONFIG="$CONFIG_DIR/config.json"
-DB_FILE="$CONFIG_DIR/database.boltdb"
+# Read options
+ADMIN_LOGIN="$(bashio::config 'admin_login')"
+ADMIN_EMAIL="$(bashio::config 'admin_email')"
+ADMIN_NAME="$(bashio::config 'admin_name')"
+ADMIN_PASSWORD="$(bashio::config 'admin_password')"
+CONF_PATH="$(bashio::config 'config_path')"
+DATA_DIR="$(bashio::config 'data_dir')"
+PORT="$(bashio::config 'port')"
 
-# Force timezone for schedules
-export SEMAPHORE_SCHEDULE_TIMEZONE="$SCHEDULE_TZ"
+# Basic sanity
+: "${ADMIN_LOGIN:?admin_login missing in options}"
+: "${ADMIN_PASSWORD:?admin_password missing in options}"
+: "${CONF_PATH:?config_path missing in options}"
+: "${DATA_DIR:?data_dir missing in options}"
+: "${PORT:?port missing in options}"
 
-# Always generate a proper BoltDB config if missing
-if [ ! -f "$SEMAPHORE_CONFIG" ]; then
-    echo "Generating Semaphore config at $SEMAPHORE_CONFIG..."
-    cat > "$SEMAPHORE_CONFIG" <<EOF
+# Ensure data dir exists and is writable
+mkdir -p "${DATA_DIR}"
+chown -R root:root "${DATA_DIR}" || true
+
+# Show current config path
+log "Config: ${CONF_PATH}"
+log "Data  : ${DATA_DIR}"
+log "Port  : ${PORT}"
+
+# Ensure a minimal config exists if one isn't provided (BoltDB with HTTP on :3000)
+if [ ! -s "${CONF_PATH}" ]; then
+  log "No config file found; generating minimal BoltDB config."
+  mkdir -p "$(dirname "${CONF_PATH}")"
+  cat > "${CONF_PATH}" <<'JSON'
 {
-  "dialect": "bolt",
-  "bolt": { "file": "$DB_FILE" },
+  "bolt": {
+    "file": "/var/lib/semaphore/database.boltdb"
+  },
   "tmp_path": "/tmp/semaphore",
-  "port": "8055",
-  "cookie_hash": "changeme-cookie-hash",
-  "cookie_encryption": "changeme-cookie-key",
-  "access_key_encryption": "changeme-access-key",
-  "schedule": { "timezone": "$SCHEDULE_TZ" }
+  "cookie_hash": "change-me-cookie-hash",
+  "cookie_encryption": "change-me-cookie-key",
+  "access_key_encryption": "change-me-access-key",
+  "web_host": "",
+  "web_port": "3000",
+  "non_auth": false
 }
-EOF
+JSON
 fi
 
-# Make sure DB folder exists
-mkdir -p "$(dirname "$DB_FILE")"
+# Make sure DB parent exists
+mkdir -p /var/lib/semaphore
 
-# Ensure admin exists (create only if DB is new)
-if [ ! -f "$DB_FILE" ]; then
-    echo "Initializing Semaphore admin user..."
-    /usr/local/bin/semaphore user add \
-        --admin \
-        --login "$ADMIN_LOGIN" \
-        --name "Admin" \
-        --email "admin@example.com" \
-        --password "$ADMIN_PASSWORD" \
-        --config "$SEMAPHORE_CONFIG"
+# Auto-provision / reset admin user from options
+log "Ensuring admin user exists (or resetting password)..."
+if ! semaphore user change-by-login \
+  --login "${ADMIN_LOGIN}" \
+  --password "${ADMIN_PASSWORD}" \
+  --config "${CONF_PATH}"; then
+  semaphore user add \
+    --admin \
+    --login "${ADMIN_LOGIN}" \
+    --email "${ADMIN_EMAIL}" \
+    --name  "${ADMIN_NAME}" \
+    --password "${ADMIN_PASSWORD}" \
+    --config "${CONF_PATH}"
 fi
+log "Admin ready: ${ADMIN_LOGIN}"
 
-# Start Semaphore server with BoltDB config
-exec /usr/local/bin/semaphore server --config "$SEMAPHORE_CONFIG"
+# Start server on configured port (override if needed)
+export SEMAPHORE_PORT="${PORT}"
+log "Starting Semaphore on :${PORT}"
+exec semaphore server --config "${CONF_PATH}"
