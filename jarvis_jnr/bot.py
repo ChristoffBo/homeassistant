@@ -64,7 +64,7 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] ❌ Resolve app_id failed: {e}")
 
 # -----------------------------
-# Beautifier (same as before with AI inserts)
+# Beautifier
 # -----------------------------
 def beautify_message(title, raw):
     text = raw.strip()
@@ -124,7 +124,6 @@ def get_weather():
         r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
-
         now = data["properties"]["timeseries"][0]
         details = now["data"]["instant"]["details"]
         temp = details.get("air_temperature")
@@ -133,113 +132,99 @@ def get_weather():
         condition = "☀️ Clear"
         if cloud > 70: condition = "☁️ Overcast"
         elif cloud > 30: condition = "🌤 Partly cloudy"
-
-        advice = "🙂 Looks like a fine day." if cloud < 30 else "☂️ You may want an umbrella." if cloud > 70 else "🌥 A bit cloudy, but manageable."
-
-        return (
-            f"{condition} in {WEATHER_CITY}, {temp}°C, wind {wind} m/s.\n"
-            f"{advice}"
-        )
+        return f"{condition} in {WEATHER_CITY}, {temp}°C, wind {wind} m/s."
     except Exception as e:
         return f"🌦 Weather fetch error: {e}"
 
 # -----------------------------
-# Radarr / Sonarr (cached lookups)
+# Radarr / Sonarr Insights
 # -----------------------------
 def get_series_count():
     try:
         if SONARR_ENABLED:
-            url = f"{SONARR_URL}/api/v3/series"
-            r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+            r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
             if r.status_code == 200:
-                total = len(r.json())
-                return f"📺 You have {total} series. {'Plenty to binge!' if total>30 else 'A modest collection.'}"
+                return f"📺 You have {len(r.json())} series."
     except: pass
     return "📺 Could not fetch series count."
 
 def get_movie_count():
     try:
         if RADARR_ENABLED:
-            url = f"{RADARR_URL}/api/v3/movie"
-            r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+            r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
             if r.status_code == 200:
-                total = len(r.json())
-                return f"🎬 You have {total} movies. {'A true cinema archive!' if total>100 else 'Compact but quality.'}"
+                return f"🎬 You have {len(r.json())} movies."
     except: pass
     return "🎬 Could not fetch movie count."
 
-def get_upcoming_series():
+def get_largest_series():
     try:
         if SONARR_ENABLED:
-            today = datetime.now().date()
-            until = today + timedelta(days=7)
-            series_map = {}
-            sr = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
-            if sr.status_code == 200:
-                for s in sr.json():
-                    series_map[s["id"]] = s.get("title", "Unknown Show")
-            r = requests.get(f"{SONARR_URL}/api/v3/calendar?start={today}&end={until}", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
-            if r.status_code == 200 and r.json():
-                items = []
-                for e in r.json():
-                    sid = e.get("seriesId")
-                    title = series_map.get(sid, "Unknown Show")
-                    season = e.get("seasonNumber", "?")
-                    ep = e.get("episodeNumber", "?")
-                    airdate = e.get("airDate", "N/A")
-                    items.append(f"• {title} - S{season}E{ep} ({airdate})")
-                return "📺 Upcoming episodes:\n" + "\n".join(items[:10]) + f"\n⚡ {len(items)} episodes airing this week!"
+            r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+            if r.status_code == 200:
+                series = r.json()
+                largest = max(series, key=lambda s: s.get("statistics", {}).get("sizeOnDisk", 0))
+                size_gb = largest["statistics"]["sizeOnDisk"] / (1024**3)
+                return f"📺 Largest series: {largest['title']} ({size_gb:.1f} GB)"
     except Exception as e:
-        return f"📺 Error fetching upcoming series: {e}"
-    return "📺 No upcoming episodes this week. 📭 A quiet schedule ahead."
+        return f"📺 Error: {e}"
+    return "📺 Could not fetch largest series."
 
-def get_upcoming_movies():
+def get_longest_series():
+    try:
+        if SONARR_ENABLED:
+            r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+            if r.status_code == 200:
+                series = r.json()
+                longest = max(series, key=lambda s: s.get("statistics", {}).get("episodeFileCount", 0))
+                count = longest["statistics"]["episodeFileCount"]
+                return f"📺 Longest running series: {longest['title']} ({count} episodes)"
+    except Exception as e:
+        return f"📺 Error: {e}"
+    return "📺 Could not fetch longest series."
+
+def get_largest_movie():
     try:
         if RADARR_ENABLED:
-            today = datetime.now().date()
-            until = today + timedelta(days=7)
-            movie_map = {}
-            mr = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
-            if mr.status_code == 200:
-                for m in mr.json():
-                    movie_map[m["id"]] = m.get("title", "Unknown Movie")
-            r = requests.get(f"{RADARR_URL}/api/v3/calendar?start={today}&end={until}", headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
-            if r.status_code == 200 and r.json():
-                items = []
-                for m in r.json():
-                    mid = m.get("movieId")
-                    title = movie_map.get(mid, m.get("title", "Unknown Movie"))
-                    airdate = m.get("inCinemas", "N/A")[:10]
-                    items.append(f"• {title} ({airdate})")
-                return "🎬 Upcoming movies:\n" + "\n".join(items[:10]) + f"\n🍿 {len(items)} movies arriving this week!"
+            r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+            if r.status_code == 200:
+                movies = r.json()
+                movies = [m for m in movies if m.get("movieFile")]
+                largest = max(movies, key=lambda m: m["movieFile"]["size"])
+                size_gb = largest["movieFile"]["size"] / (1024**3)
+                return f"🎬 Largest movie: {largest['title']} ({size_gb:.1f} GB)"
     except Exception as e:
-        return f"🎬 Error fetching upcoming movies: {e}"
-    return "🎬 No upcoming movies this week. 🎞 Time to revisit old favorites!"
+        return f"🎬 Error: {e}"
+    return "🎬 Could not fetch largest movie."
+
+def get_longest_movie():
+    try:
+        if RADARR_ENABLED:
+            r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+            if r.status_code == 200:
+                movies = r.json()
+                longest = max(movies, key=lambda m: m.get("runtime", 0))
+                runtime = longest.get("runtime", 0)
+                return f"🎬 Longest movie: {longest['title']} ({runtime} min)"
+    except Exception as e:
+        return f"🎬 Error: {e}"
+    return "🎬 Could not fetch longest movie."
 
 # -----------------------------
-# Digest with Time-based Greetings
+# Digest
 # -----------------------------
-def get_greeting():
-    hour = datetime.now().hour
-    if 5 <= hour < 12: return "🌅 Good morning!"
-    if 12 <= hour < 18: return "🌞 Good afternoon!"
-    if 18 <= hour < 22: return "🌆 Good evening!"
-    return "🌙 Good night!"
-
 def get_digest():
-    parts = []
-    parts.append(f"{get_greeting()} Here is your personalized digest:\n")
-    parts.append(get_weather())
-    parts.append(get_movie_count())
-    parts.append(get_series_count())
-    parts.append(get_upcoming_movies())
-    parts.append(get_upcoming_series())
-    parts.append(random.choice([
-        f"🤖 That’s all for now, {BOT_NAME} signing off.",
-        f"✨ Digest prepared and delivered by {BOT_NAME}.",
-        f"📡 Stay tuned for more updates with {BOT_NAME}.",
-    ]))
-    return "\n\n".join(parts)
+    return "\n".join([
+        "🗞 Digest Report",
+        get_weather(),
+        get_movie_count(),
+        get_series_count(),
+        get_largest_series(),
+        get_longest_series(),
+        get_largest_movie(),
+        get_longest_movie(),
+        f"\n🤖 Report generated by {BOT_NAME}"
+    ])
 
 # -----------------------------
 # Cleanup + Scheduler
@@ -273,39 +258,30 @@ def run_scheduler():
         time.sleep(1)
 
 # -----------------------------
-# Parser + Command Handling
+# Parser + Commands
 # -----------------------------
 def parse_command(title, raw):
     text = (title + " " + raw).strip().lower()
     if BOT_NAME.lower() not in text: return None
     if "movie" in text and "count" in text: return "movie_count"
     if "series" in text and "count" in text: return "series_count"
-    if "upcoming movie" in text: return "movies_upcoming"
-    if "upcoming series" in text: return "series_upcoming"
-    if "series" in text: return "series_upcoming"
-    if "movies" in text: return "movies_upcoming"
-    if "weather" in text: return "weather"
+    if "largest series" in text: return "largest_series"
+    if "longest series" in text: return "longest_series"
+    if "largest movie" in text: return "largest_movie"
+    if "longest movie" in text: return "longest_movie"
     if "digest" in text: return "digest"
-    if "help" in text: return "help"
+    if "weather" in text: return "weather"
     return None
 
 def handle_command(command):
     if command == "movie_count": return get_movie_count()
     if command == "series_count": return get_series_count()
-    if command == "movies_upcoming": return get_upcoming_movies()
-    if command == "series_upcoming": return get_upcoming_series()
+    if command == "largest_series": return get_largest_series()
+    if command == "longest_series": return get_longest_series()
+    if command == "largest_movie": return get_largest_movie()
+    if command == "longest_movie": return get_longest_movie()
     if command == "weather": return get_weather()
     if command == "digest": return get_digest()
-    if command == "help":
-        return (
-            f"🤖 Commands for {BOT_NAME}:\n"
-            "• Jarvis movies count → total movies\n"
-            "• Jarvis series count → total series\n"
-            "• Jarvis upcoming movies → next 7 days\n"
-            "• Jarvis upcoming series → next 7 days\n"
-            "• Jarvis weather → forecast\n"
-            "• Jarvis digest → daily report\n"
-        )
     return "🤖 Unknown command."
 
 # -----------------------------
