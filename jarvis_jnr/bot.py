@@ -245,12 +245,12 @@ def retention_cleanup():
         print(f"[{BOT_NAME}] Retention cleanup failed: {e}")
 
 # -----------------------------
-# Clean up old Jarvis messages specifically
+# Clean up non-Jarvis messages periodically
 # -----------------------------
-def cleanup_old_jarvis_messages():
-    """Clean up Jarvis's own old beautified messages"""
+def cleanup_non_jarvis_messages():
+    """Delete all messages that are NOT from Jarvis to keep only beautified messages"""
     if not jarvis_app_id:
-        print(f"[{BOT_NAME}] No Jarvis app ID - cannot clean old messages")
+        print(f"[{BOT_NAME}] No Jarvis app ID - cannot identify non-Jarvis messages")
         return
         
     try:
@@ -259,41 +259,41 @@ def cleanup_old_jarvis_messages():
         r.raise_for_status()
         msgs = r.json().get("messages", [])
         
-        # Clean messages older than 1 hour for Jarvis specifically
-        cleanup_cutoff = time.time() - (1 * 3600)  # 1 hour
         deleted_count = 0
         
         for msg in msgs:
             try:
-                if msg.get("appid") == jarvis_app_id:
-                    ts = datetime.datetime.fromisoformat(msg["date"].replace("Z", "+00:00")).timestamp()
-                    msg_id = msg.get("id")
-                    title = msg.get("title", "")
-                    
-                    if ts < cleanup_cutoff and msg_id:
-                        if delete_message(msg_id):
-                            deleted_count += 1
-                            print(f"[{BOT_NAME}] Cleaned old beautified message: '{title[:50]}...'")
+                msg_id = msg.get("id")
+                appid = msg.get("appid")
+                title = msg.get("title", "")
+                
+                # Delete any message that is NOT from Jarvis
+                if msg_id and appid != jarvis_app_id:
+                    print(f"[{BOT_NAME}] Deleting non-Jarvis message {msg_id}: '{title[:50]}...' from app {appid}")
+                    if delete_message(msg_id):
+                        deleted_count += 1
                             
             except Exception as e:
-                print(f"[{BOT_NAME}] Error processing Jarvis message {msg.get('id')}: {e}")
+                print(f"[{BOT_NAME}] Error processing message {msg.get('id')}: {e}")
         
         if deleted_count > 0:
-            print(f"[{BOT_NAME}] Cleaned up {deleted_count} old Jarvis messages")
+            print(f"[{BOT_NAME}] Cleaned up {deleted_count} non-Jarvis messages")
+        else:
+            print(f"[{BOT_NAME}] No non-Jarvis messages to clean up")
             
     except Exception as e:
-        print(f"[{BOT_NAME}] Failed to cleanup old Jarvis messages: {e}")
+        print(f"[{BOT_NAME}] Failed to cleanup non-Jarvis messages: {e}")
 
 def run_scheduler():
     # Initial cleanup if bulk purge is enabled
     if ENABLE_BULK_PURGE and jarvis_app_id:
         purge_app_messages(jarvis_app_id)
     
-    # Schedule retention cleanup (includes Jarvis cleanup now)
+    # Schedule retention cleanup for very old Jarvis messages only
     schedule.every(30).minutes.do(retention_cleanup)
     
-    # Schedule specific Jarvis message cleanup more frequently
-    schedule.every(10).minutes.do(cleanup_old_jarvis_messages)
+    # Schedule frequent cleanup of ALL non-Jarvis messages (keep only beautified)
+    schedule.every(2).minutes.do(cleanup_non_jarvis_messages)
     
     while True:
         schedule.run_pending()
@@ -340,16 +340,6 @@ async def listen():
 
                     print(f"[{BOT_NAME}] PROCESSING: message id={mid} title='{title}' from app={appid}")
 
-                    # Delete the original message first (to prevent duplicates)
-                    print(f"[{BOT_NAME}] Deleting original message {mid} before beautifying")
-                    delete_success = delete_message(mid)
-                    
-                    if not delete_success:
-                        print(f"[{BOT_NAME}] WARNING: Could not delete original message {mid}")
-
-                    # Small delay to ensure deletion completes
-                    await asyncio.sleep(0.5)
-
                     # Beautify if enabled
                     if BEAUTIFY_ENABLED:
                         final_msg = beautify_message(title, message)
@@ -358,15 +348,24 @@ async def listen():
                         final_msg = message
                         print(f"[{BOT_NAME}] Using original message (beautify disabled)")
 
-                    # Send beautified message
+                    # Send beautified message first
                     repost_priority = 0 if SILENT_REPOST else 5
                     print(f"[{BOT_NAME}] SENDING beautified message with priority={repost_priority}")
                     send_success = send_message(title, final_msg, priority=repost_priority)
                     
                     if send_success:
-                        print(f"[{BOT_NAME}] ✅ Successfully processed and beautified message")
+                        print(f"[{BOT_NAME}] ✅ Successfully sent beautified message")
+                        
+                        # Now delete the original message after successful send
+                        print(f"[{BOT_NAME}] Deleting original message {mid} after successful beautification")
+                        delete_success = delete_message(mid)
+                        
+                        if delete_success:
+                            print(f"[{BOT_NAME}] ✅ Successfully deleted original message {mid}")
+                        else:
+                            print(f"[{BOT_NAME}] ❌ Failed to delete original message {mid}")
                     else:
-                        print(f"[{BOT_NAME}] ❌ Failed to send beautified message")
+                        print(f"[{BOT_NAME}] ❌ Failed to send beautified message - keeping original")
 
                 except json.JSONDecodeError as e:
                     print(f"[{BOT_NAME}] JSON decode error: {e}")
