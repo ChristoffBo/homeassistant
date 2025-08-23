@@ -1,7 +1,7 @@
 {
   "build_from": {
-    "aarch64": "debian:stable-slim",
-    "amd64": "debian:stable-slim",
-    "armv7": "debian:stable-slim"
+    "aarch64": "ghcr.io/home-assistant/aarch64-base:latest",
+    "amd64": "ghcr.io/home-assistant/amd64-base:latest",
+    "armv7": "ghcr.io/home-assistant/armv7-base:latest"
   }
 }
