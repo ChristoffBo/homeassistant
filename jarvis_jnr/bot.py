@@ -204,7 +204,8 @@ async def listen():
 # -----------------------------
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on...")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     loop.create_task(listen())
     schedule.every(5).seconds.do(cleanup_messages)
     while True:
