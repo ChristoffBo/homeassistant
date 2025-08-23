@@ -56,6 +56,7 @@ if [ ! -s "${CONF_PATH}" ]; then
   "access_key_encryption": "change-me-access-key",
   "web_host": "0.0.0.0",
   "web_port": "3000",
+  "web_root": "",
   "non_auth": false
 }
 JSON
@@ -82,5 +83,6 @@ log "Admin ready: ${ADMIN_LOGIN}"
 
 # Start server on configured port (override if needed)
 export SEMAPHORE_PORT="${PORT}"
+export SEMAPHORE_WEB_ROOT=""
 log "Starting Semaphore on :${PORT}"
 exec semaphore server --config "${CONF_PATH}"
