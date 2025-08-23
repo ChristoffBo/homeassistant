@@ -91,7 +91,6 @@ def get_weather():
         r.raise_for_status()
         data = r.json()
 
-        # Current
         now = data["properties"]["timeseries"][0]
         details = now["data"]["instant"]["details"]
         temp = details.get("air_temperature")
@@ -101,7 +100,6 @@ def get_weather():
         if cloud > 70: condition = "☁️ Overcast"
         elif cloud > 30: condition = "🌤 Partly cloudy"
 
-        # Next 3 days summary
         summaries = []
         for entry in data["properties"]["timeseries"][:72:24]:
             t = entry["time"][:10]
@@ -116,7 +114,7 @@ def get_weather():
         return f"🌦 Weather fetch error: {e}"
 
 # -----------------------------
-# Radarr / Sonarr
+# Radarr / Sonarr with cache
 # -----------------------------
 def get_series_count():
     try:
@@ -143,13 +141,23 @@ def get_upcoming_series():
         if SONARR_ENABLED:
             today = datetime.now().date()
             until = today + timedelta(days=7)
+
+            # Cache all series first
+            series_map = {}
+            series_url = f"{SONARR_URL}/api/v3/series"
+            sr = requests.get(series_url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+            if sr.status_code == 200:
+                for s in sr.json():
+                    series_map[s["id"]] = s.get("title", "Unknown Show")
+
+            # Calendar
             url = f"{SONARR_URL}/api/v3/calendar?start={today}&end={until}"
             r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
             if r.status_code == 200 and r.json():
                 items = []
                 for e in r.json():
-                    series_info = e.get("series", {}) or {}
-                    title = series_info.get("title", "Unknown Show")
+                    sid = e.get("seriesId")
+                    title = series_map.get(sid, "Unknown Show")
                     season = e.get("seasonNumber", "?")
                     ep = e.get("episodeNumber", "?")
                     airdate = e.get("airDate", "N/A")
@@ -164,13 +172,25 @@ def get_upcoming_movies():
         if RADARR_ENABLED:
             today = datetime.now().date()
             until = today + timedelta(days=7)
+
+            # Cache all movies first
+            movie_map = {}
+            movie_url = f"{RADARR_URL}/api/v3/movie"
+            mr = requests.get(movie_url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+            if mr.status_code == 200:
+                for m in mr.json():
+                    movie_map[m["id"]] = m.get("title", "Unknown Movie")
+
+            # Calendar
             url = f"{RADARR_URL}/api/v3/calendar?start={today}&end={until}"
             r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
             if r.status_code == 200 and r.json():
-                items = [
-                    f"• {m['title']} ({m.get('inCinemas','N/A')[:10]})"
-                    for m in r.json()
-                ]
+                items = []
+                for m in r.json():
+                    mid = m.get("movieId")
+                    title = movie_map.get(mid, m.get("title", "Unknown Movie"))
+                    airdate = m.get("inCinemas", "N/A")[:10]
+                    items.append(f"• {title} ({airdate})")
                 return "🎬 Upcoming movies:\n" + "\n".join(items[:10])
     except Exception as e:
         return f"🎬 Error fetching upcoming movies: {e}"
@@ -199,12 +219,12 @@ def parse_command(title, raw):
 
     if "movie" in text and "count" in text: return "movie_count"
     if "series" in text and "count" in text: return "series_count"
-    if "upcoming movie" in text or ("movies" in text and "upcoming" in text): return "movies_upcoming"
-    if "upcoming series" in text or ("series" in text and "upcoming" in text): return "series_upcoming"
-    if "series" in text and "upcoming" not in text: return "series_upcoming"
-    if "movies" in text and "upcoming" not in text: return "movies_upcoming"
+    if "upcoming movie" in text: return "movies_upcoming"
+    if "upcoming series" in text: return "series_upcoming"
+    if "series" in text: return "series_upcoming"
+    if "movies" in text: return "movies_upcoming"
     if "weather" in text or "forecast" in text: return "weather"
-    if "digest" in text or "morning" in text: return "digest"
+    if "digest" in text: return "digest"
     if "help" in text: return "help"
     return None
 
