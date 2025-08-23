@@ -112,18 +112,21 @@ def delete_message(message_id):
 # Bulk purge all messages for an app (keep this for cleanup)
 # -----------------------------
 def purge_app_messages(appid):
+    """Purge all messages for a specific app"""
     if not appid:
-        return
-    url = f"{GOTIFY_URL}/application/{appid}/message"
-    headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        return False
+    url = f"{GOTIFY_URL}/application/{appid}/message?token={CLIENT_TOKEN}"
     try:
-        r = requests.delete(url, headers=headers, timeout=10)
+        r = requests.delete(url, timeout=10)
         if r.status_code == 200:
             print(f"[{BOT_NAME}] Purged all messages for app id={appid}")
+            return True
         else:
             print(f"[{BOT_NAME}] Failed purge for app {appid}: {r.status_code} {r.text}")
+            return False
     except Exception as e:
         print(f"[{BOT_NAME}] Purge error for app {appid}: {e}")
+        return False
 
 def test_token_permissions():
     """Test if CLIENT_TOKEN has proper permissions"""
@@ -309,15 +312,20 @@ async def listen():
                     send_success = send_message(title, final_msg, priority=repost_priority)
                     
                     if send_success:
-                        # Only delete original if we successfully sent the beautified version
-                        print(f"[{BOT_NAME}] SEND SUCCESS - Now attempting to delete original message {mid}")
-                        delete_success = delete_message(mid)
-                        if not delete_success:
-                            print(f"[{BOT_NAME}] ❌ DELETE FAILED for message {mid}")
+                        print(f"[{BOT_NAME}] ✅ SEND SUCCESS - Now purging all non-Jarvis messages")
+                        
+                        # Option 1: Individual message deletion (more precise)
+                        purge_success = purge_all_except_jarvis()
+                        
+                        # Option 2: Bulk purge entire apps (faster, less precise)
+                        # purge_success = bulk_purge_all_except_jarvis()
+                        
+                        if purge_success:
+                            print(f"[{BOT_NAME}] ✅ PURGE SUCCESS - All non-Jarvis messages cleaned up")
                         else:
-                            print(f"[{BOT_NAME}] ✅ DELETE SUCCESS for message {mid}")
+                            print(f"[{BOT_NAME}] ❌ PURGE FAILED - Some messages may remain")
                     else:
-                        print(f"[{BOT_NAME}] ❌ SEND FAILED - Not deleting original message {mid}")
+                        print(f"[{BOT_NAME}] ❌ SEND FAILED - Not purging messages")
 
                 except json.JSONDecodeError as e:
                     print(f"[{BOT_NAME}] JSON decode error: {e}")
