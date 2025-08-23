@@ -1,63 +1,6 @@
 # -----------------------------
-# Command processing
-# -----------------------------
-def process_command(title, message):
-    """Process commands sent to Jarvis"""
-    message_lower = message.lower().strip()
-    
-    if "!purge" in message_lower or "purge all" in message_lower:
-        print(f"[{BOT_NAME}] Purge command received!")
-        
-        # Option 1: Individual message deletion (more precise)
-        purge_success = purge_all_except_jarvis()
-        
-        # Option 2: Bulk purge entire apps (faster - uncomment to use)
-        # purge_success = bulk_purge_all_except_jarvis()
-        
-        if purge_success:
-            send_message("Purge Complete", "🧹 All non-Jarvis messages have been purged successfully!", priority=5)
-            return True
-        else:
-            send_message("Purge Failed", "❌ Purge operation encountered errors. Check logs for details.", priority=5)
-            return True
-    
-    elif "!status" in message_lower:
-        try:
-            # Get message count
-            url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            
-            messages = r.json().get('messages', [])
-            total_messages = len(messages)
-            jarvis_messages = len([msg for msg in messages if msg.get('appid') == jarvis_app_id])
-            other_messages = total_messages - jarvis_messages
-            
-            status_msg = f"📊 System Status:\n\n"
-            status_msg += f"🤖 Jarvis App ID: {jarvis_app_id}\n"
-            status_msg += f"📧 Total Messages: {total_messages}\n"
-            status_msg += f"🤖 Jarvis Messages: {jarvis_messages}\n"
-            status_msg += f"📨 Other Messages: {other_messages}\n\n"
-            status_msg += f"Commands: !purge, !status"
-            
-            send_message("Status Report", status_msg, priority=3)
-            return True
-            
-        except Exception as e:
-            send_message("Status Error", f"❌ Could not get status: {e}", priority=5)
-            return True
-    
-    elif "!help" in message_lower:
-        help_msg = f"🤖 {BOT_NAME} Commands:\n\n"
-        help_msg += f"!purge - Delete all non-Jarvis messages\n"
-        help_msg += f"!status - Show system status\n"
-        help_msg += f"!help - Show this help\n\n"
-        help_msg += f"Send any of these commands as a message to trigger them."
-        
-        send_message("Help", help_msg, priority=3)
-        return True
-    
-    return False  import os, json, time, asyncio, requests, websockets, schedule, datetime, random
+# Resolve numeric app_id for Jarvis app
+# -----------------------------import os, json, time, asyncio, requests, websockets, schedule, datetime, random
 
 # -----------------------------
 # Config from environment (set in run.sh from options.json)
@@ -371,9 +314,14 @@ async def listen():
                     # Debug: Show all message data
                     print(f"[{BOT_NAME}] Full message data: {json.dumps(data, indent=2)}")
 
-                    # Skip Jarvis's own messages
+                    # Skip Jarvis's own messages - CRITICAL CHECK
                     if jarvis_app_id and appid == jarvis_app_id:
                         print(f"[{BOT_NAME}] SKIPPING: Own message id={mid} (appid {appid} == jarvis {jarvis_app_id})")
+                        continue
+
+                    # Additional check: Skip messages that already have Jarvis branding
+                    if BOT_NAME in title or BOT_ICON in message:
+                        print(f"[{BOT_NAME}] SKIPPING: Message already has Jarvis branding")
                         continue
 
                     # Skip if no message ID
