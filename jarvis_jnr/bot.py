@@ -31,11 +31,37 @@ def send_message(title, message, priority=5):
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
         print(f"[{BOT_NAME}] Sent beautified: {title} (priority={priority})")
+        return True
     except Exception as e:
         print(f"[{BOT_NAME}] Failed to send message: {e}")
+        return False
 
 # -----------------------------
-# Bulk purge all messages for an app
+# Delete individual message by ID
+# -----------------------------
+def delete_message(message_id):
+    """Delete a specific message by its ID using CLIENT token"""
+    if not message_id:
+        print(f"[{BOT_NAME}] No message ID provided for deletion")
+        return False
+    
+    url = f"{GOTIFY_URL}/message/{message_id}"
+    headers = {"X-Gotify-Key": CLIENT_TOKEN}
+    
+    try:
+        r = requests.delete(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] Successfully deleted message ID {message_id}")
+            return True
+        else:
+            print(f"[{BOT_NAME}] Failed to delete message {message_id}: {r.status_code} {r.text}")
+            return False
+    except Exception as e:
+        print(f"[{BOT_NAME}] Error deleting message {message_id}: {e}")
+        return False
+
+# -----------------------------
+# Bulk purge all messages for an app (keep this for cleanup)
 # -----------------------------
 def purge_app_messages(appid):
     if not appid:
@@ -102,25 +128,36 @@ def beautify_message(title, raw):
 def retention_cleanup():
     try:
         url = f"{GOTIFY_URL}/message"
-        r = requests.get(url, headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.get(url, headers=headers, timeout=5)
         r.raise_for_status()
         msgs = r.json().get("messages", [])
         cutoff = time.time() - (RETENTION_HOURS * 3600)
 
+        deleted_count = 0
         for msg in msgs:
             try:
                 ts = datetime.datetime.fromisoformat(msg["date"].replace("Z", "+00:00")).timestamp()
                 if ts < cutoff:
-                    purge_app_messages(msg["appid"])
+                    if delete_message(msg["id"]):
+                        deleted_count += 1
             except Exception as e:
                 print(f"[{BOT_NAME}] Error checking msg {msg.get('id')}: {e}")
+        
+        if deleted_count > 0:
+            print(f"[{BOT_NAME}] Retention cleanup deleted {deleted_count} old messages")
+            
     except Exception as e:
         print(f"[{BOT_NAME}] Retention cleanup failed: {e}")
 
 def run_scheduler():
+    # Initial cleanup if bulk purge is enabled
     if ENABLE_BULK_PURGE and jarvis_app_id:
         purge_app_messages(jarvis_app_id)
+    
+    # Schedule retention cleanup
     schedule.every(30).minutes.do(retention_cleanup)
+    
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -132,8 +169,11 @@ async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
     ws_url += f"/stream?token={CLIENT_TOKEN}"
     print(f"[{BOT_NAME}] Connecting to {ws_url}...")
+    
     try:
-        async with websockets.connect(ws_url) as ws:
+        async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
+            print(f"[{BOT_NAME}] Connected! Listening for messages...")
+            
             async for msg in ws:
                 try:
                     data = json.loads(msg)
@@ -142,8 +182,16 @@ async def listen():
                     title = data.get("title", "")
                     message = data.get("message", "")
 
+                    print(f"[{BOT_NAME}] Received message id={mid} from app={appid}")
+
                     # Skip Jarvis's own messages
                     if jarvis_app_id and appid == jarvis_app_id:
+                        print(f"[{BOT_NAME}] Skipping own message id={mid}")
+                        continue
+
+                    # Skip if no message ID
+                    if not mid:
+                        print(f"[{BOT_NAME}] No message ID, skipping")
                         continue
 
                     print(f"[{BOT_NAME}] Processing message id={mid} title='{title}'")
@@ -154,18 +202,24 @@ async def listen():
                     else:
                         final_msg = message
 
+                    # Send beautified message
                     repost_priority = 0 if SILENT_REPOST else 5
-                    send_message(title, final_msg, priority=repost_priority)
+                    if send_message(title, final_msg, priority=repost_priority):
+                        # Only delete original if we successfully sent the beautified version
+                        delete_message(mid)
+                    else:
+                        print(f"[{BOT_NAME}] Not deleting original message {mid} due to send failure")
 
-                    # Purge original app's messages
-                    purge_app_messages(appid)
-
+                except json.JSONDecodeError as e:
+                    print(f"[{BOT_NAME}] JSON decode error: {e}")
                 except Exception as e:
-                    print(f"[{BOT_NAME}] Error processing: {e}")
+                    print(f"[{BOT_NAME}] Error processing message: {e}")
+                    
     except Exception as e:
         print(f"[{BOT_NAME}] WebSocket connection failed: {e}")
+        print(f"[{BOT_NAME}] Reconnecting in 10 seconds...")
         await asyncio.sleep(10)
-        await listen()
+        await listen()  # Reconnect
 
 # -----------------------------
 # Main entrypoint
@@ -186,6 +240,7 @@ if __name__ == "__main__":
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    # Start both the listener and scheduler
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
 
