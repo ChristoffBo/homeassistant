@@ -1,174 +1,90 @@
-import os
-import json
-import time
-import random
-import requests
-import websocket
-from datetime import datetime
+import os, json, time, requests, websocket, threading, datetime
 
-CONFIG_PATH = "/data/options.json"
+# Config from env (set in run.sh from options.json)
+BOT_NAME = os.getenv("BOT_NAME", "Jarvis")
+BOT_ICON = os.getenv("BOT_ICON", "🤖")
+GOTIFY_URL = os.getenv("GOTIFY_URL")
+APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")        # for sending
+CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")  # for deleting
+RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
-def load_config():
-    with open(CONFIG_PATH, "r") as f:
-        return json.load(f)
+STREAM_URL = GOTIFY_URL.replace("http", "ws") + f"/stream?token={CLIENT_TOKEN}"
 
-config = load_config()
+print(f"[{BOT_NAME}] Starting add-on...")
+print(f"[{BOT_NAME}] Connecting to {STREAM_URL} ...")
 
-BOT_NAME = config.get("bot_name", "Jarvis")
-BOT_ICON = config.get("bot_icon", "🤖")
-GOTIFY_URL = config.get("gotify_url").rstrip("/")
-CLIENT_TOKEN = config.get("gotify_client_token")
-APP_TOKEN = config.get("gotify_app_token")
-RETENTION_HOURS = config.get("retention_hours", 24)
-BEAUTIFY_ENABLED = config.get("beautify_enabled", True)
-
-HEADERS_CLIENT = {"X-Gotify-Key": CLIENT_TOKEN}
-HEADERS_APP = {"X-Gotify-Key": APP_TOKEN}
-
-# --- Dynamic AI-like footers ---
-FOOTERS = [
-    "With regards, {BOT_NAME}",
-    "At your service, {BOT_NAME}",
-    "Your loyal assistant, {BOT_NAME}",
-    "Glad I could help, {BOT_NAME}",
-    "On duty, {BOT_NAME}",
-    "Consider it done — {BOT_NAME}",
-    "Always watching, {BOT_NAME}"
-]
-
-def random_footer():
-    return f"{BOT_ICON} {random.choice(FOOTERS).format(BOT_NAME=BOT_NAME)}"
-
-# --- Beautify profiles ---
-def beautify_message(msg):
-    title = msg.get("title", "")
-    body = msg.get("message", "")
-    footer = random_footer()
-
-    lowered = (title + " " + body).lower()
-
-    if any(x in lowered for x in ["error", "failed", "failure", "unreachable"]):
-        return f"""{BOT_ICON} {BOT_NAME}: {title}
-❌🔥 {body}
-
-{footer}"""
-
-    if any(x in lowered for x in ["warn", "degraded", "delay"]):
-        return f"""{BOT_ICON} {BOT_NAME}: {title}
-⚠️⏳ {body}
-
-{footer}"""
-
-    if any(x in lowered for x in ["completed", "success", "done", "finished", "ok"]):
-        return f"""{BOT_ICON} {BOT_NAME}: {title}
-✅✨ {body}
-
-{footer}"""
-
-    if any(x in lowered for x in ["started", "boot", "status", "info"]):
-        return f"""{BOT_ICON} {BOT_NAME}: {title}
-ℹ️ {body}
-
-{footer}"""
-
-    if any(x in lowered for x in ["radarr", "movie"]):
-        return f"""{BOT_ICON} {BOT_NAME}: 🎬 {title}
-{body}
-
-{footer}"""
-
-    if any(x in lowered for x in ["sonarr", "episode", "tv"]):
-        return f"""{BOT_ICON} {BOT_NAME}: 📺 {title}
-{body}
-
-{footer}"""
-
-    if any(x in lowered for x in ["backup", "restore", "snapshot"]):
-        return f"""{BOT_ICON} {BOT_NAME}: 💾 {title}
-{body}
-
-{footer}"""
-
-    if any(x in lowered for x in ["network", "vpn", "zerotier", "netbird"]):
-        return f"""{BOT_ICON} {BOT_NAME}: 🌐 {title}
-{body}
-
-{footer}"""
-
-    # Default
-    return f"""{BOT_ICON} {BOT_NAME}: {title}
-{body}
-
-{footer}"""
-
-# --- Delete with client token ---
-def delete_message(msg_id):
-    url = f"{GOTIFY_URL}/message/{msg_id}"
-    try:
-        r = requests.delete(url, headers=HEADERS_CLIENT)
-        if r.status_code == 200:
-            print(f"[{BOT_NAME}] Deleted original id={msg_id}")
-        else:
-            print(f"[{BOT_NAME}] Failed to delete id={msg_id}, status={r.status_code}, resp={r.text}")
-    except Exception as e:
-        print(f"[{BOT_NAME}] Exception deleting id={msg_id}: {e}")
-
-# --- Send beautified message ---
 def send_message(title, message, priority=5):
-    url = f"{GOTIFY_URL}/message"
-    payload = {"title": title, "message": message, "priority": priority}
+    """Send beautified message via APP token."""
+    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+    data = {
+        "title": f"{BOT_ICON} {BOT_NAME}: {title}",
+        "message": f"{message}\n\n{BOT_ICON} With regards, {BOT_NAME}",
+        "priority": priority
+    }
     try:
-        r = requests.post(url, headers=HEADERS_APP, json=payload)
-        if r.status_code == 200:
-            print(f"[{BOT_NAME}] Sent beautified: {title}")
-        else:
-            print(f"[{BOT_NAME}] Failed to send, status={r.status_code}, resp={r.text}")
+        r = requests.post(url, json=data, timeout=5)
+        r.raise_for_status()
+        print(f"[{BOT_NAME}] Sent beautified: {title}")
     except Exception as e:
-        print(f"[{BOT_NAME}] Exception sending: {e}")
+        print(f"[{BOT_NAME}] Failed to send message: {e}")
 
-# --- Process incoming ---
-def handle_message(msg):
-    msg_id = msg.get("id")
-    title = msg.get("title", "")
-    body = msg.get("message", "")
+def delete_message(mid):
+    """Delete message via CLIENT (admin) token."""
+    url = f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}"
+    try:
+        r = requests.delete(url, timeout=5)
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] Deleted original message {mid}")
+        else:
+            print(f"[{BOT_NAME}] Failed to delete {mid}: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] Delete error: {e}")
 
-    if not body:
-        return
+def beautify_text(title, message):
+    """Make messages look nicer."""
+    return f"✨ {title}\n\n{message.capitalize()}"
 
-    if BEAUTIFY_ENABLED:
-        pretty = beautify_message(msg)
-        send_message(title, pretty, msg.get("priority", 5))
-        delete_message(msg_id)
+def on_message(ws, raw):
+    try:
+        data = json.loads(raw)
+        mid = data.get("id")
+        appid = data.get("appid")
+        title = data.get("title", "")
+        message = data.get("message", "")
 
-# --- Websocket events ---
-def on_message(ws, message):
-    data = json.loads(message)
-    if data.get("event") == "message":
-        handle_message(data.get("message", {}))
+        # Ignore if it's Jarvis itself (appid will match Jarvis’ app)
+        if appid and APP_TOKEN in message:
+            print(f"[{BOT_NAME}] Ignoring self message id {mid}")
+            return
+
+        beautified = beautify_text(title, message)
+        send_message(title, beautified)
+        delete_message(mid)
+
+    except Exception as e:
+        print(f"[{BOT_NAME}] Error processing message: {e}")
 
 def on_error(ws, error):
-    print(f"[{BOT_NAME}] Websocket error: {error}")
+    print(f"[{BOT_NAME}] WebSocket error: {error}")
 
 def on_close(ws, close_status_code, close_msg):
-    print(f"[{BOT_NAME}] Websocket closed")
+    print(f"[{BOT_NAME}] WebSocket closed: {close_status_code} {close_msg}")
+    time.sleep(5)
+    start_ws()  # reconnect
 
 def on_open(ws):
-    print(f"[{BOT_NAME}] Connected to Gotify stream")
+    print(f"[{BOT_NAME}] Listening to Gotify...")
 
-# --- Startup ---
-def main():
-    print(f"[{BOT_NAME}] Starting add-on...")
-    send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
-
-    ws_url = f"{GOTIFY_URL.replace('http', 'ws')}/stream?token={CLIENT_TOKEN}"
+def start_ws():
     ws = websocket.WebSocketApp(
-        ws_url,
+        STREAM_URL,
         on_message=on_message,
         on_error=on_error,
         on_close=on_close,
-        on_open=on_open,
+        on_open=on_open
     )
-    ws.run_forever()
+    ws.run_forever(ping_interval=30, ping_timeout=10)
 
 if __name__ == "__main__":
-    main()
+    send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
+    start_ws()
