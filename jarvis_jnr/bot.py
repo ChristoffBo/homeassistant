@@ -64,32 +64,53 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] ❌ Resolve app_id failed: {e}")
 
 # -----------------------------
-# Beautifier
+# Beautifier (same as before with AI inserts)
 # -----------------------------
 def beautify_message(title, raw):
     text = raw.strip()
     lower = text.lower()
     has_image = "![](" in text or text.lower().endswith((".jpg", ".png", ".jpeg"))
 
+    prefix_options = [
+        ("error", "💀"), ("fail", "💥"), ("warning", "⚠️"),
+        ("success", "✅"), ("done", "🎉"), ("start", "🚀"),
+        ("update", "🔔"), ("download", "📥"), ("upload", "📤"),
+        ("backup", "💾"), ("restore", "♻️"), ("weather", "🌦"),
+        ("movie", "🎬"), ("series", "📺"), ("music", "🎵"),
+    ]
     prefix = "💡"
-    if "error" in lower: prefix = "💀"
-    elif "success" in lower: prefix = "✅"
-    elif "warning" in lower: prefix = "⚠️"
-    elif "start" in lower: prefix = "🚀"
-    elif "grabbed" in lower or "downloaded" in lower: prefix = "📥"
+    for key, emo in prefix_options:
+        if key in lower:
+            prefix = emo
+            break
+
+    ai_responses = [
+        "🤔 Analyzing input…",
+        "⚡ Processing request…",
+        "🔍 Running checks…",
+        "📡 Generating report…",
+        "🧠 Engaging reasoning core…",
+        "✅ Task complete.",
+        "🎯 Operation successful.",
+    ]
+    insert = random.choice(ai_responses)
 
     closings = [
         f"{BOT_ICON} With regards, {BOT_NAME}",
         f"✨ Processed intelligently by {BOT_NAME}",
         f"🤖 Yours truly, {BOT_NAME}",
-        f"📡 Report crafted by {BOT_NAME}"
+        f"📡 Report crafted by {BOT_NAME}",
+        f"🧠 Insight provided by {BOT_NAME}",
+        f"⚡ Powered by {BOT_NAME}",
+        f"🎯 Task completed by {BOT_NAME}",
+        f"📊 Analysis finished by {BOT_NAME}"
     ]
     closing = random.choice(closings)
 
     if has_image:
-        return f"{prefix} {title}\n\n{text}\n\n{closing}"
+        return f"{prefix} {title}\n\n{insert}\n\n{text}\n\n{closing}"
     else:
-        return f"{prefix} {text}\n\n{closing}"
+        return f"{prefix} {text}\n\n{insert}\n\n{closing}"
 
 # -----------------------------
 # Weather
@@ -113,21 +134,17 @@ def get_weather():
         if cloud > 70: condition = "☁️ Overcast"
         elif cloud > 30: condition = "🌤 Partly cloudy"
 
-        summaries = []
-        for entry in data["properties"]["timeseries"][:72:24]:
-            t = entry["time"][:10]
-            d = entry["data"]["instant"]["details"]
-            summaries.append(f"{t}: {d.get('air_temperature')}°C")
+        advice = "🙂 Looks like a fine day." if cloud < 30 else "☂️ You may want an umbrella." if cloud > 70 else "🌥 A bit cloudy, but manageable."
 
         return (
             f"{condition} in {WEATHER_CITY}, {temp}°C, wind {wind} m/s.\n"
-            f"📅 3-day outlook:\n" + "\n".join(summaries)
+            f"{advice}"
         )
     except Exception as e:
         return f"🌦 Weather fetch error: {e}"
 
 # -----------------------------
-# Radarr / Sonarr with cache
+# Radarr / Sonarr (cached lookups)
 # -----------------------------
 def get_series_count():
     try:
@@ -135,7 +152,8 @@ def get_series_count():
             url = f"{SONARR_URL}/api/v3/series"
             r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
             if r.status_code == 200:
-                return f"📺 You have {len(r.json())} series."
+                total = len(r.json())
+                return f"📺 You have {total} series. {'Plenty to binge!' if total>30 else 'A modest collection.'}"
     except: pass
     return "📺 Could not fetch series count."
 
@@ -145,7 +163,8 @@ def get_movie_count():
             url = f"{RADARR_URL}/api/v3/movie"
             r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
             if r.status_code == 200:
-                return f"🎬 You have {len(r.json())} movies."
+                total = len(r.json())
+                return f"🎬 You have {total} movies. {'A true cinema archive!' if total>100 else 'Compact but quality.'}"
     except: pass
     return "🎬 Could not fetch movie count."
 
@@ -169,10 +188,10 @@ def get_upcoming_series():
                     ep = e.get("episodeNumber", "?")
                     airdate = e.get("airDate", "N/A")
                     items.append(f"• {title} - S{season}E{ep} ({airdate})")
-                return "📺 Upcoming episodes:\n" + "\n".join(items[:10])
+                return "📺 Upcoming episodes:\n" + "\n".join(items[:10]) + f"\n⚡ {len(items)} episodes airing this week!"
     except Exception as e:
         return f"📺 Error fetching upcoming series: {e}"
-    return "📺 No upcoming episodes this week."
+    return "📺 No upcoming episodes this week. 📭 A quiet schedule ahead."
 
 def get_upcoming_movies():
     try:
@@ -192,27 +211,38 @@ def get_upcoming_movies():
                     title = movie_map.get(mid, m.get("title", "Unknown Movie"))
                     airdate = m.get("inCinemas", "N/A")[:10]
                     items.append(f"• {title} ({airdate})")
-                return "🎬 Upcoming movies:\n" + "\n".join(items[:10])
+                return "🎬 Upcoming movies:\n" + "\n".join(items[:10]) + f"\n🍿 {len(items)} movies arriving this week!"
     except Exception as e:
         return f"🎬 Error fetching upcoming movies: {e}"
-    return "🎬 No upcoming movies this week."
+    return "🎬 No upcoming movies this week. 🎞 Time to revisit old favorites!"
 
 # -----------------------------
-# Digest
+# Digest with Time-based Greetings
 # -----------------------------
+def get_greeting():
+    hour = datetime.now().hour
+    if 5 <= hour < 12: return "🌅 Good morning!"
+    if 12 <= hour < 18: return "🌞 Good afternoon!"
+    if 18 <= hour < 22: return "🌆 Good evening!"
+    return "🌙 Good night!"
+
 def get_digest():
     parts = []
-    parts.append("🗞 Daily Digest\n")
+    parts.append(f"{get_greeting()} Here is your personalized digest:\n")
     parts.append(get_weather())
     parts.append(get_movie_count())
     parts.append(get_series_count())
     parts.append(get_upcoming_movies())
     parts.append(get_upcoming_series())
-    parts.append(f"\n🤖 Digest crafted by {BOT_NAME}")
+    parts.append(random.choice([
+        f"🤖 That’s all for now, {BOT_NAME} signing off.",
+        f"✨ Digest prepared and delivered by {BOT_NAME}.",
+        f"📡 Stay tuned for more updates with {BOT_NAME}.",
+    ]))
     return "\n\n".join(parts)
 
 # -----------------------------
-# Cleanup Jobs
+# Cleanup + Scheduler
 # -----------------------------
 def retention_cleanup():
     try:
@@ -236,14 +266,14 @@ def cleanup_non_jarvis_messages():
         print(f"[{BOT_NAME}] Non-Jarvis cleanup failed: {e}")
 
 def run_scheduler():
-    schedule.every(30).minutes.do(retention_cleanup)
-    schedule.every(2).minutes.do(cleanup_non_jarvis_messages)
+    schedule.every(5).minutes.do(retention_cleanup)
+    schedule.every(5).seconds.do(cleanup_non_jarvis_messages)
     while True:
         schedule.run_pending()
         time.sleep(1)
 
 # -----------------------------
-# Parser
+# Parser + Command Handling
 # -----------------------------
 def parse_command(title, raw):
     text = (title + " " + raw).strip().lower()
@@ -311,7 +341,12 @@ if __name__ == "__main__":
     startup_msgs = [
         f"🤖 {BOT_NAME} online and operational.",
         f"🚀 Greetings! {BOT_NAME} is ready.",
-        f"✨ Hello, I am {BOT_NAME}, your assistant."
+        f"✨ Hello, I am {BOT_NAME}, your assistant.",
+        f"🧩 Systems initialized. {BOT_NAME} at your service.",
+        f"🎯 {BOT_NAME} reporting in.",
+        f"📡 Connection established. {BOT_NAME} is live.",
+        f"⚡ Boot sequence complete. {BOT_NAME} engaged.",
+        f"🔔 {BOT_NAME} is standing by."
     ]
     send_message("Startup", random.choice(startup_msgs))
     loop = asyncio.new_event_loop()
