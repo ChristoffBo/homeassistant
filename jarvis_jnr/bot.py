@@ -28,10 +28,15 @@ BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true"
 
 jarvis_app_id = None
 
+# -----------------------------
 # In-memory caches
-cache_movies = None
-cache_series = None
-cache_expiry = 0
+# -----------------------------
+cache = {
+    "movies": None,
+    "series": None,
+    "movies_expiry": 0,
+    "series_expiry": 0,
+}
 
 # -----------------------------
 # Gotify Helpers
@@ -59,7 +64,7 @@ def delete_message(mid):
         print("Delete error:", e)
 
 # -----------------------------
-# Purge helpers
+# Purge Helpers
 # -----------------------------
 def purge_app_messages(appid, appname=""):
     if not appid: return False
@@ -106,13 +111,11 @@ def resolve_app_id():
 def beautify_message(title, raw):
     text = raw.strip()
     lower = text.lower()
-
     prefix = "💡"
     if "error" in lower or "failed" in lower: prefix = "💀"
     elif "success" in lower or "completed" in lower: prefix = "✅"
     elif "warning" in lower: prefix = "⚠️"
     elif "start" in lower or "starting" in lower: prefix = "🚀"
-
     closings = [
         f"{BOT_ICON} Yours truly, {BOT_NAME}",
         f"✨ Insight provided by {BOT_NAME}",
@@ -137,34 +140,36 @@ def cleanup_messages():
         print("Cleanup error:", e)
 
 # -----------------------------
-# Radarr / Sonarr
+# Radarr / Sonarr with caching
 # -----------------------------
 def get_upcoming_movies(days=7):
     try:
-        global cache_movies, cache_expiry
         now = time.time()
-        if cache_movies and now < cache_expiry: return cache_movies
+        if cache["movies"] and now < cache["movies_expiry"]:
+            return cache["movies"]
         start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         end = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=days)).strftime("%Y-%m-%d")
-        url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}&token={RADARR_KEY}"
-        cache_movies = requests.get(url, timeout=10).json()
-        cache_expiry = now + 60
-        return cache_movies
+        url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}&apikey={RADARR_KEY}"
+        data = requests.get(url, timeout=10).json()
+        cache["movies"] = data
+        cache["movies_expiry"] = now + 300  # cache 5 minutes
+        return data
     except Exception as e:
         print("Radarr error:", e)
         return []
 
 def get_upcoming_episodes(days=7):
     try:
-        global cache_series, cache_expiry
         now = time.time()
-        if cache_series and now < cache_expiry: return cache_series
+        if cache["series"] and now < cache["series_expiry"]:
+            return cache["series"]
         start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         end = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}&apikey={SONARR_KEY}"
-        cache_series = requests.get(url, timeout=10).json()
-        cache_expiry = now + 60
-        return cache_series
+        data = requests.get(url, timeout=10).json()
+        cache["series"] = data
+        cache["series_expiry"] = now + 300
+        return data
     except Exception as e:
         print("Sonarr error:", e)
         return []
@@ -219,12 +224,10 @@ def handle_command(msg):
     if "series count" in q: return f"📺 You have {get_series_count()} series."
     if "longest movie" in q: return get_longest_movie()
     if "longest series" in q: return get_longest_series()
-
     if "upcoming movie" in q:
         um = get_upcoming_movies()
         if not um: return "🎬 No upcoming movies this week."
         return "🎬 Upcoming movies:\n" + "\n".join([f"{m.get('title','Unknown')} ({m.get('physicalRelease','N/A')})" for m in um[:5]])
-
     if "upcoming series" in q or "upcoming show" in q:
         us = get_upcoming_episodes()
         if not us: return "📺 No upcoming episodes this week."
@@ -245,12 +248,7 @@ async def listen():
                 data = json.loads(msg)
                 mid, appid, title, message = data.get("id"), data.get("appid"), data.get("title",""), data.get("message","")
                 if not mid: continue
-
-                # Skip own messages
-                if jarvis_app_id and appid == jarvis_app_id:
-                    continue
-
-                # Handle command
+                if jarvis_app_id and appid == jarvis_app_id: continue
                 resp = handle_command(message)
                 if resp:
                     final_msg = beautify_message(title, resp) if BEAUTIFY_ENABLED else resp
@@ -269,7 +267,6 @@ async def listen():
 async def main():
     print(f"[{BOT_NAME}] Starting add-on...")
     resolve_app_id()
-
     startup_msg = random.choice([
         f"Good Day, I am {BOT_NAME}, ready to assist.",
         f"Greetings, {BOT_NAME} is now online and standing by.",
@@ -277,10 +274,8 @@ async def main():
         f"{BOT_NAME} reporting for duty.",
     ])
     send_message("Startup", beautify_message("Startup", startup_msg), priority=5)
-
     schedule.every(5).minutes.do(purge_non_jarvis_apps)
     schedule.every(5).seconds.do(cleanup_messages)
-
     asyncio.create_task(listen())
     while True:
         schedule.run_pending()
