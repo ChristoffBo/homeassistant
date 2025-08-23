@@ -9,14 +9,13 @@ BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
 APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
-APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
+APP_NAME = os.getenv("JARVIS_APP_NAME", BOT_NAME)
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
 WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() in ("1", "true", "yes")
-WEATHER_API = os.getenv("WEATHER_API", "openweathermap")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Johannesburg")
 WEATHER_TIME = os.getenv("WEATHER_TIME", "07:00")
@@ -35,6 +34,38 @@ SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
 SONARR_TIME = os.getenv("SONARR_TIME", "07:30")
 
 jarvis_app_id = None
+
+# -----------------------------
+# Randomized AI-like responses
+# -----------------------------
+no_movies_responses = [
+    "🎬 I checked Radarr — no new movies scheduled in the next {days} days. Time to revisit an old favorite.",
+    "🎬 Nothing fresh in Radarr for the coming {days} days. The cinema slate is quiet.",
+    "🎬 I looked ahead {days} days and found no upcoming movies. Perfect chance to binge older titles.",
+    "🎬 All clear — no movies in the pipeline this week. Shall I remind you again tomorrow?"
+]
+
+no_series_responses = [
+    "📺 I checked Sonarr — no new episodes arriving in the next {days} days. Time to catch up on backlogs.",
+    "📺 No new shows in the schedule for {days} days. A calm week for your watchlist.",
+    "📺 Sonarr has no upcoming episodes this week. Shall I keep checking for you?",
+    "📺 All quiet on Sonarr — no shows are due in the next {days} days."
+]
+
+no_digest_responses = [
+    "🗞 I checked all sources — nothing new to report today. Everything is calm and up to date.",
+    "🗞 No updates for now — all systems are quiet. I’ll keep monitoring.",
+    "🗞 Everything looks steady today — no new weather, movies, or shows to mention.",
+    "🗞 I scanned your feeds — nothing to highlight. Shall I prepare a fresh update tomorrow?"
+]
+
+startup_messages = [
+    f"Good day! I am {BOT_NAME}, ready to assist you.",
+    f"🚀 {BOT_NAME} is online and operational.",
+    f"🤖 {BOT_NAME} reporting for duty.",
+    f"✨ Systems initialized — {BOT_NAME} standing by.",
+    f"🧩 {BOT_NAME} is here, keeping an eye on things for you."
+]
 
 # -----------------------------
 # Helpers
@@ -78,53 +109,64 @@ def beautify_message(title, raw):
     elif "success" in lower: prefix = "✅"
     elif "warning" in lower: prefix = "⚠️"
     elif "start" in lower: prefix = "🚀"
+
     closings = [
         f"{BOT_ICON} With regards, {BOT_NAME}",
         f"✨ Processed intelligently by {BOT_NAME}",
-        f"🧩 Ever at your service, {BOT_NAME}"
+        f"🧩 Ever at your service, {BOT_NAME}",
+        f"🤖 Yours truly, {BOT_NAME}",
+        f"📡 At your command, {BOT_NAME}",
+        f"🔧 Report crafted by {BOT_NAME}",
+        f"🛰 Keeping watch — {BOT_NAME}"
     ]
+
     return f"{prefix} {raw.strip()}\n\n{random.choice(closings)}"
 
 # -----------------------------
 # Modules
 # -----------------------------
 def fetch_weather():
-    if not WEATHER_ENABLED or not WEATHER_API_KEY: return None
+    if not WEATHER_ENABLED or not WEATHER_API_KEY: 
+        return None
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={WEATHER_CITY}&appid={WEATHER_API_KEY}&units=metric"
         r = requests.get(url, timeout=5).json()
-        return f"🌤 {WEATHER_CITY}: {r['main']['temp']}°C, {r['weather'][0]['description']}"
+        return f"🌤 The weather in {WEATHER_CITY}: {r['main']['temp']}°C, {r['weather'][0]['description']}."
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Weather error: {e}")
-        return None
+        return "🌤 Sorry, I couldn’t fetch the weather right now."
 
 def fetch_radarr_upcoming(days=7):
-    if not RADARR_ENABLED or not RADARR_API_KEY: return None
+    if not RADARR_ENABLED or not RADARR_API_KEY: 
+        return None
     try:
         start = datetime.now().strftime("%Y-%m-%d")
         end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}"
         r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=5).json()
-        if not r: return "🎬 No upcoming movies"
-        items = [f"{m['title']} ({m['inCinemas'][:10] if m.get('inCinemas') else 'TBA'})" for m in r]
-        return "🎬 Upcoming Movies:\n" + "\n".join(items[:5])
+        if not r:
+            return random.choice(no_movies_responses).format(days=days)
+        items = [f"• {m['title']} ({m['inCinemas'][:10] if m.get('inCinemas') else 'TBA'})" for m in r]
+        return f"🎬 Here are movies coming in the next {days} days:\n" + "\n".join(items[:5])
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Radarr upcoming error: {e}")
-        return None
+        print(f"[{BOT_NAME}] ❌ Radarr error: {e}")
+        return "🎬 Sorry, I couldn’t fetch Radarr data right now."
 
 def fetch_sonarr_upcoming(days=7):
-    if not SONARR_ENABLED or not SONARR_API_KEY: return None
+    if not SONARR_ENABLED or not SONARR_API_KEY: 
+        return None
     try:
         start = datetime.now().strftime("%Y-%m-%d")
         end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}"
         r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=5).json()
-        if not r: return "📺 No upcoming episodes"
-        items = [f"{e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in r]
-        return "📺 Upcoming Episodes:\n" + "\n".join(items[:5])
+        if not r:
+            return random.choice(no_series_responses).format(days=days)
+        items = [f"• {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in r]
+        return f"📺 Upcoming episodes in the next {days} days:\n" + "\n".join(items[:5])
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Sonarr upcoming error: {e}")
-        return None
+        print(f"[{BOT_NAME}] ❌ Sonarr error: {e}")
+        return "📺 Sorry, I couldn’t fetch Sonarr data right now."
 
 def send_digest():
     if not DIGEST_ENABLED: return
@@ -132,16 +174,23 @@ def send_digest():
     if WEATHER_ENABLED: w = fetch_weather();  parts.append(w) if w else None
     if RADARR_ENABLED:  r = fetch_radarr_upcoming(7); parts.append(r) if r else None
     if SONARR_ENABLED:  s = fetch_sonarr_upcoming(7); parts.append(s) if s else None
-    if not parts: return
-    digest_msg = "🗞 Daily Digest\n\n" + "\n".join(parts)
-    send_message("Daily Digest", beautify_message("Digest", digest_msg))
+
+    if not parts:
+        msg = random.choice(no_digest_responses)
+    else:
+        msg = "🗞 Here’s your daily assistant report:\n\n" + "\n\n".join(parts)
+
+    send_message("Daily Digest", beautify_message("Digest", msg))
+    return msg
 
 # -----------------------------
 # Command Parser
 # -----------------------------
-def parse_command(raw):
-    text = raw.strip().lower()
-    if not text.startswith("jarvis"):
+def parse_command(title, raw):
+    bot_name_lower = BOT_NAME.lower()
+    text = (title + " " + raw).strip().lower()
+
+    if bot_name_lower not in text:
         return None
 
     if "help" in text: return "help"
@@ -158,18 +207,19 @@ def handle_command(command):
     if command == "media": return f"{fetch_radarr_upcoming(7)}\n\n{fetch_sonarr_upcoming(7)}"
     if command == "weather": return fetch_weather()
     if command == "digest": 
-        send_digest()
-        return "🗞 Digest sent"
+        return send_digest()
     if command == "help":
         return (
-            "🤖 Jarvis Command Help:\n\n"
-            "• Jarvis weather → Get current weather\n"
-            "• Jarvis digest → Get full daily digest now\n"
-            "• Jarvis radarr / Jarvis movies → Upcoming Radarr movies\n"
-            "• Jarvis sonarr / Jarvis shows / Jarvis series → Upcoming Sonarr episodes\n"
-            "• Jarvis media → Combined Radarr + Sonarr upcoming"
+            f"🤖 Hello, I am {BOT_NAME}, your AI assistant.\n\n"
+            "Here are some things you can ask me:\n"
+            "• Weather → 'Jarvis weather' or 'Jarvis, what’s the weather like?'\n"
+            "• Digest → 'Jarvis digest' to get today’s report\n"
+            "• Movies → 'Jarvis movies' for upcoming Radarr\n"
+            "• Shows → 'Jarvis series' or 'Jarvis shows' for Sonarr\n"
+            "• Media → 'Jarvis media' for both movies + shows\n\n"
+            "Just mention my name as the wake word. I'm always listening."
         )
-    return "🤖 I didn’t understand that."
+    return f"🤖 I didn’t quite understand that, but I’m learning."
 
 # -----------------------------
 # Scheduler
@@ -197,10 +247,10 @@ async def listen():
 
             if appid == jarvis_app_id: continue  # skip own
 
-            command = parse_command(message)
+            command = parse_command(title, message)
             if command:
                 reply = handle_command(command)
-                if reply: send_message("Jarvis Command", beautify_message("Jarvis", reply))
+                if reply: send_message("Command Response", beautify_message(BOT_NAME, reply))
                 requests.delete(f"{GOTIFY_URL}/message/{mid}", headers={"X-Gotify-Key": CLIENT_TOKEN})
                 continue
 
@@ -215,7 +265,8 @@ async def listen():
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] 🚀 Starting...")
     resolve_app_id()
-    send_message("Startup", f"{BOT_NAME} online and ready.", priority=5)
+    startup_msg = random.choice(startup_messages)
+    send_message("Startup", startup_msg, priority=5)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
