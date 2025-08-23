@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import random
 import requests
 import websocket
 from datetime import datetime
@@ -24,36 +25,73 @@ BEAUTIFY_ENABLED = config.get("beautify_enabled", True)
 HEADERS_CLIENT = {"X-Gotify-Key": CLIENT_TOKEN}
 HEADERS_APP = {"X-Gotify-Key": APP_TOKEN}
 
+# --- Random AI-like footers ---
+FOOTERS = [
+    "With regards, {BOT_NAME}",
+    "At your service, {BOT_NAME}",
+    "Your loyal assistant, {BOT_NAME}",
+    "Glad I could help, {BOT_NAME}",
+    "On duty, {BOT_NAME}",
+    "Consider it done — {BOT_NAME}",
+    "Always watching, {BOT_NAME}"
+]
+
+def random_footer():
+    return f"{BOT_ICON} {random.choice(FOOTERS).format(BOT_NAME=BOT_NAME)}"
+
 # --- Beautify profiles ---
 def beautify_message(msg):
     title = msg.get("title", "")
     body = msg.get("message", "")
-    footer = f"{BOT_ICON} With regards, {BOT_NAME}"
+    footer = random_footer()
 
-    # Detect type
     lowered = (title + " " + body).lower()
 
-    if any(x in lowered for x in ["error", "failed", "failure"]):
+    if any(x in lowered for x in ["error", "failed", "failure", "unreachable"]):
         return f"""{BOT_ICON} {BOT_NAME}: {title}
 ❌🔥 {body}
 
 {footer}"""
 
-    if any(x in lowered for x in ["warn", "degraded"]):
+    if any(x in lowered for x in ["warn", "degraded", "delay"]):
         return f"""{BOT_ICON} {BOT_NAME}: {title}
 ⚠️⏳ {body}
 
 {footer}"""
 
-    if any(x in lowered for x in ["completed", "success", "done", "finished"]):
+    if any(x in lowered for x in ["completed", "success", "done", "finished", "ok"]):
         return f"""{BOT_ICON} {BOT_NAME}: {title}
 ✅✨ {body}
 
 {footer}"""
 
-    if any(x in lowered for x in ["info", "started", "status"]):
+    if any(x in lowered for x in ["started", "boot", "status", "info"]):
         return f"""{BOT_ICON} {BOT_NAME}: {title}
 ℹ️ {body}
+
+{footer}"""
+
+    if any(x in lowered for x in ["radarr", "movie"]):
+        return f"""{BOT_ICON} {BOT_NAME}: 🎬 {title}
+{body}
+
+{footer}"""
+
+    if any(x in lowered for x in ["sonarr", "episode", "tv"]):
+        return f"""{BOT_ICON} {BOT_NAME}: 📺 {title}
+{body}
+
+{footer}"""
+
+    if any(x in lowered for x in ["backup", "restore", "snapshot"]):
+        return f"""{BOT_ICON} {BOT_NAME}: 💾 {title}
+{body}
+
+{footer}"""
+
+    if any(x in lowered for x in ["network", "vpn", "zerotier", "netbird"]):
+        return f"""{BOT_ICON} {BOT_NAME}: 🌐 {title}
+{body}
 
 {footer}"""
 
