@@ -146,10 +146,14 @@ def get_upcoming_series():
             url = f"{SONARR_URL}/api/v3/calendar?start={today}&end={until}"
             r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
             if r.status_code == 200 and r.json():
-                items = [
-                    f"• {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})"
-                    for e in r.json()
-                ]
+                items = []
+                for e in r.json():
+                    series_info = e.get("series", {}) or {}
+                    title = series_info.get("title", "Unknown Show")
+                    season = e.get("seasonNumber", "?")
+                    ep = e.get("episodeNumber", "?")
+                    airdate = e.get("airDate", "N/A")
+                    items.append(f"• {title} - S{season}E{ep} ({airdate})")
                 return "📺 Upcoming episodes:\n" + "\n".join(items[:10])
     except Exception as e:
         return f"📺 Error fetching upcoming series: {e}"
