@@ -46,7 +46,10 @@ fi
 mkdir -p "${DATA_DIR}"
 mkdir -p "$(dirname "${CONF_PATH}")"
 mkdir -p /var/lib/semaphore
+mkdir -p /tmp/semaphore
 chown -R root:root "${DATA_DIR}" || true
+chmod -R 755 "${DATA_DIR}" || true
+chmod -R 755 /tmp/semaphore || true
 
 # Show current config
 log "Config: ${CONF_PATH}"
@@ -62,6 +65,7 @@ ACCESS_KEY_ENCRYPTION="$(bashio::config 'access_key_encryption' "$(openssl rand 
 log "Generating Semaphore config..."
 cat > "${CONF_PATH}" <<JSON
 {
+  "dialect": "bolt",
   "bolt": {
     "file": "${DATA_DIR}/database.boltdb"
   },
@@ -71,9 +75,20 @@ cat > "${CONF_PATH}" <<JSON
   "access_key_encryption": "${ACCESS_KEY_ENCRYPTION}",
   "web_host": "${WEB_HOST}",
   "web_port": "${PORT}",
-  "non_auth": false
+  "non_auth": false,
+  "runner": {
+    "api_url": "http://127.0.0.1:${PORT}",
+    "config_file": "${CONF_PATH}",
+    "max_parallel_tasks": 5
+  }
 }
 JSON
+
+# Initialize database if it doesn't exist
+if [ ! -f "${DATA_DIR}/database.boltdb" ]; then
+  log "Initializing BoltDB database..."
+  semaphore setup --config "${CONF_PATH}" || true
+fi
 
 # Auto-provision / reset admin user from options
 log "Ensuring admin user exists (or resetting password)..."
@@ -93,9 +108,15 @@ fi
 
 log "Admin ready: ${ADMIN_LOGIN}"
 
-# Set environment variables
+# Set environment variables to ensure BoltDB is used
 export SEMAPHORE_PORT="${PORT}"
 export SEMAPHORE_CONFIG_PATH="${CONF_PATH}"
+export SEMAPHORE_DB_DIALECT="bolt"
+export SEMAPHORE_DB_HOST=""
+export SEMAPHORE_DB_NAME=""
+export SEMAPHORE_DB_USER=""
+export SEMAPHORE_DB_PASS=""
+export SEMAPHORE_TMP_PATH="/tmp/semaphore"
 
 # Start server
 log "Starting Semaphore on :${PORT}"
