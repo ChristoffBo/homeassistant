@@ -1,4 +1,63 @@
-import os, json, time, asyncio, requests, websockets, schedule, datetime, random
+# -----------------------------
+# Command processing
+# -----------------------------
+def process_command(title, message):
+    """Process commands sent to Jarvis"""
+    message_lower = message.lower().strip()
+    
+    if "!purge" in message_lower or "purge all" in message_lower:
+        print(f"[{BOT_NAME}] Purge command received!")
+        
+        # Option 1: Individual message deletion (more precise)
+        purge_success = purge_all_except_jarvis()
+        
+        # Option 2: Bulk purge entire apps (faster - uncomment to use)
+        # purge_success = bulk_purge_all_except_jarvis()
+        
+        if purge_success:
+            send_message("Purge Complete", "🧹 All non-Jarvis messages have been purged successfully!", priority=5)
+            return True
+        else:
+            send_message("Purge Failed", "❌ Purge operation encountered errors. Check logs for details.", priority=5)
+            return True
+    
+    elif "!status" in message_lower:
+        try:
+            # Get message count
+            url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
+            r = requests.get(url, timeout=10)
+            r.raise_for_status()
+            
+            messages = r.json().get('messages', [])
+            total_messages = len(messages)
+            jarvis_messages = len([msg for msg in messages if msg.get('appid') == jarvis_app_id])
+            other_messages = total_messages - jarvis_messages
+            
+            status_msg = f"📊 System Status:\n\n"
+            status_msg += f"🤖 Jarvis App ID: {jarvis_app_id}\n"
+            status_msg += f"📧 Total Messages: {total_messages}\n"
+            status_msg += f"🤖 Jarvis Messages: {jarvis_messages}\n"
+            status_msg += f"📨 Other Messages: {other_messages}\n\n"
+            status_msg += f"Commands: !purge, !status"
+            
+            send_message("Status Report", status_msg, priority=3)
+            return True
+            
+        except Exception as e:
+            send_message("Status Error", f"❌ Could not get status: {e}", priority=5)
+            return True
+    
+    elif "!help" in message_lower:
+        help_msg = f"🤖 {BOT_NAME} Commands:\n\n"
+        help_msg += f"!purge - Delete all non-Jarvis messages\n"
+        help_msg += f"!status - Show system status\n"
+        help_msg += f"!help - Show this help\n\n"
+        help_msg += f"Send any of these commands as a message to trigger them."
+        
+        send_message("Help", help_msg, priority=3)
+        return True
+    
+    return False  import os, json, time, asyncio, requests, websockets, schedule, datetime, random
 
 # -----------------------------
 # Config from environment (set in run.sh from options.json)
@@ -112,20 +171,46 @@ def delete_message(message_id):
 # Bulk purge all messages for an app (keep this for cleanup)
 # -----------------------------
 def purge_app_messages(appid):
-    """Purge all messages for a specific app"""
+    """Purge all messages for a specific app using CLIENT (admin) token"""
     if not appid:
         return False
-    url = f"{GOTIFY_URL}/application/{appid}/message?token={CLIENT_TOKEN}"
+    
+    # Try both authentication methods for bulk purge
+    print(f"[{BOT_NAME}] Attempting to purge all messages for app ID: {appid}")
+    
+    # Method 1: Query parameter
     try:
+        url = f"{GOTIFY_URL}/application/{appid}/message?token={CLIENT_TOKEN}"
+        print(f"[{BOT_NAME}] Purge URL (query): {url}")
+        
         r = requests.delete(url, timeout=10)
+        print(f"[{BOT_NAME}] Purge response: {r.status_code} - {r.text}")
+        
         if r.status_code == 200:
-            print(f"[{BOT_NAME}] Purged all messages for app id={appid}")
+            print(f"[{BOT_NAME}] ✅ Successfully purged all messages for app id={appid}")
+            return True
+            
+    except Exception as e:
+        print(f"[{BOT_NAME}] Purge method 1 failed: {e}")
+    
+    # Method 2: Header authentication  
+    try:
+        url = f"{GOTIFY_URL}/application/{appid}/message"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        print(f"[{BOT_NAME}] Purge URL (header): {url}")
+        
+        r = requests.delete(url, headers=headers, timeout=10)
+        print(f"[{BOT_NAME}] Purge response (header): {r.status_code} - {r.text}")
+        
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] ✅ Successfully purged all messages for app id={appid} (via header)")
             return True
         else:
-            print(f"[{BOT_NAME}] Failed purge for app {appid}: {r.status_code} {r.text}")
+            print(f"[{BOT_NAME}] ❌ Failed purge for app {appid}: {r.status_code} {r.text}")
             return False
+            
     except Exception as e:
-        print(f"[{BOT_NAME}] Purge error for app {appid}: {e}")
+        print(f"[{BOT_NAME}] Purge method 2 failed: {e}")
         return False
 
 def test_token_permissions():
@@ -312,18 +397,19 @@ async def listen():
                     send_success = send_message(title, final_msg, priority=repost_priority)
                     
                     if send_success:
-                        print(f"[{BOT_NAME}] ✅ SEND SUCCESS - Now purging all non-Jarvis messages")
+                        print(f"[{BOT_NAME}] ✅ SEND SUCCESS - Now auto-purging non-Jarvis messages")
                         
-                        # Option 1: Individual message deletion (more precise)
-                        purge_success = purge_all_except_jarvis()
-                        
-                        # Option 2: Bulk purge entire apps (faster, less precise)
-                        # purge_success = bulk_purge_all_except_jarvis()
-                        
-                        if purge_success:
-                            print(f"[{BOT_NAME}] ✅ PURGE SUCCESS - All non-Jarvis messages cleaned up")
+                        # Auto-purge: Delete all messages from the source app (not Jarvis)
+                        if appid and appid != jarvis_app_id:
+                            print(f"[{BOT_NAME}] Auto-purging app ID {appid} (source of original message)")
+                            purge_success = purge_app_messages(appid)
+                            
+                            if purge_success:
+                                print(f"[{BOT_NAME}] ✅ AUTO-PURGE SUCCESS for app {appid}")
+                            else:
+                                print(f"[{BOT_NAME}] ❌ AUTO-PURGE FAILED for app {appid}")
                         else:
-                            print(f"[{BOT_NAME}] ❌ PURGE FAILED - Some messages may remain")
+                            print(f"[{BOT_NAME}] Skipping purge - no valid source app ID")
                     else:
                         print(f"[{BOT_NAME}] ❌ SEND FAILED - Not purging messages")
 
