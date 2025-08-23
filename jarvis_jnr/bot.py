@@ -8,6 +8,22 @@ APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", BOT_NAME)
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
+SELF_APP_ID = None  # resolved later
+
+def resolve_self_appid():
+    """Resolve Jarvis' own AppID from Gotify using APP_NAME."""
+    global SELF_APP_ID
+    try:
+        r = requests.get(f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}", timeout=5)
+        r.raise_for_status()
+        for app in r.json():
+            if app["name"].lower() == APP_NAME.lower():
+                SELF_APP_ID = app["id"]
+                print(f"[{BOT_NAME}] Resolved self AppID = {SELF_APP_ID}")
+                return
+        print(f"[{BOT_NAME}] WARNING: Could not find app '{APP_NAME}', loop protection disabled.")
+    except Exception as e:
+        print(f"[{BOT_NAME}] Failed to resolve AppID: {e}")
 
 def send_message(title, message, priority=5):
     """Send a message back to Gotify (via APP token)."""
@@ -31,6 +47,11 @@ async def listen():
                     title = data.get("title", "")
                     message = data.get("message", "")
                     mid = data.get("id")
+                    appid = data.get("appid")
+
+                    # 🔒 Skip Jarvis' own messages (loop protection)
+                    if SELF_APP_ID and appid == SELF_APP_ID:
+                        continue
 
                     # Beautify and repost if enabled
                     if os.getenv("BEAUTIFY_ENABLED", "true") == "true":
@@ -72,7 +93,7 @@ def run_scheduler():
         time.sleep(1)
 
 if __name__ == "__main__":
-    # Dynamic startup message
+    resolve_self_appid()
     send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
 
     # Explicitly create new asyncio loop (fixes DeprecationWarning)
