@@ -14,7 +14,7 @@
   "host_network": false,
   "ingress": true,
   "ingress_port": 8055,
-  "ingress_stream": false,
+  "ingress_stream": true,
   "panel_admin": false,
   "map": [
     "share:rw"
