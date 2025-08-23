@@ -1,4 +1,4 @@
-import os, json, time, asyncio, requests, websockets, random
+import os, json, time, asyncio, requests, websockets, random, schedule
 from datetime import datetime, timedelta
 
 # -----------------------------
@@ -10,6 +10,8 @@ GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
 APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", BOT_NAME)
+
+RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
 WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() in ("1", "true", "yes")
 WEATHER_LAT = float(os.getenv("WEATHER_LAT", "-26.2041"))
@@ -40,6 +42,17 @@ def send_message(title, message, priority=5):
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Send error: {e}")
 
+def delete_message(mid):
+    if not mid:
+        return False
+    try:
+        url = f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}"
+        r = requests.delete(url, timeout=5)
+        return r.status_code == 200
+    except Exception as e:
+        print(f"[{BOT_NAME}] Delete error: {e}")
+        return False
+
 def resolve_app_id():
     global jarvis_app_id
     try:
@@ -67,7 +80,7 @@ def beautify_message(title, raw):
 
     closings = [
         f"{BOT_ICON} With regards, {BOT_NAME}",
-        f"✨ Processed by {BOT_NAME}",
+        f"✨ Processed intelligently by {BOT_NAME}",
         f"🤖 Yours truly, {BOT_NAME}",
         f"📡 Report crafted by {BOT_NAME}"
     ]
@@ -141,18 +154,12 @@ def get_upcoming_series():
         if SONARR_ENABLED:
             today = datetime.now().date()
             until = today + timedelta(days=7)
-
-            # Cache all series first
             series_map = {}
-            series_url = f"{SONARR_URL}/api/v3/series"
-            sr = requests.get(series_url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+            sr = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
             if sr.status_code == 200:
                 for s in sr.json():
                     series_map[s["id"]] = s.get("title", "Unknown Show")
-
-            # Calendar
-            url = f"{SONARR_URL}/api/v3/calendar?start={today}&end={until}"
-            r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+            r = requests.get(f"{SONARR_URL}/api/v3/calendar?start={today}&end={until}", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
             if r.status_code == 200 and r.json():
                 items = []
                 for e in r.json():
@@ -172,18 +179,12 @@ def get_upcoming_movies():
         if RADARR_ENABLED:
             today = datetime.now().date()
             until = today + timedelta(days=7)
-
-            # Cache all movies first
             movie_map = {}
-            movie_url = f"{RADARR_URL}/api/v3/movie"
-            mr = requests.get(movie_url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+            mr = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
             if mr.status_code == 200:
                 for m in mr.json():
                     movie_map[m["id"]] = m.get("title", "Unknown Movie")
-
-            # Calendar
-            url = f"{RADARR_URL}/api/v3/calendar?start={today}&end={until}"
-            r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+            r = requests.get(f"{RADARR_URL}/api/v3/calendar?start={today}&end={until}", headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
             if r.status_code == 200 and r.json():
                 items = []
                 for m in r.json():
@@ -211,19 +212,49 @@ def get_digest():
     return "\n\n".join(parts)
 
 # -----------------------------
+# Cleanup Jobs
+# -----------------------------
+def retention_cleanup():
+    try:
+        r = requests.get(f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}", timeout=5).json()
+        cutoff = time.time() - (RETENTION_HOURS * 3600)
+        for msg in r.get("messages", []):
+            ts = datetime.fromisoformat(msg["date"].replace("Z", "+00:00")).timestamp()
+            if ts < cutoff:
+                delete_message(msg["id"])
+    except Exception as e:
+        print(f"[{BOT_NAME}] Retention cleanup failed: {e}")
+
+def cleanup_non_jarvis_messages():
+    if not jarvis_app_id: return
+    try:
+        r = requests.get(f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}", timeout=5).json()
+        for msg in r.get("messages", []):
+            if msg.get("appid") != jarvis_app_id:
+                delete_message(msg["id"])
+    except Exception as e:
+        print(f"[{BOT_NAME}] Non-Jarvis cleanup failed: {e}")
+
+def run_scheduler():
+    schedule.every(30).minutes.do(retention_cleanup)
+    schedule.every(2).minutes.do(cleanup_non_jarvis_messages)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# -----------------------------
 # Parser
 # -----------------------------
 def parse_command(title, raw):
     text = (title + " " + raw).strip().lower()
     if BOT_NAME.lower() not in text: return None
-
     if "movie" in text and "count" in text: return "movie_count"
     if "series" in text and "count" in text: return "series_count"
     if "upcoming movie" in text: return "movies_upcoming"
     if "upcoming series" in text: return "series_upcoming"
     if "series" in text: return "series_upcoming"
     if "movies" in text: return "movies_upcoming"
-    if "weather" in text or "forecast" in text: return "weather"
+    if "weather" in text: return "weather"
     if "digest" in text: return "digest"
     if "help" in text: return "help"
     return None
@@ -259,10 +290,8 @@ async def listen():
                 appid = data.get("appid")
                 title = data.get("title", "")
                 message = data.get("message", "")
-
                 if jarvis_app_id and appid == jarvis_app_id:
                     continue
-
                 command = parse_command(title, message)
                 if command:
                     response = handle_command(command)
@@ -270,6 +299,7 @@ async def listen():
                 else:
                     beautified = beautify_message(title, message)
                     send_message(title, beautified, priority=0)
+                    delete_message(data.get("id"))
             except Exception as e:
                 print(f"[{BOT_NAME}] Error: {e}")
 
@@ -287,4 +317,5 @@ if __name__ == "__main__":
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
+    loop.run_in_executor(None, run_scheduler)
     loop.run_forever()
