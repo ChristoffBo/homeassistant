@@ -9,9 +9,9 @@ echo "[Jarvis Jnr] Starting bot..."
 export BOT_NAME=$(jq -r '.bot_name' $CONFIG_PATH)
 export BOT_ICON=$(jq -r '.bot_icon' $CONFIG_PATH)
 export GOTIFY_URL=$(jq -r '.gotify_url' $CONFIG_PATH)
-
-export APP_TOKEN=$(jq -r '.gotify_app_token' $CONFIG_PATH)
 export CLIENT_TOKEN=$(jq -r '.gotify_client_token' $CONFIG_PATH)
+export APP_TOKEN=$(jq -r '.gotify_app_token' $CONFIG_PATH)
+export GOTIFY_APP_ID=$(jq -r '.gotify_app_id' $CONFIG_PATH)
 
 export RETENTION_HOURS=$(jq -r '.retention_hours' $CONFIG_PATH)
 export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' $CONFIG_PATH)
