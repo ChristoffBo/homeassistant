@@ -1,22 +1,16 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.16.18",
+  "version": "v2.16.17",
   "slug": "ansible_semaphore",
   "description": "Semaphore UI inside Home Assistant (no ingress; direct port).",
-  "arch": [
-    "aarch64",
-    "amd64",
-    "armv7"
-  ],
+  "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
   "init": false,
   "host_network": false,
   "ingress": false,
   "panel_admin": false,
-  "map": [
-    "share:rw"
-  ],
+  "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
   "ports": {
     "8055/tcp": 8055
@@ -29,12 +23,14 @@
     "admin_login": "admin",
     "admin_password": "changeme",
     "config_path": "/share/ansible_semaphore",
-    "schedule_timezone": "Africa/Johannesburg"
+    "schedule_timezone": "Africa/Johannesburg",
+    "db_dialect": "bolt"
   },
   "schema": {
     "admin_login": "str",
     "admin_password": "password",
     "config_path": "str",
-    "schedule_timezone": "str"
+    "schedule_timezone": "str",
+    "db_dialect": "str"
   }
 }
