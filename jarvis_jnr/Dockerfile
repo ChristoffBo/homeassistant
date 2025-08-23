@@ -1,9 +1,9 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/{arch}-base:latest
-FROM $BUILD_FROM
+FROM debian:stable-slim
 
-# Install dependencies (Alpine package manager)
-RUN apk add --no-cache \
-    python3 py3-pip curl jq bashio
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    python3 python3-pip curl jq \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
