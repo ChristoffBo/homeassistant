@@ -39,60 +39,50 @@ series_cache = {}
 movie_cache = {}
 
 # -----------------------------
-# Randomized AI-like responses
+# Beautifier with Image Support
 # -----------------------------
-no_movies_responses = [
-    "🎬 I checked Radarr — no new movies scheduled in the next {days} days. Time to revisit an old favorite.",
-    "🎬 Nothing fresh in Radarr for the coming {days} days. The cinema slate is quiet.",
-    "🎬 I looked ahead {days} days and found no upcoming movies. Perfect chance to binge older titles.",
-    "🎬 All clear — no movies in the pipeline this week. Shall I remind you again tomorrow?"
-]
+def beautify_message(title, raw):
+    text = raw.strip()
+    lower = text.lower()
 
-no_series_responses = [
-    "📺 I checked Sonarr — no new episodes arriving in the next {days} days. Time to catch up on backlogs.",
-    "📺 No new shows in the schedule for {days} days. A calm week for your watchlist.",
-    "📺 Sonarr has no upcoming episodes this week. Shall I keep checking for you?",
-    "📺 All quiet on Sonarr — no shows are due in the next {days} days."
-]
+    has_image = "![](" in text or text.lower().endswith((".jpg", ".png", ".jpeg"))
 
-no_digest_responses = [
-    "🗞 I checked all sources — nothing new to report today. Everything is calm and up to date.",
-    "🗞 No updates for now — all systems are quiet. I’ll keep monitoring.",
-    "🗞 Everything looks steady today — no new weather, movies, or shows to mention.",
-    "🗞 I scanned your feeds — nothing to highlight. Shall I prepare a fresh update tomorrow?"
-]
+    prefix = "💡"
+    if "error" in lower: prefix = "💀"
+    elif "success" in lower: prefix = "✅"
+    elif "warning" in lower: prefix = "⚠️"
+    elif "start" in lower: prefix = "🚀"
+    elif "grabbed" in lower or "downloaded" in lower: prefix = "📥"
 
-startup_messages = [
-    f"Good day! I am {BOT_NAME}, ready to assist you.",
-    f"🚀 {BOT_NAME} is online and operational.",
-    f"🤖 {BOT_NAME} reporting for duty.",
-    f"✨ Systems initialized — {BOT_NAME} standing by.",
-    f"🧩 {BOT_NAME} is here, keeping an eye on things for you."
-]
+    closings = [
+        f"{BOT_ICON} With regards, {BOT_NAME}",
+        f"✨ Processed intelligently by {BOT_NAME}",
+        f"🧩 Ever at your service, {BOT_NAME}",
+        f"🤖 Yours truly, {BOT_NAME}",
+        f"📡 At your command, {BOT_NAME}",
+        f"🔧 Report crafted by {BOT_NAME}",
+        f"🤝 Always assisting, {BOT_NAME}",
+        f"🧠 Thoughtfully yours, {BOT_NAME}"
+    ]
+    closing = random.choice(closings)
+
+    if has_image:
+        return f"{prefix} {title}\n\n{text}\n\n{closing}"
+    else:
+        return f"{prefix} {text}\n\n{closing}"
 
 # -----------------------------
 # Helpers
 # -----------------------------
 def send_message(title, message, priority=5):
-    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     try:
-        r = requests.post(url, json={"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}, timeout=5)
+        url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+        data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
+        r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
         print(f"[{BOT_NAME}] ✅ Sent: {title}")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed send: {e}")
-
-def purge_non_jarvis_apps():
-    global jarvis_app_id
-    try:
-        r = requests.get(f"{GOTIFY_URL}/application", headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
-        r.raise_for_status()
-        for app in r.json():
-            if app.get("id") != jarvis_app_id:
-                requests.delete(f"{GOTIFY_URL}/application/{app['id']}/message", headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
-                print(f"[{BOT_NAME}] 🗑 Purged {app['name']} (id={app['id']})")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Purge error: {e}")
+        print(f"[{BOT_NAME}] ❌ Send error: {e}")
 
 def resolve_app_id():
     global jarvis_app_id
@@ -105,224 +95,102 @@ def resolve_app_id():
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Resolve app_id failed: {e}")
 
-def beautify_message(title, raw):
-    prefix = "💡"
-    lower = raw.lower()
-    if "error" in lower: prefix = "💀"
-    elif "success" in lower: prefix = "✅"
-    elif "warning" in lower: prefix = "⚠️"
-    elif "start" in lower: prefix = "🚀"
-
-    closings = [
-        f"{BOT_ICON} With regards, {BOT_NAME}",
-        f"✨ Processed intelligently by {BOT_NAME}",
-        f"🧩 Ever at your service, {BOT_NAME}",
-        f"🤖 Yours truly, {BOT_NAME}",
-        f"📡 At your command, {BOT_NAME}",
-        f"🔧 Report crafted by {BOT_NAME}",
-        f"🛰 Keeping watch — {BOT_NAME}"
-    ]
-
-    return f"{prefix} {raw.strip()}\n\n{random.choice(closings)}"
-
 # -----------------------------
-# Cache loaders
+# Count functions
 # -----------------------------
-def load_sonarr_series():
-    global series_cache
+def get_series_count():
+    if not SONARR_ENABLED or not SONARR_API_KEY:
+        return "📺 Sonarr is not enabled or misconfigured."
     try:
         url = f"{SONARR_URL}/api/v3/series"
         r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
         if r.status_code == 200:
-            data = r.json()
-            series_cache = {s["id"]: s["title"] for s in data}
-            print(f"[{BOT_NAME}] ✅ Loaded {len(series_cache)} Sonarr series")
-        else:
-            print(f"[{BOT_NAME}] ❌ Failed to load Sonarr series: {r.status_code}")
+            return f"📺 You currently have {len(r.json())} series in your Sonarr library."
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Sonarr series load error: {e}")
+        return f"📺 Error fetching series count: {e}"
 
-def load_radarr_movies():
-    global movie_cache
+def get_movie_count():
+    if not RADARR_ENABLED or not RADARR_API_KEY:
+        return "🎬 Radarr is not enabled or misconfigured."
     try:
         url = f"{RADARR_URL}/api/v3/movie"
         r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
         if r.status_code == 200:
-            data = r.json()
-            movie_cache = {m["id"]: m["title"] for m in data}
-            print(f"[{BOT_NAME}] ✅ Loaded {len(movie_cache)} Radarr movies")
-        else:
-            print(f"[{BOT_NAME}] ❌ Failed to load Radarr movies: {r.status_code}")
+            return f"🎬 Your Radarr library contains {len(r.json())} movies."
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Radarr movie load error: {e}")
+        return f"🎬 Error fetching movie count: {e}"
 
 # -----------------------------
-# Modules
-# -----------------------------
-def fetch_weather():
-    if not WEATHER_ENABLED:
-        return None
-    try:
-        url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={WEATHER_LAT}&lon={WEATHER_LON}"
-        headers = {"User-Agent": f"{BOT_NAME}/1.0"}
-        r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-
-        timeseries = data.get("properties", {}).get("timeseries", [])
-        if not timeseries:
-            return "🌤 Sorry, I couldn’t fetch weather data right now."
-
-        current = timeseries[0]["data"]["instant"]["details"]
-        temp = current.get("air_temperature")
-        humidity = current.get("relative_humidity")
-        wind = current.get("wind_speed")
-
-        return f"🌤 The weather in {WEATHER_CITY}: {temp}°C, {humidity}% humidity, wind {wind} m/s."
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Weather error: {e}")
-        return "🌤 Sorry, I couldn’t fetch weather right now."
-
-def fetch_radarr_upcoming(days=7):
-    if not RADARR_ENABLED or not RADARR_API_KEY: 
-        return None
-    try:
-        start = datetime.now().strftime("%Y-%m-%d")
-        end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-        url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}"
-        r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
-        if r.status_code != 200:
-            return f"🎬 Radarr API error {r.status_code}: {r.text[:100]}"
-
-        data = r.json()
-        items = []
-        for e in data:
-            mid = e.get("movieId")
-            title = movie_cache.get(mid, e.get("title", "Unknown Movie"))
-            in_cinemas = e.get("inCinemas") or "TBA"
-            items.append(f"• {title} ({in_cinemas[:10]})")
-
-        if not items:
-            return random.choice(no_movies_responses).format(days=days)
-        return "🎬 Upcoming movies:\n" + "\n".join(items[:5])
-    except Exception as e:
-        return f"🎬 Radarr fetch failed: {e}"
-
-def fetch_sonarr_upcoming(days=7):
-    if not SONARR_ENABLED or not SONARR_API_KEY: 
-        return None
-    try:
-        start = datetime.now().strftime("%Y-%m-%d")
-        end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-        url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}"
-        r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
-        if r.status_code != 200:
-            return f"📺 Sonarr API error {r.status_code}: {r.text[:100]}"
-
-        data = r.json()
-        items = []
-        for e in data:
-            sid = e.get("seriesId")
-            title = series_cache.get(sid, e.get("seriesTitle", "Unknown Show"))
-            season = e.get("seasonNumber", "?")
-            episode = e.get("episodeNumber", "?")
-            airdate = e.get("airDate", "TBA")
-            items.append(f"• {title} - S{season}E{episode} ({airdate})")
-
-        if not items:
-            return random.choice(no_series_responses).format(days=days)
-        return "📺 Upcoming episodes:\n" + "\n".join(items[:5])
-    except Exception as e:
-        return f"📺 Sonarr fetch failed: {e}"
-
-def send_digest():
-    if not DIGEST_ENABLED: return
-    parts = []
-    if WEATHER_ENABLED: w = fetch_weather();  parts.append(w) if w else None
-    if RADARR_ENABLED:  r = fetch_radarr_upcoming(7); parts.append(r) if r else None
-    if SONARR_ENABLED:  s = fetch_sonarr_upcoming(7); parts.append(s) if s else None
-
-    if not parts:
-        msg = random.choice(no_digest_responses)
-    else:
-        msg = "🗞 Here’s your daily assistant report:\n\n" + "\n\n".join(parts)
-
-    send_message("Daily Digest", beautify_message("Digest", msg))
-    return msg
-
-# -----------------------------
-# Command Parser
+# Command parser
 # -----------------------------
 def parse_command(title, raw):
     bot_name_lower = BOT_NAME.lower()
     text = (title + " " + raw).strip().lower()
-
     if bot_name_lower not in text:
         return None
 
-    if "help" in text: return "help"
-    if "media" in text: return "media"
-    if "radarr" in text or "movie" in text or "movies" in text: return "radarr_upcoming"
-    if "sonarr" in text or "show" in text or "shows" in text or "series" in text: return "sonarr_upcoming"
-    if "weather" in text: return "weather"
-    if "digest" in text or "summary" in text: return "digest"
+    if "series count" in text or "series amount" in text or "how many series" in text:
+        return "series_count"
+    if "movies count" in text or "movies amount" in text or "how many movies" in text:
+        return "movie_count"
+    if "radarr" in text or "movie" in text:
+        return "radarr_upcoming"
+    if "sonarr" in text or "show" in text or "series" in text:
+        return "sonarr_upcoming"
+    if "weather" in text:
+        return "weather"
+    if "digest" in text:
+        return "digest"
+    if "help" in text:
+        return "help"
     return None
 
 def handle_command(command):
-    if command == "radarr_upcoming": return fetch_radarr_upcoming(7)
-    if command == "sonarr_upcoming": return fetch_sonarr_upcoming(7)
-    if command == "media": return f"{fetch_radarr_upcoming(7)}\n\n{fetch_sonarr_upcoming(7)}"
-    if command == "weather": return fetch_weather()
-    if command == "digest": return send_digest()
+    if command == "series_count": return get_series_count()
+    if command == "movie_count": return get_movie_count()
     if command == "help":
         return (
             f"🤖 Hello, I am {BOT_NAME}, your AI assistant.\n\n"
-            "Here are some things you can ask me:\n"
-            "• Weather → 'Jarvis weather'\n"
-            "• Digest → 'Jarvis digest'\n"
-            "• Movies → 'Jarvis movies'\n"
-            "• Shows → 'Jarvis series'\n"
-            "• Media → 'Jarvis media'\n"
+            "• 'Jarvis movies count' → total movies\n"
+            "• 'Jarvis series count' → total series\n"
+            "• 'Jarvis movies' → upcoming movies\n"
+            "• 'Jarvis series' → upcoming episodes\n"
+            "• 'Jarvis weather' → weather update\n"
+            "• 'Jarvis digest' → daily report\n"
         )
-    return f"🤖 I didn’t quite understand that, but I’m learning."
+    return f"🤖 I didn’t understand. Try 'Jarvis help' for a list of commands."
 
 # -----------------------------
-# Scheduler
-# -----------------------------
-def run_scheduler():
-    schedule.every(5).minutes.do(purge_non_jarvis_apps)
-    if WEATHER_ENABLED: schedule.every().day.at(WEATHER_TIME).do(lambda: send_message("Weather Update", beautify_message("Weather", fetch_weather())))
-    if RADARR_ENABLED: schedule.every().day.at(RADARR_TIME).do(lambda: send_message("Radarr Update", beautify_message("Radarr", fetch_radarr_upcoming())))
-    if SONARR_ENABLED: schedule.every().day.at(SONARR_TIME).do(lambda: send_message("Sonarr Update", beautify_message("Sonarr", fetch_sonarr_upcoming())))
-    if DIGEST_ENABLED: schedule.every().day.at(DIGEST_TIME).do(send_digest)
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-# -----------------------------
-# Listener
+# Async WebSocket listener
 # -----------------------------
 async def listen():
-    ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
+    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
+    print(f"[{BOT_NAME}] Connecting to {ws_url}...")
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         async for msg in ws:
-            data = json.loads(msg)
-            mid, appid = data.get("id"), data.get("appid")
-            title, message = data.get("title",""), data.get("message","")
+            try:
+                data = json.loads(msg)
+                mid = data.get("id")
+                appid = data.get("appid")
+                title = data.get("title", "")
+                message = data.get("message", "")
 
-            if appid == jarvis_app_id: continue  # skip own
+                # Skip own messages
+                if jarvis_app_id and appid == jarvis_app_id:
+                    continue
 
-            command = parse_command(title, message)
-            if command:
-                reply = handle_command(command)
-                if reply: send_message("Command Response", beautify_message(BOT_NAME, reply))
-                requests.delete(f"{GOTIFY_URL}/message/{mid}", headers={"X-Gotify-Key": CLIENT_TOKEN})
-                continue
+                command = parse_command(title, message)
+                if command:
+                    response = handle_command(command)
+                    send_message("Command Response", response, priority=5)
+                    continue
 
-            # Normal beautify flow
-            if BEAUTIFY_ENABLED: message = beautify_message(title, message)
-            send_message(title, message, priority=(0 if SILENT_REPOST else 5))
-            purge_non_jarvis_apps()
+                if BEAUTIFY_ENABLED:
+                    final_msg = beautify_message(title, message)
+                    send_message(title, final_msg, priority=(0 if SILENT_REPOST else 5))
+
+            except Exception as e:
+                print(f"[{BOT_NAME}] Error processing WS msg: {e}")
 
 # -----------------------------
 # Entrypoint
@@ -330,12 +198,16 @@ async def listen():
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] 🚀 Starting...")
     resolve_app_id()
-    if SONARR_ENABLED: load_sonarr_series()
-    if RADARR_ENABLED: load_radarr_movies()
-    startup_msg = random.choice(startup_messages)
-    send_message("Startup", startup_msg, priority=5)
+
+    startup_msgs = [
+        f"🤖 {BOT_NAME} online and operational.",
+        f"🚀 Greetings! {BOT_NAME} systems ready.",
+        f"✨ Hello, I am {BOT_NAME}, your AI companion.",
+        f"📡 {BOT_NAME} is standing by, awaiting instructions."
+    ]
+    send_message("Startup", random.choice(startup_msgs))
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
-    loop.run_in_executor(None, run_scheduler)
     loop.run_forever()
