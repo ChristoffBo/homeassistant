@@ -161,17 +161,32 @@ def test_token_permissions():
 # Test token permissions on startup
 def resolve_app_id():
     global jarvis_app_id
+    print(f"[{BOT_NAME}] Resolving app ID for app name: '{APP_NAME}'")
     try:
-        r = requests.get(f"{GOTIFY_URL}/application", headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
+        url = f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}"
+        print(f"[{BOT_NAME}] Getting applications from: {url}")
+        r = requests.get(url, timeout=5)
         r.raise_for_status()
-        for app in r.json():
-            if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] Resolved app '{APP_NAME}' to id={jarvis_app_id}")
+        apps = r.json()
+        
+        print(f"[{BOT_NAME}] Found {len(apps)} applications:")
+        for app in apps:
+            app_name = app.get("name", "Unknown")
+            app_id = app.get("id", "Unknown")
+            print(f"[{BOT_NAME}]   - App: '{app_name}' (ID: {app_id})")
+            
+            if app_name == APP_NAME:
+                jarvis_app_id = app_id
+                print(f"[{BOT_NAME}] ✅ MATCHED! Resolved app '{APP_NAME}' to id={jarvis_app_id}")
                 return
-        print(f"[{BOT_NAME}] WARNING: Could not find app {APP_NAME}")
+                
+        print(f"[{BOT_NAME}] ❌ WARNING: Could not find app '{APP_NAME}' in available apps")
+        print(f"[{BOT_NAME}] Available app names: {[app.get('name') for app in apps]}")
+        
     except Exception as e:
-        print(f"[{BOT_NAME}] Failed to resolve app id: {e}")
+        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
+        
+    print(f"[{BOT_NAME}] Final jarvis_app_id = {jarvis_app_id}")
 
 # -----------------------------
 # AI-like beautifier
@@ -255,44 +270,54 @@ async def listen():
             
             async for msg in ws:
                 try:
+                    print(f"[{BOT_NAME}] RAW WebSocket message received: {msg[:200]}...")
+                    
                     data = json.loads(msg)
                     mid = data.get("id")
                     appid = data.get("appid")
                     title = data.get("title", "")
                     message = data.get("message", "")
 
-                    print(f"[{BOT_NAME}] Received message id={mid} from app={appid}")
+                    print(f"[{BOT_NAME}] PARSED - ID: {mid}, AppID: {appid}, Title: '{title}', Jarvis AppID: {jarvis_app_id}")
+
+                    # Debug: Show all message data
+                    print(f"[{BOT_NAME}] Full message data: {json.dumps(data, indent=2)}")
 
                     # Skip Jarvis's own messages
                     if jarvis_app_id and appid == jarvis_app_id:
-                        print(f"[{BOT_NAME}] Skipping own message id={mid}")
+                        print(f"[{BOT_NAME}] SKIPPING: Own message id={mid} (appid {appid} == jarvis {jarvis_app_id})")
                         continue
 
                     # Skip if no message ID
                     if not mid:
-                        print(f"[{BOT_NAME}] No message ID, skipping")
+                        print(f"[{BOT_NAME}] SKIPPING: No message ID")
                         continue
 
-                    print(f"[{BOT_NAME}] Processing message id={mid} title='{title}' from app={appid}")
+                    print(f"[{BOT_NAME}] PROCESSING: message id={mid} title='{title}' from app={appid}")
 
                     # Beautify if enabled
                     if BEAUTIFY_ENABLED:
                         final_msg = beautify_message(title, message)
+                        print(f"[{BOT_NAME}] BEAUTIFIED message ready")
                     else:
                         final_msg = message
+                        print(f"[{BOT_NAME}] Using original message (beautify disabled)")
 
                     # Send beautified message
                     repost_priority = 0 if SILENT_REPOST else 5
+                    print(f"[{BOT_NAME}] SENDING beautified message with priority={repost_priority}")
                     send_success = send_message(title, final_msg, priority=repost_priority)
                     
                     if send_success:
                         # Only delete original if we successfully sent the beautified version
-                        print(f"[{BOT_NAME}] Attempting to delete original message {mid}")
+                        print(f"[{BOT_NAME}] SEND SUCCESS - Now attempting to delete original message {mid}")
                         delete_success = delete_message(mid)
                         if not delete_success:
-                            print(f"[{BOT_NAME}] WARNING: Failed to delete original message {mid}")
+                            print(f"[{BOT_NAME}] ❌ DELETE FAILED for message {mid}")
+                        else:
+                            print(f"[{BOT_NAME}] ✅ DELETE SUCCESS for message {mid}")
                     else:
-                        print(f"[{BOT_NAME}] Not deleting original message {mid} due to send failure")
+                        print(f"[{BOT_NAME}] ❌ SEND FAILED - Not deleting original message {mid}")
 
                 except json.JSONDecodeError as e:
                     print(f"[{BOT_NAME}] JSON decode error: {e}")
