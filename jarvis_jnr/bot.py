@@ -204,6 +204,17 @@ async def listen():
 # -----------------------------
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on...")
+
+    # Random startup greeting
+    startup_msg = random.choice([
+        f"Good Day, I am {BOT_NAME}, ready to assist.",
+        f"Greetings, {BOT_NAME} is now online and standing by.",
+        f"🚀 {BOT_NAME} systems initialized and operational.",
+        f"{BOT_NAME} reporting for duty.",
+        f"🤖 Hello, {BOT_NAME} at your service."
+    ])
+    send_message("Startup", beautify_message("Startup", startup_msg), priority=5)
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
