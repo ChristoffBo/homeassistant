@@ -44,6 +44,12 @@ export SONARR_API_KEY=$(jq -r '.sonarr_api_key' $CONFIG_PATH)
 export SONARR_TIME=$(jq -r '.sonarr_time' $CONFIG_PATH)
 
 # -----------------------------------------------------------
+# Newly added toggles
+# -----------------------------------------------------------
+export SILENT_REPOST=$(jq -r '.silent_repost' $CONFIG_PATH)
+export ENABLE_BULK_PURGE=$(jq -r '.enable_bulk_purge' $CONFIG_PATH)
+
+# -----------------------------------------------------------
 # Log start with dynamic bot name
 # -----------------------------------------------------------
 log "Starting add-on..."
