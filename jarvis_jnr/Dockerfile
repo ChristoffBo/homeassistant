@@ -5,10 +5,9 @@ RUN apt-get update && apt-get install -y \
     python3 python3-pip curl jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy add-on files
 WORKDIR /app
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 COPY run.sh /run.sh
 COPY bot.py /app/bot.py
