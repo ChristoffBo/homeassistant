@@ -1,7 +1,7 @@
 import os, json, time, asyncio, requests, websockets, schedule, datetime, random
 
 # -----------------------------
-# Config
+# Config from environment (set in run.sh from options.json)
 # -----------------------------
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
@@ -10,287 +10,221 @@ CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
 APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
-RADARR_ENABLED = os.getenv("RADARR_ENABLED", "false").lower() in ("1","true","yes")
-RADARR_URL = os.getenv("RADARR_URL", "")
-RADARR_KEY = os.getenv("RADARR_API_KEY", "")
-SONARR_ENABLED = os.getenv("SONARR_ENABLED", "false").lower() in ("1","true","yes")
-SONARR_URL = os.getenv("SONARR_URL", "")
-SONARR_KEY = os.getenv("SONARR_API_KEY", "")
+RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "12"))
+SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
+BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
-WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() in ("1","true","yes")
+# Radarr & Sonarr
+RADARR_URL = os.getenv("RADARR_URL", "").rstrip("/")
+RADARR_API_KEY = os.getenv("RADARR_API_KEY", "")
+SONARR_URL = os.getenv("SONARR_URL", "").rstrip("/")
+SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
+
+# Weather
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Johannesburg")
 
-DIGEST_ENABLED = os.getenv("DIGEST_ENABLED", "true").lower() in ("1","true","yes")
-DIGEST_TIME = os.getenv("DIGEST_TIME", "08:00")
-
-jarvis_app_id = None
-series_cache = {}
-movies_cache = {}
+jarvis_app_id = None  # resolved on startup
+radarr_cache = {}
+sonarr_cache = {}
 
 # -----------------------------
-# Gotify
+# Helpers
 # -----------------------------
 def send_message(title, message, priority=5):
+    """Send beautified message using APP token"""
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
     try:
         r = requests.post(url, json=data, timeout=10)
         r.raise_for_status()
+        return True
     except Exception as e:
-        print(f"[{BOT_NAME}] Send failed: {e}")
+        print(f"[{BOT_NAME}] Failed to send: {e}")
+        return False
 
 def delete_message(mid):
+    """Delete specific message by ID"""
+    if not mid: return False
     try:
-        requests.delete(f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}", timeout=5)
-    except: pass
+        url = f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}"
+        r = requests.delete(url, timeout=5)
+        return r.status_code == 200
+    except Exception as e:
+        print(f"[{BOT_NAME}] Delete error: {e}")
+        return False
 
 def resolve_app_id():
+    """Resolve Jarvis app_id"""
     global jarvis_app_id
     try:
-        apps = requests.get(f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}", timeout=5).json()
-        for app in apps:
+        r = requests.get(f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}", timeout=5)
+        r.raise_for_status()
+        for app in r.json():
             if app.get("name") == APP_NAME:
-                jarvis_app_id = app["id"]
+                jarvis_app_id = app.get("id")
+                print(f"[{BOT_NAME}] Found app id {jarvis_app_id}")
+                return
     except Exception as e:
-        print(f"[{BOT_NAME}] App ID resolve failed: {e}")
+        print(f"[{BOT_NAME}] Resolve app id failed: {e}")
+
+# -----------------------------
+# Beautifier
+# -----------------------------
+def beautify_message(title, raw):
+    text = raw.strip()
+    lower = text.lower()
+    prefix = "✨"
+    if "error" in lower or "failed" in lower: prefix = "💀"
+    elif "success" in lower or "completed" in lower: prefix = "✅"
+    elif "warning" in lower: prefix = "⚠️"
+    elif "start" in lower: prefix = "🚀"
+
+    closings = [
+        f"{BOT_ICON} With regards, {BOT_NAME}",
+        f"✨ Processed intelligently by {BOT_NAME}",
+        f"🧠 Insight provided by {BOT_NAME}",
+        f"📊 Analysis complete — {BOT_NAME} signing off",
+        f"🤖 Yours truly, {BOT_NAME}"
+    ]
+    closing = random.choice(closings)
+    return f"{prefix} {text}\n\n{closing}"
+
+# -----------------------------
+# Weather
+# -----------------------------
+def get_weather():
+    try:
+        url = f"https://wttr.in/{WEATHER_CITY}?format=j1"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        current = data["current_condition"][0]
+        temp = current["temp_C"]
+        wind = current["windspeedKmph"]
+        return f"🌤 Current weather: {temp}°C, wind {wind} km/h"
+    except Exception as e:
+        return f"⚠️ Weather unavailable: {e}"
+
+# -----------------------------
+# Radarr / Sonarr API
+# -----------------------------
+def upcoming_movies(days=7):
+    try:
+        start = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+        end = (datetime.datetime.utcnow() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}"
+        headers = {"X-Api-Key": RADARR_API_KEY}
+        r = requests.get(url, headers=headers, timeout=10)
+        return r.json()
+    except Exception as e:
+        print(f"[{BOT_NAME}] Radarr upcoming error: {e}")
+        return []
+
+def upcoming_series(days=7):
+    try:
+        start = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+        end = (datetime.datetime.utcnow() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+        url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}"
+        headers = {"X-Api-Key": SONARR_API_KEY}
+        r = requests.get(url, headers=headers, timeout=10)
+        return r.json()
+    except Exception as e:
+        print(f"[{BOT_NAME}] Sonarr upcoming error: {e}")
+        return []
 
 # -----------------------------
 # Cleanup
 # -----------------------------
 def cleanup_non_jarvis():
     try:
-        msgs = requests.get(f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}", timeout=5).json().get("messages", [])
-        for m in msgs:
-            if m.get("appid") != jarvis_app_id:
-                delete_message(m["id"])
+        r = requests.get(f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}", timeout=5)
+        msgs = r.json().get("messages", [])
+        for msg in msgs:
+            if msg["appid"] != jarvis_app_id:
+                delete_message(msg["id"])
     except: pass
 
 def cleanup_old_jarvis():
+    cutoff = time.time() - (12 * 3600)
     try:
-        cutoff = time.time() - (12*3600)
-        msgs = requests.get(f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}", timeout=5).json().get("messages", [])
-        for m in msgs:
-            if m.get("appid") == jarvis_app_id:
-                ts = datetime.datetime.fromisoformat(m["date"].replace("Z","+00:00")).timestamp()
+        r = requests.get(f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}", timeout=5)
+        msgs = r.json().get("messages", [])
+        for msg in msgs:
+            if msg["appid"] == jarvis_app_id:
+                ts = datetime.datetime.fromisoformat(msg["date"].replace("Z", "+00:00")).timestamp()
                 if ts < cutoff:
-                    delete_message(m["id"])
+                    delete_message(msg["id"])
     except: pass
 
 def run_scheduler():
     schedule.every(5).seconds.do(cleanup_non_jarvis)
     schedule.every(30).minutes.do(cleanup_old_jarvis)
-    if DIGEST_ENABLED:
-        schedule.every().day.at(DIGEST_TIME).do(run_digest)
     while True:
         schedule.run_pending()
         time.sleep(1)
 
 # -----------------------------
-# Beautify
-# -----------------------------
-def beautify_response(text, mood="info", image_url=None):
-    prefixes = {
-        "info": ["💡","📘","🔎","✨","📊","🧠"],
-        "warn": ["⚠️","❗","🔥","⏳"],
-        "error": ["💀","❌","🚫","🛑"],
-        "success": ["✅","🚀","🌟","🎉"],
-    }
-    closings = [
-        f"{BOT_ICON} Yours truly, {BOT_NAME}",
-        f"🪄 Processed by {BOT_NAME}",
-        f"🧠 Analysis complete — {BOT_NAME}",
-        f"📊 Report generated by {BOT_NAME}",
-        f"🤖 Always at your service, {BOT_NAME}",
-        f"✨ Guided by intelligence — {BOT_NAME}"
-    ]
-    prefix = random.choice(prefixes.get(mood, ["🤖"]))
-    closing = random.choice(closings)
-    msg = f"{prefix} {text}\n\n{closing}"
-    if image_url:
-        msg += f"\n\n![Poster]({image_url})"
-    return msg
-
-# -----------------------------
-# Radarr / Sonarr helpers
-# -----------------------------
-def radarr(path):
-    try:
-        r = requests.get(f"{RADARR_URL}/api/v3/{path}", headers={"X-Api-Key":RADARR_KEY}, timeout=10)
-        return r.json()
-    except: return []
-
-def sonarr(path):
-    try:
-        r = requests.get(f"{SONARR_URL}/api/v3/{path}", headers={"X-Api-Key":SONARR_KEY}, timeout=10)
-        return r.json()
-    except: return []
-
-def update_caches():
-    global series_cache, movies_cache
-    if SONARR_ENABLED:
-        try: series_cache = {s["id"]:s for s in sonarr("series")}
-        except: pass
-    if RADARR_ENABLED:
-        try: movies_cache = {m["id"]:m for m in radarr("movie")}
-        except: pass
-
-def upcoming_series(days=7):
-    try: 
-        events = sonarr(f"calendar?start={datetime.date.today()}&end={datetime.date.today()+datetime.timedelta(days=days)}")
-        for e in events:
-            sid = e.get("seriesId")
-            if sid in series_cache:
-                e["series"]["title"] = series_cache[sid].get("title","Unknown")
-        return events
-    except: return []
-
-def upcoming_movies(days=7):
-    try:
-        events = radarr(f"calendar?start={datetime.date.today()}&end={datetime.date.today()+datetime.timedelta(days=days)}")
-        for e in events:
-            mid = e.get("movieId")
-            if mid in movies_cache:
-                e["title"] = movies_cache[mid].get("title","Unknown")
-        return events
-    except: return []
-
-# -----------------------------
-# Stats helpers
-# -----------------------------
-def movie_count(): return len(movies_cache)
-def series_count(): return len(series_cache)
-
-def longest_movie():
-    return max(movies_cache.values(), key=lambda m:m.get("runtime",0), default=None)
-
-def shortest_movie():
-    return min([m for m in movies_cache.values() if m.get("runtime",0)>0], key=lambda m:m["runtime"], default=None)
-
-def largest_movie():
-    return max([m for m in movies_cache.values() if m.get("movieFile",{}).get("size")], key=lambda m:m["movieFile"]["size"], default=None)
-
-def longest_series():
-    return max(series_cache.values(), key=lambda s:s.get("statistics",{}).get("episodeFileCount",0), default=None)
-
-def largest_series():
-    return max(series_cache.values(), key=lambda s:s.get("statistics",{}).get("sizeOnDisk",0), default=None)
-
-# -----------------------------
-# Weather
-# -----------------------------
-def get_weather():
-    if not WEATHER_ENABLED: return None
-    try:
-        r = requests.get(f"https://wttr.in/{WEATHER_CITY}?format=j1", timeout=10).json()
-        c = r["current_condition"][0]
-        return f"{c['temp_C']}°C, {c['weatherDesc'][0]['value']}, wind {c['windspeedKmph']} km/h"
-    except: return None
-
-# -----------------------------
-# Digest
-# -----------------------------
-def run_digest():
-    update_caches()
-    parts = []
-    w = get_weather()
-    if w: parts.append(f"🌦 Weather: {w}")
-    parts.append(f"🎬 Movies: {len(movies_cache)} total")
-    parts.append(f"📺 Series: {len(series_cache)} total")
-    um = upcoming_movies()
-    if um: parts.append("🎬 Upcoming: "+", ".join([m["title"] for m in um[:3]]))
-    us = upcoming_series()
-    if us: parts.append("📺 Upcoming: "+", ".join([s['series']['title'] for s in us[:3]]))
-    send_message("Daily Digest", beautify_response("\n".join(parts),"info"))
-
-# -----------------------------
 # Command handler
 # -----------------------------
-def handle_command(text):
-    update_caches()
-    t = text.lower()
+def handle_command(cmd):
+    lower = cmd.lower()
 
-    if "help" in t:
-        return beautify_response("Commands: weather, digest, upcoming movies/series, next movie/episode, movie/series count, longest/shortest/largest.","info")
+    # Weather
+    if "weather" in lower: return get_weather()
 
-    if "weather" in t: return beautify_response(get_weather() or "Weather unavailable.","info")
-    if "digest" in t: run_digest(); return beautify_response("📨 Digest sent.","success")
+    # Radarr/Sonarr upcoming
+    if "upcoming movie" in lower: 
+        movies = upcoming_movies()
+        if not movies: return "🎬 No upcoming movies this week."
+        return "🎬 Upcoming movies:\n" + "\n".join([f"- {m['title']} ({m['inCinemas'][:10]})" for m in movies[:5]])
 
-    if "upcoming series" in t:
-        s = upcoming_series()
-        if not s: return beautify_response("No upcoming episodes.","info")
-        lines = [f"• {x['series']['title']} S{x['seasonNumber']}E{x['episodeNumber']} ({x['airDate']})" for x in s]
-        img = series_cache.get(s[0]['seriesId'],{}).get("images",[{}])[0].get("url")
-        return beautify_response("📺 Upcoming Episodes:\n"+"\n".join(lines),"info",img)
+    if "upcoming series" in lower or "upcoming show" in lower:
+        eps = upcoming_series()
+        if not eps: return "📺 No upcoming episodes."
+        return "📺 Upcoming episodes:\n" + "\n".join([f"- {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in eps[:5]])
 
-    if "upcoming movie" in t:
-        m = upcoming_movies()
-        if not m: return beautify_response("No upcoming movies.","info")
-        lines = [f"• {x['title']} ({x.get('inCinemas')})" for x in m]
-        img = movies_cache.get(m[0].get("movieId"),{}).get("remotePoster")
-        return beautify_response("🎬 Upcoming Movies:\n"+"\n".join(lines),"info",img)
-
-    if "next episode" in t:
-        s = upcoming_series()
-        if not s: return beautify_response("No next episode.","info")
-        nxt = min(s, key=lambda x:x.get("airDate") or "9999")
-        return beautify_response(f"📺 Next: {nxt['series']['title']} S{nxt['seasonNumber']}E{nxt['episodeNumber']} ({nxt['airDate']})","info")
-
-    if "next movie" in t:
-        m = upcoming_movies()
-        if not m: return beautify_response("No next movie.","info")
-        nxt = min(m, key=lambda x:x.get("inCinemas") or "9999")
-        return beautify_response(f"🎬 Next Movie: {nxt['title']} ({nxt['inCinemas']})","info")
-
-    if "series count" in t: return beautify_response(f"📺 You have {series_count()} series.","info")
-    if "movie count" in t: return beautify_response(f"🎬 You have {movie_count()} movies.","info")
-
-    if "longest movie" in t:
-        m = longest_movie(); return beautify_response(f"🎬 Longest movie: {m['title']} ({m['runtime']} mins)","info",m.get("remotePoster") if m else None)
-    if "shortest movie" in t:
-        m = shortest_movie(); return beautify_response(f"🎬 Shortest movie: {m['title']} ({m['runtime']} mins)","info",m.get("remotePoster") if m else None)
-    if "largest movie" in t:
-        m = largest_movie(); return beautify_response(f"🎬 Largest movie: {m['title']} ({round(m['movieFile']['size']/1e9,2)} GB)","info",m.get("remotePoster") if m else None)
-
-    if "longest series" in t:
-        s = longest_series(); return beautify_response(f"📺 Longest series: {s['title']} ({s['statistics']['episodeFileCount']} episodes)","info")
-    if "largest series" in t:
-        s = largest_series(); return beautify_response(f"📺 Largest series: {s['title']} ({round(s['statistics']['sizeOnDisk']/1e9,2)} GB)","info")
-
-    return beautify_response("Unknown command. Try 'Jarvis help'.","warn")
+    return f"🤖 I didn’t understand. Try 'Jarvis help' for commands."
 
 # -----------------------------
-# Listener
+# WebSocket listener
 # -----------------------------
 async def listen():
-    ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")+f"/stream?token={CLIENT_TOKEN}"
-    async with websockets.connect(ws_url,ping_interval=30) as ws:
+    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
+    ws_url += f"/stream?token={CLIENT_TOKEN}"
+    async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         async for msg in ws:
             try:
-                d = json.loads(msg); mid=d.get("id"); appid=d.get("appid")
-                if appid == jarvis_app_id: continue
-                txt = f"{d.get('title','')} {d.get('message','')}"
-                if BOT_NAME.lower() in txt.lower() or "jarvis" in txt.lower():
-                    response = handle_command(txt)
-                    send_message("Command Response", response, priority=5)
+                data = json.loads(msg)
+                mid = data.get("id")
+                appid = data.get("appid")
+                title = data.get("title", "")
+                message = data.get("message", "")
+
+                if jarvis_app_id and appid == jarvis_app_id: continue
+
+                if BOT_NAME.lower() in title.lower() or BOT_NAME.lower() in message.lower():
+                    response = handle_command(message)
+                    send_message("Command Response", beautify_message(title, response))
                     delete_message(mid)
                 else:
-                    response = beautify_response(txt,"info")
-                    send_message("Beautified", response, priority=0)
-                    delete_message(mid)
-            except Exception as e:
-                print(f"[{BOT_NAME}] Listener error: {e}")
+                    if BEAUTIFY_ENABLED:
+                        beautified = beautify_message(title, message)
+                        if send_message(title, beautified, priority=(0 if SILENT_REPOST else 5)):
+                            delete_message(mid)
+            except: pass
 
 # -----------------------------
 # Entrypoint
 # -----------------------------
-if __name__=="__main__":
+if __name__ == "__main__":
     resolve_app_id()
     send_message("Startup", random.choice([
-        f"🚀 {BOT_NAME} online.",
-        f"✨ {BOT_NAME} ready for duty.",
-        f"🤖 Greetings, {BOT_NAME} active."
+        f"🚀 {BOT_NAME} systems online.",
+        f"✨ Good day! {BOT_NAME} ready to assist.",
+        f"🤖 {BOT_NAME} initialized and standing by."
     ]))
-    loop=asyncio.new_event_loop(); asyncio.set_event_loop(loop)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
     loop.run_forever()
