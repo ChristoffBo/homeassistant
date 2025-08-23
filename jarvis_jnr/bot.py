@@ -1,140 +1,83 @@
 #!/usr/bin/env python3
-import asyncio
-import websockets
-import json
-import requests
-import logging
-import os
+import asyncio, json, os, requests, websockets, time, logging
 
-# ---- Load configuration from options.json ----
-CONFIG_PATH = "/data/options.json"
+# Load config
+with open("/data/options.json") as f:
+    cfg = json.load(f)
 
-with open(CONFIG_PATH, "r") as f:
-    options = json.load(f)
+BOT_NAME = cfg.get("bot_name", "Jarvis")
+BOT_ICON = cfg.get("bot_icon", "🤖")
+GOTIFY_URL = cfg.get("gotify_url")
+CLIENT_TOKEN = cfg.get("gotify_client_token")
+APP_TOKEN = cfg.get("gotify_app_token")
 
-BOT_NAME = options.get("bot_name", "Jarvis")
-BOT_ICON = options.get("bot_icon", "🤖")
-GOTIFY_URL = options.get("gotify_url", "http://gotify:80")
-CLIENT_TOKEN = options.get("gotify_client_token", "")
-APP_TOKEN = options.get("gotify_app_token", "")
-RETENTION_HOURS = options.get("retention_hours", 24)
+# Retention & settings
+RETENTION_HOURS = cfg.get("retention_hours", 24)
+QUIET = cfg.get("quiet_hours_enabled", False)
+QUIET_RANGE = cfg.get("quiet_hours", "22:00-06:00")
 
-# ---- Setup logging ----
+# Headers
+HEADERS_CLIENT = {"X-Gotify-Key": CLIENT_TOKEN}
+HEADERS_APP = {"X-Gotify-Key": APP_TOKEN}
+
+# Logging
 logging.basicConfig(level=logging.INFO, format=f"[{BOT_NAME}] %(message)s")
 
-# ---- Gotify endpoints ----
 STREAM_URL = f"{GOTIFY_URL}/stream?token={CLIENT_TOKEN}"
-MESSAGE_URL = f"{GOTIFY_URL}/message"
+MSG_URL = f"{GOTIFY_URL}/message"
 
-# ---- Headers ----
-CLIENT_HEADERS = {"X-Gotify-Key": CLIENT_TOKEN}
-APP_HEADERS = {"X-Gotify-Key": APP_TOKEN}
+# Beautify any incoming message
+def beautify(raw_msg):
+    title = raw_msg.get("title", "Notification")
+    body = raw_msg.get("message", "")
+    clean = f"✨ {body.strip()}\n\n🤖 With regards, {BOT_NAME}"
+    return f"{BOT_ICON} {BOT_NAME}: {title}", clean
 
-# ---- Beautify Function ----
-def beautify_message(message):
-    """
-    Create a cleaner, more professional formatted message.
-    """
-    title = message.get("title", "Notification")
-    body = message.get("message", "")
-
-    beautified_title = f"{BOT_ICON} {BOT_NAME}: {title}"
-    beautified_message = (
-        f"✨ {body}\n\n"
-        f"👋 With regards, {BOT_NAME}"
-    )
-
-    return beautified_title, beautified_message
-
-
-# ---- Delete message ----
-def delete_message(message_id):
-    """
-    Delete a raw Gotify message using the admin CLIENT token.
-    """
+# Delete a message using client token
+def delete_msg(msg_id):
     try:
-        url = f"{MESSAGE_URL}/{message_id}"
-        r = requests.delete(url, headers=CLIENT_HEADERS, timeout=5)
-        if r.status_code == 200:
-            logging.info(f"Deleted original message {message_id}")
+        resp = requests.delete(f"{MSG_URL}/{msg_id}", headers=HEADERS_CLIENT, timeout=5)
+        if resp.ok:
+            logging.info(f"Deleted original {msg_id}")
         else:
-            logging.error(f"Failed to delete {message_id}: {r.status_code} {r.text}")
+            logging.error(f"Delete failed {msg_id}: {resp.status_code}")
     except Exception as e:
-        logging.error(f"Error deleting message {message_id}: {e}")
+        logging.error(f"Error deleting {msg_id}: {e}")
 
-
-# ---- Post message ----
-def post_message(title, message):
-    """
-    Post a beautified message using the APP token.
-    """
+# Post beautified using app token
+def post_msg(title, body):
     try:
-        payload = {"title": title, "message": message, "priority": 5}
-        r = requests.post(MESSAGE_URL, headers=APP_HEADERS, json=payload, timeout=5)
-        if r.status_code == 200:
-            logging.info(f"Sent beautified: {title}")
+        requests.post(MSG_URL, headers=HEADERS_APP, json={
+            "title": title, "message": body, "priority": 5
+        }, timeout=5)
+        logging.info(f"Sent beautified: {title}")
+    except Exception as e:
+        logging.error(f"Posting failed: {e}")
+
+def process(raw):
+    try:
+        data = json.loads(raw)["message"]
+        mid = data.get("id")
+        if not data.get("message", "").endswith(f"With regards, {BOT_NAME}"):
+            bt, bb = beautify(data)
+            post_msg(bt, bb)
+            delete_msg(mid)
         else:
-            logging.error(f"Failed to send beautified message: {r.status_code} {r.text}")
-    except Exception as e:
-        logging.error(f"Error sending message: {e}")
-
-
-# ---- Process incoming ----
-def process_message(raw):
-    """
-    Decide whether to beautify/delete or ignore.
-    """
-    try:
-        data = json.loads(raw)
-        msg = data.get("message")
-
-        if not msg:
-            return
-
-        msg_id = msg.get("id")
-        title = msg.get("title", "")
-        body = msg.get("message", "")
-
-        # Ignore Jarvis's own beautified messages (check footer/tag)
-        if body.strip().endswith(f"With regards, {BOT_NAME}"):
-            logging.info(f"Ignored own message {msg_id}")
-            return
-
-        # Beautify & send
-        beautified_title, beautified_body = beautify_message(msg)
-        post_message(beautified_title, beautified_body)
-
-        # Delete original
-        delete_message(msg_id)
-
+            logging.info(f"Ignored own {mid}")
     except Exception as e:
         logging.error(f"Process error: {e}")
 
+async def listen_loop():
+    logging.info("Listening to Gotify...")
+    async with websockets.connect(STREAM_URL) as ws:
+        async for msg in ws:
+            process(msg)
 
-# ---- WebSocket Event Loop ----
-async def listen():
-    logging.info("Starting add-on...")
-    logging.info(f"Connecting to {STREAM_URL} ...")
+def send_startup():
+    title = f"{BOT_ICON} {BOT_NAME}: Startup"
+    body = f"Good Day, I am {BOT_NAME}, ready to assist.\n\n🤖 With regards, {BOT_NAME}"
+    post_msg(title, body)
 
-    async for ws in websockets.connect(STREAM_URL):
-        try:
-            logging.info("Event loop started.")
-            async for message in ws:
-                process_message(message)
-        except websockets.ConnectionClosed:
-            logging.warning("WebSocket closed, reconnecting...")
-            await asyncio.sleep(3)
-            continue
-
-
-# ---- Startup Message ----
-def send_startup_message():
-    startup_title = f"{BOT_ICON} {BOT_NAME}: Startup"
-    startup_body = f"Good Day, I am {BOT_NAME}, ready to assist.\n\n👋 With regards, {BOT_NAME}"
-    post_message(startup_title, startup_body)
-
-
-# ---- Main ----
 if __name__ == "__main__":
-    send_startup_message()
-    asyncio.run(listen())
+    send_startup()
+    asyncio.run(listen_loop())
