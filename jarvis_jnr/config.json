@@ -1,8 +1,8 @@
 {
   "name": "Jarvis Jnr",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "jarvis_jnr",
-  "description": "Gotify Smart Bot assistant for beautifying, cleaning, summarizing, weather, Radarr, Sonarr, and more.",
+  "description": "Gotify Smart Bot assistant for beautifying, cleaning, summarizing, and managing notifications.",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
