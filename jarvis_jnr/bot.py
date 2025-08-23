@@ -3,15 +3,15 @@ import os, json, time, asyncio, requests, websockets, schedule, datetime
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
-CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
-APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
+CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")   # admin client token
+APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")         # Jarvis app token
 APP_NAME = os.getenv("JARVIS_APP_NAME", BOT_NAME)
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SELF_APP_ID = None  # resolved later
 
 def resolve_self_appid():
-    """Resolve Jarvis' own AppID from Gotify using APP_NAME."""
+    """Resolve Jarvis' own AppID from Gotify using APP_NAME (for loop protection)."""
     global SELF_APP_ID
     try:
         r = requests.get(f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}", timeout=5)
@@ -26,7 +26,7 @@ def resolve_self_appid():
         print(f"[{BOT_NAME}] Failed to resolve AppID: {e}")
 
 def send_message(title, message, priority=5):
-    """Send a message back to Gotify (via APP token)."""
+    """Send beautified message using Jarvis APP token."""
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
     try:
@@ -36,9 +36,9 @@ def send_message(title, message, priority=5):
         print(f"[{BOT_NAME}] Failed to send message:", e)
 
 def delete_message(mid):
-    """Delete original message with APP token (always works if app owns it)."""
+    """Delete message using CLIENT token (admin rights)."""
     try:
-        requests.delete(f"{GOTIFY_URL}/message/{mid}?token={APP_TOKEN}", timeout=5)
+        requests.delete(f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}", timeout=5)
         print(f"[{BOT_NAME}] Deleted original message {mid}")
     except Exception as e:
         print(f"[{BOT_NAME}] Failed to delete message {mid}: {e}")
@@ -61,7 +61,7 @@ async def listen():
                     if SELF_APP_ID and appid == SELF_APP_ID:
                         continue
 
-                    # Beautify and repost if enabled
+                    # Beautify + repost + delete
                     if os.getenv("BEAUTIFY_ENABLED", "true") == "true":
                         new = f"✨ {message.capitalize()}"
                         send_message(title, new)
@@ -72,7 +72,7 @@ async def listen():
     except Exception as e:
         print(f"[{BOT_NAME}] WebSocket connection failed:", e)
         await asyncio.sleep(10)
-        await listen()  # retry loop
+        await listen()  # retry
 
 def retention_cleanup():
     """Delete old messages past retention_hours."""
@@ -98,11 +98,9 @@ if __name__ == "__main__":
     resolve_self_appid()
     send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
 
-    # Explicitly create new asyncio loop (fixes DeprecationWarning)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    # Start listener + scheduler
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
 
