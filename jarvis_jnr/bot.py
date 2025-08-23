@@ -1,7 +1,7 @@
 import os, json, time, asyncio, requests, websockets, schedule, datetime, random
 
 # -----------------------------
-# Config from environment (set in run.sh from options.json)
+# Config
 # -----------------------------
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
@@ -14,197 +14,189 @@ RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
-jarvis_app_id = None  # resolved on startup
+WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() in ("1", "true", "yes")
+WEATHER_API = os.getenv("WEATHER_API", "openweathermap")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
+WEATHER_CITY = os.getenv("WEATHER_CITY", "Johannesburg")
+WEATHER_TIME = os.getenv("WEATHER_TIME", "07:00")
+
+DIGEST_ENABLED = os.getenv("DIGEST_ENABLED", "false").lower() in ("1", "true", "yes")
+DIGEST_TIME = os.getenv("DIGEST_TIME", "08:00")
+
+RADARR_ENABLED = os.getenv("RADARR_ENABLED", "false").lower() in ("1", "true", "yes")
+RADARR_URL = os.getenv("RADARR_URL", "")
+RADARR_API_KEY = os.getenv("RADARR_API_KEY", "")
+RADARR_TIME = os.getenv("RADARR_TIME", "07:30")
+
+SONARR_ENABLED = os.getenv("SONARR_ENABLED", "false").lower() in ("1", "true", "yes")
+SONARR_URL = os.getenv("SONARR_URL", "")
+SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
+SONARR_TIME = os.getenv("SONARR_TIME", "07:30")
+
+jarvis_app_id = None
 
 # -----------------------------
-# Send message (with APP token)
+# Send message
 # -----------------------------
 def send_message(title, message, priority=5):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    data = {
-        "title": f"{BOT_ICON} {BOT_NAME}: {title}",
-        "message": message,
-        "priority": priority,
-    }
     try:
-        r = requests.post(url, json=data, timeout=5)
+        r = requests.post(url, json={"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}, timeout=5)
         r.raise_for_status()
-        print(f"[{BOT_NAME}] ✅ Sent beautified: {title}")
-        return True
+        print(f"[{BOT_NAME}] ✅ Sent: {title}")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to send message: {e}")
-        return False
+        print(f"[{BOT_NAME}] ❌ Failed send: {e}")
 
 # -----------------------------
-# Purge all messages for a specific app (non-Jarvis)
-# -----------------------------
-def purge_app_messages(appid, appname=""):
-    if not appid:
-        return False
-    url = f"{GOTIFY_URL}/application/{appid}/message"
-    headers = {"X-Gotify-Key": CLIENT_TOKEN}
-    try:
-        r = requests.delete(url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            print(f"[{BOT_NAME}] 🗑 Purged all messages from app '{appname}' (id={appid})")
-            return True
-        else:
-            print(f"[{BOT_NAME}] ❌ Purge failed for app '{appname}' (id={appid}): {r.status_code} {r.text}")
-            return False
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Error purging app {appid}: {e}")
-        return False
-
-# -----------------------------
-# Purge all non-Jarvis apps
+# Purge non-Jarvis apps
 # -----------------------------
 def purge_non_jarvis_apps():
     global jarvis_app_id
-    if not jarvis_app_id:
-        print(f"[{BOT_NAME}] ⚠️ Jarvis app_id not resolved, cannot purge non-Jarvis apps")
-        return
     try:
-        url = f"{GOTIFY_URL}/application"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(f"{GOTIFY_URL}/application", headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
         r.raise_for_status()
-        apps = r.json()
-        for app in apps:
-            appid = app.get("id")
-            name = app.get("name")
-            if appid != jarvis_app_id:
-                purge_app_messages(appid, name)
+        for app in r.json():
+            if app.get("id") != jarvis_app_id:
+                requests.delete(f"{GOTIFY_URL}/application/{app['id']}/message", headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
+                print(f"[{BOT_NAME}] 🗑 Purged {app['name']} (id={app['id']})")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
+        print(f"[{BOT_NAME}] ❌ Purge error: {e}")
 
-# -----------------------------
-# Resolve numeric app_id for Jarvis app
-# -----------------------------
 def resolve_app_id():
     global jarvis_app_id
-    print(f"[{BOT_NAME}] Resolving app ID for app name: '{APP_NAME}'")
     try:
-        url = f"{GOTIFY_URL}/application"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=5)
-        r.raise_for_status()
-        apps = r.json()
-        for app in apps:
-            print(f"[{BOT_NAME}] Found app '{app.get('name')}' (id={app.get('id')})")
+        r = requests.get(f"{GOTIFY_URL}/application", headers={"X-Gotify-Key": CLIENT_TOKEN}, timeout=5)
+        for app in r.json():
             if app.get("name") == APP_NAME:
                 jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] ✅ MATCHED: '{APP_NAME}' -> id={jarvis_app_id}")
-                return
-        print(f"[{BOT_NAME}] ❌ WARNING: Could not find app '{APP_NAME}'")
+                print(f"[{BOT_NAME}] ✅ Jarvis app_id={jarvis_app_id}")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
+        print(f"[{BOT_NAME}] ❌ Resolve app_id failed: {e}")
 
 # -----------------------------
-# AI-like beautifier
+# Beautifier
 # -----------------------------
 def beautify_message(title, raw):
-    text = raw.strip()
-    lower = text.lower()
-
     prefix = "💡"
-    if "error" in lower or "failed" in lower:
-        prefix = "💀"
-    elif "success" in lower or "completed" in lower or "done" in lower:
-        prefix = "✅"
-    elif "warning" in lower:
-        prefix = "⚠️"
-    elif "start" in lower or "starting" in lower:
-        prefix = "🚀"
-
+    lower = raw.lower()
+    if "error" in lower: prefix = "💀"
+    elif "success" in lower: prefix = "✅"
+    elif "warning" in lower: prefix = "⚠️"
+    elif "start" in lower: prefix = "🚀"
     closings = [
         f"{BOT_ICON} With regards, {BOT_NAME}",
         f"✨ Processed intelligently by {BOT_NAME}",
-        f"🧩 Ever at your service, {BOT_NAME}",
-        f"🤖 Yours truly, {BOT_NAME}",
+        f"🧩 Ever at your service, {BOT_NAME}"
     ]
-    closing = random.choice(closings)
-
-    return f"{prefix} {text}\n\n{closing}"
+    return f"{prefix} {raw.strip()}\n\n{random.choice(closings)}"
 
 # -----------------------------
-# Scheduled cleanup
+# Weather
+# -----------------------------
+def fetch_weather():
+    if not WEATHER_ENABLED or not WEATHER_API_KEY: return None
+    try:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={WEATHER_CITY}&appid={WEATHER_API_KEY}&units=metric"
+        r = requests.get(url, timeout=5).json()
+        return f"🌤 {WEATHER_CITY}: {r['main']['temp']}°C, {r['weather'][0]['description']}"
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Weather error: {e}")
+        return None
+
+# -----------------------------
+# Radarr
+# -----------------------------
+def fetch_radarr():
+    if not RADARR_ENABLED or not RADARR_API_KEY: return None
+    try:
+        r = requests.get(f"{RADARR_URL}/api/v3/movie", headers={"X-Api-Key": RADARR_API_KEY}, timeout=5).json()
+        return f"🎬 Radarr Movies: {len(r)} tracked"
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Radarr error: {e}")
+        return None
+
+# -----------------------------
+# Sonarr
+# -----------------------------
+def fetch_sonarr():
+    if not SONARR_ENABLED or not SONARR_API_KEY: return None
+    try:
+        r = requests.get(f"{SONARR_URL}/api/v3/series", headers={"X-Api-Key": SONARR_API_KEY}, timeout=5).json()
+        return f"📺 Sonarr Series: {len(r)} tracked"
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Sonarr error: {e}")
+        return None
+
+# -----------------------------
+# Digest
+# -----------------------------
+def send_digest():
+    if not DIGEST_ENABLED: return
+    print(f"[{BOT_NAME}] 📝 Building daily digest...")
+    parts = []
+    if WEATHER_ENABLED: 
+        w = fetch_weather()
+        if w: parts.append(w)
+    if RADARR_ENABLED: 
+        r = fetch_radarr()
+        if r: parts.append(r)
+    if SONARR_ENABLED: 
+        s = fetch_sonarr()
+        if s: parts.append(s)
+    if not parts:
+        print(f"[{BOT_NAME}] No modules enabled for digest")
+        return
+    digest_msg = "🗞 Daily Digest\n\n" + "\n".join(parts)
+    send_message("Daily Digest", beautify_message("Digest", digest_msg), priority=5)
+
+# -----------------------------
+# Scheduler
 # -----------------------------
 def run_scheduler():
-    # Every 5 minutes, purge everything that is not Jarvis
     schedule.every(5).minutes.do(purge_non_jarvis_apps)
+
+    if WEATHER_ENABLED:
+        schedule.every().day.at(WEATHER_TIME).do(
+            lambda: send_message("Weather Update", beautify_message("Weather", fetch_weather()))
+        )
+    if RADARR_ENABLED:
+        schedule.every().day.at(RADARR_TIME).do(
+            lambda: send_message("Radarr Update", beautify_message("Radarr", fetch_radarr()))
+        )
+    if SONARR_ENABLED:
+        schedule.every().day.at(SONARR_TIME).do(
+            lambda: send_message("Sonarr Update", beautify_message("Sonarr", fetch_sonarr()))
+        )
+    if DIGEST_ENABLED:
+        schedule.every().day.at(DIGEST_TIME).do(send_digest)
+
     while True:
         schedule.run_pending()
         time.sleep(1)
 
 # -----------------------------
-# Main async listener
+# Listener
 # -----------------------------
 async def listen():
-    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
-    ws_url += f"/stream?token={CLIENT_TOKEN}"
-    print(f"[{BOT_NAME}] Connecting to {ws_url}...")
-
-    try:
-        async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
-            print(f"[{BOT_NAME}] ✅ Connected! Listening for messages...")
-
-            async for msg in ws:
-                try:
-                    data = json.loads(msg)
-                    mid = data.get("id")
-                    appid = data.get("appid")
-                    title = data.get("title", "")
-                    message = data.get("message", "")
-
-                    print(f"[{BOT_NAME}] Incoming message id={mid}, appid={appid}, title='{title}'")
-
-                    # Skip Jarvis's own messages
-                    if jarvis_app_id and appid == jarvis_app_id:
-                        print(f"[{BOT_NAME}] Skipping own message id={mid}")
-                        continue
-
-                    # Beautify if enabled
-                    if BEAUTIFY_ENABLED:
-                        final_msg = beautify_message(title, message)
-                    else:
-                        final_msg = message
-
-                    repost_priority = 0 if SILENT_REPOST else 5
-                    send_success = send_message(title, final_msg, priority=repost_priority)
-
-                    if send_success:
-                        print(f"[{BOT_NAME}] ✅ Reposted beautified message")
-                        # Purge everything that is not Jarvis
-                        purge_non_jarvis_apps()
-
-                except Exception as e:
-                    print(f"[{BOT_NAME}] ❌ Error processing message: {e}")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ WebSocket connection failed: {e}")
-        await asyncio.sleep(10)
-        await listen()
+    ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
+    async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
+        async for msg in ws:
+            data = json.loads(msg)
+            if data.get("appid") == jarvis_app_id: continue
+            title, message = data.get("title",""), data.get("message","")
+            if BEAUTIFY_ENABLED: message = beautify_message(title, message)
+            send_message(title, message, priority=(0 if SILENT_REPOST else 5))
+            purge_non_jarvis_apps()
 
 # -----------------------------
-# Main entrypoint
+# Entrypoint
 # -----------------------------
 if __name__ == "__main__":
-    print(f"[{BOT_NAME}] Starting add-on...")
-
+    print(f"[{BOT_NAME}] 🚀 Starting...")
     resolve_app_id()
-
-    startup_msg = random.choice([
-        f"Good Day, I am {BOT_NAME}, ready to assist.",
-        f"Greetings, {BOT_NAME} is now online and standing by.",
-        f"🚀 {BOT_NAME} systems initialized and operational.",
-        f"{BOT_NAME} reporting for duty.",
-    ])
-    send_message("Startup", startup_msg, priority=5)
-
+    send_message("Startup", f"{BOT_NAME} online and ready.", priority=5)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
-
-    print(f"[{BOT_NAME}] Event loop started.")
     loop.run_forever()
