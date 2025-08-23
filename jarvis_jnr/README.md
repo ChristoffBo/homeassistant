@@ -1,3 +1,6 @@
+Work in Progress do not use
+
+
 # Jarvis Jnr
 
 Jarvis Jnr is a Gotify Smart Bot Home Assistant add-on. It connects to your Gotify server with a client token, watches for messages, beautifies them, deletes raw versions, enforces retention, and can respond to simple commands.
