@@ -45,17 +45,31 @@ def delete_message(message_id):
         print(f"[{BOT_NAME}] No message ID provided for deletion")
         return False
     
-    url = f"{GOTIFY_URL}/message/{message_id}"
-    headers = {"X-Gotify-Key": CLIENT_TOKEN}
+    # Try both authentication methods for Gotify message deletion
+    url = f"{GOTIFY_URL}/message/{message_id}?token={CLIENT_TOKEN}"
     
     try:
-        r = requests.delete(url, headers=headers, timeout=10)
+        # First try with query parameter (most common)
+        r = requests.delete(url, timeout=10)
         if r.status_code == 200:
             print(f"[{BOT_NAME}] Successfully deleted message ID {message_id}")
             return True
+        
+        # If that fails, try with header authentication
+        url_no_token = f"{GOTIFY_URL}/message/{message_id}"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.delete(url_no_token, headers=headers, timeout=10)
+        
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] Successfully deleted message ID {message_id} (via header)")
+            return True
         else:
             print(f"[{BOT_NAME}] Failed to delete message {message_id}: {r.status_code} {r.text}")
+            # Debug: Print the exact URL and token being used
+            print(f"[{BOT_NAME}] Debug - URL: {url_no_token}")
+            print(f"[{BOT_NAME}] Debug - CLIENT_TOKEN length: {len(CLIENT_TOKEN) if CLIENT_TOKEN else 'None'}")
             return False
+            
     except Exception as e:
         print(f"[{BOT_NAME}] Error deleting message {message_id}: {e}")
         return False
@@ -194,7 +208,7 @@ async def listen():
                         print(f"[{BOT_NAME}] No message ID, skipping")
                         continue
 
-                    print(f"[{BOT_NAME}] Processing message id={mid} title='{title}'")
+                    print(f"[{BOT_NAME}] Processing message id={mid} title='{title}' from app={appid}")
 
                     # Beautify if enabled
                     if BEAUTIFY_ENABLED:
@@ -204,9 +218,14 @@ async def listen():
 
                     # Send beautified message
                     repost_priority = 0 if SILENT_REPOST else 5
-                    if send_message(title, final_msg, priority=repost_priority):
+                    send_success = send_message(title, final_msg, priority=repost_priority)
+                    
+                    if send_success:
                         # Only delete original if we successfully sent the beautified version
-                        delete_message(mid)
+                        print(f"[{BOT_NAME}] Attempting to delete original message {mid}")
+                        delete_success = delete_message(mid)
+                        if not delete_success:
+                            print(f"[{BOT_NAME}] WARNING: Failed to delete original message {mid}")
                     else:
                         print(f"[{BOT_NAME}] Not deleting original message {mid} due to send failure")
 
