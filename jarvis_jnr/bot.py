@@ -83,6 +83,37 @@ def purge_app_messages(appid):
         return False
 
 # -----------------------------
+# Delete specific message by ID
+# -----------------------------
+def delete_message(message_id):
+    """Delete a specific message by its ID using CLIENT token"""
+    if not message_id:
+        return False
+    
+    try:
+        # Try query parameter method
+        url = f"{GOTIFY_URL}/message/{message_id}?token={CLIENT_TOKEN}"
+        r = requests.delete(url, timeout=10)
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] ✅ Deleted message ID: {message_id}")
+            return True
+            
+        # Try header method
+        url = f"{GOTIFY_URL}/message/{message_id}"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.delete(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] ✅ Deleted message ID: {message_id} (via header)")
+            return True
+        else:
+            print(f"[{BOT_NAME}] ❌ Failed to delete message {message_id}: {r.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"[{BOT_NAME}] Error deleting message {message_id}: {e}")
+        return False
+
+# -----------------------------
 # Test token permissions
 # -----------------------------
 def test_token_permissions():
@@ -174,30 +205,10 @@ def beautify_message(title, raw):
     return f"{prefix} {text}\n\n{closing}"
 
 # -----------------------------
-# Retention cleanup (individual message deletion for old messages)
+# Retention cleanup with Jarvis message cleanup
 # -----------------------------
-def delete_message(message_id):
-    """Delete a specific message by its ID using CLIENT token"""
-    if not message_id:
-        return False
-    
-    try:
-        # Try query parameter method
-        url = f"{GOTIFY_URL}/message/{message_id}?token={CLIENT_TOKEN}"
-        r = requests.delete(url, timeout=10)
-        if r.status_code == 200:
-            return True
-            
-        # Try header method
-        url = f"{GOTIFY_URL}/message/{message_id}"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.delete(url, headers=headers, timeout=10)
-        return r.status_code == 200
-        
-    except Exception:
-        return False
-
 def retention_cleanup():
+    """Clean up old messages including Jarvis's own beautified messages"""
     try:
         url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
         r = requests.get(url, timeout=5)
@@ -206,28 +217,83 @@ def retention_cleanup():
         cutoff = time.time() - (RETENTION_HOURS * 3600)
 
         deleted_count = 0
+        jarvis_deleted = 0
+        
         for msg in msgs:
             try:
                 ts = datetime.datetime.fromisoformat(msg["date"].replace("Z", "+00:00")).timestamp()
-                if ts < cutoff:
-                    if delete_message(msg["id"]):
+                msg_id = msg.get("id")
+                appid = msg.get("appid")
+                title = msg.get("title", "")
+                
+                # Check if message is old enough for cleanup
+                if ts < cutoff and msg_id:
+                    # Clean up all old messages, including Jarvis's own
+                    if delete_message(msg_id):
                         deleted_count += 1
+                        if appid == jarvis_app_id:
+                            jarvis_deleted += 1
+                            print(f"[{BOT_NAME}] Cleaned up old Jarvis message: '{title[:50]}...'")
+                            
             except Exception as e:
                 print(f"[{BOT_NAME}] Error checking msg {msg.get('id')}: {e}")
         
         if deleted_count > 0:
-            print(f"[{BOT_NAME}] Retention cleanup deleted {deleted_count} old messages")
+            print(f"[{BOT_NAME}] Retention cleanup: {deleted_count} total messages deleted ({jarvis_deleted} Jarvis messages)")
             
     except Exception as e:
         print(f"[{BOT_NAME}] Retention cleanup failed: {e}")
+
+# -----------------------------
+# Clean up old Jarvis messages specifically
+# -----------------------------
+def cleanup_old_jarvis_messages():
+    """Clean up Jarvis's own old beautified messages"""
+    if not jarvis_app_id:
+        print(f"[{BOT_NAME}] No Jarvis app ID - cannot clean old messages")
+        return
+        
+    try:
+        url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
+        r = requests.get(url, timeout=5)
+        r.raise_for_status()
+        msgs = r.json().get("messages", [])
+        
+        # Clean messages older than 1 hour for Jarvis specifically
+        cleanup_cutoff = time.time() - (1 * 3600)  # 1 hour
+        deleted_count = 0
+        
+        for msg in msgs:
+            try:
+                if msg.get("appid") == jarvis_app_id:
+                    ts = datetime.datetime.fromisoformat(msg["date"].replace("Z", "+00:00")).timestamp()
+                    msg_id = msg.get("id")
+                    title = msg.get("title", "")
+                    
+                    if ts < cleanup_cutoff and msg_id:
+                        if delete_message(msg_id):
+                            deleted_count += 1
+                            print(f"[{BOT_NAME}] Cleaned old beautified message: '{title[:50]}...'")
+                            
+            except Exception as e:
+                print(f"[{BOT_NAME}] Error processing Jarvis message {msg.get('id')}: {e}")
+        
+        if deleted_count > 0:
+            print(f"[{BOT_NAME}] Cleaned up {deleted_count} old Jarvis messages")
+            
+    except Exception as e:
+        print(f"[{BOT_NAME}] Failed to cleanup old Jarvis messages: {e}")
 
 def run_scheduler():
     # Initial cleanup if bulk purge is enabled
     if ENABLE_BULK_PURGE and jarvis_app_id:
         purge_app_messages(jarvis_app_id)
     
-    # Schedule retention cleanup
+    # Schedule retention cleanup (includes Jarvis cleanup now)
     schedule.every(30).minutes.do(retention_cleanup)
+    
+    # Schedule specific Jarvis message cleanup more frequently
+    schedule.every(10).minutes.do(cleanup_old_jarvis_messages)
     
     while True:
         schedule.run_pending()
@@ -274,6 +340,16 @@ async def listen():
 
                     print(f"[{BOT_NAME}] PROCESSING: message id={mid} title='{title}' from app={appid}")
 
+                    # Delete the original message first (to prevent duplicates)
+                    print(f"[{BOT_NAME}] Deleting original message {mid} before beautifying")
+                    delete_success = delete_message(mid)
+                    
+                    if not delete_success:
+                        print(f"[{BOT_NAME}] WARNING: Could not delete original message {mid}")
+
+                    # Small delay to ensure deletion completes
+                    await asyncio.sleep(0.5)
+
                     # Beautify if enabled
                     if BEAUTIFY_ENABLED:
                         final_msg = beautify_message(title, message)
@@ -288,21 +364,9 @@ async def listen():
                     send_success = send_message(title, final_msg, priority=repost_priority)
                     
                     if send_success:
-                        print(f"[{BOT_NAME}] ✅ SEND SUCCESS - Now auto-purging source app messages")
-                        
-                        # Auto-purge: Delete all messages from the source app (not Jarvis)
-                        if appid and appid != jarvis_app_id:
-                            print(f"[{BOT_NAME}] Auto-purging app ID {appid} (source of original message)")
-                            purge_success = purge_app_messages(appid)
-                            
-                            if purge_success:
-                                print(f"[{BOT_NAME}] ✅ AUTO-PURGE SUCCESS for app {appid}")
-                            else:
-                                print(f"[{BOT_NAME}] ❌ AUTO-PURGE FAILED for app {appid}")
-                        else:
-                            print(f"[{BOT_NAME}] Skipping purge - no valid source app ID")
+                        print(f"[{BOT_NAME}] ✅ Successfully processed and beautified message")
                     else:
-                        print(f"[{BOT_NAME}] ❌ SEND FAILED - Not purging messages")
+                        print(f"[{BOT_NAME}] ❌ Failed to send beautified message")
 
                 except json.JSONDecodeError as e:
                     print(f"[{BOT_NAME}] JSON decode error: {e}")
