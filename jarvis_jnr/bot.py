@@ -35,8 +35,6 @@ SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
 SONARR_TIME = os.getenv("SONARR_TIME", "07:30")
 
 jarvis_app_id = None
-series_cache = {}
-movie_cache = {}
 
 # -----------------------------
 # Beautifier with Image Support
@@ -96,7 +94,7 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] ❌ Resolve app_id failed: {e}")
 
 # -----------------------------
-# Count functions
+# Radarr/Sonarr functions
 # -----------------------------
 def get_series_count():
     if not SONARR_ENABLED or not SONARR_API_KEY:
@@ -121,33 +119,123 @@ def get_movie_count():
         return f"🎬 Error fetching movie count: {e}"
 
 # -----------------------------
+# Weather function (Met.no)
+# -----------------------------
+def get_weather():
+    if not WEATHER_ENABLED:
+        return "🌦 Weather module is disabled."
+    try:
+        url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={WEATHER_LAT}&lon={WEATHER_LON}"
+        headers = {"User-Agent": f"{BOT_NAME}/1.0"}
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        timeseries = data.get("properties", {}).get("timeseries", [])
+        if not timeseries:
+            return "🌦 I couldn’t retrieve any weather data."
+
+        first = timeseries[0]
+        details = first["data"]["instant"]["details"]
+
+        temp = details.get("air_temperature")
+        wind = details.get("wind_speed")
+        cloud = details.get("cloud_area_fraction")
+
+        condition = "☀️ Clear"
+        if cloud > 70: condition = "☁️ Overcast"
+        elif cloud > 30: condition = "🌤 Partly cloudy"
+
+        return (
+            f"{condition} in {WEATHER_CITY}, {temp}°C, wind {wind} m/s.\n"
+            f"🤖 {BOT_NAME} suggests planning accordingly."
+        )
+    except Exception as e:
+        return f"🌦 Weather fetch error: {e}"
+
+# -----------------------------
+# Digest function
+# -----------------------------
+def get_digest():
+    parts = []
+    parts.append("🗞 Good day! Here is your personalized digest:\n")
+
+    # Weather
+    parts.append(get_weather())
+
+    # Library counts
+    parts.append(get_movie_count())
+    parts.append(get_series_count())
+
+    # Upcoming movies
+    try:
+        if RADARR_ENABLED:
+            url = f"{RADARR_URL}/api/v3/calendar?unmonitored=false"
+            r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+            if r.status_code == 200:
+                upcoming = [
+                    f"• {m.get('title')} ({m.get('inCinemas','N/A')[:10]})"
+                    for m in r.json() if "inCinemas" in m
+                ][:5]
+                if upcoming:
+                    parts.append("🎬 Upcoming movies:\n" + "\n".join(upcoming))
+    except Exception as e:
+        parts.append(f"🎬 Could not fetch upcoming movies: {e}")
+
+    # Upcoming episodes
+    try:
+        if SONARR_ENABLED:
+            url = f"{SONARR_URL}/api/v3/calendar"
+            r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+            if r.status_code == 200:
+                upcoming = [
+                    f"• {e.get('series',{}).get('title','Unknown')} - S{e.get('seasonNumber')}E{e.get('episodeNumber')} ({e.get('airDate','N/A')})"
+                    for e in r.json()
+                ][:5]
+                if upcoming:
+                    parts.append("📺 Upcoming episodes:\n" + "\n".join(upcoming))
+    except Exception as e:
+        parts.append(f"📺 Could not fetch upcoming episodes: {e}")
+
+    parts.append(f"\n🤖 Digest crafted with care by {BOT_NAME}")
+    return "\n\n".join(parts)
+
+# -----------------------------
 # Command parser
 # -----------------------------
 def parse_command(title, raw):
     bot_name_lower = BOT_NAME.lower()
     text = (title + " " + raw).strip().lower()
+
     if bot_name_lower not in text:
         return None
 
-    if "series count" in text or "series amount" in text or "how many series" in text:
-        return "series_count"
-    if "movies count" in text or "movies amount" in text or "how many movies" in text:
+    if "movies count" in text or "movies amount" in text or "how many movies" in text or "movies total" in text:
         return "movie_count"
-    if "radarr" in text or "movie" in text:
+    if "series count" in text or "series amount" in text or "how many series" in text or "series total" in text:
+        return "series_count"
+    if "radarr" in text or ("movie" in text and "count" not in text and "how many" not in text):
         return "radarr_upcoming"
-    if "sonarr" in text or "show" in text or "series" in text:
+    if "sonarr" in text or "show" in text or ("series" in text and "count" not in text and "how many" not in text):
         return "sonarr_upcoming"
-    if "weather" in text:
+    if "weather" in text or "forecast" in text:
         return "weather"
-    if "digest" in text:
+    if "digest" in text or "morning report" in text or "daily summary" in text:
         return "digest"
     if "help" in text:
         return "help"
+
+    print(f"[{BOT_NAME}] No command matched for text='{text}'")
     return None
 
+# -----------------------------
+# Command handler
+# -----------------------------
 def handle_command(command):
     if command == "series_count": return get_series_count()
     if command == "movie_count": return get_movie_count()
+    if command == "weather": return get_weather()
+    if command == "digest": return get_digest()
     if command == "help":
         return (
             f"🤖 Hello, I am {BOT_NAME}, your AI assistant.\n\n"
@@ -175,7 +263,6 @@ async def listen():
                 title = data.get("title", "")
                 message = data.get("message", "")
 
-                # Skip own messages
                 if jarvis_app_id and appid == jarvis_app_id:
                     continue
 
