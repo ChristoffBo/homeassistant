@@ -189,22 +189,30 @@ def handle_command(msg):
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")+f"/stream?token={CLIENT_TOKEN}"
-    async with websockets.connect(ws_url) as ws:
-        async for msg in ws:
-            data = json.loads(msg)
-            mid, message = data.get("id"), data.get("message","")
-            if not mid: continue
-            resp = handle_command(message)
-            if resp:
-                send_message("Response", beautify_message("Response", resp))
-                delete_message(mid)
+    print(f"[{BOT_NAME}] Connecting to {ws_url}...")
+    try:
+        async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
+            print(f"[{BOT_NAME}] ✅ Connected and listening...")
+            async for msg in ws:
+                try:
+                    data = json.loads(msg)
+                    mid, message = data.get("id"), data.get("message","")
+                    if not mid: continue
+                    resp = handle_command(message)
+                    if resp:
+                        send_message("Response", beautify_message("Response", resp))
+                        delete_message(mid)
+                except Exception as e:
+                    print("Message handling error:", e)
+    except Exception as e:
+        print("WebSocket error:", e)
+        await asyncio.sleep(10)
+        await listen()
 
 # -----------------------------
 # Main
 # -----------------------------
-if __name__ == "__main__":
-    print(f"[{BOT_NAME}] Starting add-on...")
-
+async def main():
     # Random startup greeting
     startup_msg = random.choice([
         f"Good Day, I am {BOT_NAME}, ready to assist.",
@@ -215,10 +223,17 @@ if __name__ == "__main__":
     ])
     send_message("Startup", beautify_message("Startup", startup_msg), priority=5)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(listen())
+    # Schedule cleanup
     schedule.every(5).seconds.do(cleanup_messages)
+
+    # Start websocket listener
+    asyncio.create_task(listen())
+
+    # Scheduler loop
     while True:
         schedule.run_pending()
-        time.sleep(1)
+        await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    print(f"[{BOT_NAME}] Starting add-on...")
+    asyncio.run(main())
