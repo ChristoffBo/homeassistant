@@ -3,7 +3,7 @@ FROM $BUILD_FROM
 
 # Install dependencies (Alpine package manager)
 RUN apk add --no-cache \
-    python3 py3-pip curl jq
+    python3 py3-pip curl jq bashio
 
 WORKDIR /app
 
