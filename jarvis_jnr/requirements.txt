@@ -2,3 +2,4 @@ requests
 websockets
 schedule
 aiohttp
+websocket-client
