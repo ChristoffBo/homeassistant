@@ -25,7 +25,7 @@ if [ ! -f "$SEMAPHORE_CONFIG" ]; then
         cat > "$SEMAPHORE_CONFIG" <<EOF
 {
   "dialect": "bolt",
-  "bolt": { "host": "$DB_FILE" },
+  "bolt": { "file": "$DB_FILE" },
   "tmp_path": "/tmp/semaphore",
   "port": "8055",
   "schedule": { "timezone": "$SCHEDULE_TZ" }
