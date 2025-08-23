@@ -5,7 +5,7 @@ BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")   # admin client token
 APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")         # Jarvis app token
-APP_NAME = os.getenv("JARVIS_APP_NAME", BOT_NAME)
+APP_NAME = os.getenv("JARVIS_APP_NAME", BOT_NAME) # resolve dynamically
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SELF_APP_ID = None  # resolved later
