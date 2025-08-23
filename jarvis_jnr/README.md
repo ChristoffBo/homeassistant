@@ -40,10 +40,11 @@ Jarvis Jnr is a Gotify Smart Bot Home Assistant add-on. It connects to your Goti
 
 📌 Setup
 1. Create a dedicated Gotify user called jarvis_jnr
-2. Generate a Client Token for this user
-3. Put the token and Gotify URL into options.json
-4. Start the add-on in Home Assistant
-5. Jarvis Jnr will now beautify and manage your Gotify messages
+2. Create a Gotify App with the same name (Jarvis Jnr) so its messages show separately
+3. Go to your Gotify admin user → Clients → Create Client and generate a Client Token
+4. Put the Gotify URL and Client Token into options.json
+5. Start the add-on in Home Assistant
+6. Jarvis Jnr will now beautify and manage your Gotify messages
 
 🧠 Notes
 - Requires a Gotify client token (not app token)
