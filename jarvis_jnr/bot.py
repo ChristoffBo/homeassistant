@@ -24,12 +24,12 @@ DIGEST_ENABLED = os.getenv("DIGEST_ENABLED", "false").lower() in ("1", "true", "
 DIGEST_TIME = os.getenv("DIGEST_TIME", "08:00")
 
 RADARR_ENABLED = os.getenv("RADARR_ENABLED", "false").lower() in ("1", "true", "yes")
-RADARR_URL = os.getenv("RADARR_URL", "")
+RADARR_URL = os.getenv("RADARR_URL", "").rstrip("/")
 RADARR_API_KEY = os.getenv("RADARR_API_KEY", "")
 RADARR_TIME = os.getenv("RADARR_TIME", "07:30")
 
 SONARR_ENABLED = os.getenv("SONARR_ENABLED", "false").lower() in ("1", "true", "yes")
-SONARR_URL = os.getenv("SONARR_URL", "")
+SONARR_URL = os.getenv("SONARR_URL", "").rstrip("/")
 SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
 SONARR_TIME = os.getenv("SONARR_TIME", "07:30")
 
@@ -143,14 +143,19 @@ def fetch_radarr_upcoming(days=7):
         start = datetime.now().strftime("%Y-%m-%d")
         end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}"
-        r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=5).json()
-        if not r:
+        print(f"[{BOT_NAME}] 🔎 Fetching Radarr: {url}")
+        r = requests.get(url, headers={"X-Api-Key": RADARR_API_KEY}, timeout=10)
+        print(f"[{BOT_NAME}] 🔎 Radarr status={r.status_code}, length={len(r.text)}")
+        print(f"[{BOT_NAME}] 🔎 Radarr response (first 300): {r.text[:300]}")
+        if r.status_code != 200:
+            return f"🎬 Radarr API error {r.status_code}: {r.text[:100]}"
+        data = r.json()
+        if not data:
             return random.choice(no_movies_responses).format(days=days)
-        items = [f"• {m['title']} ({m['inCinemas'][:10] if m.get('inCinemas') else 'TBA'})" for m in r]
-        return f"🎬 Here are movies coming in the next {days} days:\n" + "\n".join(items[:5])
+        items = [f"• {m['title']} ({m.get('inCinemas','TBA')[:10]})" for m in data]
+        return "🎬 Upcoming movies:\n" + "\n".join(items[:5])
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Radarr error: {e}")
-        return "🎬 Sorry, I couldn’t fetch Radarr data right now."
+        return f"🎬 Radarr fetch failed: {e}"
 
 def fetch_sonarr_upcoming(days=7):
     if not SONARR_ENABLED or not SONARR_API_KEY: 
@@ -159,14 +164,28 @@ def fetch_sonarr_upcoming(days=7):
         start = datetime.now().strftime("%Y-%m-%d")
         end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
         url = f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}"
-        r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=5).json()
-        if not r:
+        print(f"[{BOT_NAME}] 🔎 Fetching Sonarr: {url}")
+        r = requests.get(url, headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+
+        print(f"[{BOT_NAME}] 🔎 Sonarr status={r.status_code}, length={len(r.text)}")
+        print(f"[{BOT_NAME}] 🔎 Sonarr response preview: {r.text[:300]}")
+
+        if r.status_code != 200:
+            return f"📺 Sonarr API error {r.status_code}: {r.text[:100]}"
+
+        try:
+            data = r.json()
+        except Exception:
+            return f"📺 Sonarr did not return JSON. Response starts with: {r.text[:100]}"
+
+        if not data:
             return random.choice(no_series_responses).format(days=days)
-        items = [f"• {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in r]
-        return f"📺 Upcoming episodes in the next {days} days:\n" + "\n".join(items[:5])
+
+        items = [f"• {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in data]
+        return "📺 Upcoming episodes:\n" + "\n".join(items[:5])
+
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Sonarr error: {e}")
-        return "📺 Sorry, I couldn’t fetch Sonarr data right now."
+        return f"📺 Sonarr fetch failed: {e}"
 
 def send_digest():
     if not DIGEST_ENABLED: return
@@ -206,18 +225,16 @@ def handle_command(command):
     if command == "sonarr_upcoming": return fetch_sonarr_upcoming(7)
     if command == "media": return f"{fetch_radarr_upcoming(7)}\n\n{fetch_sonarr_upcoming(7)}"
     if command == "weather": return fetch_weather()
-    if command == "digest": 
-        return send_digest()
+    if command == "digest": return send_digest()
     if command == "help":
         return (
             f"🤖 Hello, I am {BOT_NAME}, your AI assistant.\n\n"
             "Here are some things you can ask me:\n"
-            "• Weather → 'Jarvis weather' or 'Jarvis, what’s the weather like?'\n"
-            "• Digest → 'Jarvis digest' to get today’s report\n"
-            "• Movies → 'Jarvis movies' for upcoming Radarr\n"
-            "• Shows → 'Jarvis series' or 'Jarvis shows' for Sonarr\n"
-            "• Media → 'Jarvis media' for both movies + shows\n\n"
-            "Just mention my name as the wake word. I'm always listening."
+            "• Weather → 'Jarvis weather'\n"
+            "• Digest → 'Jarvis digest'\n"
+            "• Movies → 'Jarvis movies'\n"
+            "• Shows → 'Jarvis series'\n"
+            "• Media → 'Jarvis media'\n"
         )
     return f"🤖 I didn’t quite understand that, but I’m learning."
 
