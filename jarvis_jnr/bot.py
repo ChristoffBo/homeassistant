@@ -1,8 +1,5 @@
 import os, json, time, asyncio, requests, websockets, schedule, datetime, random
 
-# -----------------------------
-# Config from environment (set in run.sh from options.json)
-# -----------------------------
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
@@ -14,24 +11,21 @@ RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "12"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
-# Radarr & Sonarr
 RADARR_URL = os.getenv("RADARR_URL", "").rstrip("/")
 RADARR_API_KEY = os.getenv("RADARR_API_KEY", "")
 SONARR_URL = os.getenv("SONARR_URL", "").rstrip("/")
 SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
 
-# Weather
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Johannesburg")
 
-jarvis_app_id = None  # resolved on startup
+jarvis_app_id = None
 radarr_cache = {}
 sonarr_cache = {}
 
 # -----------------------------
-# Helpers
+# Gotify Messaging
 # -----------------------------
 def send_message(title, message, priority=5):
-    """Send beautified message using APP token"""
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
     try:
@@ -39,22 +33,18 @@ def send_message(title, message, priority=5):
         r.raise_for_status()
         return True
     except Exception as e:
-        print(f"[{BOT_NAME}] Failed to send: {e}")
+        print(f"[{BOT_NAME}] Send error: {e}")
         return False
 
 def delete_message(mid):
-    """Delete specific message by ID"""
     if not mid: return False
     try:
         url = f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}"
         r = requests.delete(url, timeout=5)
         return r.status_code == 200
-    except Exception as e:
-        print(f"[{BOT_NAME}] Delete error: {e}")
-        return False
+    except: return False
 
 def resolve_app_id():
-    """Resolve Jarvis app_id"""
     global jarvis_app_id
     try:
         r = requests.get(f"{GOTIFY_URL}/application?token={CLIENT_TOKEN}", timeout=5)
@@ -62,13 +52,10 @@ def resolve_app_id():
         for app in r.json():
             if app.get("name") == APP_NAME:
                 jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] Found app id {jarvis_app_id}")
-                return
-    except Exception as e:
-        print(f"[{BOT_NAME}] Resolve app id failed: {e}")
+    except: pass
 
 # -----------------------------
-# Beautifier
+# Beautify
 # -----------------------------
 def beautify_message(title, raw):
     text = raw.strip()
@@ -90,7 +77,7 @@ def beautify_message(title, raw):
     return f"{prefix} {text}\n\n{closing}"
 
 # -----------------------------
-# Weather
+# Weather (wttr.in)
 # -----------------------------
 def get_weather():
     try:
@@ -116,7 +103,6 @@ def upcoming_movies(days=7):
         r = requests.get(url, headers=headers, timeout=10)
         return r.json()
     except Exception as e:
-        print(f"[{BOT_NAME}] Radarr upcoming error: {e}")
         return []
 
 def upcoming_series(days=7):
@@ -128,7 +114,6 @@ def upcoming_series(days=7):
         r = requests.get(url, headers=headers, timeout=10)
         return r.json()
     except Exception as e:
-        print(f"[{BOT_NAME}] Sonarr upcoming error: {e}")
         return []
 
 # -----------------------------
@@ -169,23 +154,35 @@ def handle_command(cmd):
     lower = cmd.lower()
 
     # Weather
-    if "weather" in lower: return get_weather()
+    if any(word in lower for word in ["weather", "forecast", "temperature"]):
+        return get_weather()
 
-    # Radarr/Sonarr upcoming
-    if "upcoming movie" in lower: 
+    # Upcoming
+    if "upcoming" in lower and "movie" in lower:
         movies = upcoming_movies()
         if not movies: return "🎬 No upcoming movies this week."
         return "🎬 Upcoming movies:\n" + "\n".join([f"- {m['title']} ({m['inCinemas'][:10]})" for m in movies[:5]])
 
-    if "upcoming series" in lower or "upcoming show" in lower:
+    if any(word in lower for word in ["upcoming series", "upcoming show", "series upcoming", "show upcoming"]):
         eps = upcoming_series()
-        if not eps: return "📺 No upcoming episodes."
+        if not eps: return "📺 No upcoming episodes this week."
         return "📺 Upcoming episodes:\n" + "\n".join([f"- {e['series']['title']} - S{e['seasonNumber']}E{e['episodeNumber']} ({e['airDate']})" for e in eps[:5]])
+
+    # Help
+    if "help" in lower:
+        return (
+            "🤖 Available commands:\n"
+            "- Jarvis weather / forecast\n"
+            "- Jarvis upcoming movies\n"
+            "- Jarvis upcoming series\n"
+            "- Jarvis movie count / series count\n"
+            "- Jarvis longest movie / longest series\n"
+        )
 
     return f"🤖 I didn’t understand. Try 'Jarvis help' for commands."
 
 # -----------------------------
-# WebSocket listener
+# Listener
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
@@ -213,7 +210,7 @@ async def listen():
             except: pass
 
 # -----------------------------
-# Entrypoint
+# Main
 # -----------------------------
 if __name__ == "__main__":
     resolve_app_id()
