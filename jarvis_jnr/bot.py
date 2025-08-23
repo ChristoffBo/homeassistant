@@ -3,22 +3,29 @@ import os, json, time, asyncio, requests, websockets, schedule, datetime
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
-APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")   # for posting
-CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")  # for deleting + stream
+APP_TOKEN = os.getenv("APP_TOKEN")       # FIXED naming
+CLIENT_TOKEN = os.getenv("CLIENT_TOKEN") # FIXED naming
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
 def send_message(title, message, priority=5):
     """Send a message back to Gotify (using APP token)."""
+    if not APP_TOKEN:
+        print(f"[{BOT_NAME}] No APP_TOKEN configured, cannot send messages")
+        return
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
     try:
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
+        print(f"[{BOT_NAME}] Sent message: {title}")
     except Exception as e:
         print(f"[{BOT_NAME}] Failed to send message:", e)
 
 async def listen():
     """Listen to Gotify WebSocket stream for new messages."""
+    if not CLIENT_TOKEN:
+        print(f"[{BOT_NAME}] No CLIENT_TOKEN configured, cannot listen")
+        return
     ws_url = f"{GOTIFY_URL.replace('http', 'ws')}/stream?token={CLIENT_TOKEN}"
     print(f"[{BOT_NAME}] Connecting to {ws_url}...")
     try:
@@ -31,7 +38,7 @@ async def listen():
                     mid = data.get("id")
 
                     # Ignore Jarvis’ own reposts (prevents infinite loop)
-                    if title.startswith(f"{BOT_NAME}:"):
+                    if title.startswith(f"{BOT_NAME}:") or title.startswith(f"{BOT_ICON} {BOT_NAME}:"):
                         continue
 
                     # Beautify + repost
@@ -55,6 +62,8 @@ async def listen():
 
 def retention_cleanup():
     """Delete old messages past retention_hours (uses CLIENT token)."""
+    if not CLIENT_TOKEN:
+        return
     try:
         url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
         r = requests.get(url, timeout=5).json()
@@ -75,7 +84,8 @@ def run_scheduler():
         time.sleep(1)
 
 if __name__ == "__main__":
-    send_message("Startup", f"{BOT_NAME} bot is now running.")
+    # Startup message
+    send_message("Startup", "Good Day, I am Jarvis ready to assist.")
 
     # Explicitly create new asyncio loop (fixes DeprecationWarning)
     loop = asyncio.new_event_loop()
