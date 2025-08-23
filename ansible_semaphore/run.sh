@@ -27,11 +27,11 @@ DATA_DIR="$(bashio::config 'data_dir' '/share/ansible_semaphore')"
 # Determine if ingress is enabled
 if bashio::config.true 'ingress'; then
     PORT="8099"
-    WEB_HOST=""
+    WEB_HOST="0.0.0.0"
     log "Ingress mode enabled - using port ${PORT}"
 else
     PORT="$(bashio::config 'port' '8055')"
-    WEB_HOST=""
+    WEB_HOST="0.0.0.0"
     log "Direct access mode - using port ${PORT}"
 fi
 
@@ -61,9 +61,27 @@ COOKIE_HASH="$(bashio::config 'cookie_hash' "$(openssl rand -hex 32)")"
 COOKIE_ENCRYPTION="$(bashio::config 'cookie_encryption' "$(openssl rand -hex 32)")"
 ACCESS_KEY_ENCRYPTION="$(bashio::config 'access_key_encryption' "$(openssl rand -hex 32)")"
 
-# Create config file with proper settings for ingress
-log "Generating Semaphore config..."
-cat > "${CONF_PATH}" <<JSON
+# Set ALL environment variables before doing anything
+export SEMAPHORE_DB_DIALECT="bolt"
+export SEMAPHORE_DB_PATH="${DATA_DIR}/database.boltdb"
+export SEMAPHORE_TMP_PATH="/tmp/semaphore"
+export SEMAPHORE_PORT="${PORT}"
+export SEMAPHORE_WEB_ROOT=""
+export SEMAPHORE_CONFIG_PATH="${CONF_PATH}"
+
+# Clear any MySQL environment variables that might interfere
+unset SEMAPHORE_DB_HOST 2>/dev/null || true
+unset SEMAPHORE_DB_USER 2>/dev/null || true
+unset SEMAPHORE_DB_PASS 2>/dev/null || true
+unset SEMAPHORE_DB_NAME 2>/dev/null || true
+unset SEMAPHORE_MYSQL_HOST 2>/dev/null || true
+unset SEMAPHORE_MYSQL_USER 2>/dev/null || true
+unset SEMAPHORE_MYSQL_PASS 2>/dev/null || true
+unset SEMAPHORE_MYSQL_NAME 2>/dev/null || true
+
+# Create minimal BoltDB config
+log "Creating BoltDB configuration..."
+cat > "${CONF_PATH}" <<EOF
 {
   "dialect": "bolt",
   "tmp_path": "/tmp/semaphore",
@@ -72,59 +90,36 @@ cat > "${CONF_PATH}" <<JSON
   "access_key_encryption": "${ACCESS_KEY_ENCRYPTION}",
   "web_host": "${WEB_HOST}",
   "web_port": "${PORT}",
-  "non_auth": false,
-  "git_client": "go_git",
-  "max_tasks_per_template": 5
+  "git_client": "go_git"
 }
-JSON
+EOF
 
-# Initialize database if it doesn't exist
-log "Checking database initialization..."
+log "Configuration file created:"
+cat "${CONF_PATH}"
+
+# Initialize the database using environment variables only
+log "Initializing database with environment variables..."
 if [ ! -f "${DATA_DIR}/database.boltdb" ]; then
-  log "Running Semaphore setup with BoltDB..."
-  
-  # Run setup with environment variables to ensure BoltDB
-  SEMAPHORE_DB_DIALECT="bolt" \
-  SEMAPHORE_DB_PATH="${DATA_DIR}/database.boltdb" \
-  SEMAPHORE_ADMIN="${ADMIN_LOGIN}" \
-  SEMAPHORE_ADMIN_EMAIL="${ADMIN_EMAIL}" \
-  SEMAPHORE_ADMIN_NAME="${ADMIN_NAME}" \
-  SEMAPHORE_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
-  SEMAPHORE_CONFIG="${CONF_PATH}" \
-    semaphore setup --config "${CONF_PATH}" || log "Setup failed, continuing..."
+  log "Database file doesn't exist, running migration..."
+  semaphore migrate --config "${CONF_PATH}" || log "Migration failed, continuing..."
 fi
 
-# Auto-provision / reset admin user from options
-log "Ensuring admin user exists (or resetting password)..."
-if ! semaphore user change-by-login \
+# Create admin user
+log "Setting up admin user..."
+semaphore user add \
+  --admin \
   --login "${ADMIN_LOGIN}" \
+  --email "${ADMIN_EMAIL}" \
+  --name "${ADMIN_NAME}" \
   --password "${ADMIN_PASSWORD}" \
-  --config "${CONF_PATH}" 2>/dev/null; then
-  log "Creating new admin user..."
-  semaphore user add \
-    --admin \
-    --login "${ADMIN_LOGIN}" \
-    --email "${ADMIN_EMAIL}" \
-    --name  "${ADMIN_NAME}" \
-    --password "${ADMIN_PASSWORD}" \
-    --config "${CONF_PATH}"
-fi
+  --config "${CONF_PATH}" 2>/dev/null || log "User creation failed or user exists"
 
 log "Admin ready: ${ADMIN_LOGIN}"
 
-# Set environment variables to ensure BoltDB is used
-export SEMAPHORE_PORT="${PORT}"
-export SEMAPHORE_CONFIG_PATH="${CONF_PATH}"
-export SEMAPHORE_DB_DIALECT="bolt"
-export SEMAPHORE_DB_PATH="${DATA_DIR}/database.boltdb"
-export SEMAPHORE_TMP_PATH="/tmp/semaphore"
+# Start server with explicit config
+log "Starting Semaphore server..."
+log "Using config: ${CONF_PATH}"
+log "Database: ${DATA_DIR}/database.boltdb"
+log "Port: ${PORT}"
 
-# Clear any MySQL environment variables that might interfere
-unset SEMAPHORE_DB_HOST
-unset SEMAPHORE_DB_USER
-unset SEMAPHORE_DB_PASS
-unset SEMAPHORE_DB_NAME
-
-# Start server
-log "Starting Semaphore on :${PORT}"
 exec semaphore server --config "${CONF_PATH}"
