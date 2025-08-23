@@ -3,8 +3,8 @@ import os, json, time, asyncio, requests, websockets, schedule, datetime
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
-CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")   # only for listening
-APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")         # used for sending + deleting
+CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")   # full permissions (read/delete)
+APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")         # Jarvis app token (posting)
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 
 FOOTER = f"{BOT_ICON} With regards, {BOT_NAME}"
@@ -39,7 +39,7 @@ async def listen():
                     title = data.get("title", "")
                     message = data.get("message", "")
 
-                    # skip own messages (avoid infinite loop)
+                    # skip Jarvis’ own messages (avoid loop)
                     if FOOTER in message:
                         print(f"[{BOT_NAME}] Skipping own message id={mid}")
                         continue
@@ -49,9 +49,10 @@ async def listen():
                         new_msg = f"✨ {message.strip()}"
                         send_message(title, new_msg)
 
-                        # delete original (now with APP_TOKEN)
+                        # delete original (CLIENT_TOKEN has permission)
                         try:
-                            requests.delete(f"{GOTIFY_URL}/message/{mid}?token={APP_TOKEN}")
+                            del_url = f"{GOTIFY_URL}/message/{mid}?token={CLIENT_TOKEN}"
+                            requests.delete(del_url, timeout=5)
                             print(f"[{BOT_NAME}] Deleted original message {mid}")
                         except Exception as e:
                             print(f"[{BOT_NAME}] Failed to delete message {mid}: {e}")
@@ -65,15 +66,15 @@ async def listen():
 
 
 def retention_cleanup():
-    """Delete old messages past retention_hours (using APP_TOKEN)."""
+    """Delete old messages past retention_hours using CLIENT_TOKEN."""
     try:
-        url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+        url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
         r = requests.get(url, timeout=5).json()
         cutoff = time.time() - (RETENTION_HOURS * 3600)
         for msg in r.get("messages", []):
             ts = datetime.datetime.fromisoformat(msg["date"].replace("Z","+00:00")).timestamp()
             if ts < cutoff:
-                requests.delete(f"{GOTIFY_URL}/message/{msg['id']}?token={APP_TOKEN}")
+                requests.delete(f"{GOTIFY_URL}/message/{msg['id']}?token={CLIENT_TOKEN}")
                 print(f"[{BOT_NAME}] Deleted old message {msg['id']}")
     except Exception as e:
         print(f"[{BOT_NAME}] Retention cleanup failed:", e)
@@ -90,7 +91,7 @@ def run_scheduler():
 if __name__ == "__main__":
     send_message("Startup", f"Good Day, I am {BOT_NAME}, ready to assist.")
 
-    # Explicitly create new asyncio loop
+    # Explicit asyncio loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
