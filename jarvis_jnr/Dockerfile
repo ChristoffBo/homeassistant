@@ -11,9 +11,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Copy bot and run script
+# Copy bot + startup script
 COPY run.sh /run.sh
 COPY bot.py /app/bot.py
+
 RUN chmod +x /run.sh
 
 CMD [ "/run.sh" ]
