@@ -3,6 +3,7 @@ import requests
 import datetime
 from tabulate import tabulate
 import difflib
+import json
 
 # -----------------------------
 # Config from environment
@@ -15,6 +16,24 @@ SONARR_API = os.getenv("sonarr_api_key", "")
 RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
 SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
 
+# -----------------------------
+# Load Home Assistant options.json (overrides env)
+# -----------------------------
+try:
+    with open("/data/options.json", "r") as f:
+        options = json.load(f)
+        RADARR_ENABLED = options.get("radarr_enabled", RADARR_ENABLED)
+        SONARR_ENABLED = options.get("sonarr_enabled", SONARR_ENABLED)
+        RADARR_URL = options.get("radarr_url", RADARR_URL)
+        RADARR_API = options.get("radarr_api_key", RADARR_API)
+        SONARR_URL = options.get("sonarr_url", SONARR_URL)
+        SONARR_API = options.get("sonarr_api_key", SONARR_API)
+except Exception as e:
+    print(f"[ARR] ⚠️ Could not load options.json: {e}")
+
+# -----------------------------
+# Caches
+# -----------------------------
 radarr_cache = {"movies": [], "fetched": None}
 sonarr_cache = {"series": [], "fetched": None}
 
@@ -166,11 +185,9 @@ COMMANDS = {
     "upcoming_series": upcoming_series,
 }
 
-def handle_arr_command(title: str, message: str):
-    # Merge and normalize input
-    cmd = f"{title} {message}".lower().strip()
+def handle_arr_command(command: str):
+    cmd = command.lower().strip()
 
-    # Remove common prefixes
     if cmd.startswith("jarvis"):
         cmd = cmd.replace("jarvis", "", 1).strip()
     if cmd.startswith("jarvis jnr"):
@@ -178,19 +195,16 @@ def handle_arr_command(title: str, message: str):
     if cmd.startswith("message"):
         cmd = cmd.replace("message", "", 1).strip()
 
-    # Alias normalization
     if cmd in ALIASES:
         cmd = ALIASES[cmd]
 
-    # Direct command match
     if cmd in COMMANDS:
         return COMMANDS[cmd]()
 
-    # Fuzzy match
     possibilities = list(COMMANDS.keys()) + list(ALIASES.keys())
     match = difflib.get_close_matches(cmd, possibilities, n=1, cutoff=0.6)
     if match:
         mapped = ALIASES.get(match[0], match[0])
         return COMMANDS[mapped]()
 
-    return f"🤖 Unknown command: {cmd}", None
+    return f"🤖 Unknown command: {command}", None
