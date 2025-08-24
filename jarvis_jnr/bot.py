@@ -364,10 +364,21 @@ async def listen():
                     
                     # Route to ARR if title or message starts with "Jarvis"
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
-                        response, extras = handle_arr_command(title, message)
+                        cmd = title.lower().replace("jarvis","",1).strip() if title.lower().startswith("jarvis") else message.lower().replace("jarvis","",1).strip()
+                        
+                        # ARR routing
+                        response, extras = handle_arr_command(cmd)
                         if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
+                        
+                        # Weather routing
+                        if any(word in cmd for word in ["weather", "forecast", "temperature", "temp"]):
+                            if "weather" in extra_modules:
+                                response, extras = extra_modules["weather"].handle_weather_command(cmd)
+                                if response:
+                                    send_message("Weather", response, extras=extras)
+                                    continue
 
                     if BEAUTIFY_ENABLED:
                         final, extras = beautify_message(title, message)
