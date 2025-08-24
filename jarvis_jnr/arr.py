@@ -2,7 +2,7 @@ import os
 import requests
 import datetime
 from tabulate import tabulate
-import difflib  # for fuzzy matching
+import difflib
 
 # -----------------------------
 # Config from environment
@@ -138,38 +138,51 @@ def longest_series():
     return f"📺 Longest Series: {title} — {seasons} seasons, {episodes} episodes", None
 
 # -----------------------------
-# Command Router with Fuzzy Matching
+# Command Router
 # -----------------------------
-COMMANDS = {
-    "upcoming movies": upcoming_movies,
-    "upcoming series": upcoming_series,
-    "movie count": movie_count,
-    "series count": series_count,
-    "longest movie": longest_movie,
-    "longest series": longest_series,
+ALIASES = {
+    "movies count": "movie_count",
+    "how many movies": "movie_count",
+    "movie count": "movie_count",
+    "shows count": "series_count",
+    "how many shows": "series_count",
+    "series count": "series_count",
+    "longest film": "longest_movie",
+    "longest movie": "longest_movie",
+    "longest series": "longest_series",
+    "longest show": "longest_series",
+    "upcoming movies": "upcoming_movies",
+    "upcoming movie": "upcoming_movies",
+    "upcoming shows": "upcoming_series",
+    "upcoming series": "upcoming_series",
 }
 
-ALIASES = {
-    "movies count": "movie count",
-    "how many movies": "movie count",
-    "films total": "movie count",
-    "shows count": "series count",
-    "how many shows": "series count",
-    "tv count": "series count",
-    "longest film": "longest movie",
-    "biggest runtime movie": "longest movie",
-    "biggest show": "longest series",
-    "longest show": "longest series",
+COMMANDS = {
+    "movie_count": movie_count,
+    "series_count": series_count,
+    "longest_movie": longest_movie,
+    "longest_series": longest_series,
+    "upcoming_movies": upcoming_movies,
+    "upcoming_series": upcoming_series,
 }
 
 def handle_arr_command(title: str, message: str):
-    # FIX: join title + message into one command string
+    # Merge and normalize input
     cmd = f"{title} {message}".lower().strip()
 
+    # Remove common prefixes
+    if cmd.startswith("jarvis"):
+        cmd = cmd.replace("jarvis", "", 1).strip()
+    if cmd.startswith("jarvis jnr"):
+        cmd = cmd.replace("jarvis jnr", "", 1).strip()
+    if cmd.startswith("message"):
+        cmd = cmd.replace("message", "", 1).strip()
+
+    # Alias normalization
     if cmd in ALIASES:
         cmd = ALIASES[cmd]
 
-    # Exact match
+    # Direct command match
     if cmd in COMMANDS:
         return COMMANDS[cmd]()
 
@@ -180,4 +193,4 @@ def handle_arr_command(title: str, message: str):
         mapped = ALIASES.get(match[0], match[0])
         return COMMANDS[mapped]()
 
-    return f"🤖 Unknown command: {title} {message}", None
+    return f"🤖 Unknown command: {cmd}", None
