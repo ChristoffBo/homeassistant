@@ -41,7 +41,7 @@ def colorize(text, level="info"):
     return f"{ANSI['cyan']}{text}{ANSI['reset']}"
 
 # -----------------------------
-# Send message (with APP token, now supports extras)
+# Send message (with APP token, supports extras)
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -157,10 +157,18 @@ def beautify_radarr(title, raw):
             year = obj["movie"].get("year", "")
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = obj.get("release", {}).get("size", "Unknown")
+
+            table = tabulate(
+                [[movie, year, quality, size]],
+                headers=["Title", "Year", "Quality", "Size"],
+                tablefmt="github"
+            )
+
             if "importfailed" in raw.lower():
-                msg = f"⛔ RADARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n📽 {movie} ({year})\n💾 {quality} | {size}\n🔴 ERROR: Import failed"
+                msg = f"⛔ RADARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
                 return msg, extras
-            msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n📽 {movie} ({year})\n💾 {quality} | {size}\n🟢 SUCCESS: Added to collection"
+
+            msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Added to collection"
             return msg, extras
     except Exception:
         pass
@@ -186,13 +194,22 @@ def beautify_sonarr(title, raw):
             season = obj["episode"].get("seasonNumber", "?")
             ep_num = obj["episode"].get("episodeNumber", "?")
             quality = obj.get("release", {}).get("quality", "Unknown")
+
+            table = tabulate(
+                [[series, f"S{season:02}E{ep_num:02}", ep_title, quality]],
+                headers=["Series", "Episode", "Title", "Quality"],
+                tablefmt="github"
+            )
+
             if "importfailed" in raw.lower():
-                msg = f"⛔ SONARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n📺 {series} S{season:02}E{ep_num:02} - {ep_title}\n💾 {quality}\n🔴 ERROR: Import failed"
+                msg = f"⛔ SONARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
                 return msg, extras
+
             if "subtitle" in raw.lower():
-                msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n📺 {series} S{season:02}E{ep_num:02} - {ep_title}\n💾 {quality}\n🟢 SUCCESS: Subtitles available"
+                msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Subtitles available"
                 return msg, extras
-            msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n📌 {series} - S{season:02}E{ep_num:02} - {ep_title}\n💾 {quality}\n🟢 SUCCESS: Ready for streaming"
+
+            msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Ready for streaming"
             return msg, extras
     except Exception:
         pass
