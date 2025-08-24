@@ -30,9 +30,28 @@ RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
-# FIX: read lowercase module toggles
+# FIX: read lowercase module toggles from env
 RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
 SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
+
+# -----------------------------
+# Load Home Assistant options.json for toggles + API config
+# -----------------------------
+try:
+    with open("/data/options.json", "r") as f:
+        options = json.load(f)
+        RADARR_ENABLED = options.get("radarr_enabled", RADARR_ENABLED)
+        SONARR_ENABLED = options.get("sonarr_enabled", SONARR_ENABLED)
+        RADARR_URL = options.get("radarr_url", "")
+        RADARR_API_KEY = options.get("radarr_api_key", "")
+        SONARR_URL = options.get("sonarr_url", "")
+        SONARR_API_KEY = options.get("sonarr_api_key", "")
+except Exception as e:
+    print(f"[{BOT_NAME}] ⚠️ Could not load options.json: {e}")
+    RADARR_URL = ""
+    RADARR_API_KEY = ""
+    SONARR_URL = ""
+    SONARR_API_KEY = ""
 
 jarvis_app_id = None  # resolved on startup
 extra_modules = {}    # holds dynamically loaded modules
