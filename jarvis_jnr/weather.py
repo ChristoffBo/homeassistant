@@ -29,7 +29,7 @@ def _get_json(url):
 
 def _icon_for_code(code, big=False):
     mapping = {
-        0: "☀️" if big else "☀",  # clear
+        0: "☀️" if big else "☀",
         1: "🌤" if big else "🌤",
         2: "⛅" if big else "⛅",
         3: "☁️" if big else "☁",
@@ -107,7 +107,6 @@ def _commentary(temp_max, code):
         "⛔ Avoid unnecessary travel if storm worsens."
     ]
 
-    # Priority: weather code overrides temperature categories
     if code in [61,63,65,80,81,82]:
         return random.choice(rain_lines)
     if code in [71,73,75,85,86]:
@@ -132,14 +131,21 @@ def _commentary(temp_max, code):
 def current_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true"
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&current_weather=true"
+        f"&temperature_unit=celsius&windspeed_unit=kmh"
+    )
     data = _get_json(url)
     if "error" in data:
         return f"⚠️ Weather API error: {data['error']}", None
     cw = data.get("current_weather", {})
-    temp = cw.get("temperature")
-    wind = cw.get("windspeed")
-    code = cw.get("weathercode")
+    if not cw:
+        return "⚠️ No current weather data returned", None
+    temp = cw.get("temperature", "?")
+    wind = cw.get("windspeed", "?")
+    code = cw.get("weathercode", -1)
     desc = _icon_for_code(code, big=True)
     return f"{desc} Current Weather in {CITY}\n🌡 {temp}°C | 🌬 {wind} km/h", None
 
@@ -149,7 +155,12 @@ def current_weather():
 def forecast_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto"
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&daily=temperature_2m_max,temperature_2m_min,weathercode"
+        f"&timezone=auto&temperature_unit=celsius"
+    )
     data = _get_json(url)
     if "error" in data:
         return f"⚠️ Weather API error: {data['error']}", None
@@ -164,7 +175,7 @@ def forecast_weather():
         icon = _icon_for_code(code)
         desc = _icon_for_code(code, big=True)
 
-        if i == 0:  # Today highlight
+        if i == 0:  # Today
             today_text = f"{desc} Today in {CITY}\n🌡 {tmin}°C - {tmax}°C\n{_commentary(tmax, code)}"
         else:
             rows.append([date, f"{tmin}°C", f"{tmax}°C", icon])
@@ -179,4 +190,6 @@ def handle_weather_command(command: str):
     cmd = command.lower().strip()
     if "forecast" in cmd:
         return forecast_weather()
-    return current_weather()
+    if any(word in cmd for word in ["weather", "temperature", "temp", "now"]):
+        return current_weather()
+    return "⚠️ Unknown weather command", None
