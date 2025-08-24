@@ -90,6 +90,17 @@ def get_greeting():
     else:
         return "🌙 Good evening"
 
+def get_settings_summary():
+    settings = [
+        (f"⏳ retention_hours = {RETENTION_HOURS}", "Hours messages are kept before purge"),
+        (f"🤫 silent_repost = {SILENT_REPOST}", "Skip reposting if duplicate"),
+        (f"🎨 beautify_enabled = {BEAUTIFY_ENABLED}", "Beautify and repost messages"),
+        (f"🎬 radarr_enabled = {RADARR_ENABLED}", "Radarr module active"),
+        (f"📺 sonarr_enabled = {SONARR_ENABLED}", "Sonarr module active"),
+    ]
+    summary = "⚙️ Settings:\n" + "\n".join([f"- {s[0]} ({s[1]})" for s in settings])
+    return summary
+
 # -----------------------------
 # Send message
 # -----------------------------
@@ -343,7 +354,8 @@ if __name__ == "__main__":
         f"{greeting} — Systems check complete",
         f"{greeting} — Boot sequence done",
     ]
-    send_message("Startup", random.choice(startup_msgs), priority=5)
+    startup_message = random.choice(startup_msgs) + "\n\n" + get_settings_summary()
+    send_message("Startup", startup_message, priority=5)
     active = []
     if RADARR_ENABLED:
         active.append("🎬 Radarr")
