@@ -16,13 +16,6 @@ except Exception as e:
     def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
     def cache_sonarr(): print("[Jarvis Jnr] ⚠️ Sonarr cache not available")
 
-# ✅ Additive: direct fallback import for weather
-try:
-    import weather
-except Exception as e:
-    print(f"[Jarvis Jnr] ⚠️ Failed to load weather module directly: {e}")
-    weather = None
-
 # -----------------------------
 # Config from environment (set in run.sh from options.json)
 # -----------------------------
@@ -373,7 +366,12 @@ async def listen():
                     message = data.get("message","")
                     
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
-                        cmd = title.lower().replace("jarvis","",1).strip() if title.lower().startswith("jarvis") else message.lower().replace("jarvis","",1).strip()
+                        # 🔧 ADDITIVE FIX: if the title is just the wake word, fall back to the message for the command.
+                        if title.lower().startswith("jarvis"):
+                            tmp = title.lower().replace("jarvis","",1).strip()
+                            cmd = tmp if tmp else message.lower().replace("jarvis","",1).strip()
+                        else:
+                            cmd = message.lower().replace("jarvis","",1).strip()
                         
                         # ✅ Help command
                         if cmd in ["help", "commands"]:
@@ -396,16 +394,13 @@ async def listen():
                             send_message("Help", help_text)
                             continue
 
-                        # ✅ Weather routing (with fallback)
+                        # ✅ Weather routing
                         if any(word in cmd for word in ["weather", "forecast", "temperature", "temp"]):
-                            response, extras = None, None
                             if "weather" in extra_modules:
                                 response, extras = extra_modules["weather"].handle_weather_command(cmd)
-                            elif weather:
-                                response, extras = weather.handle_weather_command(cmd)
-                            if response:
-                                send_message("Weather", response, extras=extras)
-                                continue
+                                if response:
+                                    send_message("Weather", response, extras=extras)
+                                    continue
                         
                         # ✅ ARR routing
                         response, extras = handle_arr_command(title, message)
