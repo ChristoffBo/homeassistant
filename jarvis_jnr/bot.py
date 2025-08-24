@@ -1,7 +1,9 @@
-import os, json, time, asyncio, requests, websockets, schedule, datetime, random
+import os, json, time, asyncio, requests, websockets, schedule, datetime, random, re, yaml
+from tabulate import tabulate
+import copy
 
 # -----------------------------
-# Config from environment (set in run.sh from options.json)
+# Config
 # -----------------------------
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
@@ -14,10 +16,30 @@ RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
-jarvis_app_id = None  # resolved on startup
+jarvis_app_id = None
+
+# ANSI color codes
+ANSI = {
+    "reset": "\033[0m",
+    "bold": "\033[1m",
+    "red": "\033[91m",
+    "green": "\033[92m",
+    "yellow": "\033[93m",
+    "cyan": "\033[96m",
+    "white": "\033[97m",
+}
+
+def colorize(text, level="info"):
+    if "error" in level.lower() or "fail" in level.lower():
+        return f"{ANSI['red']}{text}{ANSI['reset']}"
+    if "success" in level.lower() or "completed" in level.lower() or "running" in level.lower():
+        return f"{ANSI['green']}{text}{ANSI['reset']}"
+    if "warn" in level.lower():
+        return f"{ANSI['yellow']}{text}{ANSI['reset']}"
+    return f"{ANSI['cyan']}{text}{ANSI['reset']}"
 
 # -----------------------------
-# Send message (with APP token)
+# Send message
 # -----------------------------
 def send_message(title, message, priority=5):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -29,188 +51,189 @@ def send_message(title, message, priority=5):
     try:
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
-        print(f"[{BOT_NAME}] ✅ Sent beautified: {title}")
         return True
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to send message: {e}")
+        print(f"[{BOT_NAME}] ❌ send_message failed: {e}")
         return False
 
 # -----------------------------
-# Purge all messages for a specific app (non-Jarvis)
+# Purge helpers
 # -----------------------------
-def purge_app_messages(appid, appname=""):
-    if not appid:
-        return False
+def purge_app_messages(appid):
     url = f"{GOTIFY_URL}/application/{appid}/message"
     headers = {"X-Gotify-Key": CLIENT_TOKEN}
     try:
-        r = requests.delete(url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            print(f"[{BOT_NAME}] 🗑 Purged all messages from app '{appname}' (id={appid})")
-            return True
-        else:
-            print(f"[{BOT_NAME}] ❌ Purge failed for app '{appname}' (id={appid}): {r.status_code} {r.text}")
-            return False
+        requests.delete(url, headers=headers, timeout=10)
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Error purging app {appid}: {e}")
-        return False
+        print(f"[{BOT_NAME}] ❌ purge_app_messages failed: {e}")
 
-# -----------------------------
-# Purge all non-Jarvis apps (only used if beautify is enabled)
-# -----------------------------
 def purge_non_jarvis_apps():
     global jarvis_app_id
     if not jarvis_app_id:
-        print(f"[{BOT_NAME}] ⚠️ Jarvis app_id not resolved, cannot purge non-Jarvis apps")
         return
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
         r = requests.get(url, headers=headers, timeout=5)
-        r.raise_for_status()
-        apps = r.json()
-        for app in apps:
-            appid = app.get("id")
-            name = app.get("name")
-            if appid != jarvis_app_id:
-                purge_app_messages(appid, name)
+        for app in r.json():
+            if app.get("id") != jarvis_app_id:
+                purge_app_messages(app.get("id"))
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
+        print(f"[{BOT_NAME}] ❌ purge_non_jarvis_apps failed: {e}")
 
-# -----------------------------
-# Purge old messages (retention-based, always runs)
-# -----------------------------
 def purge_old_messages():
     url = f"{GOTIFY_URL}/message"
     headers = {"X-Gotify-Key": CLIENT_TOKEN}
     try:
         r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
         messages = r.json().get("messages", [])
         now = datetime.datetime.utcnow().timestamp()
         cutoff = now - (RETENTION_HOURS * 3600)
-
         for msg in messages:
             ts = msg.get("date")
             if ts:
                 msg_time = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
                 if msg_time < cutoff:
-                    mid = msg.get("id")
-                    del_url = f"{GOTIFY_URL}/message/{mid}"
-                    dr = requests.delete(del_url, headers=headers, timeout=5)
-                    if dr.status_code == 200:
-                        print(f"[{BOT_NAME}] 🗑 Deleted old message id={mid}")
+                    del_url = f"{GOTIFY_URL}/message/{msg['id']}"
+                    requests.delete(del_url, headers=headers, timeout=5)
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Error purging old messages: {e}")
+        print(f"[{BOT_NAME}] ❌ purge_old_messages failed: {e}")
 
 # -----------------------------
-# Resolve numeric app_id for Jarvis app
+# Resolve app_id
 # -----------------------------
 def resolve_app_id():
     global jarvis_app_id
-    print(f"[{BOT_NAME}] Resolving app ID for app name: '{APP_NAME}'")
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
         r = requests.get(url, headers=headers, timeout=5)
-        r.raise_for_status()
-        apps = r.json()
-        for app in apps:
-            print(f"[{BOT_NAME}] Found app '{app.get('name')}' (id={app.get('id')})")
+        for app in r.json():
             if app.get("name") == APP_NAME:
                 jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] ✅ MATCHED: '{APP_NAME}' -> id={jarvis_app_id}")
-                return
-        print(f"[{BOT_NAME}] ❌ WARNING: Could not find app '{APP_NAME}'")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
+        print(f"[{BOT_NAME}] ❌ resolve_app_id failed: {e}")
 
 # -----------------------------
-# AI-like beautifier
+# Beautifier Helpers
+# -----------------------------
+def format_logs(msg):
+    if re.search(r"\d{4}-\d{2}-\d{2}|\[INFO\]|\[ERROR\]|\[WARN\]", msg):
+        return f"```log\n{msg}\n```"
+    return msg
+
+def dict_to_report(obj, header):
+    lines = []
+    for k, v in obj.items():
+        icon = "🔖"
+        key = k.capitalize()
+        if isinstance(v, list):
+            if all(isinstance(i, dict) for i in v):
+                # Make safe copy without ANSI
+                plain_list = []
+                colored_list = []
+                for row in v:
+                    plain_row = {}
+                    colored_row = {}
+                    for kk, vv in row.items():
+                        val = str(vv)
+                        plain_row[kk] = val
+                        # colorize status values
+                        if "status" in kk.lower():
+                            if "fail" in val.lower() or "error" in val.lower():
+                                colored_row[kk] = colorize(val.upper(), "error")
+                            elif "success" in val.lower() or "completed" in val.lower() or "running" in val.lower():
+                                colored_row[kk] = colorize(val, "success")
+                            else:
+                                colored_row[kk] = colorize(val, "info")
+                        else:
+                            colored_row[kk] = val
+                    plain_list.append(plain_row)
+                    colored_list.append(colored_row)
+                # Tabulate using plain data, then replace values with colored ones
+                table_plain = tabulate(plain_list, headers="keys", tablefmt="github")
+                for pr, cr in zip(plain_list, colored_list):
+                    for kk, vv in pr.items():
+                        table_plain = table_plain.replace(vv, cr[kk], 1)
+                lines.append(f"{icon} {key}:\n{table_plain}")
+            else:
+                bullets = "\n  • ".join([str(i) for i in v])
+                lines.append(f"{icon} {key}:\n  • {bullets}")
+        else:
+            val = str(v)
+            if "status" in k.lower():
+                if "fail" in val.lower() or "error" in val.lower():
+                    icon, val = "🔴", colorize(val.upper(), "error")
+                elif "success" in val.lower() or "completed" in val.lower() or "running" in val.lower():
+                    icon, val = "🟢", colorize(val, "success")
+                else:
+                    icon = "⚪"
+            elif "host" in k.lower():
+                icon = "🖥"
+            elif "size" in k.lower() or "disk" in k.lower():
+                icon = "💾"
+            elif "time" in k.lower() or "duration" in k.lower():
+                icon = "⏱"
+            elif "event" in k.lower():
+                icon = "🔖"
+            elif "error" in k.lower():
+                icon = "❌"
+                val = colorize(val, "error")
+            lines.append(f"{icon} {key}: {val}")
+    return f"{ANSI['bold']}{header}{ANSI['reset']}\n╾━━━━━━━━━━━━━━━━╼\n" + "\n".join(lines)
+
+def try_parse_json(msg):
+    try:
+        obj = json.loads(msg)
+        if isinstance(obj, dict):
+            return dict_to_report(obj, "📡 JSON EVENT REPORT")
+    except Exception:
+        return None
+    return None
+
+def try_parse_yaml(msg):
+    try:
+        obj = yaml.safe_load(msg)
+        if isinstance(obj, dict):
+            return dict_to_report(obj, "📡 YAML EVENT REPORT")
+    except Exception:
+        return None
+    return None
+
+# -----------------------------
+# Beautifier Main
 # -----------------------------
 def beautify_message(title, raw):
     text = raw.strip()
     lower = text.lower()
 
-    prefix = "💡"
-    status_line = None
-
-    # Special handling for Radarr/Sonarr
-    if "downloaded:" in lower and ("radarr" in lower or "movie" in lower):
-        prefix = "🎬"
-        status_line = f"{prefix} **New Movie Downloaded**"
-        formatted = raw.replace("Downloaded:", "").strip()
-        formatted = f"{status_line}\n{formatted}\n\n✅ Added to your collection!"
-    elif "downloaded:" in lower and ("sonarr" in lower or "s0" in lower or "episode" in lower):
-        prefix = "📺"
-        status_line = f"{prefix} **New Episode Downloaded**"
-        formatted = raw.replace("Downloaded:", "").strip()
-        formatted = f"{status_line}\n{formatted}\n\n✅ Ready to watch!"
+    # JSON first
+    json_report = try_parse_json(raw)
+    if json_report:
+        formatted = json_report
+    # YAML next
+    elif try_parse_yaml(raw):
+        formatted = try_parse_yaml(raw)
+    elif "error" in lower or "failed" in lower or "exception" in lower:
+        formatted = f"⛔ SYSTEM ERROR DETECTED\n╾━━━━━━━━━━━━━━━━╼\n🔴 ERROR: {colorize(format_logs(raw), 'error')}\n\n🛠 Action → Investigate issue"
+    elif "warning" in lower or "caution" in lower:
+        formatted = f"⚠ SYSTEM WARNING\n╾━━━━━━━━━━━━━━━━╼\n🟡 WARNING: {colorize(format_logs(raw), 'warn')}\n\n🛠 Action → Review conditions"
+    elif "success" in lower or "completed" in lower or "done" in lower:
+        formatted = f"✅ OPERATION SUCCESSFUL\n╾━━━━━━━━━━━━━━━━╼\n🟢 SUCCESS: {colorize(format_logs(raw), 'success')}\n\n✨ All systems nominal"
     else:
-        # General rules
-        if "error" in lower or "failed" in lower or "exception" in lower:
-            prefix = "💀"
-            status_line = f"{prefix} **ERROR**"
-            text = text.replace("error", "**ERROR**").replace("Error", "**ERROR**")
-        elif "success" in lower or "completed" in lower or "done" in lower:
-            prefix = "✅"
-            status_line = f"{prefix} **SUCCESS**"
-            text = text.replace("success", "**SUCCESS**").replace("Success", "**SUCCESS**")
-        elif "warning" in lower or "caution" in lower:
-            prefix = "⚠️"
-            status_line = f"{prefix} **WARNING**"
-            text = text.replace("warning", "**WARNING**").replace("Warning", "**WARNING**")
-        elif "start" in lower or "starting" in lower or "boot" in lower:
-            prefix = "🚀"
-            status_line = f"{prefix} **STARTUP**"
+        formatted = f"🛰 SYSTEM MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{colorize(format_logs(raw), 'info')}"
 
-        formatted = text
-        formatted = formatted.replace(":", ":\n")
-        formatted = formatted.replace("  ", " ")
-
-        if status_line:
-            formatted = f"{status_line}\n{formatted}"
-        else:
-            formatted = f"{prefix} {formatted}"
-
-    closings = [
+    closing = random.choice([
         f"{BOT_ICON} With regards, {BOT_NAME}",
         f"✨ Processed intelligently by {BOT_NAME}",
-        f"🧩 Ever at your service, {BOT_NAME}",
-        f"🤖 Yours truly, {BOT_NAME}",
-        f"📌 Tidied up by {BOT_NAME}",
-        f"🔧 Optimized by {BOT_NAME}",
-        f"📊 Sorted with care – {BOT_NAME}",
-        f"✅ Verified and logged – {BOT_NAME}",
-        f"⚡ Fast-forwarded through {BOT_NAME}",
-        f"🛡️ Guarded by {BOT_NAME}",
-        f"📡 Relayed by {BOT_NAME}",
-        f"📝 Reformatted by {BOT_NAME}",
-        f"📦 Packed neatly by {BOT_NAME}",
-        f"🎯 Precision from {BOT_NAME}",
-        f"🚀 Launched by {BOT_NAME}",
-        f"🎶 Harmonized with {BOT_NAME}",
-        f"💡 Refined by {BOT_NAME}",
-        f"🔍 Checked thoroughly by {BOT_NAME}",
-        f"🔑 Secured with {BOT_NAME}",
-        f"🌙 Wrapped up by {BOT_NAME}",
-        f"🔥 Clean and clear, {BOT_NAME}",
-        f"🎉 Delivered courtesy of {BOT_NAME}",
-        f"🛠️ Engineered by {BOT_NAME}",
-        f"📢 Signed, {BOT_NAME}",
-        f"🌐 Routed via {BOT_NAME}",
-        f"⚙️ Mechanized by {BOT_NAME}",
-        f"📎 Clipped and trimmed by {BOT_NAME}",
-        f"🔋 Energized by {BOT_NAME}",
-        f"👑 Finalized by {BOT_NAME}",
-        f"🧠 Intelligently processed by {BOT_NAME}",
-    ]
-    closing = random.choice(closings)
-
+        f"🛡 Guarded by {BOT_NAME}",
+        f"📊 Sorted with care — {BOT_NAME}",
+        f"🚀 Executed at velocity — {BOT_NAME}",
+    ])
     return f"{formatted}\n\n{closing}"
 
 # -----------------------------
-# Scheduled cleanup
+# Scheduler
 # -----------------------------
 def run_scheduler():
     schedule.every(10).minutes.do(purge_old_messages)
@@ -221,7 +244,7 @@ def run_scheduler():
         time.sleep(1)
 
 # -----------------------------
-# Main async listener
+# Listener
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
@@ -229,99 +252,45 @@ async def listen():
 
     while True:
         try:
-            print(f"[{BOT_NAME}] Connecting to {ws_url}...")
             async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
-                print(f"[{BOT_NAME}] ✅ Connected! Listening for messages...")
-
                 async for msg in ws:
                     try:
                         data = json.loads(msg)
-                        mid = data.get("id")
                         appid = data.get("appid")
-                        title = data.get("title", "")
                         message = data.get("message", "")
                         extras = data.get("extras", {})
 
-                        print(f"[{BOT_NAME}] Incoming message id={mid}, appid={appid}, title='{title}'")
-
-                        # Detect if message has an image (Radarr/Sonarr posters)
-                        has_image = False
-                        if extras:
-                            client_disp = extras.get("client::display")
-                            if client_disp and client_disp.get("image"):
-                                has_image = True
-
-                        # Skip Jarvis's own messages
                         if jarvis_app_id and appid == jarvis_app_id:
-                            print(f"[{BOT_NAME}] Skipping own message id={mid}")
                             continue
 
+                        has_image = extras.get("client::display", {}).get("image") if extras else False
+
                         if BEAUTIFY_ENABLED:
-                            final_msg = beautify_message(title, message)
+                            final_msg = beautify_message(data.get("title", ""), message)
                             repost_priority = 0 if SILENT_REPOST else 5
-                            send_success = send_message(title, final_msg, priority=repost_priority)
-                            if send_success:
-                                print(f"[{BOT_NAME}] ✅ Reposted beautified message")
+                            if send_message(data.get("title", ""), final_msg, priority=repost_priority):
                                 if not has_image:
                                     purge_non_jarvis_apps()
-                                else:
-                                    print(f"[{BOT_NAME}] 🎬 Detected media message with image — keeping original")
                         else:
-                            print(f"[{BOT_NAME}] (Beautify disabled) Keeping original message")
-
+                            print(f"[{BOT_NAME}] Beautify disabled — keeping original")
                     except Exception as e:
                         print(f"[{BOT_NAME}] ❌ Error processing message: {e}")
-
         except Exception as e:
             print(f"[{BOT_NAME}] ❌ WebSocket connection failed: {e}")
             await asyncio.sleep(10)
 
 # -----------------------------
-# Main entrypoint
+# Entrypoint
 # -----------------------------
 if __name__ == "__main__":
-    print(f"[{BOT_NAME}] Starting add-on...")
-
     resolve_app_id()
-
     startup_msgs = [
-        f"Good Day, I am {BOT_NAME}, ready to assist.",
-        f"Greetings, {BOT_NAME} is now online and standing by.",
-        f"🚀 {BOT_NAME} systems initialized and operational.",
-        f"{BOT_NAME} reporting for duty.",
-        f"{BOT_NAME} says hello 👋, let’s get started.",
-        f"✅ {BOT_NAME} boot complete. Standing ready.",
-        f"🌐 {BOT_NAME} connected and awaiting instructions.",
-        f"Jarvis online, how may I serve?",
-        f"🤖 {BOT_NAME} has joined the network.",
-        f"🟢 {BOT_NAME} is operational.",
-        f"⚡ {BOT_NAME} spun up and ready.",
-        f"📡 {BOT_NAME} listening for signals.",
-        f"🛠️ {BOT_NAME} tools loaded, let’s go.",
-        f"🎯 {BOT_NAME} targeting optimal performance.",
-        f"💡 {BOT_NAME} systems nominal.",
-        f"⏱️ {BOT_NAME} uptime counter started.",
-        f"🧩 {BOT_NAME} fully initialized.",
-        f"🔑 {BOT_NAME} authentication verified.",
-        f"📊 {BOT_NAME} monitoring engaged.",
-        f"📢 {BOT_NAME} loud and clear.",
-        f"🔋 {BOT_NAME} power levels optimal.",
-        f"🌙 {BOT_NAME} is awake from standby.",
-        f"🔥 {BOT_NAME} is fired up.",
-        f"🎉 {BOT_NAME} welcomes you.",
-        f"Jarvis core sync complete.",
-        f"System reboot finished, {BOT_NAME} online.",
-        f"Hello World! {BOT_NAME} here.",
-        f"Initialization finished. {BOT_NAME} operational.",
-        f"Mission control: {BOT_NAME} connected.",
-        f"👑 {BOT_NAME} ready to rule the notifications.",
+        f"🤖 JARVIS JNR ONLINE\n╾━━━━━━━━━━━━━━━━╼\n👑 Ready to rule notifications\n📡 Listening for events\n⚡ Systems nominal\n\n🧠 Standing by",
+        f"🚀 BOOT COMPLETE\n╾━━━━━━━━━━━━━━━━╼\n✅ Initialization finished\n📡 Awaiting input\n⚡ Operational",
     ]
-    startup_msg = random.choice(startup_msgs)
-    send_message("Startup", startup_msg, priority=5)
-
+    send_message("Startup", random.choice(startup_msgs), priority=5)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
-    print(f"[{BOT_NAME}] Event loop started.")
     loop.run_forever()
