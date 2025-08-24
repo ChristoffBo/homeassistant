@@ -472,6 +472,8 @@ if __name__ == "__main__":
     resolve_app_id()
 
     greeting = get_greeting()
+    send_message("Greeting", f"{greeting}, Commander! Jarvis Jnr reporting for duty.", priority=5)
+
     startup_msgs = [
         f"{greeting}, Commander!\n╾━━━━━━━━━━━━━━━━╼\n🤖 Jarvis Jnr is online\n🛡 Defense protocols armed\n🧠 Intelligence kernel active",
         f"{greeting} — Systems Check Complete\n╾━━━━━━━━━━━━━━━━╼\n✅ Diagnostics clean\n📂 Knowledge base loaded\n📡 Event pipeline secure",
