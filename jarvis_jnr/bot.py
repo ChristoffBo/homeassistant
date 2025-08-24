@@ -10,7 +10,7 @@ try:
     from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
 except Exception as e:
     print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}")
-    handle_arr_command = lambda cmd: ("⚠️ ARR module not available", None)
+    handle_arr_command = lambda *args, **kwargs: ("⚠️ ARR module not available", None)
     RADARR_ENABLED = False
     SONARR_ENABLED = False
     def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
@@ -362,15 +362,10 @@ async def listen():
                     title = data.get("title","")
                     message = data.get("message","")
                     
-                    cmd = None
-                    if title.lower().startswith("jarvis"):
-                        cmd = title.lower().replace("jarvis","",1).strip()
-                    elif message.lower().startswith("jarvis"):
-                        cmd = message.lower().replace("jarvis","",1).strip()
-                    
-                    if cmd:
-                        response, extras = handle_arr_command(cmd)
-                        if response: 
+                    # Route to ARR if title or message starts with "Jarvis"
+                    if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
+                        response, extras = handle_arr_command(title, message)
+                        if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
 
