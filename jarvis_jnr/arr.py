@@ -4,6 +4,7 @@ import datetime
 from tabulate import tabulate
 import difflib
 import json
+import random
 
 # -----------------------------
 # Config from environment
@@ -38,6 +39,74 @@ radarr_cache = {"movies": [], "fetched": None}
 sonarr_cache = {"series": [], "fetched": None}
 
 # -----------------------------
+# Quotes
+# -----------------------------
+MOVIE_QUOTES = [
+    "May the Force be with you.",
+    "I'll be back.",
+    "Here's looking at you, kid.",
+    "You talking to me?",
+    "I love the smell of napalm in the morning.",
+    "Hasta la vista, baby.",
+    "Show me the money!",
+    "You can’t handle the truth!",
+    "To infinity and beyond!",
+    "Why so serious?",
+    "I see dead people.",
+    "E.T. phone home.",
+    "You had me at hello.",
+    "Just keep swimming.",
+    "Life is like a box of chocolates.",
+    "Say hello to my little friend!",
+    "Bond. James Bond.",
+    "They may take our lives, but they’ll never take our freedom!",
+    "I feel the need—the need for speed!",
+    "Houston, we have a problem.",
+    "Frankly, my dear, I don’t give a damn.",
+    "Nobody puts Baby in a corner.",
+    "Keep your friends close, but your enemies closer.",
+    "I’m king of the world!",
+    "Wax on, wax off.",
+    "They call it a Royale with Cheese.",
+    "This is the beginning of a beautiful friendship.",
+    "What we’ve got here is failure to communicate.",
+    "Go ahead, make my day."
+]
+
+SERIES_QUOTES = [
+    "I am the one who knocks.",
+    "You come at the king, you best not miss.",
+    "How you doin’?",
+    "Winter is coming.",
+    "The truth is out there.",
+    "D’oh!",
+    "That's what she said.",
+    "Live long and prosper.",
+    "Bazinga!",
+    "This is the way.",
+    "Say my name.",
+    "Yada, yada, yada.",
+    "Clear eyes, full hearts, can’t lose.",
+    "Just one more thing...",
+    "You got it, dude!",
+    "Legend—wait for it—dary!",
+    "Is that your final answer?",
+    "You are the weakest link. Goodbye.",
+    "We were on a break!",
+    "It’s gonna be legen—wait for it—dary!",
+    "The night is dark and full of terrors.",
+    "This is Sparta! (okay, not a show, but fun)",
+    "Who lives in a pineapple under the sea?",
+    "Cowabunga!",
+    "You rang?",
+    "Allons-y!",
+    "Geronimo!",
+    "The cake is a lie.",
+    "In the name of the Moon, I’ll punish you!",
+    "Scooby-Doo, where are you?"
+]
+
+# -----------------------------
 # Helpers
 # -----------------------------
 def _get_json(url):
@@ -50,6 +119,12 @@ def _get_json(url):
 
 def _tabulate_list(items, headers):
     return tabulate(items, headers=headers, tablefmt="github")
+
+def _movie_quote():
+    return random.choice(MOVIE_QUOTES)
+
+def _series_quote():
+    return random.choice(SERIES_QUOTES)
 
 # -----------------------------
 # Radarr functions
@@ -74,20 +149,30 @@ def upcoming_movies(days=7):
     data = _get_json(url)
     if not isinstance(data, list) or not data:
         return "🎬 No upcoming movies", None
-    rows = []
+
+    lines = []
     for m in data:
         title = m.get("title", "Unknown")
         year = m.get("year", "")
         date = m.get("inCinemas") or m.get("physicalRelease")
-        rows.append([title, year, date])
-    return "🎬 Upcoming Movies\n" + _tabulate_list(rows, ["Title", "Year", "Release"]), None
+        try:
+            date = datetime.datetime.fromisoformat(date.replace("Z", "+00:00"))
+            date = date.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+        lines.append(f"- {title} ({year}) — {date}")
+
+    commentary = f"🎬 {len(lines)} upcoming movies in the next {days} days.\n{_movie_quote()}"
+    return "🎬 Upcoming Movies\n" + "\n".join(lines) + f"\n{commentary}", None
 
 def movie_count():
     if not RADARR_ENABLED:
         return "⚠️ Radarr not enabled", None
     if not radarr_cache["movies"]:
         cache_radarr()
-    return f"🎬 Total Movies: {len(radarr_cache['movies'])}", None
+    total = len(radarr_cache["movies"])
+    commentary = "🎬 That’s quite a collection!" if total > 500 else "🎬 A modest library."
+    return f"🎬 Total Movies: {total}\n{commentary}\n{_movie_quote()}", None
 
 def longest_movie():
     if not RADARR_ENABLED:
@@ -99,7 +184,8 @@ def longest_movie():
     longest = max(radarr_cache["movies"], key=lambda m: m.get("runtime", 0) or 0)
     title = longest.get("title", "Unknown")
     runtime = longest.get("runtime", 0)
-    return f"🎬 Longest Movie: {title} — {runtime} min", None
+    commentary = "🎬 That’s a long one!" if runtime > 150 else "🎬 Pretty average runtime."
+    return f"🎬 Longest Movie: {title} — {runtime} min\n{commentary}\n{_movie_quote()}", None
 
 # -----------------------------
 # Sonarr functions
@@ -129,7 +215,6 @@ def upcoming_series(days=7):
     for e in data:
         series = e.get("series", {}).get("title")
         if not series:
-            # fallback: lookup in cache
             sid = e.get("seriesId")
             cached = next((s for s in sonarr_cache["series"] if s.get("id") == sid), {})
             series = cached.get("title", "Unknown")
@@ -146,14 +231,17 @@ def upcoming_series(days=7):
 
         lines.append(f"- {series} — S{season:02}E{ep:02} — {date}")
 
-    return "📺 Upcoming Episodes\n" + "\n".join(lines), None
+    commentary = f"📺 {len(lines)} upcoming episodes in the next {days} days.\n{_series_quote()}"
+    return "📺 Upcoming Episodes\n" + "\n".join(lines) + f"\n{commentary}", None
 
 def series_count():
     if not SONARR_ENABLED:
         return "⚠️ Sonarr not enabled", None
     if not sonarr_cache["series"]:
         cache_sonarr()
-    return f"📺 Total Series: {len(sonarr_cache['series'])}", None
+    total = len(sonarr_cache["series"])
+    commentary = "📺 That’s a huge collection of shows!" if total > 200 else "📺 Not too many series yet."
+    return f"📺 Total Series: {total}\n{commentary}\n{_series_quote()}", None
 
 def longest_series():
     if not SONARR_ENABLED:
@@ -162,14 +250,18 @@ def longest_series():
         cache_sonarr()
     if not sonarr_cache["series"]:
         return "⚠️ No series in cache", None
-    longest = max(
-        sonarr_cache["series"],
-        key=lambda s: (s.get("seasonCount", 0) * s.get("episodeCount", 0))
-    )
+
+    def series_length(s):
+        episodes = s.get("statistics", {}).get("episodeCount") or s.get("totalEpisodeCount", 0) or 0
+        return episodes
+
+    longest = max(sonarr_cache["series"], key=series_length)
     title = longest.get("title", "Unknown")
     seasons = longest.get("seasonCount", "?")
-    episodes = longest.get("episodeCount", "?")
-    return f"📺 Longest Series: {title} — {seasons} seasons, {episodes} episodes", None
+    episodes = longest.get("statistics", {}).get("episodeCount") or longest.get("totalEpisodeCount", "?")
+
+    commentary = f"📺 Wow, {title} has {episodes} episodes across {seasons} seasons!" if episodes not in ("?", 0) else "📺 Couldn’t determine full stats."
+    return f"📺 Longest Series: {title} — {seasons} seasons, {episodes} episodes\n{commentary}\n{_series_quote()}", None
 
 # -----------------------------
 # Command Router
