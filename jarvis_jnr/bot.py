@@ -368,7 +368,19 @@ async def listen():
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
                         cmd = title.lower().replace("jarvis","",1).strip() if title.lower().startswith("jarvis") else message.lower().replace("jarvis","",1).strip()
                         
-                        # ✅ Weather routing FIRST
+                        # ✅ Help command
+                        if cmd in ["help", "commands"]:
+                            help_text = (
+                                "📝 Available Commands:\n"
+                                "- weather / forecast / temperature / temp → Weather info\n"
+                                "- movie count / series count → ARR stats\n"
+                                "- Radarr events, Sonarr events handled automatically\n"
+                                "- help / commands → Show this message"
+                            )
+                            send_message("Help", help_text)
+                            continue
+
+                        # ✅ Weather routing
                         if any(word in cmd for word in ["weather", "forecast", "temperature", "temp"]):
                             if "weather" in extra_modules:
                                 response, extras = extra_modules["weather"].handle_weather_command(cmd)
@@ -376,8 +388,8 @@ async def listen():
                                     send_message("Weather", response, extras=extras)
                                     continue
                         
-                        # ARR routing AFTER weather
-                        response, extras = handle_arr_command(cmd, cmd)
+                        # ✅ ARR routing
+                        response, extras = handle_arr_command(cmd)
                         if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
