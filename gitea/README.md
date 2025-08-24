@@ -1,6 +1,8 @@
 # 🧩 Gitea Home Assistant Add-on
 Self-hosted lightweight Git server powered by Gitea. Manage repositories, issues, teams, and more in a sleek web interface.
 
+This is a clone of the one created by Alex Belgium.
+
 ✅ Uses the official Docker image: gitea/gitea
 ✅ Full web-based Git interface
 ✅ Built-in user, team, and org management
