@@ -60,6 +60,25 @@ def send_message(title, message, priority=5):
         return False
 
 # -----------------------------
+# Silent refresh event
+# -----------------------------
+def send_refresh_event():
+    """Send a silent refresh event to force Gotify clients to update UI"""
+    try:
+        url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+        data = {"title": "refresh", "message": ".", "priority": 0}
+        r = requests.post(url, json=data, timeout=5)
+        if r.ok:
+            msg_id = r.json().get("id")
+            if msg_id:
+                # delete the refresh immediately so user never sees it
+                del_url = f"{GOTIFY_URL}/message/{msg_id}"
+                headers = {"X-Gotify-Key": CLIENT_TOKEN}
+                requests.delete(del_url, headers=headers, timeout=5)
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Failed to send refresh event: {e}")
+
+# -----------------------------
 # Purge all messages for a specific app (non-Jarvis)
 # -----------------------------
 def purge_app_messages(appid, appname=""):
@@ -71,6 +90,7 @@ def purge_app_messages(appid, appname=""):
         r = requests.delete(url, headers=headers, timeout=10)
         if r.status_code == 200:
             print(f"[{BOT_NAME}] 🗑 Purged all messages from app '{appname}' (id={appid})")
+            send_refresh_event()
             return True
         else:
             print(f"[{BOT_NAME}] ❌ Purge failed for app '{appname}' (id={appid}): {r.status_code} {r.text}")
@@ -98,6 +118,7 @@ def purge_non_jarvis_apps():
             name = app.get("name")
             if appid != jarvis_app_id:
                 purge_app_messages(appid, name)
+        send_refresh_event()
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
@@ -232,28 +253,6 @@ def beautify_message(title, raw):
         "💡 No anomalies detected",
         "✨ End of report — Jarvis Jnr",
         "🤖 Yours truly — Jarvis Jnr",
-        "🧬 Neural pathways stable",
-        "🛰 Signal integrity verified",
-        "⚡ Latency minimized",
-        "🔭 Horizon scan clear",
-        "📡 Event pipeline secure",
-        "🛡 Notification shield active",
-        "🎛 Systems calibrated",
-        "🔓 Trust chain validated",
-        "🧠 Pattern recognition complete",
-        "📊 Metrics logged",
-        "🔍 Deep scan finished",
-        "⚙️ Self-adjustment executed",
-        "🛰 Orbit stabilized",
-        "🚨 Alert cycle completed",
-        "📡 Transmission closed",
-        "🔒 Encryption maintained",
-        "🧩 Modular process complete",
-        "📢 Event cycle terminated",
-        "🎯 Precision maintained",
-        "🔧 Maintenance complete",
-        "🛠 Systems checked",
-        "📂 Data safely stored",
         "👑 Signed by Jarvis Jnr AI",
     ]
     return f"{result}\n\n{random.choice(closings)}"
@@ -289,12 +288,9 @@ async def listen():
 
                     print(f"[{BOT_NAME}] Incoming message id={mid}, appid={appid}, title='{title}'")
 
-                    # Skip Jarvis's own messages
                     if jarvis_app_id and appid == jarvis_app_id:
-                        print(f"[{BOT_NAME}] Skipping own message id={mid}")
                         continue
 
-                    # Beautify if enabled
                     if BEAUTIFY_ENABLED:
                         final_msg = beautify_message(title, message)
                     else:
@@ -323,57 +319,11 @@ if __name__ == "__main__":
     resolve_app_id()
 
     startup_msgs = [
-        "🤖 JARVIS JNR ONLINE — Systems nominal",
-        "🚀 Boot complete — AI core active",
-        "🛰 Stream uplink established",
-        "✅ Diagnostics clean, standing by",
-        "📡 Event pipeline secure",
-        "⚡ Neural systems engaged",
-        "🔧 Initialization complete",
-        "🌐 Network sync stable",
-        "🛡 Defense subsystems ready",
-        "✨ Adaptive AI cycle online",
-        "📊 Metrics calibrated",
-        "🧠 Intelligence kernel active",
-        "🔋 Energy flow stable",
-        "📂 Knowledge base loaded",
-        "🎯 Objective lock established",
-        "🔭 Horizon scan active",
-        "📎 Notification hooks attached",
-        "🗝 Secure channel ready",
-        "🛰 Satellite link optimal",
-        "🚨 Monitoring all systems",
-        "🔍 Pattern recognition enabled",
-        "🎛 Subroutines aligned",
-        "🧬 Neural weave steady",
-        "🔒 Trust chain validated",
-        "📢 Broadcast channel live",
-        "🛠 Maintenance check passed",
-        "🧑‍💻 Operator link ready",
-        "📡 Communication channel clear",
-        "💡 Intelligence awakened",
-        "👑 Jarvis Jnr reporting for duty",
-        "🛰 AI uplink locked — streams secure",
-        "⚡ Rapid response core online",
-        "✨ Neural calibration complete",
-        "📊 Event filters primed",
-        "🛡 Intrusion detection ready",
-        "🚀 Velocity mode engaged",
-        "📡 Wideband listening enabled",
-        "🔧 Auto-tuning modules online",
-        "🔋 Battery reserves full",
-        "🔭 Long-range scan clean",
-        "🧠 Memory cache optimized",
-        "🌐 Multi-network sync done",
-        "📎 AI hooks aligned",
-        "🔒 Encryption handshakes valid",
-        "⚡ Power flows balanced",
-        "🛠 Repair cycles green",
-        "🎯 Targets monitored",
-        "🧬 DNA patterns locked",
-        "📢 Notification broadcast open",
-        "👁 Surveillance optimal",
-        "🚨 Emergency channel hot",
+        "🤖 JARVIS JNR INITIALIZED\n╾━━━━━━━━━━━━━━━━╼\n📡 Systems Online\n🛡 Defense protocols armed\n🧠 Intelligence kernel active",
+        "🚀 BOOT COMPLETE\n╾━━━━━━━━━━━━━━━━╼\n✅ Diagnostics clean\n📂 Knowledge base loaded\n📡 Event pipeline secure",
+        "🛰 UPLINK ESTABLISHED\n╾━━━━━━━━━━━━━━━━╼\n🌐 Network sync stable\n⚡ Rapid response ready\n🔒 Encryption validated",
+        "🧠 CORE ONLINE\n╾━━━━━━━━━━━━━━━━╼\n📊 Metrics calibrated\n🔭 Horizon scan clear\n🎯 Objective lock established",
+        "✨ AI BOOT SEQUENCE\n╾━━━━━━━━━━━━━━━━╼\n🔧 Subsystems aligned\n📡 Channels open\n👑 Jarvis Jnr reporting for duty",
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
 
