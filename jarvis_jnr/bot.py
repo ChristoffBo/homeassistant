@@ -16,6 +16,13 @@ except Exception as e:
     def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
     def cache_sonarr(): print("[Jarvis Jnr] ⚠️ Sonarr cache not available")
 
+# ✅ Additive: direct fallback import for weather
+try:
+    import weather
+except Exception as e:
+    print(f"[Jarvis Jnr] ⚠️ Failed to load weather module directly: {e}")
+    weather = None
+
 # -----------------------------
 # Config from environment (set in run.sh from options.json)
 # -----------------------------
@@ -389,13 +396,16 @@ async def listen():
                             send_message("Help", help_text)
                             continue
 
-                        # ✅ Weather routing
+                        # ✅ Weather routing (with fallback)
                         if any(word in cmd for word in ["weather", "forecast", "temperature", "temp"]):
+                            response, extras = None, None
                             if "weather" in extra_modules:
                                 response, extras = extra_modules["weather"].handle_weather_command(cmd)
-                                if response:
-                                    send_message("Weather", response, extras=extras)
-                                    continue
+                            elif weather:
+                                response, extras = weather.handle_weather_command(cmd)
+                            if response:
+                                send_message("Weather", response, extras=extras)
+                                continue
                         
                         # ✅ ARR routing
                         response, extras = handle_arr_command(title, message)
