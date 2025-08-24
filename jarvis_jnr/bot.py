@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 # -----------------------------
 # Module imports
 # -----------------------------
-from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED
+from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
 
 # -----------------------------
 # Config from environment (set in run.sh from options.json)
@@ -258,71 +258,6 @@ def beautify_sonarr(title, raw):
         msg = f"📡 SONARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
     return msg, extras
 
-def beautify_watchtower(title, raw):
-    match = re.search(r"([\w./-]+):([\w.-]+)", raw)
-    image = match.group(0) if match else "Unknown"
-    if "error" in raw.lower() or "failed" in raw.lower():
-        return f"⛔ CONTAINER UPDATE FAILED\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🔴 ERROR: {raw}\n\n🛠 Action → Verify image or registry", None
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    return f"🐳 CONTAINER UPDATE\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🕒 Time: {now_str}\n\n🟢 SUCCESS: Container restarted successfully", None
-
-def beautify_semaphore(title, raw):
-    playbook = re.search(r"Playbook:\s*(.+)", raw)
-    host = re.search(r"Host:\s*(.+)", raw)
-    status = re.search(r"Status:\s*(.+)", raw)
-    pb_val = playbook.group(1) if playbook else "Unknown"
-    host_val = host.group(1) if host else "Unknown"
-    status_val = status.group(1).upper() if status else "UNKNOWN"
-    if "FAIL" in status_val or "ERROR" in status_val:
-        return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🔴 Status: {status_val}\n\n🛠 Action → Investigate failure", None
-    return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🟢 Status: {status_val}\n\n✨ All tasks completed successfully", None
-
-def beautify_json(title, raw):
-    try:
-        obj = json.loads(raw)
-        if isinstance(obj, dict):
-            # Apply human-size/runtime if keys exist
-            pretty_obj = {}
-            for k, v in obj.items():
-                if "size" in k.lower():
-                    pretty_obj[k] = human_size(v)
-                elif "time" in k.lower() or "runtime" in k.lower():
-                    pretty_obj[k] = format_runtime(v)
-                else:
-                    pretty_obj[k] = v
-            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
-            return f"📡 JSON EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
-    except Exception:
-        return None, None
-    return None, None
-
-def beautify_yaml(title, raw):
-    try:
-        obj = yaml.safe_load(raw)
-        if isinstance(obj, dict):
-            pretty_obj = {}
-            for k, v in obj.items():
-                if "size" in k.lower():
-                    pretty_obj[k] = human_size(v)
-                elif "time" in k.lower() or "runtime" in k.lower():
-                    pretty_obj[k] = format_runtime(v)
-                else:
-                    pretty_obj[k] = v
-            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
-            return f"📡 YAML EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
-    except Exception:
-        return None, None
-    return None, None
-
-def beautify_generic(title, raw):
-    if "error" in raw.lower():
-        return f"⛔ ERROR DETECTED\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'error')}", None
-    if "success" in raw.lower():
-        return f"✅ SUCCESS\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'success')}", None
-    if "warning" in raw.lower():
-        return f"⚠ WARNING\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'warn')}", None
-    return f"🛰 MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{raw}", None
-
 # -----------------------------
 # Main beautifier router
 # -----------------------------
@@ -460,8 +395,10 @@ if __name__ == "__main__":
     active_modules = []
     if RADARR_ENABLED:
         active_modules.append("🎬 Radarr")
+        cache_radarr()
     if SONARR_ENABLED:
         active_modules.append("📺 Sonarr")
+        cache_sonarr()
     if active_modules:
         send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=5)
     else:
