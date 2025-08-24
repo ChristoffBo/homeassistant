@@ -190,6 +190,6 @@ def handle_weather_command(command: str):
     cmd = command.lower().strip()
     if "forecast" in cmd:
         return forecast_weather()
-    if any(word in cmd for word in ["weather", "temperature", "temp", "now"]):
+    if any(word in cmd for word in ["weather", "temperature", "temp", "now", "today"]):
         return current_weather()
     return "⚠️ Unknown weather command", None
