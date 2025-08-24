@@ -188,6 +188,7 @@ def beautify_radarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
     extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
+
     try:
         obj = json.loads(raw)
         if "movie" in obj:
@@ -196,18 +197,22 @@ def beautify_radarr(title, raw):
             runtime = format_runtime(obj["movie"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = human_size(obj.get("release", {}).get("size", 0))
+
             table = tabulate(
                 [[movie, year, runtime, quality, size]],
                 headers=["Title", "Year", "Runtime", "Quality", "Size"],
                 tablefmt="github"
             )
+
             if "importfailed" in raw.lower():
                 msg = f"⛔ RADARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
                 return msg, extras
+
             msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Added to collection"
             return msg, extras
     except Exception:
         pass
+
     if "importfailed" in raw.lower() or "error" in raw.lower():
         msg = f"⛔ RADARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
     elif any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
@@ -220,6 +225,7 @@ def beautify_sonarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
     extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
+
     try:
         obj = json.loads(raw)
         if "episode" in obj:
@@ -230,21 +236,26 @@ def beautify_sonarr(title, raw):
             runtime = format_runtime(obj["episode"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = human_size(obj.get("release", {}).get("size", 0))
+
             table = tabulate(
                 [[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]],
                 headers=["Series", "Episode", "Title", "Runtime", "Quality", "Size"],
                 tablefmt="github"
             )
+
             if "importfailed" in raw.lower():
                 msg = f"⛔ SONARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
                 return msg, extras
+
             if "subtitle" in raw.lower():
                 msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Subtitles available"
                 return msg, extras
+
             msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Ready for streaming"
             return msg, extras
     except Exception:
         pass
+
     if "importfailed" in raw.lower() or "error" in raw.lower():
         msg = f"⛔ SONARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
     elif "subtitle" in raw.lower():
@@ -254,6 +265,71 @@ def beautify_sonarr(title, raw):
     else:
         msg = f"📡 SONARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
     return msg, extras
+
+def beautify_watchtower(title, raw):
+    match = re.search(r"([\w./-]+):([\w.-]+)", raw)
+    image = match.group(0) if match else "Unknown"
+    if "error" in raw.lower() or "failed" in raw.lower():
+        return f"⛔ CONTAINER UPDATE FAILED\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🔴 ERROR: {raw}\n\n🛠 Action → Verify image or registry", None
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return f"🐳 CONTAINER UPDATE\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🕒 Time: {now_str}\n\n🟢 SUCCESS: Container restarted successfully", None
+
+def beautify_semaphore(title, raw):
+    playbook = re.search(r"Playbook:\s*(.+)", raw)
+    host = re.search(r"Host:\s*(.+)", raw)
+    status = re.search(r"Status:\s*(.+)", raw)
+    pb_val = playbook.group(1) if playbook else "Unknown"
+    host_val = host.group(1) if host else "Unknown"
+    status_val = status.group(1).upper() if status else "UNKNOWN"
+    if "FAIL" in status_val or "ERROR" in status_val:
+        return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🔴 Status: {status_val}\n\n🛠 Action → Investigate failure", None
+    return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🟢 Status: {status_val}\n\n✨ All tasks completed successfully", None
+
+def beautify_json(title, raw):
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            # Apply human-size/runtime if keys exist
+            pretty_obj = {}
+            for k, v in obj.items():
+                if "size" in k.lower():
+                    pretty_obj[k] = human_size(v)
+                elif "time" in k.lower() or "runtime" in k.lower():
+                    pretty_obj[k] = format_runtime(v)
+                else:
+                    pretty_obj[k] = v
+            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
+            return f"📡 JSON EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
+    except Exception:
+        return None, None
+    return None, None
+
+def beautify_yaml(title, raw):
+    try:
+        obj = yaml.safe_load(raw)
+        if isinstance(obj, dict):
+            pretty_obj = {}
+            for k, v in obj.items():
+                if "size" in k.lower():
+                    pretty_obj[k] = human_size(v)
+                elif "time" in k.lower() or "runtime" in k.lower():
+                    pretty_obj[k] = format_runtime(v)
+                else:
+                    pretty_obj[k] = v
+            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
+            return f"📡 YAML EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
+    except Exception:
+        return None, None
+    return None, None
+
+def beautify_generic(title, raw):
+    if "error" in raw.lower():
+        return f"⛔ ERROR DETECTED\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'error')}", None
+    if "success" in raw.lower():
+        return f"✅ SUCCESS\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'success')}", None
+    if "warning" in raw.lower():
+        return f"⚠ WARNING\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'warn')}", None
+    return f"🛰 MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{raw}", None
 
 # -----------------------------
 # Main beautifier router
@@ -275,6 +351,7 @@ def beautify_message(title, raw):
         result, extras = beautify_yaml(title, raw)
     else:
         result, extras = beautify_generic(title, raw)
+
     closings = [
         "🧠 Analysis complete — Jarvis Jnr",
         "⚡ Task executed at optimal efficiency",
@@ -387,13 +464,26 @@ if __name__ == "__main__":
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
 
-    # Report active modules
+    # Report active modules + run cache
     active_modules = []
     if RADARR_ENABLED:
         active_modules.append("🎬 Radarr")
-        cache_radarr()
+        try: cache_radarr()
+        except Exception as e: print(f"[{BOT_NAME}] ⚠️ Radarr cache failed: {e}")
     if SONARR_ENABLED:
         active_modules.append("📺 Sonarr")
-        cache_sonarr()
+        try: cache_sonarr()
+        except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed: {e}")
     if active_modules:
-        send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=
+        send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=5)
+    else:
+        send_message("Modules", "⚠️ No external modules enabled", priority=5)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    loop.create_task(listen())
+    loop.run_in_executor(None, run_scheduler)
+
+    print(f"[{BOT_NAME}] Event loop started.")
+    loop.run_forever()
