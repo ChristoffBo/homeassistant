@@ -23,7 +23,7 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
-APP_TOKEN = os.getenv("APP_TOKEN")
+APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
@@ -214,99 +214,7 @@ def purge_all_messages():
         print(f"[{BOT_NAME}] ❌ Error purging Jarvis messages: {e}")
 
 # -----------------------------
-# Beautifiers
-# -----------------------------
-def beautify_radarr(title, raw):
-    img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
-    img_url = img_match.group(1) if img_match else None
-    extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
-    try:
-        obj = json.loads(raw)
-        if "movie" in obj:
-            movie = obj["movie"].get("title", "Unknown Movie")
-            year = obj["movie"].get("year", "")
-            runtime = format_runtime(obj["movie"].get("runtime", 0))
-            quality = obj.get("release", {}).get("quality", "Unknown")
-            size = human_size(obj.get("release", {}).get("size", 0))
-            table = tabulate([[movie, year, runtime, quality, size]], headers=["Title","Year","Runtime","Quality","Size"], tablefmt="github")
-            if "importfailed" in raw.lower():
-                return f"⛔ RADARR IMPORT FAILED\n{table}", extras
-            return f"🎬 NEW MOVIE\n{table}", extras
-    except Exception:
-        pass
-    return f"📡 RADARR EVENT\n{raw}", extras
-
-def beautify_sonarr(title, raw):
-    img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
-    img_url = img_match.group(1) if img_match else None
-    extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
-    try:
-        obj = json.loads(raw)
-        if "episode" in obj:
-            series = obj.get("series", {}).get("title", "Unknown Series")
-            ep_title = obj["episode"].get("title", "Unknown Episode")
-            season = obj["episode"].get("seasonNumber", "?")
-            ep_num = obj["episode"].get("episodeNumber", "?")
-            runtime = format_runtime(obj["episode"].get("runtime", 0))
-            quality = obj.get("release", {}).get("quality", "Unknown")
-            size = human_size(obj.get("release", {}).get("size", 0))
-            table = tabulate([[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]], headers=["Series","Episode","Title","Runtime","Quality","Size"], tablefmt="github")
-            return f"📺 NEW EPISODE\n{table}", extras
-    except Exception:
-        pass
-    return f"📡 SONARR EVENT\n{raw}", extras
-
-def beautify_watchtower(title, raw):
-    return f"🐳 WATCHTOWER\n{raw}", None
-
-def beautify_semaphore(title, raw):
-    return f"📊 SEMAPHORE\n{raw}", None
-
-def beautify_json(title, raw):
-    try:
-        obj = json.loads(raw)
-        if isinstance(obj, dict):
-            table = tabulate([obj], headers="keys", tablefmt="github")
-            return f"📡 JSON EVENT\n{table}", None
-    except Exception:
-        return None, None
-    return None, None
-
-def beautify_yaml(title, raw):
-    try:
-        obj = yaml.safe_load(raw)
-        if isinstance(obj, dict):
-            table = tabulate([obj], headers="keys", tablefmt="github")
-            return f"📡 YAML EVENT\n{table}", None
-    except Exception:
-        return None, None
-    return None, None
-
-def beautify_generic(title, raw):
-    return f"🛰 MESSAGE\n{raw}", None
-
-def beautify_message(title, raw):
-    lower = raw.lower()
-    if "radarr" in lower: return beautify_radarr(title, raw)
-    if "sonarr" in lower: return beautify_sonarr(title, raw)
-    if "watchtower" in lower: return beautify_watchtower(title, raw)
-    if "semaphore" in lower: return beautify_semaphore(title, raw)
-    if beautify_json(title, raw)[0]: return beautify_json(title, raw)
-    if beautify_yaml(title, raw)[0]: return beautify_yaml(title, raw)
-    return beautify_generic(title, raw)
-
-# -----------------------------
-# Scheduler
-# -----------------------------
-def run_scheduler():
-    schedule.every(5).seconds.do(purge_non_jarvis_apps)
-    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-# -----------------------------
-# Listener (baseline + arr hook)
+# Listener (with ARR fix)
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")
@@ -324,7 +232,7 @@ async def listen():
                     title = data.get("title","")
                     message = data.get("message","")
 
-                    # only command if starts with "jarvis"
+                    # FIXED: Forward both title + message to ARR
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
                         response, extras = handle_arr_command(title, message)
                         if response:
@@ -344,23 +252,14 @@ async def listen():
         await listen()
 
 # -----------------------------
-# Dynamic Module Loader
+# Scheduler
 # -----------------------------
-def try_load_module(modname, label, icon="🧩"):
-    path = f"/app/{modname}.py"
-    enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
-    if not os.path.exists(path) or not enabled:
-        return None
-    try:
-        spec = importlib.util.spec_from_file_location(modname, path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        extra_modules[modname] = module
-        print(f"[{BOT_NAME}] ✅ Loaded module: {modname}")
-        return f"{icon} {label}"
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Failed to load module {modname}: {e}")
-        return None
+def run_scheduler():
+    schedule.every(5).seconds.do(purge_non_jarvis_apps)
+    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
 # -----------------------------
 # Main
