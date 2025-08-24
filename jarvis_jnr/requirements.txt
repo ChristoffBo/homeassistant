@@ -1,5 +1,7 @@
-requests
-websockets
 schedule
 aiohttp
 websocket-client
+requests
+websockets
+pyyaml
+tabulate
