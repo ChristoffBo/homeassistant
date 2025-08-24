@@ -1,4 +1,5 @@
-import json, requests, datetime, random
+import json, requests, random
+from datetime import datetime
 from tabulate import tabulate
 
 # -----------------------------
