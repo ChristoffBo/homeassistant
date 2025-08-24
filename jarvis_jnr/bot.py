@@ -144,10 +144,22 @@ def resolve_app_id():
 # Beautifier modules
 # -----------------------------
 def beautify_radarr(title, raw):
-    return f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n🎞 {raw}\n\n🟢 SUCCESS: Added to collection"
+    img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
+    img_url = img_match.group(1) if img_match else None
+    msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n"
+    if img_url:
+        msg += f"\n🖼 Poster:\n![]({img_url})\n"
+    msg += "\n🟢 SUCCESS: Added to collection"
+    return msg
 
 def beautify_sonarr(title, raw):
-    return f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n📌 {raw}\n\n🟢 SUCCESS: Ready for streaming"
+    img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
+    img_url = img_match.group(1) if img_match else None
+    msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n"
+    if img_url:
+        msg += f"\n🖼 Poster:\n![]({img_url})\n"
+    msg += "\n🟢 SUCCESS: Ready for streaming"
+    return msg
 
 def beautify_watchtower(title, raw):
     match = re.search(r"([\w./-]+):([\w.-]+)", raw)
@@ -238,7 +250,49 @@ def beautify_message(title, raw):
         "🔋 Energy levels optimal",
         "🛡 Defensive protocols active",
         "📎 Documented for future reference",
+        "🏷 Indexed by Jarvis Jnr",
+        "⏱ Execution time recorded",
+        "📂 Archived in knowledge base",
+        "🧑‍💻 Operator assistance provided",
+        "🗂 Data classified securely",
+        "🗝 Access log updated",
+        "👁 Visual scan completed",
+        "🛠 AI maintenance cycle closed",
+        "💡 No anomalies detected",
+        "✨ End of report — Jarvis Jnr",
+        "🤖 Yours truly — Jarvis Jnr",
         "👑 Signed by Jarvis Jnr AI",
+        "🛰 AI uplink stable — session closed",
+        "📡 Report finalized by Jarvis Jnr",
+        "🧬 Neural integrity verified",
+        "🔭 Scan complete — clear results",
+        "⚡ Cycle finished successfully",
+        "🛡 Secure lock maintained",
+        "🔧 Automated tuning complete",
+        "📊 Log entry archived",
+        "🧠 Processed and secured",
+        "🔒 Cryptographic seal applied",
+        "🚨 Monitoring cycle reset",
+        "🎯 Precision report generated",
+        "📢 Event concluded successfully",
+        "🗂 Data indexed into memory",
+        "🛠 Diagnostics closed cleanly",
+        "💡 All systems remain stable",
+        "📎 Timestamp recorded",
+        "📂 Historical record updated",
+        "👑 Endorsed by Jarvis Jnr",
+        "⚡ Performance metrics optimal",
+        "🔭 Final scan shows green",
+        "🛰 Signal lock confirmed",
+        "📡 Transmission cycle complete",
+        "🧬 Report consistency verified",
+        "📊 Entry validated by AI",
+        "🎛 Systems check ended",
+        "🔧 No corrective action required",
+        "🛡 Defense protocols reset",
+        "🧠 Adaptive learning stored",
+        "✨ AI task finished seamlessly",
+        "📂 Closure logged",
     ]
     return f"{result}\n\n{random.choice(closings)}"
 
@@ -309,6 +363,11 @@ if __name__ == "__main__":
         "🛰 UPLINK ESTABLISHED\n╾━━━━━━━━━━━━━━━━╼\n🌐 Network sync stable\n⚡ Rapid response ready\n🔒 Encryption validated",
         "🧠 CORE ONLINE\n╾━━━━━━━━━━━━━━━━╼\n📊 Metrics calibrated\n🔭 Horizon scan clear\n🎯 Objective lock established",
         "✨ AI BOOT SEQUENCE\n╾━━━━━━━━━━━━━━━━╼\n🔧 Subsystems aligned\n📡 Channels open\n👑 Jarvis Jnr reporting for duty",
+        "📡 Network uplink secured\n╾━━━━━━━━━━━━━━━━╼\n🛰 Satellite lock achieved\n📂 Sync with knowledge base complete",
+        "🔧 Initialization cycle green\n╾━━━━━━━━━━━━━━━━╼\n⚡ Rapid response core charged\n🔭 Horizon sensors calibrated",
+        "🛡 Security posture validated\n╾━━━━━━━━━━━━━━━━╼\n📊 Intrusion detection armed\n✅ All channels encrypted",
+        "🎯 Objective matrix online\n╾━━━━━━━━━━━━━━━━╼\n📎 Hooks aligned\n🔋 Power reserves nominal",
+        "👑 AI authority engaged\n╾━━━━━━━━━━━━━━━━╼\n🧠 Neural patterns locked\n🚀 Jarvis Jnr now in command",
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
 
