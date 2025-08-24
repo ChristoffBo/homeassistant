@@ -5,3 +5,4 @@ requests
 websockets
 pyyaml
 tabulate
+rapidfuzz
