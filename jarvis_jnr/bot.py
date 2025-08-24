@@ -41,6 +41,32 @@ def colorize(text, level="info"):
     return f"{ANSI['cyan']}{text}{ANSI['reset']}"
 
 # -----------------------------
+# Helpers: Human-readable size, runtime
+# -----------------------------
+def human_size(num, suffix="B"):
+    try:
+        num = float(num)
+        for unit in ["", "K", "M", "G", "T", "P", "E", "Z"]:
+            if abs(num) < 1024.0:
+                return f"{num:3.1f}{unit}{suffix}"
+            num /= 1024.0
+        return f"{num:.1f}Y{suffix}"
+    except Exception:
+        return str(num)
+
+def format_runtime(minutes):
+    try:
+        minutes = int(minutes)
+        if minutes <= 0:
+            return "?"
+        hours, mins = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h {mins}m"
+        return f"{mins}m"
+    except Exception:
+        return "?"
+
+# -----------------------------
 # Send message (with APP token, supports extras)
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
@@ -155,12 +181,13 @@ def beautify_radarr(title, raw):
         if "movie" in obj:
             movie = obj["movie"].get("title", "Unknown Movie")
             year = obj["movie"].get("year", "")
+            runtime = format_runtime(obj["movie"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
-            size = obj.get("release", {}).get("size", "Unknown")
+            size = human_size(obj.get("release", {}).get("size", 0))
 
             table = tabulate(
-                [[movie, year, quality, size]],
-                headers=["Title", "Year", "Quality", "Size"],
+                [[movie, year, runtime, quality, size]],
+                headers=["Title", "Year", "Runtime", "Quality", "Size"],
                 tablefmt="github"
             )
 
@@ -193,11 +220,13 @@ def beautify_sonarr(title, raw):
             ep_title = obj["episode"].get("title", "Unknown Episode")
             season = obj["episode"].get("seasonNumber", "?")
             ep_num = obj["episode"].get("episodeNumber", "?")
+            runtime = format_runtime(obj["episode"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
+            size = human_size(obj.get("release", {}).get("size", 0))
 
             table = tabulate(
-                [[series, f"S{season:02}E{ep_num:02}", ep_title, quality]],
-                headers=["Series", "Episode", "Title", "Quality"],
+                [[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]],
+                headers=["Series", "Episode", "Title", "Runtime", "Quality", "Size"],
                 tablefmt="github"
             )
 
@@ -247,7 +276,16 @@ def beautify_json(title, raw):
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict):
-            table = tabulate([obj], headers="keys", tablefmt="github")
+            # Apply human-size/runtime if keys exist
+            pretty_obj = {}
+            for k, v in obj.items():
+                if "size" in k.lower():
+                    pretty_obj[k] = human_size(v)
+                elif "time" in k.lower() or "runtime" in k.lower():
+                    pretty_obj[k] = format_runtime(v)
+                else:
+                    pretty_obj[k] = v
+            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
             return f"📡 JSON EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
     except Exception:
         return None, None
@@ -257,7 +295,15 @@ def beautify_yaml(title, raw):
     try:
         obj = yaml.safe_load(raw)
         if isinstance(obj, dict):
-            table = tabulate([obj], headers="keys", tablefmt="github")
+            pretty_obj = {}
+            for k, v in obj.items():
+                if "size" in k.lower():
+                    pretty_obj[k] = human_size(v)
+                elif "time" in k.lower() or "runtime" in k.lower():
+                    pretty_obj[k] = format_runtime(v)
+                else:
+                    pretty_obj[k] = v
+            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
             return f"📡 YAML EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
     except Exception:
         return None, None
