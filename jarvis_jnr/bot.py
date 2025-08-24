@@ -23,7 +23,7 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
-APP_TOKEN = os.getenv("APP_TOKEN")
+APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
@@ -421,7 +421,6 @@ async def listen():
 def try_load_module(modname, label, icon="🧩"):
     path = f"/app/{modname}.py"
 
-    # ✅ FIX: check env + options.json
     enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
     if not enabled:
         try:
