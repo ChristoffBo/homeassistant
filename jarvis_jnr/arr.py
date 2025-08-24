@@ -1,134 +1,157 @@
-import os, requests, difflib, datetime
+import os, requests, datetime, re, schedule, time, threading
 from tabulate import tabulate
 
 # -----------------------------
-# Config from environment (set via run.sh → options.json)
+# Config from environment
 # -----------------------------
-RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes", "on")
-RADARR_URL = os.getenv("radarr_url")
-RADARR_KEY = os.getenv("radarr_api_key")
+RADARR_URL = os.getenv("RADARR_URL")
+RADARR_APIKEY = os.getenv("RADARR_APIKEY")
+SONARR_URL = os.getenv("SONARR_URL")
+SONARR_APIKEY = os.getenv("SONARR_APIKEY")
 
-SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes", "on")
-SONARR_URL = os.getenv("sonarr_url")
-SONARR_KEY = os.getenv("sonarr_api_key")
+RADARR_ENABLED = bool(RADARR_URL and RADARR_APIKEY)
+SONARR_ENABLED = bool(SONARR_URL and SONARR_APIKEY)
 
 # -----------------------------
-# Helper functions
+# Cache
 # -----------------------------
-def human_size(num, suffix="B"):
-    try:
-        num = float(num)
-        for unit in ["", "K", "M", "G", "T"]:
-            if abs(num) < 1024.0:
-                return f"{num:3.1f}{unit}{suffix}"
-            num /= 1024.0
-        return f"{num:.1f}P{suffix}"
-    except Exception:
-        return str(num)
+radarr_cache = {"movies": []}
+sonarr_cache = {"series": []}
 
-def format_runtime(minutes):
+# -----------------------------
+# API Helpers
+# -----------------------------
+def api_get(url, apikey):
     try:
-        minutes = int(minutes)
-        if minutes <= 0:
-            return "?"
-        h, m = divmod(minutes, 60)
-        if h:
-            return f"{h}h {m}m"
-        return f"{m}m"
-    except Exception:
-        return "?"
-
-def fetch_api(url, key):
-    try:
-        r = requests.get(url, headers={"X-Api-Key": key}, timeout=10)
-        r.raise_for_status()
-        return r.json()
+        r = requests.get(url, headers={"X-Api-Key": apikey}, timeout=10)
+        if r.ok:
+            return r.json()
+        else:
+            print(f"[arr] ❌ API request failed {url} {r.status_code}")
+            return None
     except Exception as e:
-        return {"error": str(e)}
+        print(f"[arr] ❌ Exception in api_get: {e}")
+        return None
 
 # -----------------------------
-# Radarr functions
+# Cache functions
 # -----------------------------
-def radarr_upcoming():
+def cache_radarr():
+    global radarr_cache
     if not RADARR_ENABLED:
-        return "🎬 Radarr is disabled", None
-    start = datetime.date.today()
-    end = start + datetime.timedelta(days=7)
-    data = fetch_api(f"{RADARR_URL}/api/v3/calendar?start={start}&end={end}", RADARR_KEY)
-    if "error" in data:
-        return f"⛔ Radarr error: {data['error']}", None
-    if not data:
-        return "🎬 No upcoming movies in the next 7 days.", None
-    table = [[d.get("title"), d.get("inCinemas", "N/A")[:10], format_runtime(d.get("runtime", 0))] for d in data]
-    msg = f"🎬 UPCOMING MOVIES (7 days)\n╾━━━━━━━━━━━━━━━━╼\n{tabulate(table, headers=['Title','In Cinemas','Runtime'], tablefmt='github')}"
-    return msg, None
+        return
+    try:
+        radarr_cache["movies"] = api_get(f"{RADARR_URL}/api/v3/movie", RADARR_APIKEY) or []
+        print(f"[arr] ✅ Cached {len(radarr_cache['movies'])} Radarr movies")
+    except Exception as e:
+        print(f"[arr] ❌ Failed to cache Radarr: {e}")
 
-def radarr_count():
-    data = fetch_api(f"{RADARR_URL}/api/v3/movie", RADARR_KEY)
-    if "error" in data:
-        return f"⛔ Radarr error: {data['error']}", None
-    msg = f"🎬 You have **{len(data)} movies** in Radarr."
-    return msg, None
-
-def radarr_longest():
-    data = fetch_api(f"{RADARR_URL}/api/v3/movie", RADARR_KEY)
-    if "error" in data:
-        return f"⛔ Radarr error: {data['error']}", None
-    if not data:
-        return "🎬 No movies in Radarr.", None
-    longest = max(data, key=lambda x: x.get("runtime", 0))
-    msg = f"🎬 LONGEST MOVIE\n╾━━━━━━━━━━━━━━━━╼\n{longest['title']} ({format_runtime(longest.get('runtime',0))})"
-    return msg, None
-
-# -----------------------------
-# Sonarr functions
-# -----------------------------
-def sonarr_upcoming():
+def cache_sonarr():
+    global sonarr_cache
     if not SONARR_ENABLED:
-        return "📺 Sonarr is disabled", None
-    start = datetime.date.today()
-    end = start + datetime.timedelta(days=7)
-    data = fetch_api(f"{SONARR_URL}/api/v3/calendar?start={start}&end={end}", SONARR_KEY)
-    if "error" in data:
-        return f"⛔ Sonarr error: {data['error']}", None
-    if not data:
-        return "📺 No upcoming episodes in the next 7 days.", None
-    table = [[d['series']['title'], f"S{d['seasonNumber']:02}E{d['episodeNumber']:02}", d.get("airDate","N/A")] for d in data]
-    msg = f"📺 UPCOMING SERIES (7 days)\n╾━━━━━━━━━━━━━━━━╼\n{tabulate(table, headers=['Series','Episode','Air Date'], tablefmt='github')}"
-    return msg, None
-
-def sonarr_count():
-    data = fetch_api(f"{SONARR_URL}/api/v3/series", SONARR_KEY)
-    if "error" in data:
-        return f"⛔ Sonarr error: {data['error']}", None
-    msg = f"📺 You have **{len(data)} shows** in Sonarr."
-    return msg, None
-
-def sonarr_longest():
-    data = fetch_api(f"{SONARR_URL}/api/v3/series", SONARR_KEY)
-    if "error" in data:
-        return f"⛔ Sonarr error: {data['error']}", None
-    if not data:
-        return "📺 No shows in Sonarr.", None
-    longest = max(data, key=lambda x: (x.get("seasonCount",0), x.get("episodeCount",0)))
-    msg = f"📺 LONGEST SERIES\n╾━━━━━━━━━━━━━━━━╼\n{longest['title']} → {longest.get('seasonCount',0)} seasons / {longest.get('episodeCount',0)} episodes"
-    return msg, None
+        return
+    try:
+        sonarr_cache["series"] = api_get(f"{SONARR_URL}/api/v3/series", SONARR_APIKEY) or []
+        print(f"[arr] ✅ Cached {len(sonarr_cache['series'])} Sonarr series")
+    except Exception as e:
+        print(f"[arr] ❌ Failed to cache Sonarr: {e}")
 
 # -----------------------------
-# Command router with fuzzy matching
+# Command Handlers
 # -----------------------------
-COMMANDS = {
-    "upcoming movies": radarr_upcoming,
-    "how many movies": radarr_count,
-    "longest movie": radarr_longest,
-    "upcoming series": sonarr_upcoming,
-    "how many shows": sonarr_count,
-    "longest series": sonarr_longest,
-}
+def upcoming_movies():
+    if not RADARR_ENABLED:
+        return "⚠️ Radarr not enabled", None
+    url = f"{RADARR_URL}/api/v3/calendar?start={datetime.date.today()}&end={(datetime.date.today() + datetime.timedelta(days=7))}"
+    items = api_get(url, RADARR_APIKEY) or []
+    if not items:
+        return "🎬 No upcoming movies in the next 7 days", None
+    table = tabulate(
+        [[m.get("title"), m.get("inCinemas",""), m.get("physicalRelease","")] for m in items],
+        headers=["Title","In Cinemas","Physical Release"],
+        tablefmt="github"
+    )
+    return f"🎬 UPCOMING MOVIES (7 days)\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
 
-def handle_arr_command(query):
-    query = query.lower()
-    matches = difflib.get_close_matches(query, COMMANDS.keys(), n=1, cutoff=0.5)
-    if matches:
-        return COMMANDS[matches[0]]()
-    return None, None
+def upcoming_series():
+    if not SONARR_ENABLED:
+        return "⚠️ Sonarr not enabled", None
+    url = f"{SONARR_URL}/api/v3/calendar?start={datetime.date.today()}&end={(datetime.date.today() + datetime.timedelta(days=7))}"
+    items = api_get(url, SONARR_APIKEY) or []
+    if not items:
+        return "📺 No upcoming episodes in the next 7 days", None
+    table = tabulate(
+        [[m.get('series',{}).get('title'), f"S{m.get('seasonNumber')}E{m.get('episodeNumber')}", m.get("airDate")] for m in items],
+        headers=["Series","Episode","Air Date"],
+        tablefmt="github"
+    )
+    return f"📺 UPCOMING EPISODES (7 days)\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
+
+def count_movies():
+    if not RADARR_ENABLED:
+        return "⚠️ Radarr not enabled", None
+    return f"🎬 Total Movies: {len(radarr_cache['movies'])}", None
+
+def count_series():
+    if not SONARR_ENABLED:
+        return "⚠️ Sonarr not enabled", None
+    return f"📺 Total Series: {len(sonarr_cache['series'])}", None
+
+def longest_movie():
+    if not RADARR_ENABLED:
+        return "⚠️ Radarr not enabled", None
+    if not radarr_cache["movies"]:
+        return "🎬 No cached movies", None
+    longest = max(radarr_cache["movies"], key=lambda m: m.get("runtime",0))
+    return f"🎬 Longest Movie: {longest.get('title')} ({longest.get('runtime')} min)", None
+
+def longest_series():
+    if not SONARR_ENABLED:
+        return "⚠️ Sonarr not enabled", None
+    if not sonarr_cache["series"]:
+        return "📺 No cached series", None
+    longest = max(sonarr_cache["series"], key=lambda s: (s.get("seasonCount",0), s.get("episodeCount",0)))
+    return f"📺 Longest Series: {longest.get('title')} ({longest.get('seasonCount')} seasons, {longest.get('episodeCount')} episodes)", None
+
+# -----------------------------
+# Fuzzy Command Router
+# -----------------------------
+def handle_arr_command(cmd: str):
+    c = cmd.lower().strip()
+
+    if "upcoming" in c and "movie" in c:
+        return upcoming_movies()
+    if "upcoming" in c and ("series" in c or "show" in c):
+        return upcoming_series()
+    if "how many" in c and "movie" in c:
+        return count_movies()
+    if "how many" in c and ("series" in c or "show" in c):
+        return count_series()
+    if "longest" in c and "movie" in c:
+        return longest_movie()
+    if "longest" in c and ("series" in c or "show" in c):
+        return longest_series()
+
+    return f"⚠️ Unknown Jarvis module command: {cmd}", None
+
+# -----------------------------
+# Scheduler for refreshing cache
+# -----------------------------
+def refresh_cache():
+    if RADARR_ENABLED:
+        cache_radarr()
+    if SONARR_ENABLED:
+        cache_sonarr()
+
+def start_scheduler():
+    schedule.every(60).minutes.do(refresh_cache)
+    def run():
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+
+# Start cache refresh loop on import
+refresh_cache()
+start_scheduler()
