@@ -1,19 +1,18 @@
 import os
 import requests
 import datetime
-import difflib
 from tabulate import tabulate
 
 # -----------------------------
 # Config from environment
 # -----------------------------
-RADARR_URL = os.getenv("RADARR_URL", "")
-RADARR_API = os.getenv("RADARR_API", "")
-SONARR_URL = os.getenv("SONARR_URL", "")
-SONARR_API = os.getenv("SONARR_API", "")
+RADARR_URL = os.getenv("radarr_url", "")
+RADARR_API = os.getenv("radarr_api_key", "")
+SONARR_URL = os.getenv("sonarr_url", "")
+SONARR_API = os.getenv("sonarr_api_key", "")
 
-RADARR_ENABLED = bool(RADARR_URL and RADARR_API)
-SONARR_ENABLED = bool(SONARR_URL and SONARR_API)
+RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
+SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
 
 radarr_cache = {"movies": [], "fetched": None}
 sonarr_cache = {"series": [], "fetched": None}
@@ -31,19 +30,6 @@ def _get_json(url):
 
 def _tabulate_list(items, headers):
     return tabulate(items, headers=headers, tablefmt="github")
-
-def _normalize_command(title: str, message: str) -> str:
-    """Combine title+message, normalize to lowercase for command parsing."""
-    combined = f"{title} {message}".lower()
-    return combined.strip()
-
-def _fuzzy_match(cmd: str, keywords: list, cutoff: float = 0.75) -> bool:
-    """Return True if cmd is close enough to any keyword."""
-    for keyword in keywords:
-        ratio = difflib.SequenceMatcher(None, cmd, keyword).ratio()
-        if ratio >= cutoff or keyword in cmd:
-            return True
-    return False
 
 # -----------------------------
 # Radarr functions
@@ -79,6 +65,8 @@ def upcoming_movies(days=7):
 def movie_count():
     if not RADARR_ENABLED:
         return "⚠️ Radarr not enabled", None
+    if not radarr_cache["movies"]:
+        cache_radarr()
     return f"🎬 Total Movies: {len(radarr_cache['movies'])}", None
 
 def longest_movie():
@@ -128,6 +116,8 @@ def upcoming_series(days=7):
 def series_count():
     if not SONARR_ENABLED:
         return "⚠️ Sonarr not enabled", None
+    if not sonarr_cache["series"]:
+        cache_sonarr()
     return f"📺 Total Series: {len(sonarr_cache['series'])}", None
 
 def longest_series():
@@ -137,7 +127,10 @@ def longest_series():
         cache_sonarr()
     if not sonarr_cache["series"]:
         return "⚠️ No series in cache", None
-    longest = max(sonarr_cache["series"], key=lambda s: (s.get("seasonCount", 0) * s.get("episodeCount", 0)))
+    longest = max(
+        sonarr_cache["series"],
+        key=lambda s: (s.get("seasonCount", 0) * s.get("episodeCount", 0))
+    )
     title = longest.get("title", "Unknown")
     seasons = longest.get("seasonCount", "?")
     episodes = longest.get("episodeCount", "?")
@@ -146,20 +139,18 @@ def longest_series():
 # -----------------------------
 # Command Router
 # -----------------------------
-def handle_arr_command(title: str, message: str):
-    cmd = _normalize_command(title, message)
-
-    if _fuzzy_match(cmd, ["upcoming movie", "movies upcoming"]):
+def handle_arr_command(command: str):
+    cmd = command.lower().strip()
+    if "upcoming movie" in cmd:
         return upcoming_movies()
-    if _fuzzy_match(cmd, ["upcoming series", "upcoming show", "shows upcoming"]):
+    if "upcoming series" in cmd or "upcoming show" in cmd:
         return upcoming_series()
-    if _fuzzy_match(cmd, ["how many movie", "movie count", "total movies", "movies count"]):
+    if "how many movie" in cmd or "movie count" in cmd:
         return movie_count()
-    if _fuzzy_match(cmd, ["how many show", "how many series", "series count", "total series", "shows count"]):
+    if "how many show" in cmd or "how many series" in cmd or "series count" in cmd:
         return series_count()
-    if _fuzzy_match(cmd, ["longest movie", "longest movies"]):
+    if "longest movie" in cmd:
         return longest_movie()
-    if _fuzzy_match(cmd, ["longest series", "longest show", "longest shows", "longest tv"]):
+    if "longest series" in cmd or "longest show" in cmd:
         return longest_series()
-
-    return None, None
+    return f"🤖 Unknown command: {command}", None
