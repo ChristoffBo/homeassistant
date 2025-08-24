@@ -214,28 +214,7 @@ def purge_all_messages():
         print(f"[{BOT_NAME}] ❌ Error purging Jarvis messages: {e}")
 
 # -----------------------------
-# Resolve app id
-# -----------------------------
-def resolve_app_id():
-    global jarvis_app_id
-    print(f"[{BOT_NAME}] Resolving app ID for '{APP_NAME}'")
-    try:
-        url = f"{GOTIFY_URL}/application"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=5)
-        r.raise_for_status()
-        apps = r.json()
-        for app in apps:
-            if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] ✅ Found '{APP_NAME}' id={jarvis_app_id}")
-                return
-        print(f"[{BOT_NAME}] ❌ Could not find app '{APP_NAME}'")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
-
-# -----------------------------
-# Beautifiers (unchanged)
+# Beautifiers
 # -----------------------------
 def beautify_radarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
@@ -327,7 +306,7 @@ def run_scheduler():
         time.sleep(1)
 
 # -----------------------------
-# Listener (with ARR command integration)
+# Listener (baseline + arr hook)
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")
@@ -344,12 +323,13 @@ async def listen():
                         continue
                     title = data.get("title","")
                     message = data.get("message","")
-                    
-                    # Pass both title and message to ARR command handler
-                    response, extras = handle_arr_command(title, message)
-                    if response:
-                        send_message("Jarvis", response, extras=extras)
-                        continue
+
+                    # only command if starts with "jarvis"
+                    if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
+                        response, extras = handle_arr_command(title, message)
+                        if response:
+                            send_message("Jarvis", response, extras=extras)
+                            continue
 
                     if BEAUTIFY_ENABLED:
                         final, extras = beautify_message(title, message)
