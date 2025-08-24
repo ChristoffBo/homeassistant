@@ -174,7 +174,6 @@ def purge_non_jarvis_apps():
             name = app.get("name")
             if appid != jarvis_app_id:
                 purge_app_messages(appid, name)
-        # removed spammy purge notification
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
@@ -400,6 +399,7 @@ if __name__ == "__main__":
         f"{greeting} — Handshake complete, commander",
         f"{greeting} — Prepared for system oversight",
     ]
+
     startup_message = random.choice(startup_msgs) + "\n\n" + get_settings_summary()
 
     active = []
