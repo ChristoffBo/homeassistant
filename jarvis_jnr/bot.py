@@ -30,6 +30,10 @@ RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
+# FIX: read lowercase module toggles
+RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
+SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
+
 jarvis_app_id = None  # resolved on startup
 extra_modules = {}    # holds dynamically loaded modules
 
@@ -178,7 +182,6 @@ def purge_non_jarvis_apps():
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
 def purge_all_messages():
-    """Purge Jarvis' own messages based on retention hours silently."""
     global jarvis_app_id
     if not jarvis_app_id:
         return
@@ -213,7 +216,7 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
 # -----------------------------
-# Beautifiers (FULL)
+# Beautifiers (unchanged)
 # -----------------------------
 def beautify_radarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
@@ -298,8 +301,8 @@ def beautify_message(title, raw):
 # Scheduler
 # -----------------------------
 def run_scheduler():
-    schedule.every(5).seconds.do(purge_non_jarvis_apps)   # fast purge others
-    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)  # retention purge
+    schedule.every(5).seconds.do(purge_non_jarvis_apps)
+    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -317,22 +320,16 @@ async def listen():
             async for msg in ws:
                 try:
                     data = json.loads(msg)
-
-                    # ADDITIVE FIX: ignore own messages
                     appid = data.get("appid")
                     if appid == jarvis_app_id:
                         continue
-
                     title = data.get("title","")
                     message = data.get("message","")
-
-                    # NEW: Forward both title and message to arr module
                     if message.lower().startswith("jarvis") or title.lower().startswith("jarvis"):
                         response, extras = handle_arr_command(title, message)
                         if response: 
                             send_message("Jarvis", response, extras=extras)
                             continue
-
                     if BEAUTIFY_ENABLED:
                         final, extras = beautify_message(title, message)
                     else:
@@ -350,7 +347,7 @@ async def listen():
 # -----------------------------
 def try_load_module(modname, label, icon="🧩"):
     path = f"/app/{modname}.py"
-    enabled = os.getenv(f"{modname.upper()}_ENABLED", "false").lower() in ("1", "true", "yes")
+    enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
     if not os.path.exists(path) or not enabled:
         return None
     try:
@@ -404,9 +401,7 @@ if __name__ == "__main__":
         f"{greeting} — Handshake complete, commander",
         f"{greeting} — Prepared for system oversight",
     ]
-
     startup_message = random.choice(startup_msgs) + "\n\n" + get_settings_summary()
-
     active = []
     if RADARR_ENABLED:
         active.append("🎬 Radarr")
@@ -416,8 +411,6 @@ if __name__ == "__main__":
         active.append("📺 Sonarr")
         try: cache_sonarr()
         except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed {e}")
-
-    # Dynamically check optional modules
     for mod, label, icon in [
         ("chat", "Chat", "💬"),
         ("weather", "Weather", "🌦"),
@@ -425,14 +418,11 @@ if __name__ == "__main__":
     ]:
         loaded = try_load_module(mod, label, icon)
         if loaded: active.append(loaded)
-
     if active:
         startup_message += "\n\n✅ Active Modules: " + ", ".join(active)
     else:
         startup_message += "\n\n⚠️ No external modules enabled"
-
     send_message("Startup", startup_message, priority=5)
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
