@@ -2,15 +2,14 @@ import os
 import requests
 import datetime
 from tabulate import tabulate
-from rapidfuzz import fuzz, process
 
 # -----------------------------
 # Config from environment
 # -----------------------------
 RADARR_URL = os.getenv("RADARR_URL", "")
-RADARR_API = os.getenv("RADARR_API_KEY", "")  # fixed to match run.sh
+RADARR_API = os.getenv("RADARR_API", "")
 SONARR_URL = os.getenv("SONARR_URL", "")
-SONARR_API = os.getenv("SONARR_API_KEY", "")  # fixed to match run.sh
+SONARR_API = os.getenv("SONARR_API", "")
 
 RADARR_ENABLED = bool(RADARR_URL and RADARR_API)
 SONARR_ENABLED = bool(SONARR_URL and SONARR_API)
@@ -131,33 +130,20 @@ def longest_series():
     return f"📺 Longest Series: {title} — {seasons} seasons, {episodes} episodes", None
 
 # -----------------------------
-# Command Router (with fuzzy matching)
+# Command Router (additive fix: check both title and message)
 # -----------------------------
-def handle_arr_command(command: str):
-    cmd = command.lower().strip()
-
-    commands = {
-        "upcoming movies": upcoming_movies,
-        "upcoming films": upcoming_movies,
-        "movie count": movie_count,
-        "film count": movie_count,
-        "how many movies": movie_count,
-        "longest movie": longest_movie,
-        "longest film": longest_movie,
-        "upcoming series": upcoming_series,
-        "upcoming shows": upcoming_series,
-        "tv upcoming": upcoming_series,
-        "episodes coming": upcoming_series,
-        "series count": series_count,
-        "show count": series_count,
-        "how many series": series_count,
-        "longest series": longest_series,
-        "longest show": longest_series,
-        "longest tv": longest_series,
-    }
-
-    # Fuzzy match the closest known command
-    best_match, score = process.extractOne(cmd, commands.keys(), scorer=fuzz.ratio)
-    if score > 70:  # threshold to accept as match
-        return commands[best_match]()
+def handle_arr_command(command: str, title: str = ""):
+    cmd = f"{title} {command}".lower().strip()
+    if "upcoming movie" in cmd:
+        return upcoming_movies()
+    if "upcoming series" in cmd or "upcoming show" in cmd:
+        return upcoming_series()
+    if "how many movie" in cmd:
+        return movie_count()
+    if "how many show" in cmd or "how many series" in cmd:
+        return series_count()
+    if "longest movie" in cmd:
+        return longest_movie()
+    if "longest series" in cmd or "longest show" in cmd:
+        return longest_series()
     return f"🤖 Unknown command: {command}", None
