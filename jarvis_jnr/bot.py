@@ -107,6 +107,7 @@ def format_runtime(minutes):
         return "?"
 
 def get_greeting():
+    hour = datetime.now().hour
     greetings = [
         "🧠 Neural systems online — good day, Commander.",
         "⚡ Operational awareness at 100%.",
@@ -367,7 +368,7 @@ async def listen():
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
                         cmd = title.lower().replace("jarvis","",1).strip() if title.lower().startswith("jarvis") else message.lower().replace("jarvis","",1).strip()
                         
-                        # ✅ Help command (AI-style)
+                        # ✅ Help command
                         if cmd in ["help", "commands"]:
                             help_text = (
                                 "🤖 **Jarvis Jnr Command Matrix** 🤖\n\n"
@@ -388,16 +389,16 @@ async def listen():
                             send_message("Help", help_text)
                             continue
 
-                        # ✅ Weather routing FIRST
-                        if any(word in cmd for word in ["weather", "forecast", "temperature", "temp", "now", "today"]):
+                        # ✅ Weather routing
+                        if any(word in cmd for word in ["weather", "forecast", "temperature", "temp"]):
                             if "weather" in extra_modules:
                                 response, extras = extra_modules["weather"].handle_weather_command(cmd)
                                 if response:
                                     send_message("Weather", response, extras=extras)
                                     continue
                         
-                        # ✅ ARR routing LAST
-                        response, extras = handle_arr_command(cmd, message)
+                        # ✅ ARR routing
+                        response, extras = handle_arr_command(title, message)
                         if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
@@ -419,6 +420,8 @@ async def listen():
 # -----------------------------
 def try_load_module(modname, label, icon="🧩"):
     path = f"/app/{modname}.py"
+
+    # ✅ FIX: check env + options.json
     enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
     if not enabled:
         try:
@@ -427,6 +430,7 @@ def try_load_module(modname, label, icon="🧩"):
                 enabled = opts.get(f"{modname}_enabled", False)
         except:
             enabled = False
+
     if not os.path.exists(path) or not enabled:
         return None
     try:
