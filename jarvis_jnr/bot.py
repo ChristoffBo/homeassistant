@@ -214,6 +214,27 @@ def purge_all_messages():
         print(f"[{BOT_NAME}] ❌ Error purging Jarvis messages: {e}")
 
 # -----------------------------
+# Resolve app id (RESTORED)
+# -----------------------------
+def resolve_app_id():
+    global jarvis_app_id
+    print(f"[{BOT_NAME}] Resolving app ID for '{APP_NAME}'")
+    try:
+        url = f"{GOTIFY_URL}/application"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.get(url, headers=headers, timeout=5)
+        r.raise_for_status()
+        apps = r.json()
+        for app in apps:
+            if app.get("name") == APP_NAME:
+                jarvis_app_id = app.get("id")
+                print(f"[{BOT_NAME}] ✅ Found '{APP_NAME}' id={jarvis_app_id}")
+                return
+        print(f"[{BOT_NAME}] ❌ Could not find app '{APP_NAME}'")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
+
+# -----------------------------
 # Listener (with ARR fix)
 # -----------------------------
 async def listen():
@@ -260,6 +281,25 @@ def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
+
+# -----------------------------
+# Dynamic Module Loader
+# -----------------------------
+def try_load_module(modname, label, icon="🧩"):
+    path = f"/app/{modname}.py"
+    enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
+    if not os.path.exists(path) or not enabled:
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location(modname, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        extra_modules[modname] = module
+        print(f"[{BOT_NAME}] ✅ Loaded module: {modname}")
+        return f"{icon} {label}"
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Failed to load module {modname}: {e}")
+        return None
 
 # -----------------------------
 # Main
