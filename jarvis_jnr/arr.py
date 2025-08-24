@@ -185,13 +185,14 @@ COMMANDS = {
     "upcoming_series": upcoming_series,
 }
 
-def handle_arr_command(command: str):
-    cmd = command.lower().strip()
+def handle_arr_command(title: str, message: str):
+    # merge into a single command string
+    cmd = f"{title} {message}".lower().strip()
 
-    if cmd.startswith("jarvis"):
-        cmd = cmd.replace("jarvis", "", 1).strip()
     if cmd.startswith("jarvis jnr"):
         cmd = cmd.replace("jarvis jnr", "", 1).strip()
+    elif cmd.startswith("jarvis"):
+        cmd = cmd.replace("jarvis", "", 1).strip()
     if cmd.startswith("message"):
         cmd = cmd.replace("message", "", 1).strip()
 
@@ -207,4 +208,4 @@ def handle_arr_command(command: str):
         mapped = ALIASES.get(match[0], match[0])
         return COMMANDS[mapped]()
 
-    return f"🤖 Unknown command: {command}", None
+    return f"🤖 Unknown command: {cmd}", None
