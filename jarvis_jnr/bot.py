@@ -2,7 +2,6 @@ import os, json, time, asyncio, requests, websockets, schedule, random, re, yaml
 from tabulate import tabulate
 from datetime import datetime, timezone
 import importlib.util
-import threading
 
 # -----------------------------
 # Module imports (safe)
@@ -159,44 +158,6 @@ def purge_app_messages(appid, appname=""):
         print(f"[{BOT_NAME}] ❌ Error purging app {appid}: {e}")
         return False
 
-def purge_old_messages():
-    """Delete all messages older than retention_hours (including Jarvis's own)."""
-    global jarvis_app_id
-    try:
-        url = f"{GOTIFY_URL}/message"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=10)
-        if not r.ok: return
-        msgs = r.json()
-        cutoff = time.time() - (RETENTION_HOURS * 3600)
-        for m in msgs:
-            ts = m.get("date", "")
-            mid = m.get("id")
-            appid = m.get("appid")
-            if not ts or not mid: continue
-            try:
-                dt = datetime.fromisoformat(ts.replace("Z","+00:00")).timestamp()
-            except Exception:
-                continue
-            if dt < cutoff:
-                del_url = f"{GOTIFY_URL}/message/{mid}"
-                requests.delete(del_url, headers=headers, timeout=5)
-                print(f"[{BOT_NAME}] 🗑 Purged old message id={mid}")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Error purging old messages: {e}")
-
-def purge_original_message(mid):
-    """Delete a single non-Jarvis message after reposting (5s delay)."""
-    def _del():
-        try:
-            url = f"{GOTIFY_URL}/message/{mid}"
-            headers = {"X-Gotify-Key": CLIENT_TOKEN}
-            requests.delete(url, headers=headers, timeout=5)
-            print(f"[{BOT_NAME}] 🗑 Purged original message id={mid}")
-        except Exception as e:
-            print(f"[{BOT_NAME}] ❌ Failed to purge original msg id={mid}: {e}")
-    threading.Timer(5.0, _del).start()
-
 def purge_non_jarvis_apps():
     global jarvis_app_id
     if not jarvis_app_id:
@@ -322,7 +283,6 @@ def beautify_message(title, raw):
 # -----------------------------
 def run_scheduler():
     schedule.every(5).minutes.do(purge_non_jarvis_apps)
-    schedule.every(5).minutes.do(purge_old_messages)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -341,27 +301,21 @@ async def listen():
                 try:
                     data = json.loads(msg)
 
-                    # Ignore own messages
+                    # ADDITIVE FIX: ignore own messages
                     appid = data.get("appid")
                     if appid == jarvis_app_id:
                         continue
 
-                    mid = data.get("id")
                     title = data.get("title","")
                     message = data.get("message","")
-
                     if message.lower().startswith("jarvis"):
                         response, extras = handle_arr_command(message.replace("jarvis","",1).strip())
-                        if response:
-                            send_message("Jarvis", response, extras=extras)
-                        continue
-
+                        if response: send_message("Jarvis", response, extras=extras); continue
                     if BEAUTIFY_ENABLED:
                         final, extras = beautify_message(title, message)
-                        send_message(title, final, priority=5, extras=extras)
-                        if mid: purge_original_message(mid)
                     else:
-                        send_message(title, message, priority=5)
+                        final, extras = message, None
+                    send_message(title, final, priority=5, extras=extras)
                 except Exception as e:
                     print(f"[{BOT_NAME}] Error processing: {e}")
     except Exception as e:
@@ -401,7 +355,7 @@ if __name__ == "__main__":
         f"{greeting} — Boot sequence done",
     ]
     startup_message = random.choice(startup_msgs) + "\n\n" + get_settings_summary()
-    send_message("Startup", startup_message, priority=5)
+
     active = []
     if RADARR_ENABLED:
         active.append("🎬 Radarr")
@@ -422,9 +376,11 @@ if __name__ == "__main__":
         if loaded: active.append(loaded)
 
     if active:
-        send_message("Modules", "✅ Active Modules: " + ", ".join(active), priority=5)
+        startup_message += "\n\n✅ Active Modules: " + ", ".join(active)
     else:
-        send_message("Modules", "⚠️ No external modules enabled", priority=5)
+        startup_message += "\n\n⚠️ No external modules enabled"
+
+    send_message("Startup", startup_message, priority=5)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
