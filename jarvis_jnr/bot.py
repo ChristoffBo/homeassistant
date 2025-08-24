@@ -10,7 +10,7 @@ try:
     from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
 except Exception as e:
     print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}")
-    handle_arr_command = lambda cmd: ("⚠️ ARR module not available", None)
+    handle_arr_command = lambda title, msg: ("⚠️ ARR module not available", None)
     RADARR_ENABLED = False
     SONARR_ENABLED = False
     def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
@@ -235,7 +235,7 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
 # -----------------------------
-# Beautifiers (unchanged)
+# Beautifiers
 # -----------------------------
 def beautify_radarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
@@ -327,7 +327,7 @@ def run_scheduler():
         time.sleep(1)
 
 # -----------------------------
-# Listener
+# Listener (FIXED extraction)
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")
@@ -344,19 +344,19 @@ async def listen():
                         continue
                     title = data.get("title","")
                     message = data.get("message","")
-                    
-                    # -----------------------------
-                    # FIXED: extract clean command for arr
-                    # -----------------------------
-                    cmd = None
-                    if title.lower().startswith("jarvis"):
-                        cmd = title.lower().replace("jarvis","",1).strip()
-                    elif message.lower().startswith("jarvis"):
-                        cmd = message.lower().replace("jarvis","",1).strip()
-                    
+
+                    # --- FIX: Extract clean Jarvis command ---
+                    cmd = f"{title} {message}".lower().strip()
+                    if cmd.startswith("jarvis jnr"):
+                        cmd = cmd.replace("jarvis jnr","",1).strip()
+                    if cmd.startswith("jarvis"):
+                        cmd = cmd.replace("jarvis","",1).strip()
+                    if cmd.startswith("message"):
+                        cmd = cmd.replace("message","",1).strip()
+
                     if cmd:
-                        response, extras = handle_arr_command(cmd)
-                        if response: 
+                        response, extras = handle_arr_command("", cmd)
+                        if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
 
