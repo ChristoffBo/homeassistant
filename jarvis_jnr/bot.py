@@ -10,7 +10,7 @@ try:
     from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
 except Exception as e:
     print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}")
-    handle_arr_command = lambda cmd: ("⚠️ ARR module not available", None)
+    handle_arr_command = lambda title, message: ("⚠️ ARR module not available", None)
     RADARR_ENABLED = False
     SONARR_ENABLED = False
     def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
@@ -214,7 +214,120 @@ def purge_all_messages():
         print(f"[{BOT_NAME}] ❌ Error purging Jarvis messages: {e}")
 
 # -----------------------------
-# Listener (fixed with ARR routing)
+# Resolve app id
+# -----------------------------
+def resolve_app_id():
+    global jarvis_app_id
+    print(f"[{BOT_NAME}] Resolving app ID for '{APP_NAME}'")
+    try:
+        url = f"{GOTIFY_URL}/application"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.get(url, headers=headers, timeout=5)
+        r.raise_for_status()
+        apps = r.json()
+        for app in apps:
+            if app.get("name") == APP_NAME:
+                jarvis_app_id = app.get("id")
+                print(f"[{BOT_NAME}] ✅ Found '{APP_NAME}' id={jarvis_app_id}")
+                return
+        print(f"[{BOT_NAME}] ❌ Could not find app '{APP_NAME}'")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
+
+# -----------------------------
+# Beautifiers (unchanged)
+# -----------------------------
+def beautify_radarr(title, raw):
+    img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
+    img_url = img_match.group(1) if img_match else None
+    extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
+    try:
+        obj = json.loads(raw)
+        if "movie" in obj:
+            movie = obj["movie"].get("title", "Unknown Movie")
+            year = obj["movie"].get("year", "")
+            runtime = format_runtime(obj["movie"].get("runtime", 0))
+            quality = obj.get("release", {}).get("quality", "Unknown")
+            size = human_size(obj.get("release", {}).get("size", 0))
+            table = tabulate([[movie, year, runtime, quality, size]], headers=["Title","Year","Runtime","Quality","Size"], tablefmt="github")
+            if "importfailed" in raw.lower():
+                return f"⛔ RADARR IMPORT FAILED\n{table}", extras
+            return f"🎬 NEW MOVIE\n{table}", extras
+    except Exception:
+        pass
+    return f"📡 RADARR EVENT\n{raw}", extras
+
+def beautify_sonarr(title, raw):
+    img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
+    img_url = img_match.group(1) if img_match else None
+    extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
+    try:
+        obj = json.loads(raw)
+        if "episode" in obj:
+            series = obj.get("series", {}).get("title", "Unknown Series")
+            ep_title = obj["episode"].get("title", "Unknown Episode")
+            season = obj["episode"].get("seasonNumber", "?")
+            ep_num = obj["episode"].get("episodeNumber", "?")
+            runtime = format_runtime(obj["episode"].get("runtime", 0))
+            quality = obj.get("release", {}).get("quality", "Unknown")
+            size = human_size(obj.get("release", {}).get("size", 0))
+            table = tabulate([[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]], headers=["Series","Episode","Title","Runtime","Quality","Size"], tablefmt="github")
+            return f"📺 NEW EPISODE\n{table}", extras
+    except Exception:
+        pass
+    return f"📡 SONARR EVENT\n{raw}", extras
+
+def beautify_watchtower(title, raw):
+    return f"🐳 WATCHTOWER\n{raw}", None
+
+def beautify_semaphore(title, raw):
+    return f"📊 SEMAPHORE\n{raw}", None
+
+def beautify_json(title, raw):
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"📡 JSON EVENT\n{table}", None
+    except Exception:
+        return None, None
+    return None, None
+
+def beautify_yaml(title, raw):
+    try:
+        obj = yaml.safe_load(raw)
+        if isinstance(obj, dict):
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"📡 YAML EVENT\n{table}", None
+    except Exception:
+        return None, None
+    return None, None
+
+def beautify_generic(title, raw):
+    return f"🛰 MESSAGE\n{raw}", None
+
+def beautify_message(title, raw):
+    lower = raw.lower()
+    if "radarr" in lower: return beautify_radarr(title, raw)
+    if "sonarr" in lower: return beautify_sonarr(title, raw)
+    if "watchtower" in lower: return beautify_watchtower(title, raw)
+    if "semaphore" in lower: return beautify_semaphore(title, raw)
+    if beautify_json(title, raw)[0]: return beautify_json(title, raw)
+    if beautify_yaml(title, raw)[0]: return beautify_yaml(title, raw)
+    return beautify_generic(title, raw)
+
+# -----------------------------
+# Scheduler
+# -----------------------------
+def run_scheduler():
+    schedule.every(5).seconds.do(purge_non_jarvis_apps)
+    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# -----------------------------
+# Listener (with ARR command integration)
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")
@@ -229,35 +342,20 @@ async def listen():
                     appid = data.get("appid")
                     if appid == jarvis_app_id:
                         continue
-
                     title = data.get("title","")
                     message = data.get("message","")
+                    
+                    # Pass both title and message to ARR command handler
+                    response, extras = handle_arr_command(title, message)
+                    if response:
+                        send_message("Jarvis", response, extras=extras)
+                        continue
 
-                    # -----------------------------
-                    # FIX: Command handling for ARR
-                    # -----------------------------
-                    cmd = None
-                    if title.lower().startswith("jarvis"):
-                        cmd = title.lower().replace("jarvis","",1).strip()
-                    elif message.lower().startswith("jarvis"):
-                        cmd = message.lower().replace("jarvis","",1).strip()
-
-                    if cmd:
-                        response, extras = handle_arr_command(cmd)
-                        if response:
-                            send_message("Jarvis", response, extras=extras)
-                            continue
-
-                    # -----------------------------
-                    # Beautify / fallback
-                    # -----------------------------
                     if BEAUTIFY_ENABLED:
-                        final, extras = message, None
+                        final, extras = beautify_message(title, message)
                     else:
                         final, extras = message, None
-
                     send_message(title, final, priority=5, extras=extras)
-
                 except Exception as e:
                     print(f"[{BOT_NAME}] Error processing: {e}")
     except Exception as e:
@@ -285,27 +383,46 @@ def try_load_module(modname, label, icon="🧩"):
         return None
 
 # -----------------------------
-# Scheduler
-# -----------------------------
-def run_scheduler():
-    schedule.every(5).seconds.do(purge_non_jarvis_apps)
-    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-# -----------------------------
 # Main
 # -----------------------------
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on…")
+    resolve_app_id()
     greeting = get_greeting()
-    startup_message = random.choice([
+    startup_msgs = [
+        f"{greeting}, Commander! 🤖 Jarvis Jnr is online",
         f"{greeting} — Systems check complete",
         f"{greeting} — Boot sequence done",
-        f"{greeting} — Your AI assistant is awake"
-    ]) + "\n\n" + get_settings_summary()
-
+        f"{greeting} — Awaiting your first command",
+        f"{greeting} — Online and operational",
+        f"{greeting} — Ready to execute tasks",
+        f"{greeting} — AI systems stable",
+        f"{greeting} — All modules nominal",
+        f"{greeting} — Standing by",
+        f"{greeting} — Boot complete, monitoring systems",
+        f"{greeting} — Your AI assistant is awake",
+        f"{greeting} — Self-check passed, ready for input",
+        f"{greeting} — Neural routines initialized",
+        f"{greeting} — Connected and synchronized",
+        f"{greeting} — Logging initialized",
+        f"{greeting} — Status: Green across all systems",
+        f"{greeting} — No anomalies detected",
+        f"{greeting} — Communication link established",
+        f"{greeting} — Directives loaded",
+        f"{greeting} — Mission parameters clear",
+        f"{greeting} — AI cognition stable",
+        f"{greeting} — Situational awareness online",
+        f"{greeting} — All channels monitored",
+        f"{greeting} — Power levels optimal",
+        f"{greeting} — Data streams stable",
+        f"{greeting} — Integrity checks clean",
+        f"{greeting} — Running smooth, no errors",
+        f"{greeting} — Fully locked and synchronized",
+        f"{greeting} — Central core running optimal",
+        f"{greeting} — Handshake complete, commander",
+        f"{greeting} — Prepared for system oversight",
+    ]
+    startup_message = random.choice(startup_msgs) + "\n\n" + get_settings_summary()
     active = []
     if RADARR_ENABLED:
         active.append("🎬 Radarr")
@@ -315,7 +432,6 @@ if __name__ == "__main__":
         active.append("📺 Sonarr")
         try: cache_sonarr()
         except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed {e}")
-
     for mod, label, icon in [
         ("chat", "Chat", "💬"),
         ("weather", "Weather", "🌦"),
@@ -323,14 +439,11 @@ if __name__ == "__main__":
     ]:
         loaded = try_load_module(mod, label, icon)
         if loaded: active.append(loaded)
-
     if active:
         startup_message += "\n\n✅ Active Modules: " + ", ".join(active)
     else:
         startup_message += "\n\n⚠️ No external modules enabled"
-
     send_message("Startup", startup_message, priority=5)
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
