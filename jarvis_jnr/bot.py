@@ -3,9 +3,17 @@ from tabulate import tabulate
 from datetime import datetime, timezone
 
 # -----------------------------
-# Module imports
+# Module imports (safe)
 # -----------------------------
-from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
+try:
+    from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
+except Exception as e:
+    print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}")
+    handle_arr_command = lambda cmd: ("⚠️ ARR module not available", None)
+    RADARR_ENABLED = False
+    SONARR_ENABLED = False
+    def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
+    def cache_sonarr(): print("[Jarvis Jnr] ⚠️ Sonarr cache not available")
 
 # -----------------------------
 # Config from environment (set in run.sh from options.json)
@@ -180,7 +188,6 @@ def beautify_radarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
     extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
-
     try:
         obj = json.loads(raw)
         if "movie" in obj:
@@ -189,22 +196,18 @@ def beautify_radarr(title, raw):
             runtime = format_runtime(obj["movie"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = human_size(obj.get("release", {}).get("size", 0))
-
             table = tabulate(
                 [[movie, year, runtime, quality, size]],
                 headers=["Title", "Year", "Runtime", "Quality", "Size"],
                 tablefmt="github"
             )
-
             if "importfailed" in raw.lower():
                 msg = f"⛔ RADARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
                 return msg, extras
-
             msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Added to collection"
             return msg, extras
     except Exception:
         pass
-
     if "importfailed" in raw.lower() or "error" in raw.lower():
         msg = f"⛔ RADARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
     elif any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
@@ -217,7 +220,6 @@ def beautify_sonarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
     extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
-
     try:
         obj = json.loads(raw)
         if "episode" in obj:
@@ -228,26 +230,21 @@ def beautify_sonarr(title, raw):
             runtime = format_runtime(obj["episode"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = human_size(obj.get("release", {}).get("size", 0))
-
             table = tabulate(
                 [[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]],
                 headers=["Series", "Episode", "Title", "Runtime", "Quality", "Size"],
                 tablefmt="github"
             )
-
             if "importfailed" in raw.lower():
                 msg = f"⛔ SONARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
                 return msg, extras
-
             if "subtitle" in raw.lower():
                 msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Subtitles available"
                 return msg, extras
-
             msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Ready for streaming"
             return msg, extras
     except Exception:
         pass
-
     if "importfailed" in raw.lower() or "error" in raw.lower():
         msg = f"⛔ SONARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
     elif "subtitle" in raw.lower():
@@ -278,7 +275,6 @@ def beautify_message(title, raw):
         result, extras = beautify_yaml(title, raw)
     else:
         result, extras = beautify_generic(title, raw)
-
     closings = [
         "🧠 Analysis complete — Jarvis Jnr",
         "⚡ Task executed at optimal efficiency",
@@ -400,15 +396,4 @@ if __name__ == "__main__":
         active_modules.append("📺 Sonarr")
         cache_sonarr()
     if active_modules:
-        send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=5)
-    else:
-        send_message("Modules", "⚠️ No external modules enabled", priority=5)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.create_task(listen())
-    loop.run_in_executor(None, run_scheduler)
-
-    print(f"[{BOT_NAME}] Event loop started.")
-    loop.run_forever()
+        send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=
