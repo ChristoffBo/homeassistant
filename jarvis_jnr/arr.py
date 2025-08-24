@@ -2,6 +2,7 @@ import os
 import requests
 import datetime
 from tabulate import tabulate
+import difflib  # NEW: for fuzzy matching
 
 # -----------------------------
 # Config from environment
@@ -137,20 +138,44 @@ def longest_series():
     return f"📺 Longest Series: {title} — {seasons} seasons, {episodes} episodes", None
 
 # -----------------------------
-# Command Router
+# Command Router with Fuzzy Matching
 # -----------------------------
+COMMANDS = {
+    "upcoming movies": upcoming_movies,
+    "upcoming series": upcoming_series,
+    "movie count": movie_count,
+    "series count": series_count,
+    "longest movie": longest_movie,
+    "longest series": longest_series,
+}
+
+ALIASES = {
+    "movies count": "movie count",
+    "how many movies": "movie count",
+    "films total": "movie count",
+    "shows count": "series count",
+    "how many shows": "series count",
+    "tv count": "series count",
+    "longest film": "longest movie",
+    "biggest runtime movie": "longest movie",
+    "biggest show": "longest series",
+    "longest show": "longest series",
+}
+
 def handle_arr_command(command: str):
     cmd = command.lower().strip()
-    if "upcoming movie" in cmd:
-        return upcoming_movies()
-    if "upcoming series" in cmd or "upcoming show" in cmd:
-        return upcoming_series()
-    if "how many movie" in cmd or "movie count" in cmd:
-        return movie_count()
-    if "how many show" in cmd or "how many series" in cmd or "series count" in cmd:
-        return series_count()
-    if "longest movie" in cmd:
-        return longest_movie()
-    if "longest series" in cmd or "longest show" in cmd:
-        return longest_series()
+    if cmd in ALIASES:
+        cmd = ALIASES[cmd]
+
+    # Exact match
+    if cmd in COMMANDS:
+        return COMMANDS[cmd]()
+
+    # Fuzzy match
+    possibilities = list(COMMANDS.keys()) + list(ALIASES.keys())
+    match = difflib.get_close_matches(cmd, possibilities, n=1, cutoff=0.6)
+    if match:
+        mapped = ALIASES.get(match[0], match[0])
+        return COMMANDS[mapped]()
+
     return f"🤖 Unknown command: {command}", None
