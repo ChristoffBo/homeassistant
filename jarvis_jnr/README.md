@@ -1,4 +1,4 @@
-Jarvis Jnr is a Home Assistant add-on that connects to your Gotify server, watches incoming messages, beautifies them, reposts the formatted version, and can execute simple commands (wake-word style). It also enforces message retention and supports optional modules (Weather, Radarr, Sonarr). This is an alpha build. Features and modules may change in future versions.
+Jarvis Jnr is a Home Assistant add-on that connects to your Gotify server, watches incoming messages, beautifies them, reposts the formatted version, and can execute simple commands (wake-word style). It also enforces message retention and supports optional modules (Weather, Radarr, Sonarr,quips coming soon). This is an alpha build. Features and modules may change in future versions.
 
 ✅ Features
 Beautifies messages (delete + repost formatted)
