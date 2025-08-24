@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 # Module imports (safe)
 # -----------------------------
 try:
-    from arr import handle_arr_command, RADARR_ENABLED as ARR_RADARR, SONARR_ENABLED as ARR_SONARR, cache_radarr, cache_sonarr
+    from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
 except Exception as e:
     print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}")
     handle_arr_command = lambda cmd: ("⚠️ ARR module not available", None)
-    ARR_RADARR = False
-    ARR_SONARR = False
+    RADARR_ENABLED = False
+    SONARR_ENABLED = False
     def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
     def cache_sonarr(): print("[Jarvis Jnr] ⚠️ Sonarr cache not available")
 
@@ -22,20 +22,12 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
-APP_TOKEN = os.getenv("APP_TOKEN")
+APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
-
-# 🔧 Pull module toggles from options.json/env
-RADARR_ENABLED_OPT = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes", "on")
-SONARR_ENABLED_OPT = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes", "on")
-
-# Effective states = env toggle AND arr module capability
-RADARR_ENABLED = ARR_RADARR and RADARR_ENABLED_OPT
-SONARR_ENABLED = ARR_SONARR and SONARR_ENABLED_OPT
 
 jarvis_app_id = None  # resolved on startup
 
@@ -62,7 +54,7 @@ def colorize(text, level="info"):
     return f"{ANSI['cyan']}{text}{ANSI['reset']}"
 
 # -----------------------------
-# Helpers: Human-readable size, runtime, greeting
+# Helpers: Human-readable size, runtime
 # -----------------------------
 def human_size(num, suffix="B"):
     try:
@@ -86,15 +78,6 @@ def format_runtime(minutes):
         return f"{mins}m"
     except Exception:
         return "?"
-
-def get_greeting():
-    hour = datetime.now().hour
-    if hour < 12:
-        return "☀️ Good morning"
-    elif hour < 18:
-        return "🌤 Good afternoon"
-    else:
-        return "🌙 Good evening"
 
 # -----------------------------
 # Send message (with APP token, supports extras)
@@ -306,6 +289,7 @@ def beautify_json(title, raw):
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict):
+            # Apply human-size/runtime if keys exist
             pretty_obj = {}
             for k, v in obj.items():
                 if "size" in k.lower():
@@ -471,15 +455,12 @@ if __name__ == "__main__":
 
     resolve_app_id()
 
-    greeting = get_greeting()
-    send_message("Greeting", f"{greeting}, Commander! Jarvis Jnr reporting for duty.", priority=5)
-
     startup_msgs = [
-        f"{greeting}, Commander!\n╾━━━━━━━━━━━━━━━━╼\n🤖 Jarvis Jnr is online\n🛡 Defense protocols armed\n🧠 Intelligence kernel active",
-        f"{greeting} — Systems Check Complete\n╾━━━━━━━━━━━━━━━━╼\n✅ Diagnostics clean\n📂 Knowledge base loaded\n📡 Event pipeline secure",
-        f"{greeting} — Link Established\n╾━━━━━━━━━━━━━━━━╼\n🌐 Network sync stable\n⚡ Rapid response ready\n🔒 Encryption validated",
-        f"{greeting} — Core Engaged\n╾━━━━━━━━━━━━━━━━╼\n📊 Metrics calibrated\n🔭 Horizon scan clear\n🎯 Objective lock established",
-        f"{greeting} — Boot Sequence Complete\n╾━━━━━━━━━━━━━━━━╼\n🔧 Subsystems aligned\n📡 Channels open\n👑 Jarvis Jnr reporting for duty",
+        "🤖 JARVIS JNR INITIALIZED\n╾━━━━━━━━━━━━━━━━╼\n📡 Systems Online\n🛡 Defense protocols armed\n🧠 Intelligence kernel active",
+        "🚀 BOOT COMPLETE\n╾━━━━━━━━━━━━━━━━╼\n✅ Diagnostics clean\n📂 Knowledge base loaded\n📡 Event pipeline secure",
+        "🛰 UPLINK ESTABLISHED\n╾━━━━━━━━━━━━━━━━╼\n🌐 Network sync stable\n⚡ Rapid response ready\n🔒 Encryption validated",
+        "🧠 CORE ONLINE\n╾━━━━━━━━━━━━━━━━╼\n📊 Metrics calibrated\n🔭 Horizon scan clear\n🎯 Objective lock established",
+        "✨ AI BOOT SEQUENCE\n╾━━━━━━━━━━━━━━━━╼\n🔧 Subsystems aligned\n📡 Channels open\n👑 Jarvis Jnr reporting for duty",
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
 
@@ -493,7 +474,6 @@ if __name__ == "__main__":
         active_modules.append("📺 Sonarr")
         try: cache_sonarr()
         except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed: {e}")
-
     if active_modules:
         send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=5)
     else:
