@@ -1,6 +1,7 @@
 import os, json, time, asyncio, requests, websockets, schedule, random, re, yaml
 from tabulate import tabulate
 from datetime import datetime, timezone
+import importlib.util
 
 # -----------------------------
 # Module imports (safe)
@@ -30,6 +31,7 @@ SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
 jarvis_app_id = None  # resolved on startup
+extra_modules = {}    # holds dynamically loaded modules
 
 # -----------------------------
 # ANSI Colors
@@ -305,6 +307,25 @@ async def listen():
         await listen()
 
 # -----------------------------
+# Dynamic Module Loader
+# -----------------------------
+def try_load_module(modname, label, icon="🧩"):
+    path = f"/app/{modname}.py"
+    enabled = os.getenv(f"{modname.upper()}_ENABLED", "false").lower() in ("1", "true", "yes")
+    if not os.path.exists(path) or not enabled:
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location(modname, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        extra_modules[modname] = module
+        print(f"[{BOT_NAME}] ✅ Loaded module: {modname}")
+        return f"{icon} {label}"
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Failed to load module {modname}: {e}")
+        return None
+
+# -----------------------------
 # Main
 # -----------------------------
 if __name__ == "__main__":
@@ -326,10 +347,21 @@ if __name__ == "__main__":
         active.append("📺 Sonarr")
         try: cache_sonarr()
         except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed {e}")
+
+    # Dynamically check optional modules
+    for mod, label, icon in [
+        ("chat", "Chat", "💬"),
+        ("weather", "Weather", "🌦"),
+        ("digest", "Digest", "📰"),
+    ]:
+        loaded = try_load_module(mod, label, icon)
+        if loaded: active.append(loaded)
+
     if active:
         send_message("Modules", "✅ Active Modules: " + ", ".join(active), priority=5)
     else:
         send_message("Modules", "⚠️ No external modules enabled", priority=5)
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
