@@ -3,7 +3,7 @@ from tabulate import tabulate
 from datetime import datetime, timezone
 
 # -----------------------------
-# Config
+# Config from environment (set in run.sh from options.json)
 # -----------------------------
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
@@ -16,9 +16,11 @@ RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
 SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
-jarvis_app_id = None
+jarvis_app_id = None  # resolved on startup
 
-# ANSI color codes
+# -----------------------------
+# ANSI Colors
+# -----------------------------
 ANSI = {
     "reset": "\033[0m",
     "bold": "\033[1m",
@@ -39,7 +41,7 @@ def colorize(text, level="info"):
     return f"{ANSI['cyan']}{text}{ANSI['reset']}"
 
 # -----------------------------
-# Send message
+# Send message (with APP token)
 # -----------------------------
 def send_message(title, message, priority=5):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -51,198 +53,335 @@ def send_message(title, message, priority=5):
     try:
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
+        print(f"[{BOT_NAME}] ✅ Sent beautified: {title}")
         return True
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ send_message failed: {e}")
+        print(f"[{BOT_NAME}] ❌ Failed to send message: {e}")
         return False
 
 # -----------------------------
-# Purge helpers
+# Purge all messages for a specific app (non-Jarvis)
 # -----------------------------
-def purge_app_messages(appid):
+def purge_app_messages(appid, appname=""):
+    if not appid:
+        return False
     url = f"{GOTIFY_URL}/application/{appid}/message"
     headers = {"X-Gotify-Key": CLIENT_TOKEN}
     try:
-        requests.delete(url, headers=headers, timeout=10)
+        r = requests.delete(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] 🗑 Purged all messages from app '{appname}' (id={appid})")
+            return True
+        else:
+            print(f"[{BOT_NAME}] ❌ Purge failed for app '{appname}' (id={appid}): {r.status_code} {r.text}")
+            return False
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ purge_app_messages failed: {e}")
+        print(f"[{BOT_NAME}] ❌ Error purging app {appid}: {e}")
+        return False
 
+# -----------------------------
+# Purge all non-Jarvis apps
+# -----------------------------
 def purge_non_jarvis_apps():
     global jarvis_app_id
     if not jarvis_app_id:
+        print(f"[{BOT_NAME}] ⚠️ Jarvis app_id not resolved, cannot purge non-Jarvis apps")
         return
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
         r = requests.get(url, headers=headers, timeout=5)
-        for app in r.json():
-            if app.get("id") != jarvis_app_id:
-                purge_app_messages(app.get("id"))
+        r.raise_for_status()
+        apps = r.json()
+        for app in apps:
+            appid = app.get("id")
+            name = app.get("name")
+            if appid != jarvis_app_id:
+                purge_app_messages(appid, name)
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ purge_non_jarvis_apps failed: {e}")
-
-def purge_old_messages():
-    url = f"{GOTIFY_URL}/message"
-    headers = {"X-Gotify-Key": CLIENT_TOKEN}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        messages = r.json().get("messages", [])
-        now = datetime.now(timezone.utc).timestamp()
-        cutoff = now - (RETENTION_HOURS * 3600)
-        for msg in messages:
-            ts = msg.get("date")
-            if ts:
-                msg_time = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-                if msg_time < cutoff:
-                    del_url = f"{GOTIFY_URL}/message/{msg['id']}"
-                    requests.delete(del_url, headers=headers, timeout=5)
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ purge_old_messages failed: {e}")
+        print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
 # -----------------------------
-# Resolve app_id
+# Resolve numeric app_id for Jarvis app
 # -----------------------------
 def resolve_app_id():
     global jarvis_app_id
+    print(f"[{BOT_NAME}] Resolving app ID for app name: '{APP_NAME}'")
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
         r = requests.get(url, headers=headers, timeout=5)
-        for app in r.json():
+        r.raise_for_status()
+        apps = r.json()
+        for app in apps:
+            print(f"[{BOT_NAME}] Found app '{app.get('name')}' (id={app.get('id')})")
             if app.get("name") == APP_NAME:
                 jarvis_app_id = app.get("id")
+                print(f"[{BOT_NAME}] ✅ MATCHED: '{APP_NAME}' -> id={jarvis_app_id}")
+                return
+        print(f"[{BOT_NAME}] ❌ WARNING: Could not find app '{APP_NAME}'")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ resolve_app_id failed: {e}")
+        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
 # -----------------------------
-# Beautifier (shortened here - unchanged from before)
+# Beautifier modules
+# -----------------------------
+def beautify_radarr(title, raw):
+    return f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n🎞 {raw}\n\n🟢 SUCCESS: Added to collection"
+
+def beautify_sonarr(title, raw):
+    return f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n📌 {raw}\n\n🟢 SUCCESS: Ready for streaming"
+
+def beautify_watchtower(title, raw):
+    match = re.search(r"([\w./-]+):([\w.-]+)", raw)
+    image = match.group(0) if match else "Unknown"
+    if "error" in raw.lower() or "failed" in raw.lower():
+        return f"⛔ CONTAINER UPDATE FAILED\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🔴 ERROR: {raw}\n\n🛠 Action → Verify image or registry"
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return f"🐳 CONTAINER UPDATE\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🕒 Time: {now_str}\n\n🟢 SUCCESS: Container restarted successfully"
+
+def beautify_semaphore(title, raw):
+    playbook = re.search(r"Playbook:\s*(.+)", raw)
+    host = re.search(r"Host:\s*(.+)", raw)
+    status = re.search(r"Status:\s*(.+)", raw)
+    pb_val = playbook.group(1) if playbook else "Unknown"
+    host_val = host.group(1) if host else "Unknown"
+    status_val = status.group(1).upper() if status else "UNKNOWN"
+    if "FAIL" in status_val or "ERROR" in status_val:
+        return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🔴 Status: {status_val}\n\n🛠 Action → Investigate failure"
+    return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🟢 Status: {status_val}\n\n✨ All tasks completed successfully"
+
+def beautify_json(title, raw):
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"📡 JSON EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}"
+    except Exception:
+        return None
+    return None
+
+def beautify_yaml(title, raw):
+    try:
+        obj = yaml.safe_load(raw)
+        if isinstance(obj, dict):
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"📡 YAML EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}"
+    except Exception:
+        return None
+    return None
+
+def beautify_generic(title, raw):
+    if "error" in raw.lower():
+        return f"⛔ ERROR DETECTED\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'error')}"
+    if "success" in raw.lower():
+        return f"✅ SUCCESS\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'success')}"
+    if "warning" in raw.lower():
+        return f"⚠ WARNING\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'warn')}"
+    return f"🛰 MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
+
+# -----------------------------
+# Main beautifier router
 # -----------------------------
 def beautify_message(title, raw):
-    # (keeping previous beautify code unchanged for brevity in this snippet)
-    formatted = f"🛰 SYSTEM MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'info')}"
+    lower = raw.lower()
+    result = None
+    if "radarr" in lower:
+        result = beautify_radarr(title, raw)
+    elif "sonarr" in lower:
+        result = beautify_sonarr(title, raw)
+    elif "watchtower" in lower or "docker" in lower:
+        result = beautify_watchtower(title, raw)
+    elif "playbook" in lower or "semaphore" in lower:
+        result = beautify_semaphore(title, raw)
+    elif beautify_json(title, raw):
+        result = beautify_json(title, raw)
+    elif beautify_yaml(title, raw):
+        result = beautify_yaml(title, raw)
+    else:
+        result = beautify_generic(title, raw)
 
     closings = [
         "🧠 Analysis complete — Jarvis Jnr",
         "⚡ Task executed at optimal efficiency",
-        "✅ Operation verified by Jarvis Jnr",
+        "✅ Operation verified — Jarvis Jnr",
         "🛰 Transmission relayed successfully",
         "📊 Report compiled and archived",
-        "🔍 Inspection concluded — no anomalies detected",
-        "⚙️ Automated by Jarvis Jnr",
+        "🔍 Inspection concluded — no anomalies",
+        "⚙️ Automated response — Jarvis Jnr",
         "📡 Standing by for further input",
-        "🖥 Process logged in system memory",
+        "🖥 Process logged in memory",
         "🔒 Secure execution confirmed",
         "🌐 Status synchronized across network",
         "🚀 Operation finished — systems nominal",
-        "🧩 Adaptive workflow completed",
-        "🔧 Diagnostics concluded — stable",
-        "📢 Notification delivered by AI core",
+        "🧩 Adaptive workflow complete",
+        "🔧 Diagnostics stable",
+        "📢 Notification delivered — AI core",
         "🎯 Objective reached successfully",
-        "🔋 Energy levels optimal — continuing operations",
-        "🛡 Defensive protocols maintained",
+        "🔋 Energy levels optimal",
+        "🛡 Defensive protocols active",
         "📎 Documented for future reference",
-        "🏷 Tagged and indexed by Jarvis",
+        "🏷 Indexed by Jarvis Jnr",
         "⏱ Execution time recorded",
         "📂 Archived in knowledge base",
         "🧑‍💻 Operator assistance provided",
-        "🗂 Classified and stored securely",
-        "🗝 Access log updated — all secure",
-        "👁 Visual scan of event completed",
+        "🗂 Data classified securely",
+        "🗝 Access log updated",
+        "👁 Visual scan completed",
         "🛠 AI maintenance cycle closed",
-        "💡 No anomalies detected at this stage",
+        "💡 No anomalies detected",
         "✨ End of report — Jarvis Jnr",
-        "🤖 Yours truly, Jarvis Jnr",
+        "🤖 Yours truly — Jarvis Jnr",
+        "🧬 Neural pathways stable",
+        "🛰 Signal integrity verified",
+        "⚡ Latency minimized",
+        "🔭 Horizon scan clear",
+        "📡 Event pipeline secure",
+        "🛡 Notification shield active",
+        "🎛 Systems calibrated",
+        "🔓 Trust chain validated",
+        "🧠 Pattern recognition complete",
+        "📊 Metrics logged",
+        "🔍 Deep scan finished",
+        "⚙️ Self-adjustment executed",
+        "🛰 Orbit stabilized",
+        "🚨 Alert cycle completed",
+        "📡 Transmission closed",
+        "🔒 Encryption maintained",
+        "🧩 Modular process complete",
+        "📢 Event cycle terminated",
+        "🎯 Precision maintained",
+        "🔧 Maintenance complete",
+        "🛠 Systems checked",
+        "📂 Data safely stored",
+        "👑 Signed by Jarvis Jnr AI",
     ]
-    return f"{formatted}\n\n{random.choice(closings)}"
+    return f"{result}\n\n{random.choice(closings)}"
 
 # -----------------------------
-# Scheduler
+# Scheduled cleanup
 # -----------------------------
 def run_scheduler():
-    schedule.every(10).minutes.do(purge_old_messages)
-    if BEAUTIFY_ENABLED:
-        schedule.every(5).minutes.do(purge_non_jarvis_apps)
+    schedule.every(5).minutes.do(purge_non_jarvis_apps)
     while True:
         schedule.run_pending()
         time.sleep(1)
 
 # -----------------------------
-# Listener
+# Main async listener
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
     ws_url += f"/stream?token={CLIENT_TOKEN}"
+    print(f"[{BOT_NAME}] Connecting to {ws_url}...")
 
-    while True:
-        try:
-            async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
-                async for msg in ws:
-                    try:
-                        data = json.loads(msg)
-                        appid = data.get("appid")
-                        message = data.get("message", "")
-                        extras = data.get("extras", {})
+    try:
+        async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
+            print(f"[{BOT_NAME}] ✅ Connected! Listening for messages...")
 
-                        if jarvis_app_id and appid == jarvis_app_id:
-                            continue
+            async for msg in ws:
+                try:
+                    data = json.loads(msg)
+                    mid = data.get("id")
+                    appid = data.get("appid")
+                    title = data.get("title", "")
+                    message = data.get("message", "")
 
-                        has_image = extras.get("client::display", {}).get("image") if extras else False
+                    print(f"[{BOT_NAME}] Incoming message id={mid}, appid={appid}, title='{title}'")
 
-                        if BEAUTIFY_ENABLED:
-                            final_msg = beautify_message(data.get("title", ""), message)
-                            repost_priority = 0 if SILENT_REPOST else 5
-                            if send_message(data.get("title", ""), final_msg, priority=repost_priority):
-                                if not has_image:
-                                    purge_non_jarvis_apps()
-                        else:
-                            print(f"[{BOT_NAME}] Beautify disabled — keeping original")
-                    except Exception as e:
-                        print(f"[{BOT_NAME}] ❌ Error processing message: {e}")
-        except Exception as e:
-            print(f"[{BOT_NAME}] ❌ WebSocket connection failed: {e}")
-            await asyncio.sleep(10)
+                    # Skip Jarvis's own messages
+                    if jarvis_app_id and appid == jarvis_app_id:
+                        print(f"[{BOT_NAME}] Skipping own message id={mid}")
+                        continue
+
+                    # Beautify if enabled
+                    if BEAUTIFY_ENABLED:
+                        final_msg = beautify_message(title, message)
+                    else:
+                        final_msg = message
+
+                    repost_priority = 0 if SILENT_REPOST else 5
+                    send_success = send_message(title, final_msg, priority=repost_priority)
+
+                    if send_success:
+                        print(f"[{BOT_NAME}] ✅ Reposted beautified message")
+                        purge_non_jarvis_apps()
+
+                except Exception as e:
+                    print(f"[{BOT_NAME}] ❌ Error processing message: {e}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ WebSocket connection failed: {e}")
+        await asyncio.sleep(10)
+        await listen()
 
 # -----------------------------
-# Entrypoint
+# Main entrypoint
 # -----------------------------
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on...")
+
     resolve_app_id()
+
     startup_msgs = [
-        "🤖 JARVIS JNR ONLINE\n╾━━━━━━━━━━━━━━━━╼\n👑 Ready to rule notifications\n📡 Listening for events\n⚡ Systems nominal\n\n🧠 Standing by",
-        "🚀 BOOT COMPLETE\n╾━━━━━━━━━━━━━━━━╼\n✅ Initialization finished\n📡 Awaiting input\n⚡ Operational",
-        "🛰 SYSTEM STARTUP\n╾━━━━━━━━━━━━━━━━╼\n🤖 Core AI online\n📊 Monitoring engaged\n🛡 Defensive protocols active",
-        "✅ ALL SYSTEMS NOMINAL\n╾━━━━━━━━━━━━━━━━╼\n🖥 Core AI running\n📡 Event stream open\n🔋 Power levels stable",
-        "📡 SYNC COMPLETE\n╾━━━━━━━━━━━━━━━━╼\n⚙️ Notification pipeline active\n🛡 Watching infrastructure\n🧠 Adaptive intelligence online",
-        "🌐 NETWORK READY\n╾━━━━━━━━━━━━━━━━╼\n📡 Gotify stream connected\n🛰 Jarvis Jnr listening\n⚡ Awaiting instructions",
-        "✨ BOOT SEQUENCE COMPLETE\n╾━━━━━━━━━━━━━━━━╼\n✅ Initialization finished\n🧠 Intelligence core ready\n📡 Events inbound",
-        "🔧 INITIALIZATION DONE\n╾━━━━━━━━━━━━━━━━╼\n📊 Subsystems engaged\n🛰 AI standing by\n🚀 Systems at velocity",
-        "📊 STATUS: ONLINE\n╾━━━━━━━━━━━━━━━━╼\n🖥 Console active\n📡 Events visible\n⚡ AI operator present",
-        "🛡 SHIELDING ENABLED\n╾━━━━━━━━━━━━━━━━╼\n✅ Event protection\n📡 Core systems online\n🤖 Jarvis Jnr standing by",
-        "⚡ POWER OPTIMAL\n╾━━━━━━━━━━━━━━━━╼\n🔋 Energy flow stable\n📡 Event link active\n🧠 Neural routines online",
-        "🔍 SELF-CHECK PASSED\n╾━━━━━━━━━━━━━━━━╼\n✅ Diagnostics clean\n⚡ Performance optimal\n📡 Ready to process",
-        "🌟 AI READY\n╾━━━━━━━━━━━━━━━━╼\n🤖 Jarvis Jnr awakened\n📡 Standing watch\n🛡 Securing notifications",
-        "🚨 ALERT MODE READY\n╾━━━━━━━━━━━━━━━━╼\n📡 Streams locked\n🛡 Monitoring enabled\n⚡ Response instant",
-        "📂 KNOWLEDGE BASE LOADED\n╾━━━━━━━━━━━━━━━━╼\n📡 Input channels ready\n🧠 AI processing active\n✨ Standing by",
-        "🎯 TARGET LOCKED\n╾━━━━━━━━━━━━━━━━╼\n⚡ Awaiting next instruction\n🤖 Jarvis Jnr ready\n📡 Notifications inbound",
-        "🛰 UPLINK STABLE\n╾━━━━━━━━━━━━━━━━╼\n📡 Gotify stream secure\n🛡 AI operational\n⚡ Fully online",
-        "✨ OPERATIONAL CYCLE STARTED\n╾━━━━━━━━━━━━━━━━╼\n🧠 AI core ready\n📡 Monitoring flows\n🚀 Standing by",
-        "📊 DATA STREAM OPEN\n╾━━━━━━━━━━━━━━━━╼\n📡 Listening to events\n🧠 AI parsing engaged\n⚡ Secure link stable",
-        "🔒 SECURITY MODE ACTIVE\n╾━━━━━━━━━━━━━━━━╼\n🛡 Jarvis Jnr guarding events\n📡 Uplink confirmed\n⚡ All green",
-        "📡 STREAM INIT\n╾━━━━━━━━━━━━━━━━╼\n🤖 Notifications will be managed\n🧠 AI safeguards online\n⚡ Stability ensured",
-        "🛰 CONNECTION LIVE\n╾━━━━━━━━━━━━━━━━╼\n📡 Data link to Gotify secured\n🛡 Monitoring pipelines\n🤖 Jarvis Jnr vigilant",
-        "🚀 AI ENGAGED\n╾━━━━━━━━━━━━━━━━╼\n📊 Neural cores aligned\n🛡 Systems protected\n📡 Jarvis Jnr standing by",
-        "🔎 STATUS: READY\n╾━━━━━━━━━━━━━━━━╼\n📡 Stream validated\n🧠 AI analysis online\n⚡ Secure operations",
-        "🌌 STARLINK READY\n╾━━━━━━━━━━━━━━━━╼\n📡 Notifications pipeline glowing\n🧠 AI aligned\n🚀 All modules active",
-        "🛠 MODULES READY\n╾━━━━━━━━━━━━━━━━╼\n⚡ Neural subroutines linked\n📡 Input channels clean\n🤖 Core AI steady",
-        "🎶 AI CHIME\n╾━━━━━━━━━━━━━━━━╼\n📡 Notifications orchestrated\n🛡 Protected by Jarvis Jnr\n✨ Standing by",
-        "⚡ TURBO MODE\n╾━━━━━━━━━━━━━━━━╼\n📡 Streams wide open\n🤖 Processing with velocity\n🛡 Systems defended",
-        "📡 AI GUARDIAN ONLINE\n╾━━━━━━━━━━━━━━━━╼\n🤖 Securing flows\n🛡 Monitoring 24/7\n✨ Jarvis Jnr operational",
-        "✨ WELCOME BACK\n╾━━━━━━━━━━━━━━━━╼\n🤖 Jarvis Jnr here again\n📡 Notifications safe\n🛡 Standing guard",
+        "🤖 JARVIS JNR ONLINE — Systems nominal",
+        "🚀 Boot complete — AI core active",
+        "🛰 Stream uplink established",
+        "✅ Diagnostics clean, standing by",
+        "📡 Event pipeline secure",
+        "⚡ Neural systems engaged",
+        "🔧 Initialization complete",
+        "🌐 Network sync stable",
+        "🛡 Defense subsystems ready",
+        "✨ Adaptive AI cycle online",
+        "📊 Metrics calibrated",
+        "🧠 Intelligence kernel active",
+        "🔋 Energy flow stable",
+        "📂 Knowledge base loaded",
+        "🎯 Objective lock established",
+        "🔭 Horizon scan active",
+        "📎 Notification hooks attached",
+        "🗝 Secure channel ready",
+        "🛰 Satellite link optimal",
+        "🚨 Monitoring all systems",
+        "🔍 Pattern recognition enabled",
+        "🎛 Subroutines aligned",
+        "🧬 Neural weave steady",
+        "🔒 Trust chain validated",
+        "📢 Broadcast channel live",
+        "🛠 Maintenance check passed",
+        "🧑‍💻 Operator link ready",
+        "📡 Communication channel clear",
+        "💡 Intelligence awakened",
+        "👑 Jarvis Jnr reporting for duty",
+        "🛰 AI uplink locked — streams secure",
+        "⚡ Rapid response core online",
+        "✨ Neural calibration complete",
+        "📊 Event filters primed",
+        "🛡 Intrusion detection ready",
+        "🚀 Velocity mode engaged",
+        "📡 Wideband listening enabled",
+        "🔧 Auto-tuning modules online",
+        "🔋 Battery reserves full",
+        "🔭 Long-range scan clean",
+        "🧠 Memory cache optimized",
+        "🌐 Multi-network sync done",
+        "📎 AI hooks aligned",
+        "🔒 Encryption handshakes valid",
+        "⚡ Power flows balanced",
+        "🛠 Repair cycles green",
+        "🎯 Targets monitored",
+        "🧬 DNA patterns locked",
+        "📢 Notification broadcast open",
+        "👁 Surveillance optimal",
+        "🚨 Emergency channel hot",
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
+
+    print(f"[{BOT_NAME}] Event loop started.")
     loop.run_forever()
