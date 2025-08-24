@@ -377,7 +377,7 @@ async def listen():
                                     continue
                         
                         # ARR routing AFTER weather
-                        response, extras = handle_arr_command(title, message)
+                        response, extras = handle_arr_command(cmd, cmd)
                         if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
