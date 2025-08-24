@@ -399,7 +399,17 @@ async def listen():
 # -----------------------------
 def try_load_module(modname, label, icon="🧩"):
     path = f"/app/{modname}.py"
+
+    # ✅ FIX: check env + options.json
     enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
+    if not enabled:
+        try:
+            with open("/data/options.json", "r") as f:
+                opts = json.load(f)
+                enabled = opts.get(f"{modname}_enabled", False)
+        except:
+            enabled = False
+
     if not os.path.exists(path) or not enabled:
         return None
     try:
