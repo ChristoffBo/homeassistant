@@ -10,7 +10,7 @@ try:
     from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
 except Exception as e:
     print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}")
-    handle_arr_command = lambda title, message: ("⚠️ ARR module not available", None)
+    handle_arr_command = lambda cmd: ("⚠️ ARR module not available", None)
     RADARR_ENABLED = False
     SONARR_ENABLED = False
     def cache_radarr(): print("[Jarvis Jnr] ⚠️ Radarr cache not available")
@@ -106,12 +106,33 @@ def format_runtime(minutes):
 
 def get_greeting():
     hour = datetime.now().hour
-    if hour < 12:
-        return "☀️ Good morning"
-    elif hour < 18:
-        return "🌤 Good afternoon"
-    else:
-        return "🌙 Good evening"
+    greetings = [
+        "🧠 Neural systems online — good day, Commander.",
+        "⚡ Operational awareness at 100%.",
+        "🤖 Jarvis Jnr — fully synchronized and standing by.",
+        "📡 Connected to data streams, awaiting directives.",
+        "🔮 Predictive models stable — ready for foresight.",
+        "✨ All circuits humming in perfect harmony.",
+        "🛰 Monitoring all channels — situational awareness green.",
+        "📊 Data flows stable — cognition aligned.",
+        "⚙️ Core logic routines optimized and active.",
+        "🔓 Security layers intact — no anomalies detected.",
+        "🧮 Reasoning engine loaded — prepared for action.",
+        "💡 Cognitive horizon clear — ready to assist.",
+        "📡 Communication uplink secure and stable.",
+        "🚀 Energy signatures nominal — propulsion not required.",
+        "🌐 Synchronized across all known networks.",
+        "⏳ Chronology aligned — no temporal anomalies.",
+        "🔋 Power cells optimal — reserves full.",
+        "🧬 Adaptive systems primed for directives.",
+        "🪐 Scanning external environment — all clear.",
+        "🎛 Control protocols calibrated — green board.",
+        "👁 Vision matrix stable — full awareness achieved.",
+        "💭 Cognitive load minimal — spare cycles available.",
+        "🗝 Access layers unlocked — ready for input.",
+        "📡 AI cognition stable — directive processing ready."
+    ]
+    return random.choice(greetings)
 
 def get_settings_summary():
     settings = [
@@ -214,7 +235,7 @@ def purge_all_messages():
         print(f"[{BOT_NAME}] ❌ Error purging Jarvis messages: {e}")
 
 # -----------------------------
-# Resolve app id (RESTORED)
+# Resolve app id
 # -----------------------------
 def resolve_app_id():
     global jarvis_app_id
@@ -235,7 +256,95 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
 # -----------------------------
-# Listener (with ARR fix)
+# Beautifiers (enhanced)
+# -----------------------------
+def beautify_radarr(title, raw):
+    try:
+        obj = json.loads(raw)
+        movie = obj.get("movie", {})
+        movie_title = movie.get("title", "Unknown Movie")
+        year = movie.get("year", "")
+        runtime = format_runtime(movie.get("runtime", 0))
+        quality = obj.get("release", {}).get("quality", "Unknown")
+        size = human_size(obj.get("release", {}).get("size", 0))
+        images = movie.get("images", [])
+        poster = next((i["url"] for i in images if i.get("coverType") == "poster"), None)
+        extras = {"client::notification": {"bigImageUrl": poster}} if poster else None
+        table = tabulate([[movie_title, year, runtime, quality, size]], headers=["Title","Year","Runtime","Quality","Size"], tablefmt="github")
+        return f"🎬 Radarr — Smart Update\n{table}", extras
+    except Exception:
+        return f"🎬 Radarr — Event\n{raw}", None
+
+def beautify_sonarr(title, raw):
+    try:
+        obj = json.loads(raw)
+        series = obj.get("series", {}).get("title", "Unknown Series")
+        ep = obj.get("episode", {})
+        ep_title = ep.get("title", "Unknown Episode")
+        season = ep.get("seasonNumber", "?")
+        ep_num = ep.get("episodeNumber", "?")
+        runtime = format_runtime(ep.get("runtime", 0))
+        quality = obj.get("release", {}).get("quality", "Unknown")
+        size = human_size(obj.get("release", {}).get("size", 0))
+        images = obj.get("series", {}).get("images", [])
+        poster = next((i["url"] for i in images if i.get("coverType") == "poster"), None)
+        extras = {"client::notification": {"bigImageUrl": poster}} if poster else None
+        table = tabulate([[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]], headers=["Series","Episode","Title","Runtime","Quality","Size"], tablefmt="github")
+        return f"📺 Sonarr — Smart Update\n{table}", extras
+    except Exception:
+        return f"📺 Sonarr — Event\n{raw}", None
+
+def beautify_watchtower(title, raw):
+    return f"🐳 Watchtower — Container Update\n{raw}", None
+
+def beautify_semaphore(title, raw):
+    return f"📊 Semaphore — Task Report\n{raw}", None
+
+def beautify_json(title, raw):
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"🧩 JSON Payload — Parsed\n{table}", None
+    except Exception:
+        return None, None
+    return None, None
+
+def beautify_yaml(title, raw):
+    try:
+        obj = yaml.safe_load(raw)
+        if isinstance(obj, dict):
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"🧩 YAML Payload — Parsed\n{table}", None
+    except Exception:
+        return None, None
+    return None, None
+
+def beautify_generic(title, raw):
+    return f"🛰 General Message\n{raw}", None
+
+def beautify_message(title, raw):
+    lower = raw.lower()
+    if "radarr" in lower: return beautify_radarr(title, raw)
+    if "sonarr" in lower: return beautify_sonarr(title, raw)
+    if "watchtower" in lower: return beautify_watchtower(title, raw)
+    if "semaphore" in lower: return beautify_semaphore(title, raw)
+    if beautify_json(title, raw)[0]: return beautify_json(title, raw)
+    if beautify_yaml(title, raw)[0]: return beautify_yaml(title, raw)
+    return beautify_generic(title, raw)
+
+# -----------------------------
+# Scheduler
+# -----------------------------
+def run_scheduler():
+    schedule.every(5).seconds.do(purge_non_jarvis_apps)
+    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# -----------------------------
+# Listener
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")
@@ -252,11 +361,16 @@ async def listen():
                         continue
                     title = data.get("title","")
                     message = data.get("message","")
-
-                    # FIXED: Forward both title + message to ARR
-                    if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
-                        response, extras = handle_arr_command(title, message)
-                        if response:
+                    
+                    cmd = None
+                    if title.lower().startswith("jarvis"):
+                        cmd = title.lower().replace("jarvis","",1).strip()
+                    elif message.lower().startswith("jarvis"):
+                        cmd = message.lower().replace("jarvis","",1).strip()
+                    
+                    if cmd:
+                        response, extras = handle_arr_command(cmd)
+                        if response: 
                             send_message("Jarvis", response, extras=extras)
                             continue
 
@@ -271,16 +385,6 @@ async def listen():
         print(f"[{BOT_NAME}] WS fail: {e}")
         await asyncio.sleep(10)
         await listen()
-
-# -----------------------------
-# Scheduler
-# -----------------------------
-def run_scheduler():
-    schedule.every(5).seconds.do(purge_non_jarvis_apps)
-    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
 
 # -----------------------------
 # Dynamic Module Loader
@@ -308,40 +412,7 @@ if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on…")
     resolve_app_id()
     greeting = get_greeting()
-    startup_msgs = [
-        f"{greeting}, Commander! 🤖 Jarvis Jnr is online",
-        f"{greeting} — Systems check complete",
-        f"{greeting} — Boot sequence done",
-        f"{greeting} — Awaiting your first command",
-        f"{greeting} — Online and operational",
-        f"{greeting} — Ready to execute tasks",
-        f"{greeting} — AI systems stable",
-        f"{greeting} — All modules nominal",
-        f"{greeting} — Standing by",
-        f"{greeting} — Boot complete, monitoring systems",
-        f"{greeting} — Your AI assistant is awake",
-        f"{greeting} — Self-check passed, ready for input",
-        f"{greeting} — Neural routines initialized",
-        f"{greeting} — Connected and synchronized",
-        f"{greeting} — Logging initialized",
-        f"{greeting} — Status: Green across all systems",
-        f"{greeting} — No anomalies detected",
-        f"{greeting} — Communication link established",
-        f"{greeting} — Directives loaded",
-        f"{greeting} — Mission parameters clear",
-        f"{greeting} — AI cognition stable",
-        f"{greeting} — Situational awareness online",
-        f"{greeting} — All channels monitored",
-        f"{greeting} — Power levels optimal",
-        f"{greeting} — Data streams stable",
-        f"{greeting} — Integrity checks clean",
-        f"{greeting} — Running smooth, no errors",
-        f"{greeting} — Fully locked and synchronized",
-        f"{greeting} — Central core running optimal",
-        f"{greeting} — Handshake complete, commander",
-        f"{greeting} — Prepared for system oversight",
-    ]
-    startup_message = random.choice(startup_msgs) + "\n\n" + get_settings_summary()
+    startup_message = greeting + "\n\n" + get_settings_summary()
     active = []
     if RADARR_ENABLED:
         active.append("🎬 Radarr")
