@@ -368,14 +368,23 @@ async def listen():
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
                         cmd = title.lower().replace("jarvis","",1).strip() if title.lower().startswith("jarvis") else message.lower().replace("jarvis","",1).strip()
                         
-                        # ✅ Help command
+                        # ✅ Help command (AI-style)
                         if cmd in ["help", "commands"]:
                             help_text = (
-                                "📝 Available Commands:\n"
-                                "- weather / forecast / temperature / temp → Weather info\n"
-                                "- movie count / series count → ARR stats\n"
-                                "- Radarr events, Sonarr events handled automatically\n"
-                                "- help / commands → Show this message"
+                                "🤖 **Jarvis Jnr Command Matrix** 🤖\n\n"
+                                "🌦  Weather Intelligence:\n"
+                                "   • `weather` → Current weather snapshot\n"
+                                "   • `forecast` → 7-day weather projection\n"
+                                "   • `temperature` / `temp` → Temperature query\n\n"
+                                "🎬  Radarr Protocols:\n"
+                                "   • `movie count` → Total movies indexed\n"
+                                "   • Auto-reacts to Radarr events in real-time\n\n"
+                                "📺  Sonarr Protocols:\n"
+                                "   • `series count` → Total series indexed\n"
+                                "   • Auto-reacts to Sonarr events in real-time\n\n"
+                                "🧩  System:\n"
+                                "   • `help` or `commands` → Display this command matrix\n\n"
+                                "⚡ *Jarvis Jnr is fully synchronized and standing by.*"
                             )
                             send_message("Help", help_text)
                             continue
@@ -388,8 +397,8 @@ async def listen():
                                     send_message("Weather", response, extras=extras)
                                     continue
                         
-                        # ✅ ARR routing
-                        response, extras = handle_arr_command(cmd)
+                        # ✅ ARR routing (fixed back to title/message)
+                        response, extras = handle_arr_command(title, message)
                         if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
