@@ -178,23 +178,19 @@ def purge_non_jarvis_apps():
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
-def resolve_app_id():
+def purge_all_messages():
+    """Purge Jarvis' own messages based on retention hours."""
     global jarvis_app_id
-    print(f"[{BOT_NAME}] Resolving app ID for '{APP_NAME}'")
+    if not jarvis_app_id:
+        return
     try:
-        url = f"{GOTIFY_URL}/application"
+        url = f"{GOTIFY_URL}/application/{jarvis_app_id}/message"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=5)
-        r.raise_for_status()
-        apps = r.json()
-        for app in apps:
-            if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] ✅ Found '{APP_NAME}' id={jarvis_app_id}")
-                return
-        print(f"[{BOT_NAME}] ❌ Could not find app '{APP_NAME}'")
+        r = requests.delete(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            print(f"[{BOT_NAME}] 🗑 Purged ALL messages from Jarvis app (retention {RETENTION_HOURS}h)")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
+        print(f"[{BOT_NAME}] ❌ Error purging Jarvis messages: {e}")
 
 # -----------------------------
 # Beautifiers (FULL)
@@ -282,7 +278,8 @@ def beautify_message(title, raw):
 # Scheduler
 # -----------------------------
 def run_scheduler():
-    schedule.every(5).minutes.do(purge_non_jarvis_apps)
+    schedule.every(5).seconds.do(purge_non_jarvis_apps)   # fast purge others
+    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)  # retention purge
     while True:
         schedule.run_pending()
         time.sleep(1)
