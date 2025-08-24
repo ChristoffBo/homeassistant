@@ -1,4 +1,4 @@
-import json, requests, random
+import json, yaml, requests, random
 from datetime import datetime
 from tabulate import tabulate
 
@@ -7,7 +7,12 @@ from tabulate import tabulate
 # -----------------------------
 try:
     with open("/data/options.json", "r") as f:
-        options = json.load(f)
+        text = f.read()
+        try:
+            options = json.loads(text)        # try JSON first
+        except json.JSONDecodeError:
+            options = yaml.safe_load(text)    # fallback to YAML
+
         ENABLED = options.get("weather_enabled", False)
         LAT = options.get("weather_lat", -26.2041)
         LON = options.get("weather_lon", 28.0473)
