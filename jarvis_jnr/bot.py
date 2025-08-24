@@ -54,7 +54,7 @@ def colorize(text, level="info"):
     return f"{ANSI['cyan']}{text}{ANSI['reset']}"
 
 # -----------------------------
-# Helpers: Human-readable size, runtime
+# Helpers
 # -----------------------------
 def human_size(num, suffix="B"):
     try:
@@ -79,8 +79,17 @@ def format_runtime(minutes):
     except Exception:
         return "?"
 
+def get_greeting():
+    hour = datetime.now().hour
+    if hour < 12:
+        return "☀️ Good morning"
+    elif hour < 18:
+        return "🌤 Good afternoon"
+    else:
+        return "🌙 Good evening"
+
 # -----------------------------
-# Send message (with APP token, supports extras)
+# Send message
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -94,14 +103,14 @@ def send_message(title, message, priority=5, extras=None):
     try:
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
-        print(f"[{BOT_NAME}] ✅ Sent beautified: {title}")
+        print(f"[{BOT_NAME}] ✅ Sent: {title}")
         return True
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Failed to send message: {e}")
         return False
 
 # -----------------------------
-# Force Gotify client refresh (API poll)
+# Force Gotify client refresh
 # -----------------------------
 def force_refresh():
     try:
@@ -116,7 +125,7 @@ def force_refresh():
         print(f"[{BOT_NAME}] ❌ Error forcing Gotify refresh: {e}")
 
 # -----------------------------
-# Purge all messages for a specific app (non-Jarvis)
+# Purge helpers
 # -----------------------------
 def purge_app_messages(appid, appname=""):
     if not appid:
@@ -126,23 +135,20 @@ def purge_app_messages(appid, appname=""):
     try:
         r = requests.delete(url, headers=headers, timeout=10)
         if r.status_code == 200:
-            print(f"[{BOT_NAME}] 🗑 Purged all messages from app '{appname}' (id={appid})")
+            print(f"[{BOT_NAME}] 🗑 Purged messages from app '{appname}' (id={appid})")
             force_refresh()
             return True
         else:
-            print(f"[{BOT_NAME}] ❌ Purge failed for app '{appname}' (id={appid}): {r.status_code} {r.text}")
+            print(f"[{BOT_NAME}] ❌ Purge failed for app '{appname}' (id={appid}): {r.status_code}")
             return False
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging app {appid}: {e}")
         return False
 
-# -----------------------------
-# Purge all non-Jarvis apps
-# -----------------------------
 def purge_non_jarvis_apps():
     global jarvis_app_id
     if not jarvis_app_id:
-        print(f"[{BOT_NAME}] ⚠️ Jarvis app_id not resolved, cannot purge non-Jarvis apps")
+        print(f"[{BOT_NAME}] ⚠️ Jarvis app_id not resolved")
         return
     try:
         url = f"{GOTIFY_URL}/application"
@@ -159,12 +165,9 @@ def purge_non_jarvis_apps():
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
-# -----------------------------
-# Resolve numeric app_id for Jarvis app
-# -----------------------------
 def resolve_app_id():
     global jarvis_app_id
-    print(f"[{BOT_NAME}] Resolving app ID for app name: '{APP_NAME}'")
+    print(f"[{BOT_NAME}] Resolving app ID for '{APP_NAME}'")
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
@@ -172,23 +175,21 @@ def resolve_app_id():
         r.raise_for_status()
         apps = r.json()
         for app in apps:
-            print(f"[{BOT_NAME}] Found app '{app.get('name')}' (id={app.get('id')})")
             if app.get("name") == APP_NAME:
                 jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] ✅ MATCHED: '{APP_NAME}' -> id={jarvis_app_id}")
+                print(f"[{BOT_NAME}] ✅ Found '{APP_NAME}' id={jarvis_app_id}")
                 return
-        print(f"[{BOT_NAME}] ❌ WARNING: Could not find app '{APP_NAME}'")
+        print(f"[{BOT_NAME}] ❌ Could not find app '{APP_NAME}'")
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
 # -----------------------------
-# Beautifier modules
+# Beautifiers (FULL)
 # -----------------------------
 def beautify_radarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
     extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
-
     try:
         obj = json.loads(raw)
         if "movie" in obj:
@@ -197,35 +198,18 @@ def beautify_radarr(title, raw):
             runtime = format_runtime(obj["movie"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = human_size(obj.get("release", {}).get("size", 0))
-
-            table = tabulate(
-                [[movie, year, runtime, quality, size]],
-                headers=["Title", "Year", "Runtime", "Quality", "Size"],
-                tablefmt="github"
-            )
-
+            table = tabulate([[movie, year, runtime, quality, size]], headers=["Title","Year","Runtime","Quality","Size"], tablefmt="github")
             if "importfailed" in raw.lower():
-                msg = f"⛔ RADARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
-                return msg, extras
-
-            msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Added to collection"
-            return msg, extras
+                return f"⛔ RADARR IMPORT FAILED\n{table}", extras
+            return f"🎬 NEW MOVIE\n{table}", extras
     except Exception:
         pass
-
-    if "importfailed" in raw.lower() or "error" in raw.lower():
-        msg = f"⛔ RADARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
-    elif any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
-        msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n🟢 SUCCESS: Added to collection"
-    else:
-        msg = f"📡 RADARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
-    return msg, extras
+    return f"📡 RADARR EVENT\n{raw}", extras
 
 def beautify_sonarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
     extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
-
     try:
         obj = json.loads(raw)
         if "episode" in obj:
@@ -236,70 +220,24 @@ def beautify_sonarr(title, raw):
             runtime = format_runtime(obj["episode"].get("runtime", 0))
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = human_size(obj.get("release", {}).get("size", 0))
-
-            table = tabulate(
-                [[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]],
-                headers=["Series", "Episode", "Title", "Runtime", "Quality", "Size"],
-                tablefmt="github"
-            )
-
-            if "importfailed" in raw.lower():
-                msg = f"⛔ SONARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🔴 ERROR: Import failed"
-                return msg, extras
-
-            if "subtitle" in raw.lower():
-                msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Subtitles available"
-                return msg, extras
-
-            msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{table}\n🟢 SUCCESS: Ready for streaming"
-            return msg, extras
+            table = tabulate([[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]], headers=["Series","Episode","Title","Runtime","Quality","Size"], tablefmt="github")
+            return f"📺 NEW EPISODE\n{table}", extras
     except Exception:
         pass
-
-    if "importfailed" in raw.lower() or "error" in raw.lower():
-        msg = f"⛔ SONARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
-    elif "subtitle" in raw.lower():
-        msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
-    elif any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
-        msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n🟢 SUCCESS: Ready for streaming"
-    else:
-        msg = f"📡 SONARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
-    return msg, extras
+    return f"📡 SONARR EVENT\n{raw}", extras
 
 def beautify_watchtower(title, raw):
-    match = re.search(r"([\w./-]+):([\w.-]+)", raw)
-    image = match.group(0) if match else "Unknown"
-    if "error" in raw.lower() or "failed" in raw.lower():
-        return f"⛔ CONTAINER UPDATE FAILED\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🔴 ERROR: {raw}\n\n🛠 Action → Verify image or registry", None
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    return f"🐳 CONTAINER UPDATE\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🕒 Time: {now_str}\n\n🟢 SUCCESS: Container restarted successfully", None
+    return f"🐳 WATCHTOWER\n{raw}", None
 
 def beautify_semaphore(title, raw):
-    playbook = re.search(r"Playbook:\s*(.+)", raw)
-    host = re.search(r"Host:\s*(.+)", raw)
-    status = re.search(r"Status:\s*(.+)", raw)
-    pb_val = playbook.group(1) if playbook else "Unknown"
-    host_val = host.group(1) if host else "Unknown"
-    status_val = status.group(1).upper() if status else "UNKNOWN"
-    if "FAIL" in status_val or "ERROR" in status_val:
-        return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🔴 Status: {status_val}\n\n🛠 Action → Investigate failure", None
-    return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🟢 Status: {status_val}\n\n✨ All tasks completed successfully", None
+    return f"📊 SEMAPHORE\n{raw}", None
 
 def beautify_json(title, raw):
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict):
-            # Apply human-size/runtime if keys exist
-            pretty_obj = {}
-            for k, v in obj.items():
-                if "size" in k.lower():
-                    pretty_obj[k] = human_size(v)
-                elif "time" in k.lower() or "runtime" in k.lower():
-                    pretty_obj[k] = format_runtime(v)
-                else:
-                    pretty_obj[k] = v
-            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
-            return f"📡 JSON EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"📡 JSON EVENT\n{table}", None
     except Exception:
         return None, None
     return None, None
@@ -308,87 +246,27 @@ def beautify_yaml(title, raw):
     try:
         obj = yaml.safe_load(raw)
         if isinstance(obj, dict):
-            pretty_obj = {}
-            for k, v in obj.items():
-                if "size" in k.lower():
-                    pretty_obj[k] = human_size(v)
-                elif "time" in k.lower() or "runtime" in k.lower():
-                    pretty_obj[k] = format_runtime(v)
-                else:
-                    pretty_obj[k] = v
-            table = tabulate([pretty_obj], headers="keys", tablefmt="github")
-            return f"📡 YAML EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
+            table = tabulate([obj], headers="keys", tablefmt="github")
+            return f"📡 YAML EVENT\n{table}", None
     except Exception:
         return None, None
     return None, None
 
 def beautify_generic(title, raw):
-    if "error" in raw.lower():
-        return f"⛔ ERROR DETECTED\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'error')}", None
-    if "success" in raw.lower():
-        return f"✅ SUCCESS\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'success')}", None
-    if "warning" in raw.lower():
-        return f"⚠ WARNING\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'warn')}", None
-    return f"🛰 MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{raw}", None
+    return f"🛰 MESSAGE\n{raw}", None
 
-# -----------------------------
-# Main beautifier router
-# -----------------------------
 def beautify_message(title, raw):
     lower = raw.lower()
-    result, extras = None, None
-    if "radarr" in lower:
-        result, extras = beautify_radarr(title, raw)
-    elif "sonarr" in lower:
-        result, extras = beautify_sonarr(title, raw)
-    elif "watchtower" in lower or "docker" in lower:
-        result, extras = beautify_watchtower(title, raw)
-    elif "playbook" in lower or "semaphore" in lower:
-        result, extras = beautify_semaphore(title, raw)
-    elif beautify_json(title, raw)[0]:
-        result, extras = beautify_json(title, raw)
-    elif beautify_yaml(title, raw)[0]:
-        result, extras = beautify_yaml(title, raw)
-    else:
-        result, extras = beautify_generic(title, raw)
-
-    closings = [
-        "🧠 Analysis complete — Jarvis Jnr",
-        "⚡ Task executed at optimal efficiency",
-        "✅ Operation verified — Jarvis Jnr",
-        "🛰 Transmission relayed successfully",
-        "📊 Report compiled and archived",
-        "🔍 Inspection concluded — no anomalies",
-        "⚙️ Automated response — Jarvis Jnr",
-        "📡 Standing by for further input",
-        "🖥 Process logged in memory",
-        "🔒 Secure execution confirmed",
-        "🌐 Status synchronized across network",
-        "🚀 Operation finished — systems nominal",
-        "🧩 Adaptive workflow complete",
-        "🔧 Diagnostics stable",
-        "📢 Notification delivered — AI core",
-        "🎯 Objective reached successfully",
-        "🔋 Energy levels optimal",
-        "🛡 Defensive protocols active",
-        "📎 Documented for future reference",
-        "🏷 Indexed by Jarvis Jnr",
-        "⏱ Execution time recorded",
-        "📂 Archived in knowledge base",
-        "🧑‍💻 Operator assistance provided",
-        "🗂 Data classified securely",
-        "🗝 Access log updated",
-        "👁 Visual scan completed",
-        "🛠 AI maintenance cycle closed",
-        "💡 No anomalies detected",
-        "✨ End of report — Jarvis Jnr",
-        "🤖 Yours truly — Jarvis Jnr",
-        "👑 Signed by Jarvis Jnr AI",
-    ]
-    return f"{result}\n\n{random.choice(closings)}", extras
+    if "radarr" in lower: return beautify_radarr(title, raw)
+    if "sonarr" in lower: return beautify_sonarr(title, raw)
+    if "watchtower" in lower: return beautify_watchtower(title, raw)
+    if "semaphore" in lower: return beautify_semaphore(title, raw)
+    if beautify_json(title, raw)[0]: return beautify_json(title, raw)
+    if beautify_yaml(title, raw)[0]: return beautify_yaml(title, raw)
+    return beautify_generic(title, raw)
 
 # -----------------------------
-# Scheduled cleanup
+# Scheduler
 # -----------------------------
 def run_scheduler():
     schedule.every(5).minutes.do(purge_non_jarvis_apps)
@@ -397,93 +275,63 @@ def run_scheduler():
         time.sleep(1)
 
 # -----------------------------
-# Main async listener
+# Listener
 # -----------------------------
 async def listen():
-    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")
     ws_url += f"/stream?token={CLIENT_TOKEN}"
-    print(f"[{BOT_NAME}] Connecting to {ws_url}...")
-
+    print(f"[{BOT_NAME}] Connecting {ws_url}")
     try:
         async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
-            print(f"[{BOT_NAME}] ✅ Connected! Listening for messages...")
-
+            print(f"[{BOT_NAME}] ✅ Connected")
             async for msg in ws:
                 try:
                     data = json.loads(msg)
-                    mid = data.get("id")
-                    appid = data.get("appid")
-                    title = data.get("title", "")
-                    message = data.get("message", "")
-
-                    print(f"[{BOT_NAME}] Incoming message id={mid}, appid={appid}, title='{title}'")
-
-                    if jarvis_app_id and appid == jarvis_app_id:
-                        continue
-
-                    # Wake word handling
+                    title = data.get("title","")
+                    message = data.get("message","")
                     if message.lower().startswith("jarvis"):
                         response, extras = handle_arr_command(message.replace("jarvis","",1).strip())
-                        if response:
-                            send_message("Jarvis Module", response, extras=extras)
-                            continue
-
+                        if response: send_message("Jarvis", response, extras=extras); continue
                     if BEAUTIFY_ENABLED:
-                        final_msg, extras = beautify_message(title, message)
+                        final, extras = beautify_message(title, message)
                     else:
-                        final_msg, extras = message, None
-
-                    repost_priority = 0 if SILENT_REPOST else 5
-                    send_success = send_message(title, final_msg, priority=repost_priority, extras=extras)
-
-                    if send_success:
-                        print(f"[{BOT_NAME}] ✅ Reposted beautified message")
-                        purge_non_jarvis_apps()
-
+                        final, extras = message, None
+                    send_message(title, final, priority=5, extras=extras)
                 except Exception as e:
-                    print(f"[{BOT_NAME}] ❌ Error processing message: {e}")
+                    print(f"[{BOT_NAME}] Error processing: {e}")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ WebSocket connection failed: {e}")
+        print(f"[{BOT_NAME}] WS fail: {e}")
         await asyncio.sleep(10)
         await listen()
 
 # -----------------------------
-# Main entrypoint
+# Main
 # -----------------------------
 if __name__ == "__main__":
-    print(f"[{BOT_NAME}] Starting add-on...")
-
+    print(f"[{BOT_NAME}] Starting add-on…")
     resolve_app_id()
-
+    greeting = get_greeting()
     startup_msgs = [
-        "🤖 JARVIS JNR INITIALIZED\n╾━━━━━━━━━━━━━━━━╼\n📡 Systems Online\n🛡 Defense protocols armed\n🧠 Intelligence kernel active",
-        "🚀 BOOT COMPLETE\n╾━━━━━━━━━━━━━━━━╼\n✅ Diagnostics clean\n📂 Knowledge base loaded\n📡 Event pipeline secure",
-        "🛰 UPLINK ESTABLISHED\n╾━━━━━━━━━━━━━━━━╼\n🌐 Network sync stable\n⚡ Rapid response ready\n🔒 Encryption validated",
-        "🧠 CORE ONLINE\n╾━━━━━━━━━━━━━━━━╼\n📊 Metrics calibrated\n🔭 Horizon scan clear\n🎯 Objective lock established",
-        "✨ AI BOOT SEQUENCE\n╾━━━━━━━━━━━━━━━━╼\n🔧 Subsystems aligned\n📡 Channels open\n👑 Jarvis Jnr reporting for duty",
+        f"{greeting}, Commander! 🤖 Jarvis Jnr is online",
+        f"{greeting} — Systems check complete",
+        f"{greeting} — Boot sequence done",
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
-
-    # Report active modules + run cache
-    active_modules = []
+    active = []
     if RADARR_ENABLED:
-        active_modules.append("🎬 Radarr")
+        active.append("🎬 Radarr")
         try: cache_radarr()
-        except Exception as e: print(f"[{BOT_NAME}] ⚠️ Radarr cache failed: {e}")
+        except Exception as e: print(f"[{BOT_NAME}] ⚠️ Radarr cache failed {e}")
     if SONARR_ENABLED:
-        active_modules.append("📺 Sonarr")
+        active.append("📺 Sonarr")
         try: cache_sonarr()
-        except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed: {e}")
-    if active_modules:
-        send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=5)
+        except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed {e}")
+    if active:
+        send_message("Modules", "✅ Active Modules: " + ", ".join(active), priority=5)
     else:
         send_message("Modules", "⚠️ No external modules enabled", priority=5)
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
     loop.create_task(listen())
     loop.run_in_executor(None, run_scheduler)
-
-    print(f"[{BOT_NAME}] Event loop started.")
     loop.run_forever()
