@@ -23,7 +23,7 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
-APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
+APP_TOKEN = os.getenv("APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
@@ -107,7 +107,6 @@ def format_runtime(minutes):
         return "?"
 
 def get_greeting():
-    hour = datetime.now().hour
     greetings = [
         "🧠 Neural systems online — good day, Commander.",
         "⚡ Operational awareness at 100%.",
@@ -389,16 +388,16 @@ async def listen():
                             send_message("Help", help_text)
                             continue
 
-                        # ✅ Weather routing
-                        if any(word in cmd for word in ["weather", "forecast", "temperature", "temp"]):
+                        # ✅ Weather routing FIRST
+                        if any(word in cmd for word in ["weather", "forecast", "temperature", "temp", "now", "today"]):
                             if "weather" in extra_modules:
                                 response, extras = extra_modules["weather"].handle_weather_command(cmd)
                                 if response:
                                     send_message("Weather", response, extras=extras)
                                     continue
                         
-                        # ✅ ARR routing (fixed back to title/message)
-                        response, extras = handle_arr_command(title, message)
+                        # ✅ ARR routing LAST
+                        response, extras = handle_arr_command(cmd, message)
                         if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
@@ -420,8 +419,6 @@ async def listen():
 # -----------------------------
 def try_load_module(modname, label, icon="🧩"):
     path = f"/app/{modname}.py"
-
-    # ✅ FIX: check env + options.json
     enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
     if not enabled:
         try:
@@ -430,7 +427,6 @@ def try_load_module(modname, label, icon="🧩"):
                 enabled = opts.get(f"{modname}_enabled", False)
         except:
             enabled = False
-
     if not os.path.exists(path) or not enabled:
         return None
     try:
