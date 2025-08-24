@@ -289,6 +289,12 @@ async def listen():
             async for msg in ws:
                 try:
                     data = json.loads(msg)
+
+                    # ADDITIVE FIX: ignore own messages
+                    appid = data.get("appid")
+                    if appid == jarvis_app_id:
+                        continue
+
                     title = data.get("title","")
                     message = data.get("message","")
                     if message.lower().startswith("jarvis"):
