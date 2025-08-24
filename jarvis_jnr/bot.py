@@ -33,6 +33,7 @@ BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true"
 # FIX: read lowercase module toggles from env
 RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
 SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
+WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1", "true", "yes")
 
 # -----------------------------
 # Load Home Assistant options.json for toggles + API config
@@ -46,6 +47,7 @@ try:
         RADARR_API_KEY = options.get("radarr_api_key", "")
         SONARR_URL = options.get("sonarr_url", "")
         SONARR_API_KEY = options.get("sonarr_api_key", "")
+        WEATHER_ENABLED = options.get("weather_enabled", WEATHER_ENABLED)
 except Exception as e:
     print(f"[{BOT_NAME}] ⚠️ Could not load options.json: {e}")
     RADARR_URL = ""
@@ -141,6 +143,7 @@ def get_settings_summary():
         (f"🎨 beautify_enabled = {BEAUTIFY_ENABLED}", "Beautify and repost messages"),
         (f"🎬 radarr_enabled = {RADARR_ENABLED}", "Radarr module active"),
         (f"📺 sonarr_enabled = {SONARR_ENABLED}", "Sonarr module active"),
+        (f"🌦 weather_enabled = {WEATHER_ENABLED}", "Weather module active"),
     ]
     summary = "⚙️ Settings:\n" + "\n".join([f"- {s[0]} ({s[1]})" for s in settings])
     return summary
@@ -362,12 +365,11 @@ async def listen():
                     title = data.get("title","")
                     message = data.get("message","")
                     
-                    # Route to ARR if title or message starts with "Jarvis"
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
                         cmd = title.lower().replace("jarvis","",1).strip() if title.lower().startswith("jarvis") else message.lower().replace("jarvis","",1).strip()
                         
                         # ARR routing
-                        response, extras = handle_arr_command(cmd)
+                        response, extras = handle_arr_command(title, message)
                         if response:
                             send_message("Jarvis", response, extras=extras)
                             continue
