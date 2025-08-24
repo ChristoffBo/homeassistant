@@ -41,15 +41,17 @@ def colorize(text, level="info"):
     return f"{ANSI['cyan']}{text}{ANSI['reset']}"
 
 # -----------------------------
-# Send message (with APP token)
+# Send message (with APP token, now supports extras)
 # -----------------------------
-def send_message(title, message, priority=5):
+def send_message(title, message, priority=5, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {
         "title": f"{BOT_ICON} {BOT_NAME}: {title}",
         "message": message,
         "priority": priority,
     }
+    if extras:
+        data["extras"] = extras
     try:
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
@@ -146,28 +148,57 @@ def resolve_app_id():
 def beautify_radarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
-    msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n"
-    if img_url:
-        msg += f"\n🖼 Poster:\n![]({img_url})\n"
-    msg += "\n🟢 SUCCESS: Added to collection"
-    return msg
+    extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
+
+    try:
+        obj = json.loads(raw)
+        if "movie" in obj:
+            movie = obj["movie"].get("title", "Unknown Movie")
+            year = obj["movie"].get("year", "")
+            quality = obj.get("release", {}).get("quality", "Unknown")
+            size = obj.get("release", {}).get("size", "Unknown")
+            msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n📽 {movie} ({year})\n💾 {quality} | {size}\n🟢 SUCCESS: Added to collection"
+            return msg, extras
+    except Exception:
+        pass
+
+    if any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
+        msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n🟢 SUCCESS: Added to collection"
+    else:
+        msg = f"📡 RADARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
+    return msg, extras
 
 def beautify_sonarr(title, raw):
     img_match = re.search(r"(https?://\S+\.(?:jpg|png|jpeg))", raw)
     img_url = img_match.group(1) if img_match else None
-    msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n"
-    if img_url:
-        msg += f"\n🖼 Poster:\n![]({img_url})\n"
-    msg += "\n🟢 SUCCESS: Ready for streaming"
-    return msg
+    extras = {"client::notification": {"bigImageUrl": img_url}} if img_url else None
+
+    try:
+        obj = json.loads(raw)
+        if "episode" in obj:
+            series = obj.get("series", {}).get("title", "Unknown Series")
+            ep_title = obj["episode"].get("title", "Unknown Episode")
+            season = obj["episode"].get("seasonNumber", "?")
+            ep_num = obj["episode"].get("episodeNumber", "?")
+            quality = obj.get("release", {}).get("quality", "Unknown")
+            msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n📌 {series} - S{season:02}E{ep_num:02} - {ep_title}\n💾 {quality}\n🟢 SUCCESS: Ready for streaming"
+            return msg, extras
+    except Exception:
+        pass
+
+    if any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
+        msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n🟢 SUCCESS: Ready for streaming"
+    else:
+        msg = f"📡 SONARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
+    return msg, extras
 
 def beautify_watchtower(title, raw):
     match = re.search(r"([\w./-]+):([\w.-]+)", raw)
     image = match.group(0) if match else "Unknown"
     if "error" in raw.lower() or "failed" in raw.lower():
-        return f"⛔ CONTAINER UPDATE FAILED\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🔴 ERROR: {raw}\n\n🛠 Action → Verify image or registry"
+        return f"⛔ CONTAINER UPDATE FAILED\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🔴 ERROR: {raw}\n\n🛠 Action → Verify image or registry", None
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    return f"🐳 CONTAINER UPDATE\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🕒 Time: {now_str}\n\n🟢 SUCCESS: Container restarted successfully"
+    return f"🐳 CONTAINER UPDATE\n╾━━━━━━━━━━━━━━━━╼\n📦 Image: {image}\n🕒 Time: {now_str}\n\n🟢 SUCCESS: Container restarted successfully", None
 
 def beautify_semaphore(title, raw):
     playbook = re.search(r"Playbook:\s*(.+)", raw)
@@ -177,58 +208,58 @@ def beautify_semaphore(title, raw):
     host_val = host.group(1) if host else "Unknown"
     status_val = status.group(1).upper() if status else "UNKNOWN"
     if "FAIL" in status_val or "ERROR" in status_val:
-        return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🔴 Status: {status_val}\n\n🛠 Action → Investigate failure"
-    return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🟢 Status: {status_val}\n\n✨ All tasks completed successfully"
+        return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🔴 Status: {status_val}\n\n🛠 Action → Investigate failure", None
+    return f"📊 SEMAPHORE TASK REPORT\n╾━━━━━━━━━━━━━━━━╼\n📂 Playbook: `{pb_val}`\n🖥 Host: {host_val}\n🟢 Status: {status_val}\n\n✨ All tasks completed successfully", None
 
 def beautify_json(title, raw):
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict):
             table = tabulate([obj], headers="keys", tablefmt="github")
-            return f"📡 JSON EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}"
+            return f"📡 JSON EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
     except Exception:
-        return None
-    return None
+        return None, None
+    return None, None
 
 def beautify_yaml(title, raw):
     try:
         obj = yaml.safe_load(raw)
         if isinstance(obj, dict):
             table = tabulate([obj], headers="keys", tablefmt="github")
-            return f"📡 YAML EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}"
+            return f"📡 YAML EVENT REPORT\n╾━━━━━━━━━━━━━━━━╼\n{table}", None
     except Exception:
-        return None
-    return None
+        return None, None
+    return None, None
 
 def beautify_generic(title, raw):
     if "error" in raw.lower():
-        return f"⛔ ERROR DETECTED\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'error')}"
+        return f"⛔ ERROR DETECTED\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'error')}", None
     if "success" in raw.lower():
-        return f"✅ SUCCESS\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'success')}"
+        return f"✅ SUCCESS\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'success')}", None
     if "warning" in raw.lower():
-        return f"⚠ WARNING\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'warn')}"
-    return f"🛰 MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
+        return f"⚠ WARNING\n╾━━━━━━━━━━━━━━━━╼\n{colorize(raw, 'warn')}", None
+    return f"🛰 MESSAGE\n╾━━━━━━━━━━━━━━━━╼\n{raw}", None
 
 # -----------------------------
 # Main beautifier router
 # -----------------------------
 def beautify_message(title, raw):
     lower = raw.lower()
-    result = None
+    result, extras = None, None
     if "radarr" in lower:
-        result = beautify_radarr(title, raw)
+        result, extras = beautify_radarr(title, raw)
     elif "sonarr" in lower:
-        result = beautify_sonarr(title, raw)
+        result, extras = beautify_sonarr(title, raw)
     elif "watchtower" in lower or "docker" in lower:
-        result = beautify_watchtower(title, raw)
+        result, extras = beautify_watchtower(title, raw)
     elif "playbook" in lower or "semaphore" in lower:
-        result = beautify_semaphore(title, raw)
-    elif beautify_json(title, raw):
-        result = beautify_json(title, raw)
-    elif beautify_yaml(title, raw):
-        result = beautify_yaml(title, raw)
+        result, extras = beautify_semaphore(title, raw)
+    elif beautify_json(title, raw)[0]:
+        result, extras = beautify_json(title, raw)
+    elif beautify_yaml(title, raw)[0]:
+        result, extras = beautify_yaml(title, raw)
     else:
-        result = beautify_generic(title, raw)
+        result, extras = beautify_generic(title, raw)
 
     closings = [
         "🧠 Analysis complete — Jarvis Jnr",
@@ -262,39 +293,8 @@ def beautify_message(title, raw):
         "✨ End of report — Jarvis Jnr",
         "🤖 Yours truly — Jarvis Jnr",
         "👑 Signed by Jarvis Jnr AI",
-        "🛰 AI uplink stable — session closed",
-        "📡 Report finalized by Jarvis Jnr",
-        "🧬 Neural integrity verified",
-        "🔭 Scan complete — clear results",
-        "⚡ Cycle finished successfully",
-        "🛡 Secure lock maintained",
-        "🔧 Automated tuning complete",
-        "📊 Log entry archived",
-        "🧠 Processed and secured",
-        "🔒 Cryptographic seal applied",
-        "🚨 Monitoring cycle reset",
-        "🎯 Precision report generated",
-        "📢 Event concluded successfully",
-        "🗂 Data indexed into memory",
-        "🛠 Diagnostics closed cleanly",
-        "💡 All systems remain stable",
-        "📎 Timestamp recorded",
-        "📂 Historical record updated",
-        "👑 Endorsed by Jarvis Jnr",
-        "⚡ Performance metrics optimal",
-        "🔭 Final scan shows green",
-        "🛰 Signal lock confirmed",
-        "📡 Transmission cycle complete",
-        "🧬 Report consistency verified",
-        "📊 Entry validated by AI",
-        "🎛 Systems check ended",
-        "🔧 No corrective action required",
-        "🛡 Defense protocols reset",
-        "🧠 Adaptive learning stored",
-        "✨ AI task finished seamlessly",
-        "📂 Closure logged",
     ]
-    return f"{result}\n\n{random.choice(closings)}"
+    return f"{result}\n\n{random.choice(closings)}", extras
 
 # -----------------------------
 # Scheduled cleanup
@@ -331,12 +331,12 @@ async def listen():
                         continue
 
                     if BEAUTIFY_ENABLED:
-                        final_msg = beautify_message(title, message)
+                        final_msg, extras = beautify_message(title, message)
                     else:
-                        final_msg = message
+                        final_msg, extras = message, None
 
                     repost_priority = 0 if SILENT_REPOST else 5
-                    send_success = send_message(title, final_msg, priority=repost_priority)
+                    send_success = send_message(title, final_msg, priority=repost_priority, extras=extras)
 
                     if send_success:
                         print(f"[{BOT_NAME}] ✅ Reposted beautified message")
@@ -363,11 +363,6 @@ if __name__ == "__main__":
         "🛰 UPLINK ESTABLISHED\n╾━━━━━━━━━━━━━━━━╼\n🌐 Network sync stable\n⚡ Rapid response ready\n🔒 Encryption validated",
         "🧠 CORE ONLINE\n╾━━━━━━━━━━━━━━━━╼\n📊 Metrics calibrated\n🔭 Horizon scan clear\n🎯 Objective lock established",
         "✨ AI BOOT SEQUENCE\n╾━━━━━━━━━━━━━━━━╼\n🔧 Subsystems aligned\n📡 Channels open\n👑 Jarvis Jnr reporting for duty",
-        "📡 Network uplink secured\n╾━━━━━━━━━━━━━━━━╼\n🛰 Satellite lock achieved\n📂 Sync with knowledge base complete",
-        "🔧 Initialization cycle green\n╾━━━━━━━━━━━━━━━━╼\n⚡ Rapid response core charged\n🔭 Horizon sensors calibrated",
-        "🛡 Security posture validated\n╾━━━━━━━━━━━━━━━━╼\n📊 Intrusion detection armed\n✅ All channels encrypted",
-        "🎯 Objective matrix online\n╾━━━━━━━━━━━━━━━━╼\n📎 Hooks aligned\n🔋 Power reserves nominal",
-        "👑 AI authority engaged\n╾━━━━━━━━━━━━━━━━╼\n🧠 Neural patterns locked\n🚀 Jarvis Jnr now in command",
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
 
