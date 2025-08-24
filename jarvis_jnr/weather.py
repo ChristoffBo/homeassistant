@@ -1,4 +1,4 @@
-import json, requests, datetime
+import json, requests, datetime, random
 from tabulate import tabulate
 
 # -----------------------------
@@ -56,16 +56,74 @@ def _icon_for_code(code, big=False):
     return mapping.get(code, "🌍")
 
 def _commentary(temp_max, code):
+    hot_lines = [
+        "🔥 Scorching hot today — stay hydrated and find some shade!",
+        "☀️ Sun’s blazing, don’t forget sunscreen.",
+        "🥵 The heat is on — perfect excuse for ice cream.",
+        "🌞 Hot day ahead, keep your energy cool.",
+        "🔥 Expect high temps, slow down and take it easy."
+    ]
+    warm_lines = [
+        "😎 Beautiful warm weather — enjoy it while it lasts.",
+        "🌤 Great day to be outdoors.",
+        "😊 Pleasant temps — perfect for a walk.",
+        "☀️ Warm and cozy, nothing extreme.",
+        "🌼 Feels like a proper summer’s day."
+    ]
+    mild_lines = [
+        "🙂 A mild day — comfortable all around.",
+        "🌤 Not too hot, not too cold — just right.",
+        "🍃 Balanced weather, easy on the body.",
+        "☁️ Calm and moderate day ahead.",
+        "👍 Perfectly tolerable conditions."
+    ]
+    cold_lines = [
+        "❄️ Brrr — chilly day, layer up!",
+        "🥶 Cold weather incoming, wear something thick.",
+        "🌬 Wind chill will make it feel colder.",
+        "🧥 Jacket weather, no doubt.",
+        "🔥 Good day for a hot drink inside."
+    ]
+    rain_lines = [
+        "🌧 Showers expected — keep an umbrella handy.",
+        "☔ Rain on the way, don’t get caught off guard.",
+        "🌦 Cloudbursts could surprise you.",
+        "🌧 Wet weather day, roads may be slippery.",
+        "⛈ Storm risk — drive safe."
+    ]
+    snow_lines = [
+        "❄️ Snow incoming — magical but cold.",
+        "☃️ Bundle up, it’s snow time.",
+        "🌨 Expect flakes in the air today.",
+        "❄️ Slippery conditions possible.",
+        "🏔 Winter wonderland vibes."
+    ]
+    storm_lines = [
+        "⚡ Thunderstorm risk — stay indoors if possible.",
+        "⛈ Lightning expected, unplug sensitive gear.",
+        "🌪 Severe weather — caution advised.",
+        "💨 Strong winds could cause disruptions.",
+        "⛔ Avoid unnecessary travel if storm worsens."
+    ]
+
+    # Priority: weather code overrides temperature categories
+    if code in [61,63,65,80,81,82]:
+        return random.choice(rain_lines)
+    if code in [71,73,75,85,86]:
+        return random.choice(snow_lines)
+    if code in [95,96,99]:
+        return random.choice(storm_lines)
+
     if temp_max >= 30:
-        return "🔥 It’s going to be very hot today — stay cool and hydrated!"
-    elif temp_max <= 10:
-        return "❄️ Cold day ahead — wear something warm!"
-    elif code in [61,63,65,80,81,82,95,96,99]:
-        return "🌧 Don’t forget your umbrella, rain is expected."
-    elif code in [71,73,75,85,86]:
-        return "❄️ Snow is coming — watch your step!"
-    else:
-        return "🌤 Looks like a pleasant day ahead."
+        return random.choice(hot_lines)
+    elif 20 <= temp_max < 30:
+        return random.choice(warm_lines)
+    elif 10 <= temp_max < 20:
+        return random.choice(mild_lines)
+    elif temp_max < 10:
+        return random.choice(cold_lines)
+
+    return "🌤 Looks like a balanced day ahead."
 
 # -----------------------------
 # Current Weather
