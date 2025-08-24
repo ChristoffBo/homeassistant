@@ -137,52 +137,49 @@ def run_scheduler():
         time.sleep(1)
 
 # -----------------------------
-# Main async listener
+# Main async listener (fixed with reconnect loop)
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://")
     ws_url += f"/stream?token={CLIENT_TOKEN}"
-    print(f"[{BOT_NAME}] Connecting to {ws_url}...")
 
-    try:
-        async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
-            print(f"[{BOT_NAME}] ✅ Connected! Listening for messages...")
+    while True:
+        try:
+            print(f"[{BOT_NAME}] Connecting to {ws_url}...")
+            async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
+                print(f"[{BOT_NAME}] ✅ Connected! Listening for messages...")
 
-            async for msg in ws:
-                try:
-                    data = json.loads(msg)
-                    mid = data.get("id")
-                    appid = data.get("appid")
-                    title = data.get("title", "")
-                    message = data.get("message", "")
+                async for msg in ws:
+                    try:
+                        data = json.loads(msg)
+                        mid = data.get("id")
+                        appid = data.get("appid")
+                        title = data.get("title", "")
+                        message = data.get("message", "")
 
-                    print(f"[{BOT_NAME}] Incoming message id={mid}, appid={appid}, title='{title}'")
+                        print(f"[{BOT_NAME}] Incoming message id={mid}, appid={appid}, title='{title}'")
 
-                    # Skip Jarvis's own messages
-                    if jarvis_app_id and appid == jarvis_app_id:
-                        print(f"[{BOT_NAME}] Skipping own message id={mid}")
-                        continue
+                        # Skip Jarvis's own messages
+                        if jarvis_app_id and appid == jarvis_app_id:
+                            print(f"[{BOT_NAME}] Skipping own message id={mid}")
+                            continue
 
-                    # Beautify if enabled
-                    if BEAUTIFY_ENABLED:
-                        final_msg = beautify_message(title, message)
-                    else:
-                        final_msg = message
+                        # Beautify if enabled
+                        final_msg = beautify_message(title, message) if BEAUTIFY_ENABLED else message
 
-                    repost_priority = 0 if SILENT_REPOST else 5
-                    send_success = send_message(title, final_msg, priority=repost_priority)
+                        repost_priority = 0 if SILENT_REPOST else 5
+                        send_success = send_message(title, final_msg, priority=repost_priority)
 
-                    if send_success:
-                        print(f"[{BOT_NAME}] ✅ Reposted beautified message")
-                        # Purge everything that is not Jarvis
-                        purge_non_jarvis_apps()
+                        if send_success:
+                            print(f"[{BOT_NAME}] ✅ Reposted beautified message")
+                            purge_non_jarvis_apps()
 
-                except Exception as e:
-                    print(f"[{BOT_NAME}] ❌ Error processing message: {e}")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ WebSocket connection failed: {e}")
-        await asyncio.sleep(10)
-        await listen()
+                    except Exception as e:
+                        print(f"[{BOT_NAME}] ❌ Error processing message: {e}")
+
+        except Exception as e:
+            print(f"[{BOT_NAME}] ❌ WebSocket connection failed: {e}")
+            await asyncio.sleep(10)   # retry loop without recursion
 
 # -----------------------------
 # Main entrypoint
