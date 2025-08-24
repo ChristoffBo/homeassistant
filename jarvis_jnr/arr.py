@@ -124,14 +124,29 @@ def upcoming_series(days=7):
     data = _get_json(url)
     if not isinstance(data, list) or not data:
         return "📺 No upcoming episodes", None
-    rows = []
+
+    lines = []
     for e in data:
-        series = e.get("series", {}).get("title", "Unknown")
+        series = e.get("series", {}).get("title")
+        if not series:
+            # fallback: lookup in cache
+            sid = e.get("seriesId")
+            cached = next((s for s in sonarr_cache["series"] if s.get("id") == sid), {})
+            series = cached.get("title", "Unknown")
+
         ep = e.get("episodeNumber", "?")
         season = e.get("seasonNumber", "?")
+
         date = e.get("airDateUtc", "")
-        rows.append([series, f"S{season:02}E{ep:02}", date])
-    return "📺 Upcoming Episodes\n" + _tabulate_list(rows, ["Series", "Episode", "Air Date"]), None
+        try:
+            date = datetime.datetime.fromisoformat(date.replace("Z", "+00:00"))
+            date = date.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+
+        lines.append(f"- {series} — S{season:02}E{ep:02} — {date}")
+
+    return "📺 Upcoming Episodes\n" + "\n".join(lines), None
 
 def series_count():
     if not SONARR_ENABLED:
