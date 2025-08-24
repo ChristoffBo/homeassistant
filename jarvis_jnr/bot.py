@@ -174,7 +174,7 @@ def purge_non_jarvis_apps():
             name = app.get("name")
             if appid != jarvis_app_id:
                 purge_app_messages(appid, name)
-        force_refresh()
+        send_message("Purge", "🗑 Removed non-Jarvis messages", priority=3)
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
@@ -188,9 +188,31 @@ def purge_all_messages():
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
         r = requests.delete(url, headers=headers, timeout=10)
         if r.status_code == 200:
+            send_message("Retention", f"⏳ Cleared all Jarvis messages (older than {RETENTION_HOURS}h)", priority=3)
             print(f"[{BOT_NAME}] 🗑 Purged ALL messages from Jarvis app (retention {RETENTION_HOURS}h)")
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging Jarvis messages: {e}")
+
+# -----------------------------
+# Resolve app id (RESTORED)
+# -----------------------------
+def resolve_app_id():
+    global jarvis_app_id
+    print(f"[{BOT_NAME}] Resolving app ID for '{APP_NAME}'")
+    try:
+        url = f"{GOTIFY_URL}/application"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.get(url, headers=headers, timeout=5)
+        r.raise_for_status()
+        apps = r.json()
+        for app in apps:
+            if app.get("name") == APP_NAME:
+                jarvis_app_id = app.get("id")
+                print(f"[{BOT_NAME}] ✅ Found '{APP_NAME}' id={jarvis_app_id}")
+                return
+        print(f"[{BOT_NAME}] ❌ Could not find app '{APP_NAME}'")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
 # -----------------------------
 # Beautifiers (FULL)
