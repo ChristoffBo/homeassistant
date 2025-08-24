@@ -2,7 +2,7 @@ import os
 import requests
 import datetime
 from tabulate import tabulate
-import difflib  # NEW: for fuzzy matching
+import difflib  # for fuzzy matching
 
 # -----------------------------
 # Config from environment
@@ -162,8 +162,10 @@ ALIASES = {
     "longest show": "longest series",
 }
 
-def handle_arr_command(command: str):
-    cmd = command.lower().strip()
+def handle_arr_command(title: str, message: str):
+    # FIX: join title + message into one command string
+    cmd = f"{title} {message}".lower().strip()
+
     if cmd in ALIASES:
         cmd = ALIASES[cmd]
 
@@ -178,4 +180,4 @@ def handle_arr_command(command: str):
         mapped = ALIASES.get(match[0], match[0])
         return COMMANDS[mapped]()
 
-    return f"🤖 Unknown command: {command}", None
+    return f"🤖 Unknown command: {title} {message}", None
