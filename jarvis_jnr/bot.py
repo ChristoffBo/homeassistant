@@ -3,6 +3,11 @@ from tabulate import tabulate
 from datetime import datetime, timezone
 
 # -----------------------------
+# Module imports
+# -----------------------------
+from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED
+
+# -----------------------------
 # Config from environment (set in run.sh from options.json)
 # -----------------------------
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
@@ -408,6 +413,13 @@ async def listen():
                     if jarvis_app_id and appid == jarvis_app_id:
                         continue
 
+                    # Wake word handling
+                    if message.lower().startswith("jarvis"):
+                        response, extras = handle_arr_command(message.replace("jarvis","",1).strip())
+                        if response:
+                            send_message("Jarvis Module", response, extras=extras)
+                            continue
+
                     if BEAUTIFY_ENABLED:
                         final_msg, extras = beautify_message(title, message)
                     else:
@@ -443,6 +455,17 @@ if __name__ == "__main__":
         "✨ AI BOOT SEQUENCE\n╾━━━━━━━━━━━━━━━━╼\n🔧 Subsystems aligned\n📡 Channels open\n👑 Jarvis Jnr reporting for duty",
     ]
     send_message("Startup", random.choice(startup_msgs), priority=5)
+
+    # Report active modules
+    active_modules = []
+    if RADARR_ENABLED:
+        active_modules.append("🎬 Radarr")
+    if SONARR_ENABLED:
+        active_modules.append("📺 Sonarr")
+    if active_modules:
+        send_message("Modules", "✅ Active Modules: " + ", ".join(active_modules), priority=5)
+    else:
+        send_message("Modules", "⚠️ No external modules enabled", priority=5)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
