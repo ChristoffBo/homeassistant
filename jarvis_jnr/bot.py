@@ -157,12 +157,17 @@ def beautify_radarr(title, raw):
             year = obj["movie"].get("year", "")
             quality = obj.get("release", {}).get("quality", "Unknown")
             size = obj.get("release", {}).get("size", "Unknown")
+            if "importfailed" in raw.lower():
+                msg = f"⛔ RADARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n📽 {movie} ({year})\n💾 {quality} | {size}\n🔴 ERROR: Import failed"
+                return msg, extras
             msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n📽 {movie} ({year})\n💾 {quality} | {size}\n🟢 SUCCESS: Added to collection"
             return msg, extras
     except Exception:
         pass
 
-    if any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
+    if "importfailed" in raw.lower() or "error" in raw.lower():
+        msg = f"⛔ RADARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
+    elif any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
         msg = f"🎬 NEW MOVIE DOWNLOADED\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n🟢 SUCCESS: Added to collection"
     else:
         msg = f"📡 RADARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
@@ -181,12 +186,22 @@ def beautify_sonarr(title, raw):
             season = obj["episode"].get("seasonNumber", "?")
             ep_num = obj["episode"].get("episodeNumber", "?")
             quality = obj.get("release", {}).get("quality", "Unknown")
+            if "importfailed" in raw.lower():
+                msg = f"⛔ SONARR IMPORT FAILED\n╾━━━━━━━━━━━━━━━━╼\n📺 {series} S{season:02}E{ep_num:02} - {ep_title}\n💾 {quality}\n🔴 ERROR: Import failed"
+                return msg, extras
+            if "subtitle" in raw.lower():
+                msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n📺 {series} S{season:02}E{ep_num:02} - {ep_title}\n💾 {quality}\n🟢 SUCCESS: Subtitles available"
+                return msg, extras
             msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n📌 {series} - S{season:02}E{ep_num:02} - {ep_title}\n💾 {quality}\n🟢 SUCCESS: Ready for streaming"
             return msg, extras
     except Exception:
         pass
 
-    if any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
+    if "importfailed" in raw.lower() or "error" in raw.lower():
+        msg = f"⛔ SONARR ERROR\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
+    elif "subtitle" in raw.lower():
+        msg = f"💬 SUBTITLES IMPORTED\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
+    elif any(x in raw.lower() for x in ["downloaded", "imported", "grabbed"]):
         msg = f"📺 NEW EPISODE AVAILABLE\n╾━━━━━━━━━━━━━━━━╼\n{raw}\n🟢 SUCCESS: Ready for streaming"
     else:
         msg = f"📡 SONARR EVENT\n╾━━━━━━━━━━━━━━━━╼\n{raw}"
