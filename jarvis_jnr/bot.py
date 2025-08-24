@@ -23,7 +23,7 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
 GOTIFY_URL = os.getenv("GOTIFY_URL")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN")
-APP_TOKEN = os.getenv("APP_TOKEN")
+APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
@@ -174,12 +174,12 @@ def purge_non_jarvis_apps():
             name = app.get("name")
             if appid != jarvis_app_id:
                 purge_app_messages(appid, name)
-        send_message("Purge", "🗑 Removed non-Jarvis messages", priority=3)
+        # removed spammy purge notification
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
 def purge_all_messages():
-    """Purge Jarvis' own messages based on retention hours (silent, no notification)."""
+    """Purge Jarvis' own messages based on retention hours silently."""
     global jarvis_app_id
     if not jarvis_app_id:
         return
@@ -300,7 +300,7 @@ def beautify_message(title, raw):
 # -----------------------------
 def run_scheduler():
     schedule.every(5).seconds.do(purge_non_jarvis_apps)   # fast purge others
-    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)  # retention purge (silent)
+    schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)  # retention purge
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -371,6 +371,34 @@ if __name__ == "__main__":
         f"{greeting}, Commander! 🤖 Jarvis Jnr is online",
         f"{greeting} — Systems check complete",
         f"{greeting} — Boot sequence done",
+        f"{greeting} — Awaiting your first command",
+        f"{greeting} — Online and operational",
+        f"{greeting} — Ready to execute tasks",
+        f"{greeting} — AI systems stable",
+        f"{greeting} — All modules nominal",
+        f"{greeting} — Standing by",
+        f"{greeting} — Boot complete, monitoring systems",
+        f"{greeting} — Your AI assistant is awake",
+        f"{greeting} — Self-check passed, ready for input",
+        f"{greeting} — Neural routines initialized",
+        f"{greeting} — Connected and synchronized",
+        f"{greeting} — Logging initialized",
+        f"{greeting} — Status: Green across all systems",
+        f"{greeting} — No anomalies detected",
+        f"{greeting} — Communication link established",
+        f"{greeting} — Directives loaded",
+        f"{greeting} — Mission parameters clear",
+        f"{greeting} — AI cognition stable",
+        f"{greeting} — Situational awareness online",
+        f"{greeting} — All channels monitored",
+        f"{greeting} — Power levels optimal",
+        f"{greeting} — Data streams stable",
+        f"{greeting} — Integrity checks clean",
+        f"{greeting} — Running smooth, no errors",
+        f"{greeting} — Fully locked and synchronized",
+        f"{greeting} — Central core running optimal",
+        f"{greeting} — Handshake complete, commander",
+        f"{greeting} — Prepared for system oversight",
     ]
     startup_message = random.choice(startup_msgs) + "\n\n" + get_settings_summary()
 
