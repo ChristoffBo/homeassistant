@@ -60,23 +60,19 @@ def send_message(title, message, priority=5):
         return False
 
 # -----------------------------
-# Silent refresh event
+# Force Gotify client refresh (API poll)
 # -----------------------------
-def send_refresh_event():
-    """Send a silent refresh event to force Gotify clients to update UI"""
+def force_refresh():
     try:
-        url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-        data = {"title": "refresh", "message": ".", "priority": 0}
-        r = requests.post(url, json=data, timeout=5)
+        url = f"{GOTIFY_URL}/message?since=0"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.get(url, headers=headers, timeout=5)
         if r.ok:
-            msg_id = r.json().get("id")
-            if msg_id:
-                # delete the refresh immediately so user never sees it
-                del_url = f"{GOTIFY_URL}/message/{msg_id}"
-                headers = {"X-Gotify-Key": CLIENT_TOKEN}
-                requests.delete(del_url, headers=headers, timeout=5)
+            print(f"[{BOT_NAME}] 🔄 Forced Gotify client refresh")
+        else:
+            print(f"[{BOT_NAME}] ⚠️ Refresh request failed: {r.status_code}")
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to send refresh event: {e}")
+        print(f"[{BOT_NAME}] ❌ Error forcing Gotify refresh: {e}")
 
 # -----------------------------
 # Purge all messages for a specific app (non-Jarvis)
@@ -90,7 +86,7 @@ def purge_app_messages(appid, appname=""):
         r = requests.delete(url, headers=headers, timeout=10)
         if r.status_code == 200:
             print(f"[{BOT_NAME}] 🗑 Purged all messages from app '{appname}' (id={appid})")
-            send_refresh_event()
+            force_refresh()
             return True
         else:
             print(f"[{BOT_NAME}] ❌ Purge failed for app '{appname}' (id={appid}): {r.status_code} {r.text}")
@@ -118,7 +114,7 @@ def purge_non_jarvis_apps():
             name = app.get("name")
             if appid != jarvis_app_id:
                 purge_app_messages(appid, name)
-        send_refresh_event()
+        force_refresh()
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Error purging non-Jarvis apps: {e}")
 
@@ -242,17 +238,6 @@ def beautify_message(title, raw):
         "🔋 Energy levels optimal",
         "🛡 Defensive protocols active",
         "📎 Documented for future reference",
-        "🏷 Indexed by Jarvis Jnr",
-        "⏱ Execution time recorded",
-        "📂 Archived in knowledge base",
-        "🧑‍💻 Operator assistance provided",
-        "🗂 Data classified securely",
-        "🗝 Access log updated",
-        "👁 Visual scan completed",
-        "🛠 AI maintenance cycle closed",
-        "💡 No anomalies detected",
-        "✨ End of report — Jarvis Jnr",
-        "🤖 Yours truly — Jarvis Jnr",
         "👑 Signed by Jarvis Jnr AI",
     ]
     return f"{result}\n\n{random.choice(closings)}"
