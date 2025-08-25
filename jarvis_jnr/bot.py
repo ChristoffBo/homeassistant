@@ -37,10 +37,15 @@ WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1", "true",
 CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1", "true", "yes")
 DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1", "true", "yes")
 
+# NEW: AI-style features toggles (env defaults)
+AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1","true","yes")
+CACHE_REFRESH_MINUTES = int(os.getenv("cache_refresh_minutes", "60"))
+
 # -----------------------------
 # Load Home Assistant options.json / config.json for toggles + API config
 # -----------------------------
 CHAT_MOOD = "Calm"  # default if not configured
+
 def _load_json_file(path):
     try:
         with open(path, "r") as f:
@@ -71,6 +76,11 @@ try:
     # Mood from config (personality_mood preferred, chat_mood fallback)
     CHAT_MOOD = str(merged.get("personality_mood",
                                merged.get("chat_mood", CHAT_MOOD)))
+
+    # NEW: read AI feel toggles from config
+    AI_CHECKINS_ENABLED = merged.get("ai_checkins_enabled", AI_CHECKINS_ENABLED)
+    CACHE_REFRESH_MINUTES = int(merged.get("cache_refresh_minutes", CACHE_REFRESH_MINUTES))
+
 except Exception as e:
     print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
     RADARR_URL = ""
@@ -180,11 +190,21 @@ def _ts(step=None):
     return f"[00:{step:02d}]"
 
 def _kv(label, value):
-    # Minimal alignment: no excessive spaces; single indent and colon
     return f"    {label}: {value}"
 
 def _yesno(flag):
     return "True" if bool(flag) else "False"
+
+# NEW: mood-aware “voice”
+def ai_voice(line):
+    m = (CHAT_MOOD or "Calm").strip().lower()
+    if m == "sarcastic":
+        return f"😏 {line}"
+    if m in ("playful","fun"):
+        return f"✨ {line}"
+    if m in ("serious","strict"):
+        return f"🛡 {line}"
+    return f"💡 {line}"
 
 def format_startup_poster(
     *,
@@ -211,7 +231,6 @@ def format_startup_poster(
     radarr_enabled = RADARR_ENABLED if radarr_enabled is None else radarr_enabled
     sonarr_enabled = SONARR_ENABLED if sonarr_enabled is None else sonarr_enabled
     weather_enabled = WEATHER_ENABLED if weather_enabled is None else weather_enabled
-    # Chat & Digest may be controlled by dynamic loader + config/env
     chat_enabled = chat_enabled if chat_enabled is not None else False
     digest_enabled = digest_enabled if digest_enabled is not None else False
 
@@ -502,6 +521,20 @@ def beautify_message(title, raw):
 def run_scheduler():
     schedule.every(5).seconds.do(purge_non_jarvis_apps)
     schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
+    # NEW: periodic ARR cache refresh so 'upcoming' stays fresh
+    if RADARR_ENABLED and 'cache_radarr' in globals():
+        try:
+            schedule.every(CACHE_REFRESH_MINUTES).minutes.do(cache_radarr)
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Could not schedule cache_radarr: {e}")
+    if SONARR_ENABLED and 'cache_sonarr' in globals():
+        try:
+            schedule.every(CACHE_REFRESH_MINUTES).minutes.do(cache_sonarr)
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Could not schedule cache_sonarr: {e}")
+    # NEW: autonomous AI check-ins (off by default)
+    if AI_CHECKINS_ENABLED:
+        schedule.every(6).hours.do(send_ai_checkin)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -609,6 +642,24 @@ def try_load_module(modname, label, icon="🧩"):
         return None
 
 # -----------------------------
+# AI-style autonomous check-in (optional)
+# -----------------------------
+def send_ai_checkin():
+    try:
+        parts = []
+        parts.append(f"{_ts(1)} 🧠 Cognitive heartbeat")
+        parts.append(_kv("Mood", CHAT_MOOD))
+        parts.append(_kv("Beautify", "ON" if BEAUTIFY_ENABLED else "OFF"))
+        parts.append(_kv("Radarr", "ACTIVE" if RADARR_ENABLED else "INACTIVE"))
+        parts.append(_kv("Sonarr", "ACTIVE" if SONARR_ENABLED else "INACTIVE"))
+        parts.append(_kv("Weather", "ACTIVE" if WEATHER_ENABLED else "INACTIVE"))
+        parts.append(_kv("Digest", "ACTIVE" if ('digest' in extra_modules) else "INACTIVE"))
+        parts.append(f"{_ts(2)} {ai_voice('Systems nominal — awaiting directives.')}")
+        send_message("Status", "\n".join(parts), priority=5)
+    except Exception as e:
+        print(f"[{BOT_NAME}] Check-in failed: {e}")
+
+# -----------------------------
 # Main
 # -----------------------------
 if __name__ == "__main__":
@@ -657,9 +708,11 @@ if __name__ == "__main__":
         digest_enabled=digest_enabled_flag,
         chat_mood=CHAT_MOOD
     )
+    # Add a tiny mood-aware flourish (AI voice)
+    startup_poster = startup_poster + f"\n{_ts(5)} {ai_voice('Operational and listening.')}"
     send_message("Startup", startup_poster, priority=5)
 
-    # Runtime stays unchanged
+    # Runtime
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
