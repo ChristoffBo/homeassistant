@@ -1,9 +1,9 @@
-## latest (2025-08-25 10:30:00)
+## latest (2025-08-25 16:32:00)
 - Personality module added: optional chat mode with random jokes, quips, weird facts
 - Supports configurable quiet hours, min interval, daily max
 - Local stash (~100 lines) + multiple free APIs (JokeAPI, DadJoke, Chuck Norris, Geek Jokes, Quotable, Numbers, Useless Facts, etc.)
-- Personality moods supported: playful, sarcastic, serious, sci-fi, hacker-noir
-- New options in options.json: personality_enabled, personality_quiet_hours, personality_min_interval_minutes, personality_daily_max, personality_local_ratio, personality_api_ratio, personality_family_friendly, personality_mood, chat_enabled
+- Personality moods supported: playful, sarcastic, serious, sci-fi, hacker-noir, tired, depressed, excited, calm, angry
+- New options in options.json: personality_enabled, personality_quiet_hours, personality_min_interval_minutes, personality_daily_max, personality_local_ratio, personality_api_ratio, personality_family_friendly, personality_mood, chat_enabled, ai_checkins_enabled, cache_refresh_minutes
 
 ## 2025-08-24 14:20:00
 Alpha release of Jarvis Jnr Home Assistant add-on
