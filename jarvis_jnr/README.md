@@ -22,6 +22,8 @@ Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify f
 - Wake-word commands → Weather, Radarr, Sonarr, System help.  
 - **Chat Personality** → Optional “weirdo mode” that posts random jokes, facts, or quotes at safe intervals.  
 - **Extended Personality Modes** → Choose how Jarvis Jnr “speaks” by selecting a mood in `personality_mood`.  
+- **AI Check-ins** → Optional automated status posts every 6h showing system heartbeat, enabled modules, and active mood.  
+- **Configurable Cache Refresh** → Automatically refreshes Radarr/Sonarr caches at a set interval (default: 60 minutes).  
 
 ### Available Personality Modes  
 - `sarcastic` → 😏 Snappy and ironic responses.  
@@ -94,5 +96,7 @@ Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify f
   "personality_api_ratio": 40,
   "personality_family_friendly": false,
   "personality_mood": "calm",
-  "chat_enabled": true
+  "chat_enabled": true,
+  "ai_checkins_enabled": false,
+  "cache_refresh_minutes": 60
 }
