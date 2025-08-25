@@ -1,28 +1,47 @@
-# 🧩 Jarvis Jnr — Home Assistant Add-on
-This add-on runs a smart notification bot inside Home Assistant that connects to your **Gotify** server. Jarvis Jnr watches incoming messages, beautifies them into clean cards, reposts them, and can execute simple wake-word commands. It also enforces retention rules, supports integrations like **Radarr, Sonarr, Weather**, and includes a **toggleable Chat Personality** that posts random jokes, quips, or weird facts at controlled intervals.
+# 🧩 Jarvis Jnr — Home Assistant Add-on  
+This add-on runs a smart notification bot inside Home Assistant that connects to your **Gotify** server. Jarvis Jnr watches incoming messages, beautifies them into clean cards, reposts them, and can execute simple wake-word commands. It also enforces retention rules, supports integrations like **Radarr, Sonarr, Weather**, and includes a **toggleable Chat Personality** that posts random jokes, quips, or weird facts at controlled intervals.  
 
-## What it is and what it is used for
-**Jarvis Jnr** is a Gotify-aware assistant. It listens to notifications in real time and can:
-- Beautify Radarr/Sonarr events into rich cards with posters, runtime, quality, etc.
-- Format JSON, YAML, Watchtower, and Semaphore payloads.
-- Auto-clean up Gotify feeds based on retention.
-- Respond to wake-word commands like `Jarvis help`, `Jarvis weather`, or `Jarvis series count`.
-- Optionally run in **personality mode**, dropping random jokes, puns, weird facts, or API-fetched quips to make the bot feel alive.
+## What it is and what it is used for  
+**Jarvis Jnr** is a Gotify-aware assistant. It listens to notifications in real time and can:  
+- Beautify Radarr/Sonarr events into rich cards with posters, runtime, quality, etc.  
+- Format JSON, YAML, Watchtower, and Semaphore payloads.  
+- Auto-clean up Gotify feeds based on retention.  
+- Respond to wake-word commands like `Jarvis help`, `Jarvis weather`, or `Jarvis series count`.  
+- Optionally run in **personality mode**, dropping random jokes, puns, weird facts, or API-fetched quips to make the bot feel alive.  
 
-Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify for notifications. It centralizes formatting, command handling, and adds personality to your notifications.
+Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify for notifications. It centralizes formatting, command handling, and adds personality to your notifications.  
 
-## Features
-- Beautifies incoming Gotify messages into clean cards.
-- Radarr event parsing → Poster, title, year, runtime, quality, size.
-- Sonarr event parsing → Poster, SxxEyy, title, runtime, quality, size.
-- Watchtower & Semaphore payloads → Labeled update reports.
-- JSON/YAML payloads → Parsed tables.
-- General messages → Generic card.
-- Retention cleanup → Purges Jarvis or non-Jarvis messages after configured hours.
-- Wake-word commands → Weather, Radarr, Sonarr, System help.
-- **Chat Personality** → Optional “weirdo mode” that posts random jokes, facts, or quotes at safe intervals.
+## Features  
+- Beautifies incoming Gotify messages into clean cards.  
+- Radarr event parsing → Poster, title, year, runtime, quality, size.  
+- Sonarr event parsing → Poster, SxxEyy, title, runtime, quality, size.  
+- Watchtower & Semaphore payloads → Labeled update reports.  
+- JSON/YAML payloads → Parsed tables.  
+- General messages → Generic card.  
+- Retention cleanup → Purges Jarvis or non-Jarvis messages after configured hours.  
+- Wake-word commands → Weather, Radarr, Sonarr, System help.  
+- **Chat Personality** → Optional “weirdo mode” that posts random jokes, facts, or quotes at safe intervals.  
+- **Extended Personality Modes** → Choose how Jarvis Jnr “speaks” by selecting a mood in `personality_mood`.  
 
-## Paths
+### Available Personality Modes  
+- `sarcastic` → 😏 Snappy and ironic responses.  
+  *Example:* “Oh, fantastic. Another system update. Exactly what I wanted.”  
+- `playful` → ✨ Fun and lighthearted tone.  
+  *Example:* “Woohoo! New movie added — dibs on the popcorn!”  
+- `serious` → 🛡 Formal and strict output.  
+  *Example:* “Radarr has indexed 1 new title. Task complete.”  
+- `angry` → 🔥 Shouts everything, all caps.  
+  *Example:* “ARE YOU KIDDING ME? ANOTHER ERROR?!”  
+- `tired` → 😴 Slow, sleepy tone.  
+  *Example:* “Yeah… fine… added the show… I need a nap now.”  
+- `depressed` → 🌑 Dark, moody replies.  
+  *Example:* “Another episode arrives… nothing ever changes.”  
+- `excited` → 🚀 Energetic and hyped tone.  
+  *Example:* “YESSS! New content detected — let’s freaking GO!”  
+- `calm` → 💡 Neutral and steady by default.  
+  *Example:* “System event received and processed successfully.”  
+
+## Paths  
 - **Config**: `/data/options.json` — add-on settings  
 - **Bot core**: `/app/bot.py`  
 - **Radarr/Sonarr**: `/app/arr.py`  
@@ -30,15 +49,15 @@ Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify f
 - **Chat Personality**: `/app/chat.py`  
 - **Personality state**: `/data/personality_state.json`  
 
-## First-Time Setup (required)
-1. On your Gotify server, create:
-   - A **Client token** (for listening to WebSocket stream).
-   - An **App token** (for Jarvis to post replies).
-2. Place both tokens into the add-on’s options.
-3. Set URLs for Radarr/Sonarr if you want those modules active.
-4. Enable `personality_enabled` if you want the bot to post random jokes/facts.
+## First-Time Setup (required)  
+1. On your Gotify server, create:  
+   - A **Client token** (for listening to WebSocket stream).  
+   - An **App token** (for Jarvis to post replies).  
+2. Place both tokens into the add-on’s options.  
+3. Set URLs for Radarr/Sonarr if you want those modules active.  
+4. Enable `personality_enabled` if you want the bot to post random jokes/facts.  
 
-## Configuration Example
+## Configuration Example  
 ```json
 {
   "bot_name": "Jarvis Jnr",
@@ -74,6 +93,6 @@ Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify f
   "personality_local_ratio": 60,
   "personality_api_ratio": 40,
   "personality_family_friendly": false,
-  "personality_mood": "sarcastic",
+  "personality_mood": "calm",
   "chat_enabled": true
 }
