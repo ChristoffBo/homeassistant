@@ -68,8 +68,9 @@ try:
     SONARR_URL = merged.get("sonarr_url", "")
     SONARR_API_KEY = merged.get("sonarr_api_key", "")
 
-    # Mood from config
-    CHAT_MOOD = str(merged.get("chat_mood", CHAT_MOOD))
+    # Mood from config (personality_mood preferred, chat_mood fallback)
+    CHAT_MOOD = str(merged.get("personality_mood",
+                               merged.get("chat_mood", CHAT_MOOD)))
 except Exception as e:
     print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
     RADARR_URL = ""
@@ -643,7 +644,7 @@ if __name__ == "__main__":
     chat_enabled_flag = chat_loaded or CHAT_ENABLED_ENV or locals().get("CHAT_ENABLED_FILE", False)
     digest_enabled_flag = digest_loaded or DIGEST_ENABLED_ENV or locals().get("DIGEST_ENABLED_FILE", False)
 
-    # --- Unified single startup post in the agreed boot style ---
+    # Single startup post in the agreed boot style (shows ACTIVE/INACTIVE for all modules)
     startup_poster = format_startup_poster(
         bot_name=BOT_NAME,
         retention_hours=RETENTION_HOURS,
