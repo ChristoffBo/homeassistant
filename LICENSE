@@ -19,3 +19,62 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+NOTICE
+
+This repository contains add-ons that incorporate or build upon third-party
+open-source projects. Each such project retains its original license:
+
+- Gotify (https://github.com/gotify/server)  
+  MIT License, Copyright (c) 2018 Gotify contributors
+
+- Ansible Semaphore (https://github.com/ansible-semaphore/semaphore)  
+  MIT License, Copyright (c) Semaphore contributors
+
+- Apprise (https://github.com/caronc/apprise)  
+  MIT License, Copyright (c) Chris Caron and contributors
+
+- AdGuard Home (https://github.com/AdguardTeam/AdGuardHome)  
+  GPL-3.0 License, Copyright (c) AdGuard Team
+
+- Technitium DNS (https://github.com/TechnitiumSoftware/DnsServer)  
+  GPL-3.0 License, Copyright (c) Technitium Software
+
+- Uptime Kuma (https://github.com/louislam/uptime-kuma)  
+  MIT License, Copyright (c) Louis Lam
+
+- Portainer (https://github.com/portainer/portainer)  
+  zlib License, Copyright (c) Portainer.io
+
+- Heimdall (https://github.com/linuxserver/Heimdall)  
+  MIT License, Copyright (c) LinuxServer.io
+
+- 2FAuth (https://github.com/Bubka/2FAuth)  
+  GPL-3.0 License, Copyright (c) Bubka
+
+- Mailrise (https://github.com/yoannchaudet/mailrise)  
+  MIT License, Copyright (c) Yoann Chaudet
+
+- MeTube (https://github.com/alexta69/metube)  
+  AGPL-3.0 License, Copyright (c) AlexTa
+
+- dnscrypt-proxy (https://github.com/DNSCrypt/dnscrypt-proxy)  
+  ISC License, Copyright (c) Frank Denis
+
+- Zoraxy (https://github.com/tobychui/zoraxy)  
+  GPL-3.0 License, Copyright (c) Toby Chui
+
+---
+
+FUTURE ADD-ONS
+
+Any future add-ons added to this repository which incorporate, wrap, or build
+upon third-party open-source projects will likewise remain subject to their
+original licenses. Such licenses are considered incorporated by reference into
+this NOTICE section, even if not listed explicitly.  
+
+All modifications, integration code, and custom Home Assistant add-on logic
+within this repository are Copyright (c) 2026 Christoff Bothma under the
+MIT License above.
