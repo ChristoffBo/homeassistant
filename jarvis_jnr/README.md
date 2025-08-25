@@ -1,115 +1,79 @@
-Jarvis Jnr is a Home Assistant add-on that connects to your Gotify server, watches incoming messages, beautifies them, reposts the formatted version, and can execute simple commands (wake-word style). It also enforces message retention and supports optional modules (Weather, Radarr, Sonarr,quips coming soon). This is an alpha build. Features and modules may change in future versions.
+# 🧩 Jarvis Jnr — Home Assistant Add-on
+This add-on runs a smart notification bot inside Home Assistant that connects to your **Gotify** server. Jarvis Jnr watches incoming messages, beautifies them into clean cards, reposts them, and can execute simple wake-word commands. It also enforces retention rules, supports integrations like **Radarr, Sonarr, Weather**, and includes a **toggleable Chat Personality** that posts random jokes, quips, or weird facts at controlled intervals.
 
-✅ Features
-Beautifies messages (delete + repost formatted)
+## What it is and what it is used for
+**Jarvis Jnr** is a Gotify-aware assistant. It listens to notifications in real time and can:
+- Beautify Radarr/Sonarr events into rich cards with posters, runtime, quality, etc.
+- Format JSON, YAML, Watchtower, and Semaphore payloads.
+- Auto-clean up Gotify feeds based on retention.
+- Respond to wake-word commands like `Jarvis help`, `Jarvis weather`, or `Jarvis series count`.
+- Optionally run in **personality mode**, dropping random jokes, puns, weird facts, or API-fetched quips to make the bot feel alive.
 
-Radarr events → poster, title, year, runtime, quality, size
+Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify for notifications. It centralizes formatting, command handling, and adds personality to your notifications.
 
-Sonarr events → poster, SxxEyy, title, runtime, quality, size
+## Features
+- Beautifies incoming Gotify messages into clean cards.
+- Radarr event parsing → Poster, title, year, runtime, quality, size.
+- Sonarr event parsing → Poster, SxxEyy, title, runtime, quality, size.
+- Watchtower & Semaphore payloads → Labeled update reports.
+- JSON/YAML payloads → Parsed tables.
+- General messages → Generic card.
+- Retention cleanup → Purges Jarvis or non-Jarvis messages after configured hours.
+- Wake-word commands → Weather, Radarr, Sonarr, System help.
+- **Chat Personality** → Optional “weirdo mode” that posts random jokes, facts, or quotes at safe intervals.
 
-Watchtower & Semaphore payloads → labeled cards
+## Paths
+- **Config**: `/data/options.json` — add-on settings
+- **Bot core**: `/app/bot.py`
+- **Radarr/Sonarr**: `/app/arr.py`
+- **Weather module**: `/app/weather.py`
+- **Chat Personality**: `/app/chat.py`
+- **Personality state**: `/data/personality_state.json`
 
-Generic JSON/YAML payloads → parsed tables
+## First-Time Setup (required)
+1. On your Gotify server, create:
+   - A **Client token** (for listening to WebSocket stream).
+   - An **App token** (for Jarvis to post replies).
+2. Place both tokens into the add-on’s options.
+3. Set URLs for Radarr/Sonarr if you want those modules active.
+4. Enable `personality_enabled` if you want the bot to post random jokes/facts.
 
-Everything else → neat “General Message” card
-
-Retention cleanup
-
-Keeps Jarvis messages for retention_hours, then purges them
-
-Clears older/non-Jarvis messages to keep the board tidy
-
-Wake-word commands
-
-Wake word is Jarvis (case-insensitive)
-
-Send a Gotify notification with Title: Jarvis and Message: your command
-
-Supported commands:
-• Weather module (Open-Meteo, no API key): weather, forecast, temp, temperature
-• Radarr: movie count
-• Sonarr: series count, upcoming series, longest series
-• System: help or commands shows the command matrix
-
-Optional Quiet Hours (config flags exist)
-
-Modules may be expanded in future builds.
-
-📁 Files
-/data/options.json — add-on settings
-/app/bot.py — main bot
-/app/arr.py — Radarr and Sonarr integration
-/app/weather.py — Weather module (Open-Meteo)
-/app/*.py — optional modules auto-loaded when enabled
-
-⚙️ Configuration (/data/options.json)
+## Configuration Example
+```json
 {
-"bot_name": "Jarvis Jnr",
-"bot_icon": "🤖",
-"gotify_url": "http://YOUR_GOTIFY_HOST:8091",
-"gotify_client_token": "CLIENT_TOKEN_FOR_STREAMING",
-"gotify_app_token": "APP_TOKEN_FOR_POSTING",
-"jarvis_app_name": "Jarvis",
-"retention_hours": 24,
-"beautify_enabled": true,
-"commands_enabled": true,
-"quiet_hours_enabled": true,
-"quiet_hours": "22:00-06:00",
-"weather_enabled": true,
-"weather_lat": -26.2041,
-"weather_lon": 28.0473,
-"weather_city": "Your City",
-"weather_time": "07:00",
-"digest_enabled": true,
-"digest_time": "08:00",
-"radarr_enabled": true,
-"radarr_url": "http://RADARR_HOST:7878",
-"radarr_api_key": "YOUR_RADARR_API_KEY",
-"radarr_time": "07:30",
-"sonarr_enabled": true,
-"sonarr_url": "http://SONARR_HOST:8989",
-"sonarr_api_key": "YOUR_SONARR_API_KEY",
-"sonarr_time": "07:30"
+  "bot_name": "Jarvis Jnr",
+  "bot_icon": "🤖",
+  "gotify_url": "http://YOUR_GOTIFY_HOST:8091",
+  "gotify_client_token": "CLIENT_TOKEN_FOR_STREAMING",
+  "gotify_app_token": "APP_TOKEN_FOR_POSTING",
+  "jarvis_app_name": "Jarvis",
+  "retention_hours": 24,
+  "beautify_enabled": true,
+  "commands_enabled": true,
+  "quiet_hours_enabled": true,
+  "quiet_hours": "22:00-06:00",
+  "weather_enabled": true,
+  "weather_lat": -26.2041,
+  "weather_lon": 28.0473,
+  "weather_city": "Your City",
+  "weather_time": "07:00",
+  "digest_enabled": true,
+  "digest_time": "08:00",
+  "radarr_enabled": true,
+  "radarr_url": "http://RADARR_HOST:7878",
+  "radarr_api_key": "YOUR_RADARR_API_KEY",
+  "radarr_time": "07:30",
+  "sonarr_enabled": true,
+  "sonarr_url": "http://SONARR_HOST:8989",
+  "sonarr_api_key": "YOUR_SONARR_API_KEY",
+  "sonarr_time": "07:30",
+  "personality_enabled": true,
+  "personality_quiet_hours": "23:00-06:00",
+  "personality_min_interval_minutes": 60,
+  "personality_daily_max": 24,
+  "personality_local_ratio": 60,
+  "personality_api_ratio": 40,
+  "personality_family_friendly": false,
+  "personality_mood": "sarcastic",
+  "chat_enabled": true
 }
-
-🧪 Options
-bot_name — bot display name
-bot_icon — emoji or text shown in notifications
-gotify_url — base URL of Gotify server
-gotify_client_token — client token used to listen to Gotify’s WebSocket stream
-gotify_app_token — app token used by Jarvis to post replies
-jarvis_app_name — Gotify app name to prevent Jarvis looping on its own messages
-retention_hours — how long Jarvis messages are kept before purge
-beautify_enabled — enable or disable beautification
-commands_enabled — enable or disable wake-word command handling
-quiet_hours_enabled — enable or disable quiet hours
-quiet_hours — timeframe when Jarvis will stay silent
-weather_enabled — enable or disable weather module
-weather_lat — latitude used for weather lookup
-weather_lon — longitude used for weather lookup
-weather_city — label shown in weather cards (cosmetic only)
-weather_time — reserved for scheduled reports
-digest_enabled — toggle digest module (future use)
-digest_time — reserved for digest scheduling
-radarr_enabled — enable or disable Radarr module
-radarr_url — Radarr base URL
-radarr_api_key — Radarr API key
-radarr_time — reserved for scheduled Radarr reports
-sonarr_enabled — enable or disable Sonarr module
-sonarr_url — Sonarr base URL
-sonarr_api_key — Sonarr API key
-sonarr_time — reserved for scheduled Sonarr reports
-
-🌍 Usage
-
-Create in Gotify: a Client token (for listening) and an App token (for Jarvis to post).
-
-Configure /data/options.json with both tokens and your preferences.
-
-Start the add-on in Home Assistant.
-
-Send a Gotify message: Title: Jarvis, Message: your command.
-Jarvis will reply back into the Jarvis app feed with a formatted card.
-
-🧠 Notes
-This is an alpha build. Modules and configuration will change. Keep your tokens, URLs, and API keys private.
