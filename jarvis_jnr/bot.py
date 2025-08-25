@@ -149,6 +149,86 @@ def get_settings_summary():
     return summary
 
 # -----------------------------
+# Sleek poster/beautify format helpers (AI look, no tables, aligned)
+# -----------------------------
+def _ts(step=None):
+    if step is None:
+        return datetime.now().strftime("[%H:%M:%S]")
+    return f"[00:{step:02d}]"
+
+def _kv(label, value, label_pad=18):
+    pad = " " * max(0, label_pad - len(label))
+    return f"        {label}{pad}: {value}"
+
+def _on_off(flag):
+    return "True" if flag else "False"
+
+def format_startup_poster(bot_name=None,
+                          retention_hours=None,
+                          silent_repost=None,
+                          beautify_enabled=None,
+                          radarr_enabled=None,
+                          sonarr_enabled=None,
+                          chat_enabled=None,
+                          chat_mood="🔵 Calm",
+                          weather_enabled=None):
+    bot_name = bot_name if bot_name is not None else BOT_NAME
+    retention_hours = RETENTION_HOURS if retention_hours is None else retention_hours
+    silent_repost = SILENT_REPOST if silent_repost is None else silent_repost
+    beautify_enabled = BEAUTIFY_ENABLED if beautify_enabled is None else beautify_enabled
+    radarr_enabled = RADARR_ENABLED if radarr_enabled is None else radarr_enabled
+    sonarr_enabled = SONARR_ENABLED if sonarr_enabled is None else sonarr_enabled
+    weather_enabled = WEATHER_ENABLED if weather_enabled is None else weather_enabled
+
+    lines = []
+    lines.append(f"🤖 {bot_name} v1.0 — Neural Boot Sequence\n")
+    lines.append(f"{_ts(1)} ⚡ Core systems initialized")
+    lines.append(f"{_ts(2)} ⚙️ Configuration loaded")
+    lines.append(_kv("⏳ Retention Hours", str(retention_hours)))
+    lines.append(_kv("🤫 Silent Repost", _on_off(silent_repost)))
+    lines.append(_kv("🎨 Beautify Enabled", _on_off(beautify_enabled)))
+    lines.append(f"{_ts(3)} 🧩 Modules online")
+    if radarr_enabled:
+        lines.append("        🎬 Radarr .......... ACTIVE")
+    if sonarr_enabled:
+        lines.append("        📺 Sonarr .......... ACTIVE")
+    if chat_enabled:
+        lines.append("        💬 Chat Module ..... ACTIVE")
+        lines.append("            → Personality Core: ONLINE")
+        lines.append(f"            → Active Mood     : {chat_mood}")
+    if weather_enabled:
+        lines.append("        🌤️ Weather ......... ACTIVE")
+    lines.append(f"{_ts(4)} ✅ All systems nominal — Standing by")
+    return "\n".join(lines)
+
+def format_beautify_block(title, message, source_app=None, priority=None, tags=None):
+    step = 1
+    lines = []
+    lines.append(f"{_ts(step)} ✉️ Message received")
+    step += 1
+    lines.append(f"{_ts(step)} 🧾 Metadata")
+    step += 1
+    if source_app:
+        lines.append(_kv("App", source_app))
+    if priority is not None:
+        lines.append(_kv("Priority", str(priority)))
+    if tags:
+        try:
+            lines.append(_kv("Tags", ", ".join(tags)))
+        except Exception:
+            lines.append(_kv("Tags", str(tags)))
+    lines.append(f"{_ts(step)} 🧩 Content")
+    step += 1
+    if title:
+        lines.append(_kv("Title", title))
+    body = (message or "").rstrip()
+    if body:
+        for ln in (body.splitlines() or [body]):
+            lines.append(f"        {ln}")
+    lines.append(f"{_ts(step)} ✅ Reformatted — Delivered")
+    return "\n".join(lines)
+
+# -----------------------------
 # Send message
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
@@ -357,12 +437,13 @@ def beautify_yaml(title, raw):
     return None, None
 
 def beautify_generic(title, raw):
-    """Minimal AI vibe without breaking content or posters."""
+    """Sleek AI-aligned beautify block (no tables, preserves posters and content)."""
     # If it already looks formatted or long, leave it alone.
     if any(tok in raw for tok in ("http://", "https://", "```", "|---", "||")) or raw.count("\n") > 6:
         return raw, None
-    # Light-touch prefix only
-    return f"🛰 {raw}", None
+    # Build aligned block similar to startup; keep original content intact
+    styled = format_beautify_block(title=title, message=raw, source_app=APP_NAME, priority=5, tags=None)
+    return styled, None
 
 def beautify_message(title, raw):
     lower = (raw or "").lower()
@@ -381,7 +462,7 @@ def beautify_message(title, raw):
     if y and y[0]:
         return y[0], None
 
-    # Fallback: minimal AI prefix
+    # Fallback: sleek aligned block
     return beautify_generic(title, raw)
 
 # -----------------------------
@@ -525,6 +606,22 @@ if __name__ == "__main__":
     else:
         startup_message += "\n\n⚠️ No external modules enabled"
     send_message("Startup", startup_message, priority=5)
+
+    # --- ADDITIVE: Also post the sleek AI boot poster (keeps your original poster intact)
+    chat_enabled_flag = any(("💬" in x) or ("Chat" in x) for x in active)
+    startup_poster = format_startup_poster(
+        bot_name=BOT_NAME,
+        retention_hours=RETENTION_HOURS,
+        silent_repost=SILENT_REPOST,
+        beautify_enabled=BEAUTIFY_ENABLED,
+        radarr_enabled=RADARR_ENABLED,
+        sonarr_enabled=SONARR_ENABLED,
+        chat_enabled=chat_enabled_flag,
+        chat_mood="🔵 Calm",
+        weather_enabled=WEATHER_ENABLED
+    )
+    send_message("Startup • Boot Log", startup_poster, priority=5)
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
