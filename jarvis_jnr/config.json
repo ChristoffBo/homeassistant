@@ -46,7 +46,10 @@
     "personality_family_friendly": true,
     "personality_mood": "playful",
 
-    "chat_enabled": true
+    "chat_enabled": true,
+
+    "ai_checkins_enabled": false,
+    "cache_refresh_minutes": 60
   },
   "schema": {
     "bot_name": "str",
@@ -85,6 +88,8 @@
     "personality_family_friendly": "bool",
     "personality_mood": "str",
 
-    "chat_enabled": "bool"
+    "chat_enabled": "bool",
+    "ai_checkins_enabled": "bool",
+    "cache_refresh_minutes": "int"
   }
 }
