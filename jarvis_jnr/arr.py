@@ -126,7 +126,6 @@ def _movie_quote():
 def _series_quote():
     return random.choice(SERIES_QUOTES)
 
-# NEW: helper to check truthy/falsey fields safely
 def _truthy(val, default=False):
     if val is None:
         return default
@@ -137,6 +136,12 @@ def _truthy(val, default=False):
     if isinstance(val, str):
         return val.strip().lower() in ("1", "true", "yes", "y")
     return bool(val)
+
+def _utc_iso(dt):
+    # Return ISO8601 UTC Z string
+    if isinstance(dt, datetime.datetime) and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 # -----------------------------
 # Radarr functions
@@ -150,7 +155,7 @@ def cache_radarr():
     if isinstance(data, list):
         radarr_cache["movies"] = data
         radarr_cache["by_id"] = {m.get("id"): m for m in data if isinstance(m, dict)}
-        radarr_cache["fetched"] = datetime.datetime.now()
+        radarr_cache["fetched"] = datetime.datetime.now(datetime.timezone.utc)
     else:
         radarr_cache["movies"] = []
         radarr_cache["by_id"] = {}
@@ -167,9 +172,19 @@ def _radarr_movie_has_file_from_cache(movie_id):
 def upcoming_movies(days=7):
     if not RADARR_ENABLED:
         return "⚠️ Radarr not enabled", None
-    # Radarr calendar docs: /calendar shows upcoming releases regardless of local state.
-    # We filter OUT anything already downloaded (hasFile=True) by cross-checking cache.
-    url = f"{RADARR_URL}/api/v3/calendar?apikey={RADARR_API}&days={days}"
+
+    # Build time window explicitly (now .. now+days)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    end = now + datetime.timedelta(days=int(days))
+    start_s = _utc_iso(now)
+    end_s = _utc_iso(end)
+
+    # Ask API to exclude unmonitored and include movie payloads
+    url = (
+        f"{RADARR_URL}/api/v3/calendar"
+        f"?apikey={RADARR_API}&start={start_s}&end={end_s}"
+        f"&unmonitored=false&includeMovie=true"
+    )
     data = _get_json(url)
     if not isinstance(data, list) or not data:
         return "🎬 No upcoming movies", None
@@ -177,11 +192,8 @@ def upcoming_movies(days=7):
     lines = []
     kept = 0
     for m in data:
-        # Try to determine the movie id to check hasFile from cache
-        movie_id = m.get("movie", {}).get("id")
-        if movie_id is None:
-            movie_id = m.get("id") or m.get("movieId")
-        # Filter: skip if downloaded
+        movie_id = m.get("movie", {}).get("id") or m.get("id") or m.get("movieId")
+        # Filter: skip if already downloaded
         if _radarr_movie_has_file_from_cache(movie_id):
             continue
 
@@ -237,7 +249,7 @@ def cache_sonarr():
     if isinstance(data, list):
         sonarr_cache["series"] = data
         sonarr_cache["by_id"] = {s.get("id"): s for s in data if isinstance(s, dict)}
-        sonarr_cache["fetched"] = datetime.datetime.now()
+        sonarr_cache["fetched"] = datetime.datetime.now(datetime.timezone.utc)
     else:
         sonarr_cache["series"] = []
         sonarr_cache["by_id"] = {}
@@ -250,7 +262,7 @@ def _sonarr_episode_has_file(ep_obj):
             return _truthy(ep_obj.get("hasFile"), False)
         ep_id = ep_obj.get("id")
         if ep_id:
-            # Fallback: fetch episode to check hasFile (rare, but ensures correctness)
+            # Fallback: fetch episode to check hasFile (rare path)
             url = f"{SONARR_URL}/api/v3/episode/{ep_id}?apikey={SONARR_API}"
             data = _get_json(url)
             if isinstance(data, dict):
@@ -260,9 +272,18 @@ def _sonarr_episode_has_file(ep_obj):
 def upcoming_series(days=7):
     if not SONARR_ENABLED:
         return "⚠️ Sonarr not enabled", None
-    # Sonarr calendar can include episodes that are already downloaded.
-    # We filter OUT episodes that already have files or are unmonitored.
-    url = f"{SONARR_URL}/api/v3/calendar?apikey={SONARR_API}&days={days}"
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    end = now + datetime.timedelta(days=int(days))
+    start_s = _utc_iso(now)
+    end_s = _utc_iso(end)
+
+    # Ask API to exclude unmonitored and include series/episode data
+    url = (
+        f"{SONARR_URL}/api/v3/calendar"
+        f"?apikey={SONARR_API}&start={start_s}&end={end_s}"
+        f"&unmonitored=false&includeSeries=true&includeEpisode=true"
+    )
     data = _get_json(url)
     if not isinstance(data, list) or not data:
         return "📺 No upcoming episodes", None
@@ -270,14 +291,14 @@ def upcoming_series(days=7):
     lines = []
     kept = 0
     for e in data:
-        # Skip if unmonitored
+        # Skip if unmonitored (defensive even though we passed unmonitored=false)
         if not _truthy(e.get("monitored", True), True):
             continue
         # Skip if already has a file
         if _sonarr_episode_has_file(e):
             continue
 
-        series = e.get("series", {}).get("title")
+        series = (e.get("series") or {}).get("title")
         if not series:
             sid = e.get("seriesId")
             cached = sonarr_cache["by_id"].get(sid, {}) if sid is not None else {}
@@ -294,7 +315,16 @@ def upcoming_series(days=7):
         except Exception:
             pass
 
-        lines.append(f"- {series} — S{int(season):02}E{int(ep):02} — {date}")
+        try:
+            season_i = int(season)
+        except Exception:
+            season_i = 0
+        try:
+            ep_i = int(ep)
+        except Exception:
+            ep_i = 0
+
+        lines.append(f"- {series} — S{season_i:02}E{ep_i:02} — {date}")
         kept += 1
 
     if kept == 0:
