@@ -259,81 +259,129 @@ def resolve_app_id():
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
 # -----------------------------
-# Beautifiers (enhanced)
+# Beautifiers (improved: AI-style, poster-safe, no tables)
 # -----------------------------
 def beautify_radarr(title, raw):
+    """AI-style compact Radarr card. Keeps posters. No tables."""
     try:
         obj = json.loads(raw)
-        movie = obj.get("movie", {})
-        movie_title = movie.get("title", "Unknown Movie")
-        year = movie.get("year", "")
-        runtime = format_runtime(movie.get("runtime", 0))
-        quality = obj.get("release", {}).get("quality", "Unknown")
-        size = human_size(obj.get("release", {}).get("size", 0))
-        images = movie.get("images", [])
-        poster = next((i["url"] for i in images if i.get("coverType") == "poster"), None)
+        movie = obj.get("movie") or {}
+        rel   = obj.get("release") or {}
+
+        name    = movie.get("title") or "Unknown Movie"
+        year    = movie.get("year") or ""
+        runtime = format_runtime(movie.get("runtime") or 0)
+        quality = rel.get("quality") or "Unknown"
+        size    = human_size(rel.get("size") or 0)
+
+        poster = None
+        for i in (movie.get("images") or []):
+            if str(i.get("coverType","")).lower() == "poster" and i.get("url"):
+                poster = i["url"]; break
+
         extras = {"client::notification": {"bigImageUrl": poster}} if poster else None
-        table = tabulate([[movie_title, year, runtime, quality, size]], headers=["Title","Year","Runtime","Quality","Size"], tablefmt="github")
-        return f"🎬 Radarr — Smart Update\n{table}", extras
+
+        # High-tech, compact lines — no ASCII tables
+        lines = [
+            f"🎬 **{name}** ({year})",
+            f"• ⏱ {runtime}   • 🔧 {quality}   • 📦 {size}"
+        ]
+        return "\n".join(lines), extras
     except Exception:
-        return f"🎬 Radarr — Event\n{raw}", None
+        # Unknown payload? Pass through unchanged (don’t break posters).
+        return raw, None
 
 def beautify_sonarr(title, raw):
+    """AI-style compact Sonarr card. Keeps posters. No tables."""
     try:
         obj = json.loads(raw)
-        series = obj.get("series", {}).get("title", "Unknown Series")
-        ep = obj.get("episode", {})
-        ep_title = ep.get("title", "Unknown Episode")
-        season = ep.get("seasonNumber", "?")
-        ep_num = ep.get("episodeNumber", "?")
-        runtime = format_runtime(ep.get("runtime", 0))
-        quality = obj.get("release", {}).get("quality", "Unknown")
-        size = human_size(obj.get("release", {}).get("size", 0))
-        images = obj.get("series", {}).get("images", [])
-        poster = next((i["url"] for i in images if i.get("coverType") == "poster"), None)
+        series = obj.get("series") or {}
+        ep     = obj.get("episode") or {}
+        rel    = obj.get("release") or {}
+
+        sname   = series.get("title") or "Unknown Series"
+        ep_t    = ep.get("title") or "Unknown Episode"
+        season  = ep.get("seasonNumber") or "?"
+        enum    = ep.get("episodeNumber") or "?"
+        runtime = format_runtime(ep.get("runtime") or 0)
+        quality = rel.get("quality") or "Unknown"
+        size    = human_size(rel.get("size") or 0)
+
+        try: season_i = int(season)
+        except: season_i = 0
+        try: enum_i = int(enum)
+        except: enum_i = 0
+
+        poster = None
+        for i in (series.get("images") or []):
+            if str(i.get("coverType","")).lower() == "poster" and i.get("url"):
+                poster = i["url"]; break
+
         extras = {"client::notification": {"bigImageUrl": poster}} if poster else None
-        table = tabulate([[series, f"S{season:02}E{ep_num:02}", ep_title, runtime, quality, size]], headers=["Series","Episode","Title","Runtime","Quality","Size"], tablefmt="github")
-        return f"📺 Sonarr — Smart Update\n{table}", extras
+
+        lines = [
+            f"📺 **{sname}** • S{season_i:02}E{enum_i:02}",
+            f"“{ep_t}” — ⏱ {runtime}   • 🔧 {quality}   • 📦 {size}"
+        ]
+        return "\n".join(lines), extras
     except Exception:
-        return f"📺 Sonarr — Event\n{raw}", None
+        return raw, None
 
 def beautify_watchtower(title, raw):
-    return f"🐳 Watchtower — Container Update\n{raw}", None
+    # Keep simple; don’t over-format logs
+    return f"🐳 Watchtower update\n{raw}", None
 
 def beautify_semaphore(title, raw):
-    return f"📊 Semaphore — Task Report\n{raw}", None
+    return f"📊 Semaphore report\n{raw}", None
 
 def beautify_json(title, raw):
+    """Small JSON → neat bullet list. Otherwise pass-through."""
     try:
         obj = json.loads(raw)
-        if isinstance(obj, dict):
-            table = tabulate([obj], headers="keys", tablefmt="github")
-            return f"🧩 JSON Payload — Parsed\n{table}", None
+        if isinstance(obj, dict) and 0 < len(obj) <= 10:
+            bullets = [f"• {k}: {obj[k]}" for k in obj]
+            return "🧩 JSON payload\n" + "\n".join(bullets), None
     except Exception:
-        return None, None
+        pass
     return None, None
 
 def beautify_yaml(title, raw):
+    """Small YAML → neat bullet list. Otherwise pass-through."""
     try:
         obj = yaml.safe_load(raw)
-        if isinstance(obj, dict):
-            table = tabulate([obj], headers="keys", tablefmt="github")
-            return f"🧩 YAML Payload — Parsed\n{table}", None
+        if isinstance(obj, dict) and 0 < len(obj) <= 10:
+            bullets = [f"• {k}: {obj[k]}" for k in obj]
+            return "🧩 YAML payload\n" + "\n".join(bullets), None
     except Exception:
-        return None, None
+        pass
     return None, None
 
 def beautify_generic(title, raw):
-    return f"🛰 General Message\n{raw}", None
+    """Minimal AI vibe without breaking content or posters."""
+    # If it already looks formatted or long, leave it alone.
+    if any(tok in raw for tok in ("http://", "https://", "```", "|---", "||")) or raw.count("\n") > 6:
+        return raw, None
+    # Light-touch prefix only
+    return f"🛰 {raw}", None
 
 def beautify_message(title, raw):
-    lower = raw.lower()
-    if "radarr" in lower: return beautify_radarr(title, raw)
-    if "sonarr" in lower: return beautify_sonarr(title, raw)
-    if "watchtower" in lower: return beautify_watchtower(title, raw)
-    if "semaphore" in lower: return beautify_semaphore(title, raw)
-    if beautify_json(title, raw)[0]: return beautify_json(title, raw)
-    if beautify_yaml(title, raw)[0]: return beautify_yaml(title, raw)
+    lower = (raw or "").lower()
+
+    # Prefer ARR: add AI-style while keeping posters
+    if "radarr" in lower:
+        return beautify_radarr(title, raw)
+    if "sonarr" in lower:
+        return beautify_sonarr(title, raw)
+
+    # Small JSON/YAML prettify only (no tables)
+    j = beautify_json(title, raw)
+    if j and j[0]:
+        return j[0], None
+    y = beautify_yaml(title, raw)
+    if y and y[0]:
+        return y[0], None
+
+    # Fallback: minimal AI prefix
     return beautify_generic(title, raw)
 
 # -----------------------------
