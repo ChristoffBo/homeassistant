@@ -35,8 +35,8 @@ except Exception as e:
 # -----------------------------
 # Caches
 # -----------------------------
-radarr_cache = {"movies": [], "fetched": None}
-sonarr_cache = {"series": [], "fetched": None}
+radarr_cache = {"movies": [], "by_id": {}, "fetched": None}
+sonarr_cache = {"series": [], "by_id": {}, "fetched": None}
 
 # -----------------------------
 # Quotes
@@ -126,6 +126,18 @@ def _movie_quote():
 def _series_quote():
     return random.choice(SERIES_QUOTES)
 
+# NEW: helper to check truthy/falsey fields safely
+def _truthy(val, default=False):
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        return val.strip().lower() in ("1", "true", "yes", "y")
+    return bool(val)
+
 # -----------------------------
 # Radarr functions
 # -----------------------------
@@ -137,32 +149,58 @@ def cache_radarr():
     data = _get_json(url)
     if isinstance(data, list):
         radarr_cache["movies"] = data
+        radarr_cache["by_id"] = {m.get("id"): m for m in data if isinstance(m, dict)}
         radarr_cache["fetched"] = datetime.datetime.now()
     else:
         radarr_cache["movies"] = []
+        radarr_cache["by_id"] = {}
         radarr_cache["fetched"] = None
+
+def _radarr_movie_has_file_from_cache(movie_id):
+    if not radarr_cache["by_id"]:
+        cache_radarr()
+    m = radarr_cache["by_id"].get(movie_id) if movie_id is not None else None
+    if not m:
+        return False
+    return _truthy(m.get("hasFile"), False)
 
 def upcoming_movies(days=7):
     if not RADARR_ENABLED:
         return "⚠️ Radarr not enabled", None
+    # Radarr calendar docs: /calendar shows upcoming releases regardless of local state.
+    # We filter OUT anything already downloaded (hasFile=True) by cross-checking cache.
     url = f"{RADARR_URL}/api/v3/calendar?apikey={RADARR_API}&days={days}"
     data = _get_json(url)
     if not isinstance(data, list) or not data:
         return "🎬 No upcoming movies", None
 
     lines = []
+    kept = 0
     for m in data:
-        title = m.get("title", "Unknown")
-        year = m.get("year", "")
-        date = m.get("inCinemas") or m.get("physicalRelease")
+        # Try to determine the movie id to check hasFile from cache
+        movie_id = m.get("movie", {}).get("id")
+        if movie_id is None:
+            movie_id = m.get("id") or m.get("movieId")
+        # Filter: skip if downloaded
+        if _radarr_movie_has_file_from_cache(movie_id):
+            continue
+
+        title = m.get("title") or m.get("movie", {}).get("title", "Unknown")
+        year = m.get("year") or m.get("movie", {}).get("year", "")
+        date = m.get("inCinemas") or m.get("physicalRelease") or m.get("releaseDate")
         try:
-            date = datetime.datetime.fromisoformat(date.replace("Z", "+00:00"))
-            date = date.strftime("%Y-%m-%d %H:%M")
+            if isinstance(date, str):
+                date = datetime.datetime.fromisoformat(date.replace("Z", "+00:00"))
+                date = date.strftime("%Y-%m-%d %H:%M")
         except Exception:
             pass
         lines.append(f"- {title} ({year}) — {date}")
+        kept += 1
 
-    commentary = f"🎬 {len(lines)} upcoming movies in the next {days} days.\n{_movie_quote()}"
+    if kept == 0:
+        return "🎬 No upcoming movies (all items already downloaded)", None
+
+    commentary = f"🎬 {kept} upcoming movies in the next {days} days.\n{_movie_quote()}"
     return "🎬 Upcoming Movies\n" + "\n".join(lines) + f"\n{commentary}", None
 
 def movie_count():
@@ -198,25 +236,51 @@ def cache_sonarr():
     data = _get_json(url)
     if isinstance(data, list):
         sonarr_cache["series"] = data
+        sonarr_cache["by_id"] = {s.get("id"): s for s in data if isinstance(s, dict)}
         sonarr_cache["fetched"] = datetime.datetime.now()
     else:
         sonarr_cache["series"] = []
+        sonarr_cache["by_id"] = {}
         sonarr_cache["fetched"] = None
+
+def _sonarr_episode_has_file(ep_obj):
+    # Prefer direct field from calendar payload
+    if isinstance(ep_obj, dict):
+        if "hasFile" in ep_obj:
+            return _truthy(ep_obj.get("hasFile"), False)
+        ep_id = ep_obj.get("id")
+        if ep_id:
+            # Fallback: fetch episode to check hasFile (rare, but ensures correctness)
+            url = f"{SONARR_URL}/api/v3/episode/{ep_id}?apikey={SONARR_API}"
+            data = _get_json(url)
+            if isinstance(data, dict):
+                return _truthy(data.get("hasFile"), False)
+    return False
 
 def upcoming_series(days=7):
     if not SONARR_ENABLED:
         return "⚠️ Sonarr not enabled", None
+    # Sonarr calendar can include episodes that are already downloaded.
+    # We filter OUT episodes that already have files or are unmonitored.
     url = f"{SONARR_URL}/api/v3/calendar?apikey={SONARR_API}&days={days}"
     data = _get_json(url)
     if not isinstance(data, list) or not data:
         return "📺 No upcoming episodes", None
 
     lines = []
+    kept = 0
     for e in data:
+        # Skip if unmonitored
+        if not _truthy(e.get("monitored", True), True):
+            continue
+        # Skip if already has a file
+        if _sonarr_episode_has_file(e):
+            continue
+
         series = e.get("series", {}).get("title")
         if not series:
             sid = e.get("seriesId")
-            cached = next((s for s in sonarr_cache["series"] if s.get("id") == sid), {})
+            cached = sonarr_cache["by_id"].get(sid, {}) if sid is not None else {}
             series = cached.get("title", "Unknown")
 
         ep = e.get("episodeNumber", "?")
@@ -224,14 +288,19 @@ def upcoming_series(days=7):
 
         date = e.get("airDateUtc", "")
         try:
-            date = datetime.datetime.fromisoformat(date.replace("Z", "+00:00"))
-            date = date.strftime("%Y-%m-%d %H:%M")
+            if isinstance(date, str):
+                date = datetime.datetime.fromisoformat(date.replace("Z", "+00:00"))
+                date = date.strftime("%Y-%m-%d %H:%M")
         except Exception:
             pass
 
-        lines.append(f"- {series} — S{season:02}E{ep:02} — {date}")
+        lines.append(f"- {series} — S{int(season):02}E{int(ep):02} — {date}")
+        kept += 1
 
-    commentary = f"📺 {len(lines)} upcoming episodes in the next {days} days.\n{_series_quote()}"
+    if kept == 0:
+        return "📺 No upcoming episodes (all items already downloaded or unmonitored)", None
+
+    commentary = f"📺 {kept} upcoming episodes in the next {days} days.\n{_series_quote()}"
     return "📺 Upcoming Episodes\n" + "\n".join(lines) + f"\n{commentary}", None
 
 def series_count():
