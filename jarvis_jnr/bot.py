@@ -195,7 +195,7 @@ def _kv(label, value):
 def _yesno(flag):
     return "True" if bool(flag) else "False"
 
-# NEW: mood-aware “voice”
+# NEW: mood-aware “voice” (extended moods)
 def ai_voice(line):
     m = (CHAT_MOOD or "Calm").strip().lower()
     if m == "sarcastic":
@@ -204,6 +204,14 @@ def ai_voice(line):
         return f"✨ {line}"
     if m in ("serious","strict"):
         return f"🛡 {line}"
+    if m == "angry":
+        return f"🔥 {line.upper()}"
+    if m == "tired":
+        return f"😴 {line}"
+    if m == "depressed":
+        return f"🌑 {line}"
+    if m == "excited":
+        return f"🚀 {line}!"
     return f"💡 {line}"
 
 def format_startup_poster(
