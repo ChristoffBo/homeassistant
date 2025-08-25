@@ -23,12 +23,12 @@ Running Jarvis Jnr in **Home Assistant** makes sense if you already use Gotify f
 - **Chat Personality** → Optional “weirdo mode” that posts random jokes, facts, or quotes at safe intervals.
 
 ## Paths
-- **Config**: `/data/options.json` — add-on settings
-- **Bot core**: `/app/bot.py`
-- **Radarr/Sonarr**: `/app/arr.py`
-- **Weather module**: `/app/weather.py`
-- **Chat Personality**: `/app/chat.py`
-- **Personality state**: `/data/personality_state.json`
+- **Config**: `/data/options.json` — add-on settings  
+- **Bot core**: `/app/bot.py`  
+- **Radarr/Sonarr**: `/app/arr.py`  
+- **Weather module**: `/app/weather.py`  
+- **Chat Personality**: `/app/chat.py`  
+- **Personality state**: `/data/personality_state.json`  
 
 ## First-Time Setup (required)
 1. On your Gotify server, create:
