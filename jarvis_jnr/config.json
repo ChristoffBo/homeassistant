@@ -35,7 +35,16 @@
     "sonarr_enabled": true,
     "sonarr_url": "http://10.0.0.240:8989",
     "sonarr_api_key": "CHANGE_ME",
-    "sonarr_time": "07:30"
+    "sonarr_time": "07:30",
+
+    "personality_enabled": false,
+    "personality_quiet_hours": "23:00-06:00",
+    "personality_min_interval_minutes": 90,
+    "personality_daily_max": 6,
+    "personality_local_ratio": 70,
+    "personality_api_ratio": 30,
+    "personality_family_friendly": true,
+    "personality_mood": "playful"
   },
   "schema": {
     "bot_name": "str",
@@ -63,6 +72,15 @@
     "sonarr_enabled": "bool",
     "sonarr_url": "str",
     "sonarr_api_key": "str",
-    "sonarr_time": "str"
+    "sonarr_time": "str",
+
+    "personality_enabled": "bool",
+    "personality_quiet_hours": "str",
+    "personality_min_interval_minutes": "int",
+    "personality_daily_max": "int",
+    "personality_local_ratio": "int",
+    "personality_api_ratio": "int",
+    "personality_family_friendly": "bool",
+    "personality_mood": "str"
   }
 }
