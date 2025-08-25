@@ -112,4 +112,4 @@ Send a Gotify message: Title: Jarvis, Message: your command.
 Jarvis will reply back into the Jarvis app feed with a formatted card.
 
 🧠 Notes
-This is an alpha build. Modules and configuration may change. Keep your tokens, URLs, and API keys private.
+This is an alpha build. Modules and configuration will change. Keep your tokens, URLs, and API keys private.
