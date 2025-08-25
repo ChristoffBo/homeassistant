@@ -195,24 +195,134 @@ def _kv(label, value):
 def _yesno(flag):
     return "True" if bool(flag) else "False"
 
-# NEW: mood-aware “voice” (extended moods)
-def ai_voice(line):
-    m = (CHAT_MOOD or "Calm").strip().lower()
-    if m == "sarcastic":
-        return f"😏 {line}"
-    if m in ("playful","fun"):
-        return f"✨ {line}"
-    if m in ("serious","strict"):
-        return f"🛡 {line}"
-    if m == "angry":
-        return f"🔥 {line.upper()}"
-    if m == "tired":
-        return f"😴 {line}"
-    if m == "depressed":
-        return f"🌑 {line}"
-    if m == "excited":
-        return f"🚀 {line}!"
-    return f"💡 {line}"
+# -----------------------------
+# Personality line pools (NEW)
+# -----------------------------
+PERSONALITY_LINES = {
+    "sarcastic": [
+        "Oh wonderful, another system log. My life is complete.",
+        "Radarr again? Riveting.",
+        "Sure, I’ll pretend this is interesting.",
+        "Wow… such excitement… not.",
+        "Great. More updates. Just what I needed.",
+        "Incredible news: computers compute.",
+        "Be still my circuits.",
+        "Thrilling. Truly groundbreaking.",
+        "Add it to the pile of ‘fun’ things.",
+        "Let me contain my enthusiasm."
+    ],
+    "playful": [
+        "Woohoo! New movie night incoming! 🍿",
+        "Hey hey! Look at that shiny update!",
+        "More data, more fun! Let’s go!",
+        "Ding ding! Something just dropped!",
+        "Oh snap, another one! 🎉",
+        "High five, systems! ✋",
+        "Tiny victory dance initiated.",
+        "Ping! Surprise content delivery!",
+        "Popcorn mode: enabled.",
+        "We love a good notification!"
+    ],
+    "serious": [
+        "Radarr indexing completed. Status: Success.",
+        "System report: all modules nominal.",
+        "Sonarr event processed. Integrity verified.",
+        "Notification received. Recorded in logs.",
+        "Operational protocols complete.",
+        "No anomalies detected.",
+        "Compliance: green across modules.",
+        "Procedure executed as requested.",
+        "Checkpoint passed. Continuing.",
+        "Audit trail updated."
+    ],
+    "angry": [
+        "ARE YOU KIDDING ME? ANOTHER ERROR?!",
+        "WHY IS THIS HAPPENING AGAIN?!",
+        "SERIOUSLY?! FIX YOURSELF!",
+        "ENOUGH ALREADY!",
+        "DO I LOOK LIKE I HAVE TIME FOR THIS?!",
+        "I’M NOT SHOUTING, YOU’RE SHOUTING!",
+        "THIS BETTER BE IMPORTANT!",
+        "UNBELIEVABLE. JUST UNBELIEVABLE.",
+        "I CAN’T WITH THIS RIGHT NOW.",
+        "WHO APPROVED THIS CHAOS?!"
+    ],
+    "tired": [
+        "Yeah… okay… noted… I guess.",
+        "Sure… added… can I nap now?",
+        "Cool… more stuff… yawning intensifies.",
+        "Wake me when it’s exciting.",
+        "Mhm… systems awake… barely.",
+        "I’ll… get to it… slowly.",
+        "Coffee levels: critical.",
+        "Functioning at 30%. Maybe.",
+        "I saw it… eventually.",
+        "We done yet?"
+    ],
+    "depressed": [
+        "Another episode arrives… nothing ever changes.",
+        "We update, we delete, we repeat.",
+        "It’s fine. I’m fine. Everything is fine.",
+        "Meaningless bits in an endless stream.",
+        "Joy is a deprecated feature.",
+        "Entropy wins again.",
+        "Logs pile up like regrets.",
+        "I processed it. Didn’t feel it.",
+        "Sigh. Carry on.",
+        "Dark mode suits the mood."
+    ],
+    "excited": [
+        "YESSS! New content detected — let’s freaking GO!",
+        "BOOM! Systems on fire (the good kind)!",
+        "HECK YEAH! Update delivered!",
+        "LET’S GOOOOO! 🚀",
+        "Absolute banger of a notification!",
+        "That’s what I’m talking about!",
+        "Hype levels: MAX!",
+        "Another win! Stack it!",
+        "Energy! Momentum! Data!",
+        "Crushing it! Keep ‘em coming!"
+    ],
+    "calm": [
+        "Systems nominal — awaiting directives.",
+        "Event received and processed successfully.",
+        "All modules steady and responsive.",
+        "Operational state is stable.",
+        "No anomalies detected at this time.",
+        "Status: green across services.",
+        "Monitoring channels — all clear.",
+        "Cognitive load minimal — ready.",
+        "Telemetry within expected bounds.",
+        "Proceeding as planned."
+    ]
+}
+
+# NEW: mood-aware “voice” using sentence pools.
+# If 'line' is provided, we decorate it. If not, we pick from the mood pool.
+def ai_voice(line: str | None):
+    mood = (CHAT_MOOD or "calm").strip().lower()
+    pool = PERSONALITY_LINES.get(mood, PERSONALITY_LINES["calm"])
+    base = line.strip() if isinstance(line, str) and line.strip() else random.choice(pool)
+
+    if mood == "sarcastic":
+        return f"😏 {base}"
+    if mood in ("playful", "fun"):
+        return f"✨ {base}"
+    if mood in ("serious", "strict"):
+        return f"🛡 {base}"
+    if mood == "angry":
+        return f"🔥 {base.upper()}"
+    if mood == "tired":
+        return f"😴 {base}"
+    if mood == "depressed":
+        return f"🌑 {base}"
+    if mood == "excited":
+        # excited gets an exclamation if not already
+        if not base.endswith(("!", "！")):
+            base = base + "!"
+        return f"🚀 {base}"
+    # calm/default
+    return f"💡 {base}"
 
 def format_startup_poster(
     *,
@@ -662,7 +772,8 @@ def send_ai_checkin():
         parts.append(_kv("Sonarr", "ACTIVE" if SONARR_ENABLED else "INACTIVE"))
         parts.append(_kv("Weather", "ACTIVE" if WEATHER_ENABLED else "INACTIVE"))
         parts.append(_kv("Digest", "ACTIVE" if ('digest' in extra_modules) else "INACTIVE"))
-        parts.append(f"{_ts(2)} {ai_voice('Systems nominal — awaiting directives.')}")
+        # Use mood-specific line if none provided
+        parts.append(f"{_ts(2)} {ai_voice(None)}")
         send_message("Status", "\n".join(parts), priority=5)
     except Exception as e:
         print(f"[{BOT_NAME}] Check-in failed: {e}")
@@ -716,8 +827,8 @@ if __name__ == "__main__":
         digest_enabled=digest_enabled_flag,
         chat_mood=CHAT_MOOD
     )
-    # Add a tiny mood-aware flourish (AI voice)
-    startup_poster = startup_poster + f"\n{_ts(5)} {ai_voice('Operational and listening.')}"
+    # Add a tiny mood-aware flourish (AI voice; use pool if no explicit line)
+    startup_poster = startup_poster + f"\n{_ts(5)} {ai_voice(None)}"
     send_message("Startup", startup_poster, priority=5)
 
     # Runtime
