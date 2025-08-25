@@ -34,22 +34,44 @@ BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true"
 RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
 SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
 WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1", "true", "yes")
+CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1", "true", "yes")
+DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1", "true", "yes")
 
 # -----------------------------
-# Load Home Assistant options.json for toggles + API config
+# Load Home Assistant options.json / config.json for toggles + API config
 # -----------------------------
+CHAT_MOOD = "Calm"  # default if not configured
+def _load_json_file(path):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
 try:
-    with open("/data/options.json", "r") as f:
-        options = json.load(f)
-        RADARR_ENABLED = options.get("radarr_enabled", RADARR_ENABLED)
-        SONARR_ENABLED = options.get("sonarr_enabled", SONARR_ENABLED)
-        RADARR_URL = options.get("radarr_url", "")
-        RADARR_API_KEY = options.get("radarr_api_key", "")
-        SONARR_URL = options.get("sonarr_url", "")
-        SONARR_API_KEY = options.get("sonarr_api_key", "")
-        WEATHER_ENABLED = options.get("weather_enabled", WEATHER_ENABLED)
+    # Primary: options.json
+    options = _load_json_file("/data/options.json")
+    # Secondary (if user uses config.json wording): merge, options takes precedence
+    config_fallback = _load_json_file("/data/config.json")
+    merged = {**config_fallback, **options}
+
+    RADARR_ENABLED = merged.get("radarr_enabled", RADARR_ENABLED)
+    SONARR_ENABLED = merged.get("sonarr_enabled", SONARR_ENABLED)
+    WEATHER_ENABLED = merged.get("weather_enabled", WEATHER_ENABLED)
+
+    # Optional toggles from config files
+    CHAT_ENABLED_FILE = merged.get("chat_enabled", CHAT_ENABLED_ENV)
+    DIGEST_ENABLED_FILE = merged.get("digest_enabled", DIGEST_ENABLED_ENV)
+
+    RADARR_URL = merged.get("radarr_url", "")
+    RADARR_API_KEY = merged.get("radarr_api_key", "")
+    SONARR_URL = merged.get("sonarr_url", "")
+    SONARR_API_KEY = merged.get("sonarr_api_key", "")
+
+    # Mood from config
+    CHAT_MOOD = str(merged.get("chat_mood", CHAT_MOOD))
 except Exception as e:
-    print(f"[{BOT_NAME}] ⚠️ Could not load options.json: {e}")
+    print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
     RADARR_URL = ""
     RADARR_API_KEY = ""
     SONARR_URL = ""
@@ -149,82 +171,90 @@ def get_settings_summary():
     return summary
 
 # -----------------------------
-# Sleek poster/beautify format helpers (AI look, no tables, aligned)
+# Sleek poster/beautify format helpers (AI look, no tables, minimal spacing)
 # -----------------------------
 def _ts(step=None):
     if step is None:
         return datetime.now().strftime("[%H:%M:%S]")
     return f"[00:{step:02d}]"
 
-def _kv(label, value, label_pad=18):
-    pad = " " * max(0, label_pad - len(label))
-    return f"        {label}{pad}: {value}"
+def _kv(label, value):
+    # Minimal alignment: no excessive spaces; single indent and colon
+    return f"    {label}: {value}"
 
-def _on_off(flag):
-    return "True" if flag else "False"
+def _yesno(flag):
+    return "True" if bool(flag) else "False"
 
-def format_startup_poster(bot_name=None,
-                          retention_hours=None,
-                          silent_repost=None,
-                          beautify_enabled=None,
-                          radarr_enabled=None,
-                          sonarr_enabled=None,
-                          chat_enabled=None,
-                          chat_mood="🔵 Calm",
-                          weather_enabled=None):
-    bot_name = bot_name if bot_name is not None else BOT_NAME
+def format_startup_poster(
+    *,
+    bot_name: str = None,
+    retention_hours: int = None,
+    silent_repost: bool = None,
+    beautify_enabled: bool = None,
+    radarr_enabled: bool = None,
+    sonarr_enabled: bool = None,
+    chat_enabled: bool = None,
+    weather_enabled: bool = None,
+    digest_enabled: bool = None,
+    chat_mood: str = None
+) -> str:
+    """
+    Single unified boot screen. Always shows all modules with ACTIVE/INACTIVE.
+    Settings and module states are passed in (already merged from config/env).
+    """
+    bot_name = bot_name or BOT_NAME
     retention_hours = RETENTION_HOURS if retention_hours is None else retention_hours
     silent_repost = SILENT_REPOST if silent_repost is None else silent_repost
     beautify_enabled = BEAUTIFY_ENABLED if beautify_enabled is None else beautify_enabled
+
     radarr_enabled = RADARR_ENABLED if radarr_enabled is None else radarr_enabled
     sonarr_enabled = SONARR_ENABLED if sonarr_enabled is None else sonarr_enabled
     weather_enabled = WEATHER_ENABLED if weather_enabled is None else weather_enabled
+    # Chat & Digest may be controlled by dynamic loader + config/env
+    chat_enabled = chat_enabled if chat_enabled is not None else False
+    digest_enabled = digest_enabled if digest_enabled is not None else False
+
+    chat_mood = (chat_mood or CHAT_MOOD)
+
+    def mod_line(icon, name, enabled):
+        return f"    {icon} {name} — {'ACTIVE' if enabled else 'INACTIVE'}"
 
     lines = []
     lines.append(f"🤖 {bot_name} v1.0 — Neural Boot Sequence\n")
     lines.append(f"{_ts(1)} ⚡ Core systems initialized")
     lines.append(f"{_ts(2)} ⚙️ Configuration loaded")
     lines.append(_kv("⏳ Retention Hours", str(retention_hours)))
-    lines.append(_kv("🤫 Silent Repost", _on_off(silent_repost)))
-    lines.append(_kv("🎨 Beautify Enabled", _on_off(beautify_enabled)))
-    lines.append(f"{_ts(3)} 🧩 Modules online")
-    if radarr_enabled:
-        lines.append("        🎬 Radarr .......... ACTIVE")
-    if sonarr_enabled:
-        lines.append("        📺 Sonarr .......... ACTIVE")
+    lines.append(_kv("🤫 Silent Repost", _yesno(silent_repost)))
+    lines.append(_kv("🎨 Beautify Enabled", _yesno(beautify_enabled)))
+    lines.append(f"{_ts(3)} 🧩 Modules")
+    lines.append(mod_line("🎬", "Radarr", radarr_enabled))
+    lines.append(mod_line("📺", "Sonarr", sonarr_enabled))
+    lines.append(mod_line("💬", "Chat", chat_enabled))
     if chat_enabled:
-        lines.append("        💬 Chat Module ..... ACTIVE")
-        lines.append("            → Personality Core: ONLINE")
-        lines.append(f"            → Active Mood     : {chat_mood}")
-    if weather_enabled:
-        lines.append("        🌤️ Weather ......... ACTIVE")
+        lines.append(_kv("→ Personality Core", "ONLINE"))
+        lines.append(_kv("→ Active Mood", chat_mood))
+    lines.append(mod_line("🌤️", "Weather", weather_enabled))
+    lines.append(mod_line("📰", "Digest", digest_enabled))
     lines.append(f"{_ts(4)} ✅ All systems nominal — Standing by")
     return "\n".join(lines)
 
 def format_beautify_block(title, message, source_app=None, priority=None, tags=None):
+    # Clean, concise, AI-ish; preserves original content line-for-line.
     step = 1
     lines = []
-    lines.append(f"{_ts(step)} ✉️ Message received")
-    step += 1
-    lines.append(f"{_ts(step)} 🧾 Metadata")
-    step += 1
-    if source_app:
-        lines.append(_kv("App", source_app))
-    if priority is not None:
-        lines.append(_kv("Priority", str(priority)))
+    lines.append(f"{_ts(step)} ✉️ Message received"); step += 1
+    lines.append(f"{_ts(step)} 🧾 Metadata"); step += 1
+    if source_app: lines.append(_kv("App", source_app))
+    if priority is not None: lines.append(_kv("Priority", str(priority)))
     if tags:
-        try:
-            lines.append(_kv("Tags", ", ".join(tags)))
-        except Exception:
-            lines.append(_kv("Tags", str(tags)))
-    lines.append(f"{_ts(step)} 🧩 Content")
-    step += 1
-    if title:
-        lines.append(_kv("Title", title))
+        try: lines.append(_kv("Tags", ", ".join(tags)))
+        except Exception: lines.append(_kv("Tags", str(tags)))
+    lines.append(f"{_ts(step)} 🧩 Content"); step += 1
+    if title: lines.append(_kv("Title", title))
     body = (message or "").rstrip()
     if body:
         for ln in (body.splitlines() or [body]):
-            lines.append(f"        {ln}")
+            lines.append(f"    {ln}")
     lines.append(f"{_ts(step)} ✅ Reformatted — Delivered")
     return "\n".join(lines)
 
@@ -583,8 +613,8 @@ def try_load_module(modname, label, icon="🧩"):
 if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on…")
     resolve_app_id()
-    greeting = get_greeting()
-    startup_message = greeting + "\n\n" + get_settings_summary()
+
+    # Prepare active list & warm caches like before
     active = []
     if RADARR_ENABLED:
         active.append("🎬 Radarr")
@@ -594,21 +624,26 @@ if __name__ == "__main__":
         active.append("📺 Sonarr")
         try: cache_sonarr()
         except Exception as e: print(f"[{BOT_NAME}] ⚠️ Sonarr cache failed {e}")
+
+    # Dynamic modules
+    chat_loaded = False
+    digest_loaded = False
     for mod, label, icon in [
         ("chat", "Chat", "💬"),
         ("weather", "Weather", "🌦"),
         ("digest", "Digest", "📰"),
     ]:
         loaded = try_load_module(mod, label, icon)
-        if loaded: active.append(loaded)
-    if active:
-        startup_message += "\n\n✅ Active Modules: " + ", ".join(active)
-    else:
-        startup_message += "\n\n⚠️ No external modules enabled"
-    send_message("Startup", startup_message, priority=5)
+        if loaded:
+            active.append(loaded)
+            if mod == "chat": chat_loaded = True
+            if mod == "digest": digest_loaded = True
 
-    # --- ADDITIVE: Also post the sleek AI boot poster (keeps your original poster intact)
-    chat_enabled_flag = any(("💬" in x) or ("Chat" in x) for x in active)
+    # Chat/Digest enabled resolution: dynamic loader OR config/env toggles
+    chat_enabled_flag = chat_loaded or CHAT_ENABLED_ENV or locals().get("CHAT_ENABLED_FILE", False)
+    digest_enabled_flag = digest_loaded or DIGEST_ENABLED_ENV or locals().get("DIGEST_ENABLED_FILE", False)
+
+    # --- Unified single startup post in the agreed boot style ---
     startup_poster = format_startup_poster(
         bot_name=BOT_NAME,
         retention_hours=RETENTION_HOURS,
@@ -617,11 +652,13 @@ if __name__ == "__main__":
         radarr_enabled=RADARR_ENABLED,
         sonarr_enabled=SONARR_ENABLED,
         chat_enabled=chat_enabled_flag,
-        chat_mood="🔵 Calm",
-        weather_enabled=WEATHER_ENABLED
+        weather_enabled=WEATHER_ENABLED,
+        digest_enabled=digest_enabled_flag,
+        chat_mood=CHAT_MOOD
     )
-    send_message("Startup • Boot Log", startup_poster, priority=5)
+    send_message("Startup", startup_poster, priority=5)
 
+    # Runtime stays unchanged
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
