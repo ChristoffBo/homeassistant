@@ -40,4 +40,4 @@ All ports, tokens, and CLI args are configurable per add-on
 MIT License — © 2026 Christoff Bothma  
 https://github.com/ChristoffBo/homeassistant/blob/main/LICENSE  
 
-🚫 No support is provided. Use as-is. Issues, pull requests, and help are not guaranteed to be addressed.
+🚫 No support is provided. Use as-is. Issues, pull requests, and help are not guaranteed to be addressed. This is more like a side project for me.
