@@ -14,6 +14,7 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 # Copy bot, arr, weather module, and run script
 COPY run.sh /run.sh
 COPY bot.py /app/bot.py
+COPY chat.py /app/chat.py
 COPY arr.py /app/arr.py
 COPY weather.py /app/weather.py
 RUN chmod +x /run.sh
