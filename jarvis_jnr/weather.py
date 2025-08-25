@@ -1,6 +1,6 @@
 import json, yaml, requests, random
-from datetime import datetime
-from tabulate import tabulate
+from datetime import datetime, timezone
+# No tabulate: sleek AI-style aligned output (no tables)
 
 # -----------------------------
 # Load config from /data/options.json
@@ -130,6 +130,9 @@ def _commentary(temp_max, code):
 
     return "🌤 Looks like a balanced day ahead."
 
+def _kv(label, value):
+    return f"    {label}: {value}"
+
 # -----------------------------
 # Current Weather
 # -----------------------------
@@ -148,14 +151,24 @@ def current_weather():
     cw = data.get("current_weather", {})
     if not cw:
         return "⚠️ No current weather data returned", None
+
     temp = cw.get("temperature", "?")
     wind = cw.get("windspeed", "?")
     code = cw.get("weathercode", -1)
-    desc = _icon_for_code(code, big=True)
-    return f"{desc} Current Weather in {CITY}\n🌡 {temp}°C | 🌬 {wind} km/h", None
+    icon_big = _icon_for_code(code, big=True)
+
+    # Sleek aligned block
+    lines = []
+    lines.append(f"{icon_big} Current Weather — {CITY}")
+    lines.append(_kv("🌡 Temperature", f"{temp}°C"))
+    lines.append(_kv("🌬 Wind", f"{wind} km/h"))
+    ts = cw.get("time")
+    if ts:
+        lines.append(_kv("🕒 As of", ts))
+    return "\n".join(lines), None
 
 # -----------------------------
-# Forecast (7 days with today highlighted)
+# Forecast (7 days, sleek aligned list — no tables)
 # -----------------------------
 def forecast_weather():
     if not ENABLED:
@@ -169,24 +182,41 @@ def forecast_weather():
     data = _get_json(url)
     if "error" in data:
         return f"⚠️ Weather API error: {data['error']}", None
+
     daily = data.get("daily", {})
-    rows = []
-    today_text = ""
-    for i in range(min(7, len(daily.get("time", [])))):
-        date = daily["time"][i]
-        tmin = daily["temperature_2m_min"][i]
-        tmax = daily["temperature_2m_max"][i]
-        code = daily["weathercode"][i]
-        icon = _icon_for_code(code)
-        desc = _icon_for_code(code, big=True)
+    times = daily.get("time", []) or []
+    tmins = daily.get("temperature_2m_min", []) or []
+    tmaxs = daily.get("temperature_2m_max", []) or []
+    codes = daily.get("weathercode", []) or []
 
-        if i == 0:  # Today
-            today_text = f"{desc} Today in {CITY}\n🌡 {tmin}°C - {tmax}°C\n{_commentary(tmax, code)}"
-        else:
-            rows.append([date, f"{tmin}°C", f"{tmax}°C", icon])
+    if not times:
+        return "⚠️ No forecast data returned", None
 
-    table = tabulate(rows, headers=["Date","Min","Max","Condition"], tablefmt="github")
-    return f"{today_text}\n\n📅 7-Day Forecast for {CITY}\n{table}", None
+    # Today (index 0)
+    tmin0 = tmins[0] if len(tmins) > 0 else "?"
+    tmax0 = tmaxs[0] if len(tmaxs) > 0 else "?"
+    code0 = codes[0] if len(codes) > 0 else -1
+    icon0_big = _icon_for_code(code0, big=True)
+
+    lines = []
+    lines.append(f"{icon0_big} Today — {CITY}")
+    lines.append(_kv("Range", f"{tmin0}°C – {tmax0}°C"))
+    lines.append(_kv("Outlook", _commentary(tmax0 if isinstance(tmax0, (int, float)) else 0, code0)))
+
+    # Next days
+    lines.append("")
+    lines.append(f"📅 7-Day Outlook — {CITY}")
+    for i in range(0, min(7, len(times))):
+        date = times[i]
+        tmin = tmins[i] if i < len(tmins) else "?"
+        tmax = tmaxs[i] if i < len(tmaxs) else "?"
+        code = codes[i] if i < len(codes) else -1
+        icon = _icon_for_code(code, big=False)
+        # Use bullet, no tabulation
+        prefix = "• Today" if i == 0 else f"• {date}"
+        lines.append(f"{prefix} — {tmin}°C to {tmax}°C {icon}")
+
+    return "\n".join(lines), None
 
 # -----------------------------
 # Command Router
