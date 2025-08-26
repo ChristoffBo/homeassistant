@@ -692,6 +692,9 @@ async def listen():
                                 "   • `weather` → Current weather snapshot\n"
                                 "   • `forecast` → 7-day weather projection\n"
                                 "   • `temperature` / `temp` → Temperature query\n\n"
+                                "🧬  DNS (Technitium):\n"
+                                "   • `dns status` → totals, blocked, allowed, cache\n"
+                                "   • `dns flush`  → flush resolver cache\n\n"
                                 "🎬  Radarr Protocols:\n"
                                 "   • `movie count` → Total movies indexed\n"
                                 "   • Auto-reacts to Radarr events in real-time\n\n"
@@ -712,6 +715,16 @@ async def listen():
                                 if response:
                                     send_message("Weather", response, extras=extras)
                                     continue
+
+                        # ✅ DNS (Technitium) routing — same pattern as weather
+                        if "technitium" in extra_modules and (cmd.startswith("dns") or " dns" in f" {cmd}"):
+                            t_resp = extra_modules["technitium"].handle_dns_command(cmd)
+                            if isinstance(t_resp, tuple) and t_resp[0]:
+                                send_message("DNS", t_resp[0], extras=t_resp[1])
+                                continue
+                            if isinstance(t_resp, str) and t_resp:
+                                send_message("DNS", t_resp)
+                                continue
                         
                         # ✅ ARR routing
                         response, extras = handle_arr_command(title, message)
@@ -803,6 +816,7 @@ if __name__ == "__main__":
         ("chat", "Chat", "💬"),
         ("weather", "Weather", "🌦"),
         ("digest", "Digest", "📰"),
+        ("technitium", "DNS", "🧬"),  # ← load DNS module
     ]:
         loaded = try_load_module(mod, label, icon)
         if loaded:
