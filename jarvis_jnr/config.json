@@ -49,7 +49,11 @@
     "chat_enabled": true,
 
     "ai_checkins_enabled": false,
-    "cache_refresh_minutes": 60
+    "cache_refresh_minutes": 60,
+
+    "technitium_enabled": true,
+    "technitium_url": "http://10.0.0.99:5380",
+    "technitium_api_key": "CHANGE_ME"
   },
   "schema": {
     "bot_name": "str",
@@ -90,6 +94,10 @@
 
     "chat_enabled": "bool",
     "ai_checkins_enabled": "bool",
-    "cache_refresh_minutes": "int"
+    "cache_refresh_minutes": "int",
+
+    "technitium_enabled": "bool",
+    "technitium_url": "str",
+    "technitium_api_key": "str"
   }
 }
