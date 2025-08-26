@@ -36,6 +36,7 @@ SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "
 WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1", "true", "yes")
 CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1", "true", "yes")
 DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1", "true", "yes")
+TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")  # ← NEW
 
 # NEW: AI-style features toggles (env defaults)
 AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1","true","yes")
@@ -63,6 +64,7 @@ try:
     RADARR_ENABLED = merged.get("radarr_enabled", RADARR_ENABLED)
     SONARR_ENABLED = merged.get("sonarr_enabled", SONARR_ENABLED)
     WEATHER_ENABLED = merged.get("weather_enabled", WEATHER_ENABLED)
+    TECHNITIUM_ENABLED = merged.get("technitium_enabled", TECHNITIUM_ENABLED)  # ← NEW
 
     # Optional toggles from config files
     CHAT_ENABLED_FILE = merged.get("chat_enabled", CHAT_ENABLED_ENV)
@@ -335,7 +337,8 @@ def format_startup_poster(
     chat_enabled: bool = None,
     weather_enabled: bool = None,
     digest_enabled: bool = None,
-    chat_mood: str = None
+    chat_mood: str = None,
+    technitium_enabled: bool = None  # ← NEW
 ) -> str:
     """
     Single unified boot screen. Always shows all modules with ACTIVE/INACTIVE.
@@ -351,6 +354,7 @@ def format_startup_poster(
     weather_enabled = WEATHER_ENABLED if weather_enabled is None else weather_enabled
     chat_enabled = chat_enabled if chat_enabled is not None else False
     digest_enabled = digest_enabled if digest_enabled is not None else False
+    technitium_enabled = TECHNITIUM_ENABLED if technitium_enabled is None else technitium_enabled  # ← NEW
 
     chat_mood = (chat_mood or CHAT_MOOD)
 
@@ -372,6 +376,7 @@ def format_startup_poster(
         lines.append(_kv("→ Personality Core", "ONLINE"))
         lines.append(_kv("→ Active Mood", chat_mood))
     lines.append(mod_line("🌤️", "Weather", weather_enabled))
+    lines.append(mod_line("🧬", "DNS (Technitium)", technitium_enabled))  # ← NEW
     lines.append(mod_line("📰", "Digest", digest_enabled))
     lines.append(f"{_ts(4)} ✅ All systems nominal — Standing by")
     return "\n".join(lines)
@@ -703,6 +708,8 @@ async def listen():
                                 "   • Auto-reacts to Sonarr events in real-time\n\n"
                                 "🧩  System:\n"
                                 "   • `help` or `commands` → Display this command matrix\n\n"
+                                "🃏  Fun:\n"
+                                "   • `joke` or `pun` → Quick one-liner\n\n"
                                 "⚡ *Jarvis Jnr is fully synchronized and standing by.*"
                             )
                             send_message("Help", help_text)
@@ -724,6 +731,27 @@ async def listen():
                                 continue
                             if isinstance(t_resp, str) and t_resp:
                                 send_message("DNS", t_resp)
+                                continue
+
+                        # ✅ Chat fun (joke/pun)
+                        if "chat" in extra_modules and ("joke" in cmd or "pun" in cmd):
+                            try:
+                                # Prefer a router if present
+                                if hasattr(extra_modules["chat"], "handle_chat_command"):
+                                    c_resp = extra_modules["chat"].handle_chat_command("joke")
+                                elif hasattr(extra_modules["chat"], "joke"):
+                                    c_resp = (extra_modules["chat"].joke(), None)
+                                elif hasattr(extra_modules["chat"], "get_joke"):
+                                    c_resp = (extra_modules["chat"].get_joke(), None)
+                                else:
+                                    c_resp = ("🃏 Here's a joke placeholder.", None)
+                                if isinstance(c_resp, tuple):
+                                    send_message("Joke", c_resp[0], extras=c_resp[1])
+                                else:
+                                    send_message("Joke", str(c_resp))
+                                continue
+                            except Exception as _e:
+                                send_message("Joke", f"⚠️ Joke module error: {_e}")
                                 continue
                         
                         # ✅ ARR routing
@@ -784,6 +812,7 @@ def send_ai_checkin():
         parts.append(_kv("Radarr", "ACTIVE" if RADARR_ENABLED else "INACTIVE"))
         parts.append(_kv("Sonarr", "ACTIVE" if SONARR_ENABLED else "INACTIVE"))
         parts.append(_kv("Weather", "ACTIVE" if WEATHER_ENABLED else "INACTIVE"))
+        parts.append(_kv("DNS", "ACTIVE" if TECHNITIUM_ENABLED else "INACTIVE"))  # ← NEW
         parts.append(_kv("Digest", "ACTIVE" if ('digest' in extra_modules) else "INACTIVE"))
         # Use mood-specific line if none provided
         parts.append(f"{_ts(2)} {ai_voice(None)}")
@@ -839,7 +868,8 @@ if __name__ == "__main__":
         chat_enabled=chat_enabled_flag,
         weather_enabled=WEATHER_ENABLED,
         digest_enabled=digest_enabled_flag,
-        chat_mood=CHAT_MOOD
+        chat_mood=CHAT_MOOD,
+        technitium_enabled=TECHNITIUM_ENABLED,  # ← NEW
     )
     # Add a tiny mood-aware flourish (AI voice; use pool if no explicit line)
     startup_poster = startup_poster + f"\n{_ts(5)} {ai_voice(None)}"
