@@ -43,6 +43,8 @@ export SONARR_TIME=$(jq -r '.sonarr_time' $CONFIG_PATH)
 # Technitium DNS
 export technitium_enabled=$(jq -r '.technitium_enabled' $CONFIG_PATH)
 export technitium_url=$(jq -r '.technitium_url' $CONFIG_PATH)
+export technitium_user=$(jq -r '.technitium_user' $CONFIG_PATH)
+export technitium_pass=$(jq -r '.technitium_pass' $CONFIG_PATH)
 export technitium_api_key=$(jq -r '.technitium_api_key' $CONFIG_PATH)
 
 log "Starting add-on..."
