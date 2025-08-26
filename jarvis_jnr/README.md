@@ -1,5 +1,5 @@
 # 🧩 Jarvis Jnr — Home Assistant Add-on  
-This add-on runs a smart notification bot inside Home Assistant that connects to your **Gotify** server. Jarvis Jnr watches incoming messages, beautifies them into clean cards, reposts them, and can execute simple wake-word commands. It also enforces retention rules, supports integrations like **Radarr, Sonarr, Weather**, and includes a **toggleable Chat Personality** that posts random jokes, quips, or weird facts at controlled intervals.  
+This add-on runs a smart notification bot inside Home Assistant that connects to your **Gotify** server. Jarvis Jnr watches incoming messages, beautifies them into clean cards, reposts them, and can execute simple wake-word commands. It also enforces retention rules, supports integrations like **Radarr, Sonarr, Weather**, and includes a **toggleable Chat Personality** that posts random jokes, quips, or weird facts at controlled intervals. The idea is to spice up Gotify. 
 
 ## What it is and what it is used for  
 **Jarvis Jnr** is a Gotify-aware assistant. It listens to notifications in real time and can:  
