@@ -1,3 +1,11 @@
+
+## latest (2025-08-26 16:00:00)
+- Technitium DNS wired in.
+- Commands dns flush and dns status
+- Still testing
+
+
+
 ## latest (2025-08-25 16:32:00)
 - Personality module added: optional chat mode with random jokes, quips, weird facts
 - Supports configurable quiet hours, min interval, daily max
