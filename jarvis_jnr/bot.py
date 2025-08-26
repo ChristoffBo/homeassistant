@@ -212,6 +212,7 @@ PERSONALITY_LINES = {
         "Thrilling. Truly groundbreaking.",
         "Add it to the pile of ‘fun’ things.",
         "Let me contain my enthusiasm."
+        "WHAT THE ####?!"
     ],
     "playful": [
         "Woohoo! New movie night incoming! 🍿",
@@ -248,6 +249,7 @@ PERSONALITY_LINES = {
         "UNBELIEVABLE. JUST UNBELIEVABLE.",
         "I CAN’T WITH THIS RIGHT NOW.",
         "WHO APPROVED THIS CHAOS?!"
+        "WHAT THE ####?!"
     ],
     "tired": [
         "Yeah… okay… noted… I guess.",
@@ -260,6 +262,7 @@ PERSONALITY_LINES = {
         "Functioning at 30%. Maybe.",
         "I saw it… eventually.",
         "We done yet?"
+        "Im #### tired...?!"
     ],
     "depressed": [
         "Another episode arrives… nothing ever changes.",
