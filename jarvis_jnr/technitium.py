@@ -1,120 +1,191 @@
-import os, json, requests
-from urllib.parse import urlencode
+import os, json, requests, re
+from typing import Tuple, Optional
 
-# Config from env (exported by run.sh from /data/options.json)
+# -----------------------------
+# Config from env (/data/options.json is exported by run.sh)
+# -----------------------------
 TECH_URL = (os.getenv("technitium_url", "") or "").rstrip("/")
-TECH_KEY = os.getenv("technitium_api_key", "")
-ENABLED  = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
+TECH_KEY = os.getenv("technitium_api_key", "") or ""
+ENABLED  = os.getenv("technitium_enabled", "false").strip().lower() in ("1","true","yes")
 
-# ---- helpers ---------------------------------------------------------------
-def _url(path: str) -> str:
-    """
-    Build URL with ?token=... appended (Technitium API expects token query param).
-    Handles whether the path already contains a query string.
-    """
-    if not TECH_URL:
-        return path
-    sep = "&" if "?" in path else "?"
-    q = urlencode({"token": TECH_KEY}) if TECH_KEY else ""
-    return f"{TECH_URL}{path}{sep}{q}" if q else f"{TECH_URL}{path}"
+# Accept all common auth styles used by Technitium
+HDRS = {
+    "Authorization": f"Bearer {TECH_KEY}" if TECH_KEY else "",
+    "X-Auth-Token": TECH_KEY if TECH_KEY else "",
+}
+# Drop empty header entries (requests will choke on empty Authorization)
+HDRS = {k: v for k, v in HDRS.items() if v}
 
-def _get(full_or_path: str, timeout=8):
-    """
-    Accept either a full URL or a path like '/api/dns/metrics'.
-    Always call with token in the query string.
-    """
-    url = full_or_path if full_or_path.startswith("http") else _url(full_or_path)
+def _with_token(url: str) -> str:
+    """Append ?token= if caller is using query based auth (some setups require it)."""
+    if TECH_KEY and "token=" not in url:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}token={TECH_KEY}"
+    return url
+
+# -----------------------------
+# HTTP helpers
+# -----------------------------
+def _get_json(url: str, timeout: int = 8):
     try:
-        r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
-        # Some endpoints may reply with plain text; try JSON first
+        u = _with_token(url)
+        r = requests.get(u, headers=HDRS, timeout=timeout)
+        # Some instances return text for /metrics; let caller handle non-JSON
+        if r.headers.get("content-type", "").startswith("application/json"):
+            return r.json()
         try:
             return r.json()
         except Exception:
-            return {"text": r.text}
+            return r.text  # return raw for non-JSON endpoints
     except Exception as e:
         return {"error": str(e)}
 
-# ---- actions ---------------------------------------------------------------
-def _flush_cache():
-    # Try common Technitium endpoints
-    for path in ("/api/dns/flushcache", "/api/dns/cache/flush"):
-        j = _get(path)
-        if isinstance(j, dict) and "error" not in j:
-            return True, j
+def _post_json(url: str, timeout: int = 8, data=None):
+    try:
+        u = _with_token(url)
+        r = requests.post(u, headers=HDRS, json=(data or {}), timeout=timeout)
+        try:
+            return r.json()
+        except Exception:
+            return {"status_code": r.status_code, "text": r.text}
+    except Exception as e:
+        return {"error": str(e)}
+
+# -----------------------------
+# Cache flush (try both old/new paths & methods)
+# -----------------------------
+def _flush_cache() -> Tuple[bool, Optional[object]]:
+    candidates = (
+        ("POST", "/api/dns/cache/flush"),   # newer path (pref)
+        ("GET",  "/api/dns/cache/flush"),
+        ("POST", "/api/dns/flushcache"),    # older path alias
+        ("GET",  "/api/dns/flushcache"),
+    )
+    for method, path in candidates:
+        url = f"{TECH_URL}{path}"
+        resp = _post_json(url) if method == "POST" else _get_json(url)
+        if isinstance(resp, dict) and "error" in resp:
+            continue
+        # Consider any 200-ish, or a dict/ok text, as success
+        if isinstance(resp, dict):
+            # Some builds return {"success":true} or {"status":"ok"}
+            if str(resp.get("success", "")).lower() == "true" or str(resp.get("status","")).lower() in ("ok","success"):
+                return True, resp
+        if isinstance(resp, str) and re.search(r"\bok\b|\bsuccess\b|\bflushed\b", resp, re.I):
+            return True, resp
     return False, None
 
-def _read_stats():
+# -----------------------------
+# Stats readers
+# -----------------------------
+def _parse_json_stats(obj: dict):
     """
-    Normalize to: total, blocked, allowed, cache
-    Supports multiple possible endpoints/field names.
+    Normalize keys that Technitium exposes across versions.
+    We try multiple likely field names and also dig into nested dicts.
     """
-    candidates = (
-        "/api/dns/metrics",
-        "/api/dns/statistics",
-        "/api/dns/stats",
-        "/api/metrics",
-    )
-    data = None
-    for path in candidates:
-        j = _get(path)
-        if isinstance(j, dict) and "error" not in j:
-            data = j
-            break
-    if not isinstance(data, dict):
-        return None
-
     def pick(d, *keys, default=0):
         for k in keys:
             if k in d and isinstance(d[k], (int, float)):
                 return int(d[k])
         return default
 
-    total   = pick(data, "TotalQueryCount", "totalQueries", "queries", "total")
-    blocked = pick(data, "TotalBlockedQueryCount", "blockedQueries", "blocked")
-    cache   = pick(data, "CacheCount", "cacheSize", "cache", "cache_count")
-    allowed = total - blocked if total and blocked is not None else pick(data, "allowed", default=0)
+    total   = pick(obj, "TotalQueryCount", "totalQueries", "queries", "total", "dns_queries_total")
+    blocked = pick(obj, "TotalBlockedQueryCount", "blockedQueries", "blocked", "dns_blocked_total")
+    cache   = pick(obj, "CacheCount", "cacheSize", "cache", "cache_count")
 
-    # if nested
-    if total == 0 and any(isinstance(v, dict) for v in data.values()):
-        for v in data.values():
+    if (total == 0 and blocked == 0 and cache == 0) and any(isinstance(v, dict) for v in obj.values()):
+        # Some versions nest counters by section
+        for v in obj.values():
             if isinstance(v, dict):
-                total   = total   or pick(v, "TotalQueryCount", "totalQueries", "queries", "total")
-                blocked = blocked or pick(v, "TotalBlockedQueryCount", "blockedQueries", "blocked")
+                total   = total   or pick(v, "TotalQueryCount", "totalQueries", "queries", "total", "dns_queries_total")
+                blocked = blocked or pick(v, "TotalBlockedQueryCount", "blockedQueries", "blocked", "dns_blocked_total")
                 cache   = cache   or pick(v, "CacheCount", "cacheSize", "cache", "cache_count")
-        allowed = total - blocked if total and blocked is not None else allowed
 
+    allowed = total - blocked if total and blocked is not None else pick(obj, "allowed", default=0)
+    return {"total": total, "blocked": blocked, "allowed": max(0, allowed), "cache": cache}
+
+_METRIC_LINE = re.compile(r"^\s*([a-zA-Z_:][a-zA-Z0-9_:]*)\s*{[^}]*}\s*([0-9]+(?:\.[0-9]+)?)\s*$")
+def _parse_prometheus_metrics(text: str):
+    """
+    Very small Prometheus text parser; looks for common Technitium counters.
+    """
+    total = blocked = cache = 0
+    for line in (text or "").splitlines():
+        m = _METRIC_LINE.match(line)
+        if not m:
+            continue
+        name, val_s = m.group(1), m.group(2)
+        try:
+            val = int(float(val_s))
+        except Exception:
+            continue
+        lname = name.lower()
+        if "query" in lname and "total" in lname:
+            # dnsserver_queries_total or similar
+            total = max(total, val)
+        if "blocked" in lname and "total" in lname:
+            blocked = max(blocked, val)
+        if "cache" in lname and ("count" in lname or "entries" in lname or "size" in lname):
+            cache = max(cache, val)
+    allowed = max(0, total - blocked) if total else 0
     return {"total": total, "blocked": blocked, "allowed": allowed, "cache": cache}
 
-def _kv(label, value):
-    return f"    {label}: {value}"
+def _read_stats():
+    """
+    Try JSON endpoints first, then Prometheus /metrics as fallback.
+    """
+    json_candidates = (
+        "/api/dns/metrics",      # newer
+        "/api/dns/statistics",   # older
+        "/api/dns/stats",        # alias
+        "/api/metrics",          # some builds
+    )
+    for path in json_candidates:
+        resp = _get_json(f"{TECH_URL}{path}")
+        if isinstance(resp, dict) and "error" not in resp:
+            return _parse_json_stats(resp)
+        # sometimes a JSON list might be wrapped or text returned; ignore here
+    # Prometheus text fallback
+    text_candidates = ("/metrics", "/api/metrics")
+    for path in text_candidates:
+        resp = _get_json(f"{TECH_URL}{path}")
+        if isinstance(resp, str) and resp.strip():
+            return _parse_prometheus_metrics(resp)
+    return None
 
-# ---- public router ---------------------------------------------------------
+# -----------------------------
+# Pretty helpers
+# -----------------------------
+def _kv(label, value): return f"    {label}: {value:,}" if isinstance(value, int) else f"    {label}: {value}"
+
+# -----------------------------
+# Public command router (called by bot.py)
+# -----------------------------
 def handle_dns_command(cmd: str):
     """
-    Supported voice commands (title must begin with 'Jarvis'):
-      - 'dns status' / 'dns stats'
-      - 'dns flush'
+    Supported voice commands (under the Jarvis wake word):
+      • 'dns status' / 'dns'
+      • 'dns flush'
     """
     if not ENABLED or not TECH_URL:
         return "⚠️ DNS module not enabled or misconfigured", None
 
     c = (cmd or "").strip().lower()
 
-    if c.startswith("dns status") or c.startswith("dns stats") or c == "dns":
+    if c == "dns" or c.startswith("dns status"):
         stats = _read_stats()
         if not stats:
             return "⚠️ Could not read DNS stats", None
-        total   = stats.get("total",   0)
+        total   = stats.get("total", 0)
         blocked = stats.get("blocked", 0)
         allowed = stats.get("allowed", max(0, total - blocked))
-        cache   = stats.get("cache",   0)
+        cache   = stats.get("cache", 0)
         lines = []
         lines.append("🌐 Technitium DNS — Stats\n")
-        lines.append(_kv("Total Queries", f"{total:,}"))
-        lines.append(_kv("Blocked",       f"{blocked:,}"))
-        lines.append(_kv("Allowed",       f"{allowed:,}"))
-        lines.append(_kv("Cache Size",    f"{cache:,}"))
+        lines.append(_kv("Total Queries", total))
+        lines.append(_kv("Blocked",       blocked))
+        lines.append(_kv("Allowed",       allowed))
+        lines.append(_kv("Cache Size",    cache))
         return "\n".join(lines), None
 
     if c.startswith("dns flush"):
