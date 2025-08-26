@@ -381,5 +381,42 @@ def start_personality_engine():
     if not _opts.get("personality_enabled", False): return False
     t = threading.Thread(target=_engine_loop, name="JarvisPersonality", daemon=True); t.start(); return True
 
+# === On-demand jokes for bot.py ===
+
+def _one_liner():
+    # ensure options/state are loaded so family filter etc. apply
+    try:
+        _load_options()
+        _load_state()
+    except Exception:
+        pass
+    line = _pick_api_line()
+    if not line:
+        line = _pick_local_line("jokes")
+    # last-ditch fallback so we never return empty
+    return line or "I told a UDP joke… you might not get it."
+
+def get_joke():
+    """Return a single joke/pun line (string)."""
+    return _one_liner()
+
+def joke():
+    """Alias for get_joke() to support older callers."""
+    return _one_liner()
+
+def handle_chat_command(cmd: str):
+    """
+    Minimal router used by bot.py.
+    Supports: 'joke', 'pun'
+    Returns (message, extras) to match the expected tuple signature.
+    """
+    c = (cmd or "").strip().lower()
+    if "joke" in c or "pun" in c:
+        try:
+            return f"🃏 { _one_liner() }", None
+        except Exception as e:
+            return f"⚠️ Joke error: {e}", None
+    return None, None
+
 try: start_personality_engine()
 except Exception as _e: print(f"[chat.py] Failed to start engine: {_e}")
