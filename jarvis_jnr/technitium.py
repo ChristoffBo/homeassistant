@@ -1,6 +1,6 @@
 import os, json, requests
 
-# Read from /data/options.json via env (run.sh exports them)
+# Config from env (exported by run.sh from /data/options.json)
 TECH_URL = os.getenv("technitium_url", "").rstrip("/")
 TECH_KEY = os.getenv("technitium_api_key", "")
 ENABLED  = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
@@ -16,7 +16,7 @@ def _get(url, timeout=8):
         return {"error": str(e)}
 
 def _flush_cache():
-    # common Technitium endpoints; try both
+    # Try common Technitium endpoints
     for path in ("/api/dns/flushcache", "/api/dns/cache/flush"):
         j = _get(f"{TECH_URL}{path}")
         if isinstance(j, dict) and "error" not in j:
@@ -25,8 +25,7 @@ def _flush_cache():
 
 def _read_stats():
     """
-    Try a few known/observed shapes and normalize to:
-      total, blocked, allowed, cache
+    Normalize to: total, blocked, allowed, cache
     """
     candidates = (
         "/api/dns/metrics",
@@ -43,7 +42,6 @@ def _read_stats():
     if not isinstance(data, dict):
         return None
 
-    # normalize various field spellings
     def pick(d, *keys, default=0):
         for k in keys:
             if k in d and isinstance(d[k], (int, float)):
@@ -53,10 +51,9 @@ def _read_stats():
     total   = pick(data, "TotalQueryCount", "totalQueries", "queries", "total")
     blocked = pick(data, "TotalBlockedQueryCount", "blockedQueries", "blocked")
     cache   = pick(data, "CacheCount", "cacheSize", "cache", "cache_count")
-
     allowed = total - blocked if total and blocked is not None else pick(data, "allowed", default=0)
 
-    # if metrics are nested, try a quick dive
+    # if nested metrics
     if total == 0 and any(isinstance(v, dict) for v in data.values()):
         for v in data.values():
             if isinstance(v, dict):
@@ -72,7 +69,7 @@ def _kv(label, value):
 
 def handle_dns_command(cmd: str):
     """
-    Supported:
+    Supported voice commands:
       - 'dns status'
       - 'dns flush'
     """
@@ -101,5 +98,5 @@ def handle_dns_command(cmd: str):
         ok, _ = _flush_cache()
         return ("🌐 DNS cache flushed successfully" if ok else "⚠️ DNS cache flush failed"), None
 
-    # unknown dns subcommand → let other routers try
+    # Not a DNS command → let other routers try
     return None
