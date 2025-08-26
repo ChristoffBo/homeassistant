@@ -59,10 +59,10 @@ def _auth_headers(token: Optional[str], variant: str) -> dict:
         elif variant == "xauth":
             hdrs["X-Auth-Token"] = token
 
-    # Some self-host setups accept Basic for login-protected endpoints.
+    # Add Basic as a fallback header if not already set by Bearer
     ba = _basic_auth_header()
-    if ba:
-        hdrs.setdefault("Authorization", ba)  # don't overwrite Bearer if set
+    if ba and "Authorization" not in hdrs:
+        hdrs["Authorization"] = ba
     return hdrs
 
 def _append_token_query(url: str, token: Optional[str]) -> str:
@@ -74,15 +74,16 @@ def _append_token_query(url: str, token: Optional[str]) -> str:
 def _try_login_for_token() -> Optional[str]:
     """
     Login with username/password to obtain a token (v13+).
-    Endpoint: POST /api/user/login -> {"status":"ok","token":"..."}
-    Stores token for subsequent requests.
+    Endpoint: /api/user/login
+    IMPORTANT: Technitium expects 'user' and 'pass' (not username/password).
     """
     if not (TECH_URL and TECH_USER and TECH_PASS):
         return None
+    # POST first (preferred)
     try:
         r = _session.post(
             f"{TECH_URL}/api/user/login",
-            data={"username": TECH_USER, "password": TECH_PASS},
+            data={"user": TECH_USER, "pass": TECH_PASS},
             timeout=8,
         )
         if r.headers.get("content-type", "").startswith("application/json"):
@@ -96,6 +97,21 @@ def _try_login_for_token() -> Optional[str]:
         if (j or {}).get("status") == "ok" and tok:
             _set_token(tok)
             return tok
+    except Exception:
+        pass
+    # GET fallback (some proxies are picky)
+    try:
+        r = _session.get(
+            f"{TECH_URL}/api/user/login",
+            params={"user": TECH_USER, "pass": TECH_PASS},
+            timeout=8,
+        )
+        if r.ok:
+            j = r.json()
+            tok = (j or {}).get("token")
+            if (j or {}).get("status") == "ok" and tok:
+                _set_token(tok)
+                return tok
     except Exception:
         pass
     return None
@@ -140,7 +156,7 @@ def _request(method: str, path: str, *, data=None, timeout: int = 8):
             if method == "GET":
                 resp = _session.get(url, headers=headers, timeout=timeout)
             else:
-                # Prefer JSON for newer endpoints; form is okay too
+                # Prefer form-encoded for Technitium (JSON also works on some)
                 resp = _session.post(url, headers=headers, data=(data or {}), timeout=timeout)
         except Exception as e:
             return None, {"error": str(e)}
@@ -182,18 +198,18 @@ def _request(method: str, path: str, *, data=None, timeout: int = 8):
             last_payload = payload
             last_status = getattr(resp, "status_code", None)
 
-            # Consider success on 2xx
+            # Success on any 2xx
             if resp is not None and 200 <= resp.status_code < 300:
                 return payload
-            # Some endpoints return {"status":"ok"} with 200/204
+            # Some endpoints return {"status":"ok"}
             if isinstance(payload, dict) and str(payload.get("status","")).lower() in ("ok","success"):
                 return payload
-            # If explicit unauthorized, try next plan
+            # Unauthorized? try next plan
             if resp is not None and resp.status_code in (401, 403):
                 continue
         return (last_status, last_payload)
 
-    # First pass with whatever token we have
+    # First pass
     status_payload = _run_variants(token)
     if not isinstance(status_payload, tuple):
         return status_payload  # success
@@ -207,7 +223,6 @@ def _request(method: str, path: str, *, data=None, timeout: int = 8):
             status_payload = _run_variants(new_tok)
             if not isinstance(status_payload, tuple):
                 return status_payload  # success
-
             status_code, last_payload = status_payload
 
     # (C) Fallback: Basic only, no token
@@ -262,7 +277,7 @@ _DASH_KEYS = {
         "CacheCount", "cacheCount", "cacheSize", "cached"
     ],
     "blocked": [
-        "BlockedQueryCount", "blockedQueries", "blocked"
+        "BlockedQueryCount", "blockedQueries", "blocked", "TotalBlockedQueryCount"
     ],
     "dropped": [
         "DroppedCount", "dropped"
@@ -284,9 +299,9 @@ def _read_stats() -> Optional[dict]:
     Fallback: /metrics (Prometheus text)
     Returns dict with all dashboard fields.
     """
-    # JSON dashboard
+    # JSON dashboard (preferred)
     j = _get("/api/dashboard/stats/get")
-    if isinstance(j, dict) and (j.get("status") == "ok" or "response" in j or "TotalQueryCount" in j):
+    if isinstance(j, dict) and ((j.get("status") == "ok" and isinstance(j.get("response"), dict)) or "TotalQueryCount" in j or "totalQueries" in j):
         src = j.get("response", j)
         out = {}
         for label, keys in _DASH_KEYS.items():
@@ -299,7 +314,6 @@ def _read_stats() -> Optional[dict]:
                     for label, keys in _DASH_KEYS.items():
                         out[label] = out[label] or _pick_num(v, keys)
 
-        # Derived: allowed = total - blocked
         out["allowed"] = max(0, out.get("total", 0) - out.get("blocked", 0))
         return out
 
@@ -326,7 +340,7 @@ def _read_stats() -> Optional[dict]:
                 vals["cached"] = max(vals["cached"], val)
             if "clients" in name or "unique_clients" in name:
                 vals["clients"] = max(vals["clients"], val)
-            # Best-effort heuristics for others if present in metrics exposition:
+            # Best-effort heuristics for others:
             if "nxdomain" in name:
                 vals["nx_domain"] = max(vals["nx_domain"], val)
             if "refused" in name:
