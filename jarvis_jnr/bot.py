@@ -699,17 +699,9 @@ async def listen():
                                 "   • `series count` → Total series indexed\n"
                                 "   • Auto-reacts to Sonarr events in real-time\n\n"
                                 "🧩  System:\n"
-                                "   • `help` or `commands` → Display this command matrix\n"
+                                "   • `help` or `commands` → Display this command matrix\n\n"
+                                "⚡ *Jarvis Jnr is fully synchronized and standing by.*"
                             )
-                            # --- DNS HELP (only this addendum) ---
-                            if "technitium" in extra_modules:
-                                help_text += (
-                                    "\n🧬  DNS (Technitium):\n"
-                                    "   • `dns status` → totals, blocked, allowed, cache\n"
-                                    "   • `dns flush`  → flush resolver cache\n"
-                                )
-                            # Wake word reminder (title must begin with Jarvis)
-                            help_text += "\n⚙️  Wake word: title must start with `Jarvis ...`"
                             send_message("Help", help_text)
                             continue
 
@@ -721,16 +713,6 @@ async def listen():
                                     send_message("Weather", response, extras=extras)
                                     continue
                         
-                        # ✅ Technitium DNS routing (ONLY ADDITION)
-                        if "technitium" in extra_modules:
-                            t_resp = extra_modules["technitium"].handle_dns_command(cmd)
-                            if isinstance(t_resp, tuple) and t_resp[0]:
-                                send_message("DNS", t_resp[0], extras=t_resp[1])
-                                continue
-                            if isinstance(t_resp, str) and t_resp:
-                                send_message("DNS", t_resp)
-                                continue
-
                         # ✅ ARR routing
                         response, extras = handle_arr_command(title, message)
                         if response:
@@ -821,7 +803,6 @@ if __name__ == "__main__":
         ("chat", "Chat", "💬"),
         ("weather", "Weather", "🌦"),
         ("digest", "Digest", "📰"),
-        ("technitium", "DNS", "🧬"),  # ← ONLY ADDITION HERE
     ]:
         loaded = try_load_module(mod, label, icon)
         if loaded:
