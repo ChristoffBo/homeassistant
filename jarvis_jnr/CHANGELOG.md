@@ -3,6 +3,7 @@
 - Technitium DNS wired in.
 - Commands dns flush and dns status
 - Still testing
+- Also wired in Jarvis Joke give you a random joke for fun
 
 
 
