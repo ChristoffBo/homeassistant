@@ -9,7 +9,7 @@ import importlib.util
 try:
     from arr import handle_arr_command, RADARR_ENABLED, SONARR_ENABLED, cache_radarr, cache_sonarr
 except Exception as e:
-    print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}")
+    print(f"[Jarvis Jnr] ⚠️ Failed to load arr module: {e}") 
     handle_arr_command = lambda *args, **kwargs: ("⚠️ ARR module not available", None)
     RADARR_ENABLED = False
     SONARR_ENABLED = False
@@ -510,7 +510,6 @@ def resolve_app_id():
 # Beautifiers (improved: AI-style, poster-safe, no tables)
 # -----------------------------
 def beautify_radarr(title, raw):
-    """AI-style compact Radarr card. Keeps posters. No tables."""
     try:
         obj = json.loads(raw)
         movie = obj.get("movie") or {}
@@ -529,18 +528,15 @@ def beautify_radarr(title, raw):
 
         extras = {"client::notification": {"bigImageUrl": poster}} if poster else None
 
-        # High-tech, compact lines — no ASCII tables
         lines = [
             f"🎬 **{name}** ({year})",
             f"• ⏱ {runtime}   • 🔧 {quality}   • 📦 {size}"
         ]
         return "\n".join(lines), extras
     except Exception:
-        # Unknown payload? Pass through unchanged (don’t break posters).
         return raw, None
 
 def beautify_sonarr(title, raw):
-    """AI-style compact Sonarr card. Keeps posters. No tables."""
     try:
         obj = json.loads(raw)
         series = obj.get("series") or {}
@@ -576,14 +572,12 @@ def beautify_sonarr(title, raw):
         return raw, None
 
 def beautify_watchtower(title, raw):
-    # Keep simple; don’t over-format logs
     return f"🐳 Watchtower update\n{raw}", None
 
 def beautify_semaphore(title, raw):
     return f"📊 Semaphore report\n{raw}", None
 
 def beautify_json(title, raw):
-    """Small JSON → neat bullet list. Otherwise pass-through."""
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict) and 0 < len(obj) <= 10:
@@ -594,9 +588,9 @@ def beautify_json(title, raw):
     return None, None
 
 def beautify_yaml(title, raw):
-    """Small YAML → neat bullet list. Otherwise pass-through."""
     try:
-        obj = yaml.safe_load(raw)
+        import yaml as _yaml
+        obj = _yaml.safe_load(raw)
         if isinstance(obj, dict) and 0 < len(obj) <= 10:
             bullets = [f"• {k}: {obj[k]}" for k in obj]
             return "🧩 YAML payload\n" + "\n".join(bullets), None
@@ -605,32 +599,23 @@ def beautify_yaml(title, raw):
     return None, None
 
 def beautify_generic(title, raw):
-    """Sleek AI-aligned beautify block (no tables, preserves posters and content)."""
-    # If it already looks formatted or long, leave it alone.
     if any(tok in raw for tok in ("http://", "https://", "```", "|---", "||")) or raw.count("\n") > 6:
         return raw, None
-    # Build aligned block similar to startup; keep original content intact
     styled = format_beautify_block(title=title, message=raw, source_app=APP_NAME, priority=5, tags=None)
     return styled, None
 
 def beautify_message(title, raw):
     lower = (raw or "").lower()
-
-    # Prefer ARR: add AI-style while keeping posters
     if "radarr" in lower:
         return beautify_radarr(title, raw)
     if "sonarr" in lower:
         return beautify_sonarr(title, raw)
-
-    # Small JSON/YAML prettify only (no tables)
     j = beautify_json(title, raw)
     if j and j[0]:
         return j[0], None
     y = beautify_yaml(title, raw)
     if y and y[0]:
         return y[0], None
-
-    # Fallback: sleek aligned block
     return beautify_generic(title, raw)
 
 # -----------------------------
@@ -639,7 +624,6 @@ def beautify_message(title, raw):
 def run_scheduler():
     schedule.every(5).seconds.do(purge_non_jarvis_apps)
     schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
-    # NEW: periodic ARR cache refresh so 'upcoming' stays fresh
     if RADARR_ENABLED and 'cache_radarr' in globals():
         try:
             schedule.every(CACHE_REFRESH_MINUTES).minutes.do(cache_radarr)
@@ -650,7 +634,6 @@ def run_scheduler():
             schedule.every(CACHE_REFRESH_MINUTES).minutes.do(cache_sonarr)
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ Could not schedule cache_sonarr: {e}")
-    # NEW: autonomous AI check-ins (off by default)
     if AI_CHECKINS_ENABLED:
         schedule.every(6).hours.do(send_ai_checkin)
     while True:
@@ -675,34 +658,43 @@ async def listen():
                         continue
                     title = data.get("title","")
                     message = data.get("message","")
-                    
+
+                    # Wake word from TITLE or MESSAGE (kept behavior), but your workflow uses TITLE.
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
-                        # 🔧 ADDITIVE FIX: if the title is just the wake word, fall back to the message for the command.
                         if title.lower().startswith("jarvis"):
                             tmp = title.lower().replace("jarvis","",1).strip()
                             cmd = tmp if tmp else message.lower().replace("jarvis","",1).strip()
                         else:
                             cmd = message.lower().replace("jarvis","",1).strip()
-                        
-                        # ✅ Help command
+
+                        # ✅ Dynamic Help (active modules, wake words)
                         if cmd in ["help", "commands"]:
-                            help_text = (
-                                "🤖 **Jarvis Jnr Command Matrix** 🤖\n\n"
-                                "🌦  Weather Intelligence:\n"
-                                "   • `weather` → Current weather snapshot\n"
-                                "   • `forecast` → 7-day weather projection\n"
-                                "   • `temperature` / `temp` → Temperature query\n\n"
-                                "🎬  Radarr Protocols:\n"
-                                "   • `movie count` → Total movies indexed\n"
-                                "   • Auto-reacts to Radarr events in real-time\n\n"
-                                "📺  Sonarr Protocols:\n"
-                                "   • `series count` → Total series indexed\n"
-                                "   • Auto-reacts to Sonarr events in real-time\n\n"
-                                "🧩  System:\n"
-                                "   • `help` or `commands` → Display this command matrix\n\n"
-                                "⚡ *Jarvis Jnr is fully synchronized and standing by.*"
-                            )
-                            send_message("Help", help_text)
+                            help_lines = []
+                            help_lines.append("🤖 **Jarvis Jnr — Active Modules & Commands**")
+                            help_lines.append("")
+                            if "weather" in extra_modules and WEATHER_ENABLED:
+                                help_lines.append("🌦 Weather  (wake: `Jarvis weather ...`)")
+                                help_lines.append("   • `weather` → current snapshot")
+                                help_lines.append("   • `forecast` → 7-day outlook")
+                                help_lines.append("")
+                            if "technitium" in extra_modules:
+                                help_lines.append("🧬 DNS (Technitium)  (wake: `Jarvis dns ...`)")
+                                help_lines.append("   • `dns status` → totals & cache")
+                                help_lines.append("")
+                            if RADARR_ENABLED:
+                                help_lines.append("🎬 Radarr  (wake: `Jarvis ...`)")
+                                help_lines.append("   • `movie count`")
+                                help_lines.append("   • `upcoming movies`")
+                                help_lines.append("   • `longest movie`")
+                                help_lines.append("")
+                            if SONARR_ENABLED:
+                                help_lines.append("📺 Sonarr  (wake: `Jarvis ...`)")
+                                help_lines.append("   • `series count`")
+                                help_lines.append("   • `upcoming series`")
+                                help_lines.append("   • `longest series`")
+                                help_lines.append("")
+                            help_lines.append("⚙️ Wake word rule: **title must begin with `Jarvis`**.")
+                            send_message("Help", "\n".join(help_lines))
                             continue
 
                         # ✅ Weather routing
@@ -712,7 +704,17 @@ async def listen():
                                 if response:
                                     send_message("Weather", response, extras=extras)
                                     continue
-                        
+
+                        # ✅ Technitium DNS routing
+                        if "technitium" in extra_modules:
+                            t_resp = extra_modules["technitium"].handle_dns_command(cmd)
+                            if isinstance(t_resp, tuple) and t_resp[0]:
+                                send_message("DNS", t_resp[0], extras=t_resp[1])
+                                continue
+                            if isinstance(t_resp, str) and t_resp:
+                                send_message("DNS", t_resp)
+                                continue
+
                         # ✅ ARR routing
                         response, extras = handle_arr_command(title, message)
                         if response:
@@ -772,7 +774,6 @@ def send_ai_checkin():
         parts.append(_kv("Sonarr", "ACTIVE" if SONARR_ENABLED else "INACTIVE"))
         parts.append(_kv("Weather", "ACTIVE" if WEATHER_ENABLED else "INACTIVE"))
         parts.append(_kv("Digest", "ACTIVE" if ('digest' in extra_modules) else "INACTIVE"))
-        # Use mood-specific line if none provided
         parts.append(f"{_ts(2)} {ai_voice(None)}")
         send_message("Status", "\n".join(parts), priority=5)
     except Exception as e:
@@ -803,6 +804,7 @@ if __name__ == "__main__":
         ("chat", "Chat", "💬"),
         ("weather", "Weather", "🌦"),
         ("digest", "Digest", "📰"),
+        ("technitium", "DNS", "🧬")  # ADDED
     ]:
         loaded = try_load_module(mod, label, icon)
         if loaded:
@@ -810,11 +812,9 @@ if __name__ == "__main__":
             if mod == "chat": chat_loaded = True
             if mod == "digest": digest_loaded = True
 
-    # Chat/Digest enabled resolution: dynamic loader OR config/env toggles
     chat_enabled_flag = chat_loaded or CHAT_ENABLED_ENV or locals().get("CHAT_ENABLED_FILE", False)
     digest_enabled_flag = digest_loaded or DIGEST_ENABLED_ENV or locals().get("DIGEST_ENABLED_FILE", False)
 
-    # Single startup post in the agreed boot style (shows ACTIVE/INACTIVE for all modules)
     startup_poster = format_startup_poster(
         bot_name=BOT_NAME,
         retention_hours=RETENTION_HOURS,
@@ -827,11 +827,9 @@ if __name__ == "__main__":
         digest_enabled=digest_enabled_flag,
         chat_mood=CHAT_MOOD
     )
-    # Add a tiny mood-aware flourish (AI voice; use pool if no explicit line)
     startup_poster = startup_poster + f"\n{_ts(5)} {ai_voice(None)}"
     send_message("Startup", startup_poster, priority=5)
 
-    # Runtime
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(listen())
