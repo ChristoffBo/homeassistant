@@ -36,7 +36,7 @@ SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "
 WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1", "true", "yes")
 CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1", "true", "yes")
 DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1", "true", "yes")
-TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")  # ← NEW
+TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
 
 # NEW: AI-style features toggles (env defaults)
 AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1","true","yes")
@@ -64,7 +64,7 @@ try:
     RADARR_ENABLED = merged.get("radarr_enabled", RADARR_ENABLED)
     SONARR_ENABLED = merged.get("sonarr_enabled", SONARR_ENABLED)
     WEATHER_ENABLED = merged.get("weather_enabled", WEATHER_ENABLED)
-    TECHNITIUM_ENABLED = merged.get("technitium_enabled", TECHNITIUM_ENABLED)  # ← NEW
+    TECHNITIUM_ENABLED = merged.get("technitium_enabled", TECHNITIUM_ENABLED)
 
     # Optional toggles from config files
     CHAT_ENABLED_FILE = merged.get("chat_enabled", CHAT_ENABLED_ENV)
@@ -165,7 +165,7 @@ def get_greeting():
         "🪐 Scanning external environment — all clear.",
         "🎛 Control protocols calibrated — green board.",
         "👁 Vision matrix stable — full awareness achieved.",
-        "💭 Cognitive load minimal — spare cycles available.",
+        "💭 Cognitive load minimal — ready.",
         "🗝 Access layers unlocked — ready for input.",
         "📡 AI cognition stable — directive processing ready."
     ]
@@ -211,8 +211,8 @@ PERSONALITY_LINES = {
         "Be still my circuits.",
         "Thrilling. Truly groundbreaking.",
         "Add it to the pile of ‘fun’ things.",
-        "Let me contain my enthusiasm."
-        "WHAT THE ####?!"
+        "Let me contain my enthusiasm.",
+        "WHAT THE ####?!",
     ],
     "playful": [
         "Woohoo! New movie night incoming! 🍿",
@@ -224,7 +224,7 @@ PERSONALITY_LINES = {
         "Tiny victory dance initiated.",
         "Ping! Surprise content delivery!",
         "Popcorn mode: enabled.",
-        "We love a good notification!"
+        "We love a good notification!",
     ],
     "serious": [
         "Radarr indexing completed. Status: Success.",
@@ -236,7 +236,7 @@ PERSONALITY_LINES = {
         "Compliance: green across modules.",
         "Procedure executed as requested.",
         "Checkpoint passed. Continuing.",
-        "Audit trail updated."
+        "Audit trail updated.",
     ],
     "angry": [
         "ARE YOU KIDDING ME? ANOTHER ERROR?!",
@@ -248,8 +248,8 @@ PERSONALITY_LINES = {
         "THIS BETTER BE IMPORTANT!",
         "UNBELIEVABLE. JUST UNBELIEVABLE.",
         "I CAN’T WITH THIS RIGHT NOW.",
-        "WHO APPROVED THIS CHAOS?!"
-        "WHAT THE ####?!"
+        "WHO APPROVED THIS CHAOS?!",
+        "WHAT THE ####?!",
     ],
     "tired": [
         "Yeah… okay… noted… I guess.",
@@ -261,8 +261,8 @@ PERSONALITY_LINES = {
         "Coffee levels: critical.",
         "Functioning at 30%. Maybe.",
         "I saw it… eventually.",
-        "We done yet?"
-        "Im #### tired...?!"
+        "We done yet?",
+        "Im #### tired...?!",
     ],
     "depressed": [
         "Another episode arrives… nothing ever changes.",
@@ -274,7 +274,7 @@ PERSONALITY_LINES = {
         "Logs pile up like regrets.",
         "I processed it. Didn’t feel it.",
         "Sigh. Carry on.",
-        "Dark mode suits the mood."
+        "Dark mode suits the mood.",
     ],
     "excited": [
         "YESSS! New content detected — let’s freaking GO!",
@@ -286,7 +286,7 @@ PERSONALITY_LINES = {
         "Hype levels: MAX!",
         "Another win! Stack it!",
         "Energy! Momentum! Data!",
-        "Crushing it! Keep ‘em coming!"
+        "Crushing it! Keep ‘em coming!",
     ],
     "calm": [
         "Systems nominal — awaiting directives.",
@@ -298,7 +298,7 @@ PERSONALITY_LINES = {
         "Monitoring channels — all clear.",
         "Cognitive load minimal — ready.",
         "Telemetry within expected bounds.",
-        "Proceeding as planned."
+        "Proceeding as planned.",
     ]
 }
 
@@ -322,11 +322,9 @@ def ai_voice(line: str | None):
     if mood == "depressed":
         return f"🌑 {base}"
     if mood == "excited":
-        # excited gets an exclamation if not already
         if not base.endswith(("!", "！")):
             base = base + "!"
         return f"🚀 {base}"
-    # calm/default
     return f"💡 {base}"
 
 def format_startup_poster(
@@ -341,7 +339,7 @@ def format_startup_poster(
     weather_enabled: bool = None,
     digest_enabled: bool = None,
     chat_mood: str = None,
-    technitium_enabled: bool = None  # ← NEW
+    technitium_enabled: bool = None
 ) -> str:
     """
     Single unified boot screen. Always shows all modules with ACTIVE/INACTIVE.
@@ -357,7 +355,7 @@ def format_startup_poster(
     weather_enabled = WEATHER_ENABLED if weather_enabled is None else weather_enabled
     chat_enabled = chat_enabled if chat_enabled is not None else False
     digest_enabled = digest_enabled if digest_enabled is not None else False
-    technitium_enabled = TECHNITIUM_ENABLED if technitium_enabled is None else technitium_enabled  # ← NEW
+    technitium_enabled = TECHNITIUM_ENABLED if technitium_enabled is None else technitium_enabled
 
     chat_mood = (chat_mood or CHAT_MOOD)
 
@@ -379,7 +377,7 @@ def format_startup_poster(
         lines.append(_kv("→ Personality Core", "ONLINE"))
         lines.append(_kv("→ Active Mood", chat_mood))
     lines.append(mod_line("🌤️", "Weather", weather_enabled))
-    lines.append(mod_line("🧬", "DNS (Technitium)", technitium_enabled))  # ← NEW
+    lines.append(mod_line("🧬", "DNS (Technitium)", technitium_enabled))
     lines.append(mod_line("📰", "Digest", digest_enabled))
     lines.append(f"{_ts(4)} ✅ All systems nominal — Standing by")
     return "\n".join(lines)
@@ -537,14 +535,12 @@ def beautify_radarr(title, raw):
 
         extras = {"client::notification": {"bigImageUrl": poster}} if poster else None
 
-        # High-tech, compact lines — no ASCII tables
         lines = [
             f"🎬 **{name}** ({year})",
             f"• ⏱ {runtime}   • 🔧 {quality}   • 📦 {size}"
         ]
         return "\n".join(lines), extras
     except Exception:
-        # Unknown payload? Pass through unchanged (don’t break posters).
         return raw, None
 
 def beautify_sonarr(title, raw):
@@ -584,14 +580,12 @@ def beautify_sonarr(title, raw):
         return raw, None
 
 def beautify_watchtower(title, raw):
-    # Keep simple; don’t over-format logs
     return f"🐳 Watchtower update\n{raw}", None
 
 def beautify_semaphore(title, raw):
     return f"📊 Semaphore report\n{raw}", None
 
 def beautify_json(title, raw):
-    """Small JSON → neat bullet list. Otherwise pass-through."""
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict) and 0 < len(obj) <= 10:
@@ -602,7 +596,6 @@ def beautify_json(title, raw):
     return None, None
 
 def beautify_yaml(title, raw):
-    """Small YAML → neat bullet list. Otherwise pass-through."""
     try:
         obj = yaml.safe_load(raw)
         if isinstance(obj, dict) and 0 < len(obj) <= 10:
@@ -613,32 +606,23 @@ def beautify_yaml(title, raw):
     return None, None
 
 def beautify_generic(title, raw):
-    """Sleek AI-aligned beautify block (no tables, preserves posters and content)."""
-    # If it already looks formatted or long, leave it alone.
     if any(tok in raw for tok in ("http://", "https://", "```", "|---", "||")) or raw.count("\n") > 6:
         return raw, None
-    # Build aligned block similar to startup; keep original content intact
     styled = format_beautify_block(title=title, message=raw, source_app=APP_NAME, priority=5, tags=None)
     return styled, None
 
 def beautify_message(title, raw):
     lower = (raw or "").lower()
-
-    # Prefer ARR: add AI-style while keeping posters
     if "radarr" in lower:
         return beautify_radarr(title, raw)
     if "sonarr" in lower:
         return beautify_sonarr(title, raw)
-
-    # Small JSON/YAML prettify only (no tables)
     j = beautify_json(title, raw)
     if j and j[0]:
         return j[0], None
     y = beautify_yaml(title, raw)
     if y and y[0]:
         return y[0], None
-
-    # Fallback: sleek aligned block
     return beautify_generic(title, raw)
 
 # -----------------------------
@@ -647,7 +631,6 @@ def beautify_message(title, raw):
 def run_scheduler():
     schedule.every(5).seconds.do(purge_non_jarvis_apps)
     schedule.every(RETENTION_HOURS).hours.do(purge_all_messages)
-    # NEW: periodic ARR cache refresh so 'upcoming' stays fresh
     if RADARR_ENABLED and 'cache_radarr' in globals():
         try:
             schedule.every(CACHE_REFRESH_MINUTES).minutes.do(cache_radarr)
@@ -658,7 +641,6 @@ def run_scheduler():
             schedule.every(CACHE_REFRESH_MINUTES).minutes.do(cache_sonarr)
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ Could not schedule cache_sonarr: {e}")
-    # NEW: autonomous AI check-ins (off by default)
     if AI_CHECKINS_ENABLED:
         schedule.every(6).hours.do(send_ai_checkin)
     while True:
@@ -685,7 +667,7 @@ async def listen():
                     message = data.get("message","")
                     
                     if title.lower().startswith("jarvis") or message.lower().startswith("jarvis"):
-                        # 🔧 ADDITIVE FIX: if the title is just the wake word, fall back to the message for the command.
+                        # Build the command after the wake word
                         if title.lower().startswith("jarvis"):
                             tmp = title.lower().replace("jarvis","",1).strip()
                             cmd = tmp if tmp else message.lower().replace("jarvis","",1).strip()
@@ -726,8 +708,8 @@ async def listen():
                                     send_message("Weather", response, extras=extras)
                                     continue
 
-                        # ✅ DNS (Technitium) routing — same pattern as weather
-                        if "technitium" in extra_modules and (cmd.startswith("dns") or " dns" in f" {cmd}"):
+                        # ✅ DNS (Technitium) routing — tolerant and case-insensitive
+                        if "technitium" in extra_modules and re.search(r"\bdns\b", cmd, re.IGNORECASE):
                             t_resp = extra_modules["technitium"].handle_dns_command(cmd)
                             if isinstance(t_resp, tuple) and t_resp[0]:
                                 send_message("DNS", t_resp[0], extras=t_resp[1])
@@ -739,7 +721,6 @@ async def listen():
                         # ✅ Chat fun (joke/pun)
                         if "chat" in extra_modules and ("joke" in cmd or "pun" in cmd):
                             try:
-                                # Prefer a router if present
                                 if hasattr(extra_modules["chat"], "handle_chat_command"):
                                     c_resp = extra_modules["chat"].handle_chat_command("joke")
                                 elif hasattr(extra_modules["chat"], "joke"):
@@ -815,9 +796,8 @@ def send_ai_checkin():
         parts.append(_kv("Radarr", "ACTIVE" if RADARR_ENABLED else "INACTIVE"))
         parts.append(_kv("Sonarr", "ACTIVE" if SONARR_ENABLED else "INACTIVE"))
         parts.append(_kv("Weather", "ACTIVE" if WEATHER_ENABLED else "INACTIVE"))
-        parts.append(_kv("DNS", "ACTIVE" if TECHNITIUM_ENABLED else "INACTIVE"))  # ← NEW
+        parts.append(_kv("DNS", "ACTIVE" if TECHNITIUM_ENABLED else "INACTIVE"))
         parts.append(_kv("Digest", "ACTIVE" if ('digest' in extra_modules) else "INACTIVE"))
-        # Use mood-specific line if none provided
         parts.append(f"{_ts(2)} {ai_voice(None)}")
         send_message("Status", "\n".join(parts), priority=5)
     except Exception as e:
@@ -848,7 +828,7 @@ if __name__ == "__main__":
         ("chat", "Chat", "💬"),
         ("weather", "Weather", "🌦"),
         ("digest", "Digest", "📰"),
-        ("technitium", "DNS", "🧬"),  # ← load DNS module
+        ("technitium", "DNS", "🧬"),
     ]:
         loaded = try_load_module(mod, label, icon)
         if loaded:
@@ -872,9 +852,8 @@ if __name__ == "__main__":
         weather_enabled=WEATHER_ENABLED,
         digest_enabled=digest_enabled_flag,
         chat_mood=CHAT_MOOD,
-        technitium_enabled=TECHNITIUM_ENABLED,  # ← NEW
+        technitium_enabled=TECHNITIUM_ENABLED,
     )
-    # Add a tiny mood-aware flourish (AI voice; use pool if no explicit line)
     startup_poster = startup_poster + f"\n{_ts(5)} {ai_voice(None)}"
     send_message("Startup", startup_poster, priority=5)
 
