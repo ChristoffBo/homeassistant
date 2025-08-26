@@ -17,6 +17,7 @@ COPY bot.py /app/bot.py
 COPY chat.py /app/chat.py
 COPY arr.py /app/arr.py
 COPY weather.py /app/weather.py
+COPY weather.py /app/technitium.py
 RUN chmod +x /run.sh
 
 CMD [ "/run.sh" ]
