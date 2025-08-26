@@ -53,7 +53,9 @@
 
     "technitium_enabled": true,
     "technitium_url": "http://10.0.0.99:5380",
-    "technitium_api_key": "CHANGE_ME"
+    "technitium_user": "admin",
+    "technitium_pass": "CHANGE_ME",
+    "technitium_api_key": ""
   },
   "schema": {
     "bot_name": "str",
@@ -98,6 +100,8 @@
 
     "technitium_enabled": "bool",
     "technitium_url": "str",
+    "technitium_user": "str",
+    "technitium_pass": "str",
     "technitium_api_key": "str"
   }
 }
