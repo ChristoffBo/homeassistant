@@ -39,6 +39,11 @@ export SONARR_URL=$(jq -r '.sonarr_url' $CONFIG_PATH)
 export SONARR_API_KEY=$(jq -r '.sonarr_api_key' $CONFIG_PATH)
 export SONARR_TIME=$(jq -r '.sonarr_time' $CONFIG_PATH)
 
+# --- ADDED: Technitium DNS ---
+export TECHNITIUM_ENABLED=$(jq -r '.technitium_enabled' $CONFIG_PATH)
+export TECHNITIUM_URL=$(jq -r '.technitium_url' $CONFIG_PATH)
+export TECHNITIUM_API_KEY=$(jq -r '.technitium_api_key' $CONFIG_PATH)
+
 log "Starting add-on..."
 
 exec python3 /app/bot.py
