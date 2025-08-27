@@ -317,3 +317,87 @@ def handle_arr_command(title: str, message: str):
         return COMMANDS[mapped]()
 
     return f"🤖 Unknown command: {cmd}", None
+
+# -----------------------------
+# NEW: helpers for heartbeat (safe; no routing change)
+# -----------------------------
+def list_upcoming_movies(days=1, limit=3):
+    """
+    Returns a short list of strings for movies releasing in the next `days` (default 1 = today),
+    excluding items that already have files. Does not post, just returns lines.
+    """
+    if not RADARR_ENABLED:
+        return []
+    now = datetime.datetime.now(datetime.timezone.utc)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + datetime.timedelta(days=int(days))
+    url = (f"{RADARR_URL}/api/v3/calendar?apikey={RADARR_API}"
+           f"&start={_utc_iso(start)}&end={_utc_iso(end)}&unmonitored=false&includeMovie=true")
+    data = _get_json(url)
+    if not isinstance(data, list) or not data:
+        return []
+    if not radarr_cache["movies"]:
+        cache_radarr()
+    out = []
+    for m in data:
+        mid = m.get("movie", {}).get("id") or m.get("id") or m.get("movieId")
+        if _radarr_movie_has_file_from_cache(mid):
+            continue
+        title = m.get("title") or m.get("movie", {}).get("title", "Unknown")
+        year  = m.get("year") or m.get("movie", {}).get("year", "")
+        date  = m.get("inCinemas") or m.get("physicalRelease") or m.get("releaseDate")
+        try:
+            if isinstance(date, str):
+                dt = datetime.datetime.fromisoformat(date.replace("Z","+00:00"))
+                date = dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+        out.append(f"{title} ({year}) — {date}")
+        if len(out) >= int(limit):
+            break
+    return out
+
+def list_upcoming_series(days=1, limit=5):
+    """
+    Returns a short list of strings for episodes airing in the next `days` (default 1 = today),
+    excluding already-downloaded / unmonitored. Does not post, just returns lines.
+    """
+    if not SONARR_ENABLED:
+        return []
+    now = datetime.datetime.now(datetime.timezone.utc)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + datetime.timedelta(days=int(days))
+    url = (f"{SONARR_URL}/api/v3/calendar?apikey={SONARR_API}"
+           f"&start={_utc_iso(start)}&end={_utc_iso(end)}&unmonitored=false&includeSeries=true&includeEpisode=true")
+    data = _get_json(url)
+    if not isinstance(data, list) or not data:
+        return []
+    if not sonarr_cache["series"]:
+        cache_sonarr()
+    out = []
+    for e in data:
+        if not _truthy(e.get("monitored", True), True):
+            continue
+        if _sonarr_episode_has_file(e):
+            continue
+        series = (e.get("series") or {}).get("title")
+        if not series:
+            sid = e.get("seriesId")
+            cached = sonarr_cache["by_id"].get(sid, {}) if sid is not None else {}
+            series = cached.get("title","Unknown")
+        ep = e.get("episodeNumber","?"); season = e.get("seasonNumber","?")
+        date = e.get("airDateUtc","")
+        try:
+            if isinstance(date,str):
+                dt = datetime.datetime.fromisoformat(date.replace("Z","+00:00"))
+                date = dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+        try: season_i = int(season)
+        except Exception: season_i = 0
+        try: ep_i = int(ep)
+        except Exception: ep_i = 0
+        out.append(f"{series} — S{season_i:02}E{ep_i:02} — {date}")
+        if len(out) >= int(limit):
+            break
+    return out
