@@ -21,6 +21,7 @@ COPY technitium.py /app/technitium.py
 COPY digest.py /app/digest.py
 COPY uptimekuma.py /app/uptimekuma.py
 COPY aliases.py /app/aliases.py
+COPY personality.py /app/personality.py
 
 RUN chmod +x /run.sh
 
