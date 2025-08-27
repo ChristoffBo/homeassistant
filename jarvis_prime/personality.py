@@ -200,6 +200,8 @@ MOODS: Dict[str, Dict[str, Any]] = {
             "Absolute clown move.",
             "Don’t blame me for your nonsense.",
             "It’s called 'help'—use it.",
+            "F#@CK me!.",
+            "What the F#@CK was that?!.",
             "Can’t fix stupid, but I’ll try.",
             "You’re a Mother F#%ker!.",
             "Even Windows makes more sense.",
