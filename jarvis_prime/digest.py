@@ -134,15 +134,35 @@ def _kuma_summary(options: Dict[str, Any]) -> str:
         return ""
 
 # -----------------------------
-# Weather section
+# Weather section (robust one-liner)
 # -----------------------------
+_CONDITION_WORDS = (
+    "sunny","clear","cloud","rain","showers","storm","thunder","wind","breeze",
+    "fog","mist","snow","hail","overcast","drizzle","partly","mostly","humid","dry","cold","hot","warm","cool"
+)
+
+def _pick_weather_line(text: str) -> str:
+    """
+    Choose the first meaningful line: contains a digit or a known condition word,
+    not just a header like 'Today — City'.
+    """
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    for l in lines:
+        low = l.lower()
+        if any(w in low for w in _CONDITION_WORDS) or any(ch.isdigit() for ch in l) or "°" in l:
+            # avoid pure headings like 'today — <city>'
+            if not (low.startswith("today") and "—" in l and not any(ch.isdigit() for ch in l) and "°" not in l):
+                return l
+    # fallback: if first line is all we have, return it; else return empty
+    return lines[0] if lines else ""
+
 def _weather_snapshot(options: Dict[str, Any]) -> str:
     """
     Always try to return a brief one-liner for today’s weather.
     Tries, in order:
       1) weather.brief(options)
       2) weather.current_summary(options)
-      3) weather.handle_weather_command('forecast today') or 'forecast'
+      3) weather.handle_weather_command('forecast today') then 'forecast', extracting the first meaningful line.
     """
     if not _weather or not _bool(options.get("weather_enabled"), False):
         return ""
@@ -150,16 +170,18 @@ def _weather_snapshot(options: Dict[str, Any]) -> str:
     try:
         if hasattr(_weather, "brief"):
             s = str(_weather.brief(options)).strip()
-            if s:
-                return s
+            s2 = _pick_weather_line(s)
+            if s2:
+                return s2
     except Exception:
         pass
     # 2) current_summary()
     try:
         if hasattr(_weather, "current_summary"):
             s = str(_weather.current_summary(options)).strip()
-            if s:
-                return s
+            s2 = _pick_weather_line(s)
+            if s2:
+                return s2
     except Exception:
         pass
     # 3) handle_weather_command(...)
@@ -172,11 +194,9 @@ def _weather_snapshot(options: Dict[str, Any]) -> str:
                     text = str(resp[0] or "")
                 elif isinstance(resp, str):
                     text = resp
-                text = text.strip()
-                if text:
-                    # compress to a neat single line
-                    first = text.splitlines()[0].strip()
-                    return first
+                s2 = _pick_weather_line(text.strip())
+                if s2:
+                    return s2
     except Exception:
         pass
     return ""  # last resort
@@ -234,9 +254,9 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
     dns_line = _dns_note(options)
     dns_block = _section("🧠 Technitium DNS", dns_line) if dns_line else ""
 
-    # Weather — always try to include when enabled
+    # Weather — include only if we have meaningful content
     weather_line = _weather_snapshot(options)
-    weather_block = _section("⛅ Weather", weather_line) if weather_line or _bool(options.get("weather_enabled"), False) else ""
+    weather_block = _section("⛅ Weather", weather_line) if weather_line else ""
 
     # Compose
     parts = [arr_block, kuma_block, dns_block, weather_block]
