@@ -66,7 +66,7 @@ except Exception as e:
 jarvis_app_id = None
 
 # -----------------------------
-# Alias wiring (optional module)
+# Optional alias module
 # -----------------------------
 _alias_mod = None
 try:
@@ -114,16 +114,28 @@ def resolve_app_id():
 # Dynamic module loader
 # -----------------------------
 def try_load_module(modname, label):
+    """
+    Loads /app/<modname>.py. Most modules honor an *_enabled flag in options/env.
+    BUT: 'arr' is core routing and must ALWAYS load (no flag).
+    """
     path = f"/app/{modname}.py"
-    enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
-    if not enabled:
-        try:
-            with open("/data/options.json", "r") as f:
-                enabled = json.load(f).get(f"{modname}_enabled", False)
-        except Exception:
-            enabled = False
+
+    # ARR loads unconditionally
+    if modname == "arr":
+        enabled = True
+    else:
+        enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1","true","yes")
+        if not enabled:
+            try:
+                with open("/data/options.json", "r") as f:
+                    enabled = json.load(f).get(f"{modname}_enabled", False)
+            except Exception:
+                enabled = False
+
     if not os.path.exists(path) or not enabled:
+        print(f"[{BOT_NAME}] ↩️ Skipping module {modname}: file_exists={os.path.exists(path)} enabled={enabled}")
         return False
+
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(modname, path)
@@ -157,108 +169,20 @@ def startup_poster():
     return "\n".join(lines)
 
 # -----------------------------
-# Command aliasing / normalization
+# Normalization (only used for help/quick commands; ARR does its own routing)
 # -----------------------------
+def _clean(s: str) -> str:
+    s = s.lower().strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
 def normalize_cmd(cmd: str) -> str:
-    """
-    Delegates to /app/alias.py if present; otherwise falls back to built-in logic.
-    """
     if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
         return _alias_mod.normalize_cmd(cmd)
-
-    def _clean(s: str) -> str:
-        s = s.lower().strip()
-        s = re.sub(r"\s+", " ", s)
-        return s
-
-    c = _clean(cmd)
-
-    # single-word shorthands + explicit 'upcoming ...' forms
-    shorthand = {
-        "series": "upcoming_series",
-        "show": "upcoming_series",
-        "shows": "upcoming_series",
-        "tv": "upcoming_series",
-        "movies": "upcoming_movies",
-        "movie": "upcoming_movies",
-        "film": "upcoming_movies",
-        "films": "upcoming_movies",
-        "upcoming series": "upcoming_series",
-        "upcoming shows": "upcoming_series",
-        "upcoming movies": "upcoming_movies",
-        "upcoming films": "upcoming_movies",
-    }
-    if c in shorthand:
-        return shorthand[c]
-
-    exact = {
-        "dns": "dns", "dns status": "dns", "technitium": "dns", "tech dns": "dns",
-        "tdns": "dns", "dns stats": "dns",
-        "kuma": "kuma", "uptime": "kuma", "uptime kuma": "kuma", "status": "kuma",
-        "monitors": "kuma", "monitor status": "kuma",
-        "weather": "weather", "temp": "weather", "temps": "weather", "temperature": "weather",
-        "now": "weather", "today": "weather", "current": "weather",
-        "forecast": "forecast", "weekly": "forecast", "7day": "forecast", "7-day": "forecast",
-        "joke": "joke", "pun": "joke",
-        "help": "help", "commands": "commands"
-    }
-    if c in exact:
-        return exact[c]
-
-    # keyword-style (phrases)
-    if "movie" in c and "count" in c:
-        return "movie_count"
-    if "series" in c and "count" in c:
-        return "series_count"
-    if "show" in c and "count" in c:
-        return "series_count"
-    if ("movie" in c or "film" in c) and ("up" in c or "upcoming" in c):
-        return "upcoming_movies"
-    if (("series" in c or "show" in c or "tv" in c) and ("up" in c or "upcoming" in c)):
-        return "upcoming_series"
-    if "longest" in c and "movie" in c:
-        return "longest_movie"
-    if "longest" in c and ("series" in c or "show" in c or "tv" in c):
-        return "longest_series"
-
-    # DNS / Kuma fuzzy
-    if "dns" in c or "technitium" in c:
-        return "dns"
-    if "kuma" in c or "uptime" in c or "monitor" in c:
-        return "kuma"
-
-    # Weather
-    if "forecast" in c or "7 day" in c or "week" in c:
-        return "forecast"
-    if any(w in c for w in ("weather", "temp", "temperature", "now", "today", "current")):
-        return "weather"
-
-    return c
+    return _clean(cmd)
 
 # -----------------------------
-# ARR safe caller (supports 1-arg and 2-arg signatures)
-# -----------------------------
-def call_arr_safe(intent: str):
-    """
-    Tries arr.handle_arr_command with both common signatures to avoid sequencing/signature mismatches:
-      - handle_arr_command("upcoming movies")
-      - handle_arr_command("jarvis", "upcoming movies")
-    Returns the handler return value (str or tuple) or None.
-    """
-    try:
-        return extra_modules["arr"].handle_arr_command(intent)  # 1-arg
-    except TypeError:
-        try:
-            return extra_modules["arr"].handle_arr_command("jarvis", intent)  # 2-arg
-        except Exception as e:
-            print(f"[{BOT_NAME}] ARR call failed: {e}")
-            return None
-    except Exception as e:
-        print(f"[{BOT_NAME}] ARR call error: {e}")
-        return None
-
-# -----------------------------
-# Listeners / Scheduler
+# Listener
 # -----------------------------
 async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
@@ -271,88 +195,77 @@ async def listen():
                 appid = data.get("appid")
                 if appid == jarvis_app_id:
                     continue  # ignore our own posts
+
                 title = data.get("title", "")
                 message = data.get("message", "")
 
-                # Wake word
                 tlow = title.lower()
                 mlow = message.lower()
                 if tlow.startswith("jarvis") or mlow.startswith("jarvis"):
                     # build command after wake word
                     if tlow.startswith("jarvis"):
                         tmp = tlow.replace("jarvis", "", 1).strip()
-                        raw = tmp if tmp else mlow.replace("jarvis", "", 1).strip()
+                        cmd = tmp if tmp else mlow.replace("jarvis", "", 1).strip()
                     else:
-                        raw = mlow.replace("jarvis", "", 1).strip()
+                        cmd = mlow.replace("jarvis", "", 1).strip()
 
-                    cmd = normalize_cmd(raw)
+                    ncmd = normalize_cmd(cmd)
 
                     # Help
-                    if cmd in ("help", "commands"):
+                    if ncmd in ("help", "commands"):
                         help_text = (
                             "🤖 **Jarvis Prime Commands**\n\n"
                             "🌐 DNS: `dns`\n"
                             "📡 Kuma: `kuma`\n"
                             "🌦 Weather: `weather`, `forecast`\n"
-                            "🎬 Movies: `movies`, `upcoming movies`, `movie count`, `longest movie`\n"
-                            "📺 Series: `series`, `upcoming series`, `series count`, `longest series`\n"
+                            "🎬 Movies/📺 Series: `movie count`, `series count`, `upcoming movies`, `upcoming series`, `longest movie`, `longest series`\n"
                             "🃏 Fun: `joke`\n"
                         )
                         send_message("Help", help_text)
                         continue
 
                     # DNS (Technitium)
-                    if cmd == "dns" and "technitium" in extra_modules:
-                        out = extra_modules["technitium"].handle_dns_command("dns status")
+                    if "technitium" in extra_modules and re.search(r"\bdns\b|technitium", ncmd):
+                        out = extra_modules["technitium"].handle_dns_command(ncmd)
                         if isinstance(out, tuple) and out and out[0]:
                             send_message("DNS", out[0], extras=(out[1] if len(out) > 1 else None)); continue
                         if isinstance(out, str) and out:
                             send_message("DNS", out); continue
 
                     # Kuma
-                    if cmd == "kuma" and "uptimekuma" in extra_modules:
-                        out = extra_modules["uptimekuma"].handle_kuma_command("kuma")
+                    if "uptimekuma" in extra_modules and re.search(r"\bkuma\b|\buptime\b|\bmonitor", ncmd):
+                        out = extra_modules["uptimekuma"].handle_kuma_command(ncmd)
                         if isinstance(out, tuple) and out and out[0]:
                             send_message("Kuma", out[0], extras=(out[1] if len(out) > 1 else None)); continue
                         if isinstance(out, str) and out:
                             send_message("Kuma", out); continue
 
                     # Weather
-                    if cmd in ("weather", "forecast") and "weather" in extra_modules:
-                        w = extra_modules["weather"].handle_weather_command(cmd)
+                    if "weather" in extra_modules and any(w in ncmd for w in ("weather","forecast","temperature","temp","now","today","current","weekly","7day","7-day","7 day")):
+                        w = extra_modules["weather"].handle_weather_command(ncmd)
                         if isinstance(w, tuple) and w and w[0]:
                             send_message("Weather", w[0], extras=(w[1] if len(w) > 1 else None)); continue
                         if isinstance(w, str) and w:
                             send_message("Weather", w); continue
 
                     # Chat jokes
-                    if cmd == "joke" and "chat" in extra_modules:
-                        c = extra_modules["chat"].handle_chat_command("joke") if hasattr(extra_modules["chat"], "handle_chat_command") else ("🃏 Here's a joke.", None)
+                    if "chat" in extra_modules and ("joke" in ncmd or "pun" in ncmd):
+                        c = extra_modules["chat"].handle_chat_command("joke") if hasattr(extra_modules["chat"],"handle_chat_command") else ("🃏 Here's a joke.", None)
                         if isinstance(c, tuple):
-                            send_message("Joke", c[0], extras=(c[1] if len(c) > 1 else None)); continue
+                            send_message("Joke", c[0], extras=(c[1] if len(c)>1 else None)); continue
                         else:
                             send_message("Joke", str(c)); continue
 
-                    # ARR (Radarr/Sonarr)
+                    # ---- ARR HANDOFF (always call; arr.py does its own parsing/fuzzy) ----
                     if "arr" in extra_modules and hasattr(extra_modules["arr"], "handle_arr_command"):
-                        backmap = {
-                            "upcoming_movies": "upcoming movies",
-                            "upcoming_series": "upcoming series",
-                            "movie_count": "movie count",
-                            "series_count": "series count",
-                            "longest_movie": "longest movie",
-                            "longest_series": "longest series",
-                        }
-                        if cmd in backmap:
-                            intent = backmap[cmd]
-                            r = call_arr_safe(intent)
-                            if isinstance(r, tuple) and r and r[0]:
-                                send_message("Jarvis", r[0], extras=(r[1] if len(r) > 1 else None)); continue
-                            if isinstance(r, str) and r:
-                                send_message("Jarvis", r); continue
+                        r = extra_modules["arr"].handle_arr_command(title, message)
+                        if isinstance(r, tuple) and r and r[0]:
+                            send_message("Jarvis", r[0], extras=(r[1] if len(r) > 1 else None)); continue
+                        if isinstance(r, str) and r:
+                            send_message("Jarvis", r); continue
 
                     # Unknown
-                    send_message("Jarvis", f"Unknown command: {raw}")
+                    send_message("Jarvis", f"Unknown command: {cmd}")
                     continue
 
                 # Non-wake messages: pass-through
@@ -362,7 +275,6 @@ async def listen():
                 print(f"[{BOT_NAME}] Error processing: {e}")
 
 def run_scheduler():
-    # keep very light
     schedule.every(RETENTION_HOURS).hours.do(lambda: None)
     while True:
         schedule.run_pending()
@@ -375,7 +287,7 @@ if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on…")
     resolve_app_id()
 
-    # Load modules
+    # Load modules (ARR first; now unconditional)
     try_load_module("arr", "ARR")
     try_load_module("chat", "Chat")
     try_load_module("weather", "Weather")
@@ -388,6 +300,6 @@ if __name__ == "__main__":
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.create_task(listen())
+    loop.create_task(listen()))
     loop.run_in_executor(None, run_scheduler)
     loop.run_forever()
