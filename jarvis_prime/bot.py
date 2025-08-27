@@ -40,8 +40,10 @@ CHAT_MOOD = "Calm"
 # -----------------------------
 def _load_json_file(path):
     try:
-        with open(path, "r") as f: return json.load(f)
-    except Exception: return {}
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 try:
     options = _load_json_file("/data/options.json")
@@ -83,7 +85,8 @@ except Exception as _e:
 def send_message(title, message, priority=5, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
-    if extras: data["extras"] = extras
+    if extras:
+        data["extras"] = extras
     try:
         r = requests.post(url, json=data, timeout=5)
         r.raise_for_status()
@@ -98,10 +101,12 @@ def resolve_app_id():
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=5); r.raise_for_status()
+        r = requests.get(url, headers=headers, timeout=5)
+        r.raise_for_status()
         for app in r.json():
             if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id"); return
+                jarvis_app_id = app.get("id")
+                return
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
@@ -110,7 +115,7 @@ def resolve_app_id():
 # -----------------------------
 def try_load_module(modname, label):
     path = f"/app/{modname}.py"
-    enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1","true","yes")
+    enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
     if not enabled:
         try:
             with open("/data/options.json", "r") as f:
@@ -135,18 +140,19 @@ def try_load_module(modname, label):
 # Startup poster (lean)
 # -----------------------------
 def startup_poster():
-    def mod_line(icon,name,enabled): return f"    {icon} {name} – {'ACTIVE' if enabled else 'INACTIVE'}"
+    def mod_line(icon, name, enabled):
+        return f"    {icon} {name} – {'ACTIVE' if enabled else 'INACTIVE'}"
     lines = []
     lines.append("🧠 Jarvis Prime – Prime Neural Boot\n")
     lines.append(f"Mood: {CHAT_MOOD}")
     lines.append("Modules:")
-    lines.append(mod_line("🎬","Radarr", RADARR_ENABLED))
-    lines.append(mod_line("📺","Sonarr", SONARR_ENABLED))
-    lines.append(mod_line("🌤","Weather", WEATHER_ENABLED))
-    lines.append(mod_line("📰","Digest", DIGEST_ENABLED_ENV or DIGEST_ENABLED_FILE))
-    lines.append(mod_line("💬","Chat", CHAT_ENABLED_ENV or CHAT_ENABLED_FILE))
-    lines.append(mod_line("📡","Uptime Kuma", KUMA_ENABLED))
-    lines.append(mod_line("🧬","DNS (Technitium)", TECHNITIUM_ENABLED))
+    lines.append(mod_line("🎬", "Radarr", RADARR_ENABLED))
+    lines.append(mod_line("📺", "Sonarr", SONARR_ENABLED))
+    lines.append(mod_line("🌤", "Weather", WEATHER_ENABLED))
+    lines.append(mod_line("📰", "Digest", DIGEST_ENABLED_ENV or DIGEST_ENABLED_FILE))
+    lines.append(mod_line("💬", "Chat", CHAT_ENABLED_ENV or CHAT_ENABLED_FILE))
+    lines.append(mod_line("📡", "Uptime Kuma", KUMA_ENABLED))
+    lines.append(mod_line("🧬", "DNS (Technitium)", TECHNITIUM_ENABLED))
     lines.append("\nStatus: All systems nominal")
     return "\n".join(lines)
 
@@ -167,7 +173,7 @@ def normalize_cmd(cmd: str) -> str:
 
     c = _clean(cmd)
 
-    # single-word shorthands
+    # single-word shorthands + explicit 'upcoming ...' forms
     shorthand = {
         "series": "upcoming_series",
         "show": "upcoming_series",
@@ -177,6 +183,10 @@ def normalize_cmd(cmd: str) -> str:
         "movie": "upcoming_movies",
         "film": "upcoming_movies",
         "films": "upcoming_movies",
+        "upcoming series": "upcoming_series",
+        "upcoming shows": "upcoming_series",
+        "upcoming movies": "upcoming_movies",
+        "upcoming films": "upcoming_movies",
     }
     if c in shorthand:
         return shorthand[c]
@@ -189,31 +199,69 @@ def normalize_cmd(cmd: str) -> str:
         "weather": "weather", "temp": "weather", "temps": "weather", "temperature": "weather",
         "now": "weather", "today": "weather", "current": "weather",
         "forecast": "forecast", "weekly": "forecast", "7day": "forecast", "7-day": "forecast",
-        "joke": "joke", "pun": "joke"
+        "joke": "joke", "pun": "joke",
+        "help": "help", "commands": "commands"
     }
-    if c in exact: return exact[c]
+    if c in exact:
+        return exact[c]
 
-    # keyword-style
-    if "movie" in c and "count" in c: return "movie_count"
-    if "series" in c and "count" in c: return "series_count"
-    if "show" in c and "count" in c: return "series_count"
-    if ("movie" in c or "film" in c) and ("up" in c or "upcoming" in c): return "upcoming_movies"
-    if (("series" in c or "show" in c or "tv" in c) and ("up" in c or "upcoming" in c)): return "upcoming_series"
-    if "longest" in c and "movie" in c: return "longest_movie"
-    if "longest" in c and ("series" in c or "show" in c or "tv" in c): return "longest_series"
+    # keyword-style (phrases)
+    if "movie" in c and "count" in c:
+        return "movie_count"
+    if "series" in c and "count" in c:
+        return "series_count"
+    if "show" in c and "count" in c:
+        return "series_count"
+    if ("movie" in c or "film" in c) and ("up" in c or "upcoming" in c):
+        return "upcoming_movies"
+    if (("series" in c or "show" in c or "tv" in c) and ("up" in c or "upcoming" in c)):
+        return "upcoming_series"
+    if "longest" in c and "movie" in c:
+        return "longest_movie"
+    if "longest" in c and ("series" in c or "show" in c or "tv" in c):
+        return "longest_series"
 
-    if "dns" in c or "technitium" in c: return "dns"
-    if "kuma" in c or "uptime" in c or "monitor" in c: return "kuma"
-    if "forecast" in c or "7 day" in c or "week" in c: return "forecast"
-    if any(w in c for w in ("weather","temp","temperature","now","today","current")): return "weather"
+    # DNS / Kuma fuzzy
+    if "dns" in c or "technitium" in c:
+        return "dns"
+    if "kuma" in c or "uptime" in c or "monitor" in c:
+        return "kuma"
+
+    # Weather
+    if "forecast" in c or "7 day" in c or "week" in c:
+        return "forecast"
+    if any(w in c for w in ("weather", "temp", "temperature", "now", "today", "current")):
+        return "weather"
 
     return c
+
+# -----------------------------
+# ARR safe caller (supports 1-arg and 2-arg signatures)
+# -----------------------------
+def call_arr_safe(intent: str):
+    """
+    Tries arr.handle_arr_command with both common signatures to avoid sequencing/signature mismatches:
+      - handle_arr_command("upcoming movies")
+      - handle_arr_command("jarvis", "upcoming movies")
+    Returns the handler return value (str or tuple) or None.
+    """
+    try:
+        return extra_modules["arr"].handle_arr_command(intent)  # 1-arg
+    except TypeError:
+        try:
+            return extra_modules["arr"].handle_arr_command("jarvis", intent)  # 2-arg
+        except Exception as e:
+            print(f"[{BOT_NAME}] ARR call failed: {e}")
+            return None
+    except Exception as e:
+        print(f"[{BOT_NAME}] ARR call error: {e}")
+        return None
 
 # -----------------------------
 # Listeners / Scheduler
 # -----------------------------
 async def listen():
-    ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
+    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
     print(f"[{BOT_NAME}] Connecting {ws_url}")
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         print(f"[{BOT_NAME}] ✅ Connected")
@@ -222,62 +270,70 @@ async def listen():
                 data = json.loads(msg)
                 appid = data.get("appid")
                 if appid == jarvis_app_id:
-                    continue
-                title = data.get("title","")
-                message = data.get("message","")
+                    continue  # ignore our own posts
+                title = data.get("title", "")
+                message = data.get("message", "")
 
+                # Wake word
                 tlow = title.lower()
                 mlow = message.lower()
                 if tlow.startswith("jarvis") or mlow.startswith("jarvis"):
+                    # build command after wake word
                     if tlow.startswith("jarvis"):
-                        tmp = tlow.replace("jarvis","",1).strip()
-                        raw = tmp if tmp else mlow.replace("jarvis","",1).strip()
+                        tmp = tlow.replace("jarvis", "", 1).strip()
+                        raw = tmp if tmp else mlow.replace("jarvis", "", 1).strip()
                     else:
-                        raw = mlow.replace("jarvis","",1).strip()
+                        raw = mlow.replace("jarvis", "", 1).strip()
 
                     cmd = normalize_cmd(raw)
 
-                    if cmd in ("help","commands"):
+                    # Help
+                    if cmd in ("help", "commands"):
                         help_text = (
                             "🤖 **Jarvis Prime Commands**\n\n"
                             "🌐 DNS: `dns`\n"
                             "📡 Kuma: `kuma`\n"
                             "🌦 Weather: `weather`, `forecast`\n"
-                            "🎬 Movies: `movie count`, `upcoming movies`, `movies`\n"
-                            "📺 Series: `series count`, `upcoming series`, `series`\n"
+                            "🎬 Movies: `movies`, `upcoming movies`, `movie count`, `longest movie`\n"
+                            "📺 Series: `series`, `upcoming series`, `series count`, `longest series`\n"
                             "🃏 Fun: `joke`\n"
                         )
                         send_message("Help", help_text)
                         continue
 
+                    # DNS (Technitium)
                     if cmd == "dns" and "technitium" in extra_modules:
                         out = extra_modules["technitium"].handle_dns_command("dns status")
-                        if isinstance(out, tuple) and out[0]:
-                            send_message("DNS", out[0], extras=(out[1] if len(out)>1 else None)); continue
+                        if isinstance(out, tuple) and out and out[0]:
+                            send_message("DNS", out[0], extras=(out[1] if len(out) > 1 else None)); continue
                         if isinstance(out, str) and out:
                             send_message("DNS", out); continue
 
+                    # Kuma
                     if cmd == "kuma" and "uptimekuma" in extra_modules:
                         out = extra_modules["uptimekuma"].handle_kuma_command("kuma")
-                        if isinstance(out, tuple) and out[0]:
-                            send_message("Kuma", out[0], extras=(out[1] if len(out)>1 else None)); continue
+                        if isinstance(out, tuple) and out and out[0]:
+                            send_message("Kuma", out[0], extras=(out[1] if len(out) > 1 else None)); continue
                         if isinstance(out, str) and out:
                             send_message("Kuma", out); continue
 
-                    if cmd in ("weather","forecast") and "weather" in extra_modules:
+                    # Weather
+                    if cmd in ("weather", "forecast") and "weather" in extra_modules:
                         w = extra_modules["weather"].handle_weather_command(cmd)
-                        if isinstance(w, tuple) and w[0]:
-                            send_message("Weather", w[0], extras=(w[1] if len(w)>1 else None)); continue
+                        if isinstance(w, tuple) and w and w[0]:
+                            send_message("Weather", w[0], extras=(w[1] if len(w) > 1 else None)); continue
                         if isinstance(w, str) and w:
                             send_message("Weather", w); continue
 
+                    # Chat jokes
                     if cmd == "joke" and "chat" in extra_modules:
-                        c = extra_modules["chat"].handle_chat_command("joke") if hasattr(extra_modules["chat"],"handle_chat_command") else ("🃏 Here's a joke.", None)
+                        c = extra_modules["chat"].handle_chat_command("joke") if hasattr(extra_modules["chat"], "handle_chat_command") else ("🃏 Here's a joke.", None)
                         if isinstance(c, tuple):
-                            send_message("Joke", c[0], extras=(c[1] if len(c)>1 else None)); continue
+                            send_message("Joke", c[0], extras=(c[1] if len(c) > 1 else None)); continue
                         else:
                             send_message("Joke", str(c)); continue
 
+                    # ARR (Radarr/Sonarr)
                     if "arr" in extra_modules and hasattr(extra_modules["arr"], "handle_arr_command"):
                         backmap = {
                             "upcoming_movies": "upcoming movies",
@@ -288,21 +344,25 @@ async def listen():
                             "longest_series": "longest series",
                         }
                         if cmd in backmap:
-                            r = extra_modules["arr"].handle_arr_command("jarvis", backmap[cmd])
-                            if isinstance(r, tuple) and r[0]:
-                                send_message("Jarvis", r[0], extras=(r[1] if len(r)>1 else None)); continue
+                            intent = backmap[cmd]
+                            r = call_arr_safe(intent)
+                            if isinstance(r, tuple) and r and r[0]:
+                                send_message("Jarvis", r[0], extras=(r[1] if len(r) > 1 else None)); continue
                             if isinstance(r, str) and r:
                                 send_message("Jarvis", r); continue
 
+                    # Unknown
                     send_message("Jarvis", f"Unknown command: {raw}")
                     continue
 
+                # Non-wake messages: pass-through
                 send_message(title, message)
 
             except Exception as e:
                 print(f"[{BOT_NAME}] Error processing: {e}")
 
 def run_scheduler():
+    # keep very light
     schedule.every(RETENTION_HOURS).hours.do(lambda: None)
     while True:
         schedule.run_pending()
@@ -315,6 +375,7 @@ if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on…")
     resolve_app_id()
 
+    # Load modules
     try_load_module("arr", "ARR")
     try_load_module("chat", "Chat")
     try_load_module("weather", "Weather")
@@ -322,6 +383,7 @@ if __name__ == "__main__":
     try_load_module("uptimekuma", "Kuma")
     try_load_module("digest", "Digest")
 
+    # Startup card
     send_message("Startup", startup_poster(), priority=5)
 
     loop = asyncio.new_event_loop()
