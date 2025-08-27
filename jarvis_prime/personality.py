@@ -201,6 +201,7 @@ MOODS: Dict[str, Dict[str, Any]] = {
             "Don’t blame me for your nonsense.",
             "It’s called 'help'—use it.",
             "Can’t fix stupid, but I’ll try.",
+            "You’re a Mother F#%ker!.",
             "Even Windows makes more sense.",
             "This command belongs in /dev/null.",
             "You’re basically a rootkit with opinions."
