@@ -51,8 +51,26 @@ export technitium_pass=$(jq -r '.technitium_pass // ""' "$CONFIG_PATH")
 export uptimekuma_enabled=$(jq -r '.uptimekuma_enabled' "$CONFIG_PATH")
 export uptimekuma_url=$(jq -r '.uptimekuma_url' "$CONFIG_PATH")
 export uptimekuma_api_key=$(jq -r '.uptimekuma_api_key // ""' "$CONFIG_PATH")
-# Optional: private/internal status page slug (if you create one)
 export uptimekuma_status_slug=$(jq -r '.uptimekuma_status_slug // ""' "$CONFIG_PATH")
+
+# SMTP (intake)
+export smtp_enabled=$(jq -r '.smtp_enabled' "$CONFIG_PATH")
+export smtp_bind=$(jq -r '.smtp_bind // "0.0.0.0"' "$CONFIG_PATH")
+export smtp_port=$(jq -r '.smtp_port // 2525' "$CONFIG_PATH")
+export smtp_max_bytes=$(jq -r '.smtp_max_bytes // 262144' "$CONFIG_PATH")
+export smtp_dummy_rcpt=$(jq -r '.smtp_dummy_rcpt // "alerts@jarvis.local"' "$CONFIG_PATH")
+export smtp_accept_any_auth=$(jq -r '.smtp_accept_any_auth // true' "$CONFIG_PATH")
+export smtp_rewrite_title_prefix=$(jq -r '.smtp_rewrite_title_prefix // "[SMTP]"' "$CONFIG_PATH")
+export smtp_allow_html=$(jq -r '.smtp_allow_html // false' "$CONFIG_PATH")
+export smtp_priority_default=$(jq -r '.smtp_priority_default // 5' "$CONFIG_PATH")
+export smtp_priority_map=$(jq -r '.smtp_priority_map // "{}"' "$CONFIG_PATH")
+
+# Proxy (Gotify + ntfy forwarder)
+export proxy_enabled=$(jq -r '.proxy_enabled' "$CONFIG_PATH")
+export proxy_bind=$(jq -r '.proxy_bind // "0.0.0.0"' "$CONFIG_PATH")
+export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
+export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
+export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
 log "Starting add-on..."
 exec python3 /app/bot.py
