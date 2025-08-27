@@ -52,7 +52,6 @@ def _auth_headers(token: Optional[str], variant: str) -> dict:
             hdrs["Authorization"] = f"Bearer {token}"
         elif variant == "xauth":
             hdrs["X-Auth-Token"] = token
-    # Opportunistic Basic if not already set
     ba = _basic_auth_header()
     if ba and "Authorization" not in hdrs:
         hdrs["Authorization"] = ba
@@ -68,7 +67,6 @@ def _try_login_for_token() -> Optional[str]:
     """Technitium v13+: /api/user/login (fields: user, pass) -> token"""
     if not (TECH_URL and TECH_USER and TECH_PASS):
         return None
-    # POST first
     try:
         r = _session.post(f"{TECH_URL}/api/user/login",
                           data={"user": TECH_USER, "pass": TECH_PASS}, timeout=8)
@@ -78,7 +76,6 @@ def _try_login_for_token() -> Optional[str]:
             _set_token(tok); return tok
     except Exception:
         pass
-    # GET fallback
     try:
         r = _session.get(f"{TECH_URL}/api/user/login",
                          params={"user": TECH_USER, "pass": TECH_PASS}, timeout=8)
@@ -112,7 +109,6 @@ def _request(method: str, path: str, *, data=None, timeout: int = 8):
                 resp = _session.post(url, headers=headers, data=(data or {}), timeout=timeout)
         except Exception as e:
             return None, {"error": str(e)}
-        # parse json if possible
         if resp.headers.get("content-type","").startswith("application/json"):
             try:
                 payload = resp.json()
@@ -158,7 +154,6 @@ def _request(method: str, path: str, *, data=None, timeout: int = 8):
                 return got2
             resp, payload = got2
 
-    # final basic-only attempt
     if TECH_USER and TECH_PASS:
         url = f"{TECH_URL}{path}"
         headers = {}
@@ -177,25 +172,15 @@ def _get(path: str, timeout: int = 8): return _request("GET", path, timeout=time
 # =============================
 # Stats (Dashboard JSON preferred)
 # =============================
-
 def _read_stats() -> Optional[dict]:
-    """
-    Your instance returns counters under response.stats.* :
-      totalQueries,totalNoError,totalNxDomain,totalRefused,totalAuthoritative,
-      totalRecursive,totalCached,totalBlocked,totalDropped,totalClients,
-      zones,cachedEntries,allowedZones,blockedZones,allowListZones,blockListZones
-    """
     j = _get("/api/dashboard/stats/get")
     if not isinstance(j, dict):
         return None
 
-    # Normal v13+ success shape
     src: Dict[str, Any] = {}
     if j.get("status") == "ok" and isinstance(j.get("response"), dict):
         src = j["response"].get("stats") or {}
-        # Some builds keep totals in response.stats; others also repeat top-level totals.
     else:
-        # Non-standard but try best effort
         src = j.get("stats", {})
 
     out = {
@@ -210,7 +195,6 @@ def _read_stats() -> Optional[dict]:
         "blocked":          int(src.get("totalBlocked", 0) or 0),
         "dropped":          int(src.get("totalDropped", 0) or 0),
         "clients":          int(src.get("totalClients", 0) or 0),
-        # Extras you asked for:
         "zones":            int(src.get("zones", 0) or 0),
         "cachedEntries":    int(src.get("cachedEntries", 0) or 0),
         "allowedZones":     int(src.get("allowedZones", 0) or 0),
@@ -219,10 +203,8 @@ def _read_stats() -> Optional[dict]:
         "blockListZones":   int(src.get("blockListZones", 0) or 0),
     }
 
-    # Allowed = total - blocked (never negative)
     out["allowed"] = max(0, out["total"] - out["blocked"])
 
-    # If JSON endpoint didn’t return totals, bail out (we’ll avoid misleading zeros)
     if out["total"] == 0 and not any(v > 0 for k, v in out.items() if k != "total"):
         return None
 
@@ -241,12 +223,6 @@ def _kv(label, value, pct=None):
     return f"    {label}: {value} ({pct})"
 
 def handle_dns_command(cmd: str):
-    """
-    Voice:
-      • 'dns'
-      • 'dns status'
-    Produces a dashboard-style summary using response.stats totals.
-    """
     if not ENABLED or not TECH_URL:
         return "⚠️ DNS module not enabled or misconfigured", None
 
@@ -271,7 +247,6 @@ def handle_dns_command(cmd: str):
         lines.append(_kv("Dropped",        s["dropped"],        _pct(s["dropped"], total)))
         lines.append(_kv("Clients",        s["clients"]))
         lines.append(_kv("Allowed",        s["allowed"]))
-        # Extra section (zones/cache)
         lines.append("")
         lines.append("🧠 Resolver — Details")
         lines.append(_kv("Zones",          s["zones"]))
@@ -282,5 +257,35 @@ def handle_dns_command(cmd: str):
         lines.append(_kv("Block-List Zones", s["blockListZones"]))
         return "\n".join(lines), None
 
-    # Not a DNS command → let other routers try
     return None
+
+# =============================
+# Public helpers for other modules
+# =============================
+def stats(options: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+    try:
+        s = _read_stats()
+        if not isinstance(s, dict):
+            return {}
+        return {
+            "total_queries":        int(s.get("total", 0)),
+            "blocked_total":        int(s.get("blocked", 0)),
+            "server_failure_total": int(s.get("server_failure", 0)),
+        }
+    except Exception:
+        return {}
+
+def brief(options: Optional[Dict[str, Any]] = None) -> str:
+    try:
+        st = stats(options) or {}
+        def fmt_i(v):
+            try:
+                return f"{int(v):,}"
+            except Exception:
+                return str(v)
+        total = fmt_i(st.get("total_queries", 0))
+        blocked = fmt_i(st.get("blocked_total", 0))
+        servfail = fmt_i(st.get("server_failure_total", 0))
+        return f"Total: {total} | Blocked: {blocked} | Server Failure: {servfail}"
+    except Exception:
+        return ""
