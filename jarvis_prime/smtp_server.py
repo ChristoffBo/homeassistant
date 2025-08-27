@@ -1,247 +1,195 @@
 # /app/smtp_server.py
-# LAN-only SMTP intake for Jarvis Prime.
-# - Accepts any username/password (AUTH is ignored if enabled upstream).
-# - Parses Subject → title, body → message.
-# - Runs the payload through beautify_message (unified Jarvis card).
-# - Posts to Gotify via the send_message(title, text, extras) callback.
+# LAN-only SMTP intake for Jarvis Prime (aiosmtpd).
+# Accepts any AUTH creds when smtp_accept_any_auth = true.
+# Parses subject/body, beautifies through beautify.py, posts via send_message.
 
 from __future__ import annotations
-import threading
-import json
 import re
-import sys
-import time
-from datetime import datetime
-from typing import Any, Dict, Optional
+import json
+from typing import Callable, Optional, Dict, Any
 
-from email import message_from_bytes
-from email.header import decode_header
-from email.utils import parsedate_to_datetime
+from email import policy
+from email.parser import BytesParser
 
+from aiosmtpd.controller import Controller
+from aiosmtpd.smtp import AuthResult, LoginPassword
+
+# Beautify
 try:
     from beautify import beautify_message
 except Exception:
     def beautify_message(title, body, **kwargs):
         return body, None
 
-# Prefer aiosmtpd if present, else stdlib smtpd
-AIOSMTPD_AVAILABLE = False
-try:
-    import asyncio
-    from aiosmtpd.controller import Controller
-    AIOSMTPD_AVAILABLE = True
-except Exception:
-    AIOSMTPD_AVAILABLE = False
-    import smtpd
-    import asyncore
+class AnyAuthenticator:
+    def __init__(self, accept_any_auth: bool):
+        self.accept_any_auth = accept_any_auth
 
-# Optional HTML to text
-try:
-    from html2text import html2text  # optional
-except Exception:
-    html2text = None  # type: ignore
+    async def __call__(self, server, session, envelope, mechanism, auth_data):
+        if not self.accept_any_auth:
+            return AuthResult(success=False)
+        if isinstance(auth_data, LoginPassword):
+            return AuthResult(success=True)
+        return AuthResult(success=True)
 
-def _decode_header(value: Optional[str]) -> str:
-    if not value:
-        return ""
-    try:
-        parts = decode_header(value)
-        out = ""
-        for text, enc in parts:
-            if isinstance(text, bytes):
-                out += text.decode(enc or "utf-8", errors="ignore")
-            else:
-                out += text
-        return out
-    except Exception:
-        return str(value)
+def _strip_html(html: str) -> str:
+    html = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", html)
+    html = re.sub(r"(?s)<[^>]+>", "", html)
+    html = html.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    html = re.sub(r"[ \t\r\f\v]+", " ", html)
+    html = re.sub(r"\n{3,}", "\n\n", html)
+    return html.strip()
 
-def _extract_body(msg, allow_html: bool) -> str:
-    try:
-        if msg.is_multipart():
-            plain = None
-            html = None
-            for part in msg.walk():
-                ctype = (part.get_content_type() or "").lower()
-                cd = (part.get("Content-Disposition") or "").lower()
-                if "attachment" in cd:
-                    continue
-                if ctype == "text/plain":
-                    charset = part.get_content_charset() or "utf-8"
-                    plain = part.get_payload(decode=True).decode(charset, errors="ignore")
-                elif ctype == "text/html":
-                    charset = part.get_content_charset() or "utf-8"
-                    html = part.get_payload(decode=True).decode(charset, errors="ignore")
-            if plain:
-                return plain.strip()
-            if allow_html and html:
-                if html2text:
-                    try:
-                        return html2text(html).strip()
-                    except Exception:
-                        pass
-                return re.sub(r"<[^>]+>", "", html).strip()
-            if html:
-                return re.sub(r"<[^>]+>", "", html).strip()
-            return ""
-        else:
-            ctype = (msg.get_content_type() or "").lower()
-            payload = msg.get_payload(decode=True)
-            if payload is None:
-                payload = msg.get_payload()
-                if isinstance(payload, str):
-                    return payload.strip()
-                return ""
-            charset = msg.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="ignore")
-            if ctype == "text/html":
-                if allow_html and html2text:
-                    try:
-                        return html2text(text).strip()
-                    except Exception:
-                        pass
-                return re.sub(r"<[^>]+>", "", text).strip()
-            return text.strip()
-    except Exception:
-        return ""
+def _choose_priority(headers: Dict[str, str], default_prio: int, prio_map: Dict[str, int]) -> int:
+    for key in ("x-priority", "priority"):
+        if key in headers:
+            m = re.search(r"(\d+)", headers[key])
+            if m:
+                try:
+                    n = int(m.group(1))
+                    return max(1, min(10, n))
+                except Exception:
+                    pass
+    imp = headers.get("importance", "").lower()
+    if imp in prio_map:
+        return max(1, min(10, int(prio_map[imp])))
+    return max(1, min(10, int(default_prio)))
 
-def _priority_from_subject(subject: str, default: int, pmap: Dict[str, int]) -> int:
-    s = subject.lower()
-    for key, val in pmap.items():
-        if key.lower() in s:
-            return int(val)
-    return int(default)
+class JarvisSMTPHandler:
+    def __init__(self, cfg: dict, send_message_fn: Callable[[str, str, int, Optional[dict]], bool]):
+        self.cfg = cfg
+        self.send_message = send_message_fn
+        self.allowed_rcpt = (str(cfg.get("smtp_dummy_rcpt", "alerts@jarvis.local")) or "").lower()
+        self.rewrite_prefix = str(cfg.get("smtp_rewrite_title_prefix", "[SMTP]")).strip()
+        self.allow_html = bool(cfg.get("smtp_allow_html", False))
+        self.default_prio = int(cfg.get("smtp_priority_default", 5))
+        raw_map = cfg.get("smtp_priority_map", {"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5})
+        if isinstance(raw_map, str):
+            try:
+                raw_map = json.loads(raw_map)
+            except Exception:
+                raw_map = {"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5}
+        self.prio_map = {str(k).lower(): int(v) for k, v in (raw_map or {}).items()}
 
-class SMTPHandlerAIOSMTPD:
-    def __init__(self, config: Dict[str, Any], send_cb):
-        self.cfg = config
-        self.send_cb = send_cb
-        self.prefix = str(config.get("smtp_rewrite_title_prefix", "[SMTP]")).strip() + " "
-        try:
-            self.priority_map = json.loads(config.get("smtp_priority_map") or "{}")
-            if not isinstance(self.priority_map, dict): self.priority_map = {}
-        except Exception:
-            self.priority_map = {}
-        self.default_prio = int(config.get("smtp_priority_default", 5))
-        self.allow_html = bool(config.get("smtp_allow_html", False))
+    async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
+        rcpt_l = (address or "").lower()
+        envelope.rcpt_tos.append(address)
+        return "250 OK"
 
     async def handle_DATA(self, server, session, envelope):
+        rcpts = [r.lower() for r in (envelope.rcpt_tos or [])]
+        if self.allowed_rcpt not in rcpts:
+            return "550 No valid recipient for Jarvis (expected %s)" % self.allowed_rcpt
+
         try:
-            data = envelope.original_content or envelope.content
+            msg = BytesParser(policy=policy.default).parsebytes(envelope.original_content or envelope.content)
         except Exception:
-            data = envelope.content
+            return "451 Unable to parse message"
+
+        subject = (msg.get("subject", "") or "").strip()
+        from_addr = msg.get("from", "") or ""
+        title = subject or "(no subject)"
+        if self.rewrite_prefix:
+            title = f"{self.rewrite_prefix} {title}"
+
+        headers = {k.lower(): str(v) for (k, v) in msg.items()}
+
+        text_body = None
+        html_body = None
+        attach_count = 0
+
+        if msg.is_multipart():
+            for part in msg.walk():
+                ctype = part.get_content_type()
+                cdispo = (part.get_content_disposition() or "").lower()
+                if cdispo == "attachment":
+                    attach_count += 1
+                    continue
+                try:
+                    payload = part.get_content()
+                except Exception:
+                    payload = None
+                if payload is None:
+                    continue
+                if ctype == "text/plain" and text_body is None:
+                    text_body = str(payload)
+                elif ctype == "text/html" and html_body is None:
+                    html_body = str(payload)
+        else:
+            ctype = msg.get_content_type()
+            try:
+                payload = msg.get_content()
+            except Exception:
+                payload = None
+            if ctype == "text/plain":
+                text_body = str(payload or "")
+            elif ctype == "text/html":
+                html_body = str(payload or "")
+
+        if not text_body and html_body and self.allow_html:
+            text_body = _strip_html(html_body)
+        if not text_body:
+            text_body = "(no content)"
+
+        notes = []
+        if from_addr:
+            notes.append(f"From: {from_addr}")
+        if attach_count > 0:
+            notes.append(f"(+{attach_count} attachments ignored)")
+        if notes:
+            text_body = f"{text_body}\n\n" + "\n".join(notes)
+
+        priority = _choose_priority(headers, self.default_prio, self.prio_map)
+
+        final, bx = beautify_message(
+            title,
+            text_body,
+            mood=str(self.cfg.get("personality_mood", "serious")),
+            source_hint="mail",
+        )
+
+        if bool(self.cfg.get("beautify_inline_images", False)) and bx and bx.get("client::notification", {}).get("bigImageUrl"):
+            img = bx["client::notification"]["bigImageUrl"]
+            final = f"![image]({img})\n\n{final}"
+
+        self.send_message(title, final, priority=priority, extras=bx)
+        return "250 Accepted"
+
+class JarvisSMTPController:
+    def __init__(self, cfg: dict, send_message_fn: Callable[[str, str, int, Optional[dict]], bool]):
+        self.cfg = cfg
+        self.handler = JarvisSMTPHandler(cfg, send_message_fn)
+        self.controller: Optional[Controller] = None
+
+    def start(self):
+        host = str(self.cfg.get("smtp_bind", "0.0.0.0"))
+        port = int(self.cfg.get("smtp_port", 2525))
+        max_bytes = int(self.cfg.get("smtp_max_bytes", 262144))
+        accept_any_auth = bool(self.cfg.get("smtp_accept_any_auth", True))
+        self.controller = Controller(
+            self.handler,
+            hostname=host,
+            port=port,
+            authenticator=AnyAuthenticator(accept_any_auth),
+            auth_required=False,
+            data_size_limit=max_bytes,
+        )
+        self.controller.start()
+        print(f"[Jarvis SMTP] Listening on {host}:{port} (max {max_bytes} bytes, accept_any_auth={accept_any_auth})")
+
+    def stop(self):
         try:
-            msg = message_from_bytes(data)
+            if self.controller:
+                self.controller.stop()
+                print("[Jarvis SMTP] Stopped")
         except Exception:
-            raw = data.decode("utf-8", errors="ignore")
-            title = self.prefix + "Mail"
-            final, bx = beautify_message(title, raw, mood=str(self.cfg.get("personality_mood","serious")), source_hint="mail")
-            self.send_cb(title, final, extras=bx)
-            return "250 Message accepted for delivery"
+            pass
 
-        subject = _decode_header(msg.get("Subject"))
-        sender = _decode_header(msg.get("From"))
-        date_hdr = msg.get("Date")
-        try:
-            ts = parsedate_to_datetime(date_hdr).strftime("%Y-%m-%d %H:%M") if date_hdr else None
-        except Exception:
-            ts = None
+_controller: Optional[JarvisSMTPController] = None
 
-        body = _extract_body(msg, self.allow_html)
-        title = self.prefix + (subject if subject else "Mail")
-
-        lines = []
-        if sender: lines.append(f"From: {sender}")
-        if ts:     lines.append(f"Date: {ts}")
-        if body:
-            lines.append("")
-            lines.append(body)
-        text = "\n".join(lines).strip() or "(no content)"
-
-        mood = str(self.cfg.get("personality_mood", "serious"))
-        priority = _priority_from_subject(subject or "", self.default_prio, self.priority_map)
-
-        final, bx = beautify_message(title, text, mood=mood, source_hint="mail")
-        self.send_cb(title, final, priority=priority, extras=bx)
-        return "250 Message accepted for delivery"
-
-class SMTPHandlerSMPTD(smtpd.SMTPServer):  # type: ignore
-    def __init__(self, localaddr, remoteaddr, config: Dict[str, Any], send_cb):
-        super().__init__(localaddr, remoteaddr, decode_data=False)
-        self.cfg = config
-        self.send_cb = send_cb
-        self.prefix = str(config.get("smtp_rewrite_title_prefix", "[SMTP]")).strip() + " "
-        try:
-            self.priority_map = json.loads(config.get("smtp_priority_map") or "{}")
-            if not isinstance(self.priority_map, dict): self.priority_map = {}
-        except Exception:
-            self.priority_map = {}
-        self.default_prio = int(config.get("smtp_priority_default", 5))
-        self.allow_html = bool(config.get("smtp_allow_html", False))
-
-    def process_message(self, peer, mailfrom, rcpttos, data, **kwargs):
-        try:
-            msg = message_from_bytes(data)
-        except Exception:
-            raw = data.decode("utf-8", errors="ignore") if isinstance(data, (bytes, bytearray)) else str(data)
-            title = self.prefix + "Mail"
-            final, bx = beautify_message(title, raw, mood=str(self.cfg.get("personality_mood","serious")), source_hint="mail")
-            self.send_cb(title, final, extras=bx)
-            return
-
-        subject = _decode_header(msg.get("Subject"))
-        sender = _decode_header(msg.get("From"))
-        date_hdr = msg.get("Date")
-        try:
-            ts = parsedate_to_datetime(date_hdr).strftime("%Y-%m-%d %H:%M") if date_hdr else None
-        except Exception:
-            ts = None
-
-        body = _extract_body(msg, self.allow_html)
-        title = self.prefix + (subject if subject else "Mail")
-
-        lines = []
-        if sender: lines.append(f"From: {sender}")
-        if ts:     lines.append(f"Date: {ts}")
-        if body:
-            lines.append("")
-            lines.append(body)
-        text = "\n".join(lines).strip() or "(no content)"
-
-        mood = str(self.cfg.get("personality_mood", "serious"))
-        priority = _priority_from_subject(subject or "", self.default_prio, self.priority_map)
-
-        final, bx = beautify_message(title, text, mood=mood, source_hint="mail")
-        self.send_cb(title, final, priority=priority, extras=bx)
-
-def _run_aiosmtpd(bind: str, port: int, handler: SMTPHandlerAIOSMTPD):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    controller = Controller(handler, hostname=bind, port=port)
-    controller.start()
-    print(f"[Jarvis Prime] 📮 SMTP (aiosmtpd) running on {bind}:{port}")
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        controller.stop()
-
-def _run_smtpd(bind: str, port: int, factory):
-    server = factory((bind, port), None)  # type: ignore
-    print(f"[Jarvis Prime] 📮 SMTP (smtpd) running on {bind}:{port}")
-    try:
-        asyncore.loop()  # type: ignore
-    except KeyboardInterrupt:
-        pass
-
-def start_smtp(config: Dict[str, Any], send_cb):
-    bind = str(config.get("smtp_bind", "0.0.0.0"))
-    port = int(config.get("smtp_port", 2525))
-    if AIOSMTPD_AVAILABLE:
-        handler = SMTPHandlerAIOSMTPD(config, send_cb)
-        t = threading.Thread(target=_run_aiosmtpd, args=(bind, port, handler), daemon=True)
-        t.start()
-    else:
-        factory = lambda addr, remote: SMTPHandlerSMPTD(addr, remote, config, send_cb)  # noqa: E731
-        t = threading.Thread(target=_run_smtpd, args=(bind, port, factory), daemon=True)
-        t.start()
+def start_smtp(cfg: dict, send_message_fn: Callable[[str, str, int, Optional[dict]], bool]) -> None:
+    global _controller
+    if _controller:
+        return
+    _controller = JarvisSMTPController(cfg, send_message_fn)
+    _controller.start()
