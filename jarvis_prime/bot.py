@@ -336,16 +336,36 @@ async def listen():
                 # Wake-word?
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd:
-                    # Help
+                    # Help (expanded)
                     if ncmd in ("help", "commands"):
                         help_text = (
-                            "🤖 **Jarvis Prime Commands**\n\n"
-                            "🌐 DNS: `dns`\n"
-                            "📡 Kuma: `kuma`\n"
-                            "🌦 Weather: `weather`, `forecast`\n"
-                            "🎬/📺 Movies/Series: `movie count`, `series count`, `upcoming movies`, `upcoming series`, `longest movie`, `longest series`\n"
-                            "🃏 Fun: `joke`\n"
-                            "📰 Digest: `digest`\n"
+                            "🤖 Jarvis Prime — Commands\n"
+                            f"Mood: {CHAT_MOOD}\n\n"
+                            "Core:\n"
+                            "  • dns — Technitium DNS summary\n"
+                            "  • kuma — Uptime Kuma status (aliases: uptime, monitor)\n"
+                            "  • weather — Current weather (aliases: now, today, temp)\n"
+                            "  • forecast — Short forecast (aliases: weekly, 7day)\n"
+                            "  • digest — Daily digest now (aliases: daily digest, summary)\n"
+                            "  • joke — One short joke\n\n"
+                            "Media (ARR):\n"
+                            "  • upcoming movies\n"
+                            "  • upcoming series\n"
+                            "  • movie count\n"
+                            "  • series count\n"
+                            "  • longest movie\n"
+                            "  • longest series\n\n"
+                            "Aliases loaded (examples):\n"
+                            "  dns/DNS/Dns → dns\n"
+                            "  films → upcoming movies\n"
+                            "  tv → upcoming series\n"
+                            "  temps → weather\n"
+                            "  forecast week → forecast\n"
+                            "  up movies → upcoming movies\n"
+                            "  up series → upcoming series\n\n"
+                            "Tips:\n"
+                            "  • You can put 'Jarvis' in the title and the command in the message body.\n"
+                            "  • Posters for Radarr/Sonarr are supported when available.\n"
                         )
                         send_message("Help", help_text)
                         continue
