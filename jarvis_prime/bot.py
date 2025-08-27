@@ -161,6 +161,16 @@ def resolve_app_id():
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
+# NEW: stronger guard to identify our own posts even if 'appid' is missing
+def _is_our_post(data: dict) -> bool:
+    try:
+        if data.get("appid") == jarvis_app_id:
+            return True
+        t = data.get("title", "") or ""
+        return t.startswith(f"{BOT_ICON} {BOT_NAME}:")
+    except Exception:
+        return False
+
 # -----------------------------
 # Dynamic module loader
 # -----------------------------
@@ -311,7 +321,6 @@ def extract_command_from(title: str, message: str) -> str:
         tcmd = tlow.replace("jarvis", "", 1).strip()
         if tcmd:
             return tcmd
-        # fallback to message body if title had only 'jarvis'
         if mlow.startswith("jarvis"):
             return mlow.replace("jarvis", "", 1).strip()
         return mlow.strip()
@@ -332,8 +341,10 @@ async def listen():
                 data = json.loads(msg)
                 msg_id = data.get("id")
                 appid = data.get("appid")
-                if appid == jarvis_app_id:
-                    continue  # ignore our own posts
+
+                # always skip our own posts
+                if _is_our_post(data):
+                    continue
 
                 title = data.get("title", "") or ""
                 message = data.get("message", "") or ""
@@ -427,12 +438,15 @@ async def listen():
                     else:
                         send_message("Jarvis", f"Unknown command: {ncmd}"); continue
 
-                # Non-wwake messages: repost (beautified path) then purge original
-                if SILENT_REPOST:
-                    send_message(title, message)   # decorate + priority bias happen inside
-                    delete_original_message(msg_id)
-                else:
+                # Non-wake messages: beautify + optional purge (fixed)
+                if not _is_our_post(data):
                     send_message(title, message)
+                    try:
+                        sr = bool(merged.get("silent_repost", SILENT_REPOST))
+                    except Exception:
+                        sr = SILENT_REPOST
+                    if sr:
+                        delete_original_message(msg_id)
 
             except Exception as e:
                 print(f"[{BOT_NAME}] Listener error: {e}")
@@ -492,6 +506,21 @@ if __name__ == "__main__":
                 print("[Jarvis Prime] ⚠️ smtp_server.py not found")
     except Exception as e:
         print(f"[Jarvis Prime] ⚠️ SMTP start error: {e}")
+
+    # Start HTTP Proxy (Gotify/ntfy) if enabled
+    try:
+        if bool(merged.get("proxy_enabled", False)):
+            import importlib.util as _imp
+            _pxspec = _imp.spec_from_file_location("proxy", "/app/proxy.py")
+            if _pxspec and _pxspec.loader:
+                _proxy_mod = _imp.module_from_spec(_pxspec)
+                _pxspec.loader.exec_module(_proxy_mod)
+                _proxy_mod.start_proxy(merged, send_message)
+                print("[Jarvis Prime] ✅ Proxy started")
+            else:
+                print("[Jarvis Prime] ⚠️ proxy.py not found")
+    except Exception as e:
+        print(f"[Jarvis Prime] ⚠️ Proxy start error: {e}")
 
     # Startup card
     send_message("Startup", startup_poster(), priority=5)
