@@ -52,7 +52,19 @@
 
     "uptimekuma_enabled": true,
     "uptimekuma_url": "http://10.0.0.99:3001",
-    "uptimekuma_api_key": "CHANGE_ME"
+    "uptimekuma_api_key": "CHANGE_ME",
+
+    "custom_aliases": {
+      "dns": "dns",
+      "DNS": "dns",
+      "Dns": "dns",
+      "films": "upcoming_movies",
+      "tv": "upcoming_series",
+      "temps": "weather",
+      "forecast week": "forecast",
+      "up movies": "upcoming_movies",
+      "up series": "upcoming_series"
+    }
   },
   "schema": {
     "bot_name": "str",
@@ -97,6 +109,8 @@
 
     "uptimekuma_enabled": "bool",
     "uptimekuma_url": "str",
-    "uptimekuma_api_key": "str"
+    "uptimekuma_api_key": "str",
+
+    "custom_aliases": "dict?"
   }
 }
