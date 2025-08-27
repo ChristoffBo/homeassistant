@@ -11,16 +11,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Copy runtime and modules
+# Copy all modules and run script
 COPY run.sh /run.sh
 COPY bot.py /app/bot.py
-# Reuse the same modules style as Jnr; ARR & Weather & Chat are compatible:
+COPY chat.py /app/chat.py
 COPY arr.py /app/arr.py
 COPY weather.py /app/weather.py
-COPY chat.py /app/chat.py
-# Prime modules:
-COPY uptimekuma.py /app/uptimekuma.py
+COPY technitium.py /app/technitium.py
 COPY digest.py /app/digest.py
+COPY uptimekuma.py /app/uptimekuma.py
 
 RUN chmod +x /run.sh
 
