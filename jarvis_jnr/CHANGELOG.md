@@ -1,5 +1,5 @@
 
-## This is where prime started, smaller i just keep him around :)
+## This is where Prime started, smaller i just keep him around :)
 
 
 
