@@ -54,6 +54,11 @@
     "uptimekuma_url": "http://10.0.0.99:3001",
     "uptimekuma_api_key": "CHANGE_ME",
 
+    "heartbeat_enabled": true,
+    "heartbeat_interval_minutes": 120,
+    "heartbeat_start": "06:00",
+    "heartbeat_end": "20:00",
+
     "custom_aliases": "{\n  \"dns\": \"dns\",\n  \"DNS\": \"dns\",\n  \"Dns\": \"dns\",\n  \"films\": \"upcoming_movies\",\n  \"tv\": \"upcoming_series\",\n  \"temps\": \"weather\",\n  \"forecast week\": \"forecast\",\n  \"up movies\": \"upcoming_movies\",\n  \"up series\": \"upcoming_series\"\n}"
   },
   "schema": {
@@ -100,6 +105,11 @@
     "uptimekuma_enabled": "bool",
     "uptimekuma_url": "str",
     "uptimekuma_api_key": "str",
+
+    "heartbeat_enabled": "bool",
+    "heartbeat_interval_minutes": "int",
+    "heartbeat_start": "str",
+    "heartbeat_end": "str",
 
     "custom_aliases": "str?"
   }
