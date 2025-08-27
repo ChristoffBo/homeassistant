@@ -8,6 +8,12 @@
   "boot": "auto",
   "init": false,
   "ingress": false,
+
+  // EXPOSE INBOUND PORTS HERE
+  "ports": {
+    "2525/tcp": 2525
+  },
+
   "map": ["share:rw"],
   "options": {
     "bot_name": "Jarvis Prime",
