@@ -2,7 +2,7 @@
   "name": "Jarvis Prime",
   "version": "1.0.0",
   "slug": "jarvis_prime",
-  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, and personalities.",
+  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, and personalities.",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
@@ -61,6 +61,17 @@
 
     "personality_mood": "AI",
 
+    "smtp_enabled": true,
+    "smtp_bind": "0.0.0.0",
+    "smtp_port": 2525,
+    "smtp_max_bytes": 262144,
+    "smtp_dummy_rcpt": "alerts@jarvis.local",
+    "smtp_accept_any_auth": true,
+    "smtp_rewrite_title_prefix": "[SMTP]",
+    "smtp_allow_html": false,
+    "smtp_priority_default": 5,
+    "smtp_priority_map": "{ \"high\": 7, \"urgent\": 8, \"critical\": 9, \"low\": 3, \"normal\": 5 }",
+
     "custom_aliases": "{\n  \"dns\": \"dns\",\n  \"DNS\": \"dns\",\n  \"Dns\": \"dns\",\n  \"films\": \"upcoming_movies\",\n  \"tv\": \"upcoming_series\",\n  \"temps\": \"weather\",\n  \"forecast week\": \"forecast\",\n  \"up movies\": \"upcoming_movies\",\n  \"up series\": \"upcoming_series\"\n}"
   },
   "schema": {
@@ -114,6 +125,17 @@
     "heartbeat_end": "str",
 
     "personality_mood": "str",
+
+    "smtp_enabled": "bool",
+    "smtp_bind": "str",
+    "smtp_port": "int",
+    "smtp_max_bytes": "int",
+    "smtp_dummy_rcpt": "str",
+    "smtp_accept_any_auth": "bool",
+    "smtp_rewrite_title_prefix": "str",
+    "smtp_allow_html": "bool",
+    "smtp_priority_default": "int",
+    "smtp_priority_map": "str?",
 
     "custom_aliases": "str?"
   }
