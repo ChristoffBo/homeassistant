@@ -195,7 +195,7 @@ async def listen():
                         if isinstance(r, tuple) and r[0]:
                             send_message("Weather", r[0], extras=r[1]); continue
 
-                    # ✅ Technitium DNS routing (FIX)
+                    # ✅ Technitium DNS routing
                     if "technitium" in extra_modules and re.search(r"\bdns\b", text, re.IGNORECASE):
                         t_resp = extra_modules["technitium"].handle_dns_command(text)
                         if isinstance(t_resp, tuple) and t_resp[0]:
