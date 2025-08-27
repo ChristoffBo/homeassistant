@@ -64,6 +64,20 @@ except Exception as e:
 jarvis_app_id = None
 
 # -----------------------------
+# Alias wiring (optional module)
+# -----------------------------
+_alias_mod = None
+try:
+    import importlib.util as _imp
+    _alias_spec = _imp.spec_from_file_location("alias", "/app/alias.py")
+    if _alias_spec and _alias_spec.loader:
+        _alias_mod = _imp.module_from_spec(_alias_spec)
+        _alias_spec.loader.exec_module(_alias_mod)
+        print("[Jarvis Prime] ✅ alias.py loaded")
+except Exception as _e:
+    print(f"[Jarvis Prime] ⚠️ alias.py not loaded: {_e}")
+
+# -----------------------------
 # Utils
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
@@ -139,27 +153,20 @@ def startup_poster():
 # -----------------------------
 # Command aliasing / normalization
 # -----------------------------
-
-def _clean(s: str) -> str:
-    s = s.lower().strip()
-    # normalize some common typos / shorthand
-    s = re.sub(r"\s+", " ", s)
-    return s
-
 def normalize_cmd(cmd: str) -> str:
     """
-    Map many user phrasings to canonical intents.
-    Returns one of:
-      dns, kuma, weather, forecast,
-      upcoming_movies, upcoming_series,
-      movie_count, series_count,
-      longest_movie, longest_series,
-      joke
-    or returns the raw cleaned string if unknown.
+    Delegates to /app/alias.py if present; otherwise falls back to the built-in logic.
     """
-    c = _clean(cmd)
+    if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
+        return _alias_mod.normalize_cmd(cmd)
 
-    # quick exact aliases
+    # --- Fallback: current built-in logic ---
+    def _clean(s: str) -> str:
+        s = s.lower().strip()
+        s = re.sub(r"\s+", " ", s)
+        return s
+
+    c = _clean(cmd)
     exact = {
         # dns
         "dns": "dns", "dns status": "dns", "technitium": "dns", "tech dns": "dns",
@@ -177,25 +184,17 @@ def normalize_cmd(cmd: str) -> str:
     if c in exact: return exact[c]
 
     # keyword-style detection
-    # ARR counts
     if "movie" in c and "count" in c: return "movie_count"
     if "series" in c and "count" in c: return "series_count"
     if "show" in c and "count" in c: return "series_count"
-    # ARR upcoming
     if ("movie" in c or "film" in c) and ("up" in c or "upcoming" in c): return "upcoming_movies"
     if (("series" in c or "show" in c or "tv" in c) and ("up" in c or "upcoming" in c)): return "upcoming_series"
-    # ARR longest
     if "longest" in c and "movie" in c: return "longest_movie"
     if "longest" in c and ("series" in c or "show" in c or "tv" in c): return "longest_series"
-
-    # DNS / Kuma fuzzy keywords
     if "dns" in c or "technitium" in c: return "dns"
     if "kuma" in c or "uptime" in c or "monitor" in c: return "kuma"
-
-    # Weather
     if "forecast" in c or "7 day" in c or "week" in c: return "forecast"
     if any(w in c for w in ("weather","temp","temperature","now","today","current")): return "weather"
-
     return c
 
 # -----------------------------
@@ -276,7 +275,6 @@ async def listen():
 
                     # ARR (if available)
                     if "arr" in extra_modules and hasattr(extra_modules["arr"], "handle_arr_command"):
-                        # Map normalized commands back into phrases the ARR router already understands
                         backmap = {
                             "upcoming_movies": "upcoming movies",
                             "upcoming_series": "upcoming series",
@@ -286,7 +284,6 @@ async def listen():
                             "longest_series": "longest series",
                         }
                         if cmd in backmap:
-                            # build a fake message starting with wake word to reuse existing parser
                             r = extra_modules["arr"].handle_arr_command("jarvis", backmap[cmd])
                             if isinstance(r, tuple) and r[0]:
                                 send_message("Jarvis", r[0], extras=(r[1] if len(r)>1 else None)); continue
@@ -304,7 +301,6 @@ async def listen():
                 print(f"[{BOT_NAME}] Error processing: {e}")
 
 def run_scheduler():
-    # keep very light
     schedule.every(RETENTION_HOURS).hours.do(lambda: None)
     while True:
         schedule.run_pending()
