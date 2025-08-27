@@ -175,6 +175,7 @@ async def listen():
                         help_text = (
                             "🧠 Jarvis Prime Commands\n\n"
                             "📡 Kuma: `jarvis kuma status`, `jarvis kuma incidents`\n"
+                            "🧬 DNS:  `jarvis dns status`, `jarvis dns flush`\n"
                             "🎬 Radarr: `jarvis movie count`, `jarvis upcoming movies`\n"
                             "📺 Sonarr: `jarvis series count`, `jarvis upcoming series`\n"
                             "🌤️ Weather: `jarvis weather`, `jarvis forecast`\n"
@@ -193,6 +194,14 @@ async def listen():
                         r = extra_modules["weather"].handle_weather_command(text)
                         if isinstance(r, tuple) and r[0]:
                             send_message("Weather", r[0], extras=r[1]); continue
+
+                    # ✅ Technitium DNS routing (FIX)
+                    if "technitium" in extra_modules and re.search(r"\bdns\b", text, re.IGNORECASE):
+                        t_resp = extra_modules["technitium"].handle_dns_command(text)
+                        if isinstance(t_resp, tuple) and t_resp[0]:
+                            send_message("DNS", t_resp[0], extras=t_resp[1]); continue
+                        if isinstance(t_resp, str) and t_resp:
+                            send_message("DNS", t_resp); continue
 
                     # Chat jokes
                     if "chat" in extra_modules and ("joke" in text or "pun" in text):
@@ -243,7 +252,7 @@ if __name__ == "__main__":
         ("weather", "Weather", "🌤️"),
         ("digest", "Digest", "📰"),
         ("uptimekuma", "Uptime Kuma", "📡"),
-        # Technitium optional on Prime:
+        # Technitium kept in Prime:
         ("technitium", "DNS", "🧬"),
     ]:
         m = try_load_module(mod, label, icon)
