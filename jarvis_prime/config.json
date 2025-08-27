@@ -2,7 +2,7 @@
   "name": "Jarvis Prime",
   "version": "1.0.0",
   "slug": "jarvis_prime",
-  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, and uptime checks.",
+  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, and personalities.",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
@@ -59,6 +59,8 @@
     "heartbeat_start": "06:00",
     "heartbeat_end": "20:00",
 
+    "personality_mood": "AI",
+
     "custom_aliases": "{\n  \"dns\": \"dns\",\n  \"DNS\": \"dns\",\n  \"Dns\": \"dns\",\n  \"films\": \"upcoming_movies\",\n  \"tv\": \"upcoming_series\",\n  \"temps\": \"weather\",\n  \"forecast week\": \"forecast\",\n  \"up movies\": \"upcoming_movies\",\n  \"up series\": \"upcoming_series\"\n}"
   },
   "schema": {
@@ -110,6 +112,8 @@
     "heartbeat_interval_minutes": "int",
     "heartbeat_start": "str",
     "heartbeat_end": "str",
+
+    "personality_mood": "str",
 
     "custom_aliases": "str?"
   }
