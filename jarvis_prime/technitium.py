@@ -3,10 +3,10 @@ import re
 import threading
 import base64
 import requests
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, Any
 
 # =============================
-# Config (set via run.sh env)
+# Config (env set by run.sh)
 # =============================
 TECH_URL  = (os.getenv("technitium_url", "") or "").rstrip("/")
 TECH_KEY  = os.getenv("technitium_api_key", "") or ""
@@ -16,7 +16,7 @@ ENABLED   = os.getenv("technitium_enabled", "false").strip().lower() in ("1","tr
 
 _session = requests.Session()
 _token_lock = threading.RLock()
-_token_value: Optional[str] = None  # runtime token (api key or login token)
+_token_value: Optional[str] = None  # api key or login token
 
 # =============================
 # Auth helpers
@@ -65,9 +65,10 @@ def _append_token_query(url: str, token: Optional[str]) -> str:
     return url
 
 def _try_login_for_token() -> Optional[str]:
-    """Technitium v13+: /api/user/login (fields: user, pass)"""
+    """Technitium v13+: /api/user/login (fields: user, pass) -> token"""
     if not (TECH_URL and TECH_USER and TECH_PASS):
         return None
+    # POST first
     try:
         r = _session.post(f"{TECH_URL}/api/user/login",
                           data={"user": TECH_USER, "pass": TECH_PASS}, timeout=8)
@@ -77,6 +78,7 @@ def _try_login_for_token() -> Optional[str]:
             _set_token(tok); return tok
     except Exception:
         pass
+    # GET fallback
     try:
         r = _session.get(f"{TECH_URL}/api/user/login",
                          params={"user": TECH_USER, "pass": TECH_PASS}, timeout=8)
@@ -98,7 +100,7 @@ def _ensure_token() -> Optional[str]:
     return _try_login_for_token()
 
 def _request(method: str, path: str, *, data=None, timeout: int = 8):
-    """Robust request wrapper handling token/bearer/xauth/query/basic variants."""
+    """Robust request wrapper: try header/query/basic combinations."""
     if not TECH_URL:
         return {"error": "Technitium URL not configured"}
 
@@ -173,99 +175,58 @@ def _request(method: str, path: str, *, data=None, timeout: int = 8):
 def _get(path: str, timeout: int = 8): return _request("GET", path, timeout=timeout)
 
 # =============================
-# Stats (Dashboard JSON or Prometheus /metrics)
+# Stats (Dashboard JSON preferred)
 # =============================
-_DASH_KEYS = {
-    "total": ["TotalQueryCount","totalQueries","dnsQueryCount","queries","total","dns_queries_total"],
-    "no_error": ["NoErrorCount","noError","okCount","no_error"],
-    "server_failure": ["ServerFailureCount","servfail","serverFailure"],
-    "nx_domain": ["NXDomainCount","nxDomain","nxdomain"],
-    "refused": ["RefusedCount","refused"],
-    "authoritative": ["AuthoritativeCount","authoritative"],
-    "recursive": ["RecursiveCount","recursive"],
-    "cached": ["CacheCount","cacheCount","cacheSize","cached"],
-    "blocked": ["BlockedQueryCount","blockedQueries","blocked","TotalBlockedQueryCount"],
-    "dropped": ["DroppedCount","dropped"],
-    "clients": ["UniqueClientCount","clients","uniqueClients"],
-}
-
-_PROM_RE = re.compile(r'^\s*([a-zA-Z_:][a-zA-Z0-9_:]*)\s*(?:\{[^}]*\})?\s+([0-9]+(?:\.[0-9]+)?)\s*$')
-
-def _pick_num(d: dict, keys) -> int:
-    for k in keys:
-        if k in d and isinstance(d[k], (int, float)):
-            return int(d[k])
-    return 0
 
 def _read_stats() -> Optional[dict]:
     """
-    v13+: /api/dashboard/stats/get → {"status":"ok","response":{...}}
-    Fallback: /metrics (Prometheus text)
-    Returns dict with all dashboard fields.
+    Your instance returns counters under response.stats.* :
+      totalQueries,totalNoError,totalNxDomain,totalRefused,totalAuthoritative,
+      totalRecursive,totalCached,totalBlocked,totalDropped,totalClients,
+      zones,cachedEntries,allowedZones,blockedZones,allowListZones,blockListZones
     """
-    # ----- Preferred: JSON dashboard -----
     j = _get("/api/dashboard/stats/get")
-    if isinstance(j, dict) and "status" in j:
-        # many builds return {"status":"ok","response":{...}}
-        src = j.get("response") if j.get("status") == "ok" and isinstance(j.get("response"), dict) else j
+    if not isinstance(j, dict):
+        return None
 
-        out = {}
-        # first pass on the chosen object
-        for label, keys in _DASH_KEYS.items():
-            out[label] = _pick_num(src, keys)
+    # Normal v13+ success shape
+    src: Dict[str, Any] = {}
+    if j.get("status") == "ok" and isinstance(j.get("response"), dict):
+        src = j["response"].get("stats") or {}
+        # Some builds keep totals in response.stats; others also repeat top-level totals.
+    else:
+        # Non-standard but try best effort
+        src = j.get("stats", {})
 
-        # ✅ IMPORTANT: also walk nested dicts once (some stats are nested)
-        for v in src.values():
-            if isinstance(v, dict):
-                for label, keys in _DASH_KEYS.items():
-                    out[label] = out[label] or _pick_num(v, keys)
+    out = {
+        "total":            int(src.get("totalQueries", 0) or 0),
+        "no_error":         int(src.get("totalNoError", 0) or 0),
+        "server_failure":   int(src.get("totalServerFailure", 0) or 0),
+        "nx_domain":        int(src.get("totalNxDomain", 0) or 0),
+        "refused":          int(src.get("totalRefused", 0) or 0),
+        "authoritative":    int(src.get("totalAuthoritative", 0) or 0),
+        "recursive":        int(src.get("totalRecursive", 0) or 0),
+        "cached":           int(src.get("totalCached", 0) or 0),
+        "blocked":          int(src.get("totalBlocked", 0) or 0),
+        "dropped":          int(src.get("totalDropped", 0) or 0),
+        "clients":          int(src.get("totalClients", 0) or 0),
+        # Extras you asked for:
+        "zones":            int(src.get("zones", 0) or 0),
+        "cachedEntries":    int(src.get("cachedEntries", 0) or 0),
+        "allowedZones":     int(src.get("allowedZones", 0) or 0),
+        "blockedZones":     int(src.get("blockedZones", 0) or 0),
+        "allowListZones":   int(src.get("allowListZones", 0) or 0),
+        "blockListZones":   int(src.get("blockListZones", 0) or 0),
+    }
 
-        out["allowed"] = max(0, out.get("total", 0) - out.get("blocked", 0))
-        # if we have a non-zero total, treat JSON as authoritative
-        if out.get("total", 0) > 0:
-            return out
+    # Allowed = total - blocked (never negative)
+    out["allowed"] = max(0, out["total"] - out["blocked"])
 
-    # ----- Fallback: Prometheus metrics -----
-    text = _get("/metrics")
-    if isinstance(text, str) and text.strip():
-        vals = {k: 0 for k in _DASH_KEYS.keys()}
-        for line in text.splitlines():
-            m = _PROM_RE.match(line)
-            if not m: 
-                continue
-            name = m.group(1).lower()
-            try:
-                val = int(float(m.group(2)))
-            except Exception:
-                continue
+    # If JSON endpoint didn’t return totals, bail out (we’ll avoid misleading zeros)
+    if out["total"] == 0 and not any(v > 0 for k, v in out.items() if k != "total"):
+        return None
 
-            if "queries_total" in name or (("query" in name) and ("total" in name)):
-                vals["total"] = max(vals["total"], val)
-            if "blocked" in name and "total" in name:
-                vals["blocked"] = max(vals["blocked"], val)
-            if "cache" in name and ("count" in name or "entries" in name or "size" in name):
-                vals["cached"] = max(vals["cached"], val)
-            if "clients" in name or "unique_clients" in name:
-                vals["clients"] = max(vals["clients"], val)
-            if "nxdomain" in name:
-                vals["nx_domain"] = max(vals["nx_domain"], val)
-            if "refused" in name:
-                vals["refused"] = max(vals["refused"], val)
-            if "servfail" in name or "server_failure" in name:
-                vals["server_failure"] = max(vals["server_failure"], val)
-            if "authoritative" in name:
-                vals["authoritative"] = max(vals["authoritative"], val)
-            if "recursive" in name:
-                vals["recursive"] = max(vals["recursive"], val)
-            if "noerror" in name or "no_error" in name:
-                vals["no_error"] = max(vals["no_error"], val)
-            if "dropped" in name:
-                vals["dropped"] = max(vals["dropped"], val)
-
-        vals["allowed"] = max(0, vals.get("total", 0) - vals.get("blocked", 0))
-        return vals
-
-    return None
+    return out
 
 # =============================
 # Presentation
@@ -284,7 +245,7 @@ def handle_dns_command(cmd: str):
     Voice:
       • 'dns'
       • 'dns status'
-    Returns a dashboard-style summary (counts + % of total).
+    Produces a dashboard-style summary using response.stats totals.
     """
     if not ENABLED or not TECH_URL:
         return "⚠️ DNS module not enabled or misconfigured", None
@@ -299,17 +260,26 @@ def handle_dns_command(cmd: str):
         lines = []
         lines.append("🌐 Technitium DNS — Overview\n")
         lines.append(_kv("Total Queries",  total, "100%"))
-        lines.append(_kv("No Error",       s.get("no_error", 0),       _pct(s.get("no_error",0), total)))
-        lines.append(_kv("Server Failure", s.get("server_failure", 0), _pct(s.get("server_failure",0), total)))
-        lines.append(_kv("NX Domain",      s.get("nx_domain", 0),      _pct(s.get("nx_domain",0), total)))
-        lines.append(_kv("Refused",        s.get("refused", 0),        _pct(s.get("refused",0), total)))
-        lines.append(_kv("Authoritative",  s.get("authoritative", 0),  _pct(s.get("authoritative",0), total)))
-        lines.append(_kv("Recursive",      s.get("recursive", 0),      _pct(s.get("recursive",0), total)))
-        lines.append(_kv("Cached",         s.get("cached", 0),         _pct(s.get("cached",0), total)))
-        lines.append(_kv("Blocked",        s.get("blocked", 0),        _pct(s.get("blocked",0), total)))
-        lines.append(_kv("Dropped",        s.get("dropped", 0),        _pct(s.get("dropped",0), total)))
-        lines.append(_kv("Clients",        s.get("clients", 0)))
-        lines.append(_kv("Allowed",        s.get("allowed", max(0,total - s.get('blocked',0)))))
+        lines.append(_kv("No Error",       s["no_error"],       _pct(s["no_error"], total)))
+        lines.append(_kv("Server Failure", s["server_failure"], _pct(s["server_failure"], total)))
+        lines.append(_kv("NX Domain",      s["nx_domain"],      _pct(s["nx_domain"], total)))
+        lines.append(_kv("Refused",        s["refused"],        _pct(s["refused"], total)))
+        lines.append(_kv("Authoritative",  s["authoritative"],  _pct(s["authoritative"], total)))
+        lines.append(_kv("Recursive",      s["recursive"],      _pct(s["recursive"], total)))
+        lines.append(_kv("Cached",         s["cached"],         _pct(s["cached"], total)))
+        lines.append(_kv("Blocked",        s["blocked"],        _pct(s["blocked"], total)))
+        lines.append(_kv("Dropped",        s["dropped"],        _pct(s["dropped"], total)))
+        lines.append(_kv("Clients",        s["clients"]))
+        lines.append(_kv("Allowed",        s["allowed"]))
+        # Extra section (zones/cache)
+        lines.append("")
+        lines.append("🧠 Resolver — Details")
+        lines.append(_kv("Zones",          s["zones"]))
+        lines.append(_kv("Cached Entries", s["cachedEntries"]))
+        lines.append(_kv("Allowed Zones",  s["allowedZones"]))
+        lines.append(_kv("Blocked Zones",  s["blockedZones"]))
+        lines.append(_kv("Allow-List Zones", s["allowListZones"]))
+        lines.append(_kv("Block-List Zones", s["blockListZones"]))
         return "\n".join(lines), None
 
     # Not a DNS command → let other routers try
