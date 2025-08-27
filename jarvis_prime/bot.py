@@ -17,19 +17,19 @@ APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
-SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
-BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
+SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
+BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
 
 # Feature toggles (env defaults; config can override)
-RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1","true","yes")
-SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
-WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1","true","yes")
-CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1","true","yes")
-DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1","true","yes")
-TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
-KUMA_ENABLED = os.getenv("uptimekuma_enabled", "false").lower() in ("1","true","yes")
+RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
+SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
+WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1", "true", "yes")
+CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1", "true", "yes")
+DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1", "true", "yes")
+TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1", "true", "yes")
+KUMA_ENABLED = os.getenv("uptimekuma_enabled", "false").lower() in ("1", "true", "yes")
 
-AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1","true","yes")
+AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1", "true", "yes")
 CACHE_REFRESH_MINUTES = int(os.getenv("cache_refresh_minutes", "60"))
 
 # Mood
@@ -120,11 +120,10 @@ def try_load_module(modname, label):
     """
     path = f"/app/{modname}.py"
 
-    # ARR loads unconditionally
     if modname == "arr":
         enabled = True
     else:
-        enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1","true","yes")
+        enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
         if not enabled:
             try:
                 with open("/data/options.json", "r") as f:
@@ -169,7 +168,7 @@ def startup_poster():
     return "\n".join(lines)
 
 # -----------------------------
-# Normalization (only used for help/quick commands; ARR does its own routing)
+# Normalization
 # -----------------------------
 def _clean(s: str) -> str:
     s = s.lower().strip()
@@ -202,7 +201,6 @@ async def listen():
                 tlow = title.lower()
                 mlow = message.lower()
                 if tlow.startswith("jarvis") or mlow.startswith("jarvis"):
-                    # build command after wake word
                     if tlow.startswith("jarvis"):
                         tmp = tlow.replace("jarvis", "", 1).strip()
                         cmd = tmp if tmp else mlow.replace("jarvis", "", 1).strip()
@@ -218,13 +216,13 @@ async def listen():
                             "🌐 DNS: `dns`\n"
                             "📡 Kuma: `kuma`\n"
                             "🌦 Weather: `weather`, `forecast`\n"
-                            "🎬 Movies/📺 Series: `movie count`, `series count`, `upcoming movies`, `upcoming series`, `longest movie`, `longest series`\n"
+                            "🎬/📺 Movies/Series: `movie count`, `series count`, `upcoming movies`, `upcoming series`, `longest movie`, `longest series`\n"
                             "🃏 Fun: `joke`\n"
                         )
                         send_message("Help", help_text)
                         continue
 
-                    # DNS (Technitium)
+                    # DNS
                     if "technitium" in extra_modules and re.search(r"\bdns\b|technitium", ncmd):
                         out = extra_modules["technitium"].handle_dns_command(ncmd)
                         if isinstance(out, tuple) and out and out[0]:
@@ -256,7 +254,7 @@ async def listen():
                         else:
                             send_message("Joke", str(c)); continue
 
-                    # ---- ARR HANDOFF (always call; arr.py does its own parsing/fuzzy) ----
+                    # ARR (unconditional handoff)
                     if "arr" in extra_modules and hasattr(extra_modules["arr"], "handle_arr_command"):
                         r = extra_modules["arr"].handle_arr_command(title, message)
                         if isinstance(r, tuple) and r and r[0]:
@@ -287,7 +285,7 @@ if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on…")
     resolve_app_id()
 
-    # Load modules (ARR first; now unconditional)
+    # Load modules
     try_load_module("arr", "ARR")
     try_load_module("chat", "Chat")
     try_load_module("weather", "Weather")
@@ -295,11 +293,10 @@ if __name__ == "__main__":
     try_load_module("uptimekuma", "Kuma")
     try_load_module("digest", "Digest")
 
-    # Startup card
     send_message("Startup", startup_poster(), priority=5)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.create_task(listen()))
+    loop.create_task(listen())  # ✅ fixed
     loop.run_in_executor(None, run_scheduler)
     loop.run_forever()
