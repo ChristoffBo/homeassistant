@@ -1,3 +1,4 @@
+# /app/bot.py
 import os, json, time, asyncio, requests, websockets, schedule, re
 from datetime import datetime
 
@@ -59,6 +60,7 @@ try:
     options = _load_json_file("/data/options.json")
     config_fallback = _load_json_file("/data/config.json")
     merged = {**config_fallback, **options}
+
     RADARR_ENABLED = merged.get("radarr_enabled", RADARR_ENABLED)
     SONARR_ENABLED = merged.get("sonarr_enabled", SONARR_ENABLED)
     WEATHER_ENABLED = merged.get("weather_enabled", WEATHER_ENABLED)
@@ -109,14 +111,16 @@ except Exception as _e:
 # Utils
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
+    # Always decorate + bias priority
     if _personality:
         title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
         priority = _personality.apply_priority(priority, CHAT_MOOD)
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    data = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
-    if extras: data["extras"] = extras
+    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
+    if extras:
+        payload["extras"] = extras
     try:
-        r = requests.post(url, json=data, timeout=5)
+        r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
         print(f"[{BOT_NAME}] ✅ Sent: {title}")
         return True
@@ -124,16 +128,32 @@ def send_message(title, message, priority=5, extras=None):
         print(f"[{BOT_NAME}] ❌ Failed to send message: {e}")
         return False
 
+def delete_original_message(msg_id: int):
+    """Delete a Gotify message by id (used for purge of non-Jarvis posts)."""
+    try:
+        if not msg_id:
+            return
+        url = f"{GOTIFY_URL}/message/{msg_id}"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.delete(url, headers=headers, timeout=6)
+        if r.status_code in (200, 204):
+            print(f"[{BOT_NAME}] 🧹 Purged original message id={msg_id}")
+        else:
+            print(f"[{BOT_NAME}] ⚠️ Purge failed id={msg_id}: {r.status_code}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Purge error: {e}")
+
 def resolve_app_id():
     global jarvis_app_id
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, headers=headers, timeout=6)
         r.raise_for_status()
         for app in r.json():
             if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id"); return
+                jarvis_app_id = app.get("id")
+                return
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
 
@@ -142,16 +162,19 @@ def resolve_app_id():
 # -----------------------------
 def try_load_module(modname, label):
     path = f"/app/{modname}.py"
-    if modname == "arr": enabled = True
+    if modname == "arr":
+        enabled = True
     else:
         enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1","true","yes")
         if not enabled:
             try:
                 with open("/data/options.json", "r") as f:
                     enabled = json.load(f).get(f"{modname}_enabled", False)
-            except Exception: enabled = False
+            except Exception:
+                enabled = False
     if not os.path.exists(path) or not enabled:
-        print(f"[{BOT_NAME}] ↩️ Skipping module {modname}"); return False
+        print(f"[{BOT_NAME}] ↩️ Skipping module {modname}: file_exists={os.path.exists(path)} enabled={enabled}")
+        return False
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(modname, path)
@@ -161,14 +184,19 @@ def try_load_module(modname, label):
         print(f"[{BOT_NAME}] ✅ Loaded module: {modname}")
         return True
     except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Failed to load {modname}: {e}"); return False
+        print(f"[{BOT_NAME}] ⚠️ Failed to load {modname}: {e}")
+        return False
 
 # -----------------------------
 # Startup poster
 # -----------------------------
 def startup_poster():
-    def mod_line(icon, name, enabled): return f"    {icon} {name} – {'ACTIVE' if enabled else 'INACTIVE'}"
-    lines = ["🧠 Jarvis Prime – Prime Neural Boot\n", f"Mood: {CHAT_MOOD}", "Modules:"]
+    def mod_line(icon, name, enabled):
+        return f"    {icon} {name} – {'ACTIVE' if enabled else 'INACTIVE'}"
+    lines = []
+    lines.append("🧠 Jarvis Prime – Prime Neural Boot\n")
+    lines.append(f"Mood: {CHAT_MOOD}")
+    lines.append("Modules:")
     lines.append(mod_line("🎬", "Radarr", RADARR_ENABLED))
     lines.append(mod_line("📺", "Sonarr", SONARR_ENABLED))
     lines.append(mod_line("🌤", "Weather", WEATHER_ENABLED))
@@ -180,141 +208,267 @@ def startup_poster():
     return "\n".join(lines)
 
 # -----------------------------
-# Heartbeat + Digest
+# Heartbeat + helpers
 # -----------------------------
-def _parse_hhmm(s): 
-    try: hh, mm = s.split(":"); return int(hh)*60+int(mm)
-    except: return 0
-def _in_window(now, start,end):
-    mins=now.hour*60+now.minute;a=_parse_hhmm(start);b=_parse_hhmm(end)
-    if a==b:return True
-    if a<b:return a<=mins<=b
-    return mins>=a or mins<=b
+def _parse_hhmm(s):
+    try:
+        hh, mm = s.split(":")
+        return int(hh) * 60 + int(mm)
+    except Exception:
+        return 0
+
+def _in_window(now, start, end):
+    mins = now.hour * 60 + now.minute
+    a = _parse_hhmm(start); b = _parse_hhmm(end)
+    if a == b:
+        return True
+    if a < b:
+        return a <= mins <= b
+    return mins >= a or mins <= b
+
 def _fmt_uptime():
-    d=datetime.now()-BOOT_TIME;total=int(d.total_seconds()//60);h,m=divmod(total,60);d,h=divmod(h,24)
-    return " ".join([f"{d}d" if d else ""][0:1]+[f"{h}h" if h else ""][0:1]+[f"{m}m"])
+    d = datetime.now() - BOOT_TIME
+    total = int(d.total_seconds() // 60)
+    h, m = divmod(total, 60)
+    days, h = divmod(h, 24)
+    parts = []
+    if days: parts.append(f"{days}d")
+    if h: parts.append(f"{h}h")
+    parts.append(f"{m}m")
+    return " ".join(parts)
+
 def send_heartbeat_if_window():
     try:
-        if not HEARTBEAT_ENABLED: return
-        now=datetime.now()
-        if not _in_window(now,HEARTBEAT_START,HEARTBEAT_END): return
-        lines=["🫀 Heartbeat — Jarvis Prime alive",f"Time: {now.strftime('%Y-%m-%d %H:%M')}",f"Uptime: {_fmt_uptime()}",""]
-        if "arr" in extra_modules:
-            try:
-                mv=extra_modules["arr"].list_upcoming_movies(days=1,limit=3)
-                if mv: lines+=["🎬 Today’s Movies:"]+[f"- {x}" for x in mv]
-                tv=extra_modules["arr"].list_upcoming_series(days=1,limit=5)
-                if tv: lines+=["","📺 Today’s Episodes:"]+[f"- {x}" for x in tv]
-            except: pass
-        if _personality: lines.append(""); lines.append(_personality.quip(CHAT_MOOD))
-        send_message("Heartbeat","\n".join(lines),priority=3)
-    except Exception as e: print(f"[{BOT_NAME}] Heartbeat error: {e}")
+        if not HEARTBEAT_ENABLED:
+            return
+        now = datetime.now()
+        if not _in_window(now, HEARTBEAT_START, HEARTBEAT_END):
+            return
+        lines = [
+            "🫀 Heartbeat — Jarvis Prime alive",
+            f"Time: {now.strftime('%Y-%m-%d %H:%M')}",
+            f"Uptime: {_fmt_uptime()}",
+            ""
+        ]
+        # ARR (short upcoming)
+        try:
+            if "arr" in extra_modules:
+                mv = extra_modules["arr"].list_upcoming_movies(days=1, limit=3) if hasattr(extra_modules["arr"], "list_upcoming_movies") else []
+                if mv:
+                    lines.append("🎬 Today’s Movies:")
+                    lines += [f"- {x}" for x in mv]
+                tv = extra_modules["arr"].list_upcoming_series(days=1, limit=5) if hasattr(extra_modules["arr"], "list_upcoming_series") else []
+                if tv:
+                    if mv: lines.append("")
+                    lines.append("📺 Today’s Episodes:")
+                    lines += [f"- {x}" for x in tv]
+        except Exception as e:
+            lines.append(f"ARR error: {e}")
 
+        if _personality:
+            lines.append("")
+            lines.append(_personality.quip(CHAT_MOOD))
+
+        send_message("Heartbeat", "\n".join(lines), priority=3)
+    except Exception as e:
+        print(f"[{BOT_NAME}] Heartbeat error: {e}")
+
+# -----------------------------
+# Digest helper
+# -----------------------------
 def job_daily_digest():
     try:
-        dmod=extra_modules.get("digest")
-        if not dmod or not hasattr(dmod,"build_digest"): return
-        title,msg,prio=dmod.build_digest(merged)
-        if _personality: msg += f"\n\n{_personality.quip(CHAT_MOOD)}"
-        send_message(title,msg,priority=prio)
-    except Exception as e: print(f"[{BOT_NAME}] Digest error: {e}")
+        dmod = extra_modules.get("digest")
+        if not dmod or not hasattr(dmod, "build_digest"):
+            return
+        title, msg, prio = dmod.build_digest(merged)
+        if _personality:
+            msg += f"\n\n{_personality.quip(CHAT_MOOD)}"
+        send_message(title, msg, priority=prio)
+    except Exception as e:
+        print(f"[{BOT_NAME}] Digest error: {e}")
 
 # -----------------------------
-# Normalization
+# Normalization + command extraction
 # -----------------------------
-def _clean(s): return re.sub(r"\s+"," ",s.lower().strip())
-def normalize_cmd(cmd): 
-    if _alias_mod and hasattr(_alias_mod,"normalize_cmd"): return _alias_mod.normalize_cmd(cmd)
+def _clean(s):
+    return re.sub(r"\s+", " ", s.lower().strip())
+
+def normalize_cmd(cmd: str) -> str:
+    if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
+        return _alias_mod.normalize_cmd(cmd)
     return _clean(cmd)
+
+def extract_command_from(title: str, message: str) -> str:
+    """Handle cases where title == 'jarvis' and the actual command is in message."""
+    tlow, mlow = title.lower(), message.lower()
+    if tlow.startswith("jarvis"):
+        tcmd = tlow.replace("jarvis", "", 1).strip()
+        if tcmd:
+            return tcmd
+        # fallback to message body if title had only 'jarvis'
+        if mlow.startswith("jarvis"):
+            return mlow.replace("jarvis", "", 1).strip()
+        return mlow.strip()
+    if mlow.startswith("jarvis"):
+        return mlow.replace("jarvis", "", 1).strip()
+    return ""
 
 # -----------------------------
 # Listener
 # -----------------------------
 async def listen():
-    ws_url=GOTIFY_URL.replace("http://","ws://").replace("https://","wss://")+f"/stream?token={CLIENT_TOKEN}"
-    async with websockets.connect(ws_url,ping_interval=30,ping_timeout=10) as ws:
+    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
+    print(f"[{BOT_NAME}] Connecting {ws_url}")
+    async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
+        print(f"[{BOT_NAME}] ✅ Connected")
         async for msg in ws:
             try:
-                data=json.loads(msg);appid=data.get("appid")
-                if appid==jarvis_app_id: continue
-                title,message=data.get("title",""),data.get("message","")
-                tlow,mlow=title.lower(),message.lower()
-                if tlow.startswith("jarvis") or mlow.startswith("jarvis"):
-                    cmd=(tlow if tlow.startswith("jarvis") else mlow).replace("jarvis","",1).strip()
-                    ncmd=normalize_cmd(cmd)
+                data = json.loads(msg)
+                msg_id = data.get("id")
+                appid = data.get("appid")
+                if appid == jarvis_app_id:
+                    continue  # ignore our own posts
 
+                title = data.get("title", "") or ""
+                message = data.get("message", "") or ""
+
+                # Wake-word?
+                ncmd = normalize_cmd(extract_command_from(title, message))
+                if ncmd:
                     # Help
-                    if ncmd in ("help","commands"):
-                        send_message("Help","🤖 Commands: dns, weather, forecast, movie/series count, upcoming, longest, joke, digest");continue
+                    if ncmd in ("help", "commands"):
+                        help_text = (
+                            "🤖 **Jarvis Prime Commands**\n\n"
+                            "🌐 DNS: `dns`\n"
+                            "📡 Kuma: `kuma`\n"
+                            "🌦 Weather: `weather`, `forecast`\n"
+                            "🎬/📺 Movies/Series: `movie count`, `series count`, `upcoming movies`, `upcoming series`, `longest movie`, `longest series`\n"
+                            "🃏 Fun: `joke`\n"
+                            "📰 Digest: `digest`\n"
+                        )
+                        send_message("Help", help_text)
+                        continue
 
-                    # Digest
-                    if ncmd in ("digest","daily digest","summary"): job_daily_digest();continue
+                    # Manual digest
+                    if ncmd in ("digest", "daily digest", "summary"):
+                        job_daily_digest()
+                        continue
 
                     # DNS
-                    if "technitium" in extra_modules and re.search(r"\bdns\b",ncmd):
-                        out=extra_modules["technitium"].handle_dns_command(ncmd)
-                        if isinstance(out,(tuple,list)) and out and out[0]: send_message("DNS",out[0]);continue
-                        if isinstance(out,str) and out: send_message("DNS",out);continue
+                    if TECHNITIUM_ENABLED and "technitium" in extra_modules and re.search(r"\bdns\b|technitium", ncmd):
+                        out = extra_modules["technitium"].handle_dns_command(ncmd)
+                        if isinstance(out, tuple):
+                            send_message("DNS", out[0], extras=(out[1] if len(out) > 1 else None)); continue
+                        if isinstance(out, str) and out:
+                            send_message("DNS", out); continue
+
+                    # Uptime Kuma
+                    if KUMA_ENABLED and "uptimekuma" in extra_modules and re.search(r"\bkuma\b|\buptime\b|\bmonitor", ncmd):
+                        out = extra_modules["uptimekuma"].handle_kuma_command(ncmd)
+                        if isinstance(out, tuple):
+                            send_message("Kuma", out[0], extras=(out[1] if len(out) > 1 else None)); continue
+                        if isinstance(out, str) and out:
+                            send_message("Kuma", out); continue
 
                     # Weather
-                    if "weather" in extra_modules and any(w in ncmd for w in ("weather","forecast","temp","now","today","current")):
-                        w=extra_modules["weather"].handle_weather_command(ncmd)
-                        if isinstance(w,(tuple,list)) and w and w[0]:
-                            msg=w[0]; 
-                            if _personality: msg=f"{msg}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Weather",msg); continue
-                        if isinstance(w,str) and w:
-                            msg=w
-                            if _personality: msg=f"{msg}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Weather",msg); continue
+                    if WEATHER_ENABLED and "weather" in extra_modules and any(w in ncmd for w in ("weather","forecast","temperature","temp","now","today","current","weekly","7day","7-day","7 day")):
+                        w = extra_modules["weather"].handle_weather_command(ncmd)
+                        if isinstance(w, tuple) and w and w[0]:
+                            msg_text = w[0]
+                            extras = (w[1] if len(w) > 1 else None)
+                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
+                            send_message("Weather", msg_text, extras=extras); continue
+                        if isinstance(w, str) and w:
+                            msg_text = w
+                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
+                            send_message("Weather", msg_text); continue
 
                     # Chat jokes
-                    if "chat" in extra_modules and ("joke" in ncmd or "pun" in ncmd):
-                        c=extra_modules["chat"].handle_chat_command("joke"); send_message("Joke",c[0] if isinstance(c,tuple) else str(c));continue
+                    if CHAT_ENABLED_FILE and "chat" in extra_modules and ("joke" in ncmd or "pun" in ncmd):
+                        c = extra_modules["chat"].handle_chat_command("joke")
+                        if isinstance(c, tuple):
+                            send_message("Joke", c[0], extras=(c[1] if len(c) > 1 else None)); continue
+                        else:
+                            send_message("Joke", str(c)); continue
 
-                    # ARR
-                    if "arr" in extra_modules and hasattr(extra_modules["arr"],"handle_arr_command"):
-                        r=extra_modules["arr"].handle_arr_command(title,message)
-                        if isinstance(r,(tuple,list)) and r and r[0]:
-                            msg=r[0]
-                            if _personality: msg=f"{msg}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Jarvis",msg); continue
-                        if isinstance(r,str) and r:
-                            msg=r
-                            if _personality: msg=f"{msg}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Jarvis",msg); continue
-                        if _personality: send_message("Jarvis",_personality.unknown_command_response(ncmd,CHAT_MOOD)); continue
+                    # ARR (unconditional handoff)
+                    if "arr" in extra_modules and hasattr(extra_modules["arr"], "handle_arr_command"):
+                        r = extra_modules["arr"].handle_arr_command(title, message)
+                        if isinstance(r, tuple) and r and r[0]:
+                            # pass extras through so Radarr/Sonarr posters render
+                            extras = r[1] if len(r) > 1 else None
+                            msg_text = r[0]
+                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
+                            send_message("Jarvis", msg_text, extras=extras); continue
+                        if isinstance(r, str) and r:
+                            msg_text = r
+                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
+                            send_message("Jarvis", msg_text); continue
 
-                    # Unknown
-                    if _personality: send_message("Jarvis",_personality.unknown_command_response(cmd,CHAT_MOOD));continue
-                    send_message("Jarvis",f"Unknown command: {cmd}");continue
+                    # Unknown → personality
+                    if _personality:
+                        resp = _personality.unknown_command_response(ncmd, CHAT_MOOD)
+                        send_message("Jarvis", resp); continue
+                    else:
+                        send_message("Jarvis", f"Unknown command: {ncmd}"); continue
 
-                send_message(title,message)
-            except Exception as e: print(f"[{BOT_NAME}] Listener error: {e}")
+                # Non-wake messages: repost (beautified path) then purge original
+                if SILENT_REPOST:
+                    send_message(title, message)   # decorate + priority bias happen inside
+                    delete_original_message(msg_id)
+                else:
+                    send_message(title, message)
+
+            except Exception as e:
+                print(f"[{BOT_NAME}] Listener error: {e}")
 
 # -----------------------------
 # Scheduler
 # -----------------------------
 def run_scheduler():
-    schedule.every(RETENTION_HOURS).hours.do(lambda:None)
-    if HEARTBEAT_ENABLED and HEARTBEAT_INTERVAL_MIN>0: schedule.every(HEARTBEAT_INTERVAL_MIN).minutes.do(send_heartbeat_if_window)
-    if bool(merged.get("digest_enabled",False)):
-        dtime=str(merged.get("digest_time","08:00")).strip()
-        if re.match(r"^\d{2}:\d{2}(:\d{2})?$", dtime):
-            schedule.every().day.at(dtime).do(job_daily_digest)
-            print(f"[{BOT_NAME}] [Digest] scheduled @ {dtime}")
-        else:
-            print(f"[{BOT_NAME}] [Digest] ⚠️ Invalid time '{dtime}' (must be HH:MM or HH:MM:SS) → skipping")
-    while True: schedule.run_pending(); time.sleep(1)
+    # keep very light (placeholder for future retention jobs)
+    schedule.every(RETENTION_HOURS).hours.do(lambda: None)
+
+    if HEARTBEAT_ENABLED and HEARTBEAT_INTERVAL_MIN > 0:
+        schedule.every(HEARTBEAT_INTERVAL_MIN).minutes.do(send_heartbeat_if_window)
+
+    # daily digest (validate time first)
+    try:
+        if bool(merged.get("digest_enabled", False)):
+            dtime = str(merged.get("digest_time", "08:00")).strip()
+            if re.match(r"^\d{2}:\d{2}(:\d{2})?$", dtime):
+                schedule.every().day.at(dtime).do(job_daily_digest)
+                print(f"[{BOT_NAME}] [Digest] scheduled @ {dtime}")
+            else:
+                print(f"[{BOT_NAME}] [Digest] ⚠️ Invalid time '{dtime}' (HH:MM[:SS]) → skipping")
+    except Exception as e:
+        print(f"[{BOT_NAME}] [Digest] schedule error: {e}")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
 # -----------------------------
 # Main
 # -----------------------------
-if __name__=="__main__":
+if __name__ == "__main__":
     print(f"[{BOT_NAME}] Starting add-on…")
     resolve_app_id()
-    try_load_module("arr","ARR"); try_load_module("chat","Chat"); try_load_module("weather","Weather")
-    try_load_module("technitium","DNS"); try_load_module("digest","Digest")
-    send_message("Startup",startup_poster(),priority=5)
-    loop=asyncio.new_event_loop();asyncio.set_event_loop(loop)
-    loop.create_task(listen());loop.run_in_executor(None,run_scheduler);loop.run_forever()
+
+    # Load modules
+    try_load_module("arr", "ARR")
+    try_load_module("chat", "Chat")
+    try_load_module("weather", "Weather")
+    try_load_module("technitium", "DNS")
+    try_load_module("uptimekuma", "Kuma")
+    try_load_module("digest", "Digest")
+
+    # Startup card
+    send_message("Startup", startup_poster(), priority=5)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(listen())
+    loop.run_in_executor(None, run_scheduler)
+    loop.run_forever()
