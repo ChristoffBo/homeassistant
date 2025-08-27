@@ -77,6 +77,13 @@ def _dedup_lines(lines):
         if norm and norm not in seen:
             seen.add(norm)
             out.append(ln)
+        elif not norm and (not out or out[-1] != ""):
+            out.append("")  # keep single blank as separator
+    # trim leading/trailing blanks
+    while out and out[0] == "":
+        out.pop(0)
+    while out and out[-1] == "":
+        out.pop()
     return out
 
 def _lines(*chunks):
@@ -163,30 +170,20 @@ def _section_title(s: str) -> str:
 # Per-source formatters
 # ---------------------------
 def _fmt_sonarr(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    """
-    Generic Sonarr messages sometimes repeat the same line in different places
-    (e.g., "This is a test message from Sonarr"). We dedup facts vs body.
-    Also migrate any image URL to extras.bigImageUrl.
-    """
     img = _first_image_url(title) or _first_image_url(body)
     clean_title = _strip_image_urls(title)
     clean_body = _strip_image_urls(body)
 
-    # Facts (light)
     facts = []
-    # If body has a first non-empty line, capture as 'Info'
     first = _extract_first_nonempty_line(clean_body)
     if first:
         facts.append(_kv("Info", first))
 
-    # Build
     lines = _lines(
         _header("Generic Message"),
-        _kv("Time", _extract_first_nonempty_line(re.sub(r".*?(\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}).*", r"\1", clean_body, flags=re.DOTALL)) or ""),
         *facts,
     )
 
-    # Body (only if it adds new information vs facts)
     body_lines = []
     for ln in clean_body.splitlines():
         if not ln.strip():
@@ -194,7 +191,6 @@ def _fmt_sonarr(title: str, body: str) -> Tuple[str, Optional[dict]]:
         body_lines.append(ln.strip())
 
     combined = _dedup_lines(lines + ([""] if lines else []) + ([_section_title("Message")] if body_lines else []) + body_lines)
-
     text = "\n".join(combined).strip()
     extras = {"client::notification": {"bigImageUrl": img}} if img else None
     return text, extras
@@ -221,7 +217,6 @@ def _fmt_radarr(title: str, body: str) -> Tuple[str, Optional[dict]]:
         body_lines.append(ln.strip())
 
     combined = _dedup_lines(lines + ([""] if lines else []) + ([_section_title("Message")] if body_lines else []) + body_lines)
-
     text = "\n".join(combined).strip()
     extras = {"client::notification": {"bigImageUrl": img}} if img else None
     return text, extras
@@ -356,9 +351,10 @@ def beautify_message(title: str, body: str, *, mood: str = "serious", source_hin
     title = title or ""
     body = body or ""
 
-    # Short-circuit payloads that are already very short
-    if len(body) < 2 and not _first_image_url(title + " " + body):
-        return "\n".join(_dedup_lines(_lines(_header("Message"), body))).strip(), None
+    # Short-circuit tiny payloads
+    if len(body.strip()) < 2 and not _first_image_url(title + " " + body):
+        text = "\n".join(_dedup_lines(_lines(_header("Message"), body))).strip()
+        return text, None
 
     # Decide formatter
     if source_hint == "sonarr" or _is_sonarr(title, body):
