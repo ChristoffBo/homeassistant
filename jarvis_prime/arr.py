@@ -5,6 +5,7 @@ from tabulate import tabulate
 import difflib
 import json
 import random
+import re
 
 # -----------------------------
 # Config from environment
@@ -93,9 +94,7 @@ SERIES_QUOTES = [
     "Is that your final answer?",
     "You are the weakest link. Goodbye.",
     "We were on a break!",
-    "It’s gonna be legen—wait for it—dary!",
     "The night is dark and full of terrors.",
-    "This is Sparta! (okay, not a show, but fun)",
     "Who lives in a pineapple under the sea?",
     "Cowabunga!",
     "You rang?",
@@ -173,13 +172,11 @@ def upcoming_movies(days=7):
     if not RADARR_ENABLED:
         return "⚠️ Radarr not enabled", None
 
-    # Build time window explicitly (now .. now+days)
     now = datetime.datetime.now(datetime.timezone.utc)
     end = now + datetime.timedelta(days=int(days))
     start_s = _utc_iso(now)
     end_s = _utc_iso(end)
 
-    # Ask API to exclude unmonitored and include movie payloads
     url = (
         f"{RADARR_URL}/api/v3/calendar"
         f"?apikey={RADARR_API}&start={start_s}&end={end_s}"
@@ -193,7 +190,6 @@ def upcoming_movies(days=7):
     kept = 0
     for m in data:
         movie_id = m.get("movie", {}).get("id") or m.get("id") or m.get("movieId")
-        # Filter: skip if already downloaded
         if _radarr_movie_has_file_from_cache(movie_id):
             continue
 
@@ -256,13 +252,11 @@ def cache_sonarr():
         sonarr_cache["fetched"] = None
 
 def _sonarr_episode_has_file(ep_obj):
-    # Prefer direct field from calendar payload
     if isinstance(ep_obj, dict):
         if "hasFile" in ep_obj:
             return _truthy(ep_obj.get("hasFile"), False)
         ep_id = ep_obj.get("id")
         if ep_id:
-            # Fallback: fetch episode to check hasFile (rare path)
             url = f"{SONARR_URL}/api/v3/episode/{ep_id}?apikey={SONARR_API}"
             data = _get_json(url)
             if isinstance(data, dict):
@@ -278,7 +272,6 @@ def upcoming_series(days=7):
     start_s = _utc_iso(now)
     end_s = _utc_iso(end)
 
-    # Ask API to exclude unmonitored and include series/episode data
     url = (
         f"{SONARR_URL}/api/v3/calendar"
         f"?apikey={SONARR_API}&start={start_s}&end={end_s}"
@@ -291,10 +284,8 @@ def upcoming_series(days=7):
     lines = []
     kept = 0
     for e in data:
-        # Skip if unmonitored (defensive even though we passed unmonitored=false)
         if not _truthy(e.get("monitored", True), True):
             continue
-        # Skip if already has a file
         if _sonarr_episode_has_file(e):
             continue
 
@@ -363,25 +354,10 @@ def longest_series():
     return f"📺 Longest Series: {title} — {seasons} seasons, {episodes} episodes\n{commentary}\n{_series_quote()}", None
 
 # -----------------------------
-# Command Router
+# Command Router (robust)
 # -----------------------------
-ALIASES = {
-    "movies count": "movie_count",
-    "how many movies": "movie_count",
-    "movie count": "movie_count",
-    "shows count": "series_count",
-    "how many shows": "series_count",
-    "series count": "series_count",
-    "longest film": "longest_movie",
-    "longest movie": "longest_movie",
-    "longest series": "longest_series",
-    "longest show": "longest_series",
-    "upcoming movies": "upcoming_movies",
-    "upcoming movie": "upcoming_movies",
-    "upcoming shows": "upcoming_series",
-    "upcoming series": "upcoming_series",
-}
 
+# canonical command names → functions
 COMMANDS = {
     "movie_count": movie_count,
     "series_count": series_count,
@@ -391,23 +367,85 @@ COMMANDS = {
     "upcoming_series": upcoming_series,
 }
 
+# Many natural aliases → canonical
+ALIASES = {
+    # counts
+    "movies count": "movie_count",
+    "how many movies": "movie_count",
+    "movie count": "movie_count",
+    "shows count": "series_count",
+    "how many shows": "series_count",
+    "series count": "series_count",
+    # longest
+    "longest film": "longest_movie",
+    "longest movie": "longest_movie",
+    "longest series": "longest_series",
+    "longest show": "longest_series",
+    # upcoming
+    "upcoming movies": "upcoming_movies",
+    "upcoming movie": "upcoming_movies",
+    "movies upcoming": "upcoming_movies",
+    "movie upcoming": "upcoming_movies",
+    "next movies": "upcoming_movies",
+    "next movie": "upcoming_movies",
+    "upcoming shows": "upcoming_series",
+    "upcoming series": "upcoming_series",
+    "shows upcoming": "upcoming_series",
+    "series upcoming": "upcoming_series",
+    "next shows": "upcoming_series",
+    "next show": "upcoming_series",
+}
+
+# Regex patterns that map directly to canonical commands
+PATTERNS = [
+    (re.compile(r"\b(next|upcoming)\s+(movie|movies)\b"), "upcoming_movies"),
+    (re.compile(r"\b(next|upcoming)\s+(show|shows|series)\b"), "upcoming_series"),
+    (re.compile(r"\b(movie|movies)\s+count\b"), "movie_count"),
+    (re.compile(r"\b(series|shows)\s+count\b"), "series_count"),
+    (re.compile(r"\blongest\s+(movie|film)\b"), "longest_movie"),
+    (re.compile(r"\blongest\s+(series|show)\b"), "longest_series"),
+]
+
+def _normalize(text: str) -> str:
+    """
+    Make command recognition very tolerant:
+    - lower case
+    - strip starting wake words: jarvis/jarvis jnr/jarvis prime/message
+    - remove punctuation
+    - collapse spaces
+    """
+    t = (text or "").lower().strip()
+
+    # Strip wake words if present at the start
+    for head in ("jarvis jnr", "jarvis prime", "jarvis", "message"):
+        if t.startswith(head):
+            t = t[len(head):].strip()
+
+    # Remove punctuation
+    t = re.sub(r"[^\w\s]", " ", t)
+    # Collapse whitespace
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
 def handle_arr_command(title: str, message: str):
-    # merge into a single command string
-    cmd = f"{title} {message}".lower().strip()
+    """
+    Backward-compatible entry point. We build a single command string
+    from title+message and run it through the tolerant parser.
+    """
+    raw = f"{title} {message}".strip()
+    cmd = _normalize(raw)
 
-    if cmd.startswith("jarvis jnr"):
-        cmd = cmd.replace("jarvis jnr", "", 1).strip()
-    elif cmd.startswith("jarvis"):
-        cmd = cmd.replace("jarvis", "", 1).strip()
-    if cmd.startswith("message"):
-        cmd = cmd.replace("message", "", 1).strip()
-
+    # Direct alias map
     if cmd in ALIASES:
         cmd = ALIASES[cmd]
-
-    if cmd in COMMANDS:
         return COMMANDS[cmd]()
 
+    # Regex patterns
+    for pat, mapped in PATTERNS:
+        if pat.search(cmd):
+            return COMMANDS[mapped]()
+
+    # Fuzzy fallback across aliases and canonical names
     possibilities = list(COMMANDS.keys()) + list(ALIASES.keys())
     match = difflib.get_close_matches(cmd, possibilities, n=1, cutoff=0.6)
     if match:
