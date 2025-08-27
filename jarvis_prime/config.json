@@ -2,7 +2,7 @@
   "name": "Jarvis Prime",
   "version": "1.0.0",
   "slug": "jarvis_prime",
-  "description": "Next-gen Gotify assistant (modular, moods, digest, uptime monitor).",
+  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, and uptime checks.",
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
@@ -16,12 +16,13 @@
     "gotify_client_token": "CHANGE_ME_CLIENT",
     "gotify_app_token": "CHANGE_ME_APP",
     "jarvis_app_name": "Jarvis",
+
     "retention_hours": 24,
     "beautify_enabled": true,
     "silent_repost": true,
 
     "chat_enabled": true,
-    "ai_checkins_enabled": true,
+    "ai_checkins_enabled": false,
     "cache_refresh_minutes": 60,
 
     "weather_enabled": true,
@@ -43,15 +44,15 @@
     "sonarr_api_key": "CHANGE_ME",
     "sonarr_time": "07:30",
 
-    "uptimekuma_enabled": true,
-    "uptimekuma_url": "http://10.0.0.240:3001",
-    "uptimekuma_api_key": "CHANGE_ME",
+    "technitium_enabled": true,
+    "technitium_url": "http://10.0.0.99:5380",
+    "technitium_user": "admin",
+    "technitium_pass": "CHANGE_ME",
+    "technitium_api_key": "",
 
-    "technitium_enabled": false,
-    "technitium_url": "",
-    "technitium_user": "",
-    "technitium_pass": "",
-    "technitium_api_key": ""
+    "uptimekuma_enabled": true,
+    "uptimekuma_url": "http://10.0.0.99:3001",
+    "uptimekuma_api_key": "CHANGE_ME"
   },
   "schema": {
     "bot_name": "str",
@@ -60,6 +61,7 @@
     "gotify_client_token": "str",
     "gotify_app_token": "str",
     "jarvis_app_name": "str",
+
     "retention_hours": "int",
     "beautify_enabled": "bool",
     "silent_repost": "bool",
@@ -87,14 +89,14 @@
     "sonarr_api_key": "str",
     "sonarr_time": "str",
 
-    "uptimekuma_enabled": "bool",
-    "uptimekuma_url": "str",
-    "uptimekuma_api_key": "str",
-
     "technitium_enabled": "bool",
     "technitium_url": "str",
     "technitium_user": "str",
     "technitium_pass": "str",
-    "technitium_api_key": "str"
+    "technitium_api_key": "str",
+
+    "uptimekuma_enabled": "bool",
+    "uptimekuma_url": "str",
+    "uptimekuma_api_key": "str"
   }
 }
