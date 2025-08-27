@@ -23,6 +23,7 @@
 
     "retention_hours": 24,
     "beautify_enabled": true,
+    "beautify_inline_images": false,
     "silent_repost": true,
 
     "chat_enabled": true,
@@ -94,6 +95,7 @@
 
     "retention_hours": "int",
     "beautify_enabled": "bool",
+    "beautify_inline_images": "bool",
     "silent_repost": "bool",
 
     "chat_enabled": "bool",
