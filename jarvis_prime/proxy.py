@@ -1,124 +1,185 @@
 # /app/proxy.py
-# Minimal HTTP forwarder for Gotify and ntfy.
-# - Listens on proxy_bind:proxy_port (defaults 0.0.0.0:2580)
-# - For Gotify:   accepts /message?token=...  → forwards to <proxy_gotify_url>/message?token=...
-# - For ntfy:     accepts /<topic> and /<topic>/... → forwards to <proxy_ntfy_url>/<same_path>
-# - Everything else: 404
+# Simple HTTP proxy/intake for Jarvis Prime.
+# Endpoints:
+#   POST /gotify    -> expects Gotify-like JSON {title, message, priority?, extras?}
+#   POST /ntfy      -> accepts:
+#       - text/plain body with optional headers: Title, Priority
+#       - JSON { "topic": "...", "title": "...", "message": "..." }
+# Behavior:
+#   - Everything is beautified via beautify_message (Jarvis Card).
+#   - Forwards (best-effort) to real targets if configured:
+#       proxy_gotify_url, proxy_ntfy_url
+#   - Replies 200 OK with {"status":"ok"} even if forward fails (logged).
+#
+# Config keys (from merged options/config):
+#   proxy_enabled: bool
+#   proxy_bind: "0.0.0.0"
+#   proxy_port: 8099
+#   proxy_gotify_url: "http://gotify:8091/message?token=XXXX"  # full URL (with token)
+#   proxy_ntfy_url: "http://ntfy:80/your-topic"                # base URL or topic endpoint
 #
 # Notes:
-# - Runs in its own thread; non-blocking for bot.py
-# - Uses 'requests' to forward original method, headers (sanitized), and body
-# - Adds small log lines for visibility
+# - Zero external deps beyond 'requests'.
+# - Runs in its own thread; non-blocking.
+# - Keeps it minimal and resilient.
 
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
-import requests
+from __future__ import annotations
 import json
-import io
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
 
-# Will be filled by start_proxy()
-_CFG = {}
-_send_fn = None
+import requests
 
-def _log(msg: str):
-    print(f"[Proxy] {msg}")
+# Beautifier
+try:
+    from beautify import beautify_message
+except Exception:
+    def beautify_message(title, body, **kwargs):
+        return body, None  # soft fallback
 
-def _target_base(path: str):
-    """Decide whether to forward to Gotify or ntfy based on path."""
-    got = (_CFG.get("proxy_gotify_url") or "").rstrip("/")
-    ntf = (_CFG.get("proxy_ntfy_url") or "").rstrip("/")
+class ProxyState:
+    def __init__(self, config, send_cb):
+        self.cfg = config
+        self.send_cb = send_cb
+        self.bind = str(config.get("proxy_bind", "0.0.0.0"))
+        self.port = int(config.get("proxy_port", 8099))
+        self.forward_gotify = (config.get("proxy_gotify_url") or "").strip()
+        self.forward_ntfy = (config.get("proxy_ntfy_url") or "").strip()
+        self.mood = str(config.get("personality_mood", "serious"))
 
-    # Gotify compatibility: /message?token=...
-    if path.startswith("/message"):
-        return got
-    # ntfy-style: /topic or /topic/...
-    if path.startswith("/") and len(path) > 1 and not path.startswith("/message"):
-        return ntf
-    return None
+STATE: ProxyState | None = None
 
-def _sanitize_headers(headers):
-    """Drop hop-by-hop headers and any Host header (requests sets its own)."""
-    drop = {
-        "host","connection","keep-alive","proxy-authenticate","proxy-authorization",
-        "te","trailers","transfer-encoding","upgrade"
-    }
-    clean = {}
-    for k, v in headers.items():
-        if k.lower() not in drop:
-            clean[k] = v
-    return clean
+def _json(data: dict, code: int = 200):
+    return (code, "application/json; charset=utf-8", json.dumps(data).encode("utf-8"))
 
-class _ProxyHandler(BaseHTTPRequestHandler):
-    # We only need POST and PUT for Gotify/Ntfy, but accept GET for testing.
-    def _handle(self):
+def _text(data: str, code: int = 200):
+    return (code, "text/plain; charset=utf-8", data.encode("utf-8"))
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "JarvisProxy/1.0"
+
+    def _send(self, tup):
+        code, ctype, payload = tup
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self):  # noqa: N802
         try:
-            base = _target_base(self.path)
-            if not base:
-                self.send_response(404); self.end_headers()
-                self.wfile.write(b"Not Found")
-                _log(f"404 {self.command} {self.path}")
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length > 0 else b""
+            path = self.path.split("?", 1)[0]
+
+            if path == "/gotify":
+                self._handle_gotify(raw)
+                return
+            if path == "/ntfy":
+                self._handle_ntfy(raw)
                 return
 
-            # Build upstream URL
-            url = f"{base}{self.path}"
-
-            # Body
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length) if length > 0 else b""
-
-            # Headers
-            headers = _sanitize_headers({k: v for k, v in self.headers.items()})
-
-            # Forward using same verb
-            method = self.command.upper()
-            resp = requests.request(method, url, data=body, headers=headers, timeout=10)
-
-            # Mirror status + body
-            self.send_response(resp.status_code)
-            for k, v in resp.headers.items():
-                # Avoid chunked issues
-                if k.lower() not in ("transfer-encoding", "content-encoding", "content-length", "connection"):
-                    self.send_header(k, v)
-            self.send_header("Content-Length", str(len(resp.content)))
-            self.end_headers()
-            self.wfile.write(resp.content)
-
-            _log(f"{method} {self.path} -> {url} [{resp.status_code}]")
+            self._send(_json({"error": "unknown endpoint"}, 404))
         except Exception as e:
-            _log(f"Error handling {self.command} {self.path}: {e}")
+            self._send(_json({"error": str(e)}, 500))
+
+    def _handle_gotify(self, raw: bytes):
+        global STATE
+        try:
+            payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
+        except Exception:
+            payload = {}
+        title = str(payload.get("title") or "Message")
+        message = str(payload.get("message") or "")
+        priority = int(payload.get("priority") or 5)
+        extras = payload.get("extras") if isinstance(payload.get("extras"), dict) else None
+
+        # Beautify + post to our Gotify
+        final, bx = beautify_message(title, message, mood=STATE.mood if STATE else "serious", source_hint="proxy")
+        (STATE or self)._post_local(title, final, priority, _merge_extras(bx, extras))
+
+        # Forward to real Gotify if configured
+        if STATE and STATE.forward_gotify:
             try:
-                self.send_response(502); self.end_headers()
-                self.wfile.write(b"Bad Gateway")
+                r = requests.post(STATE.forward_gotify, json={"title": title, "message": message, "priority": priority, "extras": extras}, timeout=8)
+                if not r.ok:
+                    print(f"[Proxy] ⚠️ forward gotify failed: {r.status_code} {r.text[:200]}")
+            except Exception as e:
+                print(f"[Proxy] ⚠️ forward gotify error: {e}")
+
+        self._send(_json({"status": "ok"}))
+
+    def _handle_ntfy(self, raw: bytes):
+        global STATE
+        ctype = (self.headers.get("Content-Type") or "").lower()
+        title = self.headers.get("Title") or "ntfy"
+        priority = int(self.headers.get("Priority") or 5)
+        text = ""
+
+        if "application/json" in ctype:
+            try:
+                payload = json.loads(raw.decode("utf-8", errors="ignore"))
             except Exception:
-                pass
+                payload = {}
+            title = payload.get("title") or title
+            text = payload.get("message") or ""
+        else:
+            # text/plain or unknown
+            text = raw.decode("utf-8", errors="ignore")
 
-    def do_POST(self): self._handle()
-    def do_PUT(self): self._handle()
-    def do_GET(self): self._handle()  # optional for quick testing (e.g., curl)
+        # Beautify + post locally
+        final, bx = beautify_message(title, text, mood=STATE.mood if STATE else "serious", source_hint="proxy")
+        (STATE or self)._post_local(title, final, priority, bx)
 
-def _serve(bind: str, port: int):
-    httpd = HTTPServer((bind, port), _ProxyHandler)
-    _log(f"listening on http://{bind}:{port}")
-    httpd.serve_forever()
+        # Forward to ntfy if configured
+        if STATE and STATE.forward_ntfy:
+            try:
+                headers = {}
+                if title: headers["Title"] = str(title)
+                if priority: headers["Priority"] = str(priority)
+                r = requests.post(STATE.forward_ntfy, data=text.encode("utf-8"), headers=headers, timeout=8)
+                if not r.ok:
+                    print(f"[Proxy] ⚠️ forward ntfy failed: {r.status_code} {r.text[:200]}")
+            except Exception as e:
+                print(f"[Proxy] ⚠️ forward ntfy error: {e}")
 
-def start_proxy(options: dict, send_fn):
-    global _CFG, _send_fn
-    _CFG = options or {}
-    _send_fn = send_fn
+        self._send(_json({"status": "ok"}))
 
-    bind = str(_CFG.get("proxy_bind", "0.0.0.0"))
-    try:
-        port = int(_CFG.get("proxy_port", 2580))
-    except Exception:
-        port = 2580
+    # Helper to send into our Gotify via bot's callback
+    def _post_local(self, title: str, message: str, priority: int, extras: dict | None):
+        if STATE and STATE.send_cb:
+            try:
+                STATE.send_cb(title, message, priority=priority, extras=extras)
+            except Exception as e:
+                print(f"[Proxy] ❌ local post error: {e}")
 
-    # Validate targets (warn only)
-    if not (_CFG.get("proxy_gotify_url") or "").startswith("http"):
-        _log("⚠️ proxy_gotify_url is empty or invalid")
-    if not (_CFG.get("proxy_ntfy_url") or "").startswith("http"):
-        _log("⚠️ proxy_ntfy_url is empty or invalid")
+def _merge_extras(a, b):
+    if not a and not b:
+        return None
+    if not a:
+        return b
+    if not b:
+        return a
+    # shallow merge; preserve bigImageUrl if set
+    out = dict(a)
+    cn = dict(out.get("client::notification", {}))
+    bn = (b.get("client::notification") or {})
+    if "bigImageUrl" not in cn and "bigImageUrl" in bn:
+        cn["bigImageUrl"] = bn["bigImageUrl"]
+    if cn:
+        out["client::notification"] = cn
+    for k, v in b.items():
+        if k == "client::notification":
+            continue
+        out[k] = v
+    return out
 
-    t = threading.Thread(target=_serve, args=(bind, port), daemon=True)
+def start_proxy(config, send_cb):
+    global STATE
+    STATE = ProxyState(config, send_cb)
+    addr = (STATE.bind, STATE.port)
+    print(f"[Jarvis Prime] 🔀 Proxy listening on {STATE.bind}:{STATE.port} (endpoints: /gotify, /ntfy)")
+    server = ThreadingHTTPServer(addr, Handler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
-    return True
