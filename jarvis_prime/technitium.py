@@ -198,33 +198,47 @@ def _pick_num(d: dict, keys) -> int:
     return 0
 
 def _read_stats() -> Optional[dict]:
-    # Preferred: JSON dashboard (v13+)
+    """
+    v13+: /api/dashboard/stats/get → {"status":"ok","response":{...}}
+    Fallback: /metrics (Prometheus text)
+    Returns dict with all dashboard fields.
+    """
+    # ----- Preferred: JSON dashboard -----
     j = _get("/api/dashboard/stats/get")
-    if isinstance(j, dict) and ((j.get("status") == "ok" and isinstance(j.get("response"), dict)) or "TotalQueryCount" in j or "totalQueries" in j):
-        src = j.get("response", j)
+    if isinstance(j, dict) and "status" in j:
+        # many builds return {"status":"ok","response":{...}}
+        src = j.get("response") if j.get("status") == "ok" and isinstance(j.get("response"), dict) else j
+
         out = {}
+        # first pass on the chosen object
         for label, keys in _DASH_KEYS.items():
             out[label] = _pick_num(src, keys)
-        if sum(out.values()) == 0:
-            for v in src.values():
-                if isinstance(v, dict):
-                    for label, keys in _DASH_KEYS.items():
-                        out[label] = out[label] or _pick_num(v, keys)
-        out["allowed"] = max(0, out.get("total", 0) - out.get("blocked", 0))
-        return out
 
-    # Fallback: Prometheus metrics
+        # ✅ IMPORTANT: also walk nested dicts once (some stats are nested)
+        for v in src.values():
+            if isinstance(v, dict):
+                for label, keys in _DASH_KEYS.items():
+                    out[label] = out[label] or _pick_num(v, keys)
+
+        out["allowed"] = max(0, out.get("total", 0) - out.get("blocked", 0))
+        # if we have a non-zero total, treat JSON as authoritative
+        if out.get("total", 0) > 0:
+            return out
+
+    # ----- Fallback: Prometheus metrics -----
     text = _get("/metrics")
     if isinstance(text, str) and text.strip():
         vals = {k: 0 for k in _DASH_KEYS.keys()}
         for line in text.splitlines():
             m = _PROM_RE.match(line)
-            if not m: continue
+            if not m: 
+                continue
             name = m.group(1).lower()
             try:
                 val = int(float(m.group(2)))
             except Exception:
                 continue
+
             if "queries_total" in name or (("query" in name) and ("total" in name)):
                 vals["total"] = max(vals["total"], val)
             if "blocked" in name and "total" in name:
@@ -247,6 +261,7 @@ def _read_stats() -> Optional[dict]:
                 vals["no_error"] = max(vals["no_error"], val)
             if "dropped" in name:
                 vals["dropped"] = max(vals["dropped"], val)
+
         vals["allowed"] = max(0, vals.get("total", 0) - vals.get("blocked", 0))
         return vals
 
