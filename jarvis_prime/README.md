@@ -6,7 +6,7 @@ What it is and what it does
 Jarvis Prime is a Gotify-aware assistant. It centralizes formatting, command handling, and adds personality to your notifications. It subscribes to your Gotify stream via Client token, reposts via App token, and runs a five-layer Beautify Engine to standardize visual style across heterogeneous sources. It can also ingest via SMTP or HTTP proxy and still beautify before posting. It offers moods and personality so your notifications feel alive, and includes wake-word commands, a daily digest, and optional heartbeat.
 
 Features
-• Unified Beautify Engine (7 layers: Ingest → Detect → Normalize → Interpret → Render → Checks Duplicate Sentencaes → Tries and Places Images Back)
+• Unified Beautify Engine (7 layers: ingest → detect → normalize → interpret → render → de-dupe → image restore)
 • Works out-of-the-box for unknown senders, with built-ins for ARR (Radarr/Sonarr), QNAP/Unraid, Watchtower, Speedtest, JSON/YAML, DNS, Weather, generic text
 • Optional rules file /data/beautify_rules.yaml to add detectors/extractors without code
 • Consistent “Jarvis Card” look with mood tint and AI interpretation line
