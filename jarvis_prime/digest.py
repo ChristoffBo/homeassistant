@@ -23,9 +23,6 @@ _tech = _try_import("technitium")
 # -----------------------------
 # Tiny utils
 # -----------------------------
-def _now_str() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
-
 def _bool(v: Any, default: bool = False) -> bool:
     if isinstance(v, bool):
         return v
@@ -46,14 +43,11 @@ def _section(title: str, body: str) -> str:
 
 def _bullet_lines(items: List[str], limit: int = 5) -> str:
     out = []
-    for i, it in enumerate(items[:limit]):
+    for it in items[:limit]:
         line = str(it).strip()
         if not line:
             continue
-        if line.startswith("- "):
-            out.append(line)
-        else:
-            out.append(f"- {line}")
+        out.append(f"- {line}" if not line.startswith("- ") else line)
     return "\n".join(out)
 
 # -----------------------------
@@ -68,11 +62,18 @@ def _arr_counts(options: Dict[str, Any]) -> Tuple[str, str]:
 
     movies_count = None
     series_count = None
+
+    # Try several helpers for counts
     try:
         if hasattr(_arr, "get_counts"):
             counts = _arr.get_counts(options)  # expected: {"movies": N, "series": M}
             movies_count = counts.get("movies")
             series_count = counts.get("series")
+        else:
+            if hasattr(_arr, "movies_count"):
+                movies_count = _arr.movies_count(options)
+            if hasattr(_arr, "series_count"):
+                series_count = _arr.series_count(options)
     except Exception:
         pass
 
@@ -80,6 +81,7 @@ def _arr_counts(options: Dict[str, Any]) -> Tuple[str, str]:
     right = f"Movies: {movies_count if isinstance(movies_count, int) else '?'}"
     summary = f"{left} | {right}"
 
+    # Upcoming (today/top)
     upcoming_lines: List[str] = []
     try:
         if hasattr(_arr, "get_upcoming"):
@@ -88,12 +90,20 @@ def _arr_counts(options: Dict[str, Any]) -> Tuple[str, str]:
         elif hasattr(_arr, "safe_today_upcoming"):
             ups = _arr.safe_today_upcoming(options, limit=5)  # list[str]
             upcoming_lines = [str(x) for x in (ups or [])]
+        elif hasattr(_arr, "list_upcoming_series") or hasattr(_arr, "list_upcoming_movies"):
+            ups = []
+            if hasattr(_arr, "list_upcoming_series"):
+                ups += (_arr.list_upcoming_series(days=1, limit=3) or [])
+            if hasattr(_arr, "list_upcoming_movies"):
+                ups += (_arr.list_upcoming_movies(days=1, limit=2) or [])
+            upcoming_lines = [str(x) for x in ups]
     except Exception:
         pass
 
-    details = ""
     if upcoming_lines:
         details = _bullet_lines(upcoming_lines, limit=5)
+    else:
+        details = "_No upcoming in the next 24h._"
 
     return (summary, details)
 
@@ -127,16 +137,49 @@ def _kuma_summary(options: Dict[str, Any]) -> str:
 # Weather section
 # -----------------------------
 def _weather_snapshot(options: Dict[str, Any]) -> str:
+    """
+    Always try to return a brief one-liner for today’s weather.
+    Tries, in order:
+      1) weather.brief(options)
+      2) weather.current_summary(options)
+      3) weather.handle_weather_command('forecast today') or 'forecast'
+    """
     if not _weather or not _bool(options.get("weather_enabled"), False):
         return ""
+    # 1) brief()
     try:
         if hasattr(_weather, "brief"):
-            return str(_weather.brief(options)).strip()
-        if hasattr(_weather, "current_summary"):
-            return str(_weather.current_summary(options)).strip()
+            s = str(_weather.brief(options)).strip()
+            if s:
+                return s
     except Exception:
         pass
-    return ""
+    # 2) current_summary()
+    try:
+        if hasattr(_weather, "current_summary"):
+            s = str(_weather.current_summary(options)).strip()
+            if s:
+                return s
+    except Exception:
+        pass
+    # 3) handle_weather_command(...)
+    try:
+        if hasattr(_weather, "handle_weather_command"):
+            for cmd in ("forecast today", "forecast"):
+                resp = _weather.handle_weather_command(cmd)
+                text = ""
+                if isinstance(resp, tuple) and resp:
+                    text = str(resp[0] or "")
+                elif isinstance(resp, str):
+                    text = resp
+                text = text.strip()
+                if text:
+                    # compress to a neat single line
+                    first = text.splitlines()[0].strip()
+                    return first
+    except Exception:
+        pass
+    return ""  # last resort
 
 # -----------------------------
 # Technitium section (Total | Blocked | Server Failure)
@@ -172,7 +215,7 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
     Returns: (title, message, priority)
     Priority: 5 normal; bump to 7 if Kuma shows any DOWN.
     """
-    title = f"🗞️ Daily Digest — {datetime.now().strftime('%a %d %b %Y')}"
+    title = f"📰 Daily Digest — {datetime.now().strftime('%a %d %b %Y')}"
 
     # ARR
     arr_summary, arr_details = _arr_counts(options)
@@ -191,9 +234,9 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
     dns_line = _dns_note(options)
     dns_block = _section("🧠 Technitium DNS", dns_line) if dns_line else ""
 
-    # Weather
+    # Weather — always try to include when enabled
     weather_line = _weather_snapshot(options)
-    weather_block = _section("⛅ Weather", weather_line) if weather_line else ""
+    weather_block = _section("⛅ Weather", weather_line) if weather_line or _bool(options.get("weather_enabled"), False) else ""
 
     # Compose
     parts = [arr_block, kuma_block, dns_block, weather_block]
