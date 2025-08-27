@@ -4,23 +4,6 @@
 # - Parses Subject → title, body → message.
 # - Runs the payload through beautify_message (unified Jarvis card).
 # - Posts to Gotify via the send_message(title, text, extras) callback.
-#
-# Config keys (from merged options/config):
-#   smtp_enabled: bool
-#   smtp_bind: "0.0.0.0"
-#   smtp_port: 2525
-#   smtp_max_bytes: 262144
-#   smtp_dummy_rcpt: "alerts@jarvis.local"
-#   smtp_accept_any_auth: true
-#   smtp_rewrite_title_prefix: "[SMTP]"
-#   smtp_allow_html: false        # if true and text/html present, prefer HTML->text stripped
-#   smtp_priority_default: 5
-#   smtp_priority_map: JSON str like: "{ \"high\": 7, \"urgent\": 8, \"critical\": 9, \"low\": 3, \"normal\": 5 }"
-#
-# Notes:
-# - Uses 'aiosmtpd' if available for robustness; falls back to builtin 'smtpd' otherwise.
-# - Runs in its own background thread; non-blocking for the main bot.
-# - Never throws on malformed emails; best-effort extraction.
 
 from __future__ import annotations
 import threading
@@ -35,19 +18,13 @@ from email import message_from_bytes
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 
-# Best effort HTML->text
-try:
-    from html2text import html2text  # optional
-except Exception:
-    html2text = None  # type: ignore
-
-# Beautifier
 try:
     from beautify import beautify_message
 except Exception:
     def beautify_message(title, body, **kwargs):
-        return body, None  # soft fallback if beautify missing
+        return body, None
 
+# Prefer aiosmtpd if present, else stdlib smtpd
 AIOSMTPD_AVAILABLE = False
 try:
     import asyncio
@@ -55,11 +32,14 @@ try:
     AIOSMTPD_AVAILABLE = True
 except Exception:
     AIOSMTPD_AVAILABLE = False
-
-# Fallback
-if not AIOSMTPD_AVAILABLE:
     import smtpd
     import asyncore
+
+# Optional HTML to text
+try:
+    from html2text import html2text  # optional
+except Exception:
+    html2text = None  # type: ignore
 
 def _decode_header(value: Optional[str]) -> str:
     if not value:
@@ -79,7 +59,6 @@ def _decode_header(value: Optional[str]) -> str:
 def _extract_body(msg, allow_html: bool) -> str:
     try:
         if msg.is_multipart():
-            # Prefer text/plain
             plain = None
             html = None
             for part in msg.walk():
@@ -101,7 +80,6 @@ def _extract_body(msg, allow_html: bool) -> str:
                         return html2text(html).strip()
                     except Exception:
                         pass
-                # naive strip tags
                 return re.sub(r"<[^>]+>", "", html).strip()
             if html:
                 return re.sub(r"<[^>]+>", "", html).strip()
@@ -155,7 +133,6 @@ class SMTPHandlerAIOSMTPD:
         try:
             msg = message_from_bytes(data)
         except Exception:
-            # best effort text fallback
             raw = data.decode("utf-8", errors="ignore")
             title = self.prefix + "Mail"
             final, bx = beautify_message(title, raw, mood=str(self.cfg.get("personality_mood","serious")), source_hint="mail")
@@ -171,21 +148,16 @@ class SMTPHandlerAIOSMTPD:
             ts = None
 
         body = _extract_body(msg, self.allow_html)
-        # Become a nice title if empty
         title = self.prefix + (subject if subject else "Mail")
 
-        # build a small preamble for beautifier (host/time in facts will be added by rules if desired)
         lines = []
-        if sender:
-            lines.append(f"From: {sender}")
-        if ts:
-            lines.append(f"Date: {ts}")
+        if sender: lines.append(f"From: {sender}")
+        if ts:     lines.append(f"Date: {ts}")
         if body:
             lines.append("")
             lines.append(body)
         text = "\n".join(lines).strip() or "(no content)"
 
-        # mood + priority heuristics
         mood = str(self.cfg.get("personality_mood", "serious"))
         priority = _priority_from_subject(subject or "", self.default_prio, self.priority_map)
 
@@ -229,10 +201,8 @@ class SMTPHandlerSMPTD(smtpd.SMTPServer):  # type: ignore
         title = self.prefix + (subject if subject else "Mail")
 
         lines = []
-        if sender:
-            lines.append(f"From: {sender}")
-        if ts:
-            lines.append(f"Date: {ts}")
+        if sender: lines.append(f"From: {sender}")
+        if ts:     lines.append(f"Date: {ts}")
         if body:
             lines.append("")
             lines.append(body)
@@ -249,14 +219,16 @@ def _run_aiosmtpd(bind: str, port: int, handler: SMTPHandlerAIOSMTPD):
     asyncio.set_event_loop(loop)
     controller = Controller(handler, hostname=bind, port=port)
     controller.start()
+    print(f"[Jarvis Prime] 📮 SMTP (aiosmtpd) running on {bind}:{port}")
     try:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
         controller.stop()
 
-def _run_smtpd(bind: str, port: int, handler: SMTPHandlerSMPTD):
-    server = handler((bind, port), None)  # type: ignore
+def _run_smtpd(bind: str, port: int, factory):
+    server = factory((bind, port), None)  # type: ignore
+    print(f"[Jarvis Prime] 📮 SMTP (smtpd) running on {bind}:{port}")
     try:
         asyncore.loop()  # type: ignore
     except KeyboardInterrupt:
@@ -265,12 +237,11 @@ def _run_smtpd(bind: str, port: int, handler: SMTPHandlerSMPTD):
 def start_smtp(config: Dict[str, Any], send_cb):
     bind = str(config.get("smtp_bind", "0.0.0.0"))
     port = int(config.get("smtp_port", 2525))
-    print(f"[Jarvis Prime] 📮 SMTP listening on {bind}:{port} (backend={'aiosmtpd' if AIOSMTPD_AVAILABLE else 'smtpd'})")
     if AIOSMTPD_AVAILABLE:
         handler = SMTPHandlerAIOSMTPD(config, send_cb)
         t = threading.Thread(target=_run_aiosmtpd, args=(bind, port, handler), daemon=True)
         t.start()
     else:
-        cls = lambda addr, remote: SMTPHandlerSMPTD(addr, remote, config, send_cb)  # noqa: E731
-        t = threading.Thread(target=_run_smtpd, args=(bind, port, cls), daemon=True)
+        factory = lambda addr, remote: SMTPHandlerSMPTD(addr, remote, config, send_cb)  # noqa: E731
+        t = threading.Thread(target=_run_smtpd, args=(bind, port, factory), daemon=True)
         t.start()
