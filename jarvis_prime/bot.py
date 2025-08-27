@@ -282,6 +282,21 @@ def send_heartbeat_if_window():
         print(f"[{BOT_NAME}] Heartbeat error: {e}")
 
 # -----------------------------
+# Daily Digest helper (uses extra_modules["digest"].build_digest)
+# -----------------------------
+def job_daily_digest():
+    try:
+        dmod = extra_modules.get("digest")
+        if not dmod or not hasattr(dmod, "build_digest"):
+            print(f"[{BOT_NAME}] [Digest] build_digest not available")
+            return
+        title, message, priority = dmod.build_digest(merged)  # merged = loaded options
+        send_message(title, message, priority=priority, extras=None)
+        print(f"[{BOT_NAME}] [Digest] sent at {datetime.now().strftime('%H:%M')}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] [Digest] ERROR: {e}")
+
+# -----------------------------
 # Normalization
 # -----------------------------
 def _clean(s: str) -> str:
@@ -332,8 +347,14 @@ async def listen():
                             "🌦 Weather: `weather`, `forecast`\n"
                             "🎬/📺 Movies/Series: `movie count`, `series count`, `upcoming movies`, `upcoming series`, `longest movie`, `longest series`\n"
                             "🃏 Fun: `joke`\n"
+                            "📰 Digest: `digest`\n"
                         )
                         send_message("Help", help_text)
+                        continue
+
+                    # Manual digest
+                    if ncmd in ("digest", "daily digest", "summary"):
+                        job_daily_digest()
                         continue
 
                     # DNS
@@ -394,6 +415,15 @@ def run_scheduler():
     if HEARTBEAT_ENABLED and HEARTBEAT_INTERVAL_MIN > 0:
         schedule.every(HEARTBEAT_INTERVAL_MIN).minutes.do(send_heartbeat_if_window)
 
+    # daily digest (HH:MM)
+    try:
+        if bool(merged.get("digest_enabled", False)):
+            dtime = str(merged.get("digest_time", "08:00")).strip()
+            schedule.every().day.at(dtime).do(job_daily_digest)
+            print(f"[{BOT_NAME}] [Digest] scheduled @ {dtime}")
+    except Exception as e:
+        print(f"[{BOT_NAME}] [Digest] schedule error: {e}")
+
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -418,6 +448,6 @@ if __name__ == "__main__":
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.create_task(listen())  # ✅ fixed
+    loop.create_task(listen())  # ✅ stays
     loop.run_in_executor(None, run_scheduler)
     loop.run_forever()
