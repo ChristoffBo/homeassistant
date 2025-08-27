@@ -23,6 +23,7 @@ COPY uptimekuma.py /app/uptimekuma.py
 COPY aliases.py /app/aliases.py
 COPY personality.py /app/personality.py
 COPY smtp_server.py /app/smtp_server.py
+COPY proxy.py /app/proxy.py
 
 RUN chmod +x /run.sh
 
