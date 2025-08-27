@@ -3,58 +3,58 @@
 set -euo pipefail
 
 CONFIG_PATH=/data/options.json
-jqget() { jq -r "$1 // empty" "$CONFIG_PATH"; }
-log() { echo "[$(jq -r '.bot_name' "$CONFIG_PATH")] $*"; }
+log() { echo "[$(jq -r '.bot_name' $CONFIG_PATH)] $*"; }
 
 # Core
-export BOT_NAME="$(jq -r '.bot_name' "$CONFIG_PATH")"
-export BOT_ICON="$(jq -r '.bot_icon' "$CONFIG_PATH")"
-export GOTIFY_URL="$(jq -r '.gotify_url' "$CONFIG_PATH")"
-export GOTIFY_CLIENT_TOKEN="$(jq -r '.gotify_client_token' "$CONFIG_PATH")"
-export GOTIFY_APP_TOKEN="$(jq -r '.gotify_app_token' "$CONFIG_PATH")"
-export JARVIS_APP_NAME="$(jq -r '.jarvis_app_name' "$CONFIG_PATH")"
+export BOT_NAME=$(jq -r '.bot_name' $CONFIG_PATH)
+export BOT_ICON=$(jq -r '.bot_icon' $CONFIG_PATH)
+export GOTIFY_URL=$(jq -r '.gotify_url' $CONFIG_PATH)
+export GOTIFY_CLIENT_TOKEN=$(jq -r '.gotify_client_token' $CONFIG_PATH)
+export GOTIFY_APP_TOKEN=$(jq -r '.gotify_app_token' $CONFIG_PATH)
+export JARVIS_APP_NAME=$(jq -r '.jarvis_app_name' $CONFIG_PATH)
 
-export RETENTION_HOURS="$(jq -r '.retention_hours' "$CONFIG_PATH")"
-export BEAUTIFY_ENABLED="$(jq -r '.beautify_enabled' "$CONFIG_PATH")"
-export SILENT_REPOST="$(jq -r '.silent_repost // "true"' "$CONFIG_PATH")"
+export RETENTION_HOURS=$(jq -r '.retention_hours' $CONFIG_PATH)
+export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' $CONFIG_PATH)
+export SILENT_REPOST=$(jq -r '.silent_repost // "true"' $CONFIG_PATH)
 
 # Weather
-export WEATHER_ENABLED="$(jq -r '.weather_enabled' "$CONFIG_PATH")"
-export WEATHER_CITY="$(jq -r '.weather_city' "$CONFIG_PATH")"
-export WEATHER_TIME="$(jq -r '.weather_time' "$CONFIG_PATH")"
+export WEATHER_ENABLED=$(jq -r '.weather_enabled' $CONFIG_PATH)
+export WEATHER_API=$(jq -r '.weather_api // ""' $CONFIG_PATH)
+export WEATHER_API_KEY=$(jq -r '.weather_api_key // ""' $CONFIG_PATH)
+export WEATHER_CITY=$(jq -r '.weather_city' $CONFIG_PATH)
+export WEATHER_TIME=$(jq -r '.weather_time' $CONFIG_PATH)
+export WEATHER_LAT=$(jq -r '.weather_lat' $CONFIG_PATH)
+export WEATHER_LON=$(jq -r '.weather_lon' $CONFIG_PATH)
 
 # Digest
-export DIGEST_ENABLED="$(jq -r '.digest_enabled' "$CONFIG_PATH")"
-export DIGEST_TIME="$(jq -r '.digest_time' "$CONFIG_PATH")"
+export DIGEST_ENABLED=$(jq -r '.digest_enabled' $CONFIG_PATH)
+export DIGEST_TIME=$(jq -r '.digest_time' $CONFIG_PATH)
 
 # Radarr
-export RADARR_ENABLED="$(jq -r '.radarr_enabled' "$CONFIG_PATH")"
-export RADARR_URL="$(jq -r '.radarr_url' "$CONFIG_PATH")"
-export RADARR_API_KEY="$(jq -r '.radarr_api_key' "$CONFIG_PATH")"
-export RADARR_TIME="$(jq -r '.radarr_time' "$CONFIG_PATH")"
+export RADARR_ENABLED=$(jq -r '.radarr_enabled' $CONFIG_PATH)
+export RADARR_URL=$(jq -r '.radarr_url' $CONFIG_PATH)
+export RADARR_API_KEY=$(jq -r '.radarr_api_key' $CONFIG_PATH)
+export RADARR_TIME=$(jq -r '.radarr_time' $CONFIG_PATH)
 
 # Sonarr
-export SONARR_ENABLED="$(jq -r '.sonarr_enabled' "$CONFIG_PATH")"
-export SONARR_URL="$(jq -r '.sonarr_url' "$CONFIG_PATH")"
-export SONARR_API_KEY="$(jq -r '.sonarr_api_key' "$CONFIG_PATH")"
-export SONARR_TIME="$(jq -r '.sonarr_time' "$CONFIG_PATH")"
+export SONARR_ENABLED=$(jq -r '.sonarr_enabled' $CONFIG_PATH)
+export SONARR_URL=$(jq -r '.sonarr_url' $CONFIG_PATH)
+export SONARR_API_KEY=$(jq -r '.sonarr_api_key' $CONFIG_PATH)
+export SONARR_TIME=$(jq -r '.sonarr_time' $CONFIG_PATH)
 
-# Uptime Kuma (Prime adds this)
-export uptimekuma_enabled="$(jq -r '.uptimekuma_enabled' "$CONFIG_PATH")"
-export uptimekuma_url="$(jq -r '.uptimekuma_url // ""' "$CONFIG_PATH")"
-export uptimekuma_api_key="$(jq -r '.uptimekuma_api_key // ""' "$CONFIG_PATH")"
+# Technitium DNS
+export technitium_enabled=$(jq -r '.technitium_enabled' $CONFIG_PATH)
+export technitium_url=$(jq -r '.technitium_url' $CONFIG_PATH)
+export technitium_api_key=$(jq -r '.technitium_api_key // ""' $CONFIG_PATH)
+export technitium_user=$(jq -r '.technitium_user // ""' $CONFIG_PATH)
+export technitium_pass=$(jq -r '.technitium_pass // ""' $CONFIG_PATH)
 
-# Technitium (optional: Prime can keep it if desired)
-export technitium_enabled="$(jq -r '.technitium_enabled' "$CONFIG_PATH")"
-export technitium_url="$(jq -r '.technitium_url // ""' "$CONFIG_PATH")"
-export technitium_api_key="$(jq -r '.technitium_api_key // ""' "$CONFIG_PATH")"
-export technitium_user="$(jq -r '.technitium_user // ""' "$CONFIG_PATH")"
-export technitium_pass="$(jq -r '.technitium_pass // ""' "$CONFIG_PATH")"
+# Uptime Kuma
+export uptimekuma_enabled=$(jq -r '.uptimekuma_enabled' $CONFIG_PATH)
+export uptimekuma_url=$(jq -r '.uptimekuma_url' $CONFIG_PATH)
+export uptimekuma_api_key=$(jq -r '.uptimekuma_api_key' $CONFIG_PATH)
+# Optional status page slug:
+export uptimekuma_status_slug=${uptimekuma_status_slug:-""}
 
-# Personality / Chat / AI
-export chat_enabled="$(jq -r '.chat_enabled' "$CONFIG_PATH")"
-export ai_checkins_enabled="$(jq -r '.ai_checkins_enabled' "$CONFIG_PATH")"
-export cache_refresh_minutes="$(jq -r '.cache_refresh_minutes' "$CONFIG_PATH")"
-
-log "Starting Jarvis Prime..."
+log "Starting add-on..."
 exec python3 /app/bot.py
