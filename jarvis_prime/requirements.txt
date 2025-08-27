@@ -1,0 +1,8 @@
+schedule
+aiohttp
+websocket-client
+requests
+websockets
+pyyaml
+tabulate
+rapidfuzz
