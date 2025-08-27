@@ -1,33 +1,39 @@
 # /app/beautify.py
-# Jarvis Prime — Beautify Engine (5 Layers)
-# 1) Ingest     -> title/body + optional source_hint/mood
-# 2) Detect     -> classify source (sonarr/radarr/qnap/unraid/watchtower/speedtest/json/yaml/generic)
-# 3) Normalize  -> extract facts, strip boilerplate, remove raw image URLs and markdown image syntax
-# 4) Interpret  -> concise, AI-ish summary lines, no “Mood:” text here
-# 5) Render     -> Jarvis Card text + extras (client::notification.bigImageUrl)
+# Jarvis Prime Beautify Engine — 7 stages
+# 1) Ingest     -> title/body, optional source_hint/mood
+# 2) Detect     -> source classification (sonarr/radarr/qnap/unraid/watchtower/json/yaml/generic)
+# 3) Normalize  -> strip boilerplate, pull facts, extract ALL images from title+body
+# 4) Interpret  -> concise fact block + body block
+# 5) Render     -> Jarvis Card text + extras (bigImageUrl)
+# 6) Polish     -> sentence-level dedupe across the whole message
+# 7) Echo Img   -> if original had images, append a Markdown image so Gotify renders the actual image
 #
 # Guarantees:
-# - No duplicate lines (“Info: …” in facts + same sentence in body).
-# - No raw image links; posters/logos become big images via extras.
-# - Works for generic payloads and specific sources.
-# - Personality/quip is NOT added here (that happens in send_message).
+# - No raw image links left in the main text (we re-insert a Markdown image in Stage 7).
+# - First image also goes to extras.client::notification.bigImageUrl.
+# - Duplicates like “Info: This is a test message” vs “This is a test message” are removed.
 
 from __future__ import annotations
 import json
 import re
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 try:
     import yaml  # optional
 except Exception:
     yaml = None
 
-# ---------------------------------------------
-# Image handling
-# ---------------------------------------------
+# ---------- Image detection / stripping (robust) ----------
+# Bare image URLs
 IMG_URL_RE = re.compile(
-    r'(https?://[^\s)]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s)]*)?)',
+    r'(https?://[^)\s]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)',
     re.IGNORECASE,
+)
+
+# Markdown images, permissive (allows spaces and optional title):
+MD_IMG_RE = re.compile(
+    r'!\s*\[[^\]]*\]\s*\(\s*([^)\s]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\)]*)?)\s*(?:"[^"]*")?\s*\)',
+    re.IGNORECASE | re.DOTALL,
 )
 
 LIKELY_POSTER_HOSTS = (
@@ -38,45 +44,78 @@ LIKELY_POSTER_HOSTS = (
     "trakt.tv",
     "tvdb.org",
     "gravatar.com",
-    "plex.tv",
-    "plex.direct",
 )
 
-def _first_image_url(text: str) -> Optional[str]:
-    """Find first image URL; prefer known poster domains if present."""
-    if not text:
-        return None
-    matches = list(IMG_URL_RE.finditer(text))
-    if not matches:
-        return None
-    try:
-        from urllib.parse import urlparse
-        # Prefer known poster hosts
-        for m in matches:
-            url = m.group(1)
-            host = urlparse(url).netloc.lower()
-            if any(h in host for h in LIKELY_POSTER_HOSTS):
-                return url
-    except Exception:
-        pass
-    return matches[0].group(1)
+def _find_all_images(*parts: str) -> List[str]:
+    seen, out = set(), []
+    for text in parts:
+        if not text:
+            continue
+        for m in MD_IMG_RE.finditer(text):
+            url = m.group(1).strip()
+            if url not in seen:
+                seen.add(url); out.append(url)
+        for m in IMG_URL_RE.finditer(text):
+            url = m.group(1).strip()
+            if url not in seen:
+                seen.add(url); out.append(url)
+    return out
 
-def _strip_image_urls(text: str) -> str:
-    """Remove markdown image syntax and bare image URLs from text."""
+def _strip_images(text: str) -> str:
     if not text:
         return ""
-    # Remove markdown image syntax ![alt](URL)
-    text = re.sub(r'!\[[^\]]*]\((https?://[^\s)]+)\)', '', text, flags=re.IGNORECASE)
-    # Remove bare image URLs
-    text = IMG_URL_RE.sub('', text)
-    # Clean spacing
+    text = MD_IMG_RE.sub("", text)
+    text = IMG_URL_RE.sub("", text)
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-# ---------------------------------------------
-# Line helpers & dedup
-# ---------------------------------------------
+# ---------- Sentence/line helpers ----------
+_LEADING_NOISE = re.compile(r'^[\W_]+', re.UNICODE)                # emojis/bullets/punct
+_LABELS = re.compile(r'^(info|message|note|status)\s*[:\-]\s*', re.IGNORECASE)
+
+def _normline_for_compare(s: str) -> str:
+    s = (s or "").strip()
+    s = _LEADING_NOISE.sub("", s)
+    s = _LABELS.sub("", s)
+    s = re.sub(r'[!\.\s]+$', '', s)
+    s = re.sub(r'\s+', ' ', s)
+    return s.lower()
+
+def _dedup_lines(lines: List[str]) -> List[str]:
+    seen, out = set(), []
+    for ln in lines:
+        norm = _normline_for_compare(ln)
+        if norm:
+            if norm in seen: 
+                continue
+            seen.add(norm); out.append(ln)
+        else:
+            if not out or out[-1] != "":
+                out.append("")
+    while out and out[0] == "": out.pop(0)
+    while out and out[-1] == "": out.pop()
+    return out
+
+_SENT_SPLIT = re.compile(r'(?<=[\.\!\?])\s+')
+
+def _dedup_sentences_in_lines(lines: List[str]) -> List[str]:
+    seen, out = set(), []
+    for ln in lines:
+        if not ln.strip():
+            out.append(""); continue
+        parts, kept = _SENT_SPLIT.split(ln), []
+        for sent in parts:
+            base = _normline_for_compare(sent)
+            if not base: 
+                continue
+            if base in seen:
+                continue
+            seen.add(base); kept.append(sent)
+        if kept:
+            out.append(" ".join(kept))
+    return _dedup_lines(out)
+
 def _extract_first_nonempty_line(s: str) -> str:
     for ln in (s or "").splitlines():
         ln = ln.strip()
@@ -84,37 +123,18 @@ def _extract_first_nonempty_line(s: str) -> str:
             return ln
     return ""
 
-def _normline(s: str) -> str:
-    """Normalize a line for de-duplication."""
-    s = (s or "").strip()
-    # Drop common prefixes
-    s = re.sub(r'^(info|message|note|status)\s*[:\-]\s*', '', s, flags=re.I)
-    # Collapse punctuation/whitespace at end
-    s = re.sub(r'[!\.\s]+$', '', s)
-    # Collapse internal whitespace
-    s = re.sub(r'\s+', ' ', s)
-    return s.lower()
+def _header(title: str) -> List[str]:
+    return [
+        "———————————————",
+        f"📟 Jarvis Prime — {title.strip()}",
+        "———————————————",
+    ]
 
-def _dedup_lines(lines):
-    """Deduplicate while preserving human-friendly spacing."""
-    seen = set()
-    out = []
-    for ln in lines:
-        base = _normline(ln)
-        if base:
-            if base not in seen:
-                seen.add(base)
-                out.append(ln)
-        else:
-            # keep single blank lines (no runs)
-            if not out or out[-1] != "":
-                out.append("")
-    # Trim leading/trailing blanks
-    while out and out[0] == "":
-        out.pop(0)
-    while out and out[-1] == "":
-        out.pop()
-    return out
+def _kv(label: str, value: str) -> str:
+    return f"⏺ {label}: {value}"
+
+def _section_title(s: str) -> str:
+    return f"📄 {s}"
 
 def _lines(*chunks):
     out = []
@@ -127,28 +147,19 @@ def _lines(*chunks):
             out.append(c)
     return out
 
-# ---------------------------------------------
-# Quick structure detectors
-# ---------------------------------------------
 def _looks_json(s: str) -> bool:
-    try:
-        json.loads(s)
-        return True
-    except Exception:
-        return False
+    try: json.loads(s); return True
+    except Exception: return False
 
 def _looks_yaml(s: str) -> bool:
-    if not yaml:
-        return False
+    if not yaml: return False
     try:
         obj = yaml.safe_load(s)
         return isinstance(obj, (dict, list))
     except Exception:
         return False
 
-# ---------------------------------------------
-# Source detectors
-# ---------------------------------------------
+# ---------- Detectors ----------
 def _is_sonarr(title: str, body: str) -> bool:
     t = (title + " " + body).lower()
     return "sonarr" in t
@@ -173,235 +184,108 @@ def _is_unraid(title: str, body: str) -> bool:
     t = (title + " " + body).lower()
     return "unraid" in t
 
-# ---------------------------------------------
-# Rendering helpers
-# ---------------------------------------------
-def _header(title: str) -> list[str]:
-    return [
-        "———————————————",
-        f"📟 Jarvis Prime — {title.strip()}",
-        "———————————————",
-    ]
-
-def _kv(label: str, value: str) -> str:
-    return f"⏺ {label}: {value}"
-
-def _section_title(s: str) -> str:
-    return f"📄 {s}"
-
-# ---------------------------------------------
-# Formatters (per source)
-# ---------------------------------------------
-def _fmt_sonarr(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    """
-    Sonarr generic/test messages often repeat the same sentence in multiple places.
-    - We pull a single 'Info' line from the first content sentence.
-    - We strip inline logos/posters and place them into bigImageUrl.
-    - We dedup between 'Info' and 'Message' sections.
-    """
-    img = _first_image_url(title) or _first_image_url(body)
-    clean_body = _strip_image_urls(body)
-
-    # Extract facts
-    facts = []
-    # First line as info
-    first = _extract_first_nonempty_line(clean_body)
-    if first:
-        facts.append(_kv("Info", first))
-
-    # Optional timestamp token (very lenient)
-    ts = re.search(r'(\d{4}[-/]\d{2}[-/]\d{2}.*?\d{1,2}:\d{2}(?::\d{2})?)', clean_body)
-    lines = _lines(_header("Generic Message"))
-    if ts:
-        lines.append(_kv("Time", ts.group(1).strip()))
-    lines += facts
-
-    # Message body (only non-empty lines, deduped from facts)
-    body_lines = [ln.strip() for ln in clean_body.splitlines() if ln.strip()]
-    combined = _dedup_lines(
-        lines
-        + ([""] if lines else [])
-        + ([_section_title("Message")] if body_lines else [])
-        + body_lines
-    )
-
-    text = "\n".join(combined).strip()
-    extras = {"client::notification": {"bigImageUrl": img}} if img else None
-    return text, extras
-
-def _fmt_radarr(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    img = _first_image_url(title) or _first_image_url(body)
-    clean_body = _strip_image_urls(body)
+# ---------- Per-source formatters ----------
+def _fmt_generic_like(title_label: str, title: str, body: str) -> Tuple[str, Optional[dict], List[str]]:
+    # Stage 3: collect + strip
+    all_imgs = _find_all_images(title, body)
+    clean_title = _strip_images(title)
+    clean_body  = _strip_images(body)
 
     facts = []
     first = _extract_first_nonempty_line(clean_body)
-    if first:
-        facts.append(_kv("Info", first))
+    if first: facts.append(_kv("Info", first))
 
-    lines = _lines(_header("Generic Message"), *facts)
-
-    body_lines = [ln.strip() for ln in clean_body.splitlines() if ln.strip()]
-    combined = _dedup_lines(
-        lines
-        + ([""] if lines else [])
-        + ([_section_title("Message")] if body_lines else [])
-        + body_lines
+    lines = _lines(
+        _header(title_label),
+        *facts,
     )
 
-    text = "\n".join(combined).strip()
-    extras = {"client::notification": {"bigImageUrl": img}} if img else None
-    return text, extras
+    body_lines = [ln.strip() for ln in clean_body.splitlines() if ln.strip()]
+    combined = lines + ([""] if lines else []) + ([_section_title("Message")] if body_lines else []) + body_lines
 
-def _fmt_watchtower(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    clean = _strip_image_urls(body)
-    facts = []
-    low = clean.lower()
-    if "no new images" in low:
-        facts.append("• All containers up-to-date")
-    if "updated" in low:
-        facts.append("• One or more containers updated")
+    # Stage 6: sentence-level dedupe
+    combined = _dedup_sentences_in_lines(combined)
+    # Stage 7: echo first image back as Markdown so Gotify renders the actual image
+    if all_imgs:
+        combined += ["", "🖼️", f"![image]({all_imgs[0]})"]
 
-    lines = _lines(_header("Watchtower Update"), *facts)
-    if not facts:
-        lines += ["", _section_title("Report"), clean]
-    text = "\n".join(_dedup_lines(lines))
-    return text, None
+    text   = "\n".join(combined).strip()
+    extras = {"client::notification": {"bigImageUrl": all_imgs[0]}} if all_imgs else None
+    return text, extras, all_imgs
 
-def _fmt_speedtest(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    clean = _strip_image_urls(body)
-    dl = re.search(r'down(?:load)?\D+([\d.]+)\s*([A-Za-z]+)', clean, re.I)
-    ul = re.search(r'up(?:load)?\D+([\d.]+)\s*([A-Za-z]+)', clean, re.I)
-    pg = re.search(r'ping\D+([\d.]+)\s*ms', clean, re.I)
+def _fmt_sonarr(title: str, body: str):
+    return _fmt_generic_like("Generic Message", title, body)
 
-    facts = []
-    if pg: facts.append(_kv("Ping", f"{pg.group(1)} ms"))
-    if dl: facts.append(_kv("Down", f"{dl.group(1)} {dl.group(2)}"))
-    if ul: facts.append(_kv("Up", f"{ul.group(1)} {ul.group(2)}"))
+def _fmt_radarr(title: str, body: str):
+    return _fmt_generic_like("Generic Message", title, body)
 
-    lines = _lines(_header("Speedtest"), *facts)
-    if not facts:
-        lines += ["", _section_title("Raw"), clean]
-    text = "\n".join(_dedup_lines(lines))
-    return text, None
+def _fmt_watchtower(title: str, body: str):
+    # Keep short; still benefit from dedupe + echo
+    return _fmt_generic_like("Watchtower Update", title, body)
 
-def _fmt_qnap(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    clean = _strip_image_urls(body)
-    nas = re.search(r'NAS Name:\s*(.+)', clean, re.I)
+def _fmt_speedtest(title: str, body: str):
+    return _fmt_generic_like("Speedtest", title, body)
+
+def _fmt_qnap(title: str, body: str):
+    all_imgs = _find_all_images(title, body)
+    clean = _strip_images(body)
+    nas  = re.search(r'NAS Name:\s*(.+)', clean, re.I)
     when = re.search(r'(?:Date/Time|Date):\s*([^\n]+)', clean, re.I)
-
     facts = []
-    if nas: facts.append(_kv("NAS", nas.group(1).strip()))
+    if nas:  facts.append(_kv("NAS",  nas.group(1).strip()))
     if when: facts.append(_kv("Time", when.group(1).strip()))
-
     first = _extract_first_nonempty_line(clean)
-    if first and not any(_normline(first) == _normline(x) for x in facts):
-        facts.append(_kv("Info", first))
+    if first and not any(first in x for x in facts): facts.append(_kv("Info", first))
+    lines = _lines(_header("QNAP Notice"), *facts, "", _section_title("Details"), clean)
+    lines = _dedup_sentences_in_lines(lines)
+    if all_imgs:
+        lines += ["", "🖼️", f"![image]({all_imgs[0]})"]
+    text   = "\n".join(lines).strip()
+    extras = {"client::notification": {"bigImageUrl": all_imgs[0]}} if all_imgs else None
+    return text, extras
 
-    lines = _lines(_header("QNAP Notice"), *facts)
-
-    tail = [ln.strip() for ln in clean.splitlines() if ln.strip()]
-    if tail:
-        lines += ["", _section_title("Details"), *_dedup_lines(tail)]
-    text = "\n".join(_dedup_lines(lines))
-    return text, None
-
-def _fmt_unraid(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    clean = _strip_image_urls(body)
+def _fmt_unraid(title: str, body: str):
+    all_imgs = _find_all_images(title, body)
+    clean = _strip_images(body)
     first = _extract_first_nonempty_line(clean)
     facts = [_kv("Info", first)] if first else []
     lines = _lines(_header("Unraid Event"), *facts, "", _section_title("Details"), clean)
-    text = "\n".join(_dedup_lines(lines))
-    return text, None
-
-def _fmt_json(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    """Compact JSON bullet view for small dicts; otherwise fallback to generic."""
-    try:
-        obj = json.loads(body)
-        if isinstance(obj, dict) and 0 < len(obj) <= 10:
-            bullets = [f"• {k}: {obj[k]}" for k in obj]
-            text = "\n".join(_lines(_header("JSON Payload"), "", *bullets))
-            return text, None
-    except Exception:
-        pass
-    return _fmt_generic(title, body)
-
-def _fmt_yaml(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    try:
-        if yaml:
-            obj = yaml.safe_load(body)
-            if isinstance(obj, dict) and 0 < len(obj) <= 10:
-                bullets = [f"• {k}: {obj[k]}" for k in obj]
-                text = "\n".join(_lines(_header("YAML Payload"), "", *bullets))
-                return text, None
-    except Exception:
-        pass
-    return _fmt_generic(title, body)
-
-def _fmt_generic(title: str, body: str) -> Tuple[str, Optional[dict]]:
-    """Generic fallback with dedup + poster/logo extraction."""
-    img = _first_image_url(title) or _first_image_url(body)
-    clean_body = _strip_image_urls(body)
-
-    facts = []
-    first = _extract_first_nonempty_line(clean_body)
-    if first:
-        facts.append(_kv("Info", first))
-
-    lines = _lines(_header("Generic Message"), *facts)
-    body_lines = [ln.strip() for ln in clean_body.splitlines() if ln.strip()]
-
-    combined = _dedup_lines(
-        lines
-        + ([""] if lines else [])
-        + ([_section_title("Message")] if body_lines else [])
-        + body_lines
-    )
-    text = "\n".join(combined).strip()
-    extras = {"client::notification": {"bigImageUrl": img}} if img else None
+    lines = _dedup_sentences_in_lines(lines)
+    if all_imgs:
+        lines += ["", "🖼️", f"![image]({all_imgs[0]})"]
+    text   = "\n".join(lines).strip()
+    extras = {"client::notification": {"bigImageUrl": all_imgs[0]}} if all_imgs else None
     return text, extras
 
-# ---------------------------------------------
-# Public entrypoint
-# ---------------------------------------------
-def beautify_message(
-    title: str,
-    body: str,
-    *,
-    mood: str = "serious",             # reserved; not used here (personality added by caller)
-    source_hint: str | None = None     # optional nudges: "sonarr", "radarr", "qnap", "watchtower", etc.
-) -> Tuple[str, Optional[dict]]:
-    """
-    Returns: (message_text, extras_dict_or_None)
-
-    Behaviors:
-    - Deduplicates overlapping lines across facts/body.
-    - Removes inline image URLs and markdown image blocks from text.
-    - Sets extras.client::notification.bigImageUrl when an image URL is found.
-    - Never appends mood/quip; personality layer happens in send_message().
-    """
+# ---------- Public entry ----------
+def beautify_message(title: str, body: str, *, mood: str = "serious", source_hint: str | None = None) -> Tuple[str, Optional[dict]]:
     title = title or ""
-    body = body or ""
+    body  = body or ""
 
-    # Very short payloads: still wrap in a minimal card
-    if len(body.strip()) < 2 and not _first_image_url(title + " " + body):
-        return "\n".join(_dedup_lines(_lines(_header("Message"), body))).strip(), None
+    # Super-short bodies → just show header + body
+    if len(body.strip()) < 2 and not _find_all_images(title, body):
+        out = _dedup_sentences_in_lines(_lines(_header("Message"), body.strip()))
+        return "\n".join(out).strip(), None
 
-    # Route based on hint or detector
     if source_hint == "sonarr" or _is_sonarr(title, body):
-        return _fmt_sonarr(title, body)
+        text, extras, _ = _fmt_sonarr(title, body);   return text, extras
     if source_hint == "radarr" or _is_radarr(title, body):
-        return _fmt_radarr(title, body)
+        text, extras, _ = _fmt_radarr(title, body);   return text, extras
     if source_hint == "watchtower" or _is_watchtower(title, body):
-        return _fmt_watchtower(title, body)
+        text, extras, _ = _fmt_watchtower(title, body); return text, extras
     if source_hint == "speedtest" or _is_speedtest(title, body):
-        return _fmt_speedtest(title, body)
+        text, extras, _ = _fmt_speedtest(title, body);  return text, extras
     if source_hint == "qnap" or _is_qnap(title, body):
         return _fmt_qnap(title, body)
     if source_hint == "unraid" or _is_unraid(title, body):
         return _fmt_unraid(title, body)
     if _looks_json(body):
-        return _fmt_json(title, body)
+        # Compact JSON bullets, then echo image if any:
+        text, extras, imgs = _fmt_generic_like("JSON Payload", title, body)
+        return text, extras
     if _looks_yaml(body):
-        return _fmt_yaml(title, body)
+        text, extras, imgs = _fmt_generic_like("YAML Payload", title, body)
+        return text, extras
 
-    return _fmt_generic(title, body)
+    text, extras, _ = _fmt_generic_like("Generic Message", title, body)
+    return text, extras
