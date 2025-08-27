@@ -3,12 +3,6 @@ import json
 from datetime import datetime
 from typing import Dict, Tuple, Any, List
 
-# The digest builder is defensive: it will try to use optional modules if present.
-# Nothing here will crash the bot if a module/section is unavailable.
-
-# -----------------------------
-# Safe import helpers
-# -----------------------------
 def _try_import(name: str):
     try:
         return __import__(name)
@@ -20,9 +14,6 @@ _kuma = _try_import("uptimekuma")
 _weather = _try_import("weather")
 _tech = _try_import("technitium")
 
-# -----------------------------
-# Tiny utils
-# -----------------------------
 def _bool(v: Any, default: bool = False) -> bool:
     if isinstance(v, bool):
         return v
@@ -54,16 +45,12 @@ def _bullet_lines(items: List[str], limit: int = 5) -> str:
 # ARR section
 # -----------------------------
 def _arr_counts(options: Dict[str, Any]) -> Tuple[str, str]:
-    """
-    Returns (summary_line, detail_block)
-    """
     if not _arr or (not _bool(options.get("radarr_enabled"), False) and not _bool(options.get("sonarr_enabled"), False)):
         return ("", "")
 
     movies_count = None
     series_count = None
 
-    # Try several helpers for counts
     try:
         if hasattr(_arr, "get_counts"):
             counts = _arr.get_counts(options)  # expected: {"movies": N, "series": M}
@@ -77,18 +64,20 @@ def _arr_counts(options: Dict[str, Any]) -> Tuple[str, str]:
     except Exception:
         pass
 
-    left = f"Series: {series_count if isinstance(series_count, int) else '?'}"
-    right = f"Movies: {movies_count if isinstance(movies_count, int) else '?'}"
-    summary = f"{left} | {right}"
+    summary_parts = []
+    if isinstance(series_count, int):
+        summary_parts.append(f"Series: {series_count}")
+    if isinstance(movies_count, int):
+        summary_parts.append(f"Movies: {movies_count}")
+    summary = " | ".join(summary_parts)
 
-    # Upcoming (today/top)
     upcoming_lines: List[str] = []
     try:
         if hasattr(_arr, "get_upcoming"):
             ups = _arr.get_upcoming(options, limit=5)  # list[str]
             upcoming_lines = [str(x) for x in (ups or [])]
         elif hasattr(_arr, "safe_today_upcoming"):
-            ups = _arr.safe_today_upcoming(options, limit=5)  # list[str]
+            ups = _arr.safe_today_upcoming(options, limit=5)
             upcoming_lines = [str(x) for x in (ups or [])]
         elif hasattr(_arr, "list_upcoming_series") or hasattr(_arr, "list_upcoming_movies"):
             ups = []
@@ -103,7 +92,7 @@ def _arr_counts(options: Dict[str, Any]) -> Tuple[str, str]:
     if upcoming_lines:
         details = _bullet_lines(upcoming_lines, limit=5)
     else:
-        details = "_No upcoming in the next 24h._"
+        details = ""  # no filler text, just empty
 
     return (summary, details)
 
@@ -115,7 +104,7 @@ def _kuma_summary(options: Dict[str, Any]) -> str:
         return ""
     try:
         if hasattr(_kuma, "get_summary"):
-            s = _kuma.get_summary(options)  # expected: {"up": N, "down": M}
+            s = _kuma.get_summary(options)
             up = _int(s.get("up"), 0)
             down = _int(s.get("down"), 0)
         else:
@@ -134,81 +123,37 @@ def _kuma_summary(options: Dict[str, Any]) -> str:
         return ""
 
 # -----------------------------
-# Weather section (robust one-liner)
+# Weather section
 # -----------------------------
-_CONDITION_WORDS = (
-    "sunny","clear","cloud","rain","showers","storm","thunder","wind","breeze",
-    "fog","mist","snow","hail","overcast","drizzle","partly","mostly","humid","dry","cold","hot","warm","cool"
-)
-
-def _pick_weather_line(text: str) -> str:
-    """
-    Choose the first meaningful line: contains a digit or a known condition word,
-    not just a header like 'Today — City'.
-    """
-    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
-    for l in lines:
-        low = l.lower()
-        if any(w in low for w in _CONDITION_WORDS) or any(ch.isdigit() for ch in l) or "°" in l:
-            # avoid pure headings like 'today — <city>'
-            if not (low.startswith("today") and "—" in l and not any(ch.isdigit() for ch in l) and "°" not in l):
-                return l
-    # fallback: if first line is all we have, return it; else return empty
-    return lines[0] if lines else ""
-
 def _weather_snapshot(options: Dict[str, Any]) -> str:
-    """
-    Always try to return a brief one-liner for today’s weather.
-    Tries, in order:
-      1) weather.brief(options)
-      2) weather.current_summary(options)
-      3) weather.handle_weather_command('forecast today') then 'forecast', extracting the first meaningful line.
-    """
     if not _weather or not _bool(options.get("weather_enabled"), False):
         return ""
-    # 1) brief()
     try:
+        # If weather module has richer snapshot
+        if hasattr(_weather, "snapshot"):
+            snap = _weather.snapshot(options) or {}
+            # try to combine temp range + condition + wind
+            rng = snap.get("range") or ""
+            cond = snap.get("condition") or snap.get("summary") or ""
+            wind = snap.get("wind") or ""
+            parts = [str(x) for x in (rng, cond, wind) if x]
+            return " | ".join(parts)
+        # fallbacks
         if hasattr(_weather, "brief"):
-            s = str(_weather.brief(options)).strip()
-            s2 = _pick_weather_line(s)
-            if s2:
-                return s2
-    except Exception:
-        pass
-    # 2) current_summary()
-    try:
+            return str(_weather.brief(options)).strip()
         if hasattr(_weather, "current_summary"):
-            s = str(_weather.current_summary(options)).strip()
-            s2 = _pick_weather_line(s)
-            if s2:
-                return s2
+            return str(_weather.current_summary(options)).strip()
     except Exception:
         pass
-    # 3) handle_weather_command(...)
-    try:
-        if hasattr(_weather, "handle_weather_command"):
-            for cmd in ("forecast today", "forecast"):
-                resp = _weather.handle_weather_command(cmd)
-                text = ""
-                if isinstance(resp, tuple) and resp:
-                    text = str(resp[0] or "")
-                elif isinstance(resp, str):
-                    text = resp
-                s2 = _pick_weather_line(text.strip())
-                if s2:
-                    return s2
-    except Exception:
-        pass
-    return ""  # last resort
+    return ""
 
 # -----------------------------
-# Technitium section (Total | Blocked | Server Failure)
+# DNS section
 # -----------------------------
 def _dns_note(options: Dict[str, Any]) -> str:
     if not _tech or not _bool(options.get("technitium_enabled"), False):
         return ""
     try:
-        # Prefer explicit helpers we added in technitium.py
         if hasattr(_tech, "brief"):
             return str(_tech.brief(options)).strip()
         if hasattr(_tech, "stats"):
@@ -230,41 +175,30 @@ def _dns_note(options: Dict[str, Any]) -> str:
 # Public API
 # -----------------------------
 def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
-    """
-    Build the daily digest message.
-    Returns: (title, message, priority)
-    Priority: 5 normal; bump to 7 if Kuma shows any DOWN.
-    """
     title = f"📰 Daily Digest — {datetime.now().strftime('%a %d %b %Y')}"
 
-    # ARR
     arr_summary, arr_details = _arr_counts(options)
     arr_block = ""
     if arr_summary or arr_details:
         body = arr_summary
         if arr_details:
-            body = f"{arr_summary}\n{arr_details}"
+            body = f"{arr_summary}\n{arr_details}" if arr_summary else arr_details
         arr_block = _section("🎬 Media", body)
 
-    # Kuma
     kuma_line = _kuma_summary(options)
     kuma_block = _section("🩺 Uptime Kuma", kuma_line) if kuma_line else ""
 
-    # DNS (Technitium)
     dns_line = _dns_note(options)
     dns_block = _section("🧠 Technitium DNS", dns_line) if dns_line else ""
 
-    # Weather — include only if we have meaningful content
     weather_line = _weather_snapshot(options)
     weather_block = _section("⛅ Weather", weather_line) if weather_line else ""
 
-    # Compose
     parts = [arr_block, kuma_block, dns_block, weather_block]
     message = "\n".join([p for p in parts if p]).strip()
     if not message:
         message = "_No modules provided data for the digest today._"
 
-    # Priority bump if any DOWN detected
     priority = 5
     if kuma_line and ("down" in kuma_line.lower() or "❗" in kuma_line):
         priority = 7
