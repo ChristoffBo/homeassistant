@@ -47,13 +47,13 @@ export technitium_api_key=$(jq -r '.technitium_api_key // ""' "$CONFIG_PATH")
 export technitium_user=$(jq -r '.technitium_user // ""' "$CONFIG_PATH")
 export technitium_pass=$(jq -r '.technitium_pass // ""' "$CONFIG_PATH")
 
-# Uptime Kuma (LAN metrics mode)
+# Uptime Kuma
 export uptimekuma_enabled=$(jq -r '.uptimekuma_enabled' "$CONFIG_PATH")
 export uptimekuma_url=$(jq -r '.uptimekuma_url' "$CONFIG_PATH")
 export uptimekuma_api_key=$(jq -r '.uptimekuma_api_key // ""' "$CONFIG_PATH")
 export uptimekuma_status_slug=$(jq -r '.uptimekuma_status_slug // ""' "$CONFIG_PATH")
 
-# SMTP (intake)
+# SMTP intake
 export smtp_enabled=$(jq -r '.smtp_enabled' "$CONFIG_PATH")
 export smtp_bind=$(jq -r '.smtp_bind // "0.0.0.0"' "$CONFIG_PATH")
 export smtp_port=$(jq -r '.smtp_port // 2525' "$CONFIG_PATH")
@@ -65,7 +65,7 @@ export smtp_allow_html=$(jq -r '.smtp_allow_html // false' "$CONFIG_PATH")
 export smtp_priority_default=$(jq -r '.smtp_priority_default // 5' "$CONFIG_PATH")
 export smtp_priority_map=$(jq -r '.smtp_priority_map // "{}"' "$CONFIG_PATH")
 
-# Proxy (Gotify + ntfy forwarder)
+# Proxy (Gotify + ntfy)
 export proxy_enabled=$(jq -r '.proxy_enabled' "$CONFIG_PATH")
 export proxy_bind=$(jq -r '.proxy_bind // "0.0.0.0"' "$CONFIG_PATH")
 export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
