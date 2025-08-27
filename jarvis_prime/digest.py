@@ -139,63 +139,29 @@ def _weather_snapshot(options: Dict[str, Any]) -> str:
     return ""
 
 # -----------------------------
-# Technitium section (Christoff’s required fields)
+# Technitium section (Total | Blocked | Server Failure)
 # -----------------------------
 def _dns_note(options: Dict[str, Any]) -> str:
-    """
-    Show exactly what Christoff wants:
-    - Total Queries (cumulative for the selected window the module returns)
-    - Blocked (total)
-    - Server Failure (total)
-    The technitium.py module may expose different helpers; we try them in order.
-    """
     if not _tech or not _bool(options.get("technitium_enabled"), False):
         return ""
-
-    # Helper to format ints with thousands separators
-    def fmt_i(v):
-        try:
-            return f"{int(v):,}"
-        except Exception:
-            return str(v)
-
-    total = blocked = server_fail = None
-
     try:
-        # 1) Prefer a compact "stats" or "summary" helper if you have one
+        # Prefer explicit helpers we added in technitium.py
+        if hasattr(_tech, "brief"):
+            return str(_tech.brief(options)).strip()
         if hasattr(_tech, "stats"):
-            s = _tech.stats(options) or {}
-            total = s.get("total_queries", s.get("queries_total", s.get("total")))
-            blocked = s.get("blocked_total", s.get("blocked"))
-            server_fail = s.get("server_failure_total", s.get("server_failure", s.get("servfail")))
-        # 2) Fallback: generic status() dict with common keys
-        if (total is None or blocked is None or server_fail is None) and hasattr(_tech, "status"):
-            s = _tech.status(options) or {}
-            total = total if total is not None else s.get("total_queries")
-            blocked = blocked if blocked is not None else s.get("blocked_total", s.get("blocked"))
-            server_fail = server_fail if server_fail is not None else s.get("server_failure_total", s.get("server_failure"))
-        # 3) Last resort: try a 'dashboard' or 'today' style helper names
-        if (total is None or blocked is None or server_fail is None):
-            for fname in ("dashboard", "today", "overview", "get_metrics"):
-                if hasattr(_tech, fname):
-                    s = getattr(_tech, fname)(options) or {}
-                    total = total if total is not None else s.get("total_queries", s.get("queries_total", s.get("total")))
-                    blocked = blocked if blocked is not None else s.get("blocked_total", s.get("blocked"))
-                    server_fail = server_fail if server_fail is not None else s.get("server_failure_total", s.get("server_failure", s.get("servfail")))
-                    break
+            st = _tech.stats(options) or {}
+            def fmt_i(v):
+                try:
+                    return f"{int(v):,}"
+                except Exception:
+                    return str(v)
+            total = fmt_i(st.get("total_queries", 0))
+            blocked = fmt_i(st.get("blocked_total", 0))
+            servfail = fmt_i(st.get("server_failure_total", 0))
+            return f"Total: {total} | Blocked: {blocked} | Server Failure: {servfail}"
     except Exception:
         pass
-
-    # Build the line; if something is missing, we just skip that part
-    parts = []
-    if total is not None:
-        parts.append(f"Total: {fmt_i(total)}")
-    if blocked is not None:
-        parts.append(f"Blocked: {fmt_i(blocked)}")
-    if server_fail is not None:
-        parts.append(f"Server Failure: {fmt_i(server_fail)}")
-
-    return " | ".join(parts)
+    return ""
 
 # -----------------------------
 # Public API
@@ -221,7 +187,7 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
     kuma_line = _kuma_summary(options)
     kuma_block = _section("🩺 Uptime Kuma", kuma_line) if kuma_line else ""
 
-    # DNS (Technitium) — now shows Total | Blocked | Server Failure
+    # DNS (Technitium)
     dns_line = _dns_note(options)
     dns_block = _section("🧠 Technitium DNS", dns_line) if dns_line else ""
 
@@ -237,7 +203,7 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
 
     # Priority bump if any DOWN detected
     priority = 5
-    if kuma_line and ("Down" in kuma_line or "down" in kuma_line or "❗" in kuma_line):
+    if kuma_line and ("down" in kuma_line.lower() or "❗" in kuma_line):
         priority = 7
 
     return title, message, priority
