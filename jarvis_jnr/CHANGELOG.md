@@ -1,9 +1,6 @@
 
-## latest (2025-08-26 16:00:00)
-- Technitium DNS wired in.
-- Commands dns flush and dns status
-- Still testing
-- Also wired in Jarvis Joke give you a random joke for fun
+## This is where prime started, smaller i just keep him around :)
+
 
 
 
