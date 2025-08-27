@@ -9,7 +9,7 @@
   "init": false,
   "ingress": false,
 
-  // EXPOSE INBOUND PORTS HERE
+ 
   "ports": {
     "2525/tcp": 2525
   },
