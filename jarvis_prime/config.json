@@ -1,0 +1,100 @@
+{
+  "name": "Jarvis Prime",
+  "version": "1.0.0",
+  "slug": "jarvis_prime",
+  "description": "Next-gen Gotify assistant (modular, moods, digest, uptime monitor).",
+  "arch": ["aarch64", "amd64", "armv7"],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "ingress": false,
+  "map": ["share:rw"],
+  "options": {
+    "bot_name": "Jarvis Prime",
+    "bot_icon": "🧠",
+    "gotify_url": "http://10.0.0.99:8091",
+    "gotify_client_token": "CHANGE_ME_CLIENT",
+    "gotify_app_token": "CHANGE_ME_APP",
+    "jarvis_app_name": "Jarvis",
+    "retention_hours": 24,
+    "beautify_enabled": true,
+    "silent_repost": true,
+
+    "chat_enabled": true,
+    "ai_checkins_enabled": true,
+    "cache_refresh_minutes": 60,
+
+    "weather_enabled": true,
+    "weather_lat": -26.2041,
+    "weather_lon": 28.0473,
+    "weather_city": "Johannesburg",
+    "weather_time": "07:00",
+
+    "digest_enabled": true,
+    "digest_time": "08:00",
+
+    "radarr_enabled": true,
+    "radarr_url": "http://10.0.0.240:7878",
+    "radarr_api_key": "CHANGE_ME",
+    "radarr_time": "07:30",
+
+    "sonarr_enabled": true,
+    "sonarr_url": "http://10.0.0.240:8989",
+    "sonarr_api_key": "CHANGE_ME",
+    "sonarr_time": "07:30",
+
+    "uptimekuma_enabled": true,
+    "uptimekuma_url": "http://10.0.0.240:3001",
+    "uptimekuma_api_key": "CHANGE_ME",
+
+    "technitium_enabled": false,
+    "technitium_url": "",
+    "technitium_user": "",
+    "technitium_pass": "",
+    "technitium_api_key": ""
+  },
+  "schema": {
+    "bot_name": "str",
+    "bot_icon": "str",
+    "gotify_url": "str",
+    "gotify_client_token": "str",
+    "gotify_app_token": "str",
+    "jarvis_app_name": "str",
+    "retention_hours": "int",
+    "beautify_enabled": "bool",
+    "silent_repost": "bool",
+
+    "chat_enabled": "bool",
+    "ai_checkins_enabled": "bool",
+    "cache_refresh_minutes": "int",
+
+    "weather_enabled": "bool",
+    "weather_lat": "float",
+    "weather_lon": "float",
+    "weather_city": "str",
+    "weather_time": "str",
+
+    "digest_enabled": "bool",
+    "digest_time": "str",
+
+    "radarr_enabled": "bool",
+    "radarr_url": "str",
+    "radarr_api_key": "str",
+    "radarr_time": "str",
+
+    "sonarr_enabled": "bool",
+    "sonarr_url": "str",
+    "sonarr_api_key": "str",
+    "sonarr_time": "str",
+
+    "uptimekuma_enabled": "bool",
+    "uptimekuma_url": "str",
+    "uptimekuma_api_key": "str",
+
+    "technitium_enabled": "bool",
+    "technitium_url": "str",
+    "technitium_user": "str",
+    "technitium_pass": "str",
+    "technitium_api_key": "str"
+  }
+}
