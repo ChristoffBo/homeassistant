@@ -24,6 +24,7 @@ COPY aliases.py /app/aliases.py
 COPY personality.py /app/personality.py
 COPY smtp_server.py /app/smtp_server.py
 COPY proxy.py /app/proxy.py
+COPY beautify.py /app/beautify.py
 
 RUN chmod +x /run.sh
 
