@@ -17,23 +17,32 @@ APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN")
 APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
-SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1", "true", "yes")
-BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1", "true", "yes")
+SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
+BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
 
 # Feature toggles (env defaults; config can override)
-RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1", "true", "yes")
-SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1", "true", "yes")
-WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1", "true", "yes")
-CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1", "true", "yes")
-DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1", "true", "yes")
-TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1", "true", "yes")
-KUMA_ENABLED = os.getenv("uptimekuma_enabled", "false").lower() in ("1", "true", "yes")
+RADARR_ENABLED = os.getenv("radarr_enabled", "false").lower() in ("1","true","yes")
+SONARR_ENABLED = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
+WEATHER_ENABLED = os.getenv("weather_enabled", "false").lower() in ("1","true","yes")
+CHAT_ENABLED_ENV = os.getenv("chat_enabled", "false").lower() in ("1","true","yes")
+DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1","true","yes")
+TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
+KUMA_ENABLED = os.getenv("uptimekuma_enabled", "false").lower() in ("1","true","yes")
 
-AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1", "true", "yes")
+AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1","true","yes")
 CACHE_REFRESH_MINUTES = int(os.getenv("cache_refresh_minutes", "60"))
 
 # Mood
 CHAT_MOOD = "Calm"
+
+# Uptime tracking for heartbeat
+BOOT_TIME = datetime.now()
+
+# Heartbeat config defaults
+HEARTBEAT_ENABLED = False
+HEARTBEAT_INTERVAL_MIN = 120
+HEARTBEAT_START = "06:00"
+HEARTBEAT_END = "20:00"
 
 # -----------------------------
 # Load /data/options.json overrides
@@ -60,6 +69,13 @@ try:
     DIGEST_ENABLED_FILE = merged.get("digest_enabled", DIGEST_ENABLED_ENV)
 
     CHAT_MOOD = str(merged.get("personality_mood", merged.get("chat_mood", CHAT_MOOD)))
+
+    # Heartbeat config
+    HEARTBEAT_ENABLED = bool(merged.get("heartbeat_enabled", HEARTBEAT_ENABLED))
+    HEARTBEAT_INTERVAL_MIN = int(merged.get("heartbeat_interval_minutes", HEARTBEAT_INTERVAL_MIN))
+    HEARTBEAT_START = str(merged.get("heartbeat_start", HEARTBEAT_START))
+    HEARTBEAT_END = str(merged.get("heartbeat_end", HEARTBEAT_END))
+
 except Exception as e:
     print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
 
@@ -123,7 +139,7 @@ def try_load_module(modname, label):
     if modname == "arr":
         enabled = True
     else:
-        enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1", "true", "yes")
+        enabled = os.getenv(f"{modname}_enabled", "false").lower() in ("1","true","yes")
         if not enabled:
             try:
                 with open("/data/options.json", "r") as f:
@@ -166,6 +182,104 @@ def startup_poster():
     lines.append(mod_line("🧬", "DNS (Technitium)", TECHNITIUM_ENABLED))
     lines.append("\nStatus: All systems nominal")
     return "\n".join(lines)
+
+# -----------------------------
+# Heartbeat helpers
+# -----------------------------
+def _parse_hhmm(s: str):
+    try:
+        hh, mm = s.split(":")
+        return int(hh)*60 + int(mm)
+    except Exception:
+        return 0
+
+def _in_window(now_dt: datetime, start_hhmm: str, end_hhmm: str):
+    mins = now_dt.hour*60 + now_dt.minute
+    a = _parse_hhmm(start_hhmm)
+    b = _parse_hhmm(end_hhmm)
+    if a == b:
+        return True
+    if a < b:
+        return a <= mins <= b
+    return mins >= a or mins <= b
+
+def _fmt_uptime():
+    delta = datetime.now() - BOOT_TIME
+    total_min = int(delta.total_seconds() // 60)
+    h, m = divmod(total_min, 60)
+    d, h = divmod(h, 24)
+    parts = []
+    if d: parts.append(f"{d}d")
+    if h: parts.append(f"{h}h")
+    parts.append(f"{m}m")
+    return " ".join(parts)
+
+def send_heartbeat_if_window():
+    try:
+        if not HEARTBEAT_ENABLED:
+            return
+        now = datetime.now()
+        if not _in_window(now, HEARTBEAT_START, HEARTBEAT_END):
+            return
+
+        lines = []
+        lines.append("🫀 Heartbeat — Jarvis Prime alive")
+        lines.append(f"Time: {now.strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"Uptime: {_fmt_uptime()}")
+        lines.append("")
+
+        # Kuma: only DOWN services (if helper exists)
+        kuma_line = None
+        try:
+            if "uptimekuma" in extra_modules and hasattr(extra_modules["uptimekuma"], "get_down_services"):
+                downs = extra_modules["uptimekuma"].get_down_services()
+                if isinstance(downs, (list, tuple)) and len(downs) > 0:
+                    names = [str(x) for x in downs][:5]
+                    more = "" if len(downs) <= 5 else f" (+{len(downs)-5} more)"
+                    kuma_line = f"📡 Kuma: DOWN → " + ", ".join(names) + more
+                else:
+                    kuma_line = "📡 Kuma: all green ✅"
+            else:
+                kuma_line = "📡 Kuma: all green ✅"
+        except Exception as e:
+            kuma_line = f"📡 Kuma: status unavailable ({e})"
+        lines.append(kuma_line)
+
+        # ARR: today’s upcoming (short lists)
+        try:
+            if "arr" in extra_modules:
+                mv = extra_modules["arr"].list_upcoming_movies(days=1, limit=3) if hasattr(extra_modules["arr"], "list_upcoming_movies") else []
+                if mv:
+                    lines.append("🎬 Today’s Movies:")
+                    lines += [f"- {x}" for x in mv]
+
+                tv = extra_modules["arr"].list_upcoming_series(days=1, limit=5) if hasattr(extra_modules["arr"], "list_upcoming_series") else []
+                if tv:
+                    if mv:
+                        lines.append("")
+                    lines.append("📺 Today’s Episodes:")
+                    lines += [f"- {x}" for x in tv]
+        except Exception as e:
+            lines.append(f"ARR error: {e}")
+
+        # One short joke inside heartbeat
+        try:
+            if "chat" in extra_modules:
+                jok = extra_modules["chat"].handle_chat_command("joke") if hasattr(extra_modules["chat"], "handle_chat_command") else None
+                if isinstance(jok, tuple):
+                    joke_line = str(jok[0] or "").strip()
+                else:
+                    joke_line = str(jok or "").strip()
+                if joke_line:
+                    lines.append("")
+                    joke_line = joke_line.splitlines()[0].strip()
+                    lines.append(f"🃏 {joke_line}")
+        except Exception:
+            pass
+
+        send_message("Heartbeat", "\n".join(lines), priority=3)
+    except Exception as e:
+        print(f"[{BOT_NAME}] Heartbeat error: {e}")
 
 # -----------------------------
 # Normalization
@@ -273,7 +387,13 @@ async def listen():
                 print(f"[{BOT_NAME}] Error processing: {e}")
 
 def run_scheduler():
+    # keep very light
     schedule.every(RETENTION_HOURS).hours.do(lambda: None)
+
+    # heartbeat job
+    if HEARTBEAT_ENABLED and HEARTBEAT_INTERVAL_MIN > 0:
+        schedule.every(HEARTBEAT_INTERVAL_MIN).minutes.do(send_heartbeat_if_window)
+
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -293,6 +413,7 @@ if __name__ == "__main__":
     try_load_module("uptimekuma", "Kuma")
     try_load_module("digest", "Digest")
 
+    # Startup card
     send_message("Startup", startup_poster(), priority=5)
 
     loop = asyncio.new_event_loop()
