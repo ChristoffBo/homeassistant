@@ -1,6 +1,7 @@
 # /app/bot.py
 import os, json, time, asyncio, requests, websockets, schedule, re
 from datetime import datetime
+from beautify import beautify_message  # ← NEW
 
 # -----------------------------
 # Dynamic modules dict
@@ -312,9 +313,9 @@ def job_daily_digest():
         if not dmod or not hasattr(dmod, "build_digest"):
             return
         title, msg, prio = dmod.build_digest(merged)
-        if _personality:
-            msg += f"\n\n{_personality.quip(CHAT_MOOD)}"
-        send_message(title, msg, priority=prio)
+        # beautify the digest body into a Jarvis card
+        final, bx = beautify_message(title, msg, mood=CHAT_MOOD, source_hint="digest")
+        send_message(title, final, priority=prio, extras=bx)
     except Exception as e:
         print(f"[{BOT_NAME}] Digest error: {e}")
 
@@ -389,7 +390,8 @@ async def listen():
                             "  • longest movie\n"
                             "  • longest series\n"
                         )
-                        send_message("Help", help_text)
+                        final, bx = beautify_message("Help", help_text, mood=CHAT_MOOD, source_hint="help")
+                        send_message("Help", final, extras=bx)
                         handled = True
 
                     # Manual digest
@@ -401,41 +403,44 @@ async def listen():
                     elif TECHNITIUM_ENABLED and "technitium" in extra_modules and re.search(r"\bdns\b|technitium", ncmd):
                         out = extra_modules["technitium"].handle_dns_command(ncmd)
                         if isinstance(out, tuple):
-                            send_message("DNS", out[0], extras=(out[1] if len(out) > 1 else None))
+                            final, bx = beautify_message("DNS", out[0], mood=CHAT_MOOD, source_hint="dns", extras=(out[1] if len(out) > 1 else None))
+                            send_message("DNS", final, extras=bx)
                         elif isinstance(out, str) and out:
-                            send_message("DNS", out)
+                            final, bx = beautify_message("DNS", out, mood=CHAT_MOOD, source_hint="dns")
+                            send_message("DNS", final, extras=bx)
                         handled = True
 
-                    # Uptime Kuma
+                    # Uptime Kuma (kept, but no extra follow-ups per your policy)
                     elif KUMA_ENABLED and "uptimekuma" in extra_modules and re.search(r"\bkuma\b|\buptime\b|\bmonitor", ncmd):
                         out = extra_modules["uptimekuma"].handle_kuma_command(ncmd)
                         if isinstance(out, tuple):
-                            send_message("Kuma", out[0], extras=(out[1] if len(out) > 1 else None))
+                            final, bx = beautify_message("Kuma", out[0], mood=CHAT_MOOD, source_hint="kuma", extras=(out[1] if len(out) > 1 else None))
+                            send_message("Kuma", final, extras=bx)
                         elif isinstance(out, str) and out:
-                            send_message("Kuma", out)
+                            final, bx = beautify_message("Kuma", out, mood=CHAT_MOOD, source_hint="kuma")
+                            send_message("Kuma", final, extras=bx)
                         handled = True
 
                     # Weather
                     elif WEATHER_ENABLED and "weather" in extra_modules and any(w in ncmd for w in ("weather","forecast","temperature","temp","now","today","current","weekly","7day","7-day","7 day")):
                         w = extra_modules["weather"].handle_weather_command(ncmd)
                         if isinstance(w, tuple) and w and w[0]:
-                            msg_text = w[0]
-                            extras = (w[1] if len(w) > 1 else None)
-                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Weather", msg_text, extras=extras)
+                            final, bx = beautify_message("Weather", w[0], mood=CHAT_MOOD, source_hint="weather", extras=(w[1] if len(w) > 1 else None))
+                            send_message("Weather", final, extras=bx)
                         elif isinstance(w, str) and w:
-                            msg_text = w
-                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Weather", msg_text)
+                            final, bx = beautify_message("Weather", w, mood=CHAT_MOOD, source_hint="weather")
+                            send_message("Weather", final, extras=bx)
                         handled = True
 
                     # Chat jokes
                     elif CHAT_ENABLED_FILE and "chat" in extra_modules and ("joke" in ncmd or "pun" in ncmd):
                         c = extra_modules["chat"].handle_chat_command("joke")
                         if isinstance(c, tuple):
-                            send_message("Joke", c[0], extras=(c[1] if len(c) > 1 else None))
+                            final, bx = beautify_message("Joke", c[0], mood=CHAT_MOOD, source_hint="chat", extras=(c[1] if len(c) > 1 else None))
+                            send_message("Joke", final, extras=bx)
                         else:
-                            send_message("Joke", str(c))
+                            final, bx = beautify_message("Joke", str(c), mood=CHAT_MOOD, source_hint="chat")
+                            send_message("Joke", final, extras=bx)
                         handled = True
 
                     # ARR (unconditional handoff)
@@ -443,22 +448,18 @@ async def listen():
                         r = extra_modules["arr"].handle_arr_command(title, message)
                         if isinstance(r, tuple) and r and r[0]:
                             extras = r[1] if len(r) > 1 else None
-                            msg_text = r[0]
-                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Jarvis", msg_text, extras=extras)
+                            final, bx = beautify_message("Jarvis", r[0], mood=CHAT_MOOD, source_hint="arr", extras=extras)
+                            send_message("Jarvis", final, extras=bx)
                         elif isinstance(r, str) and r:
-                            msg_text = r
-                            if _personality: msg_text = f"{msg_text}\n\n{_personality.quip(CHAT_MOOD)}"
-                            send_message("Jarvis", msg_text)
+                            final, bx = beautify_message("Jarvis", r, mood=CHAT_MOOD, source_hint="arr")
+                            send_message("Jarvis", final, extras=bx)
                         handled = True
 
                     else:
-                        # Unknown → personality
-                        if _personality:
-                            resp = _personality.unknown_command_response(ncmd, CHAT_MOOD)
-                            send_message("Jarvis", resp)
-                        else:
-                            send_message("Jarvis", f"Unknown command: {ncmd}")
+                        # Unknown → personality + beautify
+                        resp = _personality.unknown_command_response(ncmd, CHAT_MOOD) if _personality else f"Unknown command: {ncmd}"
+                        final, bx = beautify_message("Jarvis", resp, mood=CHAT_MOOD, source_hint="unknown")
+                        send_message("Jarvis", final, extras=bx)
                         handled = True
 
                     # PURGE after any handled wake-word command
@@ -467,9 +468,10 @@ async def listen():
                         _purge_after(msg_id)
                         continue
 
-                # Non-wake messages: repost + optional purge
+                # Non-wake messages: beautify repost + optional purge
                 print(f"[{BOT_NAME}] Repost+purge path for message id={msg_id}")
-                send_message(title, message)
+                final, bx = beautify_message(title, message, mood=CHAT_MOOD)
+                send_message(title, final, extras=bx)
                 _purge_after(msg_id)
 
             except Exception as e:
