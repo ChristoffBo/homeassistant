@@ -30,6 +30,9 @@ DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1","true"
 TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
 KUMA_ENABLED = os.getenv("uptimekuma_enabled", "false").lower() in ("1","true","yes")
 
+# SMTP toggle
+SMTP_ENABLED = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
+
 AI_CHECKINS_ENABLED = os.getenv("ai_checkins_enabled", "false").lower() in ("1","true","yes")
 CACHE_REFRESH_MINUTES = int(os.getenv("cache_refresh_minutes", "60"))
 
@@ -66,6 +69,7 @@ try:
     WEATHER_ENABLED = merged.get("weather_enabled", WEATHER_ENABLED)
     TECHNITIUM_ENABLED = merged.get("technitium_enabled", TECHNITIUM_ENABLED)
     KUMA_ENABLED = merged.get("uptimekuma_enabled", KUMA_ENABLED)
+    SMTP_ENABLED = merged.get("smtp_enabled", SMTP_ENABLED)
 
     CHAT_ENABLED_FILE = merged.get("chat_enabled", CHAT_ENABLED_ENV)
     DIGEST_ENABLED_FILE = merged.get("digest_enabled", DIGEST_ENABLED_ENV)
@@ -203,6 +207,7 @@ def startup_poster():
     lines.append(mod_line("📰", "Digest", DIGEST_ENABLED_ENV or DIGEST_ENABLED_FILE))
     lines.append(mod_line("💬", "Chat", CHAT_ENABLED_ENV or CHAT_ENABLED_FILE))
     lines.append(mod_line("📡", "Uptime Kuma", KUMA_ENABLED))
+    lines.append(mod_line("✉️", "SMTP Intake", SMTP_ENABLED))
     lines.append(mod_line("🧬", "DNS (Technitium)", TECHNITIUM_ENABLED))
     lines.append("\nStatus: All systems nominal")
     return "\n".join(lines)
@@ -336,7 +341,7 @@ async def listen():
                 # Wake-word?
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd:
-                    # Help (expanded)
+                    # Help
                     if ncmd in ("help", "commands"):
                         help_text = (
                             "🤖 Jarvis Prime — Commands\n"
@@ -354,18 +359,7 @@ async def listen():
                             "  • movie count\n"
                             "  • series count\n"
                             "  • longest movie\n"
-                            "  • longest series\n\n"
-                            "Aliases loaded (examples):\n"
-                            "  dns/DNS/Dns → dns\n"
-                            "  films → upcoming movies\n"
-                            "  tv → upcoming series\n"
-                            "  temps → weather\n"
-                            "  forecast week → forecast\n"
-                            "  up movies → upcoming movies\n"
-                            "  up series → upcoming series\n\n"
-                            "Tips:\n"
-                            "  • You can put 'Jarvis' in the title and the command in the message body.\n"
-                            "  • Posters for Radarr/Sonarr are supported when available.\n"
+                            "  • longest series\n"
                         )
                         send_message("Help", help_text)
                         continue
@@ -433,7 +427,7 @@ async def listen():
                     else:
                         send_message("Jarvis", f"Unknown command: {ncmd}"); continue
 
-                # Non-wake messages: repost (beautified path) then purge original
+                # Non-wwake messages: repost (beautified path) then purge original
                 if SILENT_REPOST:
                     send_message(title, message)   # decorate + priority bias happen inside
                     delete_original_message(msg_id)
@@ -483,6 +477,21 @@ if __name__ == "__main__":
     try_load_module("technitium", "DNS")
     try_load_module("uptimekuma", "Kuma")
     try_load_module("digest", "Digest")
+
+    # Start SMTP intake (if enabled)
+    try:
+        if SMTP_ENABLED and bool(merged.get("smtp_enabled", SMTP_ENABLED)):
+            import importlib.util as _imp
+            _sspec = _imp.spec_from_file_location("smtp_server", "/app/smtp_server.py")
+            if _sspec and _sspec.loader:
+                _smtp_mod = _imp.module_from_spec(_sspec)
+                _sspec.loader.exec_module(_smtp_mod)
+                _smtp_mod.start_smtp(merged, send_message)
+                print("[Jarvis Prime] ✅ SMTP intake started")
+            else:
+                print("[Jarvis Prime] ⚠️ smtp_server.py not found")
+    except Exception as e:
+        print(f"[Jarvis Prime] ⚠️ SMTP start error: {e}")
 
     # Startup card
     send_message("Startup", startup_poster(), priority=5)
