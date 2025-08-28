@@ -1,22 +1,24 @@
-# /app/personality_state.py - persist mood across reboots
-import os, json, datetime, threading
+# /app/personality_state.py
+from __future__ import annotations
+import json
+from pathlib import Path
 
-BASE = os.getenv("JARVIS_SHARE_BASE", "/share/jarvis_prime")
-STATE_FILE = os.path.join(BASE, "state.json")
-_os_lock = threading.RLock()
-
-def save_mood(mood: str):
-    os.makedirs(BASE, exist_ok=True)
-    with _os_lock:
-        st = {"mood": mood, "updated_at": datetime.datetime.utcnow().replace(microsecond=0).isoformat()+"Z"}
-        with open(STATE_FILE, "w") as f:
-            json.dump(st, f, ensure_ascii=False, indent=2)
-
-def load_mood(default: str):
+def save_mood(path: Path, mood: str):
     try:
-        with _os_lock:
-            with open(STATE_FILE, "r") as f:
-                st = json.load(f)
-        return st.get("mood", default) or default
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if path.exists():
+            data = json.loads(path.read_text())
+        data["mood"] = mood
+        path.write_text(json.dumps(data, indent=2))
     except Exception:
-        return default
+        pass
+
+def load_mood(path: Path) -> str | None:
+    try:
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        return data.get("mood")
+    except Exception:
+        return None
