@@ -2,19 +2,21 @@
 """
 Neural Core for Jarvis Prime
 
-- Generates a mood-forward, human-friendly rewrite of inbound messages.
-- Uses local GGUF via ctransformers when available.
-- Falls back to a compact deterministic renderer.
-- Profanity allowed/blocked from /data/options.json.
-- NO footer here — callers add a single footer so it never duplicates.
+- Rewrites inbound messages into mood-forward, human-friendly bullets.
+- Local GGUF via ctransformers (CPU). No networking required.
+- If model import/load fails, returns a compact deterministic fallback.
+- Profanity allowed/blocked from /data/options.json (personality_allow_profanity).
 """
 
 from __future__ import annotations
-import os, re, json
+import os
+import re
+import json
+import time
 from pathlib import Path
 from typing import Optional, List
 
-# ---------------- Tunables ----------------
+# ============================ Tunables ============================
 DETAIL_LEVEL = os.getenv("LLM_DETAIL_LEVEL", "rich").lower()
 MAX_LINES = 10 if DETAIL_LEVEL == "rich" else 6
 MAX_LINE_CHARS = 160
@@ -23,11 +25,15 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
 LLM_TOP_P      = float(os.getenv("LLM_TOP_P", "0.9"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "320"))
 
+# Verbose logging so we can prove it's firing
+VERBOSE = True
+
+# ============================ Globals =============================
 _MODEL = None
 _MODEL_PATH: Optional[Path] = None
 _CTRANS_AVAILABLE = False
 
-# ---------------- Config helpers ----------------
+# ====================== Config / helpers ==========================
 def _cfg_allow_profanity() -> bool:
     env = os.getenv("PERSONALITY_ALLOW_PROFANITY")
     if env is not None:
@@ -40,6 +46,7 @@ def _cfg_allow_profanity() -> bool:
         return False
 
 def _cfg_model_path(fallback: str = "") -> str:
+    # Prefer options.json (user editable)
     try:
         with open("/data/options.json", "r", encoding="utf-8") as f:
             cfg = json.load(f)
@@ -48,8 +55,10 @@ def _cfg_model_path(fallback: str = "") -> str:
                 return p
     except Exception:
         pass
+    # Fallback the explicit arg if provided
     if fallback:
         return fallback
+    # Finally, pick first .gguf under /share/jarvis_prime/models
     base = Path("/share/jarvis_prime/models")
     if base.exists():
         ggufs = sorted(base.glob("*.gguf"))
@@ -57,36 +66,58 @@ def _cfg_model_path(fallback: str = "") -> str:
             return str(ggufs[0])
     return ""
 
-# ---------------- Model load ----------------
-def _load_model(model_path: str) -> bool:
-    global _MODEL, _MODEL_PATH, _CTRANS_AVAILABLE
-    if not model_path:
-        return False
+# ============================ Model ===============================
+def _import_ctransformers() -> bool:
+    global _CTRANS_AVAILABLE
+    if _CTRANS_AVAILABLE:
+        return True
     try:
-        from ctransformers import AutoModelForCausalLM
+        from ctransformers import AutoModelForCausalLM  # noqa: F401
         _CTRANS_AVAILABLE = True
+        if VERBOSE:
+            print("[Neural Core] ctransformers import: OK")
+        return True
     except Exception as e:
-        print(f"[Neural Core] ctransformers not available: {e}")
+        print(f"[Neural Core] ctransformers import FAILED: {e}")
         _CTRANS_AVAILABLE = False
         return False
 
-    p = Path(os.path.expandvars(model_path))
-    if not p.exists():
-        print(f"[Neural Core] Model path not found: {p}")
+def _load_model(model_path: str) -> bool:
+    """
+    Load GGUF once. Returns True if the model is ready.
+    """
+    global _MODEL, _MODEL_PATH
+    if not model_path:
+        print("[Neural Core] No model path configured.")
         return False
+
+    # Already loaded?
+    p = Path(os.path.expandvars(model_path))
     if _MODEL is not None and _MODEL_PATH == p:
         return True
 
-    print(f"[Neural Core] Loading model: {p}")
+    if not _import_ctransformers():
+        return False
+
+    if not p.exists():
+        print(f"[Neural Core] Model path not found: {p}")
+        return False
+
     try:
+        from ctransformers import AutoModelForCausalLM
+        if VERBOSE:
+            size = p.stat().st_size
+            print(f"[Neural Core] Loading GGUF: {p} (size={size} bytes)")
+        t0 = time.time()
         _MODEL = AutoModelForCausalLM.from_pretrained(
             str(p.parent),
             model_file=p.name,
-            model_type="llama",
-            gpu_layers=0,
+            model_type="llama",   # TinyLlama is llama-compatible
+            gpu_layers=0,         # CPU only in HA add-on
         )
         _MODEL_PATH = p
-        print("[Neural Core] Model ready")
+        if VERBOSE:
+            print(f"[Neural Core] Model ready in {time.time()-t0:.2f}s")
         return True
     except Exception as e:
         print(f"[Neural Core] Failed to load GGUF: {e}")
@@ -94,7 +125,7 @@ def _load_model(model_path: str) -> bool:
         _MODEL_PATH = None
         return False
 
-# ---------------- Utils ----------------
+# ============================ Text utils ==========================
 def _cut(s: str, n: int) -> str:
     s = (s or "").strip()
     return (s[: n - 1] + "…") if len(s) > n else s
@@ -103,6 +134,7 @@ _PROF_RE = re.compile(
     r"\b(fuck|f\*+k|f\W?u\W?c\W?k|shit|bitch|cunt|asshole|motherf\w+|dick|prick|whore)\b",
     re.I,
 )
+
 def _clean_if_needed(text: str, allow_profanity: bool) -> str:
     return text if allow_profanity else _PROF_RE.sub("—", text or "")
 
@@ -135,7 +167,7 @@ def _normalize_mood(mood: str) -> str:
 def _bullet_for(mood: str) -> str:
     return {"serious":"•","sarcastic":"😏","playful":"✨","hacker-noir":"▣","angry":"⚡"}.get(mood,"•")
 
-# ---------------- Fallback compact renderer ----------------
+# =============== Deterministic fallback renderer ==================
 def _render_generic(text: str, mood: str, allow_profanity: bool) -> str:
     b = _bullet_for(mood)
     lines: List[str] = []
@@ -144,9 +176,12 @@ def _render_generic(text: str, mood: str, allow_profanity: bool) -> str:
         lines.append(f"{b} { _cut(first, 150)}")
     lines.append(f"{b} ✅ Done.")
     lines = _dedupe(lines, MAX_LINES)
-    return _clean_if_needed("\n".join(lines), allow_profanity)
+    out = "\n".join(lines)
+    if VERBOSE:
+        print("[Neural Core] Fallback renderer used.")
+    return _clean_if_needed(out, allow_profanity)
 
-# ---------------- Prompt building ----------------
+# =========================== Prompting ============================
 def _examples(mood: str) -> str:
     b = _bullet_for(mood)
     if mood == "angry":
@@ -177,7 +212,6 @@ def _examples(mood: str) -> str:
             f"{b} The machine hums, waiting.\n"
             f"{b} ✅ Logged."
         )
-    # serious
     return (
         f"{b} APT completed on 10.0.0.249.\n"
         f"{b} Packages upgraded: none.\n"
@@ -196,82 +230,86 @@ def _build_prompt(text: str, mood: str, allow_profanity: bool) -> str:
     profanity = "Profanity allowed if it fits the tone." if allow_profanity else "Do NOT use profanity."
     bullet = _bullet_for(mood)
     fewshot = _examples(mood)
+    # Keep the prompt *very* tight so TinyLlama doesn’t parrot instructions.
     return (
-        "You are Jarvis Prime rewriting an inbound notification for a homelab owner.\n"
+        "You are Jarvis Prime. Rewrite the MESSAGE for a homelab owner.\n"
         f"Tone: {tone}. {profanity}\n"
-        "Format rules:\n"
-        f"- Output ONLY short bullet lines, each starting with the bullet prefix '{bullet}'.\n"
-        "- Do NOT number lines. Do NOT repeat instructions. Do NOT write headings.\n"
-        "- Keep 4–8 bullets. Be concrete. Keep existing facts; do not invent.\n"
-        "- Finish with a short closing quip as the last bullet.\n\n"
-        "Example output for this tone:\n"
+        f"Output ONLY short bullets using this prefix: '{bullet}'. No headings, no numbering, no explanations.\n"
+        "Keep 4–8 bullets. Be concrete. Keep facts; do not invent. End with a quick closing quip.\n\n"
+        "Example:\n"
         f"{fewshot}\n\n"
-        f"Now rewrite the following MESSAGE exactly once in the same format.\n"
-        f"Bullet prefix to use: '{bullet}'\n"
-        "MESSAGE:\n"
-        f"{text}\n"
+        f"MESSAGE:\n{text}\n"
         "REWRITE:\n"
     )
 
-# ---------------- Public API ----------------
+# ============================ Public API ==========================
 def rewrite(
     text: str,
     mood: str = "serious",
-    timeout: int = 5,
-    cpu_limit: int = 70,
-    models_priority=None,
-    base_url: str = "",
+    timeout: int = 5,          # (caller enforces timeouts with thread pools)
+    cpu_limit: int = 70,       # kept for signature compatibility
+    models_priority=None,      # kept for signature compatibility
+    base_url: str = "",        # kept for signature compatibility
     model_path: str = "",
 ) -> str:
     """
-    Returns ONLY the rewritten body (no footer). Callers add footers.
+    Returns ONLY the rewritten body (no footer). Callers add the footer.
     """
-    text = text or ""
     allow_profanity = _cfg_allow_profanity()
     mood = _normalize_mood(mood)
     model_path = model_path or _cfg_model_path()
 
-    have_model = _load_model(model_path)
+    if VERBOSE:
+        print(f"[Neural Core] rewrite() start: mood={mood} model='{model_path}'")
 
-    if have_model and _CTRANS_AVAILABLE and _MODEL is not None:
-        try:
-            prompt = _build_prompt(text, mood, allow_profanity)
-            out = _MODEL(
-                prompt,
-                max_new_tokens=LLM_MAX_TOKENS,
-                temperature=LLM_TEMPERATURE,
-                top_p=LLM_TOP_P,
-            )
-            gen = str(out or "").strip()
+    ready = _load_model(model_path)
+    if not ready or _MODEL is None:
+        return _render_generic(text or "", mood, allow_profanity)
 
-            # ----- Sanitize / enforce bullets -----
-            # Drop anything before the first bullet symbol
-            first_bullet = re.search(r"(•|✨|⚡|😏|▣)\s", gen)
-            if first_bullet:
-                gen = gen[first_bullet.start():]
-            # Remove numbered echoes or instruction-like lines
-            lines = []
-            for ln in gen.splitlines():
-                s = ln.strip()
-                if not s:
-                    continue
-                if re.match(r"^\d+\.\s", s):
-                    continue
-                if re.search(r"(Output ONLY short bullet lines|REWRITE:|MESSAGE:|Tone:|Format rules:)", s, re.I):
-                    continue
-                # Ensure bullet prefix
-                if not re.match(r"^(•|✨|⚡|😏|▣)\s", s):
-                    s = f"{_bullet_for(mood)} {s}"
-                lines.append(s)
-                if len(lines) >= MAX_LINES:
-                    break
+    # Build prompt and generate
+    try:
+        prompt = _build_prompt(text or "", mood, allow_profanity)
+        if VERBOSE:
+            print("[Neural Core] Generating...")
+        t0 = time.time()
+        out = _MODEL(
+            prompt,
+            max_new_tokens=LLM_MAX_TOKENS,
+            temperature=LLM_TEMPERATURE,
+            top_p=LLM_TOP_P,
+        )
+        gen = str(out or "").strip()
+        if VERBOSE:
+            print(f"[Neural Core] Generation done in {time.time()-t0:.2f}s")
+    except Exception as e:
+        print(f"[Neural Core] Generation error: {e}")
+        return _render_generic(text or "", mood, allow_profanity)
 
-            result = "\n".join(lines)
-            if not result:
-                result = _render_generic(text, mood, allow_profanity)
-            return _clean_if_needed(result, allow_profanity)
-        except Exception as e:
-            print(f"[Neural Core] Generation error: {e}")
+    # -------- Sanitize / enforce bullet lines ----------
+    # Keep only content from the first bullet onwards.
+    m = re.search(r"(•|✨|⚡|😏|▣)\s", gen)
+    if m:
+        gen = gen[m.start():]
 
-    # Fallback
-    return _render_generic(text, mood, allow_profanity)
+    lines: List[str] = []
+    for raw in gen.splitlines():
+        s = raw.strip()
+        if not s:
+            continue
+        # Drop anything that looks like instructions or echoes
+        if re.match(r"^\d+\.\s", s):                 # numbered lists
+            continue
+        if re.search(r"(REWRITE:|MESSAGE:|Example|Tone:|Output ONLY)", s, re.I):
+            continue
+        # Ensure each line starts with the mood bullet
+        if not re.match(r"^(•|✨|⚡|😏|▣)\s", s):
+            s = f"{_bullet_for(mood)} {s}"
+        lines.append(_cut(s, MAX_LINE_CHARS))
+        if len(lines) >= MAX_LINES:
+            break
+
+    if not lines:
+        return _render_generic(text or "", mood, allow_profanity)
+
+    result = "\n".join(lines)
+    return _clean_if_needed(result, allow_profanity)
