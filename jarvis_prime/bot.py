@@ -427,15 +427,6 @@ def _try_call(module, fn_name, *args, **kwargs):
     return None, None
 
 def _handle_command(ncmd: str):
-    ## normalize wake words
-    lc = (ncmd or '').strip().lower()
-    if lc.startswith('jarvis - '):
-        lc = lc.split(' - ', 1)[1].strip()
-    elif lc.startswith('jarvis '):
-        lc = lc.split(' ', 1)[1].strip()
-    # common typos
-    if lc == 'forcast':
-        lc = 'forecast'
     # Imports on demand so missing modules don't crash
     m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None
     try:
@@ -481,15 +472,13 @@ def _handle_command(ncmd: str):
             send_message("Digest", "Digest module unavailable.")
         return True
 
-    if lc in ("dns",):
+    if ncmd in ("dns",):
         text, _ = _try_call(m_tech, "dns_status", merged)
-        if not text:
-            text, _ = _try_call(m_tech, "handle_dns_command", "dns")
         send_message("DNS Status", text or "No data.")
         return True
 
     if ncmd in ("kuma", "uptime", "monitor"):
-        text, _ = _try_call(m_kuma, "handle_kuma_command", "kuma")
+        text, _ = _try_call(m_kuma, "handle_kuma_command", merged, "kuma")
         send_message("Uptime Kuma", text or "No data.")
         return True
 
@@ -497,7 +486,7 @@ def _handle_command(ncmd: str):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command("weather")
+                text = m_weather.handle_weather_command(merged, "weather")
             except Exception as e:
                 text = f"⚠️ Weather failed: {e}"
         send_message("Weather", text or "No data.")
@@ -507,7 +496,7 @@ def _handle_command(ncmd: str):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command("forecast")
+                text = m_weather.handle_weather_command(merged, "forecast")
             except Exception as e:
                 text = f"⚠️ Forecast failed: {e}"
         send_message("Forecast", text or "No data.")
