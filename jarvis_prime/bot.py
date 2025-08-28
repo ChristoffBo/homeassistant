@@ -50,6 +50,15 @@ HEARTBEAT_END = "20:00"
 # Beautify inline images for Gotify Web (Android uses extras image natively)
 BEAUTIFY_INLINE_IMAGES = False
 
+# ---- LLM defaults (will be overridden by options.json below) ----
+LLM_ENABLED = False
+LLM_TIMEOUT_SECONDS = 5
+LLM_MAX_CPU_PERCENT = 70
+LLM_MODELS_PRIORITY = None
+OLLAMA_BASE_URL = ""
+LLM_MEMORY_ENABLED = False
+PERSONALITY_PERSISTENT = False
+
 # -----------------------------
 # Load /data/options.json overrides
 # -----------------------------
@@ -85,9 +94,21 @@ try:
     HEARTBEAT_END = str(merged.get("heartbeat_end", HEARTBEAT_END))
 
     BEAUTIFY_INLINE_IMAGES = bool(merged.get("beautify_inline_images", False))
+
+    # ---- LLM related options (missing previously) ----
+    LLM_ENABLED = bool(merged.get("llm_enabled", LLM_ENABLED))
+    LLM_TIMEOUT_SECONDS = int(merged.get("llm_timeout_seconds", LLM_TIMEOUT_SECONDS))
+    LLM_MAX_CPU_PERCENT = int(merged.get("llm_max_cpu_percent", LLM_MAX_CPU_PERCENT))
+    LLM_MODELS_PRIORITY = merged.get("llm_models_priority", LLM_MODELS_PRIORITY)
+    OLLAMA_BASE_URL = str(merged.get("ollama_base_url", merged.get("llm_base_url", OLLAMA_BASE_URL)))
+    LLM_MEMORY_ENABLED = bool(merged.get("llm_memory_enabled", LLM_MEMORY_ENABLED))
+    PERSONALITY_PERSISTENT = bool(merged.get("personality_persistent", PERSONALITY_PERSISTENT))
+
 except Exception as e:
     print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
     PROXY_ENABLED = PROXY_ENABLED_ENV
+    CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
+    DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
 
 jarvis_app_id = None  # resolved at runtime
 
@@ -127,6 +148,41 @@ try:
         print("[Jarvis Prime] ✅ beautify.py loaded")
 except Exception as _e:
     print(f"[Jarvis Prime] ⚠️ beautify.py not loaded: {_e}")
+
+# ---- LLM client (this was missing) ----
+_llm = None
+try:
+    import importlib.util as _imp
+    _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
+    if _lspec and _lspec.loader:
+        _llm = _imp.module_from_spec(_lspec)
+        _lspec.loader.exec_module(_llm)
+        print("[Jarvis Prime] ✅ llm_client loaded")
+except Exception as _e:
+    print(f"[Jarvis Prime] ⚠️ llm_client not loaded: {_e}")
+
+# ---- LLM memory/state (safe defaults to avoid NameError) ----
+_pstate = None
+try:
+    import importlib.util as _imp
+    _pst = _imp.spec_from_file_location("personality_state", "/app/personality_state.py")
+    if _pst and _pst.loader:
+        _pstate = _imp.module_from_spec(_pst)
+        _pst.loader.exec_module(_pstate)
+        print("[Jarvis Prime] ✅ personality_state.py loaded")
+except Exception as _e:
+    print(f"[Jarvis Prime] ⚠️ personality_state not loaded: {_e}")
+
+_llm_mem = None
+try:
+    import importlib.util as _imp
+    _mspec = _imp.spec_from_file_location("llm_memory", "/app/llm_memory.py")
+    if _mspec and _mspec.loader:
+        _llm_mem = _imp.module_from_spec(_mspec)
+        _mspec.loader.exec_module(_llm_mem)
+        print("[Jarvis Prime] ✅ llm_memory.py loaded")
+except Exception as _e:
+    print(f"[Jarvis Prime] ⚠️ llm_memory not loaded: {_e}")
 
 # -----------------------------
 # Utils
@@ -296,7 +352,6 @@ def send_heartbeat_if_window():
             f"Uptime: {_fmt_uptime()}",
             ""
         ]
-        # ARR (short upcoming)
         try:
             if "arr" in extra_modules:
                 mv = extra_modules["arr"].list_upcoming_movies(days=1, limit=3) if hasattr(extra_modules["arr"], "list_upcoming_movies") else []
@@ -385,7 +440,7 @@ async def listen():
                 # Wake-word?
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd:
-                    # Help
+                    # === COMMAND HANDLERS (unchanged) ===
                     if ncmd in ("help", "commands"):
                         help_text = (
                             "🤖 Jarvis Prime — Commands\n"
@@ -408,12 +463,10 @@ async def listen():
                         send_message("Help", help_text)
                         handled = True
 
-                    # Manual digest
                     elif ncmd in ("digest", "daily digest", "summary"):
                         job_daily_digest()
                         handled = True
 
-                    # DNS
                     elif TECHNITIUM_ENABLED and "technitium" in extra_modules and re.search(r"\bdns\b|technitium", ncmd):
                         out = extra_modules["technitium"].handle_dns_command(ncmd)
                         if isinstance(out, tuple):
@@ -422,7 +475,6 @@ async def listen():
                             send_message("DNS", out)
                         handled = True
 
-                    # Uptime Kuma
                     elif KUMA_ENABLED and "uptimekuma" in extra_modules and re.search(r"\bkuma\b|\buptime\b|\bmonitor", ncmd):
                         out = extra_modules["uptimekuma"].handle_kuma_command(ncmd)
                         if isinstance(out, tuple):
@@ -431,7 +483,6 @@ async def listen():
                             send_message("Kuma", out)
                         handled = True
 
-                    # Weather
                     elif WEATHER_ENABLED and "weather" in extra_modules and any(w in ncmd for w in ("weather","forecast","temperature","temp","now","today","current","weekly","7day","7-day","7 day")):
                         w = extra_modules["weather"].handle_weather_command(ncmd)
                         if isinstance(w, tuple) and w and w[0]:
@@ -445,7 +496,6 @@ async def listen():
                             send_message("Weather", msg_text)
                         handled = True
 
-                    # Chat jokes
                     elif CHAT_ENABLED_FILE and "chat" in extra_modules and ("joke" in ncmd or "pun" in ncmd):
                         c = extra_modules["chat"].handle_chat_command("joke")
                         if isinstance(c, tuple):
@@ -454,7 +504,6 @@ async def listen():
                             send_message("Joke", str(c))
                         handled = True
 
-                    # ARR (unconditional handoff)
                     elif "arr" in extra_modules and hasattr(extra_modules["arr"], "handle_arr_command"):
                         r = extra_modules["arr"].handle_arr_command(title, message)
                         if isinstance(r, tuple) and r and r[0]:
@@ -469,7 +518,6 @@ async def listen():
                         handled = True
 
                     else:
-                        # Unknown → personality
                         if _personality:
                             resp = _personality.unknown_command_response(ncmd, CHAT_MOOD)
                             send_message("Jarvis", resp)
@@ -477,7 +525,6 @@ async def listen():
                             send_message("Jarvis", f"Unknown command: {ncmd}")
                         handled = True
 
-                    # PURGE after any handled wake-word command
                     # Memory queries
                     if LLM_MEMORY_ENABLED and _llm_mem and re.search(r"\bwhat\s+happened\s+today\b", ncmd):
                         try:
@@ -488,7 +535,6 @@ async def listen():
                         except Exception as _e:
                             send_message("Today", f"⚠️ Memory error: {_e}")
                             handled = True
-                    
                     elif LLM_MEMORY_ENABLED and _llm_mem and re.search(r"\bwhat\s+broke\s+today\b", ncmd):
                         try:
                             out = _llm_mem.what_broke_today()
@@ -498,8 +544,6 @@ async def listen():
                         except Exception as _e:
                             send_message("Issues", f"⚠️ Memory error: {_e}")
                             handled = True
-                    
-                    # Mood switch: jarvis mood <...>
                     elif re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd):
                         newm = re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd).group(1)
                         CHAT_MOOD = newm
@@ -510,73 +554,63 @@ async def listen():
                                 print(f"[{BOT_NAME}] ⚠️ Mood save failed: {_e}")
                         send_message("Mood", f"Personality set to **{CHAT_MOOD}**")
                         handled = True
-                    
-# Memory queries
 
                     if handled:
                         print(f"[{BOT_NAME}] Purge-after-command for msg_id={msg_id}")
                         _purge_after(msg_id)
                         continue
 
-                
-                    else:
-                    # Non-wake messages: LLM → Beautify → repost
-                        print(f"[{BOT_NAME}] Repost+purge path for message id={msg_id}")
-                        
-                        # Optional LLM rewrite (inherits current CHAT_MOOD)
-                        _llm_text = None
-                        if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
-                            try:
-                                _llm_text = _llm.rewrite(
-                                    text=message,
-                                    mood=CHAT_MOOD,
-                                    timeout=LLM_TIMEOUT_SECONDS,
-                                    cpu_limit=LLM_MAX_CPU_PERCENT,
-                                    models_priority=LLM_MODELS_PRIORITY,
-                                    base_url=OLLAMA_BASE_URL
-                                )
-                                # Use rewritten as the message body; keep title
-                            except Exception as _e:
-                                print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
-                        
-                        transformed_message = _llm_text if _llm_text else message
-                        
-                        if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
-                            final, bx = _beautify.beautify_message(title, transformed_message, mood=CHAT_MOOD)
-                        
-                        # Memory log (24h rolling)
+                else:
+                    # ===== NON-WAKE MESSAGES: LLM → Beautify → repost =====
+                    print(f"[{BOT_NAME}] Repost+purge path for message id={msg_id}")
+                    _llm_text = None
+                    if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
                         try:
-                            if LLM_MEMORY_ENABLED and _llm_mem and hasattr(_llm_mem, "log_event"):
-                                _src = data.get("app", {}).get("name") or data.get("appid") or "gotify"
-                                _kind = (_src or "gotify").lower()
-                                _title = title or "Message"
-                                _meta = {"id": msg_id}
-                                _llm_mem.log_event(kind=_kind, source=_src, title=_title, body=final, meta=_meta)
-                                if hasattr(_llm_mem, "prune"):
-                                    _llm_mem.prune(24)
+                            _llm_text = _llm.rewrite(
+                                text=message,
+                                mood=CHAT_MOOD,
+                                timeout=LLM_TIMEOUT_SECONDS,
+                                cpu_limit=LLM_MAX_CPU_PERCENT,
+                                models_priority=LLM_MODELS_PRIORITY,
+                                base_url=OLLAMA_BASE_URL
+                            )
                         except Exception as _e:
-                            print(f"[{BOT_NAME}] ⚠️ Memory log failed: {_e}")
-                    
-                    
+                            print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
 
-                    # Optional inline image for Gotify Web UI (Android honors extras bigImageUrl)
+                    transformed_message = _llm_text if _llm_text else message
+                    if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
+                        final, bx = _beautify.beautify_message(title, transformed_message, mood=CHAT_MOOD)
+                    else:
+                        final, bx = transformed_message, None
+
+                    # Memory log (24h rolling)
+                    try:
+                        if LLM_MEMORY_ENABLED and _llm_mem and hasattr(_llm_mem, "log_event"):
+                            _src = data.get("app", {}).get("name") or data.get("appid") or "gotify"
+                            _kind = (_src or "gotify").lower()
+                            _title = title or "Message"
+                            _meta = {"id": msg_id}
+                            _llm_mem.log_event(kind=_kind, source=_src, title=_title, body=final, meta=_meta)
+                            if hasattr(_llm_mem, "prune"):
+                                _llm_mem.prune(24)
+                    except Exception as _e:
+                        print(f"[{BOT_NAME}] ⚠️ Memory log failed: {_e}")
+
                     if BEAUTIFY_INLINE_IMAGES and bx and bx.get("client::notification", {}).get("bigImageUrl"):
                         img = bx["client::notification"]["bigImageUrl"]
                         final = f"![image]({img})\n\n{final}"
-                else:
-                    final, bx = message, None
 
-                # Add short quip (not a Mood line)
-                if _personality:
-                    try:
-                        q = _personality.quip(CHAT_MOOD)
-                        if q:
-                            final = f"{final}\n\n— {q}"
-                    except Exception:
-                        pass
+                    if _personality:
+                        try:
+                            q = _personality.quip(CHAT_MOOD)
+                            if q:
+                                final = f"{final}\n\n— {q}"
+                        except Exception:
+                            pass
 
-                send_message(title, final, extras=bx)
-                _purge_after(msg_id)
+                    send_message(title, final, extras=bx)
+                    _purge_after(msg_id)
+                    continue
 
             except Exception as e:
                 print(f"[{BOT_NAME}] Listener error: {e}")
@@ -635,7 +669,7 @@ if __name__ == "__main__":
             else:
                 print("[Jarvis Prime] ⚠️ smtp_server.py not found")
     except Exception as e:
-        print(f"[Jarvis Prime] ⚠️ SMTP start error: {e}")
+        print(f"[{BOT_NAME}] ⚠️ SMTP start error: {e}")
 
     # Start HTTP Proxy (Gotify/ntfy) if enabled
     try:
@@ -650,7 +684,7 @@ if __name__ == "__main__":
             else:
                 print("[Jarvis Prime] ⚠️ proxy.py not found")
     except Exception as e:
-        print(f"[Jarvis Prime] ⚠️ Proxy start error: {e}")
+        print(f"[{BOT_NAME}] ⚠️ Proxy start error: {e}")
 
     # Startup card
     send_message("Startup", startup_poster(), priority=5)
