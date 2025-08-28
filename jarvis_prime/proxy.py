@@ -1,190 +1,157 @@
 # /app/proxy.py
-# Simple HTTP proxy/intake for Jarvis Prime.
-#
-# Endpoints:
-#   POST /message?token=XXXX   -> 100% Gotify-compatible (Sonarr/Radarr plugins)
-#   POST /gotify               -> JSON {title, message, priority?, extras?}
-#   POST /ntfy                 -> text/plain or JSON {"title","message"} (basic)
-#   GET  /health               -> 200 OK
-#
-# Behavior:
-#   - Every inbound payload is beautified via beautify_message (Jarvis Card).
-#   - Also forwards (best-effort) to real servers if configured:
-#       proxy_gotify_url (full /message?token=... URL), proxy_ntfy_url
-#   - Always 200 OK to the sender (logs errors).
-#
-from __future__ import annotations
-import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+import os, json, re, threading, http.server, socketserver, urllib.parse
+from typing import Optional, Tuple
 
-import requests
+BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
+BOT_ICON = os.getenv("BOT_ICON", "🧠")
 
-try:
-    from beautify import beautify_message
-except Exception:
-    def beautify_message(title, body, **kwargs):
-        return body, None  # soft fallback
+# These are injected from bot.py via start_proxy(merged, send_message)
+SEND = None
+STATE = None
 
-class ProxyState:
-    def __init__(self, config, send_cb):
-        self.cfg = config
-        self.send_cb = send_cb
-        self.bind = str(config.get("proxy_bind", "0.0.0.0"))
-        self.port = int(config.get("proxy_port", 8099))
-        self.forward_gotify = (config.get("proxy_gotify_url") or "").strip()
-        self.forward_ntfy = (config.get("proxy_ntfy_url") or "").strip()
-        self.mood = str(config.get("personality_mood", "serious"))
+_llm = None
+_beautify = None
 
-STATE: ProxyState | None = None
+def _load_helpers():
+    global _llm, _beautify
+    try:
+        import importlib.util as _imp
+        spec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
+        if spec and spec.loader:
+            _llm = _imp.module_from_spec(spec)
+            spec.loader.exec_module(_llm)
+            print(f"[{BOT_NAME}] ✅ llm_client loaded")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ llm_client not loaded: {e}")
 
-def _json(data: dict, code: int = 200):
-    return (code, "application/json; charset=utf-8", json.dumps(data).encode("utf-8"))
+    try:
+        import importlib.util as _imp
+        bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
+        if bspec and bspec.loader:
+            _beautify = _imp.module_from_spec(bspec)
+            bspec.loader.exec_module(_beautify)
+            print(f"[{BOT_NAME}] ✅ beautify.py loaded (proxy)")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ beautify not loaded: {e}")
 
-def _text(data: str, code: int = 200):
-    return (code, "text/plain; charset=utf-8", data.encode("utf-8"))
+def _footer(used_llm: bool, used_beautify: bool) -> str:
+    tags = []
+    if used_llm: tags.append("Neural Core ✓")
+    if used_beautify: tags.append("Aesthetic Engine ✓")
+    if not tags: tags.append("Relay Path")
+    return "— " + " · ".join(tags)
 
-def _merge_extras(a, b):
-    if not a and not b:
-        return None
-    if not a:
-        return b
-    if not b:
-        return a
-    out = dict(a)
-    ca = dict(out.get("client::notification", {}))
-    cb = dict((b.get("client::notification") or {}))
-    # Prefer image from A, else B
-    if "bigImageUrl" not in ca and "bigImageUrl" in cb:
-        ca["bigImageUrl"] = cb["bigImageUrl"]
-    if ca:
-        out["client::notification"] = ca
-    for k, v in b.items():
-        if k == "client::notification":
-            continue
-        out[k] = v
-    return out
+def _wake_word_present(title: str, message: str) -> bool:
+    t = (title or "").lower().strip()
+    m = (message or "").lower().strip()
+    return t.startswith("jarvis") or m.startswith("jarvis")
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "JarvisProxy/1.1"
+def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict]]:
+    used_llm = False
+    used_beautify = False
+    final = message
+    extras = None
 
-    def _send(self, tup):
-        code, ctype, payload = tup
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def do_GET(self):  # noqa: N802
-        if self.path.startswith("/health"):
-            self._send(_text("ok"))
-            return
-        self._send(_json({"error": "not found"}, 404))
-
-    def do_POST(self):  # noqa: N802
+    # Skip LLM if wake-word → commands should not be rewritten
+    if not _wake_word_present(title, message) and (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length > 0 else b""
-            path = self.path.split("?", 1)[0]
-
-            if path == "/message":
-                # Gotify compatible: /message?token=xxx  (token ignored here)
-                self._handle_gotify_like(raw)
-                return
-
-            if path == "/gotify":
-                self._handle_gotify_like(raw)
-                return
-
-            if path == "/ntfy":
-                self._handle_ntfy(raw)
-                return
-
-            self._send(_json({"error": "unknown endpoint"}, 404))
+            print(f"[{BOT_NAME}] [Proxy] → LLM.rewrite start")
+            msg = _llm.rewrite(
+                text=message,
+                mood=STATE.chat_mood,
+                timeout=STATE.llm_timeout_seconds,
+                cpu_limit=STATE.llm_max_cpu_percent,
+                models_priority=STATE.llm_models_priority,
+                base_url=STATE.ollama_base_url,
+                model_url=STATE.llm_model_url,
+                model_path=STATE.llm_model_path,
+                model_sha256=STATE.llm_model_sha256,
+                allow_profanity=STATE.personality_allow_profanity,
+            )
+            if msg:
+                final = msg
+                used_llm = True
+                print(f"[{BOT_NAME}] [Proxy] ✓ LLM.rewrite done")
         except Exception as e:
-            self._send(_json({"error": str(e)}, 500))
+            print(f"[{BOT_NAME}] [Proxy] ⚠️ LLM skipped: {e}")
 
-    def _handle_gotify_like(self, raw: bytes):
-        global STATE
-        ctype = (self.headers.get("Content-Type") or "").lower()
+    if _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            if "application/json" in ctype:
-                payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
+            final, extras = _beautify.beautify_message(title, final, mood=STATE.chat_mood)
+            used_beautify = True
+        except Exception as e:
+            print(f"[{BOT_NAME}] [Proxy] ⚠️ Beautify failed: {e}")
+
+    # Footer tag
+    final = f"{final}\n\n{_footer(used_llm, used_beautify)}"
+    return final, extras
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def _ok(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok\n")
+
+    def _bad(self, code=400, text="bad"):
+        self.send_response(code)
+        self.end_headers()
+        self.wfile.write(text.encode("utf-8"))
+
+    def do_GET(self):
+        if self.path.rstrip("/") == "/health":
+            self._ok()
+            return
+        self._bad(404, "not found")
+
+    def do_POST(self):
+        try:
+            clen = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(clen).decode("utf-8", errors="ignore")
+            # Accept JSON or form-urlencoded like Gotify
+            if self.headers.get("Content-Type", "").startswith("application/json"):
+                data = json.loads(raw or "{}")
             else:
-                # some clients still send JSON but omit content-type
-                payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
-        except Exception:
-            payload = {}
+                data = dict(urllib.parse.parse_qsl(raw))
 
-        title = str(payload.get("title") or "Message")
-        message = str(payload.get("message") or "")
-        priority = int(payload.get("priority") or 5)
-        extras = payload.get("extras") if isinstance(payload.get("extras"), dict) else None
+            title   = data.get("title")   or "Message"
+            message = data.get("message") or ""
+            priority = int(data.get("priority", 5))
 
-        # Beautify + post into our Gotify via callback
-        final, bx = beautify_message(title, message, mood=STATE.mood if STATE else "serious", source_hint="sonarr" if "sonarr" in (title + " " + message).lower() else None)
-        merged_extras = _merge_extras(bx, extras)
-        if STATE and STATE.send_cb:
-            try:
-                STATE.send_cb(title, final, priority=priority, extras=merged_extras)
-            except Exception as e:
-                print(f"[Proxy] ❌ local post error: {e}")
+            # Pipeline
+            final, extras = _llm_then_beautify(title, message)
+            SEND(title, final, priority=priority, extras=extras)
+            self._ok()
+        except Exception as e:
+            print(f"[{BOT_NAME}] [Proxy] error: {e}")
+            self._bad(500, "error")
 
-        # Optional forward to a real Gotify server
-        if STATE and STATE.forward_gotify:
-            try:
-                r = requests.post(STATE.forward_gotify, json={"title": title, "message": message, "priority": priority, "extras": extras}, timeout=8)
-                if not r.ok:
-                    print(f"[Proxy] ⚠️ forward gotify failed: {r.status_code} {r.text[:200]}")
-            except Exception as e:
-                print(f"[Proxy] ⚠️ forward gotify error: {e}")
+def start_proxy(merged_cfg, send_fn):
+    global SEND, STATE
+    SEND = send_fn
 
-        self._send(_json({"status": "ok"}))
+    class _State:
+        pass
+    STATE = _State()
+    STATE.chat_mood = merged_cfg.get("personality_mood", merged_cfg.get("chat_mood", "serious"))
+    STATE.llm_enabled = bool(merged_cfg.get("llm_enabled", False))
+    STATE.llm_timeout_seconds = int(merged_cfg.get("llm_timeout_seconds", 12))
+    STATE.llm_max_cpu_percent = int(merged_cfg.get("llm_max_cpu_percent", 70))
+    STATE.llm_models_priority = merged_cfg.get("llm_models_priority", [])
+    STATE.ollama_base_url     = merged_cfg.get("ollama_base_url", "")
+    STATE.llm_model_url       = merged_cfg.get("llm_model_url", "")
+    STATE.llm_model_path      = merged_cfg.get("llm_model_path", "")
+    STATE.llm_model_sha256    = merged_cfg.get("llm_model_sha256", "")
+    STATE.personality_allow_profanity = bool(merged_cfg.get("personality_allow_profanity", False))
 
-    def _handle_ntfy(self, raw: bytes):
-        global STATE
-        ctype = (self.headers.get("Content-Type") or "").lower()
-        title = self.headers.get("Title") or "ntfy"
-        priority = int(self.headers.get("Priority") or 5)
-        text = ""
+    host = merged_cfg.get("proxy_bind", "0.0.0.0")
+    port = int(merged_cfg.get("proxy_port", 2580))
 
-        if "application/json" in ctype:
-            try:
-                payload = json.loads(raw.decode("utf-8", errors="ignore"))
-            except Exception:
-                payload = {}
-            title = payload.get("title") or title
-            text = payload.get("message") or ""
-        else:
-            text = raw.decode("utf-8", errors="ignore")
+    _load_helpers()
 
-        final, bx = beautify_message(title, text, mood=STATE.mood if STATE else "serious", source_hint="proxy")
-        if STATE and STATE.send_cb:
-            try:
-                STATE.send_cb(title, final, priority=priority, extras=bx)
-            except Exception as e:
-                print(f"[Proxy] ❌ local post error: {e}")
+    class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
 
-        if STATE and STATE.forward_ntfy:
-            try:
-                headers = {}
-                if title: headers["Title"] = str(title)
-                if priority: headers["Priority"] = str(priority)
-                r = requests.post(STATE.forward_ntfy, data=text.encode("utf-8"), headers=headers, timeout=8)
-                if not r.ok:
-                    print(f"[Proxy] ⚠️ forward ntfy failed: {r.status_code} {r.text[:200]}")
-            except Exception as e:
-                print(f"[Proxy] ⚠️ forward ntfy error: {e}")
-
-        self._send(_json({"status": "ok"}))
-
-def start_proxy(config, send_cb):
-    global STATE
-    STATE = ProxyState(config, send_cb)
-    addr = (STATE.bind, STATE.port)
-    print(f"[Jarvis Prime] 🔀 Proxy listening on {STATE.bind}:{STATE.port} (endpoints: /message, /gotify, /ntfy, /health)")
-    server = ThreadingHTTPServer(addr, Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
+    print(f"[{BOT_NAME}] 🔀 Proxy listening on {host}:{port} (endpoints: /message, /gotify, /ntfy, /health)")
