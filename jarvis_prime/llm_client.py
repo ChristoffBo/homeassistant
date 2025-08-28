@@ -1,49 +1,74 @@
 #!/usr/bin/env python3
-"""
-Neural Core for Jarvis Prime (robust GGUF loader for ctransformers==0.2.27)
-
-- Rewrites inbound messages into mood-forward, human-friendly bullets.
-- Local GGUF via ctransformers (CPU). No networking required.
-- If model import/load fails, returns a compact deterministic fallback.
-- Profanity allowed/blocked from /data/options.json (personality_allow_profanity).
-
-This version makes loading **bulletproof** across the common ctransformers cases:
-- Accepts either a **file path** to .gguf or a **directory** containing .gguf files
-- First tries the simple `LLM(model_path=...)` constructor (fast path)
-- If that fails, falls back to `AutoModelForCausalLM.from_pretrained(dir, model_file=filename, ...)`
-- Adds loud logs so you can *see* what's happening at runtime
-"""
-
+# -*- coding: utf-8 -*-
+# Jarvis Prime — Neural Core (ctransformers GGUF loader + rewrite API)
+#
+# Key points:
+# - Provides BOTH rewrite_text(...) and rewrite_with_info(...).
+# - Robust GGUF loading for ctransformers==0.2.27:
+#     * If MODEL_PATH is a file: try LLM(model_path=...), then fallback to
+#       AutoModelForCausalLM.from_pretrained(dir, model_file=...).
+#     * If MODEL_PATH is a directory: pick a .gguf inside (respects LLM_MODELS_PRIORITY).
+# - Smart prefetch: if MODEL_PATH is a directory, download to that directory using
+#   the URL basename; if it's a file, download exactly to that file.
+# - Loud logs so you can see it firing.
 from __future__ import annotations
+
 import os
 import re
-import json
 import time
+import hashlib
+import tempfile
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, Tuple, List
+from urllib.parse import urlparse
+import json
 
-# ============================ Tunables ============================
+import requests
+
+BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
+
+# ---- Configuration via env (run.sh exports these from options.json) ----------
+MODEL_PATH = os.getenv(
+    "LLM_MODEL_PATH",
+    "/share/jarvis_prime/models"  # default to directory for resilience
+)
+MODEL_URL = os.getenv("LLM_MODEL_URL", "")
+MODEL_SHA256 = (os.getenv("LLM_MODEL_SHA256", "") or "").lower()
 DETAIL_LEVEL = os.getenv("LLM_DETAIL_LEVEL", "rich").lower()
 MAX_LINES = 10 if DETAIL_LEVEL == "rich" else 6
 MAX_LINE_CHARS = 160
-
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
 LLM_TOP_P      = float(os.getenv("LLM_TOP_P", "0.9"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "320"))
 
-# Loud logs so you can see it *fire*
 VERBOSE = True
 
-# ============================ Globals =============================
+# ---- Soft dep: ctransformers -------------------------------------------------
+_CTRANS_OK = False
 _MODEL = None
-_MODEL_PATH: Optional[Path] = None
-_CTRANS_AVAILABLE = False
+_MODEL_ANCHOR: Optional[Path] = None  # exactly what caller configured (file OR dir)
 
-# ====================== Config / helpers ==========================
+def _import_ctransformers() -> bool:
+    global _CTRANS_OK
+    if _CTRANS_OK:
+        return True
+    try:
+        from ctransformers import AutoModelForCausalLM  # noqa: F401
+        from ctransformers import LLM  # noqa: F401
+        _CTRANS_OK = True
+        if VERBOSE:
+            print("[Neural Core] ctransformers import: OK", flush=True)
+        return True
+    except Exception as e:
+        print(f"[Neural Core] ctransformers import FAILED: {e}", flush=True)
+        _CTRANS_OK = False
+        return False
+
+# ---- Personality / profanity gates ------------------------------------------
 def _cfg_allow_profanity() -> bool:
     env = os.getenv("PERSONALITY_ALLOW_PROFANITY")
     if env is not None:
-        return env.lower() in ("1", "true", "yes")
+        return env.strip().lower() in ("1", "true", "yes", "on")
     try:
         with open("/data/options.json", "r", encoding="utf-8") as f:
             cfg = json.load(f)
@@ -56,145 +81,176 @@ def _normalize_mood(mood: str) -> str:
     return m or "serious"
 
 def _bullet_for(mood: str) -> str:
-    m = _normalize_mood(mood)
-    return {"serious": "•", "cheeky": "😏", "relaxed": "✨", "urgent": "⚡"}.get(m, "•")
+    return {
+        "serious": "•",
+        "cheeky": "😏",
+        "relaxed": "✨",
+        "urgent": "⚡",
+        "angry": "🔥",
+        "sarcastic": "🙃",
+        "hacker-noir": "▣",
+    }.get(_normalize_mood(mood), "•")
 
 def _clean_if_needed(text: str, allow_profanity: bool) -> str:
     if allow_profanity:
         return text
-    # mild profanity filter – keep family friendly by default
     return re.sub(r"\b(fuck|shit|bitch|bastard)\b", "****", text, flags=re.I)
 
-# -------------------- ctransformers import -----------------------
-def _import_ctransformers() -> bool:
-    global _CTRANS_AVAILABLE
-    if _CTRANS_AVAILABLE:
-        return True
-    try:
-        # Import both facades; we may use either depending on path style
-        from ctransformers import AutoModelForCausalLM  # noqa: F401
-        from ctransformers import LLM  # noqa: F401
-        _CTRANS_AVAILABLE = True
-        if VERBOSE:
-            print("[Neural Core] ctransformers import: OK", flush=True)
-        return True
-    except Exception as e:
-        print(f"[Neural Core] ctransformers import FAILED: {e}", flush=True)
-        _CTRANS_AVAILABLE = False
-        return False
+# ---- Utilities ---------------------------------------------------------------
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
-# -------------------- GGUF path resolution -----------------------
+def _url_basename(u: str) -> str:
+    p = urlparse(u)
+    name = os.path.basename(p.path.rstrip("/"))
+    return name or "model.gguf"
+
 def _pick_gguf_in_dir(d: Path) -> Optional[Path]:
-    """Pick a .gguf file inside directory `d`. If LLM_MODELS_PRIORITY env is set
-    (comma-separated substrings), prefer files that contain any of those terms."""
-    if not d.is_dir():
-        return None
-    files = list(sorted(p for p in d.iterdir() if p.suffix.lower() == ".gguf"))
+    files = sorted([p for p in d.iterdir() if p.suffix.lower() == ".gguf"])
     if not files:
         return None
-    priority = os.getenv("LLM_MODELS_PRIORITY", "")
-    if priority:
-        prefs = [s.strip().lower() for s in priority.split(",") if s.strip()]
-        for pref in prefs:
+    pref = os.getenv("LLM_MODELS_PRIORITY", "")
+    if pref:
+        keys = [s.strip().lower() for s in pref.split(",") if s.strip()]
+        for k in keys:
             for f in files:
-                if pref in f.name.lower():
+                if k in f.name.lower():
                     return f
-    # default to first .gguf (sorted)
     return files[0]
 
-# -------------------- Model loader (robust) ----------------------
-def _load_model(model_path: str) -> bool:
+# ---- Prefetch / download -----------------------------------------------------
+def prefetch_model() -> Optional[Path]:
     """
-    Load GGUF once. Returns True if the model is ready.
-    Handles *both* direct file path and directory path.
+    Download model if missing.
+    - If MODEL_PATH is a file: download to that file.
+    - If MODEL_PATH is a dir: download to dir/<basename(url)>
     """
-    global _MODEL, _MODEL_PATH
-    if not model_path:
-        print("[Neural Core] No model path configured.", flush=True)
-        return False
+    target_anchor = Path(MODEL_PATH).expanduser()
+    target: Path
 
-    p = Path(os.path.expandvars(model_path)).expanduser()
-    if VERBOSE:
-        print(f"[Neural Core] _load_model('{p}')", flush=True)
+    if target_anchor.suffix.lower() == ".gguf":
+        target = target_anchor
+    else:
+        if not MODEL_URL:
+            print(f"[{BOT_NAME}] ⚠️ LLM_MODEL_URL not set and MODEL_PATH is a directory; cannot infer filename.", flush=True)
+            return None
+        target = target_anchor / _url_basename(MODEL_URL)
 
-    # Already loaded?
-    if _MODEL is not None and _MODEL_PATH == p:
-        return True
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        if VERBOSE:
+            print(f"[{BOT_NAME}] ✅ Model already present at {target}", flush=True)
+        return target
+
+    if not MODEL_URL:
+        print(f"[{BOT_NAME}] ⚠️ LLM_MODEL_URL not set; cannot download model.", flush=True)
+        return None
+
+    print(f"[{BOT_NAME}] 🔮 Prefetching LLM model -> {target}", flush=True)
+    headers = {"User-Agent": "jarvis-prime/1.0", "Accept": "*/*"}
+    with requests.get(MODEL_URL, headers=headers, stream=True, timeout=300) as r:
+        r.raise_for_status()
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            for chunk in r.iter_content(1024 * 1024):
+                if chunk:
+                    tmp.write(chunk)
+            tmp_path = Path(tmp.name)
+
+    if MODEL_SHA256:
+        actual = _sha256_file(tmp_path)
+        if actual.lower() != MODEL_SHA256:
+            tmp_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Model SHA256 mismatch (expected {MODEL_SHA256}, got {actual})")
+
+    tmp_path.replace(target)
+    print(f"[{BOT_NAME}] ✅ Model downloaded -> {target}", flush=True)
+    return target
+
+# ---- Model loading (robust) --------------------------------------------------
+def _resolve_model_file(anchor: Path) -> Optional[Path]:
+    """
+    Resolve the actual .gguf to load based on MODEL_PATH 'anchor'.
+    - If anchor is a file -> return it.
+    - If anchor is a dir  -> pick a .gguf inside.
+    """
+    anchor = anchor.expanduser()
+    if anchor.is_file() and anchor.suffix.lower() == ".gguf":
+        return anchor
+    if anchor.is_dir():
+        pick = _pick_gguf_in_dir(anchor)
+        if pick:
+            return pick
+    return None
+
+def _load_model() -> Optional[object]:
+    global _MODEL, _MODEL_ANCHOR
+    if _MODEL is not None:
+        return _MODEL
 
     if not _import_ctransformers():
-        return False
+        return None
 
-    # Resolve to an actual .gguf file + parent dir
-    model_file: Optional[Path] = None
-    model_dir: Optional[Path] = None
-
-    if p.is_file() and p.suffix.lower() == ".gguf":
-        model_file = p
-        model_dir = p.parent
-    elif p.is_dir():
-        picked = _pick_gguf_in_dir(p)
-        if picked:
-            model_file = picked
-            model_dir = picked.parent
-        else:
-            print(f"[Neural Core] No .gguf found in directory: {p}", flush=True)
-            return False
-    else:
-        # Path does not exist; let user know quickly
-        print(f"[Neural Core] Path not found: {p}", flush=True)
-        return False
+    anchor = Path(MODEL_PATH).expanduser()
+    gguf = _resolve_model_file(anchor)
+    if gguf is None:
+        print(f"[Neural Core] ❌ Model file not found. MODEL_PATH='{anchor}'", flush=True)
+        return None
 
     try:
-        # 1) Fast path: LLM(file) (works with local .gguf paths in 0.2.27)
+        # Fast path: LLM(model_path=<file>)
         from ctransformers import LLM
         t0 = time.time()
-        print(f"[Neural Core] Loading GGUF via LLM(): '{model_file}' ...", flush=True)
-        _MODEL = LLM(model_path=str(model_file), model_type="llama")
-        _MODEL_PATH = p
-        print(f"[Neural Core] Model ready in {time.time()-t0:.2f}s (LLM())", flush=True)
-        return True
+        print(f"[Neural Core] 🧠 Loading GGUF via LLM(): '{gguf}' ...", flush=True)
+        model = LLM(model_path=str(gguf), model_type="llama")
+        _MODEL = model
+        _MODEL_ANCHOR = anchor
+        print(f"[Neural Core] ✅ Model ready in {time.time() - t0:.2f}s (LLM())", flush=True)
+        return _MODEL
     except Exception as e1:
-        print(f"[Neural Core] LLM() load failed: {e1}", flush=True)
+        print(f"[Neural Core] ⚠️ LLM() load failed: {e1}", flush=True)
 
     try:
-        # 2) Fallback: AutoModelForCausalLM.from_pretrained(dir, model_file=...)
+        # Fallback: directory + model_file
         from ctransformers import AutoModelForCausalLM
         t0 = time.time()
-        print(f"[Neural Core] Loading GGUF via from_pretrained(dir, model_file): dir='{model_dir}', file='{model_file.name}' ...", flush=True)
-        _MODEL = AutoModelForCausalLM.from_pretrained(
-            model_path_or_repo_id=str(model_dir),
-            model_file=model_file.name,
+        print(f"[Neural Core] 🧠 Loading GGUF via from_pretrained(dir, model_file): dir='{gguf.parent}', file='{gguf.name}' ...", flush=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path_or_repo_id=str(gguf.parent),
+            model_file=gguf.name,
             model_type="llama",
             local_files_only=True,
-            gpu_layers=0,         # CPU in HA container
+            gpu_layers=0,
+            context_length=2048,
         )
-        _MODEL_PATH = p
-        print(f"[Neural Core] Model ready in {time.time()-t0:.2f}s (from_pretrained)", flush=True)
-        return True
+        _MODEL = model
+        _MODEL_ANCHOR = anchor
+        print(f"[Neural Core] ✅ Model ready in {time.time() - t0:.2f}s (from_pretrained)", flush=True)
+        return _MODEL
     except Exception as e2:
-        print(f"[Neural Core] from_pretrained load failed: {e2}", flush=True)
+        print(f"[Neural Core] ❌ from_pretrained load failed: {e2}", flush=True)
         _MODEL = None
-        _MODEL_PATH = None
-        return False
+        _MODEL_ANCHOR = None
+        return None
 
-# ============================ Text utils ==========================
-def _cut(s: str, n: int) -> str:
-    s = (s or "").strip()
-    return s if len(s) <= n else (s[: max(0, n - 1)].rstrip() + "…")
-
-def _allow_profanity() -> bool:
-    return _cfg_allow_profanity()
-
+# ---- Prompting ---------------------------------------------------------------
 def _build_prompt(text: str, mood: str, allow_profanity: bool) -> str:
     tone = {
         "serious": "succinct, confident, professional, no filler",
         "cheeky": "playful, witty, lightly sarcastic, but helpful",
         "relaxed": "friendly, calm, conversational",
-        "urgent": "terse, high-priority, crisp"
+        "urgent": "terse, high-priority, crisp",
+        "angry": "short, no-nonsense, sharp edges",
+        "sarcastic": "dry, sardonic, minimal fluff",
+        "hacker-noir": "laconic, neon-noir sysop vibe",
     }[_normalize_mood(mood)]
     filters = "" if allow_profanity else "Keep it family-friendly; avoid profanity."
     return (
-        "You rewrite the following message into a few short, human-friendly bullet lines.\n"
+        "You polish infrastructure alerts for a home server admin.\n"
+        "Keep ALL key facts (titles, IPs, versions, counts, links, times).\n"
         "Output ONLY bullet lines (no headings, no labels).\n"
         f"Tone: {tone}. {filters}\n"
         "Bullets should feel like my homelab is speaking.\n\n"
@@ -202,52 +258,109 @@ def _build_prompt(text: str, mood: str, allow_profanity: bool) -> str:
         "REWRITE:\n"
     )
 
-# ============================ Public API ==========================
-def rewrite(
+def _cut(s: str, n: int) -> str:
+    s = (s or "").strip()
+    return s if len(s) <= n else (s[: max(0, n - 1)].rstrip() + "…")
+
+# ---- Public API --------------------------------------------------------------
+def rewrite_text(prompt: str, mood: str = "serious", timeout_s: int = 5) -> str:
+    """
+    Streaming generation with a hard timeout (best-effort).
+    Kept for backward compatibility with existing callers.
+    """
+    model = _load_model()
+    if model is None:
+        # fallback: simply bulletize original text
+        return rewrite_fallback(prompt, mood)
+
+    allow_profanity = _cfg_allow_profanity()
+    tpl = _build_prompt(prompt or "", mood, allow_profanity)
+    t0 = time.time()
+    out_parts: List[str] = []
+    try:
+        for tok in model(tpl, stream=True, max_new_tokens=LLM_MAX_TOKENS,
+                         temperature=LLM_TEMPERATURE, top_p=LLM_TOP_P):
+            out_parts.append(tok)
+            if (time.time() - t0) > timeout_s:
+                break
+    except Exception as e:
+        print(f"[Neural Core] ⚠️ Generation error (stream): {e}", flush=True)
+        return rewrite_fallback(prompt, mood)
+
+    gen = "".join(out_parts).strip()
+    bullets = _postprocess(gen, mood, allow_profanity)
+    return bullets or rewrite_fallback(prompt, mood)
+
+def rewrite_with_info(
     text: str,
     mood: str = "serious",
-    timeout: int = 5,          # (caller enforces timeouts with thread pools)
-    cpu_limit: int = 70,       # kept for signature compatibility
-    models_priority=None,      # kept for signature compatibility
-    base_url: str = "",        # kept for signature compatibility
-    model_path: str = "",
-) -> str:
+    timeout: int = 5,
+    cpu_limit: int = 70,          # signature-compat only
+    models_priority=None,         # signature-compat only
+    base_url: str = "",           # signature-compat only
+    allow_profanity: Optional[bool] = None,
+    model_path: str = ""
+) -> Tuple[str, bool]:
     """
-    Returns ONLY the rewritten body (no footer). Callers add the footer.
+    Preferred API for SMTP/Proxy path.
+    Returns (output_text, used_llm).
+    used_llm == True only when a GGUF model was successfully loaded & used.
     """
-    allow_profanity = _cfg_allow_profanity()
-    mood = _normalize_mood(mood)
-    model_path = model_path or os.getenv("LLM_MODEL_PATH", "")
+    if model_path:
+        # Allow per-call override
+        global MODEL_PATH
+        MODEL_PATH = model_path
 
-    if VERBOSE:
-        print(f"[Neural Core] rewrite() start: mood={mood} model='{model_path}'", flush=True)
+    model = _load_model()
+    if model is None:
+        return rewrite_fallback(text, mood), False
 
-    ready = _load_model(model_path)
-    if not ready or _MODEL is None:
-        return _render_generic(text or "", mood, allow_profanity)
+    if allow_profanity is None:
+        allow_profanity = _cfg_allow_profanity()
 
+    prompt = _build_prompt(text or "", mood, allow_profanity)
+    t0 = time.time()
+    out = ""
     try:
-        prompt = _build_prompt(text or "", mood, allow_profanity)
-        if VERBOSE:
-            print("[Neural Core] Generating...", flush=True)
-        t0 = time.time()
-        out = _MODEL(
-            prompt,
-            max_new_tokens=LLM_MAX_TOKENS,
-            temperature=LLM_TEMPERATURE,
-            top_p=LLM_TOP_P,
-        )
-        gen = str(out or "").strip()
-        if VERBOSE:
-            print(f"[Neural Core] Generation done in {time.time()-t0:.2f}s", flush=True)
+        # Non-stream call for simplicity/compat
+        out = str(model(prompt,
+                        max_new_tokens=LLM_MAX_TOKENS,
+                        temperature=LLM_TEMPERATURE,
+                        top_p=LLM_TOP_P) or "").strip()
     except Exception as e:
-        print(f"[Neural Core] Generation error: {e}", flush=True)
-        return _render_generic(text or "", mood, allow_profanity)
+        print(f"[Neural Core] ⚠️ Generation error: {e}", flush=True)
+        return rewrite_fallback(text, mood), False
 
+    bullets = _postprocess(out, mood, allow_profanity)
+    if not bullets:
+        return rewrite_fallback(text, mood), False
+    return bullets, True
+
+# ---- Fallback & postprocess --------------------------------------------------
+def rewrite_fallback(text: str, mood: str) -> str:
+    bullet = _bullet_for(mood)
+    base = (text or "").strip().replace("\r", "")
+    lines = []
+    for raw in base.splitlines():
+        s = raw.strip()
+        if not s:
+            continue
+        if not s.startswith(bullet + " "):
+            s = f"{bullet} {s}"
+        lines.append(_cut(s, MAX_LINE_CHARS))
+        if len(lines) >= MAX_LINES:
+            break
+    if not lines:
+        lines = [f"{bullet} (no content)"]
+    return _clean_if_needed("\n".join(lines), _cfg_allow_profanity())
+
+def _postprocess(gen: str, mood: str, allow_profanity: bool) -> str:
+    if not gen:
+        return ""
+    # If model echoed instructions, try to trim to first bullet
     m = re.search(r"(•|✨|⚡|😏|▣)\s", gen)
     if m:
         gen = gen[m.start():]
-
     lines: List[str] = []
     for raw in gen.splitlines():
         s = raw.strip()
@@ -260,109 +373,24 @@ def rewrite(
         lines.append(_cut(s, MAX_LINE_CHARS))
         if len(lines) >= MAX_LINES:
             break
+    return _clean_if_needed("\n".join(lines), allow_profanity) if lines else ""
 
-    if not lines:
-        return _render_generic(text or "", mood, allow_profanity)
-
-    result = "\n".join(lines)
-    return _clean_if_needed(result, allow_profanity)
-
-# ============================ Public API (extended) ==========================
-def rewrite_with_info(
-    text: str,
-    mood: str = "serious",
-    timeout: int = 5,
-    cpu_limit: int = 70,
-    models_priority=None,
-    base_url: str = "",
-    allow_profanity: Optional[bool] = None,
-    model_path: str = ""
-) -> tuple[str, bool]:
-    """
-    Like rewrite(), but returns (output_text, used_llm).
-    used_llm == True only if a GGUF model was loaded and used for generation.
-    """
-    if allow_profanity is None:
-        allow_profanity = _allow_profanity()
-    model_path = model_path or os.getenv("LLM_MODEL_PATH", "")
-
-    ready = _load_model(model_path)
-    if not ready or _MODEL is None:
-        return _render_generic(text or "", _normalize_mood(mood), allow_profanity), False
-
-    try:
-        prompt = _build_prompt(text or "", _normalize_mood(mood), allow_profanity)
-        if VERBOSE:
-            print("[Neural Core] Generating (with info)...", flush=True)
-        t0 = time.time()
-        out = _MODEL(
-            prompt,
-            max_new_tokens=LLM_MAX_TOKENS,
-            temperature=LLM_TEMPERATURE,
-            top_p=LLM_TOP_P,
-        )
-        gen = str(out or "").strip()
-        if VERBOSE:
-            print(f"[Neural Core] Generation done in {time.time()-t0:.2f}s", flush=True)
-    except Exception as e:
-        print(f"[Neural Core] Generation error (with info): {e}", flush=True)
-        return _render_generic(text or "", _normalize_mood(mood), allow_profanity), False
-
-    m = re.search(r"(•|✨|⚡|😏|▣)\s", gen)
-    if m:
-        gen = gen[m.start():]
-
-    lines: List[str] = []
-    for raw in gen.splitlines():
-        s = raw.strip()
-        if not s:
-            continue
-        if re.search(r"(REWRITE:|MESSAGE:|Example|Tone:|Rules:|Output ONLY)", s, re.I):
-            continue
-        if not re.match(r"^(•|✨|⚡|😏|▣)\s", s):
-            s = f"{_bullet_for(_normalize_mood(mood))} {s}"
-        lines.append(_cut(s, MAX_LINE_CHARS))
-        if len(lines) >= MAX_LINES:
-            break
-
-    if not lines:
-        return _render_generic(text or "", _normalize_mood(mood), allow_profanity), False
-
-    result = "\n".join(lines)
-    return _clean_if_needed(result, allow_profanity), True
-
-# ======================== Fallback renderer ======================
-def _render_generic(text: str, mood: str, allow_profanity: bool) -> str:
-    mood = _normalize_mood(mood)
-    bullet = _bullet_for(mood)
-    base = (text or "").strip().replace("\r", "")
-    lines = []
-    for i, raw in enumerate(base.splitlines()):
-        s = raw.strip()
-        if not s:
-            continue
-        if not s.startswith(bullet + " "):
-            s = f"{bullet} {s}"
-        lines.append(_cut(s, MAX_LINE_CHARS))
-        if len(lines) >= MAX_LINES:
-            break
-    if not lines:
-        lines = [f"{bullet} (no content)"]
-    return _clean_if_needed("\n".join(lines), allow_profanity)
-
-# ============================ CLI self-test =======================
+# ---- Main: allow run.sh to prefetch (and optional self-test) -----------------
 if __name__ == "__main__":
-    # Try to load the model at startup to surface any errors in logs.
-    mp = os.getenv("LLM_MODEL_PATH", "")
-    mood = os.getenv("CHAT_MOOD", "serious")
-    print(f"[Neural Core] SELF-TEST: model_path='{mp}'", flush=True)
-    ok = _load_model(mp)
-    if not ok:
-        print("[Neural Core] SELF-TEST: model not ready", flush=True)
-        raise SystemExit(2)
     try:
-        out, used = rewrite_with_info("Boot self-test: say hello in bullet points.", mood=mood, model_path=mp)
-        print(f"[Neural Core] SELF-TEST: used_llm={used}, chars={len(out)}", flush=True)
+        dest = prefetch_model()
+        if dest:
+            print(f"[{BOT_NAME}] 🔧 Prefetch complete: {dest}", flush=True)
+        else:
+            print(f"[{BOT_NAME}] ⚠️ Prefetch skipped.", flush=True)
     except Exception as e:
-        print(f"[Neural Core] SELF-TEST: generation failed: {e}", flush=True)
-        raise SystemExit(3)
+        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}", flush=True)
+
+    # Optional quick self-test if model is present
+    model = _load_model()
+    if model is not None:
+        try:
+            out, used = rewrite_with_info("Boot self-test: say hello in bullet points.", mood=os.getenv("CHAT_MOOD", "serious"))
+            print(f"[Neural Core] SELF-TEST used_llm={used} chars={len(out)}", flush=True)
+        except Exception as e:
+            print(f"[Neural Core] SELF-TEST generation failed: {e}", flush=True)
