@@ -8,6 +8,8 @@ import requests
 import websockets
 import schedule
 import re
+import subprocess
+import atexit
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
@@ -180,6 +182,38 @@ except Exception as _e:
     print(f"[{BOT_NAME}] ⚠️ llm_client not loaded: {_e}")
 
 # -----------------------------
+# Sidecar processes (proxy/smtp)
+# -----------------------------
+_sidecars: list[subprocess.Popen] = []
+
+def start_sidecars():
+    # proxy
+    if PROXY_ENABLED:
+        try:
+            p = subprocess.Popen(["python3", "/app/proxy.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            _sidecars.append(p)
+            print(f"[{BOT_NAME}] 🔀 proxy.py started (pid={p.pid})")
+        except Exception as e:
+            print(f"[{BOT_NAME}] ❌ failed to start proxy.py: {e}")
+    # smtp
+    if SMTP_ENABLED:
+        try:
+            p = subprocess.Popen(["python3", "/app/smtp_server.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            _sidecars.append(p)
+            print(f"[{BOT_NAME}] ✉️ smtp_server.py started (pid={p.pid})")
+        except Exception as e:
+            print(f"[{BOT_NAME}] ❌ failed to start smtp_server.py: {e}")
+
+def stop_sidecars():
+    for p in _sidecars:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+
+atexit.register(stop_sidecars)
+
+# -----------------------------
 # Utils
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
@@ -243,7 +277,7 @@ def _is_our_post(data: dict) -> bool:
 
 def _should_purge() -> bool:
     try:
-        return bool(merged.get("silent_repost", SILENT_REPOST))
+        return bool(merged.get("silent_repost", S    ILENT_REPOST))
     except Exception:
         return SILENT_REPOST
 
@@ -339,10 +373,10 @@ def extract_command_from(title: str, message: str) -> str:
 # Startup HUD (high-tech boot card)
 # -----------------------------
 def post_startup_card():
-    # Make sure the model is resident in THIS process before we query status.
+    # Warm-load the model in THIS process before status.
     try:
         if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
-            _llm.prefetch_model()  # quick: no download if file exists; warm-loads model
+            _llm.prefetch_model()
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Prefetch in bot failed: {e}")
 
@@ -516,15 +550,15 @@ async def listen():
                 title   = data.get("title", "")   or ""
                 message = data.get("message", "") or ""
 
-                # Wake-word commands (still supported, but they DO NOT skip LLM anymore)
+                # Commands (do NOT skip LLM anymore)
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd:
                     handled = _handle_command(ncmd)
                     if handled:
                         _purge_after(msg_id)
-                        continue  # command produced its own message
+                        continue
 
-                # Otherwise, treat as a relay message → LLM then Beautify
+                # Otherwise, relay message → LLM then Beautify
                 final, extras, used_llm, used_beautify = _llm_then_beautify(title, message)
                 send_message(title or "Notification", final, priority=5, extras=extras)
                 _purge_after(msg_id)
@@ -538,9 +572,10 @@ async def listen():
 def main():
     resolve_app_id()
     try:
+        start_sidecars()   # <- bring back proxy/smtp listeners
         post_startup_card()
     except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Startup card error: {e}")
+        print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
 
     loop = asyncio.get_event_loop()
     while True:
