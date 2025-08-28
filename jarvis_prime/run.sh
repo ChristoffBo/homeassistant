@@ -73,13 +73,19 @@ export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
 export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
 # LLM (built-in)
-LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
-LLM_MODEL_URL=$(jq -r '.llm_model_url // ""' "$CONFIG_PATH")
-LLM_MODEL_PATH=$(jq -r '.llm_model_path // ""' "$CONFIG_PATH")
-LLM_MODEL_SHA=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
-CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
+# NOTE: export these so pipeline/llm_client can read them
+export LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
+export LLM_MODEL_URL=$(jq -r '.llm_model_url // ""' "$CONFIG_PATH")
+export LLM_MODEL_PATH=$(jq -r '.llm_model_path // ""' "$CONFIG_PATH")
+# keep original var name and the sha256 one for compatibility
+export LLM_MODEL_SHA=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
+export LLM_MODEL_SHA256="$LLM_MODEL_SHA"
+# mood env used by pipeline/llm_client
+export personality_mood=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
+# keep old var too in case other code reads it
+export CHAT_MOOD="$personality_mood"
 
-# --- NEW: LLM controls exposed via add-on options (with safe defaults)
+# --- LLM controls exposed via add-on options (with safe defaults)
 export LLM_CTX_TOKENS=$(jq -r '.llm_ctx_tokens // 4096' "$CONFIG_PATH")
 export LLM_GEN_TOKENS=$(jq -r '.llm_gen_tokens // 180' "$CONFIG_PATH")
 export LLM_MAX_LINES=$(jq -r '.llm_max_lines // 10' "$CONFIG_PATH")
