@@ -451,18 +451,30 @@ def extract_command_from(title: str, message: str) -> str:
 # Listener
 # -----------------------------
 def _llm_rewrite_blocking(input_text: str, mood: str):
-    """Call _llm.rewrite() (if present) and return the transformed text."""
-    if not (LLM_ENABLED and _llm and hasattr(_llm, "rewrite")):
+    """Call _llm.rewrite_with_info() (if present) and return (text, used_llm: bool)."""
+    if not (LLM_ENABLED and _llm and (hasattr(_llm, "rewrite_with_info") or hasattr(_llm, "rewrite"))):
         raise RuntimeError("LLM path unavailable")
-    return _llm.rewrite(
-        text=input_text,
-        mood=mood,
-        timeout=LLM_TIMEOUT_SECONDS,
-        cpu_limit=LLM_MAX_CPU_PERCENT,
-        models_priority=LLM_MODELS_PRIORITY,
-        base_url=OLLAMA_BASE_URL,
-        model_path=LLM_MODEL_PATH
-    )
+    if hasattr(_llm, "rewrite_with_info"):
+        return _llm.rewrite_with_info(
+            text=input_text,
+            mood=mood,
+            timeout=LLM_TIMEOUT_SECONDS,
+            cpu_limit=LLM_MAX_CPU_PERCENT,
+            models_priority=LLM_MODELS_PRIORITY,
+            base_url=OLLAMA_BASE_URL,
+            model_path=LLM_MODEL_PATH,
+        )
+    else:
+        _out = _llm.rewrite(
+            text=input_text,
+            mood=mood,
+            timeout=LLM_TIMEOUT_SECONDS,
+            cpu_limit=LLM_MAX_CPU_PERCENT,
+            models_priority=LLM_MODELS_PRIORITY,
+            base_url=OLLAMA_BASE_URL,
+            model_path=LLM_MODEL_PATH,
+        )
+        return _out, True
 
 async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
@@ -600,19 +612,20 @@ async def listen():
                     try:
                         with ThreadPoolExecutor(max_workers=1) as ex:
                             fut = ex.submit(_call)
-                            transformed = fut.result(timeout=max(1, LLM_TIMEOUT_SECONDS))
-                            engine_used = "Neural Core ✓"
+                            transformed, used = fut.result(timeout=max(1, LLM_TIMEOUT_SECONDS))
+                            engine_used = "Neural Core ✓" if used else "Beautify fallback"
                             print(f"[{BOT_NAME}] 🧠 Neural Core rewrite OK")
                     except FuturesTimeout:
                         print(f"[{BOT_NAME}] ⏱️ Neural Core timeout after {LLM_TIMEOUT_SECONDS}s → fallback")
                     except Exception as _e:
                         print(f"[{BOT_NAME}] ⚠️ Neural Core error: {_e}")
 
-                final = transformed
+                final = transformed if engine_used == "Neural Core ✓" else message
 
                 try:
                     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
-                        final, extras = _beautify.beautify_message(title, transformed, mood=CHAT_MOOD)
+                        source_for_beautify = transformed if engine_used == "Neural Core ✓" else message
+                        final, extras = _beautify.beautify_message(title, source_for_beautify, mood=CHAT_MOOD)
                 except Exception as _e:
                     print(f"[{BOT_NAME}] ⚠️ Beautify failed: {_e}")
 
