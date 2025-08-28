@@ -74,6 +74,7 @@ def _wake_word_present(title: str, message: str) -> bool:
     return both.startswith("jarvis ") or both.startswith("jarvis:") or " jarvis " in both
 
 def _llm_then_beautify(title: str, message: str, mood: str):
+    print(f\"[LLM DEBUG][proxy] gate: wake={_wake_word_present(title, message)} en={bool(STATE and STATE.llm_enabled)} mod={bool(_llm)} hasinfo={hasattr(_llm, 'rewrite_with_info') if _llm else False}\")
     if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite_with_info")):
         text, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
         return f"{text}\n[Beautify fallback]", bx
