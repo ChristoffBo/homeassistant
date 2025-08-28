@@ -18,26 +18,21 @@ except Exception:  # pragma: no cover
 
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
-# Defaults can be overridden by env or callers
-MODEL_PATH   = os.getenv("LLM_MODEL_PATH", "/share/jarvis_prime/models/tinyllama-1.1b-chat.v1.Q4_K_M.gguf")
-MODEL_URL    = os.getenv("LLM_MODEL_URL", "")
+# ---- Config (env or options.json will export these) ----
+MODEL_PATH   = os.getenv("LLM_MODEL_PATH", "").strip()
+MODEL_URL    = os.getenv("LLM_MODEL_URL", "").strip()
 MODEL_SHA256 = (os.getenv("LLM_MODEL_SHA256", "") or "").lower()
 
-# Priority catalog for tiny CPU models (smallest first)
-CATALOG: List[Tuple[str, str, str, str]] = [
-    # (key, repo, filename, model_type)
-    ("qwen2.5-0.5b-instruct", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q4_k_m.gguf", "qwen"),
-    ("phi-2",                 "TheBloke/phi-2-GGUF",            "phi-2.Q4_K_M.gguf",                  "phi"),
-    ("tinyllama-1.1b-chat",  "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf", "llama"),
+MODELS_DIRS = [
+    Path("/share/jarvis_prime/models"),
+    Path("/share/jarvis_prime"),
 ]
+
+SUPPORTED_TYPES = ("llama", "phi")  # keep stable; avoid qwen here
 
 _model = None
 _model_type_hint: Optional[str] = None
 _loaded_path: Optional[Path] = None
-
-
-def _hf_resolve(repo: str, filename: str) -> str:
-    return f"https://huggingface.co/{repo}/resolve/main/{filename}"
 
 
 def _sha256_file(path: Path) -> str:
@@ -50,7 +45,6 @@ def _sha256_file(path: Path) -> str:
 
 def _download(url: str, dest: Path, sha256: str = "", timeout: int = 60) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-
     if dest.exists() and dest.stat().st_size > 0:
         if sha256:
             if _sha256_file(dest).lower() == sha256.lower():
@@ -82,65 +76,59 @@ def _download(url: str, dest: Path, sha256: str = "", timeout: int = 60) -> None
 
 def _guess_model_type_from_path(path: str) -> str:
     s = path.lower()
-    if "qwen" in s: return "qwen"
-    if "phi"  in s: return "phi"
+    if "phi" in s:
+        return "phi"
+    # default to llama for tinyllama/llama/others
     return "llama"
+
+
+def _find_existing_model() -> Optional[Path]:
+    candidates: List[Path] = []
+    for d in MODELS_DIRS:
+        if not d.exists():
+            continue
+        for p in sorted(d.glob("*.gguf")):
+            # Prefer files that look like llama/tinyllama/phi; skip qwen to avoid ctransformers issues
+            low = p.name.lower()
+            if "qwen" in low:
+                continue
+            candidates.append(p)
+    # Prefer tinyllama-looking names first
+    candidates.sort(key=lambda p: (0 if "tinyllama" in p.name.lower() else 1, p.stat().st_size))
+    return candidates[0] if candidates else None
 
 
 def _ensure_model(
     model_url: str,
     model_path: str,
     model_sha256: str,
-    models_priority: Optional[List[str]],
+    models_priority: Optional[List[str]] = None,  # kept for interface compat
 ) -> Tuple[Path, Optional[str]]:
     """
-    Resolve a local gguf file (download if needed). Returns (path, model_type_hint).
+    Resolve a local gguf file (download only when explicitly configured).
+    Returns (path, model_type_hint).
     """
-    # If caller provided explicit url+path → honor it first
+    # Explicit path wins
+    if model_path:
+        dest = Path(model_path)
+        if not dest.exists() and model_url:
+            _download(model_url, dest, sha256=model_sha256 or "")
+        if not dest.exists():
+            raise RuntimeError(f"Configured model path not found: {dest}")
+        return dest, _guess_model_type_from_path(str(dest))
+
+    # Otherwise, pick an existing local model from /share/jarvis_prime (prefer tinyllama/llama)
+    existing = _find_existing_model()
+    if existing:
+        return existing, _guess_model_type_from_path(str(existing))
+
+    # As a last resort, only download if BOTH url and path were provided (we will write into path)
     if model_url and model_path:
         dest = Path(model_path)
-        try:
-            _download(model_url, dest, sha256=model_sha256 or "")
-            return dest, _guess_model_type_from_path(str(dest))
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ Explicit model download failed: {e}", flush=True)
+        _download(model_url, dest, sha256=model_sha256 or "")
+        return dest, _guess_model_type_from_path(str(dest))
 
-    # Else pick from our catalog by priority
-    wanted = models_priority or ["qwen2.5-0.5b-instruct", "phi-2", "tinyllama-1.1b-chat"]
-    wanted = [w.strip().lower() for w in wanted]
-
-    for key, repo, filename, mtype in CATALOG:
-        if key.lower() not in wanted:
-            continue
-        url  = _hf_resolve(repo, filename)
-        dest = Path("/share/jarvis_prime/models") / filename
-        try:
-            _download(url, dest)
-            return dest, mtype
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ Fallback '{key}' failed: {e}", flush=True)
-
-    raise RuntimeError("No LLM model could be downloaded. Check URLs/network.")
-
-
-def prefetch_model() -> Optional[Path]:
-    """
-    CLI entry: prefetch on boot (run.sh). Uses env overrides when present.
-    """
-    try:
-        path, _ = _ensure_model(
-            model_url=MODEL_URL,
-            model_path=MODEL_PATH,
-            model_sha256=MODEL_SHA256,
-            models_priority=None,
-        )
-        # Warm-load quickly (helps first inference)
-        _ = _load_model(path, None)
-        print(f"[{BOT_NAME}] 🧠 Prefetch complete", flush=True)
-        return path
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}", flush=True)
-        return None
+    raise RuntimeError("No usable LLM model found. Set LLM_MODEL_PATH or place a .gguf in /share/jarvis_prime/models.")
 
 
 def _load_model(model_path: Path, model_type_hint: Optional[str]):
@@ -152,6 +140,9 @@ def _load_model(model_path: Path, model_type_hint: Optional[str]):
         raise RuntimeError("ctransformers is not installed in this image")
 
     mtype = model_type_hint or _guess_model_type_from_path(str(model_path))
+    if mtype not in SUPPORTED_TYPES:
+        raise RuntimeError(f"Model type '{mtype}' not supported by this build; use llama/tinyllama/phi.")
+
     print(f"[{BOT_NAME}] 🧠 Loading model into memory: {model_path} (type={mtype})", flush=True)
     t0 = time.time()
     _model = AutoModelForCausalLM.from_pretrained(
@@ -168,12 +159,8 @@ def _load_model(model_path: Path, model_type_hint: Optional[str]):
 
 
 def _sanitize_generation(text: str) -> str:
-    """
-    Remove system/instruction echoes and keep the useful rewrite.
-    """
     if not text:
         return text
-
     bad_prefixes = (
         "[system]", "[SYSTEM]", "SYSTEM:", "Instruction:", "Instructions:",
         "You are", "As an AI", "The assistant", "Rewrite:", "Output:", "[OUTPUT]"
@@ -187,7 +174,6 @@ def _sanitize_generation(text: str) -> str:
             continue
         lines.append(s)
     out = "\n".join(lines).strip()
-    # squeeze extra blank lines
     out = "\n".join([ln for ln in out.splitlines() if ln.strip() != ""])
     return out
 
@@ -197,10 +183,29 @@ def engine_status():
         return {
             "ready": _model is not None,
             "model_type": _model_type_hint,
-            "model_path": str(_loaded_path or MODEL_PATH or "").strip(),
+            "model_path": str(_loaded_path or (MODEL_PATH or "")).strip(),
         }
     except Exception:
         return {"ready": False, "model_type": None, "model_path": str(MODEL_PATH or "")}
+
+
+def prefetch_model() -> Optional[Path]:
+    """
+    Warm-load in the current process. No surprise downloads.
+    """
+    try:
+        path, hint = _ensure_model(
+            model_url=MODEL_URL,
+            model_path=MODEL_PATH,
+            model_sha256=MODEL_SHA256,
+            models_priority=None,
+        )
+        _ = _load_model(path, hint)
+        print(f"[{BOT_NAME}] 🧠 Prefetch complete", flush=True)
+        return path
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}", flush=True)
+        return None
 
 
 def rewrite(
@@ -223,11 +228,9 @@ def rewrite(
     if not src:
         return src
 
-    # Ensure model on disk and loaded
     path, mhint = _ensure_model(model_url, model_path or MODEL_PATH, model_sha256 or MODEL_SHA256, models_priority)
     model = _load_model(path, mhint)
 
-    # VERY strong mood dial
     mood_map = {
         "serious": "clinical, confident, precise, authoritative, no jokes",
         "playful": "cheeky, energetic, witty, high personality, light irreverence",
