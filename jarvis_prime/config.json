@@ -3,7 +3,7 @@
   "version": "1.0.4",
   "slug": "jarvis_prime",
   "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, personalities, optional proxy, and built-in LLM + 24h memory (no Ollama required).",
-  "arch": ["aarch64","amd64","armv7"],
+  "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
   "init": false,
@@ -62,6 +62,7 @@
     "heartbeat_end": "20:00",
 
     "personality_mood": "serious",
+    "personality_allow_profanity": true,
 
     "smtp_enabled": true,
     "smtp_bind": "0.0.0.0",
@@ -145,6 +146,7 @@
     "heartbeat_end": "str",
 
     "personality_mood": "str",
+    "personality_allow_profanity": "bool",
 
     "smtp_enabled": "bool",
     "smtp_bind": "str",
