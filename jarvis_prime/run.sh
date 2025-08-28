@@ -5,6 +5,10 @@ set -euo pipefail
 CONFIG_PATH=/data/options.json
 log() { echo "[$(jq -r '.bot_name' "$CONFIG_PATH")] $*"; }
 
+# -----------------------------
+# Read options → environment
+# -----------------------------
+
 # Core
 export BOT_NAME=$(jq -r '.bot_name' "$CONFIG_PATH")
 export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
@@ -23,6 +27,8 @@ export WEATHER_API=$(jq -r '.weather_api // ""' "$CONFIG_PATH")
 export WEATHER_API_KEY=$(jq -r '.weather_api_key // ""' "$CONFIG_PATH")
 export WEATHER_CITY=$(jq -r '.weather_city' "$CONFIG_PATH")
 export WEATHER_TIME=$(jq -r '.weather_time' "$CONFIG_PATH")
+export WEATHER_LAT=$(jq -r '.weather_lat // empty' "$CONFIG_PATH")
+export WEATHER_LON=$(jq -r '.weather_lon // empty' "$CONFIG_PATH")
 
 # Digest
 export DIGEST_ENABLED=$(jq -r '.digest_enabled' "$CONFIG_PATH")
@@ -72,12 +78,18 @@ export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
 export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
 export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
-# LLM (built-in)
-LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
-LLM_MODEL_URL=$(jq -r '.llm_model_url // ""' "$CONFIG_PATH")
-LLM_MODEL_PATH=$(jq -r '.llm_model_path // ""' "$CONFIG_PATH")
-LLM_MODEL_SHA=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
-CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
+# Personality & LLM
+export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
+export LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
+export LLM_MEMORY_ENABLED=$(jq -r '.llm_memory_enabled // false' "$CONFIG_PATH")
+export PERSONALITY_PERSISTENT=$(jq -r '.personality_persistent // true' "$CONFIG_PATH")
+export LLM_TIMEOUT_SECONDS=$(jq -r '.llm_timeout_seconds // 5' "$CONFIG_PATH")
+export LLM_MAX_CPU_PERCENT=$(jq -r '.llm_max_cpu_percent // 70' "$CONFIG_PATH")
+export LLM_MODEL_URL=$(jq -r '.llm_model_url // ""' "$CONFIG_PATH")
+export LLM_MODEL_PATH=$(jq -r '.llm_model_path // ""' "$CONFIG_PATH")
+export LLM_MODEL_SHA256=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
+# Allow optional list priority if present (joins into CSV)
+export LLM_MODELS_PRIORITY=$(jq -r 'try .llm_models_priority | join(",") catch ""' "$CONFIG_PATH")
 
 # -----------------------------
 # Startup banner
@@ -93,35 +105,31 @@ echo "   → Model path: ${LLM_MODEL_PATH}"
 echo "🚀 Systems online — Jarvis is awake!"
 echo "──────────────────────────────────────────────"
 
-# Ensure share directories exist
+# -----------------------------
+# Ensure /share directories
+# -----------------------------
 mkdir -p /share/jarvis_prime/memory
 if [ -n "$LLM_MODEL_PATH" ]; then
   mkdir -p "$(dirname "$LLM_MODEL_PATH")"
 fi
 
-# Prefetch once on startup so the model downloads immediately
-if [ "$LLM_ENABLED" = "true" ] && [ -n "$LLM_MODEL_URL" ] && [ -n "$LLM_MODEL_PATH" ]; then
+# -----------------------------
+# Prefetch model (only if LLM enabled)
+# - Triggers download once on boot
+# - Uses llm_client.py fallback logic if URL is wrong
+# -----------------------------
+if [ "$LLM_ENABLED" = "true" ]; then
   echo "[${BOT_NAME}] 🔮 Prefetching LLM model..."
-  python3 - <<'PY'
-import json
-cfg = json.load(open("/data/options.json"))
-try:
-    from llm_client import rewrite
-    out = rewrite(
-        text="(prefetch)",
-        mood=cfg.get("personality_mood","serious"),
-        timeout=int(cfg.get("llm_timeout_seconds",5)),
-        cpu_limit=int(cfg.get("llm_max_cpu_percent",70)),
-        models_priority=[], base_url="",
-        model_url=cfg.get("llm_model_url",""),
-        model_path=cfg.get("llm_model_path",""),
-        model_sha256=cfg.get("llm_model_sha256","")
-    )
-    print("[Jarvis Prime] 🧠 Prefetch complete")
-except Exception as e:
-    print(f"[Jarvis Prime] ⚠️ Prefetch failed: {e}")
-PY
+  # llm_client.py will print progress, fix common URL mistakes, and fallback to known-good tiny models if needed.
+  LLM_ENABLED=true \
+  LLM_MODEL_URL="$LLM_MODEL_URL" \
+  LLM_MODEL_PATH="$LLM_MODEL_PATH" \
+  LLM_MODEL_SHA256="$LLM_MODEL_SHA256" \
+  LLM_MODELS_PRIORITY="$LLM_MODELS_PRIORITY" \
+  python3 /app/llm_client.py || true
 fi
 
-# Start the bot
+# -----------------------------
+# Run the bot
+# -----------------------------
 exec python3 /app/bot.py
