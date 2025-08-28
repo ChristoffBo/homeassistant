@@ -1,13 +1,55 @@
 #!/usr/bin/env python3
 # /app/pipeline.py
 from __future__ import annotations
-import os, re
+import os, re, importlib
 from typing import Tuple, Dict
 
-from beautify import beautify
-from llm_client import rewrite as llm_rewrite
-from llm_client import _polish, _cap  # light presentation cleanup only
+# ---------- Safe imports ----------
+# Try to import beautify.beautify; fall back to a minimal passthrough if missing/broken.
+try:
+    _beaut_mod = importlib.import_module("beautify")
+    _beautify = getattr(_beaut_mod, "beautify", None)
+except Exception as _e:
+    _beaut_mod = None
+    _beautify = None
 
+# Try to import LLM helpers; fall back to no-op if missing/broken.
+try:
+    from llm_client import rewrite as llm_rewrite  # type: ignore
+except Exception:
+    def llm_rewrite(text: str, mood: str = "serious", **_: object) -> str:
+        return text
+
+try:
+    from llm_client import _polish, _cap  # type: ignore
+except Exception:
+    def _polish(text: str) -> str:
+        s = (text or "").strip()
+        s = re.sub(r'[ \t]+', ' ', s)
+        s = re.sub(r'[ \t]*\n[ \t]*', '\n', s)
+        return s
+    def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES", "10")), max_chars: int = 800) -> str:
+        lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+        out = "\n".join(lines)
+        if len(out) > max_chars:
+            out = out[:max_chars].rstrip()
+        return out
+
+# ---------- Fallback image extraction (used by fallback beautify) ----------
+IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
+IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
+
+def _extract_images(src: str) -> list[str]:
+    imgs = IMG_MD_RE.findall(src or '') + IMG_URL_RE.findall(src or '')
+    seen: set[str] = set(); out: list[str] = []
+    for i in imgs:
+        if i not in seen:
+            seen.add(i); out.append(i)
+    return out
+
+# ---------- Facts guard ----------
 NUM_RE = re.compile(r'\b\d[\d,.:]*\b')
 URL_RE = re.compile(r'https?://[^\s)>\]]+')
 IP_RE  = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
@@ -21,13 +63,42 @@ def _facts(sig: str) -> Tuple[tuple, tuple, tuple]:
 def _same_facts(a: str, b: str) -> bool:
     return _facts(a) == _facts(b)
 
+# ---------- Safe beautify wrapper ----------
+def _safe_beautify(title: str, raw_text: str) -> Tuple[str, Dict[str, object]]:
+    """
+    Call beautify.beautify(title, text) if available, otherwise do a light passthrough
+    and return (text, extras).
+    """
+    if callable(_beautify):
+        try:
+            out_text, extras = _beautify(title, raw_text)
+            if isinstance(out_text, str) and isinstance(extras, dict):
+                return out_text, extras
+        except Exception:
+            pass
+
+    # Fallback: minimal whitespace cleanup; preserve images
+    images = _extract_images(raw_text)
+    chunks = [ln.strip() for ln in (raw_text or "").splitlines()]
+    out_lines: list[str] = []
+    blank = False
+    for ln in chunks:
+        if ln:
+            out_lines.append(ln); blank = False
+        else:
+            if not blank:
+                out_lines.append(""); blank = True
+    out = "\n".join(out_lines).strip()
+    return out, {"images": images, "kind": "generic", "beautify_fallback": True}
+
+# ---------- Public pipeline ----------
 def process(title: str, raw_text: str, mood: str) -> Tuple[str, Dict[str, object]]:
     """
     1) Beautify  2) LLM (low-temp)  3) Polish  4) Fact-guard fallback
     Returns (final_text, extras) where extras includes images/kind, etc.
     """
     # 1) BEAUTIFY
-    clean_text, extras = beautify(title, raw_text)
+    clean_text, extras = _safe_beautify(title or "", raw_text or "")
     base = clean_text or ""
 
     # 2) LLM voice (do not invent facts)
