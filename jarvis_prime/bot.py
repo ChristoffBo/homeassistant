@@ -6,6 +6,7 @@ from pathlib import Path
 import requests
 import websockets
 import schedule
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 # =============================================================================
 # Jarvis Prime - Bot Core (Neural Core edition)
@@ -363,7 +364,7 @@ def startup_poster():
     return "\n".join(lines)
 
 # -----------------------------
-# Heartbeat / Digest (unchanged from earlier)
+# Heartbeat / Digest
 # -----------------------------
 def _parse_hhmm(s):
     try:
@@ -449,6 +450,20 @@ def extract_command_from(title: str, message: str) -> str:
 # -----------------------------
 # Listener
 # -----------------------------
+def _llm_rewrite_blocking(input_text: str, mood: str):
+    """Call _llm.rewrite() (if present) and return the transformed text."""
+    if not (LLM_ENABLED and _llm and hasattr(_llm, "rewrite")):
+        raise RuntimeError("LLM path unavailable")
+    return _llm.rewrite(
+        text=input_text,
+        mood=mood,
+        timeout=LLM_TIMEOUT_SECONDS,
+        cpu_limit=LLM_MAX_CPU_PERCENT,
+        models_priority=LLM_MODELS_PRIORITY,
+        base_url=OLLAMA_BASE_URL,
+        model_path=LLM_MODEL_PATH
+    )
+
 async def listen():
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
     print(f"[{BOT_NAME}] Connecting {ws_url}")
@@ -572,21 +587,26 @@ async def listen():
                 transformed = message
                 extras = None
 
+                # Build richer context for the LLM
+                llm_input = (title or "").strip()
+                if message.strip():
+                    llm_input = (llm_input + "\n\n" + message.strip()).strip()
+
                 if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
+                    print(f"[{BOT_NAME}] 🔧 Neural Core attempt (mood={CHAT_MOOD}, timeout={LLM_TIMEOUT_SECONDS}s)")
+                    def _call():
+                        return _llm_rewrite_blocking(llm_input, CHAT_MOOD)
+
                     try:
-                        print(f"[{BOT_NAME}] 🔧 Neural Core rewriting (mood={CHAT_MOOD})")
-                        transformed = _llm.rewrite(
-                            text=message,
-                            mood=CHAT_MOOD,
-                            timeout=LLM_TIMEOUT_SECONDS,
-                            cpu_limit=LLM_MAX_CPU_PERCENT,
-                            models_priority=LLM_MODELS_PRIORITY,
-                            base_url=OLLAMA_BASE_URL,
-                            model_path=LLM_MODEL_PATH
-                        )
-                        engine_used = "Neural Core ✓"
+                        with ThreadPoolExecutor(max_workers=1) as ex:
+                            fut = ex.submit(_call)
+                            transformed = fut.result(timeout=max(1, LLM_TIMEOUT_SECONDS))
+                            engine_used = "Neural Core ✓"
+                            print(f"[{BOT_NAME}] 🧠 Neural Core rewrite OK")
+                    except FuturesTimeout:
+                        print(f"[{BOT_NAME}] ⏱️ Neural Core timeout after {LLM_TIMEOUT_SECONDS}s → fallback")
                     except Exception as _e:
-                        print(f"[{BOT_NAME}] ⚠️ Neural Core skipped: {_e}")
+                        print(f"[{BOT_NAME}] ⚠️ Neural Core error: {_e}")
 
                 final = transformed
 
