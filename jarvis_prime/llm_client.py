@@ -1,254 +1,237 @@
+
 #!/usr/bin/env python3
-# /app/llm_client.py
 from __future__ import annotations
 
 import os
-import time
-import hashlib
+import re
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, List, Dict
 
-import requests
-
-# Soft dep: ctransformers
 try:
     from ctransformers import AutoModelForCausalLM
-except Exception:  # pragma: no cover
-    AutoModelForCausalLM = None
+except Exception:
+    AutoModelForCausalLM = None  # type: ignore
+
+try:
+    import requests
+except Exception:
+    requests = None  # type: ignore
 
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
-# ---- Config (env or options.json will export these) ----
-MODEL_PATH   = os.getenv("LLM_MODEL_PATH", "").strip()
-MODEL_URL    = os.getenv("LLM_MODEL_URL", "").strip()
-MODEL_SHA256 = (os.getenv("LLM_MODEL_SHA256", "") or "").lower()
+# Search roots for gguf models
+SEARCH_ROOTS = [Path("/share/jarvis_prime"), Path("/share/jarvis_prime/models"), Path("/share")]
 
-MODELS_DIRS = [
-    Path("/share/jarvis_prime/models"),
-    Path("/share/jarvis_prime"),
-]
+def _list_local_models() -> list[Path]:
+    out: list[Path] = []
+    for root in SEARCH_ROOTS:
+        if root.exists():
+            out += list(root.rglob("*.gguf"))
+    # de-dup
+    seen=set(); uniq=[]
+    for p in out:
+        s=str(p)
+        if s not in seen:
+            seen.add(s); uniq.append(p)
+    return uniq
 
-SUPPORTED_TYPES = ("llama", "phi")  # keep stable; avoid qwen here
+def _choose_preferred(paths: list[Path]) -> Optional[Path]:
+    if not paths: return None
+    pref = (os.getenv("LLM_MODEL_PREFERENCE","phi,qwen,tinyllama").lower()).split(",")
+    def score(p: Path):
+        name=p.name.lower()
+        fam = min([i for i,f in enumerate(pref) if f and f in name] + [999])
+        bias = 0 if str(p).startswith("/share/jarvis_prime/") else (1 if str(p).startswith("/share/") else 2)
+        size = p.stat().st_size if p.exists() else 1<<60
+        return (fam, bias, size)
+    return sorted(paths, key=score)[0]
 
-_model = None
-_model_type_hint: Optional[str] = None
-_loaded_path: Optional[Path] = None
+MODEL_PATH  = Path(os.getenv("LLM_MODEL_PATH", ""))
+MODEL_URL   = os.getenv("LLM_MODEL_URL","")
+MODEL_URLS  = [u.strip() for u in os.getenv("LLM_MODEL_URLS","").split(",") if u.strip()]
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL","")
 
+_loaded_model = None
+_model_path: Optional[Path] = None
 
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _download(url: str, dest: Path, sha256: str = "", timeout: int = 60) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and dest.stat().st_size > 0:
-        if sha256:
-            if _sha256_file(dest).lower() == sha256.lower():
-                print(f"[{BOT_NAME}] ✅ Model already present: {dest}", flush=True)
-                return
-            dest.unlink(missing_ok=True)
-        else:
-            print(f"[{BOT_NAME}] ✅ Model already present: {dest}", flush=True)
-            return
-
-    print(f"[{BOT_NAME}] 📥 Downloading LLM model: {url}", flush=True)
-    with requests.get(url, stream=True, timeout=timeout) as r:
-        r.raise_for_status()
-        tmp = dest.with_suffix(dest.suffix + ".part")
-        with tmp.open("wb") as f:
-            for chunk in r.iter_content(1024 * 1024):
-                if chunk:
-                    f.write(chunk)
+def _download_to(url: str, dest: Path) -> bool:
+    if not requests: return False
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".part")
+        with requests.get(url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(1<<20):
+                    if chunk: f.write(chunk)
         tmp.replace(dest)
-
-    if sha256:
-        got = _sha256_file(dest)
-        if got.lower() != sha256.lower():
-            dest.unlink(missing_ok=True)
-            raise RuntimeError(f"Model SHA256 mismatch (expected {sha256}, got {got})")
-
-    print(f"[{BOT_NAME}] ✅ Model downloaded to {dest}", flush=True)
-
-
-def _guess_model_type_from_path(path: str) -> str:
-    s = path.lower()
-    if "phi" in s:
-        return "phi"
-    # default to llama for tinyllama/llama/others
-    return "llama"
-
-
-def _find_existing_model() -> Optional[Path]:
-    candidates: List[Path] = []
-    for d in MODELS_DIRS:
-        if not d.exists():
-            continue
-        for p in sorted(d.glob("*.gguf")):
-            # Prefer files that look like llama/tinyllama/phi; skip qwen to avoid ctransformers issues
-            low = p.name.lower()
-            if "qwen" in low:
-                continue
-            candidates.append(p)
-    # Prefer tinyllama-looking names first
-    candidates.sort(key=lambda p: (0 if "tinyllama" in p.name.lower() else 1, p.stat().st_size))
-    return candidates[0] if candidates else None
-
-
-def _ensure_model(
-    model_url: str,
-    model_path: str,
-    model_sha256: str,
-    models_priority: Optional[List[str]] = None,  # kept for interface compat
-) -> Tuple[Path, Optional[str]]:
-    """
-    Resolve a local gguf file (download only when explicitly configured).
-    Returns (path, model_type_hint).
-    """
-    # Explicit path wins
-    if model_path:
-        dest = Path(model_path)
-        if not dest.exists() and model_url:
-            _download(model_url, dest, sha256=model_sha256 or "")
-        if not dest.exists():
-            raise RuntimeError(f"Configured model path not found: {dest}")
-        return dest, _guess_model_type_from_path(str(dest))
-
-    # Otherwise, pick an existing local model from /share/jarvis_prime (prefer tinyllama/llama)
-    existing = _find_existing_model()
-    if existing:
-        return existing, _guess_model_type_from_path(str(existing))
-
-    # As a last resort, only download if BOTH url and path were provided (we will write into path)
-    if model_url and model_path:
-        dest = Path(model_path)
-        _download(model_url, dest, sha256=model_sha256 or "")
-        return dest, _guess_model_type_from_path(str(dest))
-
-    raise RuntimeError("No usable LLM model found. Set LLM_MODEL_PATH or place a .gguf in /share/jarvis_prime/models.")
-
-
-def _load_model(model_path: Path, model_type_hint: Optional[str]):
-    global _model, _model_type_hint, _loaded_path
-    if _model is not None:
-        return _model
-
-    if AutoModelForCausalLM is None:
-        raise RuntimeError("ctransformers is not installed in this image")
-
-    mtype = model_type_hint or _guess_model_type_from_path(str(model_path))
-    if mtype not in SUPPORTED_TYPES:
-        raise RuntimeError(f"Model type '{mtype}' not supported by this build; use llama/tinyllama/phi.")
-
-    print(f"[{BOT_NAME}] 🧠 Loading model into memory: {model_path} (type={mtype})", flush=True)
-    t0 = time.time()
-    _model = AutoModelForCausalLM.from_pretrained(
-        str(model_path),
-        model_type=mtype,
-        gpu_layers=0,
-        context_length=4096,
-    )
-    _model_type_hint = mtype
-    _loaded_path = model_path
-    dt = time.time() - t0
-    print(f"[{BOT_NAME}] 🌟 Model ready in {dt:.1f}s", flush=True)
-    return _model
-
-
-def _sanitize_generation(text: str) -> str:
-    if not text:
-        return text
-    bad_prefixes = (
-        "[system]", "[SYSTEM]", "SYSTEM:", "Instruction:", "Instructions:",
-        "You are", "As an AI", "The assistant", "Rewrite:", "Output:", "[OUTPUT]"
-    )
-    lines = []
-    for raw in text.splitlines():
-        s = raw.strip()
-        if not s:
-            continue
-        if any(s.startswith(p) for p in bad_prefixes):
-            continue
-        lines.append(s)
-    out = "\n".join(lines).strip()
-    out = "\n".join([ln for ln in out.splitlines() if ln.strip() != ""])
-    return out
-
-
-def engine_status():
-    try:
-        return {
-            "ready": _model is not None,
-            "model_type": _model_type_hint,
-            "model_path": str(_loaded_path or (MODEL_PATH or "")).strip(),
-        }
-    except Exception:
-        return {"ready": False, "model_type": None, "model_path": str(MODEL_PATH or "")}
-
-
-def prefetch_model() -> Optional[Path]:
-    """
-    Warm-load in the current process. No surprise downloads.
-    """
-    try:
-        path, hint = _ensure_model(
-            model_url=MODEL_URL,
-            model_path=MODEL_PATH,
-            model_sha256=MODEL_SHA256,
-            models_priority=None,
-        )
-        _ = _load_model(path, hint)
-        print(f"[{BOT_NAME}] 🧠 Prefetch complete", flush=True)
-        return path
+        return True
     except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}", flush=True)
+        print(f"[{BOT_NAME}] ⚠️ Download failed: {e}", flush=True)
+        return False
+
+def _resolve_model_path() -> Optional[Path]:
+    # explicit path
+    if str(MODEL_PATH):
+        p=Path(MODEL_PATH)
+        if p.is_file() and p.suffix.lower()==".gguf": return p
+        if p.is_dir():
+            best=_choose_preferred(list(p.rglob("*.gguf")))
+            if best: return best
+    # local discovery
+    best=_choose_preferred(_list_local_models())
+    if best: return best
+    # download
+    urls = MODEL_URLS or ([MODEL_URL] if MODEL_URL else [])
+    for u in urls:
+        name=u.split("/")[-1] or "model.gguf"
+        if not name.endswith(".gguf"): name += ".gguf"
+        dest=Path("/share/jarvis_prime/models")/name
+        if dest.exists(): return dest
+        if _download_to(u, dest): return dest
+    return None
+
+def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None)->None:
+    global _model_path
+    if model_path:
+        p=Path(model_path)
+        if p.is_file():
+            _model_path=p; return
+    _model_path=_resolve_model_path()
+
+def engine_status() -> Dict[str,object]:
+    base=OLLAMA_BASE_URL.strip()
+    if base and requests:
+        try:
+            r=requests.get(base.rstrip("/")+"/api/version",timeout=3)
+            ok=r.ok
+        except Exception:
+            ok=False
+        return {"ready": bool(ok), "model_path":"", "backend":"ollama"}
+    p=_model_path or _resolve_model_path()
+    return {"ready": bool(p and p.exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
+
+def _load_local_model(path: Path):
+    global _loaded_model
+    if _loaded_model is not None: return _loaded_model
+    if AutoModelForCausalLM is None: return None
+    try:
+        _loaded_model = AutoModelForCausalLM.from_pretrained(str(path), model_type="llama", gpu_layers=0)
+        return _loaded_model
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
         return None
 
+# ----------------- sanitizers & helpers -----------------
+IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
+IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
 
-def rewrite(
-    text: str,
-    mood: str = "serious",
-    timeout: int = 8,
-    cpu_limit: int = 70,
-    models_priority: Optional[List[str]] = None,
-    base_url: str = "",
-    model_url: str = "",
-    model_path: str = "",
-    model_sha256: str = "",
-    allow_profanity: bool = False,
-) -> str:
-    """
-    Style-preserving rewrite: aggressive personality by mood, no new facts,
-    keep all numbers/URLs/paths, compress fluff, 2–6 lines.
-    """
-    src = (text or "").strip()
-    if not src:
-        return src
+def _extract_images(src: str) -> str:
+    imgs = IMG_MD_RE.findall(src or '') + IMG_URL_RE.findall(src or '')
+    seen=set(); out=[]
+    for i in imgs:
+        if i not in seen:
+            seen.add(i); out.append(i)
+    return "\n".join(out)
 
-    path, mhint = _ensure_model(model_url, model_path or MODEL_PATH, model_sha256 or MODEL_SHA256, models_priority)
-    model = _load_model(path, mhint)
+def _strip_reasoning(text: str) -> str:
+    lines=[]
+    for ln in (text or "").splitlines():
+        t=ln.strip()
+        if not t: continue
+        tl=t.lower()
+        if tl.startswith(("input:","output:","explanation:","reasoning:","analysis:","system:")): continue
+        if t in ("[SYSTEM]","[INPUT]","[OUTPUT]") or t.startswith(("[SYSTEM]","[INPUT]","[OUTPUT]")): continue
+        if t.startswith("[") and t.endswith("]") and len(t)<40: continue
+        if tl.startswith("note:"): continue
+        lines.append(t)
+    return "\n".join(lines)
 
-    mood_map = {
-        "serious": "clinical, confident, precise, authoritative, no jokes",
-        "playful": "cheeky, energetic, witty, high personality, light irreverence",
-        "angry":   "furious, terse, sharp, no-nonsense, clipped sentences",
-        "happy":   "radiant, upbeat, encouraging, joyful, sparkly",
-        "sad":     "somber, reflective, restrained",
-    }
-    vibe = mood_map.get((mood or "").lower(), "confident, precise")
-    profanity = "neutral on profanity" if allow_profanity else "avoid profanity"
+def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_chars: int = 800) -> str:
+    lines=[ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines)>max_lines: lines=lines[:max_lines]
+    out="\n".join(lines)
+    if len(out)>max_chars: out=out[:max_chars].rstrip()
+    return out
 
-    system = (
-        f"You are Jarvis Prime’s Neural Core. Rewrite the input with {vibe}. "
-        f"Preserve all facts, numbers, filenames, URLs, and technical terms exactly. "
-        f"Do not invent or add new information. Keep it punchy. {profanity}. "
-        f"Target 2–6 lines. End without extra labels."
+def _load_system_prompt() -> str:
+    # 1) env var
+    sp = os.getenv("LLM_SYSTEM_PROMPT")
+    if sp: return sp
+    # 2) host-shared file
+    p = Path("/share/jarvis_prime/memory/system_prompt.txt")
+    if p.exists():
+        try:
+            return p.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    # 3) built-in file in image (copied by Dockerfile)
+    p2 = Path("/app/memory/system_prompt.txt")
+    if p2.exists():
+        try:
+            return p2.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    # 4) fallback default
+    return (
+        "YOU ARE JARVIS PRIME — HOMELAB OPERATOR’S AIDE.\n"
+        "PRIME DIRECTIVES — OBEY EXACTLY:\n"
+        "1) READ the incoming text carefully.\n"
+        "2) SAY what it means in plain, concise English. Explain, don’t embellish.\n"
+        "3) KEEP every fact/number/URL/IP/hostname/service name EXACTLY as given. No new facts.\n"
+        "4) OUTPUT up to 10 short lines, paragraph style. No lists unless input already has bullets.\n"
+        "5) NO meta (Input/Output/Explanation), NO 'Note:', NO placeholders like [YOURNAME]/[FEATURE].\n"
+        "6) If something is missing, say 'unknown' or 'not specified'; do not guess.\n"
+        "7) PERSONALITY = {mood}. Angry → blunt, sardonic (no slurs). Playful → cheeky. Serious → crisp.\n"
+        "8) Keep any images/markdown image links exactly as-is.\n"
     )
-    prompt = f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
 
-    out = model(prompt, max_new_tokens=192, temperature=0.85, top_p=0.92, repetition_penalty=1.1)
-    out = _sanitize_generation(out).strip()
-    return out or src
+# ----------------- rewrite -----------------
+def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
+            models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
+            model_url: Optional[str]=None, model_path: Optional[str]=None,
+            model_sha256: Optional[str]=None, allow_profanity: bool=False) -> str:
+    src=(text or "").strip()
+    if not src: return src
+
+    # Preserve images from original
+    imgs=_extract_images(src)
+
+    # system prompt
+    system=_load_system_prompt().format(mood=mood)
+
+    # 1) Ollama
+    base=(base_url or OLLAMA_BASE_URL or "").strip()
+    if base and requests:
+        try:
+            payload={
+                "model": (models_priority[0] if models_priority else "llama3.1"),
+                "prompt": system + "\n\nINPUT:\n" + src + "\n\nOUTPUT:\n",
+                "stream": False,
+                "options": {"temperature": 0.15, "top_p": 0.9, "repeat_penalty": 1.1}
+            }
+            r=requests.post(base.rstrip("/")+"/api/generate", json=payload, timeout=timeout)
+            if r.ok:
+                out=_strip_reasoning(str(r.json().get("response","")))
+                out=_cap(out)
+                return out + ("\n"+imgs if imgs else "")
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Ollama call failed: {e}", flush=True)
+
+    # 2) Local
+    p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
+    if p and p.exists():
+        m=_load_local_model(p)
+        if m is not None:
+            prompt=f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
+            try:
+                out=m(prompt, max_new_tokens=180, temperature=0.15, top_p=0.9, repetition_penalty=1.1)
+                out=_strip_reasoning(str(out or ""))
+                out=_cap(out)
+                return out + ("\n"+imgs if imgs else "")
+            except Exception as e:
+                print(f"[{BOT_NAME}] ⚠️ Generation failed: {e}", flush=True)
+
+    # 3) Fallback
+    out=_cap(_strip_reasoning(src))
+    return out + ("\n"+imgs if imgs else "")
