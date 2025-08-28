@@ -1,67 +1,58 @@
-# /app/llm_memory.py
-from __future__ import annotations
-
 import json
 import time
 from pathlib import Path
-from datetime import datetime
+from typing import List, Dict, Any, Optional
 
-def _now() -> float:
-    return time.time()
+MEM_DIR = Path("/share/jarvis_prime/memory")
+EVENTS = MEM_DIR / "events.json"
 
-def _read(path: Path) -> list[dict]:
+def _now() -> int:
+    return int(time.time())
+
+def ensure_store() -> None:
+    MEM_DIR.mkdir(parents=True, exist_ok=True)
+    if not EVENTS.exists():
+        EVENTS.write_text("[]", encoding="utf-8")
+
+def _read() -> List[Dict[str, Any]]:
+    ensure_store()
     try:
-        return json.loads(path.read_text())
+        return json.loads(EVENTS.read_text(encoding="utf-8"))
     except Exception:
         return []
 
-def _write(path: Path, data: list[dict]):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+def _write(rows: List[Dict[str, Any]]) -> None:
+    EVENTS.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def store_event(path: Path, *, title: str, text: str):
-    rows = _read(path)
-    rows.append({"ts": _now(), "title": title, "text": text})
-    _write(path, rows)
-
-def flush_older_than(path: Path, *, hours: int = 24):
-    rows = _read(path)
-    if not rows:
-        return
+def prune_older_than(hours: int = 24) -> None:
+    rows = _read()
     cutoff = _now() - hours * 3600
-    rows = [r for r in rows if r.get("ts", 0) >= cutoff]
-    _write(path, rows)
+    rows = [r for r in rows if isinstance(r, dict) and r.get("ts", 0) >= cutoff]
+    _write(rows)
 
-def _today_rows(path: Path) -> list[dict]:
-    rows = _read(path)
-    if not rows:
-        return []
-    today = datetime.now().date()
-    return [r for r in rows if datetime.fromtimestamp(r["ts"]).date() == today]
+def log_event(source: str, title: str, body: str, tags: Optional[List[str]] = None, hours: int = 24) -> None:
+    ensure_store()
+    prune_older_than(hours)
+    rows = _read()
+    rows.append({
+        "ts": _now(),
+        "source": source,
+        "title": title,
+        "body": body,
+        "tags": tags or []
+    })
+    _write(rows)
 
-def summarize_today(path: Path) -> str:
-    items = _today_rows(path)
-    if not items:
-        return "No events today."
-    lines = []
-    for r in items[-25:]:
-        t = datetime.fromtimestamp(r["ts"]).strftime("%H:%M")
-        lines.append(f"• {t} — {r.get('title', '')}")
-    return "### Today\n" + "\n".join(lines)
-
-def failures_today(path: Path) -> str:
-    items = _today_rows(path)
-    if not items:
-        return "No failures detected today."
-    bad = []
-    for r in items:
-        blob = (r.get("title","") + " " + r.get("text","")).lower()
-        if any(x in blob for x in ("error", "failed", "down", "unhealthy", "critical", "panic", "timeout")):
-            bad.append(r)
-    if not bad:
-        return "No failures detected today."
-    lines = []
-    for r in bad[-25:]:
-        t = datetime.fromtimestamp(r["ts"]).strftime("%H:%M")
-        lines.append(f"• {t} — {r.get('title', '')}")
-    return "### Things that broke\n" + "\n".join(lines)
+def query_today(keyword_any: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    ensure_store()
+    prune_older_than(24)
+    rows = _read()
+    start = _now() - 24 * 3600
+    out = [r for r in rows if r.get("ts", 0) >= start]
+    if keyword_any:
+        low = [k.lower() for k in keyword_any]
+        def match(r):
+            blob = f"{r.get('title','')} {r.get('body','')}".lower()
+            return any(k in blob for k in low)
+        out = [r for r in out if match(r)]
+    return out
