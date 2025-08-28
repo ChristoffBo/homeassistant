@@ -26,6 +26,15 @@ MODEL_SHA256 = os.getenv("LLM_MODEL_SHA256", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "")  # e.g., http://ollama:11434
 
 # Internal state
+
+def list_local_models() -> list[str]:
+    models = []
+    for root in [Path("/share/jarvis_prime/models"), Path("/share/jarvis_prime"), Path("/share")]:
+        if root.exists():
+            for gg in root.rglob("*.gguf"):
+                models.append(str(gg))
+    return sorted(set(models))
+
 def _iter_candidate_paths() -> Iterable[Path]:
     # Search common locations for .gguf models
     roots = [Path("/share/jarvis_prime/models"), Path("/share/jarvis_prime"), Path("/share")]
@@ -101,7 +110,41 @@ def _ollama_generate(base_url: str, prompt: str, model: str = "llama3.1") -> Opt
         print(f"[{BOT_NAME}] ⚠️ Ollama request failed: {e}", flush=True)
     return None
 
-def prefetch_model(model_path: Optional[str] = None, model_url: Optional[str] = None) -> None:
+def prefetch_model(model_path: Optional[str] = None, model_url: Optional[str] = None) -> None:  # noqa: E402
+    # If any local .gguf present, we are done
+    if list_local_models():
+        return
+    # Otherwise, try comma-separated env LLM_MODEL_URLS first, then single MODEL_URL
+    urls = []
+    env_urls = os.getenv('LLM_MODEL_URLS', '')
+    if env_urls:
+        urls.extend([u.strip() for u in env_urls.split(',') if u.strip()])
+    if model_url or MODEL_URL:
+        urls.append(model_url or MODEL_URL)
+    for u in urls:
+        try:
+            if not requests:
+                break
+            dest_root = Path('/share/jarvis_prime/models')
+            dest_root.mkdir(parents=True, exist_ok=True)
+            name = u.split('/')[-1] or 'model.gguf'
+            if not name.endswith('.gguf'):
+                name += '.gguf'
+            dest = dest_root / name
+            if dest.exists():
+                continue
+            with requests.get(u, stream=True, timeout=60) as r:
+                r.raise_for_status()
+                tmp = dest.with_suffix('.part')
+                with open(tmp, 'wb') as f:
+                    for chunk in r.iter_content(1<<20):
+                        if chunk:
+                            f.write(chunk)
+                tmp.replace(dest)
+            # stop after first successful download
+            break
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Failed to fetch {u}: {e}", flush=True)
     """
     Load or download the local GGUF so startup can show ONLINE quickly.
     No-op if using Ollama only.
@@ -141,7 +184,7 @@ def engine_status() -> Dict[str, object]:
 
     # Otherwise, local
     p = _model_path or (MODEL_PATH if MODEL_PATH.exists() else None) or _find_any_model()
-    ready = _loaded_model is not None or (p is not None and p.exists())
+    ready = bool(list_local_models()) or _loaded_model is not None or (p is not None and p.exists())
     return {
         "ready": bool(ready),
         "model_path": str(p) if p else "",

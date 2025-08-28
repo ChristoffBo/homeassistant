@@ -427,6 +427,15 @@ def _try_call(module, fn_name, *args, **kwargs):
     return None, None
 
 def _handle_command(ncmd: str):
+    ## normalize wake words
+    lc = (ncmd or '').strip().lower()
+    if lc.startswith('jarvis - '):
+        lc = lc.split(' - ', 1)[1].strip()
+    elif lc.startswith('jarvis '):
+        lc = lc.split(' ', 1)[1].strip()
+    # common typos
+    if lc == 'forcast':
+        lc = 'forecast'
     # Imports on demand so missing modules don't crash
     m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None
     try:
@@ -472,7 +481,7 @@ def _handle_command(ncmd: str):
             send_message("Digest", "Digest module unavailable.")
         return True
 
-    if ncmd in ("dns",):
+    if lc in ("dns",):
         text, _ = _try_call(m_tech, "dns_status", merged)
         if not text:
             text, _ = _try_call(m_tech, "handle_dns_command", "dns")
