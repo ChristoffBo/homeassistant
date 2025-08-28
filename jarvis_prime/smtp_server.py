@@ -1,13 +1,13 @@
 # /app/smtp_server.py
 # LAN-only SMTP intake for Jarvis Prime (aiosmtpd).
 # Accepts any AUTH creds when smtp_accept_any_auth = true.
-# Parses subject/body, runs LLM → Beautifier with timeout fallback, then posts via send_message.
-# Preserves: recipient gate, priority mapping, HTML stripping, inline images, controller lifecycle.
+# Parses subject/body, LLM → Beautify with timeout fallback, then posts via send_message.
+# Preserves: recipient gate, priority mapping, HTML stripping, inline image handling.
 
 from __future__ import annotations
 import re
 import json
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from email import policy
@@ -23,7 +23,7 @@ except Exception:
     def beautify_message(title, body, **kwargs):
         return body, None
 
-# Optional Neural Core (LLM)
+# Optional LLM
 try:
     import llm_client as _llm
 except Exception:
@@ -79,7 +79,6 @@ class JarvisSMTPHandler:
         self.cfg = cfg
         self.send_message = send_message_fn
 
-        # Existing behavior preserved
         self.allowed_rcpt = (str(cfg.get("smtp_dummy_rcpt", "alerts@jarvis.local")) or "").lower()
         self.rewrite_prefix = str(cfg.get("smtp_rewrite_title_prefix", "[SMTP]")).strip()
         self.allow_html = bool(cfg.get("smtp_allow_html", False))
@@ -92,24 +91,22 @@ class JarvisSMTPHandler:
                 raw_map = {"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5}
         self.prio_map = {str(k).lower(): int(v) for k, v in (raw_map or {}).items()}
 
-        # Neural Core settings (all from options.json; no hardcoding)
+        # Neural Core settings (from options.json)
         self.mood = str(cfg.get("personality_mood", "serious"))
         self.llm_enabled = bool(cfg.get("llm_enabled", False))
         self.llm_timeout = int(cfg.get("llm_timeout_seconds", 5))
         self.llm_cpu = int(cfg.get("llm_max_cpu_percent", 70))
         self.llm_model_path = str(cfg.get("llm_model_path", ""))
 
-        # Show which engine processed the message
-        self.show_engine_footer = True  # always-on per your instruction
+        # Footer (always on per your instruction)
+        self.show_engine_footer = True
 
     async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
-        # Keep existing behavior: append all RCPTs; gate later in DATA
-        rcpt_l = (address or "").lower()
+        # Preserve original: collect RCPTs; gate in DATA
         envelope.rcpt_tos.append(address)
         return "250 OK"
 
     def _llm_then_beautify(self, title: str, body: str):
-        """LLM rewrite → Beautify with timeout fallback. Wake-word bypass."""
         mood = self.mood or "serious"
 
         # Wake-word or LLM unavailable -> beautify only
@@ -150,10 +147,10 @@ class JarvisSMTPHandler:
                 return t, bx
 
     async def handle_DATA(self, server, session, envelope):
-        # Gate by recipient (preserves original behavior)
+        # Gate by recipient
         rcpts = [r.lower() for r in (envelope.rcpt_tos or [])]
         if self.allowed_rcpt and self.allowed_rcpt not in rcpts:
-            return "550 No valid recipient for Jarvis (expected %s)" % self.allowed_rcpt
+            return f"550 No valid recipient for Jarvis (expected {self.allowed_rcpt})"
 
         try:
             msg = BytesParser(policy=policy.default).parsebytes(
@@ -207,7 +204,7 @@ class JarvisSMTPHandler:
         if not text_body:
             text_body = "(no content)"
 
-        # Add small notes that your original code kept
+        # Optional notes
         notes = []
         if from_addr:
             notes.append(f"From: {from_addr}")
@@ -221,12 +218,12 @@ class JarvisSMTPHandler:
         # ---------- LLM → Beautifier (with timeout + footer) ----------
         final, bx = self._llm_then_beautify(title, text_body)
 
-        # Preserve inline image inlining if configured
+        # Inline big image if beautifier exposed one and inlining is allowed
         if bool(self.cfg.get("beautify_inline_images", False)) and bx and bx.get("client::notification", {}).get("bigImageUrl"):
             img = bx["client::notification"]["bigImageUrl"]
             final = f"![image]({img})\n\n{final}"
 
-        # Post to Gotify through the callback
+        # Post to Gotify
         self.send_message(title, final, priority=priority, extras=bx)
         return "250 Accepted"
 
