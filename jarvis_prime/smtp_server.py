@@ -107,6 +107,7 @@ class JarvisSMTPHandler:
         return "250 OK"
 
     def _llm_then_beautify(self, title: str, body: str):
+        print(f\"[LLM DEBUG][smtp] gate: wake={_wake_word_present(title, body)} en={self.llm_enabled} mod={bool(_llm)} hasinfo={hasattr(_llm, 'rewrite_with_info') if _llm else False}\")
         mood = self.mood or "serious"
 
         # Wake-word or LLM unavailable -> beautify only
