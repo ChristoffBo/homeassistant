@@ -3,29 +3,68 @@
 import os
 import asyncio
 from email.parser import BytesParser
+import json
+import requests
 from aiosmtpd.controller import Controller
 
+# -----------------------------
+# Config load (match bot.py behavior)
+# -----------------------------
+def _load_json(path):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _bool_env(name, default=False):
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+_config_fallback = _load_json("/data/config.json")
+_options         = _load_json("/data/options.json")
+merged           = {**_config_fallback, **_options}
+
+BOT_NAME   = os.getenv("BOT_NAME", "Jarvis Prime")
+BOT_ICON   = os.getenv("BOT_ICON", "🧠")
+GOTIFY_URL = os.getenv("GOTIFY_URL", "").rstrip("/")
+APP_TOKEN  = os.getenv("GOTIFY_APP_TOKEN", "")
+
+CHAT_MOOD = str(merged.get("personality_mood",
+               merged.get("chat_mood", os.getenv("CHAT_MOOD", "serious"))))
+LLM_ENABLED         = bool(merged.get("llm_enabled", _bool_env("LLM_ENABLED", False)))
+LLM_TIMEOUT_SECONDS = int(merged.get("llm_timeout_seconds", int(os.getenv("LLM_TIMEOUT_SECONDS", "12"))))
+LLM_MAX_CPU_PERCENT = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))))
+LLM_MODEL_URL       = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
+LLM_MODEL_PATH      = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
+LLM_MODEL_SHA256    = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
+ALLOW_PROFANITY     = bool(merged.get("personality_allow_profanity",
+                         _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
+
+# Beautify
 try:
     import importlib.util as _imp
     _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
     beautify = _imp.module_from_spec(_bspec); _bspec.loader.exec_module(beautify) if _bspec and _bspec.loader else None
-except Exception:
+    print("[smtp] beautify loaded")
+except Exception as e:
     beautify = None
+    print(f"[smtp] beautify load failed: {e}")
 
+# LLM client (prefetch if enabled)
+llm = None
 try:
     import importlib.util as _imp
     _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
     llm = _imp.module_from_spec(_lspec); _lspec.loader.exec_module(llm) if _lspec and _lspec.loader else None
-except Exception:
+    print(f"[smtp] llm_client loaded (enabled={LLM_ENABLED})")
+    if LLM_ENABLED and llm and hasattr(llm, "prefetch_model"):
+        llm.prefetch_model()
+except Exception as e:
     llm = None
-
-import requests
-
-BOT_NAME   = os.getenv("BOT_NAME","Jarvis Prime")
-BOT_ICON   = os.getenv("BOT_ICON","🧠")
-GOTIFY_URL = os.getenv("GOTIFY_URL","").rstrip("/")
-APP_TOKEN  = os.getenv("GOTIFY_APP_TOKEN","")
-MOOD       = os.getenv("CHAT_MOOD","serious")
+    print(f"[smtp] llm_client load failed: {e}")
 
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []
@@ -41,17 +80,22 @@ def _transform(title: str, body: str, mood: str):
     extras = None
 
     # LLM FIRST
-    if os.getenv("LLM_ENABLED","false").lower() in ("1","true","yes") and llm and hasattr(llm,"rewrite"):
+    if LLM_ENABLED and llm and hasattr(llm, "rewrite"):
         try:
             out = llm.rewrite(
-                text=out, mood=mood, timeout=int(os.getenv("LLM_TIMEOUT_SECONDS","8")),
-                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT","70")),
-                models_priority=[], base_url=os.getenv("OLLAMA_BASE_URL",""),
-                model_url=os.getenv("LLM_MODEL_URL",""), model_path=os.getenv("LLM_MODEL_PATH",""),
-                model_sha256=os.getenv("LLM_MODEL_SHA256",""),
-                allow_profanity=os.getenv("PERSONALITY_ALLOW_PROFANITY","false").lower() in ("1","true","yes"),
+                text=out,
+                mood=mood,
+                timeout=LLM_TIMEOUT_SECONDS,
+                cpu_limit=LLM_MAX_CPU_PERCENT,
+                models_priority=None,
+                base_url="",
+                model_url=LLM_MODEL_URL,
+                model_path=LLM_MODEL_PATH,
+                model_sha256=LLM_MODEL_SHA256,
+                allow_profanity=ALLOW_PROFANITY,
             )
             used_llm = True
+            print("[smtp] LLM rewrite applied")
         except Exception as e:
             print(f"[smtp] LLM skipped: {e}")
 
@@ -93,7 +137,7 @@ class Handler:
             else:
                 body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
 
-            out, extras = _transform(title, body, MOOD)
+            out, extras = _transform(title, body, CHAT_MOOD)
             _post(title, out, extras)
             return "250 OK"
         except Exception as e:
@@ -105,7 +149,7 @@ def main():
     port = int(os.getenv("smtp_port","2525"))
     ctrl = Controller(Handler(), hostname=bind, port=port)
     ctrl.start()
-    print(f"[smtp] listening on {bind}:{port}")
+    print(f"[smtp] listening on {bind}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD})")
     try:
         asyncio.get_event_loop().run_forever()
     finally:
