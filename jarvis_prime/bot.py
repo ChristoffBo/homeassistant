@@ -478,32 +478,40 @@ async def listen():
                         handled = True
 
                     # PURGE after any handled wake-word command
+                    # Memory queries
+                    if LLM_MEMORY_ENABLED and _llm_mem and re.search(r"\bwhat\s+happened\s+today\b", ncmd):
+                        try:
+                            out = _llm_mem.summarize_today()
+                            if out:
+                                send_message("Today", out)
+                            handled = True
+                        except Exception as _e:
+                            send_message("Today", f"⚠️ Memory error: {_e}")
+                            handled = True
+                    
+                    elif LLM_MEMORY_ENABLED and _llm_mem and re.search(r"\bwhat\s+broke\s+today\b", ncmd):
+                        try:
+                            out = _llm_mem.what_broke_today()
+                            if out:
+                                send_message("Issues", out)
+                            handled = True
+                        except Exception as _e:
+                            send_message("Issues", f"⚠️ Memory error: {_e}")
+                            handled = True
+                    
+                    # Mood switch: jarvis mood <...>
+                    elif re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd):
+                        newm = re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd).group(1)
+                        CHAT_MOOD = newm
+                        if PERSONALITY_PERSISTENT and _pstate and hasattr(_pstate, "save_mood"):
+                            try:
+                                _pstate.save_mood(newm)
+                            except Exception as _e:
+                                print(f"[{BOT_NAME}] ⚠️ Mood save failed: {_e}")
+                        send_message("Mood", f"Personality set to **{CHAT_MOOD}**")
+                        handled = True
                     
 # Memory queries
-elif LLM_MEMORY_ENABLED and _llm_mem and re.search(r"\bwhat\s+happened\s+today\b", ncmd):
-    try:
-        out = _llm_mem.summarize_today()
-        if out: send_message("Today", out); handled = True
-    except Exception as _e:
-        send_message("Today", f"⚠️ Memory error: {_e}"); handled = True
-elif LLM_MEMORY_ENABLED and _llm_mem and re.search(r"\bwhat\s+broke\s+today\b", ncmd):
-    try:
-        out = _llm_mem.what_broke_today()
-        if out: send_message("Issues", out); handled = True
-    except Exception as _e:
-        send_message("Issues", f"⚠️ Memory error: {_e}"); handled = True
-
-# Mood switch: jarvis mood <...>
-elif re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd):
-    newm = re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd).group(1)
-    CHAT_MOOD = newm
-    if PERSONALITY_PERSISTENT and _pstate and hasattr(_pstate, "save_mood"):
-        try:
-            _pstate.save_mood(newm)
-        except Exception as _e:
-            print(f"[{BOT_NAME}] ⚠️ Mood save failed: {_e}")
-    send_message("Mood", f"Personality set to **{CHAT_MOOD}**")
-    handled = True
 
                     if handled:
                         print(f"[{BOT_NAME}] Purge-after-command for msg_id={msg_id}")
@@ -511,44 +519,45 @@ elif re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd):
                         continue
 
                 
-# Non-wake messages: LLM → Beautify → repost
-print(f"[{BOT_NAME}] Repost+purge path for message id={msg_id}")
-
-# Optional LLM rewrite (inherits current CHAT_MOOD)
-_llm_text = None
-if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
-    try:
-        _llm_text = _llm.rewrite(
-            text=message,
-            mood=CHAT_MOOD,
-            timeout=LLM_TIMEOUT_SECONDS,
-            cpu_limit=LLM_MAX_CPU_PERCENT,
-            models_priority=LLM_MODELS_PRIORITY,
-            base_url=OLLAMA_BASE_URL
-        )
-        # Use rewritten as the message body; keep title
-    except Exception as _e:
-        print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
-
-transformed_message = _llm_text if _llm_text else message
-
-if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
-    final, bx = _beautify.beautify_message(title, transformed_message, mood=CHAT_MOOD)
-
-# Memory log (24h rolling)
-try:
-    if LLM_MEMORY_ENABLED and _llm_mem and hasattr(_llm_mem, "log_event"):
-        _src = data.get("app", {}).get("name") or data.get("appid") or "gotify"
-        _kind = (_src or "gotify").lower()
-        _title = title or "Message"
-        _meta = {"id": msg_id}
-        _llm_mem.log_event(kind=_kind, source=_src, title=_title, body=final, meta=_meta)
-        if hasattr(_llm_mem, "prune"):
-            _llm_mem.prune(24)
-except Exception as _e:
-    print(f"[{BOT_NAME}] ⚠️ Memory log failed: {_e}")
-
-
+                    else:
+                    # Non-wake messages: LLM → Beautify → repost
+                        print(f"[{BOT_NAME}] Repost+purge path for message id={msg_id}")
+                        
+                        # Optional LLM rewrite (inherits current CHAT_MOOD)
+                        _llm_text = None
+                        if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
+                            try:
+                                _llm_text = _llm.rewrite(
+                                    text=message,
+                                    mood=CHAT_MOOD,
+                                    timeout=LLM_TIMEOUT_SECONDS,
+                                    cpu_limit=LLM_MAX_CPU_PERCENT,
+                                    models_priority=LLM_MODELS_PRIORITY,
+                                    base_url=OLLAMA_BASE_URL
+                                )
+                                # Use rewritten as the message body; keep title
+                            except Exception as _e:
+                                print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
+                        
+                        transformed_message = _llm_text if _llm_text else message
+                        
+                        if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
+                            final, bx = _beautify.beautify_message(title, transformed_message, mood=CHAT_MOOD)
+                        
+                        # Memory log (24h rolling)
+                        try:
+                            if LLM_MEMORY_ENABLED and _llm_mem and hasattr(_llm_mem, "log_event"):
+                                _src = data.get("app", {}).get("name") or data.get("appid") or "gotify"
+                                _kind = (_src or "gotify").lower()
+                                _title = title or "Message"
+                                _meta = {"id": msg_id}
+                                _llm_mem.log_event(kind=_kind, source=_src, title=_title, body=final, meta=_meta)
+                                if hasattr(_llm_mem, "prune"):
+                                    _llm_mem.prune(24)
+                        except Exception as _e:
+                            print(f"[{BOT_NAME}] ⚠️ Memory log failed: {_e}")
+                    
+                    
 
                     # Optional inline image for Gotify Web UI (Android honors extras bigImageUrl)
                     if BEAUTIFY_INLINE_IMAGES and bx and bx.get("client::notification", {}).get("bigImageUrl"):
