@@ -474,6 +474,8 @@ def _handle_command(ncmd: str):
 
     if ncmd in ("dns",):
         text, _ = _try_call(m_tech, "dns_status", merged)
+        if not text:
+            text, _ = _try_call(m_tech, "handle_dns_command", "dns")
         send_message("DNS Status", text or "No data.")
         return True
 

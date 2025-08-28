@@ -1,9 +1,10 @@
+
 #!/usr/bin/env python3
 from __future__ import annotations
 
 import os, json, time
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Iterable
 
 # Optional dependencies
 try:
@@ -25,6 +26,19 @@ MODEL_SHA256 = os.getenv("LLM_MODEL_SHA256", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "")  # e.g., http://ollama:11434
 
 # Internal state
+def _iter_candidate_paths() -> Iterable[Path]:
+    # Search common locations for .gguf models
+    roots = [Path("/share/jarvis_prime/models"), Path("/share/jarvis_prime"), Path("/share")]
+    for root in roots:
+        if root.exists():
+            for gg in sorted(root.glob("*.gguf")):
+                yield gg
+
+def _find_any_model() -> Optional[Path]:
+    for gg in _iter_candidate_paths():
+        return gg
+    return None
+
 _loaded_model = None
 _model_path: Optional[Path] = None
 _backend: str = "none"  # none|ctransformers|ollama
@@ -34,6 +48,11 @@ def _ensure_model(path: Path = MODEL_PATH) -> Optional[Path]:
     if path and path.exists():
         _model_path = path
         return path
+    # Try discovery
+    guess = _find_any_model()
+    if guess:
+        _model_path = guess
+        return guess
     if MODEL_URL and requests:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +140,7 @@ def engine_status() -> Dict[str, object]:
         }
 
     # Otherwise, local
-    p = _model_path or (MODEL_PATH if MODEL_PATH.exists() else None)
+    p = _model_path or (MODEL_PATH if MODEL_PATH.exists() else None) or _find_any_model()
     ready = _loaded_model is not None or (p is not None and p.exists())
     return {
         "ready": bool(ready),
@@ -137,6 +156,9 @@ def _strip_numbered_reasoning(text: str) -> str:
             continue
         tl = t.lower()
         if tl.startswith(("input:", "output:", "explanation:", "reasoning:", "analysis:")):
+            continue
+        # Remove bracketed tags
+        if t in ("[SYSTEM]", "[INPUT]", "[OUTPUT]") or t.startswith("[SYSTEM]") or t.startswith("[INPUT]") or t.startswith("[OUTPUT]"):
             continue
         if tl[:2].isdigit() or tl[:1].isdigit():
             # lines like "1. ..." or "2) ..."
