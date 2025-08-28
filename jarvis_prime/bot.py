@@ -11,7 +11,7 @@ import re
 import subprocess
 import atexit
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 # -----------------------------
 # Dynamic modules dict
@@ -184,7 +184,7 @@ except Exception as _e:
 # -----------------------------
 # Sidecar processes (proxy/smtp)
 # -----------------------------
-_sidecars: list[subprocess.Popen] = []
+_sidecars: List[subprocess.Popen] = []
 
 def start_sidecars():
     # proxy
@@ -277,7 +277,7 @@ def _is_our_post(data: dict) -> bool:
 
 def _should_purge() -> bool:
     try:
-        return bool(merged.get("silent_repost", S    ILENT_REPOST))
+        return bool(merged.get("silent_repost", SILENT_REPOST))
     except Exception:
         return SILENT_REPOST
 
