@@ -12,6 +12,8 @@ import subprocess
 import atexit
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List
+from pipeline import process as pipeline_process
+
 
 # -----------------------------
 # Dynamic modules dict
@@ -216,24 +218,54 @@ atexit.register(stop_sidecars)
 # -----------------------------
 # Utils
 # -----------------------------
-def send_message(title, message, priority=5, extras=None):
-    # Always decorate + bias priority
-    if _personality and hasattr(_personality, "decorate"):
-        title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
-    if _personality and hasattr(_personality, "apply_priority"):
-        priority = _personality.apply_priority(priority, CHAT_MOOD)
-    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
-    if extras:
-        payload["extras"] = extras
+
+def send_message(title: str, text: str, priority: int = 5, image: str | None = None):
+    """Single choke point: Beautify -> LLM -> Polish -> Gotify."""
+    import os, requests
     try:
-        r = requests.post(url, json=payload, timeout=8)
-        r.raise_for_status()
-        print(f"[{BOT_NAME}] ✅ Sent: {title}")
-        return True
+        mood = os.getenv("personality_mood", "serious")
+        final_text, extras = pipeline_process(title or "", text or "", mood)
+
+        img = image
+        # If you don't want to auto-attach detected images, comment next lines
+        if not img:
+            imgs = (extras or {}).get("images") or []
+            if imgs:
+                img = imgs[0]
+
+        payload = {
+            "title": f"{os.getenv('BOT_NAME','Jarvis Prime')}: {title}",
+            "message": final_text,
+            "priority": int(priority),
+        }
+        if img:
+            payload["extras"] = {
+                "client::display": {"contentType": "text/markdown"},
+                "client::notification": {"image": img},
+            }
+
+        requests.post(
+            os.getenv("GOTIFY_URL", "").rstrip("/") + "/message",
+            headers={"X-Gotify-Key": os.getenv("GOTIFY_APP_TOKEN", "")},
+            json=payload,
+            timeout=10,
+        )
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to send message: {e}")
-        return False
+        try:
+            requests.post(
+                os.getenv("GOTIFY_URL", "").rstrip("/") + "/message",
+                headers={"X-Gotify-Key": os.getenv("GOTIFY_APP_TOKEN", "")},
+                json={
+                    "title": f"{os.getenv('BOT_NAME','Jarvis Prime')}: send_message error",
+                    "message": f"{title}
+
+{e}",
+                    "priority": 5,
+                },
+                timeout=10,
+            )
+        except Exception:
+            pass
 
 def delete_original_message(msg_id: int):
     try:
@@ -473,12 +505,12 @@ def _handle_command(ncmd: str):
         return True
 
     if ncmd in ("dns",):
-        text, _ = _try_call(m_tech, "handle_dns_command", "dns")
+        text, _ = _try_call(m_tech, "dns_status", merged)
         send_message("DNS Status", text or "No data.")
         return True
 
     if ncmd in ("kuma", "uptime", "monitor"):
-        text, _ = _try_call(m_kuma, "handle_kuma_command", "kuma")
+        text, _ = _try_call(m_kuma, "handle_kuma_command", merged, "kuma")
         send_message("Uptime Kuma", text or "No data.")
         return True
 
@@ -486,9 +518,7 @@ def _handle_command(ncmd: str):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command("weather")
-                if isinstance(text, tuple):
-                    text = text[0]
+                text = m_weather.handle_weather_command(merged, "weather")
             except Exception as e:
                 text = f"⚠️ Weather failed: {e}"
         send_message("Weather", text or "No data.")
@@ -498,9 +528,7 @@ def _handle_command(ncmd: str):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command("forecast")
-                if isinstance(text, tuple):
-                    text = text[0]
+                text = m_weather.handle_weather_command(merged, "forecast")
             except Exception as e:
                 text = f"⚠️ Forecast failed: {e}"
         send_message("Forecast", text or "No data.")
