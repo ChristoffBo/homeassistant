@@ -10,7 +10,7 @@ from typing import Optional, Tuple, List
 
 import requests
 
-# Soft dep: ctransformers
+# Optional dep; the container includes it. If not, we error clearly.
 try:
     from ctransformers import AutoModelForCausalLM
 except Exception:  # pragma: no cover
@@ -28,20 +28,23 @@ MODELS_DIRS = [
     Path("/share/jarvis_prime"),
 ]
 
-SUPPORTED_TYPES = ("llama", "phi")  # keep stable; avoid qwen here
+# Keep it stable: use llama/tinyllama/phi; skip qwen for this build
+SUPPORTED_TYPES = ("llama", "phi")
 
 _model = None
 _model_type_hint: Optional[str] = None
 _loaded_path: Optional[Path] = None
 
 
+# -----------------------------
+# Files & download helpers
+# -----------------------------
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
-
 
 def _download(url: str, dest: Path, sha256: str = "", timeout: int = 60) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -73,14 +76,11 @@ def _download(url: str, dest: Path, sha256: str = "", timeout: int = 60) -> None
 
     print(f"[{BOT_NAME}] ✅ Model downloaded to {dest}", flush=True)
 
-
 def _guess_model_type_from_path(path: str) -> str:
     s = path.lower()
     if "phi" in s:
         return "phi"
-    # default to llama for tinyllama/llama/others
     return "llama"
-
 
 def _find_existing_model() -> Optional[Path]:
     candidates: List[Path] = []
@@ -88,21 +88,19 @@ def _find_existing_model() -> Optional[Path]:
         if not d.exists():
             continue
         for p in sorted(d.glob("*.gguf")):
-            # Prefer files that look like llama/tinyllama/phi; skip qwen to avoid ctransformers issues
             low = p.name.lower()
-            if "qwen" in low:
+            if "qwen" in low:  # skip qwen on this build
                 continue
             candidates.append(p)
-    # Prefer tinyllama-looking names first
+    # Prefer tinyllama-like names first
     candidates.sort(key=lambda p: (0 if "tinyllama" in p.name.lower() else 1, p.stat().st_size))
     return candidates[0] if candidates else None
-
 
 def _ensure_model(
     model_url: str,
     model_path: str,
     model_sha256: str,
-    models_priority: Optional[List[str]] = None,  # kept for interface compat
+    models_priority: Optional[List[str]] = None,
 ) -> Tuple[Path, Optional[str]]:
     """
     Resolve a local gguf file (download only when explicitly configured).
@@ -130,7 +128,6 @@ def _ensure_model(
 
     raise RuntimeError("No usable LLM model found. Set LLM_MODEL_PATH or place a .gguf in /share/jarvis_prime/models.")
 
-
 def _load_model(model_path: Path, model_type_hint: Optional[str]):
     global _model, _model_type_hint, _loaded_path
     if _model is not None:
@@ -157,27 +154,9 @@ def _load_model(model_path: Path, model_type_hint: Optional[str]):
     print(f"[{BOT_NAME}] 🌟 Model ready in {dt:.1f}s", flush=True)
     return _model
 
-
-def _sanitize_generation(text: str) -> str:
-    if not text:
-        return text
-    bad_prefixes = (
-        "[system]", "[SYSTEM]", "SYSTEM:", "Instruction:", "Instructions:",
-        "You are", "As an AI", "The assistant", "Rewrite:", "Output:", "[OUTPUT]"
-    )
-    lines = []
-    for raw in text.splitlines():
-        s = raw.strip()
-        if not s:
-            continue
-        if any(s.startswith(p) for p in bad_prefixes):
-            continue
-        lines.append(s)
-    out = "\n".join(lines).strip()
-    out = "\n".join([ln for ln in out.splitlines() if ln.strip() != ""])
-    return out
-
-
+# -----------------------------
+# Public status / warmup
+# -----------------------------
 def engine_status():
     try:
         return {
@@ -187,7 +166,6 @@ def engine_status():
         }
     except Exception:
         return {"ready": False, "model_type": None, "model_path": str(MODEL_PATH or "")}
-
 
 def prefetch_model() -> Optional[Path]:
     """
@@ -207,6 +185,28 @@ def prefetch_model() -> Optional[Path]:
         print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}", flush=True)
         return None
 
+# -----------------------------
+# Rewrite (bullet, mood-amped)
+# -----------------------------
+def _sanitize_generation(text: str) -> str:
+    if not text:
+        return text
+    bad_prefixes = (
+        "[system]", "[SYSTEM]", "SYSTEM:", "Instruction:", "Instructions:",
+        "You are", "As an AI", "The assistant", "Rewrite:", "Output:", "[OUTPUT]", "[INPUT]"
+    )
+    lines = []
+    for raw in text.splitlines():
+        s = raw.rstrip()
+        if not s.strip():
+            continue
+        if any(s.strip().startswith(p) for p in bad_prefixes):
+            continue
+        lines.append(s)
+    out = "\n".join(lines).strip()
+    # collapse extra blank lines
+    out = "\n".join([ln for ln in out.splitlines() if ln.strip() != ""])
+    return out
 
 def rewrite(
     text: str,
@@ -221,8 +221,11 @@ def rewrite(
     allow_profanity: bool = False,
 ) -> str:
     """
-    Style-preserving rewrite: aggressive personality by mood, no new facts,
-    keep all numbers/URLs/paths, compress fluff, 2–6 lines.
+    Style-preserving rewrite to **bullet points** with mood-driven voice.
+    - Keep all facts, numbers, paths, URLs EXACT.
+    - NO new facts. NO “Explanation:” blocks. NO code fences.
+    - Output strictly as 3–10 bullet lines (•). Clipped, high-signal.
+    - If the input already has bullets, tighten and keep them.
     """
     src = (text or "").strip()
     if not src:
@@ -231,24 +234,36 @@ def rewrite(
     path, mhint = _ensure_model(model_url, model_path or MODEL_PATH, model_sha256 or MODEL_SHA256, models_priority)
     model = _load_model(path, mhint)
 
-    mood_map = {
-        "serious": "clinical, confident, precise, authoritative, no jokes",
-        "playful": "cheeky, energetic, witty, high personality, light irreverence",
+    mood = (mood or "serious").lower()
+    voice = {
+        "serious": "clinical, confident, precise, no fluff",
+        "playful": "cheeky, witty, high personality, light irreverence",
         "angry":   "furious, terse, sharp, no-nonsense, clipped sentences",
-        "happy":   "radiant, upbeat, encouraging, joyful, sparkly",
-        "sad":     "somber, reflective, restrained",
-    }
-    vibe = mood_map.get((mood or "").lower(), "confident, precise")
-    profanity = "neutral on profanity" if allow_profanity else "avoid profanity"
+        "happy":   "upbeat, punchy, energizing",
+        "sad":     "somber, restrained, minimal",
+    }.get(mood, "confident, precise")
+
+    profanity = "You may use mild profanity sparingly." if allow_profanity else "Avoid profanity."
 
     system = (
-        f"You are Jarvis Prime’s Neural Core. Rewrite the input with {vibe}. "
-        f"Preserve all facts, numbers, filenames, URLs, and technical terms exactly. "
-        f"Do not invent or add new information. Keep it punchy. {profanity}. "
-        f"Target 2–6 lines. End without extra labels."
+        "You are the Neural Core stylist. Rewrite the input into BULLET POINTS only.\n"
+        f"Voice: {voice}. {profanity}\n"
+        "Rules:\n"
+        "1) Preserve ALL facts, names, numbers, units, paths, URLs exactly.\n"
+        "2) Do NOT invent content. Do NOT add explanations or meta text.\n"
+        "3) Output 3–10 bullets, each starting with '• '.\n"
+        "4) Keep sentences short and forceful. Remove filler.\n"
+        "5) Never include 'Explanation', 'Input', 'Output', system tags, or code fences.\n"
     )
+
     prompt = f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
 
-    out = model(prompt, max_new_tokens=192, temperature=0.85, top_p=0.92, repetition_penalty=1.1)
+    out = model(prompt, max_new_tokens=224, temperature=0.8, top_p=0.9, repetition_penalty=1.1)
     out = _sanitize_generation(out).strip()
+
+    # Safety net: ensure bullet format
+    if out and not out.lstrip().startswith(("•", "- ")):
+        lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        out = "\n".join([("• " + ln.lstrip("•- ").strip()) for ln in lines])
+
     return out or src
