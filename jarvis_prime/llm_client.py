@@ -216,6 +216,26 @@ def _extract_host_status(text: str) -> Dict[str, object]:
     return d
 
 # ---------- Mood ----------
+def _normalize_mood(mood: str) -> str:
+    """Map many personalities to the core renderer set so everything 'oozes' a tone."""
+    m = (mood or "serious").strip().lower()
+    table = {
+        "ai": "serious",
+        "calm": "serious",
+        "tired": "serious",
+        "depressed": "serious",
+        "excited": "playful",
+        "happy": "playful",
+        "playful": "playful",
+        "sarcastic": "sarcastic",
+        "snarky": "sarcastic",
+        "angry": "angry",
+        "hacker-noir": "hacker-noir",
+        "noir": "hacker-noir",
+        "serious": "serious",
+    }
+    return table.get(m, "serious")
+
 def _bullet_for(mood: str) -> str:
     return {
         "serious": "•",
@@ -414,6 +434,9 @@ def rewrite(
 ) -> str:
     text = text or ""
     allow_profanity = _cfg_allow_profanity()
+
+    # Normalize mood to core renderer set so all personalities ooze.
+    mood = _normalize_mood(mood)
 
     # Optional local model load (not required)
     try:
