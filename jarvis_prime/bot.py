@@ -473,12 +473,12 @@ def _handle_command(ncmd: str):
         return True
 
     if ncmd in ("dns",):
-        text, _ = _try_call(m_tech, "dns_status", merged)
+        text, _ = _try_call(m_tech, "handle_dns_command", "dns")
         send_message("DNS Status", text or "No data.")
         return True
 
     if ncmd in ("kuma", "uptime", "monitor"):
-        text, _ = _try_call(m_kuma, "handle_kuma_command", merged, "kuma")
+        text, _ = _try_call(m_kuma, "handle_kuma_command", "kuma")
         send_message("Uptime Kuma", text or "No data.")
         return True
 
