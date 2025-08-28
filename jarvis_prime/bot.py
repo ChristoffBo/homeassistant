@@ -271,7 +271,7 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
     final = message
     extras = None
 
-    # LLM FIRST — no wake-word skip (by request)
+    # LLM FIRST — no wake-word skip
     if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
         try:
             print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, mood={CHAT_MOOD})")
@@ -339,6 +339,13 @@ def extract_command_from(title: str, message: str) -> str:
 # Startup HUD (high-tech boot card)
 # -----------------------------
 def post_startup_card():
+    # Make sure the model is resident in THIS process before we query status.
+    try:
+        if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
+            _llm.prefetch_model()  # quick: no download if file exists; warm-loads model
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Prefetch in bot failed: {e}")
+
     # LLM engine status/model
     st = {}
     if _llm and hasattr(_llm, "engine_status"):
