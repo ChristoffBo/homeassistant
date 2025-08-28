@@ -74,21 +74,25 @@ def _wake_word_present(title: str, message: str) -> bool:
     return both.startswith("jarvis ") or both.startswith("jarvis:") or " jarvis " in both
 
 def _llm_then_beautify(title: str, message: str, mood: str):
-    if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
+    if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite_with_info")):
         text, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
         return f"{text}\n[Beautify fallback]", bx
 
     def _call():
         try:
-            rewritten = _llm.rewrite(
+            rewritten, used = _llm.rewrite_with_info(
                 text=message,
                 mood=mood,
                 timeout=STATE.llm_timeout,
                 cpu_limit=STATE.llm_cpu,
                 model_path=STATE.llm_model_path,
             )
-            t, bx = beautify_message(title, rewritten, mood=mood, source_hint="proxy")
-            return f"{t}\n[Neural Core ✓]", bx
+            if used:
+                t, bx = beautify_message(title, rewritten, mood=mood, source_hint="proxy")
+                return f"{t}\n[Neural Core ✓]", bx
+            else:
+                t, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
+                return f"{t}\n[Beautify fallback]", bx
         except Exception:
             t, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
             return f"{t}\n[Beautify fallback]", bx
