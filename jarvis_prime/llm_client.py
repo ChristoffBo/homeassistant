@@ -2,15 +2,13 @@
 # -*- coding: utf-8 -*-
 # Jarvis Prime — Neural Core (ctransformers GGUF loader + rewrite API)
 #
-# Key points:
-# - Provides BOTH rewrite_text(...) and rewrite_with_info(...).
-# - Robust GGUF loading for ctransformers==0.2.27:
-#     * If MODEL_PATH is a file: try LLM(model_path=...), then fallback to
-#       AutoModelForCausalLM.from_pretrained(dir, model_file=...).
-#     * If MODEL_PATH is a directory: pick a .gguf inside (respects LLM_MODELS_PRIORITY).
-# - Smart prefetch: if MODEL_PATH is a directory, download to that directory using
-#   the URL basename; if it's a file, download exactly to that file.
-# - Loud logs so you can see it firing.
+# Provides BOTH rewrite_text(...) and rewrite_with_info(...).
+# Robust GGUF loading for ctransformers==0.2.27:
+#   * If MODEL_PATH is a file: try LLM(model_path=...), then fallback to
+#     AutoModelForCausalLM.from_pretrained(dir, model_file=...).
+#   * If MODEL_PATH is a directory: pick a .gguf inside (respects LLM_MODELS_PRIORITY).
+# Smart prefetch: if MODEL_PATH is a directory, download basename(url) into it;
+# if MODEL_PATH is a file, download exactly to that file.
 from __future__ import annotations
 
 import os
@@ -28,15 +26,14 @@ import requests
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
 # ---- Configuration via env (run.sh exports these from options.json) ----------
-MODEL_PATH = os.getenv(
-    "LLM_MODEL_PATH",
-    "/share/jarvis_prime/models"  # default to directory for resilience
-)
+MODEL_PATH = os.getenv("LLM_MODEL_PATH", "/share/jarvis_prime/models")
 MODEL_URL = os.getenv("LLM_MODEL_URL", "")
 MODEL_SHA256 = (os.getenv("LLM_MODEL_SHA256", "") or "").lower()
+
 DETAIL_LEVEL = os.getenv("LLM_DETAIL_LEVEL", "rich").lower()
 MAX_LINES = 10 if DETAIL_LEVEL == "rich" else 6
 MAX_LINE_CHARS = 160
+
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
 LLM_TOP_P      = float(os.getenv("LLM_TOP_P", "0.9"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "320"))
@@ -46,7 +43,7 @@ VERBOSE = True
 # ---- Soft dep: ctransformers -------------------------------------------------
 _CTRANS_OK = False
 _MODEL = None
-_MODEL_ANCHOR: Optional[Path] = None  # exactly what caller configured (file OR dir)
+_MODEL_ANCHOR: Optional[Path] = None  # original configured path (file OR dir)
 
 def _import_ctransformers() -> bool:
     global _CTRANS_OK
@@ -82,13 +79,8 @@ def _normalize_mood(mood: str) -> str:
 
 def _bullet_for(mood: str) -> str:
     return {
-        "serious": "•",
-        "cheeky": "😏",
-        "relaxed": "✨",
-        "urgent": "⚡",
-        "angry": "🔥",
-        "sarcastic": "🙃",
-        "hacker-noir": "▣",
+        "serious": "•", "cheeky": "😏", "relaxed": "✨", "urgent": "⚡",
+        "angry": "🔥", "sarcastic": "🙃", "hacker-noir": "▣",
     }.get(_normalize_mood(mood), "•")
 
 def _clean_if_needed(text: str, allow_profanity: bool) -> str:
@@ -105,8 +97,7 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 def _url_basename(u: str) -> str:
-    p = urlparse(u)
-    name = os.path.basename(p.path.rstrip("/"))
+    name = os.path.basename(urlparse(u).path.rstrip("/"))
     return name or "model.gguf"
 
 def _pick_gguf_in_dir(d: Path) -> Optional[Path]:
@@ -127,11 +118,9 @@ def prefetch_model() -> Optional[Path]:
     """
     Download model if missing.
     - If MODEL_PATH is a file: download to that file.
-    - If MODEL_PATH is a dir: download to dir/<basename(url)>
+    - If MODEL_PATH is a dir: download to dir/<basename(url)>.
     """
     target_anchor = Path(MODEL_PATH).expanduser()
-    target: Path
-
     if target_anchor.suffix.lower() == ".gguf":
         target = target_anchor
     else:
@@ -262,7 +251,7 @@ def _cut(s: str, n: int) -> str:
     s = (s or "").strip()
     return s if len(s) <= n else (s[: max(0, n - 1)].rstrip() + "…")
 
-# ---- Public API --------------------------------------------------------------
+# ---- Public API (legacy) -----------------------------------------------------
 def rewrite_text(prompt: str, mood: str = "serious", timeout_s: int = 5) -> str:
     """
     Streaming generation with a hard timeout (best-effort).
@@ -270,7 +259,6 @@ def rewrite_text(prompt: str, mood: str = "serious", timeout_s: int = 5) -> str:
     """
     model = _load_model()
     if model is None:
-        # fallback: simply bulletize original text
         return rewrite_fallback(prompt, mood)
 
     allow_profanity = _cfg_allow_profanity()
@@ -291,6 +279,7 @@ def rewrite_text(prompt: str, mood: str = "serious", timeout_s: int = 5) -> str:
     bullets = _postprocess(gen, mood, allow_profanity)
     return bullets or rewrite_fallback(prompt, mood)
 
+# ---- Public API (preferred) --------------------------------------------------
 def rewrite_with_info(
     text: str,
     mood: str = "serious",
@@ -302,12 +291,10 @@ def rewrite_with_info(
     model_path: str = ""
 ) -> Tuple[str, bool]:
     """
-    Preferred API for SMTP/Proxy path.
     Returns (output_text, used_llm).
     used_llm == True only when a GGUF model was successfully loaded & used.
     """
     if model_path:
-        # Allow per-call override
         global MODEL_PATH
         MODEL_PATH = model_path
 
@@ -319,14 +306,9 @@ def rewrite_with_info(
         allow_profanity = _cfg_allow_profanity()
 
     prompt = _build_prompt(text or "", mood, allow_profanity)
-    t0 = time.time()
-    out = ""
     try:
-        # Non-stream call for simplicity/compat
-        out = str(model(prompt,
-                        max_new_tokens=LLM_MAX_TOKENS,
-                        temperature=LLM_TEMPERATURE,
-                        top_p=LLM_TOP_P) or "").strip()
+        out = str(model(prompt, max_new_tokens=LLM_MAX_TOKENS,
+                        temperature=LLM_TEMPERATURE, top_p=LLM_TOP_P) or "").strip()
     except Exception as e:
         print(f"[Neural Core] ⚠️ Generation error: {e}", flush=True)
         return rewrite_fallback(text, mood), False
@@ -357,7 +339,6 @@ def rewrite_fallback(text: str, mood: str) -> str:
 def _postprocess(gen: str, mood: str, allow_profanity: bool) -> str:
     if not gen:
         return ""
-    # If model echoed instructions, try to trim to first bullet
     m = re.search(r"(•|✨|⚡|😏|▣)\s", gen)
     if m:
         gen = gen[m.start():]
