@@ -80,7 +80,7 @@ LLM_MODEL_SHA=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
 CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
 # -----------------------------
-# Cool startup banner
+# Startup banner
 # -----------------------------
 echo "──────────────────────────────────────────────"
 echo "🧠 ${BOT_NAME} ${BOT_ICON}"
@@ -99,19 +99,17 @@ if [ -n "$LLM_MODEL_PATH" ]; then
   mkdir -p "$(dirname "$LLM_MODEL_PATH")"
 fi
 
-# Prefetch the LLM once on startup so the model downloads/loads immediately
+# Prefetch once on startup so the model downloads immediately
 if [ "$LLM_ENABLED" = "true" ] && [ -n "$LLM_MODEL_URL" ] && [ -n "$LLM_MODEL_PATH" ]; then
   echo "[${BOT_NAME}] 🔮 Prefetching LLM model..."
   python3 - <<'PY'
-import json, sys
-from pathlib import Path
+import json
 cfg = json.load(open("/data/options.json"))
 try:
     from llm_client import rewrite
-    txt = "(prefetch)"
-    mood = cfg.get("personality_mood","serious")
     out = rewrite(
-        text=txt, mood=mood,
+        text="(prefetch)",
+        mood=cfg.get("personality_mood","serious"),
         timeout=int(cfg.get("llm_timeout_seconds",5)),
         cpu_limit=int(cfg.get("llm_max_cpu_percent",70)),
         models_priority=[], base_url="",
