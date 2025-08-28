@@ -1,19 +1,25 @@
 {
-  "name": "Jarvis Prime",
-  "version": "1.0.1",
-  "slug": "jarvis_prime",
-  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, personalities, and optional Gotify/ntfy proxy.",
-  "arch": ["aarch64", "amd64", "armv7"],
-  "startup": "services",
-  "boot": "auto",
-  "init": false,
-  "ingress": false,
-  "ports": {
+  "name":   "Jarvis Prime",
+  "version":   "1.0.2",
+  "slug":   "jarvis_prime",
+  "description":   "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, personalities, optional Gotify/ntfy proxy, and LLM + memory personality engine.",
+  "arch":   [
+    "aarch64",
+    "amd64",
+    "armv7"
+  ],
+  "startup":   "services",
+  "boot":   "auto",
+  "init":   false,
+  "ingress":   false,
+  "ports":   {
     "2525/tcp": 2525,
     "2580/tcp": 2580
   },
-  "map": ["share:rw"],
-  "options": {
+  "map":   [
+    "share:rw"
+  ],
+  "options":   {
     "bot_name": "Jarvis Prime",
     "bot_icon": "🧠",
     "gotify_url": "http://10.0.0.99:8091",
@@ -64,7 +70,7 @@
     "heartbeat_start": "06:00",
     "heartbeat_end": "20:00",
 
-    "personality_mood": "AI",
+    "personality_mood": "serious",
 
     "smtp_enabled": true,
     "smtp_bind": "0.0.0.0",
@@ -83,9 +89,17 @@
     "proxy_gotify_url": "http://10.0.0.99:8091",
     "proxy_ntfy_url": "http://10.0.0.99:8080",
 
-    "custom_aliases": "{\n  \"dns\": \"dns\",\n  \"DNS\": \"dns\",\n  \"Dns\": \"dns\",\n  \"films\": \"upcoming_movies\",\n  \"tv\": \"upcoming_series\",\n  \"temps\": \"weather\",\n  \"forecast week\": \"forecast\",\n  \"up movies\": \"upcoming_movies\",\n  \"up series\": \"upcoming_series\"\n}"
+    "custom_aliases": "{\n  \"dns\": \"dns\",\n  \"DNS\": \"dns\",\n  \"Dns\": \"dns\",\n  \"films\": \"upcoming_movies\",\n  \"tv\": \"upcoming_series\",\n  \"temps\": \"weather\",\n  \"forecast week\": \"forecast\",\n  \"up movies\": \"upcoming_movies\",\n  \"up series\": \"upcoming_series\"\n}",
+
+    "llm_enabled": true,
+    "llm_timeout_seconds": 5,
+    "llm_max_cpu_percent": 70,
+    "llm_memory_enabled": true,
+    "personality_persistent": true,
+    "ollama_base_url": "http://127.0.0.1:11434",
+    "llm_models_priority": ["qwen2.5:0.5b-instruct","phi:2","tinyllama:1.1b-chat"]
   },
-  "schema": {
+  "schema":   {
     "bot_name": "str",
     "bot_icon": "str",
     "gotify_url": "str",
@@ -155,6 +169,14 @@
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
 
-    "custom_aliases": "str?"
+    "custom_aliases": "str?",
+
+    "llm_enabled": "bool",
+    "llm_timeout_seconds": "int",
+    "llm_max_cpu_percent": "int",
+    "llm_memory_enabled": "bool",
+    "personality_persistent": "bool",
+    "ollama_base_url": "str",
+    "llm_models_priority": "list(str)"
   }
 }
