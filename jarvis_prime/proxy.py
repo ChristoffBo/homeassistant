@@ -1,38 +1,28 @@
+#!/usr/bin/env python3
 # /app/proxy.py
-import os, json, re, threading, http.server, socketserver, urllib.parse
-from typing import Optional, Tuple
+import os
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
-BOT_ICON = os.getenv("BOT_ICON", "🧠")
+try:
+    import importlib.util as _imp
+    _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
+    beautify = _imp.module_from_spec(_bspec); _bspec.loader.exec_module(beautify) if _bspec and _bspec.loader else None
+except Exception:
+    beautify = None
 
-# These are injected from bot.py via start_proxy(merged, send_message)
-SEND = None
-STATE = None
+try:
+    import importlib.util as _imp
+    _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
+    llm = _imp.module_from_spec(_lspec); _lspec.loader.exec_module(llm) if _lspec and _lspec.loader else None
+except Exception:
+    llm = None
 
-_llm = None
-_beautify = None
+import requests
 
-def _load_helpers():
-    global _llm, _beautify
-    try:
-        import importlib.util as _imp
-        spec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
-        if spec and spec.loader:
-            _llm = _imp.module_from_spec(spec)
-            spec.loader.exec_module(_llm)
-            print(f"[{BOT_NAME}] ✅ llm_client loaded")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ llm_client not loaded: {e}")
-
-    try:
-        import importlib.util as _imp
-        bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
-        if bspec and bspec.loader:
-            _beautify = _imp.module_from_spec(bspec)
-            bspec.loader.exec_module(_beautify)
-            print(f"[{BOT_NAME}] ✅ beautify.py loaded (proxy)")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ beautify not loaded: {e}")
+GOTIFY_URL = os.getenv("GOTIFY_URL","").rstrip("/")
+APP_TOKEN  = os.getenv("GOTIFY_APP_TOKEN","")
+MOOD       = os.getenv("CHAT_MOOD","serious")
 
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []
@@ -41,117 +31,90 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     if not tags: tags.append("Relay Path")
     return "— " + " · ".join(tags)
 
-def _wake_word_present(title: str, message: str) -> bool:
-    t = (title or "").lower().strip()
-    m = (message or "").lower().strip()
-    return t.startswith("jarvis") or m.startswith("jarvis")
-
-def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict]]:
+def _pipeline(title: str, body: str, mood: str):
     used_llm = False
     used_beautify = False
-    final = message
+    out = body or ""
     extras = None
 
-    # Skip LLM if wake-word → commands should not be rewritten
-    if not _wake_word_present(title, message) and (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
+    # LLM FIRST
+    if os.getenv("LLM_ENABLED","false").lower() in ("1","true","yes") and llm and hasattr(llm,"rewrite"):
         try:
-            print(f"[{BOT_NAME}] [Proxy] → LLM.rewrite start")
-            msg = _llm.rewrite(
-                text=message,
-                mood=STATE.chat_mood,
-                timeout=STATE.llm_timeout_seconds,
-                cpu_limit=STATE.llm_max_cpu_percent,
-                models_priority=STATE.llm_models_priority,
-                base_url=STATE.ollama_base_url,
-                model_url=STATE.llm_model_url,
-                model_path=STATE.llm_model_path,
-                model_sha256=STATE.llm_model_sha256,
-                allow_profanity=STATE.personality_allow_profanity,
+            out = llm.rewrite(
+                text=out, mood=mood, timeout=int(os.getenv("LLM_TIMEOUT_SECONDS","8")),
+                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT","70")),
+                models_priority=[], base_url=os.getenv("OLLAMA_BASE_URL",""),
+                model_url=os.getenv("LLM_MODEL_URL",""), model_path=os.getenv("LLM_MODEL_PATH",""),
+                model_sha256=os.getenv("LLM_MODEL_SHA256",""),
+                allow_profanity=os.getenv("PERSONALITY_ALLOW_PROFANITY","false").lower() in ("1","true","yes"),
             )
-            if msg:
-                final = msg
-                used_llm = True
-                print(f"[{BOT_NAME}] [Proxy] ✓ LLM.rewrite done")
+            used_llm = True
         except Exception as e:
-            print(f"[{BOT_NAME}] [Proxy] ⚠️ LLM skipped: {e}")
+            print(f"[proxy] LLM skipped: {e}")
 
-    if _beautify and hasattr(_beautify, "beautify_message"):
+    # BEAUTIFY SECOND
+    if beautify and hasattr(beautify, "beautify_message"):
         try:
-            final, extras = _beautify.beautify_message(title, final, mood=STATE.chat_mood)
+            out, extras = beautify.beautify_message(title, out, mood=mood)
             used_beautify = True
         except Exception as e:
-            print(f"[{BOT_NAME}] [Proxy] ⚠️ Beautify failed: {e}")
+            print(f"[proxy] Beautify failed: {e}")
 
-    # Footer tag
-    final = f"{final}\n\n{_footer(used_llm, used_beautify)}"
-    return final, extras
+    foot = _footer(used_llm, used_beautify)
+    if not out.rstrip().endswith(foot):
+        out = f"{out.rstrip()}\n\n{foot}"
+    return out, extras
 
-class Handler(http.server.BaseHTTPRequestHandler):
-    def _ok(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ok\n")
+def _post_gotify(title: str, message: str, extras=None):
+    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+    payload = {"title": title, "message": message, "priority": 5}
+    if extras: payload["extras"] = extras
+    r = requests.post(url, json=payload, timeout=8)
+    r.raise_for_status()
 
-    def _bad(self, code=400, text="bad"):
+class H(BaseHTTPRequestHandler):
+    def _send(self, code, data="ok", ctype="text/plain"):
         self.send_response(code)
+        self.send_header("Content-Type", ctype)
         self.end_headers()
-        self.wfile.write(text.encode("utf-8"))
+        self.wfile.write(data.encode("utf-8") if isinstance(data, str) else data)
 
     def do_GET(self):
-        if self.path.rstrip("/") == "/health":
-            self._ok()
-            return
-        self._bad(404, "not found")
+        if self.path == "/health":
+            return self._send(200, "ok")
+        return self._send(404, "not found")
 
     def do_POST(self):
         try:
-            clen = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(clen).decode("utf-8", errors="ignore")
-            # Accept JSON or form-urlencoded like Gotify
-            if self.headers.get("Content-Type", "").startswith("application/json"):
-                data = json.loads(raw or "{}")
+            length = int(self.headers.get("Content-Length","0"))
+            raw = self.rfile.read(length) if length > 0 else b""
+            title = self.headers.get("X-Title") or "Proxy"
+            body = ""
+            ctype = (self.headers.get("Content-Type") or "").lower()
+            if "application/json" in ctype:
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                    body = data.get("message") or data.get("text") or data.get("body") or ""
+                    if not title:
+                        title = data.get("title") or "Proxy"
+                except Exception:
+                    body = raw.decode("utf-8","ignore")
             else:
-                data = dict(urllib.parse.parse_qsl(raw))
+                body = raw.decode("utf-8","ignore")
 
-            title   = data.get("title")   or "Message"
-            message = data.get("message") or ""
-            priority = int(data.get("priority", 5))
-
-            # Pipeline
-            final, extras = _llm_then_beautify(title, message)
-            SEND(title, final, priority=priority, extras=extras)
-            self._ok()
+            out, extras = _pipeline(title, body, MOOD)
+            _post_gotify(f"{os.getenv('BOT_ICON','🧠')} {os.getenv('BOT_NAME','Jarvis Prime')}: {title}", out, extras)
+            return self._send(200, "ok")
         except Exception as e:
-            print(f"[{BOT_NAME}] [Proxy] error: {e}")
-            self._bad(500, "error")
+            print(f"[proxy] error: {e}")
+            return self._send(500, "error")
 
-def start_proxy(merged_cfg, send_fn):
-    global SEND, STATE
-    SEND = send_fn
+def main():
+    host = os.getenv("proxy_bind","0.0.0.0")
+    port = int(os.getenv("proxy_port","2580"))
+    srv = HTTPServer((host, port), H)
+    print(f"[proxy] listening on {host}:{port}")
+    srv.serve_forever()
 
-    class _State:
-        pass
-    STATE = _State()
-    STATE.chat_mood = merged_cfg.get("personality_mood", merged_cfg.get("chat_mood", "serious"))
-    STATE.llm_enabled = bool(merged_cfg.get("llm_enabled", False))
-    STATE.llm_timeout_seconds = int(merged_cfg.get("llm_timeout_seconds", 12))
-    STATE.llm_max_cpu_percent = int(merged_cfg.get("llm_max_cpu_percent", 70))
-    STATE.llm_models_priority = merged_cfg.get("llm_models_priority", [])
-    STATE.ollama_base_url     = merged_cfg.get("ollama_base_url", "")
-    STATE.llm_model_url       = merged_cfg.get("llm_model_url", "")
-    STATE.llm_model_path      = merged_cfg.get("llm_model_path", "")
-    STATE.llm_model_sha256    = merged_cfg.get("llm_model_sha256", "")
-    STATE.personality_allow_profanity = bool(merged_cfg.get("personality_allow_profanity", False))
-
-    host = merged_cfg.get("proxy_bind", "0.0.0.0")
-    port = int(merged_cfg.get("proxy_port", 2580))
-
-    _load_helpers()
-
-    class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-        daemon_threads = True
-
-    server = ThreadingHTTPServer((host, port), Handler)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    print(f"[{BOT_NAME}] 🔀 Proxy listening on {host}:{port} (endpoints: /message, /gotify, /ntfy, /health)")
+if __name__ == "__main__":
+    main()
