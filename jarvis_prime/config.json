@@ -161,7 +161,7 @@
     "smtp_rewrite_title_prefix": "str",
     "smtp_allow_html": "bool",
     "smtp_priority_default": "int",
-    "smtp_priority_map": "str?",
+    "smtp_priority_map": "str",
 
     "proxy_enabled": "bool",
     "proxy_bind": "str",
@@ -169,7 +169,7 @@
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
 
-    "custom_aliases": "str?",
+    "custom_aliases": "str",
 
     "llm_enabled": "bool",
     "llm_timeout_seconds": "int",
@@ -177,6 +177,6 @@
     "llm_memory_enabled": "bool",
     "personality_persistent": "bool",
     "ollama_base_url": "str",
-    "llm_models_priority": "list(str)"
+    "llm_models_priority": "list"
   }
 }
