@@ -72,6 +72,10 @@ export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
 export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
 export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
+# LLM (built-in)
+LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
+LLM_MODEL_PATH=$(jq -r '.llm_model_path // "/share/jarvis_prime/models/tinyllama-1.1b-chat.Q4_K_M.gguf"' "$CONFIG_PATH")
+
 # -----------------------------
 # Cool startup banner
 # -----------------------------
@@ -81,8 +85,14 @@ echo "⚡ Boot sequence initiated..."
 echo "   → Personalities loaded"
 echo "   → Memory core mounted"
 echo "   → Network bridges linked"
+echo "   → LLM: $( [ "$LLM_ENABLED" = "true" ] && echo "enabled" || echo "disabled" )"
+echo "   → Model path: ${LLM_MODEL_PATH}"
 echo "🚀 Systems online — Jarvis is awake!"
 echo "──────────────────────────────────────────────"
+
+# Ensure share directories exist
+mkdir -p /share/jarvis_prime/memory
+mkdir -p "$(dirname "$LLM_MODEL_PATH")"
 
 # Start the bot
 exec python3 /app/bot.py
