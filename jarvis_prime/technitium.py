@@ -222,7 +222,7 @@ def _kv(label, value, pct=None):
         return f"    {label}: {value}"
     return f"    {label}: {value} ({pct})"
 
-def handle_dns_command(cmd: str, *_):
+def handle_dns_command(cmd: str):
     if not ENABLED or not TECH_URL:
         return "⚠️ DNS module not enabled or misconfigured", None
 
