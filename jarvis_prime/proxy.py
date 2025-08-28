@@ -13,9 +13,10 @@
 #   - Forwards to external servers if configured (proxy_gotify_url / proxy_ntfy_url).
 #   - Always 200 OK to sender.
 from __future__ import annotations
+
 import json, urllib.parse
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 import requests
 
@@ -63,21 +64,30 @@ def _wake_word_present(title: str, message: str) -> bool:
     return m.startswith("jarvis ") or m.startswith("jarvis:")
 
 def _llm_then_beautify(title: str, message: str, mood: str):
-    print(f"[LLM DEBUG][proxy] gate: wake={_wake_word_present(title, message)} en={bool(STATE and STATE.llm_enabled)} mod={bool(_llm)} hasinfo={hasattr(_llm, 'rewrite_with_info') if _llm else False}")
-    if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite_with_info")):
+    # Gate debug: see *why* we skip
+    print(f"[LLM DEBUG][proxy] gate: wake={_wake_word_present(title, message)} en={bool(STATE and STATE.llm_enabled)} mod={bool(_llm)} has_info={hasattr(_llm, 'rewrite_with_info') if _llm else False} has_legacy={hasattr(_llm, 'rewrite_text') if _llm else False}")
+    if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm):
         text, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
         return f"{text}\n[Beautify fallback]", bx
 
-    def _call():
+    def call_core():
         try:
-            rewritten, used = _llm.rewrite_with_info(
-                text=message,
-                mood=mood,
-                timeout=STATE.llm_timeout,
-                cpu_limit=STATE.llm_cpu,
-                model_path=STATE.llm_model_path,
-            )
-            if used:
+            if hasattr(_llm, "rewrite_with_info"):
+                rewritten, used = _llm.rewrite_with_info(
+                    text=message,
+                    mood=mood,
+                    timeout=STATE.llm_timeout,
+                    cpu_limit=STATE.llm_cpu,
+                    model_path=STATE.llm_model_path,
+                )
+                if used:
+                    t, bx = beautify_message(title, rewritten, mood=mood, source_hint="proxy")
+                    return f"{t}\n[Neural Core ✓]", bx
+                else:
+                    t, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
+                    return f"{t}\n[Beautify fallback]", bx
+            elif hasattr(_llm, "rewrite_text"):
+                rewritten = _llm.rewrite_text(message, mood=mood, timeout_s=STATE.llm_timeout)
                 t, bx = beautify_message(title, rewritten, mood=mood, source_hint="proxy")
                 return f"{t}\n[Neural Core ✓]", bx
             else:
@@ -88,7 +98,7 @@ def _llm_then_beautify(title: str, message: str, mood: str):
             return f"{t}\n[Beautify fallback]", bx
 
     with ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(_call)
+        fut = ex.submit(call_core)
         try:
             return fut.result(timeout=max(1, STATE.llm_timeout))
         except FuturesTimeout:
@@ -98,50 +108,63 @@ def _llm_then_beautify(title: str, message: str, mood: str):
 class Handler(BaseHTTPRequestHandler):
     server_version = "JarvisProxy/1.4"
 
-    def _set_headers(self, status=200, ctype="application/json"):
-        self.send_response(status)
+    def _send(self, payload):
+        code, ctype, body = payload
+        self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.end_headers()
+        self.wfile.write(body)
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         if self.path == "/health":
-            self._set_headers()
-            self.wfile.write(b'{"ok":true}')
+            self._send((200, "application/json; charset=utf-8", b'{"ok":true}'))
             return
-        self._set_headers(404)
-        self.wfile.write(b'{"ok":false,"error":"not found"}')
+        self._send((404, "application/json; charset=utf-8", b'{"error":"not found"}'))
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length > 0 else b""
+            path, _, query = self.path.partition("?")
+            q = urllib.parse.parse_qs(query)
+
+            if path in ("/message", "/gotify"):
+                self._handle_gotify_like(raw, q)
+                return
+
+            if path == "/ntfy":
+                self._handle_ntfy(raw)
+                return
+
+            self._send((404, "application/json; charset=utf-8", b'{"error":"unknown endpoint"}'))
+        except Exception as e:
+            self._send((500, "application/json; charset=utf-8", json.dumps({"error": str(e)}).encode("utf-8")))
 
     def _handle_gotify_like(self, raw: bytes, qparams: dict):
-        try:
-            ct = self.headers.get("Content-Type", "") or ""
-            if "application/json" in ct:
-                data = json.loads(raw.decode("utf-8") or "{}")
-                title = str(data.get("title") or data.get("topic") or "Notification")
-                message = str(data.get("message") or data.get("body") or "")
-                extras = data.get("extras") or {}
-                priority = int(data.get("priority") or 5)
-            else:
-                form = urllib.parse.parse_qs(raw.decode("utf-8") or "")
-                title = str((form.get("title") or ["Notification"])[0])
-                message = str((form.get("message") or [""])[0])
-                priority = int((form.get("priority") or [5])[0])
-                extras = {}
-        except Exception:
-            try:
-                data = json.loads(raw.decode("utf-8") or "{}")
-                title = str(data.get("title") or "Notification")
-                message = str(data.get("message") or "")
-                extras = data.get("extras") or {}
-                priority = int(data.get("priority") or 5)
-            except Exception:
-                title = "Notification"
-                message = raw.decode("utf-8", "ignore")
-                extras = {}
-                priority = 5
+        ctype = (self.headers.get("Content-Type") or "").lower()
+        title = "Notification"; message = ""; priority = 5; extras = None
 
-        # token in qparams is ignored locally (we're the intake)
+        if "application/json" in ctype:
+            try:
+                payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
+            except Exception:
+                payload = {}
+            title = str(payload.get("title") or payload.get("topic") or "Notification")
+            message = str(payload.get("message") or payload.get("body") or "")
+            extras = payload.get("extras") or {}
+            try: priority = int(payload.get("priority") or 5)
+            except Exception: priority = 5
+        else:
+            form = urllib.parse.parse_qs(raw.decode("utf-8", errors="ignore") if raw else "")
+            title = str((form.get("title") or ["Notification"])[0])
+            message = str((form.get("message") or [""])[0])
+            try: priority = int((form.get("priority") or [5])[0])
+            except Exception: priority = 5
+            extras = {}
+
         final, bx = _llm_then_beautify(title, message, mood=STATE.mood if STATE else "serious")
         merged_extras = _merge_extras(bx, extras)
+
         if STATE and STATE.send_cb:
             try:
                 STATE.send_cb(title, final, priority=priority, extras=merged_extras)
@@ -166,44 +189,26 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Proxy] ⚠️ forward (ntfy) failed: {e}")
 
-        self._set_headers()
-        self.wfile.write(b'{"ok":true}')
+        self._send((200, "application/json; charset=utf-8", b'{"ok":true}'))
 
-    def do_POST(self):  # noqa: N802
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length > 0 else b""
-            path, _, query = self.path.partition("?")
-            q = urllib.parse.parse_qs(query)
-
-            if path == "/message":
-                self._handle_gotify_like(raw, q)
-                return
-
-            if path == "/gotify":
-                self._handle_gotify_like(raw, q)
-                return
-
-            if path == "/ntfy":
-                ct = self.headers.get("Content-Type", "") or ""
-                title = str((q.get("title") or ["Notification"])[0])
-                message = raw.decode("utf-8", "ignore") if "text/plain" in ct else str(json.loads(raw.decode("utf-8") or "{}").get("message") or "")
-                final, bx = _llm_then_beautify(title, message, mood=STATE.mood if STATE else "serious")
-                if STATE and STATE.send_cb:
-                    try:
-                        STATE.send_cb(title, final, priority=5, extras=_merge_extras(bx, {}))
-                    except Exception as e:
-                        print(f"[Proxy] ❌ local post error: {e}")
-                self._set_headers()
-                self.wfile.write(b'{"ok":true}')
-                return
-
-            self._set_headers(404)
-            self.wfile.write(b'{"ok":false,"error":"not found"}')
-        except Exception as e:
-            print(f"[Proxy] ❌ handler error: {e}")
-            self._set_headers(500)
-            self.wfile.write(b'{"ok":false}')
+    def _handle_ntfy(self, raw: bytes):
+        ct = (self.headers.get("Content-Type") or "").lower()
+        title = "Notification"
+        if "text/plain" in ct:
+            message = raw.decode("utf-8", errors="ignore")
+        else:
+            try:
+                payload = json.loads(raw.decode("utf-8", errors="ignore") if raw else "{}")
+            except Exception:
+                payload = {}
+            message = str(payload.get("message") or "")
+        final, bx = _llm_then_beautify(title, message, mood=STATE.mood if STATE else "serious")
+        if STATE and STATE.send_cb:
+            try:
+                STATE.send_cb(title, final, priority=5, extras=_merge_extras(bx, {}))
+            except Exception as e:
+                print(f"[Proxy] ❌ local post error: {e}")
+        self._send((200, "application/json; charset=utf-8", b'{"ok":true}'))
 
 def start_proxy(config: dict, send_message_fn):
     """Start the proxy HTTP server in a background thread."""
