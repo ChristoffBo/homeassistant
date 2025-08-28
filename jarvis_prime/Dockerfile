@@ -29,6 +29,7 @@ COPY personality.py /app/personality.py
 COPY smtp_server.py /app/smtp_server.py
 COPY proxy.py /app/proxy.py
 COPY beautify.py /app/beautify.py
+COPY pipeline.py /app/pipeline.py
 
 # New modules for LLM + Memory
 COPY llm_client.py /app/llm_client.py
