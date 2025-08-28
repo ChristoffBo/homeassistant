@@ -10,9 +10,8 @@
 # Behavior:
 #   - Every inbound payload is **LLM rewrite → Beautify** (unless wake-word).
 #   - If LLM fails or exceeds timeout, we **fall back** to Beautify only.
-#   - Also forwards (best-effort) to real servers if configured:
-#       proxy_gotify_url (full /message?token=... URL), proxy_ntfy_url
-#   - Always 200 OK to the sender (logs errors).
+#   - Forwards to real servers if configured: proxy_gotify_url, proxy_ntfy_url
+#   - Provides start_proxy(config, send_message_fn) for bot.py
 from __future__ import annotations
 import json
 import threading
@@ -49,6 +48,7 @@ class ProxyState:
         self.llm_model_path = str(config.get("llm_model_path", ""))
 
 STATE: ProxyState | None = None
+HTTPD: ThreadingHTTPServer | None = None
 
 def _json(data: dict, code: int = 200):
     return (code, "application/json; charset=utf-8", json.dumps(data).encode("utf-8"))
@@ -66,7 +66,6 @@ def _merge_extras(a, b):
     out = dict(a)
     ca = dict(out.get("client::notification", {}))
     cb = dict((b.get("client::notification") or {}))
-    # Prefer image from A, else B
     if "bigImageUrl" not in ca and "bigImageUrl" in cb:
         ca["bigImageUrl"] = cb["bigImageUrl"]
     if ca:
@@ -83,9 +82,9 @@ def _wake_word_present(title: str, message: str) -> bool:
 
 def _llm_then_beautify(title: str, message: str, mood: str):
     """Run LLM.rewrite with timeout. On any issue → just beautify raw message."""
-    # Skip LLM for wake-word commands
     if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
-        return beautify_message(title, message, mood=mood, source_hint="proxy")
+        text, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
+        return text + "\n[Beautify fallback]", bx
 
     def _call():
         try:
@@ -96,21 +95,22 @@ def _llm_then_beautify(title: str, message: str, mood: str):
                 cpu_limit=STATE.llm_cpu,
                 model_path=STATE.llm_model_path,
             )
-            return beautify_message(title, rewritten, mood=mood, source_hint="proxy")
+            t, bx = beautify_message(title, rewritten, mood=mood, source_hint="proxy")
+            return t + "\n[Neural Core ✓]", bx
         except Exception:
-            # Fallback to beautifying the original
-            return beautify_message(title, message, mood=mood, source_hint="proxy")
+            t, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
+            return t + "\n[Beautify fallback]", bx
 
     with ThreadPoolExecutor(max_workers=1) as ex:
         fut = ex.submit(_call)
         try:
             return fut.result(timeout=max(1, STATE.llm_timeout))
         except FuturesTimeout:
-            # Timeout: beautify original immediately
-            return beautify_message(title, message, mood=mood, source_hint="proxy")
+            t, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
+            return t + "\n[Beautify fallback]", bx
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "JarvisProxy/1.2"
+    server_version = "JarvisProxy/1.3"
 
     def _send(self, tup):
         code, ctype, payload = tup
@@ -132,8 +132,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length > 0 else b""
             path = self.path.split("?", 1)[0]
 
-            if path == "/message":
-                # Gotify compatible: /message?token=xxx  (token ignored here)
+            if path == "/message":       # Gotify-compatible
                 self._handle_gotify_like(raw)
                 return
 
@@ -153,11 +152,7 @@ class Handler(BaseHTTPRequestHandler):
         global STATE
         ctype = (self.headers.get("Content-Type") or "").lower()
         try:
-            if "application/json" in ctype:
-                payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
-            else:
-                # some clients still send JSON but omit content-type
-                payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
+            payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
         except Exception:
             payload = {}
 
@@ -166,7 +161,6 @@ class Handler(BaseHTTPRequestHandler):
         priority = int(payload.get("priority") or 5)
         extras = payload.get("extras") if isinstance(payload.get("extras"), dict) else None
 
-        # LLM → Beautify (with timeout fallback)
         final, bx = _llm_then_beautify(title, message, mood=STATE.mood if STATE else "serious")
         merged_extras = _merge_extras(bx, extras)
         if STATE and STATE.send_cb:
@@ -175,7 +169,6 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Proxy] ❌ local post error: {e}")
 
-        # Optional forward to a real Gotify server
         if STATE and STATE.forward_gotify:
             try:
                 r = requests.post(STATE.forward_gotify, json={"title": title, "message": message, "priority": priority, "extras": extras}, timeout=8)
@@ -209,3 +202,38 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.send_cb(title, final, priority=priority, extras=bx)
             except Exception as e:
                 print(f"[Proxy] ❌ local post error: {e}")
+
+        if STATE and STATE.forward_ntfy:
+            try:
+                # Send as simple text; many ntfy setups expect /topic in URL.
+                r = requests.post(STATE.forward_ntfy, data=text.encode("utf-8"), timeout=8)
+                if not r.ok:
+                    print(f"[Proxy] ⚠️ forward ntfy failed: {r.status_code} {r.text[:200]}")
+            except Exception as e:
+                print(f"[Proxy] ⚠️ forward ntfy error: {e}")
+
+        self._send(_json({"status": "ok"}))
+
+def start_proxy(config: dict, send_message_fn):
+    """
+    Start the proxy HTTP server in a background thread.
+    Called by bot.py
+    """
+    global STATE, HTTPD
+    STATE = ProxyState(config, send_message_fn)
+    addr = (STATE.bind, STATE.port)
+    HTTPD = ThreadingHTTPServer(addr, Handler)
+    t = threading.Thread(target=HTTPD.serve_forever, name="JarvisProxy", daemon=True)
+    t.start()
+    print(f"[Proxy] Listening on {STATE.bind}:{STATE.port}")
+
+def stop_proxy():
+    global HTTPD
+    try:
+        if HTTPD:
+            HTTPD.shutdown()
+            HTTPD.server_close()
+            HTTPD = None
+            print("[Proxy] Stopped")
+    except Exception as e:
+        print(f"[Proxy] stop error: {e}")
