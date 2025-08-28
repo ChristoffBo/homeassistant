@@ -4,13 +4,9 @@ Neural Core (rules-first, optional local GGUF via ctransformers)
 
 - Extract real facts from Sonarr/Radarr/APT/Host messages.
 - Mood-forward bullets with variety (no repetitive closers).
-- Falls back to Generic if Sonarr/Radarr fields are missing (fixes "Test Notification").
+- Falls back to Generic if Sonarr/Radarr fields are missing.
 - Profanity optional (reads personality_allow_profanity from /data/options.json or env).
-
-Env/Options:
-  personality_allow_profanity: true|false
-  LLM_EXTRA_BULLET: true|false (default false)
-  LLM_DETAIL_LEVEL: rich|normal (default rich)
+- Always appends an engine footer so you know if Neural Core fired.
 """
 
 from __future__ import annotations
@@ -18,7 +14,6 @@ import os, re, json, hashlib
 from pathlib import Path
 from typing import Optional, Dict, List
 
-# ---------- Tunables ----------
 USE_LLM_EXTRA_BULLET = os.getenv("LLM_EXTRA_BULLET", "0").lower() in ("1", "true", "yes")
 DETAIL_LEVEL = os.getenv("LLM_DETAIL_LEVEL", "rich").lower()
 MAX_LINES = 10 if DETAIL_LEVEL == "rich" else 6
@@ -73,7 +68,6 @@ def _cut(s: str, n: int) -> str:
     s = (s or "").strip()
     return (s[: n - 1] + "…") if len(s) > n else s
 
-# profanity scrub only when profanity is NOT allowed
 _PROF_RE = re.compile(
     r"\b(fuck|f\*+k|f\W?u\W?c\W?k|shit|bitch|cunt|asshole|motherf\w+|dick|prick|whore)\b",
     re.I,
@@ -255,20 +249,25 @@ def _closer(mood: str, seed: str, allow_profanity: bool) -> str:
     }.get(mood, ["Done."])
     line = _variety(seed, choices)
     if allow_profanity and mood == "angry":
-        alt = _variety(seed, ["Done. No BS.", "Done."] )
-        line = alt
+        line = _variety(seed, ["Done. No BS.", "Done."])
     return line
 
 # ---------- Renderers ----------
+def _render_generic(text: str, mood: str, allow_profanity: bool) -> List[str]:
+    b = _bullet_for(mood)
+    out: List[str] = []
+    first = _first_line(text)
+    if first:
+        out.append(f"{b} {_cut(first, 150)}")
+    out.append(f"{b} ✅ Noted. {_closer(mood, text, allow_profanity)}")
+    return out
+
 def _render_sonarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
     b = _bullet_for(mood)
     d = _extract_sonarr(text)
-
-    # Only treat as Sonarr if we have strong signals
     strong = bool(d["show"] or (d["season"] and d["episode"]) or d["path"])
     if not strong:
         return _render_generic(text, mood, allow_profanity)
-
     out: List[str] = []
     if d["show"]:
         se = ""
@@ -279,7 +278,7 @@ def _render_sonarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
     if d["ep_title"]:
         out.append(f"{b} 🧾 {_cut(d['ep_title'], 150)}")
     if d["quality"] or d["size"]:
-        combo = " | ".join(x for x in [d['quality'], d['size']] if x)
+        combo = " ".join(x for x in [d['quality'], d['size']] if x)
         out.append(f"{b} 🎚️ {combo}")
     if d["release"]:
         out.append(f"{b} 🏷️ {d['release']}")
@@ -293,28 +292,21 @@ def _render_sonarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
         out.append(f"{b} 🔗 {d['links'][0]}")
     if d["errors"]:
         out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-
-    tail = _closer(mood, seed=text, allow_profanity=allow_profanity)
-    if d["event"]:
-        out.append(f"{b} ✅ {d['event'].capitalize()} {tail}")
-    else:
-        out.append(f"{b} ✅ Processed. {tail}")
+    tail = _closer(mood, text, allow_profanity)
+    out.append(f"{b} ✅ {d['event'].capitalize() if d['event'] else 'Processed.'} {tail}")
     return out
 
 def _render_radarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
     b = _bullet_for(mood)
     d = _extract_radarr(text)
-
-    strong = bool(d["movie"] or d["path"])
-    if not strong:
+    if not (d["movie"] or d["path"]):
         return _render_generic(text, mood, allow_profanity)
-
     out: List[str] = []
     title = " ".join(x for x in [d["movie"], f"({d['year']})" if d["year"] else ""] if x).strip()
     if title:
         out.append(f"{b} 🎬 {title}")
     if d["quality"] or d["size"]:
-        combo = " | ".join(x for x in [d['quality'], d['size']] if x)
+        combo = " ".join(x for x in [d["quality"], d["size"]] if x)
         out.append(f"{b} 🎚️ {combo}")
     if d["release"]:
         out.append(f"{b} 🏷️ {d['release']}")
@@ -338,10 +330,7 @@ def _render_apt(text: str, mood: str, allow_profanity: bool) -> List[str]:
     d = _extract_apt(text)
     out: List[str] = []
     host = d["host"] or (d["ips"][0] if d["ips"] else "")
-    if host:
-        out.append(f"{b} 🛠️ APT maintenance finished on {host}")
-    else:
-        out.append(f"{b} 🛠️ APT maintenance finished")
+    out.append(f"{b} 🛠️ APT maintenance finished" + (f" on {host}" if host else ""))
     if d["upgraded"]:
         out.append(f"{b} 📦 Packages upgraded: {d['upgraded']}")
     if d["pkg_list"]:
@@ -372,26 +361,6 @@ def _render_host_status(text: str, mood: str, allow_profanity: bool) -> List[str
     if d["errors"]:
         out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
     out.append(f"{b} ✅ Host healthy. {_closer(mood, text, allow_profanity)}")
-    return out
-
-def _render_generic(text: str, mood: str, allow_profanity: bool) -> List[str]:
-    b = _bullet_for(mood)
-    d = _extract_common(text)
-    out: List[str] = []
-    first = _first_line(text)
-    if first:
-        out.append(f"{b} {_cut(first, 150)}")
-    if d["host"]:
-        out.append(f"{b} 🖥️ Host: {d['host']}")
-    if d["ips"]:
-        out.append(f"{b} 🌐 IP: {d['ips'][0]}")
-    if d["errors"]:
-        out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-    if d["poster"]:
-        out.append(f"{b} 🖼️ {d['poster']}")
-    if d["links"]:
-        out.append(f"{b} 🔗 {d['links'][0]}")
-    out.append(f"{b} ✅ Noted. {_closer(mood, text, allow_profanity)}")
     return out
 
 # ---------- Optional: one concise LLM bullet ----------
@@ -434,11 +403,9 @@ def rewrite(
 ) -> str:
     text = text or ""
     allow_profanity = _cfg_allow_profanity()
-
-    # Normalize mood to core renderer set so all personalities ooze.
     mood = _normalize_mood(mood)
 
-    # Optional local model load (not required)
+    # Optional local model load (non-blocking to main I/O)
     try:
         path = _resolve_model_path(model_path)
         _load_model(path)
@@ -448,7 +415,6 @@ def rewrite(
     try:
         tlow = text.lower()
         if "sonarr" in tlow:
-            # only if real fields exist, else generic
             lines = _render_sonarr(text, mood, allow_profanity)
         elif "radarr" in tlow:
             lines = _render_radarr(text, mood, allow_profanity)
@@ -465,7 +431,7 @@ def rewrite(
         lines.extend(_llm_extra(text, mood, allow_profanity))
         lines = _dedupe(lines, MAX_LINES)
         out = "\n".join(lines) if lines else text
-        return _clean_if_needed(out, allow_profanity)
+        return _clean_if_needed(out, allow_profanity) + "\n[Neural Core ✓]"
     except Exception as e:
         print(f"[Neural Core] Compose error: {e}")
-        return _clean_if_needed(text, allow_profanity)
+        return _clean_if_needed(text, allow_profanity) + "\n[Beautify fallback]"
