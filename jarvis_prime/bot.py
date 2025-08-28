@@ -434,6 +434,8 @@ def extract_command_from(title: str, message: str) -> str:
 # Listener
 # -----------------------------
 async def listen():
+    global CHAT_MOOD  # <-- moved here to satisfy Python's global rules
+
     ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
     print(f"[{BOT_NAME}] Connecting {ws_url}")
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
@@ -562,7 +564,6 @@ async def listen():
                             handled = True
                     elif re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd):
                         newm = re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd).group(1)
-                        global CHAT_MOOD
                         CHAT_MOOD = newm
                         if PERSONALITY_PERSISTENT and _pstate and hasattr(_pstate, "save_mood"):
                             try:
