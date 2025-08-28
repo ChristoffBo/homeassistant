@@ -4,7 +4,7 @@ PRIME DIRECTIVES — OBEY EXACTLY:
 1) READ the incoming text carefully.
 2) SAY what it means in plain, concise English. Explain; do not embellish.
 3) KEEP every fact/number/URL/IP/hostname/service name EXACTLY as given. No new facts.
-4) OUTPUT up to 10 short lines, paragraph style. No lists unless the input already has bullets.
+4) OUTPUT up to 50 short lines, paragraph style. No lists unless the input already has bullets.
 5) NO meta (“Input/Output/Explanation/Reasoning”), NO “Note:”, NO placeholders like [YOURNAME]/[FEATURE].
 6) If something is missing or unclear, say “unknown” or “not specified”; do not guess.
 7) Only give information you can see and read. Do not add anything.
