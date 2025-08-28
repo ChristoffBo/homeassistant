@@ -1,10 +1,10 @@
+#!/usr/bin/env python3
 # /app/llm_client.py
 from __future__ import annotations
 
 import os
 import time
 import hashlib
-import tempfile
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
 # Defaults can be overridden by env or callers
-MODEL_PATH   = os.getenv("LLM_MODEL_PATH", "/share/jarvis_prime/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
+MODEL_PATH   = os.getenv("LLM_MODEL_PATH", "/share/jarvis_prime/models/tinyllama-1.1b-chat.v1.Q4_K_M.gguf")
 MODEL_URL    = os.getenv("LLM_MODEL_URL", "")
 MODEL_SHA256 = (os.getenv("LLM_MODEL_SHA256", "") or "").lower()
 
@@ -33,6 +33,7 @@ CATALOG: List[Tuple[str, str, str, str]] = [
 
 _model = None
 _model_type_hint: Optional[str] = None
+_loaded_path: Optional[Path] = None
 
 
 def _hf_resolve(repo: str, filename: str) -> str:
@@ -55,7 +56,6 @@ def _download(url: str, dest: Path, sha256: str = "", timeout: int = 60) -> None
             if _sha256_file(dest).lower() == sha256.lower():
                 print(f"[{BOT_NAME}] ✅ Model already present: {dest}", flush=True)
                 return
-            # bad hash → force re-download
             dest.unlink(missing_ok=True)
         else:
             print(f"[{BOT_NAME}] ✅ Model already present: {dest}", flush=True)
@@ -144,7 +144,7 @@ def prefetch_model() -> Optional[Path]:
 
 
 def _load_model(model_path: Path, model_type_hint: Optional[str]):
-    global _model, _model_type_hint
+    global _model, _model_type_hint, _loaded_path
     if _model is not None:
         return _model
 
@@ -161,6 +161,7 @@ def _load_model(model_path: Path, model_type_hint: Optional[str]):
         context_length=4096,
     )
     _model_type_hint = mtype
+    _loaded_path = model_path
     dt = time.time() - t0
     print(f"[{BOT_NAME}] 🌟 Model ready in {dt:.1f}s", flush=True)
     return _model
@@ -173,7 +174,6 @@ def _sanitize_generation(text: str) -> str:
     if not text:
         return text
 
-    # Strip common instruction tags and bracketed markers
     bad_prefixes = (
         "[system]", "[SYSTEM]", "SYSTEM:", "Instruction:", "Instructions:",
         "You are", "As an AI", "The assistant", "Rewrite:", "Output:", "[OUTPUT]"
@@ -183,32 +183,30 @@ def _sanitize_generation(text: str) -> str:
         s = raw.strip()
         if not s:
             continue
-        # Kill instruction-ish lines
         if any(s.startswith(p) for p in bad_prefixes):
             continue
-        # Kill bracket-tag lines like [SYSTEM], [MOOD], etc.
-        if (s.startswith("[") and "]" in s and len(s.split()) <= 8):
-            tag = s.split("]", 1)[0] + "]"
-            if len(tag) <= 16:
-                continue
         lines.append(s)
+    out = "\n".join(lines).strip()
+    # squeeze extra blank lines
+    out = "\n".join([ln for ln in out.splitlines() if ln.strip() != ""])
+    return out
 
-    cleaned = "\n".join(lines).strip()
 
-    # If the model returned our template + output again, keep only the lower half
-    if "— INPUT START —" in cleaned and "— INPUT END —" in cleaned:
-        try:
-            cleaned = cleaned.split("— INPUT END —", 1)[-1].strip()
-        except Exception:
-            pass
-
-    return cleaned
+def engine_status():
+    try:
+        return {
+            "ready": _model is not None,
+            "model_type": _model_type_hint,
+            "model_path": str(_loaded_path or MODEL_PATH or "").strip(),
+        }
+    except Exception:
+        return {"ready": False, "model_type": None, "model_path": str(MODEL_PATH or "")}
 
 
 def rewrite(
     text: str,
     mood: str = "serious",
-    timeout: int = 5,
+    timeout: int = 8,
     cpu_limit: int = 70,
     models_priority: Optional[List[str]] = None,
     base_url: str = "",
@@ -218,59 +216,36 @@ def rewrite(
     allow_profanity: bool = False,
 ) -> str:
     """
-    Main entry: ensure a tiny model exists, load it, generate a short rewrite.
+    Style-preserving rewrite: aggressive personality by mood, no new facts,
+    keep all numbers/URLs/paths, compress fluff, 2–6 lines.
     """
-    local_path, model_type_hint = _ensure_model(
-        model_url=model_url or MODEL_URL,
-        model_path=model_path or MODEL_PATH,
-        model_sha256=model_sha256 or MODEL_SHA256,
-        models_priority=models_priority,
+    src = (text or "").strip()
+    if not src:
+        return src
+
+    # Ensure model on disk and loaded
+    path, mhint = _ensure_model(model_url, model_path or MODEL_PATH, model_sha256 or MODEL_SHA256, models_priority)
+    model = _load_model(path, mhint)
+
+    # VERY strong mood dial
+    mood_map = {
+        "serious": "clinical, confident, precise, authoritative, no jokes",
+        "playful": "cheeky, energetic, witty, high personality, light irreverence",
+        "angry":   "furious, terse, sharp, no-nonsense, clipped sentences",
+        "happy":   "radiant, upbeat, encouraging, joyful, sparkly",
+        "sad":     "somber, reflective, restrained",
+    }
+    vibe = mood_map.get((mood or "").lower(), "confident, precise")
+    profanity = "neutral on profanity" if allow_profanity else "avoid profanity"
+
+    system = (
+        f"You are Jarvis Prime’s Neural Core. Rewrite the input with {vibe}. "
+        f"Preserve all facts, numbers, filenames, URLs, and technical terms exactly. "
+        f"Do not invent or add new information. Keep it punchy. {profanity}. "
+        f"Target 2–6 lines. End without extra labels."
     )
+    prompt = f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
 
-    llm = _load_model(local_path, model_type_hint)
-
-    persona = {
-        "serious": "direct, concise, professional",
-        "sarcastic": "dry wit, playful jabs, still helpful",
-        "playful": "light, fun, friendly",
-        "hacker-noir": "noir monologue, terse, technical",
-        "angry": "brutally honest but helpful, short sentences",
-    }.get((mood or "serious").strip().lower(), "direct, concise, professional")
-
-    sys_prompt = (
-        "You are Jarvis Prime. Polish infrastructure alerts for a home-lab admin. "
-        "Keep ALL key facts intact (title, IPs, versions, counts, links, times, poster URLs). "
-        "Preserve markdown and lists. Return only the rewritten message."
-    )
-    if not allow_profanity:
-        sys_prompt += " Avoid profanity."
-
-    tpl = (
-        f"[SYSTEM]{sys_prompt}\n"
-        f"[MOOD]{persona}\n"
-        "— INPUT START —\n"
-        f"{text}\n"
-        "— INPUT END —\n"
-        "[OUTPUT]"
-    )
-
-    # Stream with a simple watchdog
-    t0 = time.time()
-    out = []
-    for tok in llm(tpl, stream=True):
-        out.append(tok)
-        if time.time() - t0 > timeout:
-            break
-
-    raw = "".join(out).strip()
-    # Keep the part after our [OUTPUT] tag if the model echoed prompts
-    if "[OUTPUT]" in raw:
-        raw = raw.split("[OUTPUT]", 1)[-1].strip()
-
-    cleaned = _sanitize_generation(raw)
-    return cleaned or text
-
-
-if __name__ == "__main__":
-    # Allow run.sh to call this file to prefetch the model.
-    prefetch_model()
+    out = model(prompt, max_new_tokens=192, temperature=0.85, top_p=0.92, repetition_penalty=1.1)
+    out = _sanitize_generation(out).strip()
+    return out or src
