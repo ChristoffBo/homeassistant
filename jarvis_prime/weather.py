@@ -1,3 +1,4 @@
+
 import json, yaml, requests, random
 from datetime import datetime, timezone
 
@@ -66,7 +67,7 @@ def _unit_temp(v: float) -> str:
     return f"{round(v)}°C"
 
 # =============================
-# API calls (Open-Meteo – free, no key)
+# API calls (Open‑Meteo – free, no key)
 # =============================
 def _get_current():
     url = (
@@ -125,7 +126,7 @@ def forecast_weather(days: int = 7):
         tmax  = d.get("temperature_2m_max", []) or []
         code  = d.get("weather_code", []) or []
         out = []
-        out.append("📅 7-Day Forecast")
+        out.append("📅 7‑Day Forecast")
         for i in range(min(days, len(dates))):
             dt = dates[i]
             icon = _icon_for_code((code[i] if i < len(code) else 0) or 0)
