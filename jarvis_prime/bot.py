@@ -12,229 +12,223 @@ import subprocess
 import atexit
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List
-from pipeline import process as pipeline_process
-
 
 # -----------------------------
-# Dynamic modules dict
+# Constants and Utility Functions
 # -----------------------------
-extra_modules = {}
+VERSION = "1.0.4"
+CONFIG_PATH = "/data/options.json"
+BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
+BOT_ICON = os.getenv("BOT_ICON", "🧠")
+JARVIS_APP_NAME = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
-# -----------------------------
-# Config from env (set in run.sh)
-# -----------------------------
-BOT_NAME  = os.getenv("BOT_NAME", "Jarvis Prime")
-BOT_ICON  = os.getenv("BOT_ICON", "🧠")
-GOTIFY_URL   = os.getenv("GOTIFY_URL", "").rstrip("/")
-CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
-APP_TOKEN    = os.getenv("GOTIFY_APP_TOKEN", "")
-APP_NAME     = os.getenv("JARVIS_APP_NAME", "Jarvis")
+GOTIFY_URL = os.getenv("GOTIFY_URL", "")
+GOTIFY_CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
+GOTIFY_APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN", "")
 
-RETENTION_HOURS  = int(os.getenv("RETENTION_HOURS", "24"))
-SILENT_REPOST    = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
+RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
+SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
 
-# Feature toggles (env defaults; can be overridden by /data/options.json)
-RADARR_ENABLED     = os.getenv("radarr_enabled", "false").lower() in ("1","true","yes")
-SONARR_ENABLED     = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
-WEATHER_ENABLED    = os.getenv("weather_enabled", "false").lower() in ("1","true","yes")
-CHAT_ENABLED_ENV   = os.getenv("chat_enabled", "false").lower() in ("1","true","yes")
-DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1","true","yes")
-TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
-KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","true","yes")
-SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
-PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
+# LLM Settings
+LLM_ENABLED = os.getenv("LLM_ENABLED", "false").lower() in ("1","true","yes")
+LLM_TIMEOUT = int(os.getenv("llm_timeout_seconds", "5"))
+LLM_CPU_LIMIT = int(os.getenv("llm_max_cpu_percent", "70"))
+PERSONALITY_MOOD = os.getenv("personality_mood", os.getenv("CHAT_MOOD", "serious"))
 
-# Mood
-CHAT_MOOD = "serious"
+# Weather settings (read from /data/options.json inside module where needed)
+WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "true").lower() in ("1","true","yes")
 
-# Uptime tracking
-BOOT_TIME = datetime.now(timezone.utc)
-
-# Heartbeat config (can be overridden)
-HEARTBEAT_ENABLED = False
-HEARTBEAT_INTERVAL_MIN = 120
-HEARTBEAT_START = "06:00"
-HEARTBEAT_END   = "20:00"
-
-# Beautify inline images for Gotify Web (Android uses extras image natively)
-BEAUTIFY_INLINE_IMAGES = False
+# External services
+technitium_enabled = os.getenv("technitium_enabled", "true").lower() in ("1","true","yes")
+uptimekuma_enabled = os.getenv("uptimekuma_enabled", "true").lower() in ("1","true","yes")
 
 # -----------------------------
-# Load /data/options.json overrides
+# Optional modules, imported lazily
 # -----------------------------
-def _load_json_file(path):
+m_chat = None
+m_arr = None
+m_weather = None
+m_tech = None
+m_digest = None
+m_kuma = None
+m_aliases = None
+m_llm_client = None
+m_llm_memory = None
+m_personality = None
+m_personality_state = None
+m_smtp = None
+m_proxy = None
+m_beautify = None
+
+def _safe_import(mod_name):
     try:
-        with open(path, "r") as f:
+        return __import__(mod_name)
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Optional module '{mod_name}' failed to import: {e}", flush=True)
+        return None
+
+def load_modules_once():
+    global m_chat, m_arr, m_weather, m_tech, m_digest, m_kuma, m_aliases
+    global m_llm_client, m_llm_memory, m_personality, m_personality_state
+    global m_smtp, m_proxy, m_beautify
+
+    if m_chat is None:
+        m_chat = _safe_import("chat")
+    if m_arr is None:
+        m_arr = _safe_import("arr")
+    if m_weather is None:
+        m_weather = _safe_import("weather")
+    if m_tech is None:
+        m_tech = _safe_import("technitium")
+    if m_digest is None:
+        m_digest = _safe_import("digest")
+    if m_kuma is None:
+        m_kuma = _safe_import("uptimekuma")
+    if m_aliases is None:
+        m_aliases = _safe_import("aliases")
+    if m_llm_client is None:
+        m_llm_client = _safe_import("llm_client")
+    if m_llm_memory is None:
+        m_llm_memory = _safe_import("llm_memory")
+    if m_personality is None:
+        m_personality = _safe_import("personality")
+    if m_personality_state is None:
+        m_personality_state = _safe_import("personality_state")
+    if m_smtp is None:
+        m_smtp = _safe_import("smtp_server")
+    if m_proxy is None:
+        m_proxy = _safe_import("proxy")
+    if m_beautify is None:
+        m_beautify = _safe_import("beautify")
+
+# ensure modules loaded
+load_modules_once()
+
+# -----------------------------
+# Gotify client
+# -----------------------------
+class GotifyClient:
+    def __init__(self, url: str, app_token: str, client_token: str):
+        self.url = url.rstrip("/")
+        self.app_token = app_token.strip()
+        self.client_token = client_token.strip()
+
+    def post(self, title: str, message: str, priority: int = 5, extras: Optional[dict] = None):
+        payload = {
+            "title": title,
+            "message": message,
+            "priority": priority,
+        }
+        if extras:
+            payload["extras"] = extras
+        try:
+            r = requests.post(
+                f"{self.url}/message",
+                headers={"X-Gotify-Key": self.app_token},
+                json=payload,
+                timeout=10,
+            )
+            if not r.ok:
+                print(f"[{BOT_NAME}] ⚠️ Gotify post failed {r.status_code}: {r.text}", flush=True)
+            return r
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Gotify post exception: {e}", flush=True)
+            return None
+
+    async def ws_listen(self, on_message):
+        ws_url = self.url.replace("http://", "ws://").replace("https://", "wss://")
+        ws_url = f"{ws_url}/stream?token={self.client_token}"
+        async with websockets.connect(ws_url, ping_interval=30, ping_timeout=30) as ws:
+            async for msg in ws:
+                try:
+                    data = json.loads(msg)
+                    await on_message(data)
+                except Exception as e:
+                    print(f"[{BOT_NAME}] ⚠️ WS message parse error: {e}", flush=True)
+
+gotify = GotifyClient(GOTIFY_URL, GOTIFY_APP_TOKEN, GOTIFY_CLIENT_TOKEN)
+
+# -----------------------------
+# Helpers
+# -----------------------------
+def _read_json(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
 
-merged = {}
-try:
-    options = _load_json_file("/data/options.json")
-    config_fallback = _load_json_file("/data/config.json")
-    merged = {**config_fallback, **options}
+def _normalize_title(title: str) -> str:
+    t = (title or "").strip()
+    if not t:
+        return BOT_NAME
+    return t
 
-    RADARR_ENABLED  = bool(merged.get("radarr_enabled", RADARR_ENABLED))
-    SONARR_ENABLED  = bool(merged.get("sonarr_enabled", SONARR_ENABLED))
-    WEATHER_ENABLED = bool(merged.get("weather_enabled", WEATHER_ENABLED))
-    TECHNITIUM_ENABLED = bool(merged.get("technitium_enabled", TECHNITIUM_ENABLED))
-    KUMA_ENABLED    = bool(merged.get("uptimekuma_enabled", KUMA_ENABLED))
-    SMTP_ENABLED    = bool(merged.get("smtp_enabled", SMTP_ENABLED))
-    PROXY_ENABLED   = bool(merged.get("proxy_enabled", PROXY_ENABLED_ENV))
+def normalize_command(text: str) -> str:
+    """
+    Normalize a command string, apply alias mapping if present.
+    """
+    raw = (text or "").strip()
+    lower = raw.lower()
 
-    global CHAT_ENABLED_FILE, DIGEST_ENABLED_FILE
-    CHAT_ENABLED_FILE   = merged.get("chat_enabled",   CHAT_ENABLED_ENV)
-    DIGEST_ENABLED_FILE = merged.get("digest_enabled", DIGEST_ENABLED_ENV)
-
-    CHAT_MOOD = str(merged.get("personality_mood", merged.get("chat_mood", CHAT_MOOD)))
-
-    HEARTBEAT_ENABLED       = bool(merged.get("heartbeat_enabled", HEARTBEAT_ENABLED))
-    HEARTBEAT_INTERVAL_MIN  = int(merged.get("heartbeat_interval_minutes", HEARTBEAT_INTERVAL_MIN))
-    HEARTBEAT_START         = str(merged.get("heartbeat_start", HEARTBEAT_START))
-    HEARTBEAT_END           = str(merged.get("heartbeat_end", HEARTBEAT_END))
-    BEAUTIFY_INLINE_IMAGES  = bool(merged.get("beautify_inline_images", False))
-
-except Exception as e:
-    print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
-    PROXY_ENABLED = PROXY_ENABLED_ENV
-    CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
-    DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
-
-# -----------------------------
-# LLM settings (from options.json with env fallbacks)
-# -----------------------------
-def _bool_env(name, default=False):
-    if os.getenv(name) is None: return default
-    return os.getenv(name, "").strip().lower() in ("1","true","yes","on")
-
-LLM_ENABLED           = bool(merged.get("llm_enabled", _bool_env("LLM_ENABLED", False)))
-LLM_TIMEOUT_SECONDS   = int(merged.get("llm_timeout_seconds", int(os.getenv("LLM_TIMEOUT_SECONDS", "12"))))
-LLM_MAX_CPU_PERCENT   = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))))
-LLM_MODELS_PRIORITY   = merged.get("llm_models_priority", [])
-OLLAMA_BASE_URL       = merged.get("ollama_base_url",  os.getenv("OLLAMA_BASE_URL", ""))
-LLM_MODEL_URL         = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
-LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
-LLM_MODEL_SHA256      = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
-PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
-
-print(f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} rewrite={'yes' if LLM_ENABLED else 'no'} "
-      f"beautify={'yes' if BEAUTIFY_ENABLED else 'no'} mood={CHAT_MOOD}")
-
-jarvis_app_id = None  # resolved at runtime
-
-# -----------------------------
-# Optional aliases + personality + helpers
-# -----------------------------
-_alias_mod = None
-def _try_load_aliases():
-    global _alias_mod
-    try:
-        import importlib.util as _imp
-        for fname in ("aliases.py", "alias.py"):
-            path = f"/app/{fname}"
-            if not os.path.exists(path):
-                continue
-            spec = _imp.spec_from_file_location("aliases_module", path)
-            if spec and spec.loader:
-                _alias_mod = _imp.module_from_spec(spec)
-                spec.loader.exec_module(_alias_mod)
-                print(f"[{BOT_NAME}] ✅ {fname} loaded")
-                return
-        print(f"[{BOT_NAME}] ⚠️ aliases file not found")
-    except Exception as _e:
-        print(f"[{BOT_NAME}] ⚠️ aliases module not loaded: {_e}")
-
-_try_load_aliases()
-
-_personality = None
-try:
-    import importlib.util as _imp
-    _pspec = _imp.spec_from_file_location("personality", "/app/personality.py")
-    if _pspec and _pspec.loader:
-        _personality = _imp.module_from_spec(_pspec)
-        _pspec.loader.exec_module(_personality)
-        print(f"[{BOT_NAME}] ✅ personality.py loaded")
-except Exception as _e:
-    print(f"[{BOT_NAME}] ⚠️ personality.py not loaded: {_e}")
-
-_beautify = None
-try:
-    import importlib.util as _imp
-    _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
-    if _bspec and _bspec.loader:
-        _beautify = _bspec.loader.load_module() if hasattr(_bspec.loader, "load_module") else None
-        if _beautify is None:
-            _beautify = _imp.module_from_spec(_bspec)
-            _bspec.loader.exec_module(_beautify)
-        print(f"[{BOT_NAME}] ✅ beautify.py loaded")
-except Exception as _e:
-    print(f"[{BOT_NAME}] ⚠️ beautify.py not loaded: {_e}")
-
-_llm = None
-try:
-    import importlib.util as _imp
-    _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
-    if _lspec and _lspec.loader:
-        _llm = _imp.module_from_spec(_lspec)
-        _lspec.loader.exec_module(_llm)
-        print(f"[{BOT_NAME}] ✅ llm_client loaded")
-except Exception as _e:
-    print(f"[{BOT_NAME}] ⚠️ llm_client not loaded: {_e}")
-
-# -----------------------------
-# Sidecar processes (proxy/smtp)
-# -----------------------------
-_sidecars: List[subprocess.Popen] = []
-
-def start_sidecars():
-    # proxy
-    if PROXY_ENABLED:
+    # Use aliases.py if available
+    mapped = None
+    if m_aliases and hasattr(m_aliases, "map_alias"):
         try:
-            p = subprocess.Popen(["python3", "/app/proxy.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            _sidecars.append(p)
-            print(f"[{BOT_NAME}] 🔀 proxy.py started (pid={p.pid})")
+            mapped = m_aliases.map_alias(lower)
         except Exception as e:
-            print(f"[{BOT_NAME}] ❌ failed to start proxy.py: {e}")
-    # smtp
-    if SMTP_ENABLED:
-        try:
-            p = subprocess.Popen(["python3", "/app/smtp_server.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            _sidecars.append(p)
-            print(f"[{BOT_NAME}] ✉️ smtp_server.py started (pid={p.pid})")
-        except Exception as e:
-            print(f"[{BOT_NAME}] ❌ failed to start smtp_server.py: {e}")
+            print(f"[{BOT_NAME}] ⚠️ alias mapping failed: {e}", flush=True)
+    if mapped:
+        return mapped
 
-def stop_sidecars():
-    for p in _sidecars:
-        try:
-            p.terminate()
-        except Exception:
-            pass
+    # Default simplistic normalization
+    if lower in ("dns", "DNS", "Dns"):
+        return "dns"
+    if lower in ("kuma","uptime","monitor"):
+        return "kuma"
+    if lower in ("weather","now","today","temp","temps"):
+        return "weather"
+    if lower in ("forecast","weekly","7day","7-day","7 day"):
+        return "forecast"
+    if lower in ("digest","summary"):
+        return "digest"
+    return lower
 
-atexit.register(stop_sidecars)
+def _parse_inbound(data: dict) -> Tuple[str, str, int]:
+    """
+    Parse inbound Gotify message into (title, message, priority).
+    """
+    title = data.get("title") or ""
+    message = data.get("message") or ""
+    priority = int(data.get("priority") or 5)
+    return title, message, priority
+
+def _send_raw(title: str, text: str, priority: int = 5, extras: Optional[dict] = None):
+    gotify.post(title, text, priority, extras)
 
 # -----------------------------
-# Utils
+# Pipeline-based send
 # -----------------------------
+from pipeline import process as pipeline_process
 
 def send_message(title: str, text: str, priority: int = 5, image: str | None = None):
     """Single choke point: Beautify -> LLM -> Polish -> Gotify."""
-    import os, requests
+    import os
+    import requests
     try:
         mood = os.getenv("personality_mood", "serious")
         final_text, extras = pipeline_process(title or "", text or "", mood)
 
         img = image
-        # If you don't want to auto-attach detected images, comment next lines
+        # If you don't want auto-attach, comment the next block
         if not img:
             imgs = (extras or {}).get("images") or []
             if imgs:
                 img = imgs[0]
 
         payload = {
-            "title": f"{os.getenv('BOT_NAME','Jarvis Prime')}: {title}",
+            "title": f"{os.getenv('BOT_NAME', 'Jarvis Prime')}: {title}",
             "message": final_text,
             "priority": int(priority),
         }
@@ -251,371 +245,296 @@ def send_message(title: str, text: str, priority: int = 5, image: str | None = N
             timeout=10,
         )
     except Exception as e:
+        # last-resort post so you still see errors
         try:
+            err_payload = {
+                "title": f"{os.getenv('BOT_NAME', 'Jarvis Prime')}: send_message error",
+                "message": f"{title}\n\n{e}",
+                "priority": 5,
+            }
             requests.post(
                 os.getenv("GOTIFY_URL", "").rstrip("/") + "/message",
                 headers={"X-Gotify-Key": os.getenv("GOTIFY_APP_TOKEN", "")},
-                json={
-                    "title": f"{os.getenv('BOT_NAME','Jarvis Prime')}: send_message error",
-                    "message": f"{title}
-
-{e}",
-                    "priority": 5,
-                },
+                json=err_payload,
                 timeout=10,
             )
         except Exception:
             pass
 
-def delete_original_message(msg_id: int):
-    try:
-        if not msg_id:
-            print(f"[{BOT_NAME}] ⚠️ No msg_id to purge")
-            return
-        url = f"{GOTIFY_URL}/message/{msg_id}"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.delete(url, headers=headers, timeout=8)
-        if r.status_code in (200, 204):
-            print(f"[{BOT_NAME}] 🧹 Purged original message id={msg_id}")
-        else:
-            print(f"[{BOT_NAME}] ⚠️ Purge failed id={msg_id}: {r.status_code} {r.text[:120]}")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Purge error: {e}")
-
-def resolve_app_id():
-    global jarvis_app_id
-    try:
-        url = f"{GOTIFY_URL}/application"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=8)
-        r.raise_for_status()
-        for app in r.json():
-            if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id")
-                print(f"[{BOT_NAME}] 🆔 Resolved app id = {jarvis_app_id}")
-                return
-        print(f"[{BOT_NAME}] ⚠️ App '{APP_NAME}' not found when resolving app id")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to resolve app id: {e}")
-
-def _is_our_post(data: dict) -> bool:
-    try:
-        if data.get("appid") == jarvis_app_id:
-            return True
-        t = data.get("title", "") or ""
-        return t.startswith(f"{BOT_ICON} {BOT_NAME}:")
-    except Exception:
-        return False
-
-def _should_purge() -> bool:
-    try:
-        return bool(merged.get("silent_repost", SILENT_REPOST))
-    except Exception:
-        return SILENT_REPOST
-
-def _purge_after(msg_id: int):
-    if _should_purge():
-        delete_original_message(msg_id)
-
 # -----------------------------
-# Footer + main pipeline
+# Command Handlers
 # -----------------------------
-def _footer(used_llm: bool, used_beautify: bool) -> str:
-    tags = []
-    if used_llm: tags.append("Neural Core ✓")
-    if used_beautify: tags.append("Aesthetic Engine ✓")
-    if not tags: tags.append("Relay Path")
-    return "— " + " · ".join(tags)
+def _try_call(mod, func_name: str, *args):
+    if not mod:
+        return ("module not loaded", None)
+    if not hasattr(mod, func_name):
+        return (f"function {func_name} not found", None)
+    try:
+        res = getattr(mod, func_name)(*args)
+        return (res, None)
+    except Exception as e:
+        return (None, e)
 
-def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
+def _handle_command(cmd: str, text: str, priority: int):
     """
-    Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
-    Returns (final_text, extras, used_llm, used_beautify)
+    Handle normalized command tokens, then return True if handled.
     """
-    used_llm = False
-    used_beautify = False
-    final = message
-    extras = None
+    ncmd = normalize_command(cmd)
 
-    # LLM FIRST — no wake-word skip
-    if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
-        try:
-            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, mood={CHAT_MOOD})")
-            rewritten = _llm.rewrite(
-                text=final,
-                mood=CHAT_MOOD,
-                timeout=LLM_TIMEOUT_SECONDS,
-                cpu_limit=LLM_MAX_CPU_PERCENT,
-                models_priority=LLM_MODELS_PRIORITY,
-                base_url=OLLAMA_BASE_URL,
-                model_url=LLM_MODEL_URL,
-                model_path=LLM_MODEL_PATH,
-                model_sha256=LLM_MODEL_SHA256,
-                allow_profanity=PERSONALITY_ALLOW_PROFANITY,
-            )
-            if rewritten:
-                final = rewritten
-                used_llm = True
-                print(f"[{BOT_NAME}] ✓ LLM.rewrite done")
-        except Exception as _e:
-            print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
-
-    # BEAUTIFY SECOND
-    if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
-        try:
-            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
-            used_beautify = True
-        except Exception as _e:
-            print(f"[{BOT_NAME}] ⚠️ Beautify failed: {_e}")
-
-    # Ensure footer visible
-    foot = _footer(used_llm, used_beautify)
-    if final and not final.rstrip().endswith(foot):
-        final = f"{final.rstrip()}\n\n{foot}"
-
-    return final, extras, used_llm, used_beautify
-
-# -----------------------------
-# Normalization + command extraction
-# -----------------------------
-def _clean(s):
-    return re.sub(r"\s+", " ", s.lower().strip())
-
-def normalize_cmd(cmd: str) -> str:
-    if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
-        try:
-            return _alias_mod.normalize_cmd(cmd)
-        except Exception:
-            pass
-    return _clean(cmd)
-
-def extract_command_from(title: str, message: str) -> str:
-    tlow, mlow = (title or "").lower(), (message or "").lower()
-    if tlow.startswith("jarvis"):
-        tcmd = tlow.replace("jarvis", "", 1).strip()
-        if tcmd: return tcmd
-        if mlow.startswith("jarvis"):
-            return mlow.replace("jarvis", "", 1).strip()
-        return mlow.strip()
-    if mlow.startswith("jarvis"):
-        return mlow.replace("jarvis", "", 1).strip()
-    return ""
-
-# -----------------------------
-# Startup HUD (high-tech boot card)
-# -----------------------------
-def post_startup_card():
-    # Warm-load the model in THIS process before status.
-    try:
-        if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
-            _llm.prefetch_model()
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Prefetch in bot failed: {e}")
-
-    # LLM engine status/model
-    st = {}
-    if _llm and hasattr(_llm, "engine_status"):
-        try:
-            st = _llm.engine_status() or {}
-        except Exception:
-            st = {}
-    online = bool(st.get("ready"))
-    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
-    model_name = os.path.basename(model_path) if model_path else "—"
-    engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
-    if model_name and model_name != "—":
-        engine_line += f" ({model_name})"
-
-    lines = [
-        "🧬 Prime Neural Boot",
-        f"🛰️ Engine: {engine_line}",
-        f"🎛️ Mood: {CHAT_MOOD}",
-        "",
-        "Modules:",
-        f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
-        f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
-        f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
-        f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
-        f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
-        f"📨 SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
-        f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
-        f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
-        "",
-        "Status: All systems nominal" if online else "Status: Neural Core warming up…",
-    ]
-    send_message("Startup", "\n".join(lines), priority=4)
-
-# -----------------------------
-# Command handling helpers (safe calls)
-# -----------------------------
-def _try_call(module, fn_name, *args, **kwargs):
-    try:
-        if module and hasattr(module, fn_name):
-            fn = getattr(module, fn_name)
-            return fn(*args, **kwargs)
-    except Exception as e:
-        return f"⚠️ {fn_name} failed: {e}", None
-    return None, None
-
-def _handle_command(ncmd: str):
-    # Imports on demand so missing modules don't crash
-    m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None
-    try:
-        m_arr = __import__("arr")
-    except Exception: pass
-    try:
-        m_weather = __import__("weather")
-    except Exception: pass
-    try:
-        m_kuma = __import__("uptimekuma")
-    except Exception: pass
-    try:
-        m_tech = __import__("technitium")
-    except Exception: pass
-    try:
-        m_digest = __import__("digest")
-    except Exception: pass
-
-    if ncmd in ("help", "commands"):
-        help_text = (
-            "🤖 Jarvis Prime — Commands\n"
-            f"Mood: {CHAT_MOOD}\n\n"
-            "Core:\n"
-            "  • dns — Technitium DNS summary\n"
-            "  • kuma — Uptime Kuma status (aliases: uptime, monitor)\n"
-            "  • weather — Current weather (aliases: now, today, temp)\n"
-            "  • forecast — Short forecast (aliases: weekly, 7day)\n"
-            "  • digest — Daily digest now (aliases: daily digest, summary)\n"
-            "  • joke — One short joke\n\n"
-            "Media (ARR):\n"
-            "  • upcoming movies | upcoming series | movie count | series count | longest movie | longest series\n"
-        )
-        send_message("Help", help_text)
-        return True
-
-    if ncmd in ("digest", "daily digest", "summary"):
-        if m_digest and hasattr(m_digest, "build_digest"):
-            title2, msg2, pr = m_digest.build_digest(merged)
-            if _personality and hasattr(_personality, "quip"):
-                msg2 += f"\n\n{_personality.quip(CHAT_MOOD)}"
-            send_message(title2, msg2, priority=pr)
-        else:
-            send_message("Digest", "Digest module unavailable.")
-        return True
-
-    if ncmd in ("dns",):
-        text, _ = _try_call(m_tech, "dns_status", merged)
-        send_message("DNS Status", text or "No data.")
-        return True
-
-    if ncmd in ("kuma", "uptime", "monitor"):
-        text, _ = _try_call(m_kuma, "handle_kuma_command", merged, "kuma")
-        send_message("Uptime Kuma", text or "No data.")
-        return True
-
+    # ----- WEATHER -----
     if ncmd in ("weather", "now", "today", "temp", "temps"):
-        text = ""
+        text_out = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command(merged, "weather")
+                text_out = m_weather.handle_weather_command("weather")
+                if isinstance(text_out, tuple):
+                    text_out = text_out[0]
             except Exception as e:
-                text = f"⚠️ Weather failed: {e}"
-        send_message("Weather", text or "No data.")
+                text_out = f"⚠️ Weather failed: {e}"
+        send_message("Weather", text_out or "No data.")
         return True
 
     if ncmd in ("forecast", "weekly", "7day", "7-day", "7 day"):
-        text = ""
+        text_out = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command(merged, "forecast")
+                text_out = m_weather.handle_weather_command("forecast")
+                if isinstance(text_out, tuple):
+                    text_out = text_out[0]
             except Exception as e:
-                text = f"⚠️ Forecast failed: {e}"
-        send_message("Forecast", text or "No data.")
+                text_out = f"⚠️ Forecast failed: {e}"
+        send_message("Forecast", text_out or "No data.")
         return True
 
-    # ARR commands
-    if ncmd in ("upcoming movies", "upcoming films", "movies upcoming", "films upcoming"):
-        msg, _ = _try_call(m_arr, "upcoming_movies", 7)
-        send_message("Upcoming Movies", msg or "No data.")
+    # ----- DNS -----
+    if ncmd in ("dns",):
+        text_out, err = _try_call(m_tech, "handle_dns_command", "dns")
+        if err:
+            send_message("DNS", f"⚠️ DNS failed: {err}")
+        else:
+            # handle_dns_command returns a string
+            send_message("DNS", text_out or "No data.")
         return True
-    if ncmd in ("upcoming series", "upcoming shows", "series upcoming", "shows upcoming"):
-        msg, _ = _try_call(m_arr, "upcoming_series", 7)
-        send_message("Upcoming Episodes", msg or "No data.")
+
+    # ----- KUMA (Uptime) -----
+    if ncmd in ("kuma", "uptime", "monitor"):
+        text_out, err = _try_call(m_kuma, "handle_kuma_command", "kuma")
+        if err:
+            send_message("Uptime", f"⚠️ Kuma failed: {err}")
+        else:
+            send_message("Uptime", text_out or "No data.")
         return True
-    if ncmd in ("movie count", "film count"):
-        msg, _ = _try_call(m_arr, "movie_count")
-        send_message("Movie Count", msg or "No data.")
-        return True
-    if ncmd in ("series count", "show count"):
-        msg, _ = _try_call(m_arr, "series_count")
-        send_message("Series Count", msg or "No data.")
-        return True
-    if ncmd in ("longest movie", "longest film"):
-        msg, _ = _try_call(m_arr, "longest_movie")
-        send_message("Longest Movie", msg or "No data.")
-        return True
-    if ncmd in ("longest series", "longest show"):
-        msg, _ = _try_call(m_arr, "longest_series")
-        send_message("Longest Series", msg or "No data.")
+
+    # ----- DIGEST -----
+    if ncmd in ("digest", "summary"):
+        text_out, err = _try_call(m_digest, "run_digest")
+        if err:
+            send_message("Digest", f"⚠️ Digest failed: {err}")
+        else:
+            send_message("Digest", text_out or "No data.")
         return True
 
     return False
 
 # -----------------------------
-# Listener
+# Scheduler jobs
 # -----------------------------
-async def listen():
-    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
-    print(f"[{BOT_NAME}] Connecting {ws_url}")
-    async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
-        print(f"[{BOT_NAME}] ✅ Connected")
-        async for msg in ws:
-            try:
-                data = json.loads(msg)
-                msg_id = data.get("id")
-
-                # always skip our own posts
-                if _is_our_post(data):
-                    continue
-
-                title   = data.get("title", "")   or ""
-                message = data.get("message", "") or ""
-
-                # Commands (do NOT skip LLM anymore)
-                ncmd = normalize_cmd(extract_command_from(title, message))
-                if ncmd:
-                    handled = _handle_command(ncmd)
-                    if handled:
-                        _purge_after(msg_id)
-                        continue
-
-                # Otherwise, relay message → LLM then Beautify
-                final, extras, used_llm, used_beautify = _llm_then_beautify(title, message)
-                send_message(title or "Notification", final, priority=5, extras=extras)
-                _purge_after(msg_id)
-
-            except Exception as e:
-                print(f"[{BOT_NAME}] ⚠️ Stream handling error: {e}")
-
-# -----------------------------
-# Main
-# -----------------------------
-def main():
-    resolve_app_id()
+def _job_weather():
+    if not WEATHER_ENABLED or not m_weather:
+        return
     try:
-        start_sidecars()   # <- bring back proxy/smtp listeners
-        post_startup_card()
+        out = m_weather.handle_weather_command("weather")
+        if isinstance(out, tuple):
+            out = out[0]
+        send_message("Weather", out or "No data.")
     except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
+        send_message("Weather", f"⚠️ Weather job failed: {e}")
 
-    loop = asyncio.get_event_loop()
+def _job_forecast():
+    if not WEATHER_ENABLED or not m_weather:
+        return
+    try:
+        out = m_weather.handle_weather_command("forecast")
+        if isinstance(out, tuple):
+            out = out[0]
+        send_message("Forecast", out or "No data.")
+    except Exception as e:
+        send_message("Forecast", f"⚠️ Forecast job failed: {e}")
+
+def _job_digest():
+    if not m_digest:
+        return
+    try:
+        out = m_digest.run_digest()
+        send_message("Digest", out or "No data.")
+    except Exception as e:
+        send_message("Digest", f"⚠️ Digest job failed: {e}")
+
+def _job_radarr():
+    if not m_arr or not hasattr(m_arr, "run_radarr"):
+        return
+    try:
+        out = m_arr.run_radarr()
+        send_message("Radarr", out or "No data.")
+    except Exception as e:
+        send_message("Radarr", f"⚠️ Radarr job failed: {e}")
+
+def _job_sonarr():
+    if not m_arr or not hasattr(m_arr, "run_sonarr"):
+        return
+    try:
+        out = m_arr.run_sonarr()
+        send_message("Sonarr", out or "No data.")
+    except Exception as e:
+        send_message("Sonarr", f"⚠️ Sonarr job failed: {e}")
+
+# -----------------------------
+# Memory cleanup job
+# -----------------------------
+def _cleanup_old_messages():
+    # Here you could optionally trim memory or logs if you store them locally.
+    pass
+
+# -----------------------------
+# Message processing
+# -----------------------------
+async def on_gotify_message(data: dict):
+    """
+    Callback for Gotify websocket inbound messages.
+    """
+    # The message structure:
+    # {'appid':..., 'date':..., 'id':..., 'message':..., 'priority':..., 'title':....}
+    title, message, priority = _parse_inbound(data)
+
+    # If message starts with jarvis prefix: e.g. "jarvis dns"
+    # We'll parse out a potential command from the message's start.
+    raw = (message or "").strip()
+    tokens = raw.split(None, 1)
+    cmd = tokens[0] if tokens else ""
+    rest = tokens[1] if len(tokens) > 1 else ""
+
+    # Attempt to handle command
+    handled = False
+    if cmd:
+        handled = _handle_command(cmd, rest, priority)
+
+    # If not handled as command, route as generic "chat" or pass through pipeline
+    if not handled:
+        # if chat module is enabled
+        if m_chat and hasattr(m_chat, "handle_chat"):
+            try:
+                out = m_chat.handle_chat(title, raw)
+                send_message(title, out or raw, priority=priority)
+            except Exception as e:
+                send_message(title, f"{raw}\n\n⚠️ Chat failed: {e}", priority=priority)
+        else:
+            # fallback: just send pipeline processed
+            send_message(title, raw, priority=priority)
+
+# -----------------------------
+# Schedulers & main loop
+# -----------------------------
+def setup_schedules():
+    cfg = _read_json(CONFIG_PATH)
+
+    # Daily weather time
+    if cfg.get("weather_enabled", True):
+        t = cfg.get("weather_time", "07:00")
+        try:
+            schedule.every().day.at(t).do(_job_weather)
+            print(f"[{BOT_NAME}] 🕑 Weather scheduled daily at {t}", flush=True)
+        except schedule.ScheduleValueError:
+            print(f"[{BOT_NAME}] ⚠️ Bad weather_time '{t}', skipping schedule.", flush=True)
+
+    # Daily digest
+    if cfg.get("digest_enabled", True):
+        t = cfg.get("digest_time", "08:00")
+        try:
+            schedule.every().day.at(t).do(_job_digest)
+            print(f"[{BOT_NAME}] 🕑 Digest scheduled daily at {t}", flush=True)
+        except schedule.ScheduleValueError:
+            print(f"[{BOT_NAME}] ⚠️ Bad digest_time '{t}', skipping schedule.", flush=True)
+
+    # Radarr
+    if cfg.get("radarr_enabled", False):
+        t = cfg.get("radarr_time", "07:30")
+        try:
+            schedule.every().day.at(t).do(_job_radarr)
+            print(f"[{BOT_NAME}] 🕑 Radarr scheduled daily at {t}", flush=True)
+        except schedule.ScheduleValueError:
+            print(f"[{BOT_NAME}] ⚠️ Bad radarr_time '{t}', skipping schedule.", flush=True)
+
+    # Sonarr
+    if cfg.get("sonarr_enabled", False):
+        t = cfg.get("sonarr_time", "07:30")
+        try:
+            schedule.every().day.at(t).do(_job_sonarr)
+            print(f"[{BOT_NAME}] 🕑 Sonarr scheduled daily at {t}", flush=True)
+        except schedule.ScheduleValueError:
+            print(f"[{BOT_NAME}] ⚠️ Bad sonarr_time '{t}', skipping schedule.", flush=True)
+
+def run_schedulers_forever():
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+async def ws_loop():
     while True:
         try:
-            loop.run_until_complete(listen())
+            await gotify.ws_listen(on_gotify_message)
         except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ WS error, reconnecting in 3s: {e}")
-            time.sleep(3)
+            print(f"[{BOT_NAME}] ⚠️ WS loop error: {e}; reconnecting in 3s", flush=True)
+            await asyncio.sleep(3)
+
+def start_background_schedulers():
+    # Optionally start the scheduler in a subprocess/thread
+    import threading
+    th = threading.Thread(target=run_schedulers_forever, daemon=True)
+    th.start()
+
+def prefetch_llm():
+    if not LLM_ENABLED:
+        return
+    cfg = _read_json(CONFIG_PATH)
+    try:
+        if m_llm_client and hasattr(m_llm_client, "rewrite"):
+            print(f"[{BOT_NAME}] 🔮 Prefetching LLM model...", flush=True)
+            _ = m_llm_client.rewrite(
+                text="(prefetch)",
+                mood=cfg.get("personality_mood","serious"),
+                timeout=int(cfg.get("llm_timeout_seconds",5)),
+                cpu_limit=int(cfg.get("llm_max_cpu_percent",70)),
+                models_priority=[],
+                base_url=cfg.get("llm_ollama_base_url",""),
+                model_url=cfg.get("llm_model_url",""),
+                model_path=cfg.get("llm_model_path",""),
+                model_sha256=cfg.get("llm_model_sha256",""),
+            )
+            print(f"[{BOT_NAME}] 🧠 Prefetch complete", flush=True)
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}", flush=True)
+
+def main():
+    print("──────────────────────────────────────────────", flush=True)
+    print(f"🧠 {BOT_NAME} {BOT_ICON}", flush=True)
+    print("⚡ Boot sequence initiated...", flush=True)
+    print("   → Personalities loaded", flush=True)
+    print("   → Memory core mounted", flush=True)
+    print("   → Network bridges linked", flush=True)
+    print(f"   → LLM: {'enabled' if LLM_ENABLED else 'disabled'}", flush=True)
+    print("🚀 Systems online — Jarvis is awake!", flush=True)
+    print("──────────────────────────────────────────────", flush=True)
+
+    prefetch_llm()
+    setup_schedules()
+    start_background_schedulers()
+
+    # Run websocket listener
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(ws_loop())
+    finally:
+        loop.close()
 
 if __name__ == "__main__":
     main()
