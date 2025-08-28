@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -19,7 +18,18 @@ except Exception:
 
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
-# Search roots for gguf models
+# =================== Config knobs ===================
+# Context tokens (prompt + system + history + generation headroom)
+# Override via env/option: LLM_CTX_TOKENS=2048|4096
+CTX = int(os.getenv("LLM_CTX_TOKENS", "4096"))
+# How many tokens we intend to generate; used to keep space in the window
+GEN_TOKENS = int(os.getenv("LLM_GEN_TOKENS", "180"))
+# Character budget approximation when we trim prompts to fit context.
+# (roughly 4 chars/token; conservative to avoid edge cases)
+CHARS_PER_TOKEN = 4
+SAFETY_TOKENS = 32  # extra headroom in window
+
+# =================== Model discovery ===================
 SEARCH_ROOTS = [Path("/share/jarvis_prime"), Path("/share/jarvis_prime/models"), Path("/share")]
 
 def _list_local_models() -> list[Path]:
@@ -27,7 +37,6 @@ def _list_local_models() -> list[Path]:
     for root in SEARCH_ROOTS:
         if root.exists():
             out += list(root.rglob("*.gguf"))
-    # de-dup
     seen=set(); uniq=[]
     for p in out:
         s=str(p)
@@ -116,13 +125,18 @@ def _load_local_model(path: Path):
     if _loaded_model is not None: return _loaded_model
     if AutoModelForCausalLM is None: return None
     try:
-        _loaded_model = AutoModelForCausalLM.from_pretrained(str(path), model_type="llama", gpu_layers=0)
+        _loaded_model = AutoModelForCausalLM.from_pretrained(
+            str(path),
+            model_type="llama",
+            gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
+            context_length=CTX,            # 🔥 raise context window
+        )
         return _loaded_model
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
         return None
 
-# ----------------- sanitizers & helpers -----------------
+# =================== Sanitizers & helpers ===================
 IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
 IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
 
@@ -146,6 +160,26 @@ def _strip_reasoning(text: str) -> str:
         if tl.startswith("note:"): continue
         lines.append(t)
     return "\n".join(lines)
+
+def _squelch_repeats(text: str) -> str:
+    """Collapse obvious word/bigram repetition (e.g., '60 up 60 up 60 up …')."""
+    parts = text.split()
+    out = []
+    prev = None
+    count = 0
+    for w in parts:
+        wl = w.lower()
+        if wl == prev:
+            count += 1
+            if count <= 2:
+                out.append(w)
+        else:
+            prev = wl
+            count = 1
+            out.append(w)
+    s2 = " ".join(out)
+    s2 = re.sub(r'(\b\w+\s+\w+)(?:\s+\1){2,}', r'\1 \1', s2, flags=re.I)
+    return s2
 
 def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_chars: int = 800) -> str:
     lines=[ln.strip() for ln in (text or "").splitlines() if ln.strip()]
@@ -186,7 +220,23 @@ def _load_system_prompt() -> str:
         "8) Keep any images/markdown image links exactly as-is.\n"
     )
 
-# ----------------- rewrite -----------------
+def _trim_to_ctx(src: str, system: str) -> str:
+    """
+    Roughly trim INPUT text so (system + INPUT + headroom) fits into CTX tokens.
+    We approximate with chars-per-token and leave GEN_TOKENS + SAFETY_TOKENS free.
+    """
+    if not src: return src
+    budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
+    budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
+    system_chars = len(system)
+    # keep part of the budget for system text too
+    remaining = max(500, budget_chars - system_chars)
+    if len(src) <= remaining:
+        return src
+    # Keep the tail (most recent content) which is usually most relevant
+    return src[-remaining:]
+
+# =================== Rewrite ===================
 def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
             model_url: Optional[str]=None, model_path: Optional[str]=None,
@@ -194,11 +244,9 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     src=(text or "").strip()
     if not src: return src
 
-    # Preserve images from original
     imgs=_extract_images(src)
-
-    # system prompt
     system=_load_system_prompt().format(mood=mood)
+    src=_trim_to_ctx(src, system)
 
     # 1) Ollama
     base=(base_url or OLLAMA_BASE_URL or "").strip()
@@ -208,30 +256,34 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
                 "model": (models_priority[0] if models_priority else "llama3.1"),
                 "prompt": system + "\n\nINPUT:\n" + src + "\n\nOUTPUT:\n",
                 "stream": False,
-                "options": {"temperature": 0.15, "top_p": 0.9, "repeat_penalty": 1.1}
+                "options": {"temperature": 0.15, "top_p": 0.9, "repeat_penalty": 1.3,
+                            "num_ctx": CTX, "num_predict": GEN_TOKENS}
             }
             r=requests.post(base.rstrip("/")+"/api/generate", json=payload, timeout=timeout)
             if r.ok:
                 out=_strip_reasoning(str(r.json().get("response","")))
+                out=_squelch_repeats(out)
                 out=_cap(out)
                 return out + ("\n"+imgs if imgs else "")
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ Ollama call failed: {e}", flush=True)
 
-    # 2) Local
+    # 2) Local (ctransformers)
     p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
     if p and p.exists():
         m=_load_local_model(p)
         if m is not None:
             prompt=f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
             try:
-                out=m(prompt, max_new_tokens=180, temperature=0.15, top_p=0.9, repetition_penalty=1.1)
+                out=m(prompt, max_new_tokens=GEN_TOKENS, temperature=0.15,
+                       top_p=0.9, repetition_penalty=1.3)
                 out=_strip_reasoning(str(out or ""))
+                out=_squelch_repeats(out)
                 out=_cap(out)
                 return out + ("\n"+imgs if imgs else "")
             except Exception as e:
                 print(f"[{BOT_NAME}] ⚠️ Generation failed: {e}", flush=True)
 
     # 3) Fallback
-    out=_cap(_strip_reasoning(src))
+    out=_cap(_squelch_repeats(_strip_reasoning(src)))
     return out + ("\n"+imgs if imgs else "")
