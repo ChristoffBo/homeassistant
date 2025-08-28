@@ -95,7 +95,7 @@ try:
 
     BEAUTIFY_INLINE_IMAGES = bool(merged.get("beautify_inline_images", False))
 
-    # ---- LLM related options (missing previously) ----
+    # ---- LLM related options (explicitly read here) ----
     LLM_ENABLED = bool(merged.get("llm_enabled", LLM_ENABLED))
     LLM_TIMEOUT_SECONDS = int(merged.get("llm_timeout_seconds", LLM_TIMEOUT_SECONDS))
     LLM_MAX_CPU_PERCENT = int(merged.get("llm_max_cpu_percent", LLM_MAX_CPU_PERCENT))
@@ -103,6 +103,9 @@ try:
     OLLAMA_BASE_URL = str(merged.get("ollama_base_url", merged.get("llm_base_url", OLLAMA_BASE_URL)))
     LLM_MEMORY_ENABLED = bool(merged.get("llm_memory_enabled", LLM_MEMORY_ENABLED))
     PERSONALITY_PERSISTENT = bool(merged.get("personality_persistent", PERSONALITY_PERSISTENT))
+
+    # allow options.json to override beautify flag too
+    BEAUTIFY_ENABLED = bool(merged.get("beautify_enabled", BEAUTIFY_ENABLED))
 
 except Exception as e:
     print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
@@ -117,14 +120,16 @@ jarvis_app_id = None  # resolved at runtime
 # -----------------------------
 _alias_mod = None
 try:
+    # Support either aliases.py (your file) or alias.py (older name)
     import importlib.util as _imp
-    _alias_spec = _imp.spec_from_file_location("alias", "/app/alias.py")
+    alias_path = "/app/aliases.py" if os.path.exists("/app/aliases.py") else "/app/alias.py"
+    _alias_spec = _imp.spec_from_file_location("aliases", alias_path)
     if _alias_spec and _alias_spec.loader:
         _alias_mod = _imp.module_from_spec(_alias_spec)
         _alias_spec.loader.exec_module(_alias_mod)
-        print("[Jarvis Prime] ✅ alias.py loaded")
+        print(f"[{BOT_NAME}] ✅ {os.path.basename(alias_path)} loaded")
 except Exception as _e:
-    print(f"[Jarvis Prime] ⚠️ alias.py not loaded: {_e}")
+    print(f"[{BOT_NAME}] ⚠️ aliases module not loaded: {_e}")
 
 _personality = None
 try:
@@ -149,7 +154,7 @@ try:
 except Exception as _e:
     print(f"[Jarvis Prime] ⚠️ beautify.py not loaded: {_e}")
 
-# ---- LLM client (this was missing) ----
+# ---- LLM client ----
 _llm = None
 try:
     import importlib.util as _imp
@@ -161,7 +166,7 @@ try:
 except Exception as _e:
     print(f"[Jarvis Prime] ⚠️ llm_client not loaded: {_e}")
 
-# ---- LLM memory/state (safe defaults to avoid NameError) ----
+# ---- Persistent personality & memory (optional) ----
 _pstate = None
 try:
     import importlib.util as _imp
@@ -183,6 +188,17 @@ try:
         print("[Jarvis Prime] ✅ llm_memory.py loaded")
 except Exception as _e:
     print(f"[Jarvis Prime] ⚠️ llm_memory not loaded: {_e}")
+
+# Print a single capability line so you can see state at boot
+try:
+    print(
+        f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} "
+        f"rewrite={'yes' if (_llm and hasattr(_llm,'rewrite')) else 'no'} "
+        f"beautify={'yes' if (_beautify and hasattr(_beautify,'beautify_message')) else 'no'} "
+        f"mood={CHAT_MOOD}"
+    )
+except Exception:
+    pass
 
 # -----------------------------
 # Utils
@@ -440,7 +456,7 @@ async def listen():
                 # Wake-word?
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd:
-                    # === COMMAND HANDLERS (unchanged) ===
+                    # === COMMAND HANDLERS ===
                     if ncmd in ("help", "commands"):
                         help_text = (
                             "🤖 Jarvis Prime — Commands\n"
@@ -525,7 +541,7 @@ async def listen():
                             send_message("Jarvis", f"Unknown command: {ncmd}")
                         handled = True
 
-                    # Memory queries
+                    # Memory queries / mood switch
                     if LLM_MEMORY_ENABLED and _llm_mem and re.search(r"\bwhat\s+happened\s+today\b", ncmd):
                         try:
                             out = _llm_mem.summarize_today()
@@ -546,6 +562,7 @@ async def listen():
                             handled = True
                     elif re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd):
                         newm = re.search(r"\bmood\s+(serious|sarcastic|playful|hacker-noir)\b", ncmd).group(1)
+                        global CHAT_MOOD
                         CHAT_MOOD = newm
                         if PERSONALITY_PERSISTENT and _pstate and hasattr(_pstate, "save_mood"):
                             try:
@@ -562,10 +579,11 @@ async def listen():
 
                 else:
                     # ===== NON-WAKE MESSAGES: LLM → Beautify → repost =====
-                    print(f"[{BOT_NAME}] Repost+purge path for message id={msg_id}")
+                    print(f"[{BOT_NAME}] Repost+purge path for message id={msg_id} (llm_enabled={LLM_ENABLED})")
                     _llm_text = None
                     if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
                         try:
+                            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, mood={CHAT_MOOD})")
                             _llm_text = _llm.rewrite(
                                 text=message,
                                 mood=CHAT_MOOD,
@@ -574,14 +592,23 @@ async def listen():
                                 models_priority=LLM_MODELS_PRIORITY,
                                 base_url=OLLAMA_BASE_URL
                             )
+                            print(f"[{BOT_NAME}] ← LLM.rewrite done ({'used' if _llm_text else 'empty'})")
                         except Exception as _e:
                             print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
 
                     transformed_message = _llm_text if _llm_text else message
+
+                    bx = None
                     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
-                        final, bx = _beautify.beautify_message(title, transformed_message, mood=CHAT_MOOD)
+                        try:
+                            print(f"[{BOT_NAME}] → Beautify")
+                            final, bx = _beautify.beautify_message(title, transformed_message, mood=CHAT_MOOD)
+                            print(f"[{BOT_NAME}] ← Beautify done")
+                        except Exception as _e:
+                            print(f"[{BOT_NAME}] ⚠️ Beautify error: {_e}")
+                            final = transformed_message
                     else:
-                        final, bx = transformed_message, None
+                        final = transformed_message
 
                     # Memory log (24h rolling)
                     try:
@@ -669,7 +696,7 @@ if __name__ == "__main__":
             else:
                 print("[Jarvis Prime] ⚠️ smtp_server.py not found")
     except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ SMTP start error: {e}")
+        print(f"[Jarvis Prime] ⚠️ SMTP start error: {e}")
 
     # Start HTTP Proxy (Gotify/ntfy) if enabled
     try:
@@ -684,7 +711,7 @@ if __name__ == "__main__":
             else:
                 print("[Jarvis Prime] ⚠️ proxy.py not found")
     except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Proxy start error: {e}")
+        print(f"[Jarvis Prime] ⚠️ Proxy start error: {e}")
 
     # Startup card
     send_message("Startup", startup_poster(), priority=5)
