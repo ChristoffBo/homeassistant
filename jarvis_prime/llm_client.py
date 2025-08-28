@@ -2,25 +2,23 @@
 """
 Neural Core (rules-first, optional local GGUF via ctransformers)
 
-- Useful first: extract real fields from Sonarr/Radarr/APT/Host messages.
-- Personality-forward: mood-shaded bullets; profanity optional.
-- Longer when needed (≤10 lines, ≤160 chars/line), but still tidy.
-- Never invents facts; preserves real links/posters.
+- Extract real facts from Sonarr/Radarr/APT/Host messages.
+- Mood-forward bullets with variety (no repetitive closers).
+- Falls back to Generic if Sonarr/Radarr fields are missing (fixes "Test Notification").
+- Profanity optional (reads personality_allow_profanity from /data/options.json or env).
 
-Config (either env vars or /data/options.json keys):
-  PERSONALITY_ALLOW_PROFANITY: "true"/"false"  (key: personality_allow_profanity)
-  LLM_EXTRA_BULLET: "true"/"false"            (default false)
-  LLM_DETAIL_LEVEL: "rich" or "normal"        (default rich)
-
-This module does NOT require changes to bot.py; it reads config itself.
+Env/Options:
+  personality_allow_profanity: true|false
+  LLM_EXTRA_BULLET: true|false (default false)
+  LLM_DETAIL_LEVEL: rich|normal (default rich)
 """
 
 from __future__ import annotations
-import os, re, json
+import os, re, json, hashlib
 from pathlib import Path
 from typing import Optional, Dict, List
 
-# ---------------- Tunables ----------------
+# ---------- Tunables ----------
 USE_LLM_EXTRA_BULLET = os.getenv("LLM_EXTRA_BULLET", "0").lower() in ("1", "true", "yes")
 DETAIL_LEVEL = os.getenv("LLM_DETAIL_LEVEL", "rich").lower()
 MAX_LINES = 10 if DETAIL_LEVEL == "rich" else 6
@@ -29,16 +27,8 @@ MAX_LINE_CHARS = 160
 _MODEL = None
 _MODEL_PATH: Optional[Path] = None
 
-
-# ---------------- Config helpers ----------------
-def _bool_env(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
+# ---------- Config ----------
 def _cfg_allow_profanity() -> bool:
-    """Order: env > /data/options.json > default False."""
     env = os.getenv("PERSONALITY_ALLOW_PROFANITY")
     if env is not None:
         return env.strip().lower() in ("1", "true", "yes", "on")
@@ -49,8 +39,7 @@ def _cfg_allow_profanity() -> bool:
     except Exception:
         return False
 
-
-# ---------------- Optional model load (GGUF) ----------------
+# ---------- Optional model load ----------
 def _resolve_model_path(model_path: str) -> Path:
     if model_path:
         p = Path(os.path.expandvars(model_path.strip()))
@@ -61,9 +50,7 @@ def _resolve_model_path(model_path: str) -> Path:
         ggufs = sorted(base.glob("*.gguf"))
         if ggufs:
             return ggufs[0]
-    raise FileNotFoundError(
-        f"No GGUF model at '{model_path}' and no fallback in /share/jarvis_prime/models"
-    )
+    raise FileNotFoundError("No GGUF model found")
 
 def _load_model(path: Path):
     global _MODEL, _MODEL_PATH
@@ -74,23 +61,19 @@ def _load_model(path: Path):
     except Exception as e:
         print(f"[Neural Core] ctransformers not available: {e}")
         return
-    print(f"[Neural Core] Loading model: {path} (size={path.stat().st_size} bytes)")
+    print(f"[Neural Core] Loading model: {path}")
     _MODEL = AutoModelForCausalLM.from_pretrained(
-        str(path.parent),
-        model_file=path.name,
-        model_type="llama",
-        gpu_layers=0,
+        str(path.parent), model_file=path.name, model_type="llama", gpu_layers=0
     )
     _MODEL_PATH = path
     print("[Neural Core] Model ready")
 
-
-# ---------------- Text utils ----------------
+# ---------- Utils ----------
 def _cut(s: str, n: int) -> str:
     s = (s or "").strip()
     return (s[: n - 1] + "…") if len(s) > n else s
 
-# profanity scrub used only when profanity is NOT allowed
+# profanity scrub only when profanity is NOT allowed
 _PROF_RE = re.compile(
     r"\b(fuck|f\*+k|f\W?u\W?c\W?k|shit|bitch|cunt|asshole|motherf\w+|dick|prick|whore)\b",
     re.I,
@@ -113,8 +96,13 @@ def _dedupe(lines: List[str], limit: int) -> List[str]:
             break
     return out
 
+def _variety(seed: str, options: List[str]) -> str:
+    if not options:
+        return ""
+    h = int(hashlib.md5(seed.encode("utf-8")).hexdigest(), 16)
+    return options[h % len(options)]
 
-# ---------------- Light extraction ----------------
+# ---------- Light extraction ----------
 IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 URL_RE = re.compile(r"https?://\S+", re.I)
 
@@ -160,8 +148,7 @@ def _first_line(text: str) -> str:
             return ln.strip()
     return ""
 
-
-# ---------------- Extractors ----------------
+# ---------- Extractors ----------
 def _extract_common(text: str) -> Dict[str, object]:
     return {
         "poster": _kv_any(text, "poster", "image", "cover") or "",
@@ -228,8 +215,7 @@ def _extract_host_status(text: str) -> Dict[str, object]:
     d["services_up"] = len(re.findall(r"\bUp\s+\d+\s+(?:day|days|h|hours|m|min|minutes)", text or "", re.I))
     return d
 
-
-# ---------------- Mood styling ----------------
+# ---------- Mood ----------
 def _bullet_for(mood: str) -> str:
     return {
         "serious": "•",
@@ -239,22 +225,30 @@ def _bullet_for(mood: str) -> str:
         "angry": "⚡",
     }.get(mood, "•")
 
-def _suffix(mood: str, allow_profanity: bool) -> str:
-    if mood == "angry":
-        return " Done." if not allow_profanity else " Done. No BS."
-    if mood == "sarcastic":
-        return " Noted." if not allow_profanity else " Obviously."
-    if mood == "playful":
-        return " Neat!" if not allow_profanity else " Heck yes!"
-    if mood == "hacker-noir":
-        return " Logged."
-    return ""
+def _closer(mood: str, seed: str, allow_profanity: bool) -> str:
+    choices = {
+        "angry": ["Done.", "Done. No BS.", "Handled.", "We’re good."],
+        "sarcastic": ["Noted.", "Obviously.", "Ground-breaking.", "Shocking."],
+        "playful": ["Neat!", "Nice!", "All set!", "Wrapped!"],
+        "hacker-noir": ["Logged.", "Filed.", "In the ledger.", "Trace saved."],
+        "serious": ["Complete.", "All set.", "OK.", "Done."],
+    }.get(mood, ["Done."])
+    line = _variety(seed, choices)
+    if allow_profanity and mood == "angry":
+        alt = _variety(seed, ["Done. No BS.", "Done."] )
+        line = alt
+    return line
 
-
-# ---------------- Renderers ----------------
+# ---------- Renderers ----------
 def _render_sonarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
     b = _bullet_for(mood)
     d = _extract_sonarr(text)
+
+    # Only treat as Sonarr if we have strong signals
+    strong = bool(d["show"] or (d["season"] and d["episode"]) or d["path"])
+    if not strong:
+        return _render_generic(text, mood, allow_profanity)
+
     out: List[str] = []
     if d["show"]:
         se = ""
@@ -274,22 +268,27 @@ def _render_sonarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
     if d["indexer"]:
         out.append(f"{b} 🕵️ Indexer: {d['indexer']}")
     if d["poster"]:
-        out.append(f"{b} 🖼️ Poster: {d['poster']}")
+        out.append(f"{b} 🖼️ {d['poster']}")
     if d["links"]:
         out.append(f"{b} 🔗 {d['links'][0]}")
     if d["errors"]:
         out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
+
+    tail = _closer(mood, seed=text, allow_profanity=allow_profanity)
     if d["event"]:
-        tail = _suffix(mood, allow_profanity)
-        out.append(f"{b} ✅ {d['event'].capitalize()}.{tail}")
+        out.append(f"{b} ✅ {d['event'].capitalize()} {tail}")
     else:
-        tail = _suffix(mood, allow_profanity)
-        out.append(f"{b} ✅ Added to library.{tail}")
+        out.append(f"{b} ✅ Processed. {tail}")
     return out
 
 def _render_radarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
     b = _bullet_for(mood)
     d = _extract_radarr(text)
+
+    strong = bool(d["movie"] or d["path"])
+    if not strong:
+        return _render_generic(text, mood, allow_profanity)
+
     out: List[str] = []
     title = " ".join(x for x in [d["movie"], f"({d['year']})" if d["year"] else ""] if x).strip()
     if title:
@@ -306,13 +305,12 @@ def _render_radarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
     if d["indexer"]:
         out.append(f"{b} 🕵️ Indexer: {d['indexer']}")
     if d["poster"]:
-        out.append(f"{b} 🖼️ Poster: {d['poster']}")
+        out.append(f"{b} 🖼️ {d['poster']}")
     if d["links"]:
         out.append(f"{b} 🔗 {d['links'][0]}")
     if d["errors"]:
         out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-    tail = _suffix(mood, allow_profanity)
-    out.append(f"{b} ✅ Library updated.{tail}")
+    out.append(f"{b} ✅ Library updated. {_closer(mood, text, allow_profanity)}")
     return out
 
 def _render_apt(text: str, mood: str, allow_profanity: bool) -> List[str]:
@@ -336,8 +334,7 @@ def _render_apt(text: str, mood: str, allow_profanity: bool) -> List[str]:
         out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
     if d["links"]:
         out.append(f"{b} 🔗 {d['links'][0]}")
-    tail = _suffix(mood, allow_profanity)
-    out.append(f"{b} ✅ System ready.{tail}")
+    out.append(f"{b} ✅ System ready. {_closer(mood, text, allow_profanity)}")
     return out
 
 def _render_host_status(text: str, mood: str, allow_profanity: bool) -> List[str]:
@@ -354,8 +351,7 @@ def _render_host_status(text: str, mood: str, allow_profanity: bool) -> List[str
         out.append(f"{b} 🧩 Services up: ~{d['services_up']}")
     if d["errors"]:
         out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-    tail = _suffix(mood, allow_profanity)
-    out.append(f"{b} ✅ Host healthy.{tail}")
+    out.append(f"{b} ✅ Host healthy. {_closer(mood, text, allow_profanity)}")
     return out
 
 def _render_generic(text: str, mood: str, allow_profanity: bool) -> List[str]:
@@ -372,15 +368,13 @@ def _render_generic(text: str, mood: str, allow_profanity: bool) -> List[str]:
     if d["errors"]:
         out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
     if d["poster"]:
-        out.append(f"{b} 🖼️ Poster: {d['poster']}")
+        out.append(f"{b} 🖼️ {d['poster']}")
     if d["links"]:
         out.append(f"{b} 🔗 {d['links'][0]}")
-    tail = _suffix(mood, allow_profanity)
-    out.append(f"{b} ✅ Noted.{tail}")
+    out.append(f"{b} ✅ Noted. {_closer(mood, text, allow_profanity)}")
     return out
 
-
-# ---------------- Optional: 1 concise LLM bullet ----------------
+# ---------- Optional: one concise LLM bullet ----------
 def _llm_extra(text: str, mood: str, allow_profanity: bool) -> List[str]:
     if not USE_LLM_EXTRA_BULLET or _MODEL is None:
         return []
@@ -408,8 +402,7 @@ def _llm_extra(text: str, mood: str, allow_profanity: bool) -> List[str]:
         print(f"[Neural Core] Extra bullet error: {e}")
         return []
 
-
-# ---------------- Public API ----------------
+# ---------- Public API ----------
 def rewrite(
     text: str,
     mood: str = "serious",
@@ -419,10 +412,6 @@ def rewrite(
     base_url: str = "",
     model_path: str = "",
 ) -> str:
-    """
-    Returns a personality-forward, factual summary.
-    On error, returns the original text (failsafe).
-    """
     text = text or ""
     allow_profanity = _cfg_allow_profanity()
 
@@ -436,12 +425,12 @@ def rewrite(
     try:
         tlow = text.lower()
         if "sonarr" in tlow:
+            # only if real fields exist, else generic
             lines = _render_sonarr(text, mood, allow_profanity)
         elif "radarr" in tlow:
             lines = _render_radarr(text, mood, allow_profanity)
         elif "apt" in tlow or "maintenance" in tlow:
-            # heuristics: if message looks like host stats, use host renderer
-            if "cpu load" in tlow or "memory:" in tlow:
+            if "cpu load" in tlow or "memory:" in tlow or "docker:" in tlow:
                 lines = _render_host_status(text, mood, allow_profanity)
             else:
                 lines = _render_apt(text, mood, allow_profanity)
@@ -450,10 +439,7 @@ def rewrite(
         else:
             lines = _render_generic(text, mood, allow_profanity)
 
-        # Optional single AI bullet
         lines.extend(_llm_extra(text, mood, allow_profanity))
-
-        # Final tidy
         lines = _dedupe(lines, MAX_LINES)
         out = "\n".join(lines) if lines else text
         return _clean_if_needed(out, allow_profanity)
