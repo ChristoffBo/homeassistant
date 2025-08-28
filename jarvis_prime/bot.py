@@ -474,11 +474,13 @@ def _handle_command(ncmd: str):
 
     if ncmd in ("dns",):
         text, _ = _try_call(m_tech, "dns_status", merged)
+        if not text:
+            text, _ = _try_call(m_tech, "handle_dns_command", "dns")
         send_message("DNS Status", text or "No data.")
         return True
 
     if ncmd in ("kuma", "uptime", "monitor"):
-        text, _ = _try_call(m_kuma, "handle_kuma_command", merged, "kuma")
+        text, _ = _try_call(m_kuma, "handle_kuma_command", "kuma")
         send_message("Uptime Kuma", text or "No data.")
         return True
 
@@ -486,20 +488,22 @@ def _handle_command(ncmd: str):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command(merged, "weather")
+                text = m_weather.handle_weather_command("weather")
             except Exception as e:
                 text = f"⚠️ Weather failed: {e}"
-        send_message("Weather", text or "No data.")
+        final, extras, used_llm, used_beautify = _llm_then_beautify("Weather", text or "No data.")
+        send_message("Weather", final, extras=extras)
         return True
 
     if ncmd in ("forecast", "weekly", "7day", "7-day", "7 day"):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command(merged, "forecast")
+                text = m_weather.handle_weather_command("forecast")
             except Exception as e:
                 text = f"⚠️ Forecast failed: {e}"
-        send_message("Forecast", text or "No data.")
+        final, extras, used_llm, used_beautify = _llm_then_beautify("Forecast", text or "No data.")
+        send_message("Forecast", final, extras=extras)
         return True
 
     # ARR commands
