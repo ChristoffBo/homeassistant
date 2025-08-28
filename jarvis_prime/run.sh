@@ -14,8 +14,8 @@ export GOTIFY_APP_TOKEN=$(jq -r '.gotify_app_token' "$CONFIG_PATH")
 export JARVIS_APP_NAME=$(jq -r '.jarvis_app_name' "$CONFIG_PATH")
 
 export RETENTION_HOURS=$(jq -r '.retention_hours' "$CONFIG_PATH")
-export SILENT_REPOST=$(jq -r '.silent_repost // true' "$CONFIG_PATH")
 export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled // true' "$CONFIG_PATH")
+export SILENT_REPOST=$(jq -r '.silent_repost // true' "$CONFIG_PATH")
 export BEAUTIFY_INLINE_IMAGES=$(jq -r '.beautify_inline_images // false' "$CONFIG_PATH")
 
 # Chat & Digest (file or env toggles)
@@ -57,7 +57,7 @@ export LLM_MAX_CPU_PERCENT=$(jq -r '.llm_max_cpu_percent // 70' "$CONFIG_PATH")
 export LLM_MODEL_URL=$(jq -r '.llm_model_url // ""' "$CONFIG_PATH")
 export LLM_MODEL_PATH=$(jq -r '.llm_model_path // ""' "$CONFIG_PATH")
 export LLM_MODEL_SHA256=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
-export LLM_MODELS_PRIORITY=$(jq -r 'try .llm_models_priority | join(",") catch ""' "$CONFIG_PATH")
+export LLM_MODELS_PRIORITY=$(jq -r 'try (.llm_models_priority | join(",")) catch ""' "$CONFIG_PATH")
 
 # ── Startup banner ────────────────────────────────────────────────────────────
 echo "──────────────────────────────────────────────"
