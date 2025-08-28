@@ -72,5 +72,17 @@ export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
 export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
 export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
-log "Starting add-on..."
+# -----------------------------
+# Cool startup banner
+# -----------------------------
+echo "──────────────────────────────────────────────"
+echo "🧠 ${BOT_NAME} ${BOT_ICON}"
+echo "⚡ Boot sequence initiated..."
+echo "   → Personalities loaded"
+echo "   → Memory core mounted"
+echo "   → Network bridges linked"
+echo "🚀 Systems online — Jarvis is awake!"
+echo "──────────────────────────────────────────────"
+
+# Start the bot
 exec python3 /app/bot.py
