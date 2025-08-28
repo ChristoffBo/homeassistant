@@ -5,11 +5,7 @@ set -euo pipefail
 CONFIG_PATH=/data/options.json
 log() { echo "[$(jq -r '.bot_name' "$CONFIG_PATH")] $*"; }
 
-# -----------------------------
-# Read options → environment
-# -----------------------------
-
-# Core
+# ── Read options → environment ────────────────────────────────────────────────
 export BOT_NAME=$(jq -r '.bot_name' "$CONFIG_PATH")
 export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
 export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_PATH")
@@ -78,7 +74,7 @@ export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
 export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
 export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
-# Personality & LLM
+# Personality & Neural Core (LLM)
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 export LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
 export LLM_MEMORY_ENABLED=$(jq -r '.llm_memory_enabled // false' "$CONFIG_PATH")
@@ -88,39 +84,58 @@ export LLM_MAX_CPU_PERCENT=$(jq -r '.llm_max_cpu_percent // 70' "$CONFIG_PATH")
 export LLM_MODEL_URL=$(jq -r '.llm_model_url // ""' "$CONFIG_PATH")
 export LLM_MODEL_PATH=$(jq -r '.llm_model_path // ""' "$CONFIG_PATH")
 export LLM_MODEL_SHA256=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
-# Allow optional list priority if present (joins into CSV)
 export LLM_MODELS_PRIORITY=$(jq -r 'try .llm_models_priority | join(",") catch ""' "$CONFIG_PATH")
 
-# -----------------------------
-# Startup banner
-# -----------------------------
+# ── Startup banner ────────────────────────────────────────────────────────────
 echo "──────────────────────────────────────────────"
 echo "🧠 ${BOT_NAME} ${BOT_ICON}"
 echo "⚡ Boot sequence initiated..."
 echo "   → Personalities loaded"
 echo "   → Memory core mounted"
 echo "   → Network bridges linked"
-echo "   → LLM: $( [ "$LLM_ENABLED" = "true" ] && echo "enabled" || echo "disabled" )"
+echo "   → Neural Core: $( [ "$LLM_ENABLED" = "true" ] && echo "enabled" || echo "disabled" )"
 echo "   → Model path: ${LLM_MODEL_PATH}"
 echo "🚀 Systems online — Jarvis is awake!"
 echo "──────────────────────────────────────────────"
 
-# -----------------------------
-# Ensure /share directories
-# -----------------------------
+# ── Ensure /share directories ─────────────────────────────────────────────────
 mkdir -p /share/jarvis_prime/memory
 if [ -n "$LLM_MODEL_PATH" ]; then
   mkdir -p "$(dirname "$LLM_MODEL_PATH")"
 fi
 
-# -----------------------------
-# Prefetch model (only if LLM enabled)
-# - Triggers download once on boot
-# - Uses llm_client.py fallback logic if URL is wrong
-# -----------------------------
+# ── Seed the 24h memory with a boot event (creates events.json immediately) ──
+if [ "$LLM_MEMORY_ENABLED" = "true" ]; then
+  python3 - <<'PY'
+import json, time, os
+from pathlib import Path
+MEMDIR = Path("/share/jarvis_prime/memory")
+MEMDIR.mkdir(parents=True, exist_ok=True)
+EV = MEMDIR / "events.json"
+if not EV.exists():
+    EV.write_text("[]", encoding="utf-8")
+try:
+    data = json.loads(EV.read_text(encoding="utf-8"))
+except Exception:
+    data = []
+data.append({
+    "ts": int(time.time()),
+    "title": "Jarvis boot",
+    "source": "system",
+    "body": "Startup sequence completed",
+    "tags": ["boot","system"]
+})
+# prune >24h
+cut = int(time.time()) - 24*3600
+data = [e for e in data if isinstance(e, dict) and e.get("ts",0) >= cut]
+EV.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+print("[Jarvis Prime] 🗃️ Memory seeded at /share/jarvis_prime/memory/events.json")
+PY
+fi
+
+# ── Prefetch Neural Core model (only when enabled) ────────────────────────────
 if [ "$LLM_ENABLED" = "true" ]; then
-  echo "[${BOT_NAME}] 🔮 Prefetching LLM model..."
-  # llm_client.py will print progress, fix common URL mistakes, and fallback to known-good tiny models if needed.
+  echo "[${BOT_NAME}] 🔮 Prefetching Neural Core model..."
   LLM_ENABLED=true \
   LLM_MODEL_URL="$LLM_MODEL_URL" \
   LLM_MODEL_PATH="$LLM_MODEL_PATH" \
@@ -129,7 +144,5 @@ if [ "$LLM_ENABLED" = "true" ]; then
   python3 /app/llm_client.py || true
 fi
 
-# -----------------------------
-# Run the bot
-# -----------------------------
+# ── Run the bot ───────────────────────────────────────────────────────────────
 exec python3 /app/bot.py
