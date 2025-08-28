@@ -13,6 +13,7 @@ import schedule
 # - Startup card: lists Neural Core + model, Memory, and all modules
 # - Clean separation: wake-word commands vs normal message rewrite path
 # - Optional footer marks engine path: [Neural Core ✓] or [Beautify fallback]
+# - Preflight logs show model path, existence, and size
 # =============================================================================
 
 # -----------------------------
@@ -107,7 +108,7 @@ try:
     LLM_MODEL_PATH = str(merged.get("llm_model_path", LLM_MODEL_PATH))
     PERSONALITY_PERSISTENT = bool(merged.get("personality_persistent", PERSONALITY_PERSISTENT))
 
-    # Chat/Digest toggles (can live in file only)
+    # Chat/Digest toggles (file may be source of truth)
     CHAT_ENABLED_FILE = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 except Exception as e:
@@ -119,7 +120,6 @@ except Exception as e:
 # -----------------------------
 # Optional dynamic modules
 # -----------------------------
-_alias_mod = None
 def _load_optional(name, path):
     try:
         import importlib.util as _imp
@@ -133,12 +133,12 @@ def _load_optional(name, path):
         print(f"[Jarvis Prime] ⚠️ {name} not loaded: {e}")
     return None
 
-_alias_mod = _load_optional("aliases", "/app/aliases.py")
-_personality = _load_optional("personality", "/app/personality.py")
-_beautify = _load_optional("beautify", "/app/beautify.py")
-_llm       = _load_optional("llm_client", "/app/llm_client.py")
-_llm_mem   = _load_optional("llm_memory", "/app/llm_memory.py")
-_pstate    = _load_optional("personality_state", "/app/personality_state.py")
+_alias_mod  = _load_optional("aliases", "/app/aliases.py")
+_personality= _load_optional("personality", "/app/personality.py")
+_beautify   = _load_optional("beautify", "/app/beautify.py")
+_llm        = _load_optional("llm_client", "/app/llm_client.py")
+_llm_mem    = _load_optional("llm_memory", "/app/llm_memory.py")
+_pstate     = _load_optional("personality_state", "/app/personality_state.py")
 
 # reload persisted mood if present
 try:
@@ -150,10 +150,9 @@ except Exception:
     pass
 
 # -----------------------------
-# Utils: Gotify helpers
+# Gotify helpers
 # -----------------------------
 def send_message(title, message, priority=5, extras=None):
-    # personality decorations + priority bias
     if _personality:
         try:
             title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
@@ -296,7 +295,7 @@ def fancy_boot_banner():
     """
     core  = "ENABLED"  if LLM_ENABLED else "DISABLED"
     mem   = "ENABLED"  if LLM_MEMORY_ENABLED else "DISABLED"
-    model = Path(LLM_MODEL_PATH).name if LLM_MODEL_PATH else "(auto)"
+    model = Path(LLM_MODEL_PATH.strip()).name if LLM_MODEL_PATH else "(auto)"
     print("─" * 60)
     print(brain)
     print(f"🧠 {BOT_NAME}")
@@ -307,17 +306,35 @@ def fancy_boot_banner():
     print(f"   → Neural Core: {core}")
     print(f"   → Model file: {model}")
     print(f"   → Memory: {mem}")
+    # Preflight: path + size
+    if LLM_ENABLED:
+        p = Path(os.path.expandvars(LLM_MODEL_PATH.strip()))
+        ok = p.exists()
+        size = (p.stat().st_size if ok else 0)
+        print(f"   • Preflight: path='{p}' exists={ok} size={size}")
     print("🚀 Systems online — Jarvis is awake!")
     print("─" * 60)
 
 # -----------------------------
 # Startup poster (Gotify card)
 # -----------------------------
+def _first_model_fallback() -> str:
+    base = Path("/share/jarvis_prime/models")
+    if base.exists():
+        ggufs = sorted([q.name for q in base.glob("*.gguf")])
+        return ggufs[0] if ggufs else ""
+    return ""
+
 def _present(path:str) -> str:
     if not path:
-        return "auto"
-    p = Path(path)
-    return p.name if p.exists() else f"{p.name} (missing)"
+        alt = _first_model_fallback()
+        return f"auto{(' → ' + alt) if alt else ''}"
+    p = Path(os.path.expandvars(path.strip()))
+    if p.exists():
+        return p.name
+    # show fallback if available
+    alt = _first_model_fallback()
+    return f"{p.name} ({'using ' + alt if alt else 'missing'})"
 
 def startup_poster():
     def line(icon, name, enabled):
@@ -346,7 +363,7 @@ def startup_poster():
     return "\n".join(lines)
 
 # -----------------------------
-# Heartbeat + helpers
+# Heartbeat / Digest (unchanged from earlier)
 # -----------------------------
 def _parse_hhmm(s):
     try:
@@ -394,9 +411,6 @@ def send_heartbeat_if_window():
     except Exception as e:
         print(f"[{BOT_NAME}] Heartbeat error: {e}")
 
-# -----------------------------
-# Digest helper
-# -----------------------------
 def job_daily_digest():
     try:
         dmod = extra_modules.get("digest")
@@ -424,7 +438,6 @@ def normalize_cmd(cmd: str) -> str:
     return _clean(cmd)
 
 def extract_command_from(title: str, message: str) -> str:
-    """If title or message begins with 'jarvis', treat the rest as a command."""
     tlow, mlow = (title or "").lower(), (message or "").lower()
     if tlow.startswith("jarvis"):
         tcmd = tlow.replace("jarvis", "", 1).strip()
@@ -446,7 +459,6 @@ async def listen():
                 data = json.loads(msg)
                 msg_id = data.get("id")
 
-                # ignore our own posts to avoid loops
                 if _is_our_post(data):
                     continue
 
@@ -560,7 +572,6 @@ async def listen():
                 transformed = message
                 extras = None
 
-                # Neural Core rewrite
                 if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
                     try:
                         print(f"[{BOT_NAME}] 🔧 Neural Core rewriting (mood={CHAT_MOOD})")
@@ -579,24 +590,20 @@ async def listen():
 
                 final = transformed
 
-                # Beautify
                 try:
                     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
                         final, extras = _beautify.beautify_message(title, transformed, mood=CHAT_MOOD)
                 except Exception as _e:
                     print(f"[{BOT_NAME}] ⚠️ Beautify failed: {_e}")
 
-                # Engine footer (visible hint for debugging)
                 if not ENGINE_FOOTER_DISABLED:
                     final = f"{final}\n\n`[{engine_used}]`"
 
-                # Memory log
                 try:
                     mem_log_event(kind=appname.lower(), source=appname, title=(title or "Message"), body=final, meta={"id": msg_id})
                 except Exception as _e:
                     print(f"[{BOT_NAME}] ⚠️ Memory log error: {_e}")
 
-                # Optional inline image (Gotify Web bigImageUrl)
                 try:
                     if BEAUTIFY_INLINE_IMAGES and extras and extras.get("client::notification", {}).get("bigImageUrl"):
                         img = extras["client::notification"]["bigImageUrl"]
@@ -604,7 +611,6 @@ async def listen():
                 except Exception:
                     pass
 
-                # Quip
                 try:
                     if _personality:
                         q = _personality.quip(CHAT_MOOD)
@@ -647,6 +653,13 @@ def run_scheduler():
 # Main
 # -----------------------------
 if __name__ == "__main__":
+    # Ensure share dirs exist
+    try:
+        Path("/share/jarvis_prime/memory").mkdir(parents=True, exist_ok=True)
+        Path("/share/jarvis_prime/models").mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
     fancy_boot_banner()
     resolve_app_id()
 
