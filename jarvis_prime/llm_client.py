@@ -1,94 +1,58 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# Jarvis Prime — Neural Core (ctransformers GGUF loader + rewrite API)
-#
-# Provides BOTH rewrite_text(...) and rewrite_with_info(...).
-# Robust GGUF loading for ctransformers==0.2.27:
-#   * If MODEL_PATH is a file: try LLM(model_path=...), then fallback to
-#     AutoModelForCausalLM.from_pretrained(dir, model_file=...).
-#   * If MODEL_PATH is a directory: pick a .gguf inside (respects LLM_MODELS_PRIORITY).
-# Smart prefetch: if MODEL_PATH is a directory, download basename(url) into it;
-# if MODEL_PATH is a file, download exactly to that file.
-from __future__ import annotations
-
 import os
-import re
+import sys
 import time
-import hashlib
-import tempfile
-from pathlib import Path
-from typing import Optional, Tuple, List
-from urllib.parse import urlparse
 import json
+import hashlib
+import re
+from pathlib import Path
+from typing import Optional, Tuple, Dict, List
 
 import requests
 
-BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
+# ctransformers is required by the add-on image (requirements.txt)
+try:
+    from ctransformers import AutoModelForCausalLM
+except Exception as e:
+    AutoModelForCausalLM = None
+    print(f"[Jarvis Prime] ⚠️ ctransformers import failed: {e}", flush=True)
 
-# ---- Configuration via env (run.sh exports these from options.json) ----------
-MODEL_PATH = os.getenv("LLM_MODEL_PATH", "/share/jarvis_prime/models")
-MODEL_URL = os.getenv("LLM_MODEL_URL", "")
-MODEL_SHA256 = (os.getenv("LLM_MODEL_SHA256", "") or "").lower()
 
-DETAIL_LEVEL = os.getenv("LLM_DETAIL_LEVEL", "rich").lower()
-MAX_LINES = 10 if DETAIL_LEVEL == "rich" else 6
-MAX_LINE_CHARS = 160
+# -----------------------------
+# Known-good tiny CPU models (smallest first), correct URLs & filenames
+# -----------------------------
+# Verified on Hugging Face:
+# - Qwen/Qwen2.5-0.5B-Instruct-GGUF -> qwen2.5-0.5b-instruct-q4_k_m.gguf
+# - TheBloke/phi-2-GGUF -> phi-2.Q4_K_M.gguf
+# - TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF -> tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+CATALOG = [
+    {
+        "key": "qwen2.5-0.5b-instruct",
+        "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "model_type": "qwen",  # ctransformers infers, but we hint
+    },
+    {
+        "key": "phi-2",
+        "repo": "TheBloke/phi-2-GGUF",
+        "filename": "phi-2.Q4_K_M.gguf",
+        "model_type": "phi",
+    },
+    {
+        "key": "tinyllama-1.1b-chat",
+        "repo": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+        "filename": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "model_type": "llama",
+    },
+]
 
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
-LLM_TOP_P      = float(os.getenv("LLM_TOP_P", "0.9"))
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "320"))
 
-VERBOSE = True
+def _hf_resolve(repo: str, filename: str) -> str:
+    """
+    Build a direct download 'resolve/main' URL for a public HF repo.
+    """
+    return f"https://huggingface.co/{repo}/resolve/main/{filename}"
 
-# ---- Soft dep: ctransformers -------------------------------------------------
-_CTRANS_OK = False
-_MODEL = None
-_MODEL_ANCHOR: Optional[Path] = None  # original configured path (file OR dir)
 
-def _import_ctransformers() -> bool:
-    global _CTRANS_OK
-    if _CTRANS_OK:
-        return True
-    try:
-        from ctransformers import AutoModelForCausalLM  # noqa: F401
-        from ctransformers import LLM  # noqa: F401
-        _CTRANS_OK = True
-        if VERBOSE:
-            print("[Neural Core] ctransformers import: OK", flush=True)
-        return True
-    except Exception as e:
-        print(f"[Neural Core] ctransformers import FAILED: {e}", flush=True)
-        _CTRANS_OK = False
-        return False
-
-# ---- Personality / profanity gates ------------------------------------------
-def _cfg_allow_profanity() -> bool:
-    env = os.getenv("PERSONALITY_ALLOW_PROFANITY")
-    if env is not None:
-        return env.strip().lower() in ("1", "true", "yes", "on")
-    try:
-        with open("/data/options.json", "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        return bool(cfg.get("personality_allow_profanity", False))
-    except Exception:
-        return False
-
-def _normalize_mood(mood: str) -> str:
-    m = (mood or "").strip().lower()
-    return m or "serious"
-
-def _bullet_for(mood: str) -> str:
-    return {
-        "serious": "•", "cheeky": "😏", "relaxed": "✨", "urgent": "⚡",
-        "angry": "🔥", "sarcastic": "🙃", "hacker-noir": "▣",
-    }.get(_normalize_mood(mood), "•")
-
-def _clean_if_needed(text: str, allow_profanity: bool) -> str:
-    if allow_profanity:
-        return text
-    return re.sub(r"\b(fuck|shit|bitch|bastard)\b", "****", text, flags=re.I)
-
-# ---- Utilities ---------------------------------------------------------------
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -96,282 +60,247 @@ def _sha256_file(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-def _url_basename(u: str) -> str:
-    name = os.path.basename(urlparse(u).path.rstrip("/"))
-    return name or "model.gguf"
 
-def _pick_gguf_in_dir(d: Path) -> Optional[Path]:
-    files = sorted([p for p in d.iterdir() if p.suffix.lower() == ".gguf"])
-    if not files:
-        return None
-    pref = os.getenv("LLM_MODELS_PRIORITY", "")
-    if pref:
-        keys = [s.strip().lower() for s in pref.split(",") if s.strip()]
-        for k in keys:
-            for f in files:
-                if k in f.name.lower():
-                    return f
-    return files[0]
+def _download(url: str, dest: Path, sha256: str = "", timeout: int = 60) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # If exists and matches hash (when provided), keep.
+    if dest.exists() and dest.stat().st_size > 0:
+        if sha256:
+            existing = _sha256_file(dest)
+            if existing.lower() == sha256.lower():
+                print(f"[Jarvis Prime] ✅ Model already present and verified: {dest}", flush=True)
+                return
+            else:
+                print(f"[Jarvis Prime] ♻️ Re-downloading (hash changed): {dest}", flush=True)
+                dest.unlink(missing_ok=True)
+        else:
+            print(f"[Jarvis Prime] ✅ Model already present: {dest}", flush=True)
+            return
 
-# ---- Prefetch / download -----------------------------------------------------
-def prefetch_model() -> Optional[Path]:
-    """
-    Download model if missing.
-    - If MODEL_PATH is a file: download to that file.
-    - If MODEL_PATH is a dir: download to dir/<basename(url)>.
-    """
-    target_anchor = Path(MODEL_PATH).expanduser()
-    if target_anchor.suffix.lower() == ".gguf":
-        target = target_anchor
-    else:
-        if not MODEL_URL:
-            print(f"[{BOT_NAME}] ⚠️ LLM_MODEL_URL not set and MODEL_PATH is a directory; cannot infer filename.", flush=True)
-            return None
-        target = target_anchor / _url_basename(MODEL_URL)
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        if VERBOSE:
-            print(f"[{BOT_NAME}] ✅ Model already present at {target}", flush=True)
-        return target
-
-    if not MODEL_URL:
-        print(f"[{BOT_NAME}] ⚠️ LLM_MODEL_URL not set; cannot download model.", flush=True)
-        return None
-
-    print(f"[{BOT_NAME}] 🔮 Prefetching LLM model -> {target}", flush=True)
-    headers = {"User-Agent": "jarvis-prime/1.0", "Accept": "*/*"}
-    with requests.get(MODEL_URL, headers=headers, stream=True, timeout=300) as r:
+    print(f"[Jarvis Prime] 📥 Downloading LLM model: {url}", flush=True)
+    with requests.get(url, stream=True, timeout=timeout) as r:
         r.raise_for_status()
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            for chunk in r.iter_content(1024 * 1024):
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        with tmp.open("wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
                 if chunk:
-                    tmp.write(chunk)
-            tmp_path = Path(tmp.name)
+                    f.write(chunk)
+        tmp.replace(dest)
 
-    if MODEL_SHA256:
-        actual = _sha256_file(tmp_path)
-        if actual.lower() != MODEL_SHA256:
-            tmp_path.unlink(missing_ok=True)
-            raise RuntimeError(f"Model SHA256 mismatch (expected {MODEL_SHA256}, got {actual})")
+    if sha256:
+        dl_hash = _sha256_file(dest)
+        if dl_hash.lower() != sha256.lower():
+            dest.unlink(missing_ok=True)
+            raise RuntimeError(f"SHA256 mismatch for {dest.name}: {dl_hash} != {sha256}")
+    print(f"[Jarvis Prime] ✅ Model downloaded to {dest}", flush=True)
 
-    tmp_path.replace(target)
-    print(f"[{BOT_NAME}] ✅ Model downloaded -> {target}", flush=True)
-    return target
 
-# ---- Model loading (robust) --------------------------------------------------
-def _resolve_model_file(anchor: Path) -> Optional[Path]:
-    """
-    Resolve the actual .gguf to load based on MODEL_PATH 'anchor'.
-    - If anchor is a file -> return it.
-    - If anchor is a dir  -> pick a .gguf inside.
-    """
-    anchor = anchor.expanduser()
-    if anchor.is_file() and anchor.suffix.lower() == ".gguf":
-        return anchor
-    if anchor.is_dir():
-        pick = _pick_gguf_in_dir(anchor)
-        if pick:
-            return pick
-    return None
+def _guess_model_type_from_path(path: str) -> Optional[str]:
+    s = path.lower()
+    if "qwen" in s:
+        return "qwen"
+    if "phi" in s:
+        return "phi"
+    # TinyLlama, Llama, Mistral-based
+    return "llama"
 
-def _load_model() -> Optional[object]:
-    global _MODEL, _MODEL_ANCHOR
-    if _MODEL is not None:
-        return _MODEL
 
-    if not _import_ctransformers():
-        return None
+def _load_model(model_path: Path, model_type_hint: Optional[str] = None):
+    if AutoModelForCausalLM is None:
+        raise RuntimeError("ctransformers is not available in this image")
 
-    anchor = Path(MODEL_PATH).expanduser()
-    gguf = _resolve_model_file(anchor)
-    if gguf is None:
-        print(f"[Neural Core] ❌ Model file not found. MODEL_PATH='{anchor}'", flush=True)
-        return None
-
-    try:
-        # Fast path: LLM(model_path=<file>)
-        from ctransformers import LLM
-        t0 = time.time()
-        print(f"[Neural Core] 🧠 Loading GGUF via LLM(): '{gguf}' ...", flush=True)
-        model = LLM(model_path=str(gguf), model_type="llama")
-        _MODEL = model
-        _MODEL_ANCHOR = anchor
-        print(f"[Neural Core] ✅ Model ready in {time.time() - t0:.2f}s (LLM())", flush=True)
-        return _MODEL
-    except Exception as e1:
-        print(f"[Neural Core] ⚠️ LLM() load failed: {e1}", flush=True)
-
-    try:
-        # Fallback: directory + model_file
-        from ctransformers import AutoModelForCausalLM
-        t0 = time.time()
-        print(f"[Neural Core] 🧠 Loading GGUF via from_pretrained(dir, model_file): dir='{gguf.parent}', file='{gguf.name}' ...", flush=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path_or_repo_id=str(gguf.parent),
-            model_file=gguf.name,
-            model_type="llama",
-            local_files_only=True,
-            gpu_layers=0,
-            context_length=2048,
-        )
-        _MODEL = model
-        _MODEL_ANCHOR = anchor
-        print(f"[Neural Core] ✅ Model ready in {time.time() - t0:.2f}s (from_pretrained)", flush=True)
-        return _MODEL
-    except Exception as e2:
-        print(f"[Neural Core] ❌ from_pretrained load failed: {e2}", flush=True)
-        _MODEL = None
-        _MODEL_ANCHOR = None
-        return None
-
-# ---- Prompting ---------------------------------------------------------------
-def _build_prompt(text: str, mood: str, allow_profanity: bool) -> str:
-    tone = {
-        "serious": "succinct, confident, professional, no filler",
-        "cheeky": "playful, witty, lightly sarcastic, but helpful",
-        "relaxed": "friendly, calm, conversational",
-        "urgent": "terse, high-priority, crisp",
-        "angry": "short, no-nonsense, sharp edges",
-        "sarcastic": "dry, sardonic, minimal fluff",
-        "hacker-noir": "laconic, neon-noir sysop vibe",
-    }[_normalize_mood(mood)]
-    filters = "" if allow_profanity else "Keep it family-friendly; avoid profanity."
-    return (
-        "You polish infrastructure alerts for a home server admin.\n"
-        "Keep ALL key facts (titles, IPs, versions, counts, links, times).\n"
-        "Output ONLY bullet lines (no headings, no labels).\n"
-        f"Tone: {tone}. {filters}\n"
-        "Bullets should feel like my homelab is speaking.\n\n"
-        f"MESSAGE:\n{text}\n"
-        "REWRITE:\n"
-    )
-
-def _cut(s: str, n: int) -> str:
-    s = (s or "").strip()
-    return s if len(s) <= n else (s[: max(0, n - 1)].rstrip() + "…")
-
-# ---- Public API (legacy) -----------------------------------------------------
-def rewrite_text(prompt: str, mood: str = "serious", timeout_s: int = 5) -> str:
-    """
-    Streaming generation with a hard timeout (best-effort).
-    Kept for backward compatibility with existing callers.
-    """
-    model = _load_model()
-    if model is None:
-        return rewrite_fallback(prompt, mood)
-
-    allow_profanity = _cfg_allow_profanity()
-    tpl = _build_prompt(prompt or "", mood, allow_profanity)
+    model_type = model_type_hint or _guess_model_type_from_path(str(model_path))
+    print(f"[Jarvis Prime] 🔧 Loading model into memory: {model_path} (type={model_type})", flush=True)
     t0 = time.time()
-    out_parts: List[str] = []
+    # Keep it tiny CPU-friendly
+    llm = AutoModelForCausalLM.from_pretrained(
+        str(model_path),
+        # Many models auto-detect; still pass hint to be safe
+        model_type=model_type,
+        gpu_layers=0,
+        context_length=4096,
+    )
+    dt = time.time() - t0
+    print(f"[Jarvis Prime] 🧩 Model ready in {dt:.1f}s", flush=True)
+    return llm
+
+
+def _ensure_model(
+    model_url: str,
+    model_path: str,
+    model_sha256: str,
+    models_priority: Optional[List[str]] = None,
+) -> Tuple[Path, Optional[str]]:
+    """
+    Ensure a model exists locally.
+    - If model_url + model_path are provided, try them first.
+    - Else iterate a priority list across our CATALOG keys.
+    Returns (local_path, model_type_hint)
+    """
+    # 1) If explicit values were supplied, try them first
+    if model_url and model_path:
+        fixed_url, fixed_path = _fix_known_url_mistakes(model_url, model_path)
+        try:
+            _download(fixed_url, Path(fixed_path), sha256=model_sha256 or "")
+            return Path(fixed_path), _guess_model_type_from_path(fixed_path)
+        except Exception as e:
+            print(f"[Jarvis Prime] ⚠️ Download failed for provided model: {e}", flush=True)
+
+    # 2) Fall back to catalog by priority
+    prio = models_priority or ["qwen2.5:0.5b-instruct", "phi:2", "tinyllama:1.1b-chat"]
+    # Normalize keys to our CATALOG keys
+    norm_map = {
+        "qwen2.5:0.5b-instruct": "qwen2.5-0.5b-instruct",
+        "phi:2": "phi-2",
+        "tinyllama:1.1b-chat": "tinyllama-1.1b-chat",
+    }
+    wanted = [norm_map.get(k.lower(), k.lower()) for k in prio]
+
+    for m in CATALOG:
+        if m["key"] not in wanted:
+            continue
+        url = _hf_resolve(m["repo"], m["filename"])
+        local = Path("/share/jarvis_prime/models") / m["filename"]
+        try:
+            _download(url, local)
+            return local, m.get("model_type")
+        except Exception as e:
+            print(f"[Jarvis Prime] ⚠️ Fallback '{m['key']}' failed: {e}", flush=True)
+
+    raise RuntimeError("No LLM model could be downloaded. Check network or URLs.")
+
+
+def _fix_known_url_mistakes(model_url: str, model_path: str) -> Tuple[str, str]:
+    """
+    Patch common mistakes:
+    - TinyLlama filename missing '-v1.0' -> insert before the quant part.
+    - If the provided path doesn't match filename in URL, align them.
+    """
+    url = model_url
+    path = model_path
+
+    # If TinyLlama URL missing -v1.0 segment
+    if "TinyLlama-1.1B-Chat" in url and "chat-v1.0" not in url:
+        url = re.sub(r"(tinyllama-1\.1b-chat)(\.Q\d_.*\.gguf)$", r"\1-v1.0\2", url, flags=re.IGNORECASE)
+
+    # Align local path filename to URL's tail if they differ
     try:
-        for tok in model(tpl, stream=True, max_new_tokens=LLM_MAX_TOKENS,
-                         temperature=LLM_TEMPERATURE, top_p=LLM_TOP_P):
-            out_parts.append(tok)
-            if (time.time() - t0) > timeout_s:
-                break
-    except Exception as e:
-        print(f"[Neural Core] ⚠️ Generation error (stream): {e}", flush=True)
-        return rewrite_fallback(prompt, mood)
+        fname = url.split("/")[-1]
+        if fname and not path.endswith(fname):
+            path = str(Path(path).parent / fname)
+    except Exception:
+        pass
 
-    gen = "".join(out_parts).strip()
-    bullets = _postprocess(gen, mood, allow_profanity)
-    return bullets or rewrite_fallback(prompt, mood)
+    return url, path
 
-# ---- Public API (preferred) --------------------------------------------------
-def rewrite_with_info(
+
+def _build_prompt(text: str, mood: str) -> str:
+    mood = (mood or "serious").strip().lower()
+    persona = {
+        "serious": "direct, concise, professional",
+        "sarcastic": "dry wit, playful jabs, still helpful",
+        "playful": "light, fun, friendly",
+        "hacker-noir": "noir monologue, terse, technical",
+        "angry": "brutally honest but helpful, short sentences",
+    }.get(mood, "direct, concise, professional")
+
+    system = (
+        "You are Jarvis Prime. Rewrite the incoming message for a human.\n"
+        f"Style: {persona}.\n"
+        "Keep ALL important info intact (titles, links/URLs, poster/image URLs, names).\n"
+        "Preserve any markdown, lists, and emoji. Do NOT invent facts. Be brief and readable.\n"
+        "If the input already looks good, lightly polish only."
+    )
+    return f"{system}\n\n--- INPUT START ---\n{text}\n--- INPUT END ---\n\nRewrite:"
+
+
+def rewrite(
     text: str,
     mood: str = "serious",
     timeout: int = 5,
-    cpu_limit: int = 70,          # signature-compat only
-    models_priority=None,         # signature-compat only
-    base_url: str = "",           # signature-compat only
-    allow_profanity: Optional[bool] = None,
-    model_path: str = ""
-) -> Tuple[str, bool]:
+    cpu_limit: int = 70,
+    models_priority: Optional[List[str]] = None,
+    base_url: str = "",
+    model_url: str = "",
+    model_path: str = "",
+    model_sha256: str = "",
+) -> str:
     """
-    Returns (output_text, used_llm).
-    used_llm == True only when a GGUF model was successfully loaded & used.
+    Main entry used by bot and run.sh prefetch.
+    - Ensures a small CPU-friendly model is present (download if missing)
+    - Loads with ctransformers
+    - Generates a short rewrite with mood/personality
     """
-    if model_path:
-        global MODEL_PATH
-        MODEL_PATH = model_path
+    # Ensure model exists locally
+    local_path, model_type_hint = _ensure_model(model_url, model_path, model_sha256, models_priority)
 
-    model = _load_model()
-    if model is None:
-        return rewrite_fallback(text, mood), False
+    # Load model
+    llm = _load_model(local_path, model_type_hint)
 
-    if allow_profanity is None:
-        allow_profanity = _cfg_allow_profanity()
+    prompt = _build_prompt(text, mood)
 
-    prompt = _build_prompt(text or "", mood, allow_profanity)
+    # Simple, bounded generation
+    max_new_tokens = 160
+    temperature = 0.6
+    top_p = 0.9
+    rep_penalty = 1.05
+
+    # Run with a watchdog timeout using simple wall-clock handling
+    start = time.time()
+    out_chunks: List[str] = []
     try:
-        out = str(model(prompt, max_new_tokens=LLM_MAX_TOKENS,
-                        temperature=LLM_TEMPERATURE, top_p=LLM_TOP_P) or "").strip()
+        for token in llm(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            repetition_penalty=rep_penalty,
+            stream=True,
+        ):
+            out_chunks.append(token)
+            if time.time() - start > timeout:
+                print("[Jarvis Prime] ⏱️ LLM generation hit timeout; returning partial output.", flush=True)
+                break
     except Exception as e:
-        print(f"[Neural Core] ⚠️ Generation error: {e}", flush=True)
-        return rewrite_fallback(text, mood), False
+        print(f"[Jarvis Prime] ❌ LLM generation failed: {e}", flush=True)
+        raise
 
-    bullets = _postprocess(out, mood, allow_profanity)
-    if not bullets:
-        return rewrite_fallback(text, mood), False
-    return bullets, True
+    text_out = "".join(out_chunks).strip()
+    # Minimal post-trim
+    if not text_out:
+        # If empty, return the original (polished path will still run)
+        return text
+    return text_out
 
-# ---- Fallback & postprocess --------------------------------------------------
-def rewrite_fallback(text: str, mood: str) -> str:
-    bullet = _bullet_for(mood)
-    base = (text or "").strip().replace("\r", "")
-    lines = []
-    for raw in base.splitlines():
-        s = raw.strip()
-        if not s:
-            continue
-        if not s.startswith(bullet + " "):
-            s = f"{bullet} {s}"
-        lines.append(_cut(s, MAX_LINE_CHARS))
-        if len(lines) >= MAX_LINES:
-            break
-    if not lines:
-        lines = [f"{bullet} (no content)"]
-    return _clean_if_needed("\n".join(lines), _cfg_allow_profanity())
 
-def _postprocess(gen: str, mood: str, allow_profanity: bool) -> str:
-    if not gen:
-        return ""
-    m = re.search(r"(•|✨|⚡|😏|▣)\s", gen)
-    if m:
-        gen = gen[m.start():]
-    lines: List[str] = []
-    for raw in gen.splitlines():
-        s = raw.strip()
-        if not s:
-            continue
-        if re.search(r"(REWRITE:|MESSAGE:|Example|Tone:|Rules:|Output ONLY)", s, re.I):
-            continue
-        if not re.match(r"^(•|✨|⚡|😏|▣)\s", s):
-            s = f"{_bullet_for(mood)} {s}"
-        lines.append(_cut(s, MAX_LINE_CHARS))
-        if len(lines) >= MAX_LINES:
-            break
-    return _clean_if_needed("\n".join(lines), allow_profanity) if lines else ""
+def _envflag(name: str) -> bool:
+    v = os.getenv(name, "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
-# ---- Main: allow run.sh to prefetch (and optional self-test) -----------------
+
 if __name__ == "__main__":
-    try:
-        dest = prefetch_model()
-        if dest:
-            print(f"[{BOT_NAME}] 🔧 Prefetch complete: {dest}", flush=True)
-        else:
-            print(f"[{BOT_NAME}] ⚠️ Prefetch skipped.", flush=True)
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}", flush=True)
-
-    # Optional quick self-test if model is present
-    model = _load_model()
-    if model is not None:
+    # Optional CLI prefetch support used by run.sh
+    if _envflag("LLM_ENABLED") or _envflag("llm_enabled"):
+        print("[Jarvis Prime] 🔮 Prefetching LLM model...", flush=True)
         try:
-            out, used = rewrite_with_info("Boot self-test: say hello in bullet points.", mood=os.getenv("CHAT_MOOD", "serious"))
-            print(f"[Neural Core] SELF-TEST used_llm={used} chars={len(out)}", flush=True)
+            url = os.getenv("LLM_MODEL_URL", os.getenv("llm_model_url", ""))
+            path = os.getenv("LLM_MODEL_PATH", os.getenv("llm_model_path", ""))
+            sha = os.getenv("LLM_MODEL_SHA256", os.getenv("llm_model_sha256", ""))
+
+            prio_raw = os.getenv("LLM_MODELS_PRIORITY", os.getenv("llm_models_priority", ""))
+            prio = [p.strip() for p in prio_raw.split(",") if p.strip()] if prio_raw else None
+
+            # Ensure at least a default path so we don't try to write to CWD
+            if not path:
+                path = str(Path("/share/jarvis_prime/models") / CATALOG[0]["filename"])
+            # If only repo URL given, build full URL with default q4_k_m file where possible
+            if url and url.endswith("/resolve/main"):
+                # Not expected but just in case
+                url = _hf_resolve(CATALOG[0]["repo"], CATALOG[0]["filename"])
+
+            local, _ = _ensure_model(url, path, sha, prio)
+            print(f"[Jarvis Prime] ✅ Prefetch complete: {local}", flush=True)
         except Exception as e:
-            print(f"[Neural Core] SELF-TEST generation failed: {e}", flush=True)
+            print(f"[Jarvis Prime] ⚠️ Prefetch failed: {e}", flush=True)
+    else:
+        print("[Jarvis Prime] ℹ️ LLM is disabled; skipping prefetch.", flush=True)

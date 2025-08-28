@@ -1,58 +1,94 @@
-import json
-import time
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+# /app/llm_memory.py - 24h rolling memory store
+import os, json, datetime, re, threading
 
-MEM_DIR = Path("/share/jarvis_prime/memory")
-EVENTS = MEM_DIR / "events.json"
+BASE = os.getenv("JARVIS_SHARE_BASE", "/share/jarvis_prime")
+MEM_DIR = os.path.join(BASE, "memory")
+MEM_FILE = os.path.join(MEM_DIR, "events.json")
+_os_lock = threading.RLock()
 
-def _now() -> int:
-    return int(time.time())
-
-def ensure_store() -> None:
-    MEM_DIR.mkdir(parents=True, exist_ok=True)
-    if not EVENTS.exists():
-        EVENTS.write_text("[]", encoding="utf-8")
-
-def _read() -> List[Dict[str, Any]]:
-    ensure_store()
+def _load():
     try:
-        return json.loads(EVENTS.read_text(encoding="utf-8"))
+        with open(MEM_FILE, "r") as f:
+            return json.load(f)
     except Exception:
         return []
 
-def _write(rows: List[Dict[str, Any]]) -> None:
-    EVENTS.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+def _save(events):
+    os.makedirs(MEM_DIR, exist_ok=True)
+    with open(MEM_FILE, "w") as f:
+        json.dump(events, f, ensure_ascii=False, indent=2)
 
-def prune_older_than(hours: int = 24) -> None:
-    rows = _read()
-    cutoff = _now() - hours * 3600
-    rows = [r for r in rows if isinstance(r, dict) and r.get("ts", 0) >= cutoff]
-    _write(rows)
+def log_event(kind: str, source: str, title: str, body: str, meta: dict):
+    ev = {
+        "ts": datetime.datetime.utcnow().replace(microsecond=0).isoformat()+"Z",
+        "kind": (kind or "").lower(),
+        "source": source or "",
+        "title": title or "",
+        "body": body or "",
+        "meta": meta or {},
+    }
+    with _os_lock:
+        events = _load()
+        events.append(ev)
+        _save(events)
 
-def log_event(source: str, title: str, body: str, tags: Optional[List[str]] = None, hours: int = 24) -> None:
-    ensure_store()
-    prune_older_than(hours)
-    rows = _read()
-    rows.append({
-        "ts": _now(),
-        "source": source,
-        "title": title,
-        "body": body,
-        "tags": tags or []
-    })
-    _write(rows)
+def prune(older_than_hours=24):
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=older_than_hours)
+    with _os_lock:
+        events = _load()
+        keep = []
+        for e in events:
+            try:
+                ts = datetime.datetime.fromisoformat(e.get("ts","").replace("Z",""))
+            except Exception:
+                continue
+            if ts >= cutoff:
+                keep.append(e)
+        _save(keep)
 
-def query_today(keyword_any: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-    ensure_store()
-    prune_older_than(24)
-    rows = _read()
-    start = _now() - 24 * 3600
-    out = [r for r in rows if r.get("ts", 0) >= start]
-    if keyword_any:
-        low = [k.lower() for k in keyword_any]
-        def match(r):
-            blob = f"{r.get('title','')} {r.get('body','')}".lower()
-            return any(k in blob for k in low)
-        out = [r for r in out if match(r)]
-    return out
+def _today_window():
+    now = datetime.datetime.now()
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start, now
+
+def summarize_today() -> str:
+    start, end = _today_window()
+    events = _load()
+    today = []
+    for e in events:
+        try:
+            ts = datetime.datetime.fromisoformat(e.get("ts","").replace("Z",""))
+        except Exception:
+            continue
+        if start <= ts <= end:
+            today.append(e)
+    if not today:
+        return "Nothing notable yet today."
+    counts = {}
+    for e in today:
+        k = e.get("kind") or "other"
+        counts[k] = counts.get(k,0)+1
+    bullets = [f"- {k}: {v}" for k,v in sorted(counts.items(), key=lambda x:-x[1])[:6]]
+    return "Today so far:\n" + "\n".join(bullets)
+
+ERROR_PATTERNS = re.compile(r"\b(down|failed|error|unhealthy|alert|timeout)\b", re.I)
+
+def what_broke_today() -> str:
+    start, end = _today_window()
+    events = _load()
+    bad = []
+    for e in events:
+        try:
+            ts = datetime.datetime.fromisoformat(e.get("ts","").replace("Z",""))
+        except Exception:
+            continue
+        if start <= ts <= end:
+            body = (e.get("body") or "") + " " + (e.get("title") or "")
+            if ERROR_PATTERNS.search(body):
+                bad.append(e)
+    if not bad:
+        return "No failures reported today."
+    lines = []
+    for e in bad[-12:]:
+        lines.append(f"- {e.get('ts')} • {e.get('source') or e.get('kind')} • {e.get('title')[:80]}")
+    return "Issues today:\n" + "\n".join(lines)
