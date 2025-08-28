@@ -110,7 +110,7 @@ class JarvisSMTPHandler:
         mood = self.mood or "serious"
 
         # Wake-word or LLM unavailable -> beautify only
-        if _wake_word_present(title, body) or not (self.llm_enabled and _llm and hasattr(_llm, "rewrite")):
+        if _wake_word_present(title, body) or not (self.llm_enabled and _llm and hasattr(_llm, "rewrite_with_info")):
             text, bx = beautify_message(title, body, mood=mood, source_hint="mail")
             if self.show_engine_footer:
                 text = f"{text}\n[Beautify fallback]"
@@ -118,17 +118,23 @@ class JarvisSMTPHandler:
 
         def _call():
             try:
-                rewritten = _llm.rewrite(
+                rewritten, used = _llm.rewrite_with_info(
                     text=body,
                     mood=mood,
                     timeout=self.llm_timeout,
                     cpu_limit=self.llm_cpu,
                     model_path=self.llm_model_path,
                 )
-                t, bx = beautify_message(title, rewritten, mood=mood, source_hint="mail")
-                if self.show_engine_footer:
-                    t = f"{t}\n[Neural Core ✓]"
-                return t, bx
+                if used:
+                    t, bx = beautify_message(title, rewritten, mood=mood, source_hint="mail")
+                    if self.show_engine_footer:
+                        t = f"{t}\n[Neural Core ✓]"
+                    return t, bx
+                else:
+                    t, bx = beautify_message(title, body, mood=mood, source_hint="mail")
+                    if self.show_engine_footer:
+                        t = f"{t}\n[Beautify fallback]"
+                    return t, bx
             except Exception:
                 t, bx = beautify_message(title, body, mood=mood, source_hint="mail")
                 if self.show_engine_footer:
