@@ -25,7 +25,7 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
 LLM_TOP_P      = float(os.getenv("LLM_TOP_P", "0.9"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "320"))
 
-# Verbose logging so we can prove it's firing
+# Loud logs so you can see it *fire*
 VERBOSE = True
 
 # ============================ Globals =============================
@@ -105,8 +105,8 @@ def _load_model(model_path: str) -> bool:
 
     try:
         from ctransformers import AutoModelForCausalLM
+        size = p.stat().st_size
         if VERBOSE:
-            size = p.stat().st_size
             print(f"[Neural Core] Loading GGUF: {p} (size={size} bytes)")
         t0 = time.time()
         _MODEL = AutoModelForCausalLM.from_pretrained(
@@ -182,44 +182,8 @@ def _render_generic(text: str, mood: str, allow_profanity: bool) -> str:
     return _clean_if_needed(out, allow_profanity)
 
 # =========================== Prompting ============================
-def _examples(mood: str) -> str:
-    b = _bullet_for(mood)
-    if mood == "angry":
-        return (
-            f"{b} APT finished on 10.0.0.249 — nothing to upgrade.\n"
-            f"{b} Reboot? Nope.\n"
-            f"{b} System ready. Move on.\n"
-            f"{b} ✅ Done. No BS."
-        )
-    if mood == "sarcastic":
-        return (
-            f"{b} APT ran on 10.0.0.249. Riveting.\n"
-            f"{b} Packages upgraded: none. Shocking.\n"
-            f"{b} Reboot required: no — try to contain your excitement.\n"
-            f"{b} ✅ System ready. Obviously."
-        )
-    if mood == "playful":
-        return (
-            f"{b} APT spruced up 10.0.0.249.\n"
-            f"{b} Upgrades: none — already shiny!\n"
-            f"{b} Reboot? Nah, we’re chill.\n"
-            f"{b} ✅ All set. High-five!"
-        )
-    if mood == "hacker-noir":
-        return (
-            f"{b} Host 10.0.0.249 checked the depot. Quiet night.\n"
-            f"{b} No packages moved. No reboot.\n"
-            f"{b} The machine hums, waiting.\n"
-            f"{b} ✅ Logged."
-        )
-    return (
-        f"{b} APT completed on 10.0.0.249.\n"
-        f"{b} Packages upgraded: none.\n"
-        f"{b} Reboot required: no.\n"
-        f"{b} ✅ System ready."
-    )
-
 def _build_prompt(text: str, mood: str, allow_profanity: bool) -> str:
+    """Instruction-only prompt (no domain examples, no canned content)."""
     tone = {
         "serious": "clear, terse, professional",
         "sarcastic": "dry, witty, slightly mocking (not cruel)",
@@ -229,16 +193,19 @@ def _build_prompt(text: str, mood: str, allow_profanity: bool) -> str:
     }.get(mood, "clear and concise")
     profanity = "Profanity allowed if it fits the tone." if allow_profanity else "Do NOT use profanity."
     bullet = _bullet_for(mood)
-    fewshot = _examples(mood)
-    # Keep the prompt *very* tight so TinyLlama doesn’t parrot instructions.
+
+    # Tight instructions so TinyLlama doesn’t parrot instructions.
     return (
-        "You are Jarvis Prime. Rewrite the MESSAGE for a homelab owner.\n"
+        "You are Jarvis Prime. Rewrite the following MESSAGE for a homelab owner.\n"
         f"Tone: {tone}. {profanity}\n"
-        f"Output ONLY short bullets using this prefix: '{bullet}'. No headings, no numbering, no explanations.\n"
-        "Keep 4–8 bullets. Be concrete. Keep facts; do not invent. End with a quick closing quip.\n\n"
-        "Example:\n"
-        f"{fewshot}\n\n"
-        f"MESSAGE:\n{text}\n"
+        f"Rules:\n"
+        f"- Output ONLY short bullet lines; each MUST start with '{bullet} '.\n"
+        "- No headings. No numbering. No explanations. No repeated instructions.\n"
+        "- Keep 4–8 bullets. Keep concrete facts from the message; do not invent.\n"
+        "- Use vivid word choice to ooze the mood.\n"
+        "- End with a tight closing quip as the last bullet.\n\n"
+        "MESSAGE:\n"
+        f"{text}\n"
         "REWRITE:\n"
     )
 
@@ -299,7 +266,7 @@ def rewrite(
         # Drop anything that looks like instructions or echoes
         if re.match(r"^\d+\.\s", s):                 # numbered lists
             continue
-        if re.search(r"(REWRITE:|MESSAGE:|Example|Tone:|Output ONLY)", s, re.I):
+        if re.search(r"(REWRITE:|MESSAGE:|Example|Tone:|Rules:|Output ONLY)", s, re.I):
             continue
         # Ensure each line starts with the mood bullet
         if not re.match(r"^(•|✨|⚡|😏|▣)\s", s):
