@@ -1,25 +1,25 @@
 {
-  "name":   "Jarvis Prime",
-  "version":   "1.0.2",
-  "slug":   "jarvis_prime",
-  "description":   "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, personalities, optional Gotify/ntfy proxy, and LLM + memory personality engine.",
-  "arch":   [
+  "name": "Jarvis Prime",
+  "version": "1.0.3",
+  "slug": "jarvis_prime",
+  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, personalities, optional Gotify/ntfy proxy, and LLM + memory personality engine.",
+  "arch": [
     "aarch64",
     "amd64",
     "armv7"
   ],
-  "startup":   "services",
-  "boot":   "auto",
-  "init":   false,
-  "ingress":   false,
-  "ports":   {
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "ingress": false,
+  "ports": {
     "2525/tcp": 2525,
     "2580/tcp": 2580
   },
-  "map":   [
+  "map": [
     "share:rw"
   ],
-  "options":   {
+  "options": {
     "bot_name": "Jarvis Prime",
     "bot_icon": "🧠",
     "gotify_url": "http://10.0.0.99:8091",
@@ -97,9 +97,13 @@
     "llm_memory_enabled": true,
     "personality_persistent": true,
     "ollama_base_url": "http://127.0.0.1:11434",
-    "llm_models_priority": ["qwen2.5:0.5b-instruct","phi:2","tinyllama:1.1b-chat"]
+    "llm_models_priority": [
+      "qwen2.5:0.5b-instruct",
+      "phi:2",
+      "tinyllama:1.1b-chat"
+    ]
   },
-  "schema":   {
+  "schema": {
     "bot_name": "str",
     "bot_icon": "str",
     "gotify_url": "str",
@@ -177,6 +181,6 @@
     "llm_memory_enabled": "bool",
     "personality_persistent": "bool",
     "ollama_base_url": "str",
-    "llm_models_priority": "list"
+    "llm_models_priority": "list(str)"
   }
 }
