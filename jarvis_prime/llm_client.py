@@ -1,448 +1,104 @@
-#!/usr/bin/env python3
-"""
-Neural Core (rules-first, optional local GGUF via ctransformers)
-
-- Extract real facts from Sonarr/Radarr/APT/Host messages.
-- Mood-forward bullets with variety (no repetitive closers).
-- Falls back to Generic if Sonarr/Radarr fields are missing (fixes "Test Notification").
-- Profanity optional (reads personality_allow_profanity from /data/options.json or env).
-
-Env/Options:
-  personality_allow_profanity: true|false
-  LLM_EXTRA_BULLET: true|false (default false)
-  LLM_DETAIL_LEVEL: rich|normal (default rich)
-"""
-
+# /app/llm_client.py
 from __future__ import annotations
-import os, re, json, hashlib
+
+import os
+import time
+import hashlib
+import tempfile
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional
 
-# ---------- Tunables ----------
-USE_LLM_EXTRA_BULLET = os.getenv("LLM_EXTRA_BULLET", "0").lower() in ("1", "true", "yes")
-DETAIL_LEVEL = os.getenv("LLM_DETAIL_LEVEL", "rich").lower()
-MAX_LINES = 10 if DETAIL_LEVEL == "rich" else 6
-MAX_LINE_CHARS = 160
+import requests
 
-_MODEL = None
-_MODEL_PATH: Optional[Path] = None
+# Soft dep: ctransformers
+try:
+    from ctransformers import AutoModelForCausalLM
+except Exception:  # pragma: no cover
+    AutoModelForCausalLM = None
 
-# ---------- Config ----------
-def _cfg_allow_profanity() -> bool:
-    env = os.getenv("PERSONALITY_ALLOW_PROFANITY")
-    if env is not None:
-        return env.strip().lower() in ("1", "true", "yes", "on")
-    try:
-        with open("/data/options.json", "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-            return bool(cfg.get("personality_allow_profanity", False))
-    except Exception:
-        return False
+BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
-# ---------- Optional model load ----------
-def _resolve_model_path(model_path: str) -> Path:
-    if model_path:
-        p = Path(os.path.expandvars(model_path.strip()))
-        if p.exists():
-            return p
-    base = Path("/share/jarvis_prime/models")
-    if base.exists():
-        ggufs = sorted(base.glob("*.gguf"))
-        if ggufs:
-            return ggufs[0]
-    raise FileNotFoundError("No GGUF model found")
+MODEL_PATH  = os.getenv("LLM_MODEL_PATH", "/share/jarvis_prime/models/tinyllama-1.1b-chat.Q4_K_M.gguf")
+MODEL_URL   = os.getenv("LLM_MODEL_URL", "")
+MODEL_SHA256 = (os.getenv("LLM_MODEL_SHA256", "") or "").lower()
 
-def _load_model(path: Path):
-    global _MODEL, _MODEL_PATH
-    if _MODEL is not None and _MODEL_PATH == path:
-        return
-    try:
-        from ctransformers import AutoModelForCausalLM
-    except Exception as e:
-        print(f"[Neural Core] ctransformers not available: {e}")
-        return
-    print(f"[Neural Core] Loading model: {path}")
-    _MODEL = AutoModelForCausalLM.from_pretrained(
-        str(path.parent), model_file=path.name, model_type="llama", gpu_layers=0
+_model = None
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def prefetch_model() -> Optional[Path]:
+    target = Path(MODEL_PATH)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        return target
+    if not MODEL_URL:
+        print(f"[{BOT_NAME}] ⚠️ LLM_MODEL_URL not set; cannot download model.")
+        return None
+    print(f"[{BOT_NAME}] 🔮 Prefetching LLM model…")
+    r = requests.get(MODEL_URL, stream=True, timeout=60)
+    r.raise_for_status()
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        for chunk in r.iter_content(1024 * 1024):
+            tmp.write(chunk)
+        tmp_path = Path(tmp.name)
+    if MODEL_SHA256:
+        actual = _sha256_file(tmp_path)
+        if actual.lower() != MODEL_SHA256.lower():
+            tmp_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Model SHA256 mismatch (expected {MODEL_SHA256}, got {actual})")
+    tmp_path.replace(target)
+    print(f"[{BOT_NAME}] ✅ Model downloaded -> {target}")
+    return target
+
+def _load_model():
+    global _model
+    if _model is not None:
+        return _model
+    if AutoModelForCausalLM is None:
+        raise RuntimeError("ctransformers is not installed.")
+    path = Path(MODEL_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"Model not found at {path}")
+    print(f"[{BOT_NAME}] 🧠 Loading model: {path.name}")
+    _model = AutoModelForCausalLM.from_pretrained(
+        str(path),
+        model_type="llama",
+        gpu_layers=0,
+        context_length=2048,
     )
-    _MODEL_PATH = path
-    print("[Neural Core] Model ready")
+    return _model
 
-# ---------- Utils ----------
-def _cut(s: str, n: int) -> str:
-    s = (s or "").strip()
-    return (s[: n - 1] + "…") if len(s) > n else s
-
-# profanity scrub only when profanity is NOT allowed
-_PROF_RE = re.compile(
-    r"\b(fuck|f\*+k|f\W?u\W?c\W?k|shit|bitch|cunt|asshole|motherf\w+|dick|prick|whore)\b",
-    re.I,
-)
-def _clean_if_needed(text: str, allow_profanity: bool) -> str:
-    return text if allow_profanity else _PROF_RE.sub("—", text or "")
-
-def _dedupe(lines: List[str], limit: int) -> List[str]:
-    out, seen = [], set()
-    for ln in lines:
-        ln = (ln or "").strip()
-        if not ln:
-            continue
-        k = ln.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(_cut(ln, MAX_LINE_CHARS))
-        if len(out) >= limit:
-            break
-    return out
-
-def _variety(seed: str, options: List[str]) -> str:
-    if not options:
-        return ""
-    h = int(hashlib.md5(seed.encode("utf-8")).hexdigest(), 16)
-    return options[h % len(options)]
-
-# ---------- Light extraction ----------
-IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-URL_RE = re.compile(r"https?://\S+", re.I)
-
-def _links(text: str) -> List[str]:
-    return URL_RE.findall(text or "")[:4]
-
-def _kv(text: str, key: str) -> Optional[str]:
-    pat = re.compile(rf"{key}\s*[:=]\s*(.+?)(?:[,;\n]|$)", re.I)
-    m = pat.search(text or "")
-    return m.group(1).strip() if m else None
-
-def _kv_any(text: str, *keys: str) -> Optional[str]:
-    for k in keys:
-        v = _kv(text, k)
-        if v:
-            return v
-    return None
-
-def _num_after(text: str, word: str) -> Optional[str]:
-    m = re.search(rf"{word}\s*[:=]?\s*(\d+)\b", text or "", re.I)
-    return m.group(1) if m else None
-
-def _list_after(text: str, label: str) -> List[str]:
-    m = re.search(rf"{label}\s*[:=]\s*(.+)$", text or "", re.I | re.M)
-    if not m:
-        return []
-    raw = m.group(1)
-    parts = re.split(r"[;,•\u2022]\s+|\s{2,}|\s-\s", raw)
-    return [p.strip() for p in parts if p.strip()][:12]
-
-def _errors(text: str) -> List[str]:
+def rewrite_text(prompt: str, mood: str = "serious", timeout_s: int = 5) -> str:
+    """
+    Quick, streaming generation with a hard timeout (best-effort).
+    """
+    model = _load_model()
+    system = (
+        "You polish infrastructure alerts for a home server admin. "
+        "Keep ALL key facts (titles, IPs, versions, counts, links, times). "
+        "Tone matches mood (serious/angry/playful/sarcastic/hacker-noir). "
+        "Write short, clear, useful lines."
+    )
+    tpl = f"[SYSTEM]{system}\n[MOOD]{mood}\n[INPUT]{prompt}\n[OUTPUT]"
+    t0 = time.time()
     out = []
-    for ln in (text or "").splitlines():
-        if re.search(r"\b(error|failed|failure|timeout|unavailable|not\s+available|down)\b", ln, re.I):
-            out.append(ln.strip())
-            if len(out) >= 4:
-                break
-    return out
+    for tok in model(tpl, stream=True):
+        out.append(tok)
+        if (time.time() - t0) > timeout_s:
+            break
+    text = "".join(out).strip()
+    if "[OUTPUT]" in text:
+        text = text.split("[OUTPUT]", 1)[-1].strip()
+    return text or prompt
 
-def _first_line(text: str) -> str:
-    for ln in (text or "").splitlines():
-        if ln.strip():
-            return ln.strip()
-    return ""
-
-# ---------- Extractors ----------
-def _extract_common(text: str) -> Dict[str, object]:
-    return {
-        "poster": _kv_any(text, "poster", "image", "cover") or "",
-        "links": _links(text),
-        "ips": IP_RE.findall(text or "")[:4],
-        "errors": _errors(text),
-        "host": _kv_any(text, "host") or "",
-        "title": _kv_any(text, "title") or "",
-    }
-
-def _extract_sonarr(text: str) -> Dict[str, object]:
-    d = _extract_common(text)
-    d.update({
-        "event": _kv_any(text, "event") or ("episode downloaded" if "download" in (text or "").lower() else ""),
-        "show": _kv_any(text, "show", "tv show") or "",
-        "season": _num_after(text, "season") or "",
-        "episode": _num_after(text, "episode") or "",
-        "ep_title": _kv_any(text, "episode title", "title") or "",
-        "quality": _kv_any(text, "quality") or "",
-        "size": _kv_any(text, "size") or "",
-        "release": _kv_any(text, "release group", "group") or "",
-        "path": _kv_any(text, "path", "folder", "library path") or "",
-        "indexer": _kv_any(text, "indexer") or "",
-    })
-    return d
-
-def _extract_radarr(text: str) -> Dict[str, object]:
-    d = _extract_common(text)
-    d.update({
-        "event": _kv_any(text, "event") or ("movie downloaded" if "download" in (text or "").lower() else ""),
-        "movie": _kv_any(text, "movie", "film") or "",
-        "year": _num_after(text, "year") or "",
-        "quality": _kv_any(text, "quality") or "",
-        "size": _kv_any(text, "size") or "",
-        "release": _kv_any(text, "release group", "group") or "",
-        "path": _kv_any(text, "path", "folder", "library path") or "",
-        "indexer": _kv_any(text, "indexer") or "",
-        "runtime": _kv_any(text, "runtime") or "",
-    })
-    return d
-
-def _extract_apt(text: str) -> Dict[str, object]:
-    d = _extract_common(text)
-    if not d["host"]:
-        d["host"] = (d["ips"][0] if d["ips"] else "")
-    d.update({
-        "finished": bool(re.search(r"\bapt\b.*\b(maintenance|update).*(finished|done|complete)", text or "", re.I)),
-        "upgraded": _kv_any(text, "packages upgraded", "package(s) upgraded", "upgraded") or "",
-        "reboot": bool(re.search(r"\breboot\s+required\b", text or "", re.I)),
-        "kernel": _kv_any(text, "kernel") or "",
-        "notes": _list_after(text, "notes"),
-        "pkg_list": _list_after(text, "packages") or _list_after(text, "upgraded packages"),
-    })
-    return d
-
-def _extract_host_status(text: str) -> Dict[str, object]:
-    d = _extract_common(text)
-    m = re.search(r"CPU\s*Load.*?:\s*([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)", text or "", re.I)
-    d["cpu_load"] = m.groups() if m else ()
-    m = re.search(r"Memory:\s*([\d\.]+\wB)\s+total,\s*([\d\.]+\wB)\s+used", text or "", re.I)
-    d["mem"] = m.groups() if m else ()
-    m = re.search(r"Disk\s*\(/.*?\):\s*([\d\.]+\w?)\s+total,\s*([\d\.]+\w?)\s+used.*?(\d+%|\d+\s*%|[\d\.]+\w?\s+free)", text or "", re.I)
-    d["disk"] = m.groups() if m else ()
-    d["services_up"] = len(re.findall(r"\bUp\s+\d+\s+(?:day|days|h|hours|m|min|minutes)", text or "", re.I))
-    return d
-
-# ---------- Mood ----------
-def _bullet_for(mood: str) -> str:
-    return {
-        "serious": "•",
-        "sarcastic": "😏",
-        "playful": "✨",
-        "hacker-noir": "▣",
-        "angry": "⚡",
-    }.get(mood, "•")
-
-def _closer(mood: str, seed: str, allow_profanity: bool) -> str:
-    choices = {
-        "angry": ["Done.", "Done. No BS.", "Handled.", "We’re good."],
-        "sarcastic": ["Noted.", "Obviously.", "Ground-breaking.", "Shocking."],
-        "playful": ["Neat!", "Nice!", "All set!", "Wrapped!"],
-        "hacker-noir": ["Logged.", "Filed.", "In the ledger.", "Trace saved."],
-        "serious": ["Complete.", "All set.", "OK.", "Done."],
-    }.get(mood, ["Done."])
-    line = _variety(seed, choices)
-    if allow_profanity and mood == "angry":
-        alt = _variety(seed, ["Done. No BS.", "Done."] )
-        line = alt
-    return line
-
-# ---------- Renderers ----------
-def _render_sonarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
-    b = _bullet_for(mood)
-    d = _extract_sonarr(text)
-
-    # Only treat as Sonarr if we have strong signals
-    strong = bool(d["show"] or (d["season"] and d["episode"]) or d["path"])
-    if not strong:
-        return _render_generic(text, mood, allow_profanity)
-
-    out: List[str] = []
-    if d["show"]:
-        se = ""
-        if d["season"]: se += f"S{d['season']}"
-        if d["episode"]: se += f"E{d['episode']}"
-        label = f"{d['show']} — {se}" if se else d["show"]
-        out.append(f"{b} 📺 {label}")
-    if d["ep_title"]:
-        out.append(f"{b} 🧾 {_cut(d['ep_title'], 150)}")
-    if d["quality"] or d["size"]:
-        combo = " | ".join(x for x in [d['quality'], d['size']] if x)
-        out.append(f"{b} 🎚️ {combo}")
-    if d["release"]:
-        out.append(f"{b} 🏷️ {d['release']}")
-    if d["path"]:
-        out.append(f"{b} 📂 {_cut(d['path'], 150)}")
-    if d["indexer"]:
-        out.append(f"{b} 🕵️ Indexer: {d['indexer']}")
-    if d["poster"]:
-        out.append(f"{b} 🖼️ {d['poster']}")
-    if d["links"]:
-        out.append(f"{b} 🔗 {d['links'][0]}")
-    if d["errors"]:
-        out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-
-    tail = _closer(mood, seed=text, allow_profanity=allow_profanity)
-    if d["event"]:
-        out.append(f"{b} ✅ {d['event'].capitalize()} {tail}")
-    else:
-        out.append(f"{b} ✅ Processed. {tail}")
-    return out
-
-def _render_radarr(text: str, mood: str, allow_profanity: bool) -> List[str]:
-    b = _bullet_for(mood)
-    d = _extract_radarr(text)
-
-    strong = bool(d["movie"] or d["path"])
-    if not strong:
-        return _render_generic(text, mood, allow_profanity)
-
-    out: List[str] = []
-    title = " ".join(x for x in [d["movie"], f"({d['year']})" if d["year"] else ""] if x).strip()
-    if title:
-        out.append(f"{b} 🎬 {title}")
-    if d["quality"] or d["size"]:
-        combo = " | ".join(x for x in [d['quality'], d['size']] if x)
-        out.append(f"{b} 🎚️ {combo}")
-    if d["release"]:
-        out.append(f"{b} 🏷️ {d['release']}")
-    if d["runtime"]:
-        out.append(f"{b} ⏱️ {d['runtime']}")
-    if d["path"]:
-        out.append(f"{b} 📂 {_cut(d['path'], 150)}")
-    if d["indexer"]:
-        out.append(f"{b} 🕵️ Indexer: {d['indexer']}")
-    if d["poster"]:
-        out.append(f"{b} 🖼️ {d['poster']}")
-    if d["links"]:
-        out.append(f"{b} 🔗 {d['links'][0]}")
-    if d["errors"]:
-        out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-    out.append(f"{b} ✅ Library updated. {_closer(mood, text, allow_profanity)}")
-    return out
-
-def _render_apt(text: str, mood: str, allow_profanity: bool) -> List[str]:
-    b = _bullet_for(mood)
-    d = _extract_apt(text)
-    out: List[str] = []
-    host = d["host"] or (d["ips"][0] if d["ips"] else "")
-    if host:
-        out.append(f"{b} 🛠️ APT maintenance finished on {host}")
-    else:
-        out.append(f"{b} 🛠️ APT maintenance finished")
-    if d["upgraded"]:
-        out.append(f"{b} 📦 Packages upgraded: {d['upgraded']}")
-    if d["pkg_list"]:
-        out.append(f"{b} 📦 {_cut(', '.join(d['pkg_list']), 150)}")
-    if d["kernel"]:
-        out.append(f"{b} 🧬 Kernel: {d['kernel']}")
-    if d["reboot"]:
-        out.append(f"{b} 🔁 Reboot required")
-    if d["errors"]:
-        out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-    if d["links"]:
-        out.append(f"{b} 🔗 {d['links'][0]}")
-    out.append(f"{b} ✅ System ready. {_closer(mood, text, allow_profanity)}")
-    return out
-
-def _render_host_status(text: str, mood: str, allow_profanity: bool) -> List[str]:
-    b = _bullet_for(mood)
-    d = _extract_host_status(text)
-    out: List[str] = []
-    if d["cpu_load"]:
-        out.append(f"{b} 🧮 Load(1/5/15): {'/'.join(d['cpu_load'])}")
-    if d["mem"]:
-        out.append(f"{b} 🧠 Mem: total {d['mem'][0]}, used {d['mem'][1]}")
-    if d["disk"]:
-        out.append(f"{b} 💽 Root: total {d['disk'][0]}, used {d['disk'][1]}, free {d['disk'][2]}")
-    if d["services_up"]:
-        out.append(f"{b} 🧩 Services up: ~{d['services_up']}")
-    if d["errors"]:
-        out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-    out.append(f"{b} ✅ Host healthy. {_closer(mood, text, allow_profanity)}")
-    return out
-
-def _render_generic(text: str, mood: str, allow_profanity: bool) -> List[str]:
-    b = _bullet_for(mood)
-    d = _extract_common(text)
-    out: List[str] = []
-    first = _first_line(text)
-    if first:
-        out.append(f"{b} {_cut(first, 150)}")
-    if d["host"]:
-        out.append(f"{b} 🖥️ Host: {d['host']}")
-    if d["ips"]:
-        out.append(f"{b} 🌐 IP: {d['ips'][0]}")
-    if d["errors"]:
-        out.append(f"{b} ⚠️ {_cut('; '.join(d['errors']), 150)}")
-    if d["poster"]:
-        out.append(f"{b} 🖼️ {d['poster']}")
-    if d["links"]:
-        out.append(f"{b} 🔗 {d['links'][0]}")
-    out.append(f"{b} ✅ Noted. {_closer(mood, text, allow_profanity)}")
-    return out
-
-# ---------- Optional: one concise LLM bullet ----------
-def _llm_extra(text: str, mood: str, allow_profanity: bool) -> List[str]:
-    if not USE_LLM_EXTRA_BULLET or _MODEL is None:
-        return []
+if __name__ == "__main__":
+    # Allow run.sh to call this file to prefetch the model.
     try:
-        tone = {
-            "serious": "concise",
-            "sarcastic": "dry",
-            "playful": "friendly",
-            "hacker-noir": "terse",
-            "angry": "blunt",
-        }.get(mood, "concise")
-        prompt = (
-            "Write ONE ultra-short bullet (<=160 chars) summarizing the MESSAGE. "
-            "No hallucinations. "
-            + ("Profanity ok if natural.\n" if allow_profanity else "No profanity.\n")
-            + f"Tone: {tone}\nMESSAGE:\n{text}\nBullet:\n• "
-        )
-        out = _MODEL(prompt, max_new_tokens=120, temperature=0.2, top_p=0.9)
-        line = str(out).strip()
-        line = re.sub(r"^(bullet:|message:)\s*", "", line, flags=re.I).strip()
-        if not line:
-            return []
-        return [f"{_bullet_for(mood)} {_cut(line, MAX_LINE_CHARS)}"]
+        prefetch_model()
     except Exception as e:
-        print(f"[Neural Core] Extra bullet error: {e}")
-        return []
-
-# ---------- Public API ----------
-def rewrite(
-    text: str,
-    mood: str = "serious",
-    timeout: int = 5,
-    cpu_limit: int = 70,
-    models_priority=None,
-    base_url: str = "",
-    model_path: str = "",
-) -> str:
-    text = text or ""
-    allow_profanity = _cfg_allow_profanity()
-
-    # Optional local model load (not required)
-    try:
-        path = _resolve_model_path(model_path)
-        _load_model(path)
-    except Exception as e:
-        print(f"[Neural Core] Model optional: {e}")
-
-    try:
-        tlow = text.lower()
-        if "sonarr" in tlow:
-            # only if real fields exist, else generic
-            lines = _render_sonarr(text, mood, allow_profanity)
-        elif "radarr" in tlow:
-            lines = _render_radarr(text, mood, allow_profanity)
-        elif "apt" in tlow or "maintenance" in tlow:
-            if "cpu load" in tlow or "memory:" in tlow or "docker:" in tlow:
-                lines = _render_host_status(text, mood, allow_profanity)
-            else:
-                lines = _render_apt(text, mood, allow_profanity)
-        elif "cpu load" in tlow or "memory:" in tlow or "docker:" in tlow:
-            lines = _render_host_status(text, mood, allow_profanity)
-        else:
-            lines = _render_generic(text, mood, allow_profanity)
-
-        lines.extend(_llm_extra(text, mood, allow_profanity))
-        lines = _dedupe(lines, MAX_LINES)
-        out = "\n".join(lines) if lines else text
-        return _clean_if_needed(out, allow_profanity)
-    except Exception as e:
-        print(f"[Neural Core] Compose error: {e}")
-        return _clean_if_needed(text, allow_profanity)
+        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}")
