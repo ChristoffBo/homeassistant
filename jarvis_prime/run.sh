@@ -74,7 +74,10 @@ export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
 # LLM (built-in)
 LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
-LLM_MODEL_PATH=$(jq -r '.llm_model_path // "/share/jarvis_prime/models/tinyllama-1.1b-chat.Q4_K_M.gguf"' "$CONFIG_PATH")
+LLM_MODEL_URL=$(jq -r '.llm_model_url // ""' "$CONFIG_PATH")
+LLM_MODEL_PATH=$(jq -r '.llm_model_path // ""' "$CONFIG_PATH")
+LLM_MODEL_SHA=$(jq -r '.llm_model_sha256 // ""' "$CONFIG_PATH")
+CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
 # -----------------------------
 # Cool startup banner
@@ -92,7 +95,35 @@ echo "────────────────────────�
 
 # Ensure share directories exist
 mkdir -p /share/jarvis_prime/memory
-mkdir -p "$(dirname "$LLM_MODEL_PATH")"
+if [ -n "$LLM_MODEL_PATH" ]; then
+  mkdir -p "$(dirname "$LLM_MODEL_PATH")"
+fi
+
+# Prefetch the LLM once on startup so the model downloads/loads immediately
+if [ "$LLM_ENABLED" = "true" ] && [ -n "$LLM_MODEL_URL" ] && [ -n "$LLM_MODEL_PATH" ]; then
+  echo "[${BOT_NAME}] 🔮 Prefetching LLM model..."
+  python3 - <<'PY'
+import json, sys
+from pathlib import Path
+cfg = json.load(open("/data/options.json"))
+try:
+    from llm_client import rewrite
+    txt = "(prefetch)"
+    mood = cfg.get("personality_mood","serious")
+    out = rewrite(
+        text=txt, mood=mood,
+        timeout=int(cfg.get("llm_timeout_seconds",5)),
+        cpu_limit=int(cfg.get("llm_max_cpu_percent",70)),
+        models_priority=[], base_url="",
+        model_url=cfg.get("llm_model_url",""),
+        model_path=cfg.get("llm_model_path",""),
+        model_sha256=cfg.get("llm_model_sha256","")
+    )
+    print("[Jarvis Prime] 🧠 Prefetch complete")
+except Exception as e:
+    print(f"[Jarvis Prime] ⚠️ Prefetch failed: {e}")
+PY
+fi
 
 # Start the bot
 exec python3 /app/bot.py
