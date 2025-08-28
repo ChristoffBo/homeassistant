@@ -478,7 +478,7 @@ def _handle_command(ncmd: str):
         return True
 
     if ncmd in ("kuma", "uptime", "monitor"):
-        text, _ = _try_call(m_kuma, "handle_kuma_command", merged, "kuma")
+        text, _ = _try_call(m_kuma, "handle_kuma_command", "kuma")
         send_message("Uptime Kuma", text or "No data.")
         return True
 
@@ -486,7 +486,7 @@ def _handle_command(ncmd: str):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command(merged, "weather")
+                text = m_weather.handle_weather_command("weather")
             except Exception as e:
                 text = f"⚠️ Weather failed: {e}"
         send_message("Weather", text or "No data.")
@@ -496,7 +496,7 @@ def _handle_command(ncmd: str):
         text = ""
         if m_weather and hasattr(m_weather, "handle_weather_command"):
             try:
-                text = m_weather.handle_weather_command(merged, "forecast")
+                text = m_weather.handle_weather_command("forecast")
             except Exception as e:
                 text = f"⚠️ Forecast failed: {e}"
         send_message("Forecast", text or "No data.")
