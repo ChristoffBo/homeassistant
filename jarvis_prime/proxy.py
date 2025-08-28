@@ -8,14 +8,15 @@
 #   GET  /health               -> 200 OK
 #
 # Behavior:
-#   - Every inbound payload is beautified via beautify_message (Jarvis Card).
+#   - Every inbound payload is **LLM rewrite → Beautify** (unless wake-word).
+#   - If LLM fails or exceeds timeout, we **fall back** to Beautify only.
 #   - Also forwards (best-effort) to real servers if configured:
 #       proxy_gotify_url (full /message?token=... URL), proxy_ntfy_url
 #   - Always 200 OK to the sender (logs errors).
-#
 from __future__ import annotations
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -27,6 +28,12 @@ except Exception:
     def beautify_message(title, body, **kwargs):
         return body, None  # soft fallback
 
+# Optional Neural Core (llm_client) — graceful if missing
+try:
+    import llm_client as _llm
+except Exception:
+    _llm = None
+
 class ProxyState:
     def __init__(self, config, send_cb):
         self.cfg = config
@@ -36,6 +43,10 @@ class ProxyState:
         self.forward_gotify = (config.get("proxy_gotify_url") or "").strip()
         self.forward_ntfy = (config.get("proxy_ntfy_url") or "").strip()
         self.mood = str(config.get("personality_mood", "serious"))
+        self.llm_enabled = bool(config.get("llm_enabled", False))
+        self.llm_timeout = int(config.get("llm_timeout_seconds", 5))
+        self.llm_cpu = int(config.get("llm_max_cpu_percent", 70))
+        self.llm_model_path = str(config.get("llm_model_path", ""))
 
 STATE: ProxyState | None = None
 
@@ -66,8 +77,40 @@ def _merge_extras(a, b):
         out[k] = v
     return out
 
+def _wake_word_present(title: str, message: str) -> bool:
+    both = f"{title} {message}".strip().lower()
+    return both.startswith("jarvis ") or both.startswith("jarvis:") or " jarvis " in both
+
+def _llm_then_beautify(title: str, message: str, mood: str):
+    """Run LLM.rewrite with timeout. On any issue → just beautify raw message."""
+    # Skip LLM for wake-word commands
+    if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
+        return beautify_message(title, message, mood=mood, source_hint="proxy")
+
+    def _call():
+        try:
+            rewritten = _llm.rewrite(
+                text=message,
+                mood=mood,
+                timeout=STATE.llm_timeout,
+                cpu_limit=STATE.llm_cpu,
+                model_path=STATE.llm_model_path,
+            )
+            return beautify_message(title, rewritten, mood=mood, source_hint="proxy")
+        except Exception:
+            # Fallback to beautifying the original
+            return beautify_message(title, message, mood=mood, source_hint="proxy")
+
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_call)
+        try:
+            return fut.result(timeout=max(1, STATE.llm_timeout))
+        except FuturesTimeout:
+            # Timeout: beautify original immediately
+            return beautify_message(title, message, mood=mood, source_hint="proxy")
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "JarvisProxy/1.1"
+    server_version = "JarvisProxy/1.2"
 
     def _send(self, tup):
         code, ctype, payload = tup
@@ -123,8 +166,8 @@ class Handler(BaseHTTPRequestHandler):
         priority = int(payload.get("priority") or 5)
         extras = payload.get("extras") if isinstance(payload.get("extras"), dict) else None
 
-        # Beautify + post into our Gotify via callback
-        final, bx = beautify_message(title, message, mood=STATE.mood if STATE else "serious", source_hint="sonarr" if "sonarr" in (title + " " + message).lower() else None)
+        # LLM → Beautify (with timeout fallback)
+        final, bx = _llm_then_beautify(title, message, mood=STATE.mood if STATE else "serious")
         merged_extras = _merge_extras(bx, extras)
         if STATE and STATE.send_cb:
             try:
@@ -160,31 +203,9 @@ class Handler(BaseHTTPRequestHandler):
         else:
             text = raw.decode("utf-8", errors="ignore")
 
-        final, bx = beautify_message(title, text, mood=STATE.mood if STATE else "serious", source_hint="proxy")
+        final, bx = _llm_then_beautify(title, text, mood=STATE.mood if STATE else "serious")
         if STATE and STATE.send_cb:
             try:
                 STATE.send_cb(title, final, priority=priority, extras=bx)
             except Exception as e:
                 print(f"[Proxy] ❌ local post error: {e}")
-
-        if STATE and STATE.forward_ntfy:
-            try:
-                headers = {}
-                if title: headers["Title"] = str(title)
-                if priority: headers["Priority"] = str(priority)
-                r = requests.post(STATE.forward_ntfy, data=text.encode("utf-8"), headers=headers, timeout=8)
-                if not r.ok:
-                    print(f"[Proxy] ⚠️ forward ntfy failed: {r.status_code} {r.text[:200]}")
-            except Exception as e:
-                print(f"[Proxy] ⚠️ forward ntfy error: {e}")
-
-        self._send(_json({"status": "ok"}))
-
-def start_proxy(config, send_cb):
-    global STATE
-    STATE = ProxyState(config, send_cb)
-    addr = (STATE.bind, STATE.port)
-    print(f"[Jarvis Prime] 🔀 Proxy listening on {STATE.bind}:{STATE.port} (endpoints: /message, /gotify, /ntfy, /health)")
-    server = ThreadingHTTPServer(addr, Handler)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
