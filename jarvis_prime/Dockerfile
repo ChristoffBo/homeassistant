@@ -26,6 +26,11 @@ COPY smtp_server.py /app/smtp_server.py
 COPY proxy.py /app/proxy.py
 COPY beautify.py /app/beautify.py
 
+# New modules for LLM + Memory
+COPY llm_client.py /app/llm_client.py
+COPY llm_memory.py /app/llm_memory.py
+COPY personality_state.py /app/personality_state.py
+
 RUN chmod +x /run.sh
 
 CMD [ "/run.sh" ]
