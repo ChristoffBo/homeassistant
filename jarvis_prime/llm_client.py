@@ -20,14 +20,13 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
 # =================== Config knobs ===================
 # Context tokens (prompt + system + history + generation headroom)
-# Override via env/option: LLM_CTX_TOKENS=2048|4096
+# Exposed via add-on option llm_ctx_tokens (see run.sh), default 4096.
 CTX = int(os.getenv("LLM_CTX_TOKENS", "4096"))
-# How many tokens we intend to generate; used to keep space in the window
+# Generation length (kept short for latency)
 GEN_TOKENS = int(os.getenv("LLM_GEN_TOKENS", "180"))
-# Character budget approximation when we trim prompts to fit context.
-# (roughly 4 chars/token; conservative to avoid edge cases)
+# Rough char/token conversion for trimming
 CHARS_PER_TOKEN = 4
-SAFETY_TOKENS = 32  # extra headroom in window
+SAFETY_TOKENS = 32  # extra headroom
 
 # =================== Model discovery ===================
 SEARCH_ROOTS = [Path("/share/jarvis_prime"), Path("/share/jarvis_prime/models"), Path("/share")]
@@ -129,7 +128,7 @@ def _load_local_model(path: Path):
             str(path),
             model_type="llama",
             gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
-            context_length=CTX,            # 🔥 raise context window
+            context_length=CTX,            # raise context window
         )
         return _loaded_model
     except Exception as e:
@@ -139,6 +138,10 @@ def _load_local_model(path: Path):
 # =================== Sanitizers & helpers ===================
 IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
 IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
+PLACEHOLDER_RE = re.compile(r'\[([A-Z][A-Z0-9 _:/\-\.,]{2,})\]')  # strips [EMAIL ADDRESS], [OUTPUT], etc.
+UPSELL_RE = re.compile(
+    r'(?i)\b(please review|confirm|support team|contact .*@|let us know|thank you|stay in touch|new feature|check out)\b'
+)
 
 def _extract_images(src: str) -> str:
     imgs = IMG_MD_RE.findall(src or '') + IMG_URL_RE.findall(src or '')
@@ -161,9 +164,25 @@ def _strip_reasoning(text: str) -> str:
         lines.append(t)
     return "\n".join(lines)
 
+def _remove_placeholders(text: str) -> str:
+    # Drop [PLACEHOLDER] chunks inside sentences and clean doubles/spaces.
+    s = PLACEHOLDER_RE.sub("", text or "")
+    s = re.sub(r'\(\s*\)', '', s)
+    s = re.sub(r'\s{2,}', ' ', s).strip()
+    return s
+
+def _drop_boilerplate(text: str) -> str:
+    # Kill typical marketing/support fluff lines.
+    kept=[]
+    for ln in (text or "").splitlines():
+        if not ln.strip(): continue
+        if UPSELL_RE.search(ln): continue
+        kept.append(ln.strip())
+    return "\n".join(kept)
+
 def _squelch_repeats(text: str) -> str:
     """Collapse obvious word/bigram repetition (e.g., '60 up 60 up 60 up …')."""
-    parts = text.split()
+    parts = (text or "").split()
     out = []
     prev = None
     count = 0
@@ -221,20 +240,24 @@ def _load_system_prompt() -> str:
     )
 
 def _trim_to_ctx(src: str, system: str) -> str:
-    """
-    Roughly trim INPUT text so (system + INPUT + headroom) fits into CTX tokens.
-    We approximate with chars-per-token and leave GEN_TOKENS + SAFETY_TOKENS free.
-    """
+    """Trim INPUT so (system + INPUT + headroom) fits into CTX tokens."""
     if not src: return src
     budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
     budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
-    system_chars = len(system)
-    # keep part of the budget for system text too
-    remaining = max(500, budget_chars - system_chars)
+    remaining = max(500, budget_chars - len(system))
     if len(src) <= remaining:
         return src
-    # Keep the tail (most recent content) which is usually most relevant
+    # Keep tail (usually most relevant)
     return src[-remaining:]
+
+def _finalize(text: str, imgs: str) -> str:
+    """Sanitize + cap + append images."""
+    out = _strip_reasoning(text)
+    out = _remove_placeholders(out)
+    out = _drop_boilerplate(out)
+    out = _squelch_repeats(out)
+    out = _cap(out)
+    return out + ("\n"+imgs if imgs else "")
 
 # =================== Rewrite ===================
 def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
@@ -247,6 +270,10 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     imgs=_extract_images(src)
     system=_load_system_prompt().format(mood=mood)
     src=_trim_to_ctx(src, system)
+
+    # If it's clearly a "test" message with almost no facts, bypass LLM and just compress.
+    if re.search(r'(?i)\btest\b', src) and len(src) < 600:
+        return _finalize(src, imgs)
 
     # 1) Ollama
     base=(base_url or OLLAMA_BASE_URL or "").strip()
@@ -261,10 +288,8 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             }
             r=requests.post(base.rstrip("/")+"/api/generate", json=payload, timeout=timeout)
             if r.ok:
-                out=_strip_reasoning(str(r.json().get("response","")))
-                out=_squelch_repeats(out)
-                out=_cap(out)
-                return out + ("\n"+imgs if imgs else "")
+                out=str(r.json().get("response",""))
+                return _finalize(out, imgs)
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ Ollama call failed: {e}", flush=True)
 
@@ -277,13 +302,9 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             try:
                 out=m(prompt, max_new_tokens=GEN_TOKENS, temperature=0.15,
                        top_p=0.9, repetition_penalty=1.3)
-                out=_strip_reasoning(str(out or ""))
-                out=_squelch_repeats(out)
-                out=_cap(out)
-                return out + ("\n"+imgs if imgs else "")
+                return _finalize(str(out or ""), imgs)
             except Exception as e:
                 print(f"[{BOT_NAME}] ⚠️ Generation failed: {e}", flush=True)
 
     # 3) Fallback
-    out=_cap(_squelch_repeats(_strip_reasoning(src)))
-    return out + ("\n"+imgs if imgs else "")
+    return _finalize(src, imgs)
