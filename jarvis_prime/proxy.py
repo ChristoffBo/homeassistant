@@ -2,22 +2,20 @@
 # Simple HTTP proxy/intake for Jarvis Prime.
 #
 # Endpoints:
-#   POST /message?token=XXXX   -> 100% Gotify-compatible (Sonarr/Radarr plugins)
+#   POST /message?token=XXXX   -> Gotify-compatible
 #   POST /gotify               -> JSON {title, message, priority?, extras?}
-#   POST /ntfy                 -> text/plain or JSON {"title","message"} (basic)
+#   POST /ntfy                 -> text/plain or JSON {"title","message"}
 #   GET  /health               -> 200 OK
 #
 # Behavior:
 #   - Every inbound payload is **LLM rewrite → Beautify** (unless wake-word).
 #   - If LLM fails or exceeds timeout, we **fall back** to Beautify only.
-#   - Forwards to real servers if configured: proxy_gotify_url, proxy_ntfy_url
-#   - Provides start_proxy(config, send_message_fn) for bot.py
+#   - Forwards to real servers if configured: proxy_gotify_url, proxy_ntfy_url.
+#   - Always 200 OK to the sender.
 from __future__ import annotations
 import json
-import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
 
 import requests
 
@@ -48,7 +46,6 @@ class ProxyState:
         self.llm_model_path = str(config.get("llm_model_path", ""))
 
 STATE: ProxyState | None = None
-HTTPD: ThreadingHTTPServer | None = None
 
 def _json(data: dict, code: int = 200):
     return (code, "application/json; charset=utf-8", json.dumps(data).encode("utf-8"))
@@ -66,6 +63,7 @@ def _merge_extras(a, b):
     out = dict(a)
     ca = dict(out.get("client::notification", {}))
     cb = dict((b.get("client::notification") or {}))
+    # Prefer image from A, else B
     if "bigImageUrl" not in ca and "bigImageUrl" in cb:
         ca["bigImageUrl"] = cb["bigImageUrl"]
     if ca:
@@ -81,10 +79,11 @@ def _wake_word_present(title: str, message: str) -> bool:
     return both.startswith("jarvis ") or both.startswith("jarvis:") or " jarvis " in both
 
 def _llm_then_beautify(title: str, message: str, mood: str):
-    """Run LLM.rewrite with timeout. On any issue → just beautify raw message."""
+    """Run LLM.rewrite with timeout. On any issue → beautify raw message."""
+    # Skip LLM for wake-word commands
     if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
         text, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
-        return text + "\n[Beautify fallback]", bx
+        return f"{text}\n[Beautify fallback]", bx
 
     def _call():
         try:
@@ -96,10 +95,10 @@ def _llm_then_beautify(title: str, message: str, mood: str):
                 model_path=STATE.llm_model_path,
             )
             t, bx = beautify_message(title, rewritten, mood=mood, source_hint="proxy")
-            return t + "\n[Neural Core ✓]", bx
+            return f"{t}\n[Neural Core ✓]", bx
         except Exception:
             t, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
-            return t + "\n[Beautify fallback]", bx
+            return f"{t}\n[Beautify fallback]", bx
 
     with ThreadPoolExecutor(max_workers=1) as ex:
         fut = ex.submit(_call)
@@ -107,7 +106,7 @@ def _llm_then_beautify(title: str, message: str, mood: str):
             return fut.result(timeout=max(1, STATE.llm_timeout))
         except FuturesTimeout:
             t, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
-            return t + "\n[Beautify fallback]", bx
+            return f"{t}\n[Beautify fallback]", bx
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "JarvisProxy/1.3"
@@ -132,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length > 0 else b""
             path = self.path.split("?", 1)[0]
 
-            if path == "/message":       # Gotify-compatible
+            if path == "/message":
                 self._handle_gotify_like(raw)
                 return
 
@@ -169,6 +168,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Proxy] ❌ local post error: {e}")
 
+        # Optional forward to a real Gotify server
         if STATE and STATE.forward_gotify:
             try:
                 r = requests.post(STATE.forward_gotify, json={"title": title, "message": message, "priority": priority, "extras": extras}, timeout=8)
@@ -203,37 +203,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[Proxy] ❌ local post error: {e}")
 
-        if STATE and STATE.forward_ntfy:
-            try:
-                # Send as simple text; many ntfy setups expect /topic in URL.
-                r = requests.post(STATE.forward_ntfy, data=text.encode("utf-8"), timeout=8)
-                if not r.ok:
-                    print(f"[Proxy] ⚠️ forward ntfy failed: {r.status_code} {r.text[:200]}")
-            except Exception as e:
-                print(f"[Proxy] ⚠️ forward ntfy error: {e}")
-
-        self._send(_json({"status": "ok"}))
-
 def start_proxy(config: dict, send_message_fn):
-    """
-    Start the proxy HTTP server in a background thread.
-    Called by bot.py
-    """
-    global STATE, HTTPD
+    """Start the proxy HTTP server in a background thread."""
+    global STATE
     STATE = ProxyState(config, send_message_fn)
     addr = (STATE.bind, STATE.port)
-    HTTPD = ThreadingHTTPServer(addr, Handler)
-    t = threading.Thread(target=HTTPD.serve_forever, name="JarvisProxy", daemon=True)
+    httpd = ThreadingHTTPServer(addr, Handler)
+    print(f"[Jarvis Proxy] Listening on {STATE.bind}:{STATE.port}")
+    import threading as _t
+    t = _t.Thread(target=httpd.serve_forever, name="JarvisProxy", daemon=True)
     t.start()
-    print(f"[Proxy] Listening on {STATE.bind}:{STATE.port}")
-
-def stop_proxy():
-    global HTTPD
-    try:
-        if HTTPD:
-            HTTPD.shutdown()
-            HTTPD.server_close()
-            HTTPD = None
-            print("[Proxy] Stopped")
-    except Exception as e:
-        print(f"[Proxy] stop error: {e}")
+    return httpd
