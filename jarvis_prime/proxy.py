@@ -1,19 +1,19 @@
 # /app/proxy.py
-# Simple HTTP proxy/intake for Jarvis Prime.
+# HTTP intake/forwarder for Jarvis Prime.
 #
 # Endpoints:
-#   POST /message?token=XXXX   -> Gotify-compatible
+#   POST /message[?token=...]  -> Gotify-compatible
 #   POST /gotify               -> JSON {title, message, priority?, extras?}
 #   POST /ntfy                 -> text/plain or JSON {"title","message"}
 #   GET  /health               -> 200 OK
 #
 # Behavior:
-#   - Every inbound payload is **LLM rewrite → Beautify** (unless wake-word).
-#   - If LLM fails or exceeds timeout, we **fall back** to Beautify only.
-#   - Forwards to real servers if configured: proxy_gotify_url, proxy_ntfy_url.
-#   - Always 200 OK to the sender.
+#   - For every inbound payload: LLM rewrite → Beautify (unless wake-word).
+#   - On timeout/error: Beautify-only fallback.
+#   - Forwards to external servers if configured (proxy_gotify_url / proxy_ntfy_url).
+#   - Always 200 OK to sender.
 from __future__ import annotations
-import json
+import json, urllib.parse
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -23,9 +23,8 @@ try:
     from beautify import beautify_message
 except Exception:
     def beautify_message(title, body, **kwargs):
-        return body, None  # soft fallback
+        return body, None
 
-# Optional Neural Core (llm_client) — graceful if missing
 try:
     import llm_client as _llm
 except Exception:
@@ -36,7 +35,7 @@ class ProxyState:
         self.cfg = config
         self.send_cb = send_cb
         self.bind = str(config.get("proxy_bind", "0.0.0.0"))
-        self.port = int(config.get("proxy_port", 8099))
+        self.port = int(config.get("proxy_port", 2580))
         self.forward_gotify = (config.get("proxy_gotify_url") or "").strip()
         self.forward_ntfy = (config.get("proxy_ntfy_url") or "").strip()
         self.mood = str(config.get("personality_mood", "serious"))
@@ -56,22 +55,18 @@ def _text(data: str, code: int = 200):
 def _merge_extras(a, b):
     if not a and not b:
         return None
-    if not a:
-        return b
-    if not b:
-        return a
+    if not a: return b
+    if not b: return a
     out = dict(a)
     ca = dict(out.get("client::notification", {}))
     cb = dict((b.get("client::notification") or {}))
-    # Prefer image from A, else B
     if "bigImageUrl" not in ca and "bigImageUrl" in cb:
         ca["bigImageUrl"] = cb["bigImageUrl"]
     if ca:
         out["client::notification"] = ca
     for k, v in b.items():
-        if k == "client::notification":
-            continue
-        out[k] = v
+        if k != "client::notification":
+            out[k] = v
     return out
 
 def _wake_word_present(title: str, message: str) -> bool:
@@ -79,8 +74,6 @@ def _wake_word_present(title: str, message: str) -> bool:
     return both.startswith("jarvis ") or both.startswith("jarvis:") or " jarvis " in both
 
 def _llm_then_beautify(title: str, message: str, mood: str):
-    """Run LLM.rewrite with timeout. On any issue → beautify raw message."""
-    # Skip LLM for wake-word commands
     if _wake_word_present(title, message) or not (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
         text, bx = beautify_message(title, message, mood=mood, source_hint="proxy")
         return f"{text}\n[Beautify fallback]", bx
@@ -109,7 +102,7 @@ def _llm_then_beautify(title: str, message: str, mood: str):
             return f"{t}\n[Beautify fallback]", bx
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "JarvisProxy/1.3"
+    server_version = "JarvisProxy/1.4"
 
     def _send(self, tup):
         code, ctype, payload = tup
@@ -129,14 +122,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length > 0 else b""
-            path = self.path.split("?", 1)[0]
+            path, _, query = self.path.partition("?")
+            q = urllib.parse.parse_qs(query)
 
             if path == "/message":
-                self._handle_gotify_like(raw)
+                self._handle_gotify_like(raw, q)
                 return
 
             if path == "/gotify":
-                self._handle_gotify_like(raw)
+                self._handle_gotify_like(raw, q)
                 return
 
             if path == "/ntfy":
@@ -147,19 +141,31 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send(_json({"error": str(e)}, 500))
 
-    def _handle_gotify_like(self, raw: bytes):
+    def _handle_gotify_like(self, raw: bytes, qparams: dict):
         global STATE
         ctype = (self.headers.get("Content-Type") or "").lower()
-        try:
-            payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
-        except Exception:
-            payload = {}
+        title = "Message"; message = ""; priority = 5; extras = None
 
-        title = str(payload.get("title") or "Message")
-        message = str(payload.get("message") or "")
-        priority = int(payload.get("priority") or 5)
-        extras = payload.get("extras") if isinstance(payload.get("extras"), dict) else None
+        if "application/json" in ctype:
+            try:
+                payload = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
+            except Exception:
+                payload = {}
+            title = str(payload.get("title") or title)
+            message = str(payload.get("message") or "")
+            priority = int(payload.get("priority") or priority)
+            extras = payload.get("extras") if isinstance(payload.get("extras"), dict) else None
+        else:
+            # Sonarr/Radarr can send as form-urlencoded
+            try:
+                form = urllib.parse.parse_qs(raw.decode("utf-8", errors="ignore"))
+            except Exception:
+                form = {}
+            title = str((form.get("title") or [title])[0])
+            message = str((form.get("message") or [""])[0])
+            priority = int((form.get("priority") or [priority])[0])
 
+        # token in qparams is ignored locally (we're the intake)
         final, bx = _llm_then_beautify(title, message, mood=STATE.mood if STATE else "serious")
         merged_extras = _merge_extras(bx, extras)
         if STATE and STATE.send_cb:
@@ -171,7 +177,11 @@ class Handler(BaseHTTPRequestHandler):
         # Optional forward to a real Gotify server
         if STATE and STATE.forward_gotify:
             try:
-                r = requests.post(STATE.forward_gotify, json={"title": title, "message": message, "priority": priority, "extras": extras}, timeout=8)
+                url = STATE.forward_gotify
+                payload = {"title": title, "message": message, "priority": priority}
+                if merged_extras:
+                    payload["extras"] = merged_extras
+                r = requests.post(url, json=payload, timeout=8)
                 if not r.ok:
                     print(f"[Proxy] ⚠️ forward gotify failed: {r.status_code} {r.text[:200]}")
             except Exception as e:
