@@ -19,16 +19,16 @@ except Exception:
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
 # =================== Config knobs ===================
-# Context tokens (prompt + system + history + generation headroom)
-# Exposed via add-on option llm_ctx_tokens (see run.sh), default 4096.
 CTX = int(os.getenv("LLM_CTX_TOKENS", "4096"))
-# Generation length (kept short for latency)
 GEN_TOKENS = int(os.getenv("LLM_GEN_TOKENS", "180"))
-# Rough char/token conversion for trimming
 CHARS_PER_TOKEN = 4
-SAFETY_TOKENS = 32  # extra headroom
+SAFETY_TOKENS = 32
 
-# =================== Model discovery ===================
+# Decoding knobs (safer & more precise defaults; can override via env if needed)
+TEMP = float(os.getenv("LLM_TEMPERATURE", "0.05"))
+TOP_P = float(os.getenv("LLM_TOP_P", "0.8"))
+REPEAT_P = float(os.getenv("LLM_REPEAT_PENALTY", "1.4"))
+
 SEARCH_ROOTS = [Path("/share/jarvis_prime"), Path("/share/jarvis_prime/models"), Path("/share")]
 
 def _list_local_models() -> list[Path]:
@@ -79,17 +79,14 @@ def _download_to(url: str, dest: Path) -> bool:
         return False
 
 def _resolve_model_path() -> Optional[Path]:
-    # explicit path
     if str(MODEL_PATH):
         p=Path(MODEL_PATH)
         if p.is_file() and p.suffix.lower()==".gguf": return p
         if p.is_dir():
             best=_choose_preferred(list(p.rglob("*.gguf")))
             if best: return best
-    # local discovery
     best=_choose_preferred(_list_local_models())
     if best: return best
-    # download
     urls = MODEL_URLS or ([MODEL_URL] if MODEL_URL else [])
     for u in urls:
         name=u.split("/")[-1] or "model.gguf"
@@ -128,20 +125,17 @@ def _load_local_model(path: Path):
             str(path),
             model_type="llama",
             gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
-            context_length=CTX,            # raise context window
+            context_length=CTX,
         )
         return _loaded_model
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
         return None
 
-# =================== Sanitizers & helpers ===================
 IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
 IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
-PLACEHOLDER_RE = re.compile(r'\[([A-Z][A-Z0-9 _:/\-\.,]{2,})\]')  # strips [EMAIL ADDRESS], [OUTPUT], etc.
-UPSELL_RE = re.compile(
-    r'(?i)\b(please review|confirm|support team|contact .*@|let us know|thank you|stay in touch|new feature|check out)\b'
-)
+PLACEHOLDER_RE = re.compile(r'\[([A-Z][A-Z0-9 _:/\-\.,]{2,})\]')
+UPSELL_RE = re.compile(r'(?i)\b(please review|confirm|support team|contact .*@|let us know|thank you|stay in touch|new feature|check out)\b')
 
 def _extract_images(src: str) -> str:
     imgs = IMG_MD_RE.findall(src or '') + IMG_URL_RE.findall(src or '')
@@ -165,14 +159,12 @@ def _strip_reasoning(text: str) -> str:
     return "\n".join(lines)
 
 def _remove_placeholders(text: str) -> str:
-    # Drop [PLACEHOLDER] chunks inside sentences and clean doubles/spaces.
     s = PLACEHOLDER_RE.sub("", text or "")
     s = re.sub(r'\(\s*\)', '', s)
     s = re.sub(r'\s{2,}', ' ', s).strip()
     return s
 
 def _drop_boilerplate(text: str) -> str:
-    # Kill typical marketing/support fluff lines.
     kept=[]
     for ln in (text or "").splitlines():
         if not ln.strip(): continue
@@ -181,7 +173,6 @@ def _drop_boilerplate(text: str) -> str:
     return "\n".join(kept)
 
 def _squelch_repeats(text: str) -> str:
-    """Collapse obvious word/bigram repetition (e.g., '60 up 60 up 60 up …')."""
     parts = (text or "").split()
     out = []
     prev = None
@@ -200,6 +191,30 @@ def _squelch_repeats(text: str) -> str:
     s2 = re.sub(r'(\b\w+\s+\w+)(?:\s+\1){2,}', r'\1 \1', s2, flags=re.I)
     return s2
 
+def _polish(text: str) -> str:
+    import re as _re
+    s = (text or "").strip()
+    s = _re.sub(r'[ \t]+', ' ', s)
+    s = _re.sub(r'[ \t]*\n[ \t]*', '\n', s)
+    s = _re.sub(r'([,:;.!?])(?=\S)', r'\1 ', s)
+    s = _re.sub(r'\s*…+\s*', '. ', s)
+    s = _re.sub(r'\s+([,:;.!?])', r'\1', s)
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    fixed = []
+    for ln in lines:
+        if not _re.search(r'[.!?]$', ln):
+            fixed.append(ln + '.')
+        else:
+            fixed.append(ln)
+    s = "\n".join(fixed)
+    seen=set(); out=[]
+    for ln in s.splitlines():
+        key = ln.lower()
+        if key in seen: 
+            continue
+        seen.add(key); out.append(ln)
+    return "\n".join(out)
+
 def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_chars: int = 800) -> str:
     lines=[ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     if len(lines)>max_lines: lines=lines[:max_lines]
@@ -208,58 +223,41 @@ def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_c
     return out
 
 def _load_system_prompt() -> str:
-    # 1) env var
     sp = os.getenv("LLM_SYSTEM_PROMPT")
     if sp: return sp
-    # 2) host-shared file
     p = Path("/share/jarvis_prime/memory/system_prompt.txt")
     if p.exists():
         try:
             return p.read_text(encoding="utf-8")
         except Exception:
             pass
-    # 3) built-in file in image (copied by Dockerfile)
     p2 = Path("/app/memory/system_prompt.txt")
     if p2.exists():
         try:
             return p2.read_text(encoding="utf-8")
         except Exception:
             pass
-    # 4) fallback default
-    return (
-        "YOU ARE JARVIS PRIME — HOMELAB OPERATOR’S AIDE.\n"
-        "PRIME DIRECTIVES — OBEY EXACTLY:\n"
-        "1) READ the incoming text carefully.\n"
-        "2) SAY what it means in plain, concise English. Explain, don’t embellish.\n"
-        "3) KEEP every fact/number/URL/IP/hostname/service name EXACTLY as given. No new facts.\n"
-        "4) OUTPUT up to 10 short lines, paragraph style. No lists unless input already has bullets.\n"
-        "5) NO meta (Input/Output/Explanation), NO 'Note:', NO placeholders like [YOURNAME]/[FEATURE].\n"
-        "6) If something is missing, say 'unknown' or 'not specified'; do not guess.\n"
-        "7) PERSONALITY = {mood}. Angry → blunt, sardonic (no slurs). Playful → cheeky. Serious → crisp.\n"
-        "8) Keep any images/markdown image links exactly as-is.\n"
-    )
+    # fallback
+    return "YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
 
 def _trim_to_ctx(src: str, system: str) -> str:
-    """Trim INPUT so (system + INPUT + headroom) fits into CTX tokens."""
     if not src: return src
     budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
     budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
     remaining = max(500, budget_chars - len(system))
     if len(src) <= remaining:
         return src
-    # Keep tail (usually most relevant)
     return src[-remaining:]
 
 def _finalize(text: str, imgs: str) -> str:
-    """Sanitize + cap + append images."""
     out = _strip_reasoning(text)
     out = _remove_placeholders(out)
     out = _drop_boilerplate(out)
     out = _squelch_repeats(out)
+    out = _polish(out)
     out = _cap(out)
     return out + ("\n"+imgs if imgs else "")
 
-# =================== Rewrite ===================
 def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
             model_url: Optional[str]=None, model_path: Optional[str]=None,
@@ -271,11 +269,11 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     system=_load_system_prompt().format(mood=mood)
     src=_trim_to_ctx(src, system)
 
-    # If it's clearly a "test" message with almost no facts, bypass LLM and just compress.
+    # Special-case trivial tests
     if re.search(r'(?i)\btest\b', src) and len(src) < 600:
         return _finalize(src, imgs)
 
-    # 1) Ollama
+    # 1) Ollama path
     base=(base_url or OLLAMA_BASE_URL or "").strip()
     if base and requests:
         try:
@@ -283,8 +281,11 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
                 "model": (models_priority[0] if models_priority else "llama3.1"),
                 "prompt": system + "\n\nINPUT:\n" + src + "\n\nOUTPUT:\n",
                 "stream": False,
-                "options": {"temperature": 0.15, "top_p": 0.9, "repeat_penalty": 1.3,
-                            "num_ctx": CTX, "num_predict": GEN_TOKENS}
+                "options": {
+                    "temperature": TEMP, "top_p": TOP_P, "repeat_penalty": REPEAT_P,
+                    "num_ctx": CTX, "num_predict": GEN_TOKENS,
+                    "stop": ["[SYSTEM]", "[INPUT]", "[OUTPUT]"]
+                }
             }
             r=requests.post(base.rstrip("/")+"/api/generate", json=payload, timeout=timeout)
             if r.ok:
@@ -293,15 +294,15 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ Ollama call failed: {e}", flush=True)
 
-    # 2) Local (ctransformers)
+    # 2) Local ctransformers
     p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
     if p and p.exists():
         m=_load_local_model(p)
         if m is not None:
             prompt=f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
             try:
-                out=m(prompt, max_new_tokens=GEN_TOKENS, temperature=0.15,
-                       top_p=0.9, repetition_penalty=1.3)
+                out=m(prompt, max_new_tokens=GEN_TOKENS, temperature=TEMP,
+                       top_p=TOP_P, repetition_penalty=REPEAT_P, stop=["[SYSTEM]","[INPUT]","[OUTPUT]"])
                 return _finalize(str(out or ""), imgs)
             except Exception as e:
                 print(f"[{BOT_NAME}] ⚠️ Generation failed: {e}", flush=True)
