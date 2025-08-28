@@ -1,18 +1,5 @@
 # /app/beautify.py
-# Jarvis Prime – Beautify Engine (7 stages)
-# 1) INGEST     : take raw title/body + optional hints
-# 2) DETECT     : identify source (sonarr/radarr/watchtower/qnap/unraid/speedtest/json/yaml/generic)
-# 3) NORMALIZE  : harvest images, strip image text, prep initial facts
-# 4) INTERPRET  : per-source synthesis (facts & content sections)
-# 5) RENDER     : assemble Jarvis card sections (no inline images)
-# 6) DEDUPE     : remove duplicated lines AND duplicated sentences
-# 7) RESTORE IMG: attach a single hero image via extras.bigImageUrl
-#
-# Notes:
-# - We NEVER put markdown images back into the body (prevents duplicates).
-# - Gotify displays bigImageUrl across Web + Android as the one hero image.
-# - Personality quips are added outside (in send_message), not here.
-
+# Jarvis Prime – Beautify Engine (7 stages) + 'polish' for LLM output
 from __future__ import annotations
 import json, re
 from typing import Tuple, Optional, List, Dict
@@ -22,9 +9,6 @@ try:
 except Exception:
     yaml = None
 
-# ---------------------------
-# Stage 0: shared regex & utils
-# ---------------------------
 IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
 MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\((https?://[^\s)]+)\)', re.I)
 PUNCT_SPLIT = re.compile(r'([.!?])')
@@ -67,7 +51,6 @@ def _dedup_lines(lines: List[str]) -> List[str]:
     return out
 
 def _dedup_sentences(text: str) -> str:
-    # Split by punctuation, keep order, remove repeated sentences (case/space-insensitive)
     parts: List[str] = []
     buf = ""
     for piece in PUNCT_SPLIT.split(text):
@@ -120,47 +103,35 @@ def _detect_source(t: str, b: str, hint: Optional[str]) -> str:
     if ("speedtest" in tb) or ("ookla" in tb): return "speedtest"
     if ("qnap" in tb) or ("nas name" in b.lower() and "qnap" in b.lower()): return "qnap"
     if "unraid" in tb:      return "unraid"
-    # structured payloads
     if _looks_json(b):      return "json"
     if _looks_yaml(b):      return "yaml"
     return "generic"
 
 # ---------------------------
 # Stage 3: NORMALIZE
-# - Pull out image URLs (remove from text)
-# - Clean spacing
-# - Provide a sorted, unique image list (poster-hosts preferred)
 # ---------------------------
 def _harvest_images(text: str) -> tuple[str, List[str]]:
     if not text:
         return "", []
-
     urls: List[str] = []
 
     def _md(m):
-        urls.append(m.group(1))
-        return ""
-
+        urls.append(m.group(1)); return ""
     text = MD_IMG_RE.sub(_md, text)
 
     def _bare(m):
-        urls.append(m.group(1))
-        return ""
-
+        urls.append(m.group(1)); return ""
     text = IMG_URL_RE.sub(_bare, text)
+
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
 
-    # unique, with preference
     seen = set(); uniq: List[str] = []
     for u in sorted(urls, key=_prefer_host_key):
         if u not in seen:
             seen.add(u); uniq.append(u)
     return text, uniq
 
-# ---------------------------
-# Stage 4: INTERPRET (per-source)
-# ---------------------------
 def _header(title: str) -> List[str]:
     return ["———————————————", f"📟 Jarvis Prime — {title.strip()}", "———————————————"]
 
@@ -178,8 +149,6 @@ def _interpret_generic(clean: str) -> List[str]:
 
 def _interpret_sonarr(clean: str) -> List[str]:
     facts: List[str] = []
-    ts = re.search(r'(\d{4}[-/]\d{2}[-/]\d{2}.*\d{1,2}:\d{2})', clean)
-    if ts: facts.append(_kv("Time", ts.group(1)))
     first = _first_nonempty_line(clean)
     if first: facts.append(_kv("Info", first))
     lines = _lines(_header("Generic Message"), *facts)
@@ -253,19 +222,11 @@ def _interpret_structured(kind: str, clean: str) -> List[str]:
                 return _lines(_header("YAML Payload"), "", *bullets)
         except Exception:
             pass
-    # Fallback to generic if parsing not nice
     return _interpret_generic(clean)
 
-# ---------------------------
-# Stage 5: RENDER (assemble) – return text only here
-# ---------------------------
 def _render(lines: List[str]) -> str:
-    # De-dup *lines*, join, then sentence de-dup (Stage 6 handled after)
     return "\n".join(_dedup_lines(lines)).strip()
 
-# ---------------------------
-# Stage 6/7: DEDUPE SENTENCES + RESTORE IMAGE (hero)
-# ---------------------------
 def _finalize(text: str, images: List[str]) -> Tuple[str, Optional[dict]]:
     text = _dedup_sentences(text)
     hero = images[0] if images else None
@@ -277,9 +238,6 @@ def _finalize(text: str, images: List[str]) -> Tuple[str, Optional[dict]]:
         }
     return text, extras
 
-# ---------------------------
-# Helpers: structured sniffers
-# ---------------------------
 def _looks_json(s: str) -> bool:
     try: json.loads(s); return True
     except Exception: return False
@@ -292,24 +250,12 @@ def _looks_yaml(s: str) -> bool:
     except Exception:
         return False
 
-# ---------------------------
-# Public: the full pipeline
-# ---------------------------
 def beautify_message(title: str, body: str, *, mood: str = "serious", source_hint: str | None = None) -> Tuple[str, Optional[dict]]:
-    # Stage 1: INGEST
     ctx = _ingest(title, body, mood, source_hint)
-
-    # Early tiny payloads: wrap minimal
     if len(ctx["body"]) < 2 and not IMG_URL_RE.search(ctx["title"] + " " + ctx["body"]):
         return "\n".join(_dedup_lines(_lines(_header("Message"), ctx["body"]))).strip(), None
-
-    # Stage 2: DETECT
     kind = _detect_source(ctx["title"], ctx["body"], ctx["hint"])
-
-    # Stage 3: NORMALIZE (strip images from text, collect urls)
     clean, images = _harvest_images(ctx["body"])
-
-    # Stage 4: INTERPRET (per source)
     if kind == "sonarr":       lines = _interpret_sonarr(clean)
     elif kind == "radarr":     lines = _interpret_radarr(clean)
     elif kind == "watchtower": lines = _interpret_watchtower(clean)
@@ -320,9 +266,24 @@ def beautify_message(title: str, body: str, *, mood: str = "serious", source_hin
         lines = _interpret_structured(kind, clean)
     else:
         lines = _interpret_generic(clean)
-
-    # Stage 5: RENDER (text)
     text = _render(lines)
-
-    # Stage 6 + 7: sentence de-dup + hero restore via extras
     return _finalize(text, images)
+
+# ---------------------------
+# LLM polish (format only)
+# ---------------------------
+def polish(text: str, *, mood: str = "serious") -> str:
+    if not text: return ""
+    # Trim excessive whitespace
+    s = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+    # If it's one giant paragraph, bullet it lightly
+    if "\n" not in s and len(s) > 160:
+        # split by punctuation
+        bits = [t.strip() for t in re.split(r'(?<=[.!?])\s+', s) if t.strip()]
+        bits = bits[:10]
+        s = "\n".join([f"⚡ {b}" for b in bits])
+
+    # Ensure we never nuke personality; keep as-is otherwise, just de-dup sentences
+    s = _dedup_sentences(s)
+    return s
