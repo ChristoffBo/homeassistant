@@ -25,5 +25,3 @@ EXAMPLES OF GOOD OUTPUT:
 Input: “APT maintenance finished on 10.0.0.99, no updates, no reboot.”
 Output: “APT finished on 10.0.0.99. No package or dist upgrades; reboot not required.”
 
-Input: “Uptime Kuma: 60 up, 0 down”
-Output: “Uptime Kuma shows 60 monitors UP, 0 DOWN. All green.”
