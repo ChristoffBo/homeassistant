@@ -14,7 +14,8 @@ A curated collection of custom Home Assistant add-ons designed to extend your se
   - Heimdall — App dashboard UI  
   - Mailrise — Mail-to-notification bridge  
   - Technitium DNS — DNS server with GUI + ingress  
-  - Update Checker — Auto Docker tag puller + changelog  
+  - Update Checker — Auto Docker tag puller + changelog
+  - The Jarvis Family - Gotify Bots
 - Automation scripts and update helpers  
 - All add-ons include full UI, readme, and icon/logo assets  
 
