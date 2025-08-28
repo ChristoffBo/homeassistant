@@ -1,24 +1,15 @@
 {
   "name": "Jarvis Prime",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "slug": "jarvis_prime",
-  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, personalities, optional Gotify/ntfy proxy, and LLM + memory personality engine.",
-  "arch": [
-    "aarch64",
-    "amd64",
-    "armv7"
-  ],
+  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, digest, weather, DNS, uptime checks, SMTP intake, personalities, optional proxy, and built-in LLM + 24h memory (no Ollama required).",
+  "arch": ["aarch64","amd64","armv7"],
   "startup": "services",
   "boot": "auto",
   "init": false,
   "ingress": false,
-  "ports": {
-    "2525/tcp": 2525,
-    "2580/tcp": 2580
-  },
-  "map": [
-    "share:rw"
-  ],
+  "ports": { "2525/tcp": 2525, "2580/tcp": 2580 },
+  "map": ["share:rw"],
   "options": {
     "bot_name": "Jarvis Prime",
     "bot_icon": "🧠",
@@ -92,16 +83,15 @@
     "custom_aliases": "{\n  \"dns\": \"dns\",\n  \"DNS\": \"dns\",\n  \"Dns\": \"dns\",\n  \"films\": \"upcoming_movies\",\n  \"tv\": \"upcoming_series\",\n  \"temps\": \"weather\",\n  \"forecast week\": \"forecast\",\n  \"up movies\": \"upcoming_movies\",\n  \"up series\": \"upcoming_series\"\n}",
 
     "llm_enabled": true,
-    "llm_timeout_seconds": 5,
-    "llm_max_cpu_percent": 70,
     "llm_memory_enabled": true,
     "personality_persistent": true,
-    "ollama_base_url": "http://127.0.0.1:11434",
-    "llm_models_priority": [
-      "qwen2.5:0.5b-instruct",
-      "phi:2",
-      "tinyllama:1.1b-chat"
-    ]
+
+    "llm_timeout_seconds": 5,
+    "llm_max_cpu_percent": 70,
+
+    "llm_model_url": "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat.Q4_K_M.gguf",
+    "llm_model_path": "/share/jarvis_prime/models/tinyllama-1.1b-chat.Q4_K_M.gguf",
+    "llm_model_sha256": ""
   },
   "schema": {
     "bot_name": "str",
@@ -176,11 +166,13 @@
     "custom_aliases": "str",
 
     "llm_enabled": "bool",
-    "llm_timeout_seconds": "int",
-    "llm_max_cpu_percent": "int",
     "llm_memory_enabled": "bool",
     "personality_persistent": "bool",
-    "ollama_base_url": "str",
-    "llm_models_priority": "list(str)"
+    "llm_timeout_seconds": "int",
+    "llm_max_cpu_percent": "int",
+
+    "llm_model_url": "str",
+    "llm_model_path": "str",
+    "llm_model_sha256": "str"
   }
 }
