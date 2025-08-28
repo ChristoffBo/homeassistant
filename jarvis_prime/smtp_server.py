@@ -1,195 +1,148 @@
 # /app/smtp_server.py
-# LAN-only SMTP intake for Jarvis Prime (aiosmtpd).
-# Accepts any AUTH creds when smtp_accept_any_auth = true.
-# Parses subject/body, beautifies through beautify.py, posts via send_message.
-
-from __future__ import annotations
-import re
-import json
-from typing import Callable, Optional, Dict, Any
-
-from email import policy
-from email.parser import BytesParser
+import asyncio, email, re
+from email.message import EmailMessage
+from typing import Optional, Tuple
 
 from aiosmtpd.controller import Controller
-from aiosmtpd.smtp import AuthResult, LoginPassword
+from aiosmtpd.handlers import AsyncMessage
 
-# Beautify
-try:
-    from beautify import beautify_message
-except Exception:
-    def beautify_message(title, body, **kwargs):
-        return body, None
+BOT_NAME = "Jarvis Prime"
 
-class AnyAuthenticator:
-    def __init__(self, accept_any_auth: bool):
-        self.accept_any_auth = accept_any_auth
+SEND = None
+STATE = None
 
-    async def __call__(self, server, session, envelope, mechanism, auth_data):
-        if not self.accept_any_auth:
-            return AuthResult(success=False)
-        if isinstance(auth_data, LoginPassword):
-            return AuthResult(success=True)
-        return AuthResult(success=True)
+_llm = None
+_beautify = None
 
-def _strip_html(html: str) -> str:
-    html = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", html)
-    html = re.sub(r"(?s)<[^>]+>", "", html)
-    html = html.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    html = re.sub(r"[ \t\r\f\v]+", " ", html)
-    html = re.sub(r"\n{3,}", "\n\n", html)
-    return html.strip()
+def _load_helpers():
+    global _llm, _beautify
+    try:
+        import importlib.util as _imp
+        spec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
+        if spec and spec.loader:
+            _llm = _imp.module_from_spec(spec)
+            spec.loader.exec_module(_llm)
+            print(f"[{BOT_NAME}] ✅ llm_client loaded (smtp)")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ llm_client not loaded (smtp): {e}")
 
-def _choose_priority(headers: Dict[str, str], default_prio: int, prio_map: Dict[str, int]) -> int:
-    for key in ("x-priority", "priority"):
-        if key in headers:
-            m = re.search(r"(\d+)", headers[key])
-            if m:
-                try:
-                    n = int(m.group(1))
-                    return max(1, min(10, n))
-                except Exception:
-                    pass
-    imp = headers.get("importance", "").lower()
-    if imp in prio_map:
-        return max(1, min(10, int(prio_map[imp])))
-    return max(1, min(10, int(default_prio)))
+    try:
+        import importlib.util as _imp
+        bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
+        if bspec and bspec.loader:
+            _beautify = _imp.module_from_spec(bspec)
+            bspec.loader.exec_module(_beautify)
+            print(f"[{BOT_NAME}] ✅ beautify.py loaded (smtp)")
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ beautify not loaded (smtp): {e}")
 
-class JarvisSMTPHandler:
-    def __init__(self, cfg: dict, send_message_fn: Callable[[str, str, int, Optional[dict]], bool]):
-        self.cfg = cfg
-        self.send_message = send_message_fn
-        self.allowed_rcpt = (str(cfg.get("smtp_dummy_rcpt", "alerts@jarvis.local")) or "").lower()
-        self.rewrite_prefix = str(cfg.get("smtp_rewrite_title_prefix", "[SMTP]")).strip()
-        self.allow_html = bool(cfg.get("smtp_allow_html", False))
-        self.default_prio = int(cfg.get("smtp_priority_default", 5))
-        raw_map = cfg.get("smtp_priority_map", {"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5})
-        if isinstance(raw_map, str):
-            try:
-                raw_map = json.loads(raw_map)
-            except Exception:
-                raw_map = {"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5}
-        self.prio_map = {str(k).lower(): int(v) for k, v in (raw_map or {}).items()}
+def _footer(used_llm: bool, used_beautify: bool) -> str:
+    tags = []
+    if used_llm: tags.append("Neural Core ✓")
+    if used_beautify: tags.append("Aesthetic Engine ✓")
+    if not tags: tags.append("Relay Path")
+    return "— " + " · ".join(tags)
 
-    async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
-        rcpt_l = (address or "").lower()
-        envelope.rcpt_tos.append(address)
-        return "250 OK"
+def _wake_word_present(title: str, message: str) -> bool:
+    t = (title or "").lower().strip()
+    m = (message or "").lower().strip()
+    return t.startswith("jarvis") or m.startswith("jarvis")
 
-    async def handle_DATA(self, server, session, envelope):
-        rcpts = [r.lower() for r in (envelope.rcpt_tos or [])]
-        if self.allowed_rcpt not in rcpts:
-            return "550 No valid recipient for Jarvis (expected %s)" % self.allowed_rcpt
+def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict]]:
+    used_llm = False
+    used_beautify = False
+    final = message
+    extras = None
 
+    # Skip LLM for wake-word (so commands are not rewritten)
+    if not _wake_word_present(title, message) and (STATE and STATE.llm_enabled and _llm and hasattr(_llm, "rewrite")):
         try:
-            msg = BytesParser(policy=policy.default).parsebytes(envelope.original_content or envelope.content)
-        except Exception:
-            return "451 Unable to parse message"
+            print(f"[{BOT_NAME}] [SMTP] → LLM.rewrite start")
+            msg = _llm.rewrite(
+                text=message,
+                mood=STATE.chat_mood,
+                timeout=STATE.llm_timeout_seconds,
+                cpu_limit=STATE.llm_max_cpu_percent,
+                models_priority=STATE.llm_models_priority,
+                base_url=STATE.ollama_base_url,
+                model_url=STATE.llm_model_url,
+                model_path=STATE.llm_model_path,
+                model_sha256=STATE.llm_model_sha256,
+                allow_profanity=STATE.personality_allow_profanity,
+            )
+            if msg:
+                final = msg
+                used_llm = True
+                print(f"[{BOT_NAME}] [SMTP] ✓ LLM.rewrite done")
+        except Exception as e:
+            print(f"[{BOT_NAME}] [SMTP] ⚠️ LLM skipped: {e}")
 
-        subject = (msg.get("subject", "") or "").strip()
-        from_addr = msg.get("from", "") or ""
-        title = subject or "(no subject)"
-        if self.rewrite_prefix:
-            title = f"{self.rewrite_prefix} {title}"
-
-        headers = {k.lower(): str(v) for (k, v) in msg.items()}
-
-        text_body = None
-        html_body = None
-        attach_count = 0
-
-        if msg.is_multipart():
-            for part in msg.walk():
-                ctype = part.get_content_type()
-                cdispo = (part.get_content_disposition() or "").lower()
-                if cdispo == "attachment":
-                    attach_count += 1
-                    continue
-                try:
-                    payload = part.get_content()
-                except Exception:
-                    payload = None
-                if payload is None:
-                    continue
-                if ctype == "text/plain" and text_body is None:
-                    text_body = str(payload)
-                elif ctype == "text/html" and html_body is None:
-                    html_body = str(payload)
-        else:
-            ctype = msg.get_content_type()
-            try:
-                payload = msg.get_content()
-            except Exception:
-                payload = None
-            if ctype == "text/plain":
-                text_body = str(payload or "")
-            elif ctype == "text/html":
-                html_body = str(payload or "")
-
-        if not text_body and html_body and self.allow_html:
-            text_body = _strip_html(html_body)
-        if not text_body:
-            text_body = "(no content)"
-
-        notes = []
-        if from_addr:
-            notes.append(f"From: {from_addr}")
-        if attach_count > 0:
-            notes.append(f"(+{attach_count} attachments ignored)")
-        if notes:
-            text_body = f"{text_body}\n\n" + "\n".join(notes)
-
-        priority = _choose_priority(headers, self.default_prio, self.prio_map)
-
-        final, bx = beautify_message(
-            title,
-            text_body,
-            mood=str(self.cfg.get("personality_mood", "serious")),
-            source_hint="mail",
-        )
-
-        if bool(self.cfg.get("beautify_inline_images", False)) and bx and bx.get("client::notification", {}).get("bigImageUrl"):
-            img = bx["client::notification"]["bigImageUrl"]
-            final = f"![image]({img})\n\n{final}"
-
-        self.send_message(title, final, priority=priority, extras=bx)
-        return "250 Accepted"
-
-class JarvisSMTPController:
-    def __init__(self, cfg: dict, send_message_fn: Callable[[str, str, int, Optional[dict]], bool]):
-        self.cfg = cfg
-        self.handler = JarvisSMTPHandler(cfg, send_message_fn)
-        self.controller: Optional[Controller] = None
-
-    def start(self):
-        host = str(self.cfg.get("smtp_bind", "0.0.0.0"))
-        port = int(self.cfg.get("smtp_port", 2525))
-        max_bytes = int(self.cfg.get("smtp_max_bytes", 262144))
-        accept_any_auth = bool(self.cfg.get("smtp_accept_any_auth", True))
-        self.controller = Controller(
-            self.handler,
-            hostname=host,
-            port=port,
-            authenticator=AnyAuthenticator(accept_any_auth),
-            auth_required=False,
-            data_size_limit=max_bytes,
-        )
-        self.controller.start()
-        print(f"[Jarvis SMTP] Listening on {host}:{port} (max {max_bytes} bytes, accept_any_auth={accept_any_auth})")
-
-    def stop(self):
+    if _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            if self.controller:
-                self.controller.stop()
-                print("[Jarvis SMTP] Stopped")
-        except Exception:
-            pass
+            final, extras = _beautify.beautify_message(title, final, mood=STATE.chat_mood)
+            used_beautify = True
+        except Exception as e:
+            print(f"[{BOT_NAME}] [SMTP] ⚠️ Beautify failed: {e}")
 
-_controller: Optional[JarvisSMTPController] = None
+    final = f"{final}\n\n{_footer(used_llm, used_beautify)}"
+    return final, extras
 
-def start_smtp(cfg: dict, send_message_fn: Callable[[str, str, int, Optional[dict]], bool]) -> None:
-    global _controller
-    if _controller:
-        return
-    _controller = JarvisSMTPController(cfg, send_message_fn)
-    _controller.start()
+class JarvisSMTPHandler(AsyncMessage):
+    async def handle_message(self, message: EmailMessage) -> None:
+        try:
+            subject = message.get("Subject", "Email")
+            # prefer plain text
+            body = ""
+            if message.is_multipart():
+                for part in message.walk():
+                    if part.get_content_type() == "text/plain":
+                        body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="ignore")
+                        break
+            else:
+                body = message.get_payload(decode=True).decode(message.get_content_charset() or "utf-8", errors="ignore")
+
+            final, extras = _llm_then_beautify(subject, body)
+            SEND(subject, final, priority=5, extras=extras)
+        except Exception as e:
+            print(f"[{BOT_NAME}] [SMTP] handler error: {e}")
+
+def start_smtp(cfg, send_fn):
+    """
+    Launch a local SMTP server for intake (no auth).
+    """
+    global SEND, STATE
+    SEND = send_fn
+
+    class _State:
+        pass
+    STATE = _State()
+    STATE.chat_mood = cfg.get("personality_mood", cfg.get("chat_mood", "serious"))
+    STATE.llm_enabled = bool(cfg.get("llm_enabled", False))
+    STATE.llm_timeout_seconds = int(cfg.get("llm_timeout_seconds", 12))
+    STATE.llm_max_cpu_percent = int(cfg.get("llm_max_cpu_percent", 70))
+    STATE.llm_models_priority = cfg.get("llm_models_priority", [])
+    STATE.ollama_base_url     = cfg.get("ollama_base_url", "")
+    STATE.llm_model_url       = cfg.get("llm_model_url", "")
+    STATE.llm_model_path      = cfg.get("llm_model_path", "")
+    STATE.llm_model_sha256    = cfg.get("llm_model_sha256", "")
+    STATE.personality_allow_profanity = bool(cfg.get("personality_allow_profanity", False))
+
+    host = cfg.get("smtp_bind", "0.0.0.0")
+    port = int(cfg.get("smtp_port", 2525))
+    max_bytes = int(cfg.get("smtp_max_bytes", 262144))
+    accept_any_auth = bool(cfg.get("smtp_accept_any_auth", True))
+
+    _load_helpers()
+
+    handler = JarvisSMTPHandler()
+    controller = Controller(
+        handler,
+        hostname=host,
+        port=port,
+        decode_data=True,
+        ident="JarvisSMTP",
+        authenticator=None if accept_any_auth else lambda *_: False,
+        data_size_limit=max_bytes,
+    )
+    controller.start()
+    print(f"[{BOT_NAME}] [Jarvis SMTP] Listening on {host}:{port} (max {max_bytes} bytes, accept_any_auth={accept_any_auth})")
