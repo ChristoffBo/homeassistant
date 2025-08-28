@@ -54,20 +54,15 @@ def _cfg_allow_profanity() -> bool:
     except Exception:
         return False
 
-def _cfg_model_path(fallback: str = "") -> str:
-    # Prefer explicit path from /data/options.json
+def _read_option_model_path() -> str:
     try:
         with open("/data/options.json", "r", encoding="utf-8") as f:
             cfg = json.load(f)
-            p = (cfg.get("llm_model_path") or "").strip()
-            if p:
-                return p
+            return (cfg.get("llm_model_path") or "").strip()
     except Exception:
-        pass
-    # Then use provided fallback
-    if fallback:
-        return fallback
-    # Then check default share folder
+        return ""
+
+def _first_available_model() -> str:
     base = Path("/share/jarvis_prime/models")
     if base.exists():
         ggufs = sorted(base.glob("*.gguf"))
@@ -75,10 +70,44 @@ def _cfg_model_path(fallback: str = "") -> str:
             return str(ggufs[0])
     return ""
 
+def _cfg_model_path(fallback: str = "") -> str:
+    """
+    Choose a model path robustly:
+    1) Use llm_model_path from options.json if it exists on disk.
+    2) Else use supplied fallback if it exists.
+    3) Else auto-pick the first *.gguf under /share/jarvis_prime/models.
+    4) Else return empty (no model).
+    """
+    opt = _read_option_model_path()
+    if opt:
+        p = Path(os.path.expandvars(opt))
+        if p.exists():
+            return str(p)
+        # Path provided but missing → auto-fallback
+        auto = _first_available_model()
+        if auto:
+            print(f"[Neural Core] ⚠️ Configured model not found: {opt} — using {Path(auto).name}")
+            return auto
+        print(f"[Neural Core] ⚠️ Configured model not found: {opt} — no fallback available")
+        return ""
+
+    if fallback:
+        pf = Path(os.path.expandvars(fallback))
+        if pf.exists():
+            return str(pf)
+
+    auto = _first_available_model()
+    if auto:
+        print(f"[Neural Core] Using auto-detected model: {Path(auto).name}")
+        return auto
+
+    return ""
+
 # ---------- Optional model load ----------
-def _load_model(model_path: str):
+def _load_model(model_path: str) -> bool:
     global _MODEL, _MODEL_PATH, _CTRANS_AVAILABLE
     if not model_path:
+        print("[Neural Core] No model path available")
         return False
     try:
         from ctransformers import AutoModelForCausalLM
@@ -172,7 +201,7 @@ def _closer(mood: str, seed: str, allow_profanity: bool) -> str:
     }.get(mood, ["Done."])
     return _variety(seed, choices)
 
-# ---------- Deterministic renderers (fallback) ----------
+# ---------- Deterministic renderer (fallback) ----------
 def _render_generic(text: str, mood: str, allow_profanity: bool) -> List[str]:
     b = _bullet_for(mood)
     out: List[str] = []
@@ -228,7 +257,8 @@ def rewrite(
     text = text or ""
     allow_profanity = _cfg_allow_profanity()
     mood = _normalize_mood(mood)
-    model_path = model_path or _cfg_model_path()
+    # Robust path resolution — will auto-detect if wrong
+    model_path = _cfg_model_path(model_path)
 
     # Try to load once; generation below can still fail and we will fallback.
     have_model = _load_model(model_path)
@@ -237,7 +267,7 @@ def rewrite(
     if have_model and _CTRANS_AVAILABLE and _MODEL is not None:
         try:
             prompt = _build_prompt(text, mood, allow_profanity)
-            # NOTE: ctransformers call is synchronous; caller wraps this in a thread with timeout.
+            # NOTE: ctransformers call is synchronous; caller may enforce timeout externally.
             out = _MODEL(
                 prompt,
                 max_new_tokens=LLM_MAX_TOKENS,
