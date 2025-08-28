@@ -2,12 +2,12 @@
 # LAN-only SMTP intake for Jarvis Prime (aiosmtpd).
 # Accepts any AUTH creds when smtp_accept_any_auth = true.
 # Parses subject/body, LLM → Beautify with timeout fallback, then posts via send_message.
-# Preserves: recipient gate, priority mapping, HTML stripping, inline image handling.
 
 from __future__ import annotations
+
 import re
 import json
-from typing import Callable, Optional, Dict
+from typing import Callable, Dict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from email import policy
@@ -26,9 +26,7 @@ try:
 except Exception:
     _llm = None
 
-def _wake_word_present(title: str, message: str) -> bool:
-    # Only treat as a wake-word when the **message body** starts with "jarvis " or "jarvis:"
-    # Do NOT consider the title (many sources brand with "Jarvis Prime:" which should not bypass the LLM)
+def _wake_word_present(message: str) -> bool:
     m = (message or "").strip().lower()
     return m.startswith("jarvis ") or m.startswith("jarvis:")
 
@@ -37,13 +35,6 @@ class AnyAuthenticator:
         self.accept_any = accept_any_auth
     def authenticate(self, server, session, envelope, mechanism, auth_data):
         return "OK" if self.accept_any else "NO"
-
-def _coalesce_text(parts):
-    out = []
-    for p in parts:
-        s = (p or "").strip()
-        if s: out.append(s)
-    return "\n".join(out)
 
 def _strip_html(html: str) -> str:
     try:
@@ -62,11 +53,11 @@ class JarvisSMTPHandler:
         self.cfg = cfg
         self.send_cb = send_cb
 
-        # Basic options
         self.bind = str(cfg.get("smtp_bind", "0.0.0.0"))
         self.port = int(cfg.get("smtp_port", 2525))
         self.accept_any_auth = bool(cfg.get("smtp_accept_any_auth", True))
         self.allowed_rcpt = (str(cfg.get("smtp_dummy_rcpt", "alerts@jarvis.local")) or "").lower()
+
         self.rewrite_prefix = str(cfg.get("smtp_rewrite_title_prefix", "[SMTP]")).strip()
         self.allow_html = bool(cfg.get("smtp_allow_html", False))
         self.default_prio = int(cfg.get("smtp_priority_default", 5))
@@ -78,14 +69,13 @@ class JarvisSMTPHandler:
                 raw_map = {"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5}
         self.prio_map = {str(k).lower(): int(v) for k, v in (raw_map or {}).items()}
 
-        # Neural Core settings (from options.json)
+        # Neural Core settings
         self.mood = str(cfg.get("personality_mood", "serious"))
         self.llm_enabled = bool(cfg.get("llm_enabled", False))
         self.llm_timeout = int(cfg.get("llm_timeout_seconds", 5))
         self.llm_cpu = int(cfg.get("llm_max_cpu_percent", 70))
         self.llm_model_path = str(cfg.get("llm_model_path", ""))
 
-        # Footer (always on per your instruction)
         self.show_engine_footer = True
 
     def _priority_for(self, subject: str) -> int:
@@ -105,26 +95,38 @@ class JarvisSMTPHandler:
             return max(1, min(10, int(default_prio)))
 
     def _llm_then_beautify(self, title: str, body: str):
-        print(f"[LLM DEBUG][smtp] gate: wake={_wake_word_present(title, body)} en={self.llm_enabled} mod={bool(_llm)} hasinfo={hasattr(_llm, 'rewrite_with_info') if _llm else False}")
+        print(f"[LLM DEBUG][smtp] gate: wake={_wake_word_present(body)} en={self.llm_enabled} mod={bool(_llm)} has_info={hasattr(_llm, 'rewrite_with_info') if _llm else False} has_legacy={hasattr(_llm, 'rewrite_text') if _llm else False}")
         mood = self.mood or "serious"
 
         # Wake-word or LLM unavailable -> beautify only
-        if _wake_word_present(title, body) or not (self.llm_enabled and _llm and hasattr(_llm, "rewrite_with_info")):
+        if _wake_word_present(body) or not (self.llm_enabled and _llm):
             text, bx = beautify_message(title, body, mood=mood, source_hint="mail")
             if self.show_engine_footer:
                 text = f"{text}\n[Beautify fallback]"
             return text, bx
 
-        def _call():
+        def call_core():
             try:
-                rewritten, used = _llm.rewrite_with_info(
-                    text=body,
-                    mood=mood,
-                    timeout=self.llm_timeout,
-                    cpu_limit=self.llm_cpu,
-                    model_path=self.llm_model_path,
-                )
-                if used:
+                if hasattr(_llm, "rewrite_with_info"):
+                    rewritten, used = _llm.rewrite_with_info(
+                        text=body,
+                        mood=mood,
+                        timeout=self.llm_timeout,
+                        cpu_limit=self.llm_cpu,
+                        model_path=self.llm_model_path,
+                    )
+                    if used:
+                        t, bx = beautify_message(title, rewritten, mood=mood, source_hint="mail")
+                        if self.show_engine_footer:
+                            t = f"{t}\n[Neural Core ✓]"
+                        return t, bx
+                    else:
+                        t, bx = beautify_message(title, body, mood=mood, source_hint="mail")
+                        if self.show_engine_footer:
+                            t = f"{t}\n[Beautify fallback]"
+                        return t, bx
+                elif hasattr(_llm, "rewrite_text"):
+                    rewritten = _llm.rewrite_text(body, mood=mood, timeout_s=self.llm_timeout)
                     t, bx = beautify_message(title, rewritten, mood=mood, source_hint="mail")
                     if self.show_engine_footer:
                         t = f"{t}\n[Neural Core ✓]"
@@ -140,9 +142,8 @@ class JarvisSMTPHandler:
                     t = f"{t}\n[Beautify fallback]"
                 return t, bx
 
-        # Hard timeout using a thread (keeps aiosmtpd loop responsive)
         with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_call)
+            fut = ex.submit(call_core)
             try:
                 return fut.result(timeout=max(1, self.llm_timeout))
             except FuturesTimeout:
@@ -163,7 +164,7 @@ def _parse_message(data: bytes):
         for part in msg.walk():
             ct = part.get_content_type()
             if ct == "text/plain":
-                body = part.get_payload(decode=True).decode(part.get_content_charset() | | "utf-8", "ignore")
+                body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", "ignore")
                 break
         if not body:
             for part in msg.walk():
