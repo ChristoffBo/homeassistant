@@ -11,6 +11,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
+# Default system prompt (baked into image). Runtime falls back to /share/jarvis_prime/memory if present.
+RUN mkdir -p /app/memory
+COPY memory/system_prompt.txt /app/memory/system_prompt.txt
+
 # Copy all modules and run script
 COPY run.sh /run.sh
 COPY bot.py /app/bot.py
@@ -30,6 +34,9 @@ COPY beautify.py /app/beautify.py
 COPY llm_client.py /app/llm_client.py
 COPY llm_memory.py /app/llm_memory.py
 COPY personality_state.py /app/personality_state.py
+
+# Optional defaults for LLM behaviour
+ENV LLM_MAX_LINES=10
 
 RUN chmod +x /run.sh
 
