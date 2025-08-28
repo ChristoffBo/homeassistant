@@ -1,33 +1,41 @@
-
 #!/usr/bin/env python3
-# /app/llm_client.py
 from __future__ import annotations
 
-import os, hashlib
+import os, json, time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
-# Optional: ctransformers
+# Optional dependencies
 try:
-    from ctransformers import AutoModelForCausalLM
+    from ctransformers import AutoModelForCausalLM  # local GGUF
 except Exception:
     AutoModelForCausalLM = None  # type: ignore
 
+try:
+    import requests  # for model download and/or Ollama
+except Exception:
+    requests = None  # type: ignore
+
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 
-# Defaults (overridable by caller)
+# Defaults (can be overridden via args)
 MODEL_PATH  = Path(os.getenv("LLM_MODEL_PATH", "/share/jarvis_prime/models/model.gguf"))
 MODEL_URL   = os.getenv("LLM_MODEL_URL", "")
 MODEL_SHA256 = os.getenv("LLM_MODEL_SHA256", "")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "")  # e.g., http://ollama:11434
 
+# Internal state
 _loaded_model = None
+_model_path: Optional[Path] = None
+_backend: str = "none"  # none|ctransformers|ollama
 
 def _ensure_model(path: Path = MODEL_PATH) -> Optional[Path]:
+    global _model_path
     if path and path.exists():
+        _model_path = path
         return path
-    if MODEL_URL:
+    if MODEL_URL and requests:
         try:
-            import requests
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".part")
             with requests.get(MODEL_URL, stream=True, timeout=30) as r:
@@ -37,6 +45,7 @@ def _ensure_model(path: Path = MODEL_PATH) -> Optional[Path]:
                         if chunk:
                             f.write(chunk)
             os.replace(tmp, path)
+            _model_path = path
             return path
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ Model download failed: {e}", flush=True)
@@ -44,7 +53,7 @@ def _ensure_model(path: Path = MODEL_PATH) -> Optional[Path]:
     return None
 
 def _load_model(path: Path) -> Optional[object]:
-    global _loaded_model
+    global _loaded_model, _backend
     if _loaded_model is not None:
         return _loaded_model
     if AutoModelForCausalLM is None:
@@ -53,10 +62,72 @@ def _load_model(path: Path) -> Optional[object]:
         _loaded_model = AutoModelForCausalLM.from_pretrained(
             str(path), model_type="llama", gpu_layers=0
         )
+        _backend = "ctransformers"
         return _loaded_model
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
         return None
+
+def _ollama_generate(base_url: str, prompt: str, model: str = "llama3.1") -> Optional[str]:
+    if not requests:
+        return None
+    try:
+        url = base_url.rstrip("/") + "/api/generate"
+        payload = {"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.7}}
+        r = requests.post(url, json=payload, timeout=30)
+        if r.ok:
+            j = r.json()
+            return str(j.get("response", "")).strip()
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Ollama request failed: {e}", flush=True)
+    return None
+
+def prefetch_model(model_path: Optional[str] = None, model_url: Optional[str] = None) -> None:
+    """
+    Load or download the local GGUF so startup can show ONLINE quickly.
+    No-op if using Ollama only.
+    """
+    path = Path(model_path) if model_path else MODEL_PATH
+    url  = model_url or MODEL_URL
+    if OLLAMA_BASE_URL and not (model_path or MODEL_PATH).exists():
+        # Using Ollama only; nothing to prefetch locally
+        return
+    p = _ensure_model(path)
+    if p is not None:
+        _load_model(p)
+
+def engine_status() -> Dict[str, object]:
+    """
+    Return a dict used by bot.py to render the boot card.
+    Keys:
+      - ready: bool
+      - model_path: str (if local)
+      - backend: 'ctransformers' | 'ollama' | 'none'
+    """
+    # Prefer Ollama if configured
+    base = OLLAMA_BASE_URL.strip()
+    if base:
+        ready = False
+        if requests:
+            try:
+                r = requests.get(base.rstrip("/") + "/api/version", timeout=3)
+                ready = r.ok
+            except Exception:
+                ready = False
+        return {
+            "ready": bool(ready),
+            "model_path": "",
+            "backend": "ollama",
+        }
+
+    # Otherwise, local
+    p = _model_path or (MODEL_PATH if MODEL_PATH.exists() else None)
+    ready = _loaded_model is not None or (p is not None and p.exists())
+    return {
+        "ready": bool(ready),
+        "model_path": str(p) if p else "",
+        "backend": "ctransformers" if ready else "none",
+    }
 
 def _strip_numbered_reasoning(text: str) -> str:
     out_lines = []
@@ -64,18 +135,15 @@ def _strip_numbered_reasoning(text: str) -> str:
         t = ln.strip()
         if not t:
             continue
-        # Drop analysis-style prefixes
-        if re_match(r'^(input|output|explanation|reasoning)\s*[:\-]', t):
+        tl = t.lower()
+        if tl.startswith(("input:", "output:", "explanation:", "reasoning:", "analysis:")):
             continue
-        # Drop obvious numbered points
-        if re_match(r'^\d+[\.\)]\s+', t):
-            continue
+        if tl[:2].isdigit() or tl[:1].isdigit():
+            # lines like "1. ..." or "2) ..."
+            if len(t) > 1 and t[1] in {'.', ')'}:
+                continue
         out_lines.append(t)
     return "\n".join(out_lines)
-
-def re_match(pat: str, s: str) -> bool:
-    import re
-    return re.match(pat, s, flags=re.I) is not None
 
 def _cap(text: str, max_lines: int = 6, max_chars: int = 400) -> str:
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
@@ -87,35 +155,38 @@ def _cap(text: str, max_lines: int = 6, max_chars: int = 400) -> str:
     return out
 
 def rewrite(text: str, mood: str = "serious", timeout: int = 8, cpu_limit: int = 70,
-            models_priority: Optional[List[str]] = None, allow_profanity: bool = False,
-            model_path: Optional[str] = None, model_url: Optional[str] = None,
-            model_sha256: Optional[str] = None) -> str:
+            models_priority: Optional[List[str]] = None, base_url: Optional[str] = None,
+            model_url: Optional[str] = None, model_path: Optional[str] = None,
+            model_sha256: Optional[str] = None, allow_profanity: bool = False) -> str:
     """
-    Deterministic, clamped rewrite. If no model, returns original text.
+    Clamped rewrite. Uses Ollama (if base_url/OLLAMA_BASE_URL is set), otherwise local GGUF via ctransformers.
+    If no engine is available, returns the original text.
     """
     src = (text or "").strip()
     if not src:
         return src
 
-    # Try model
+    # Select backend
+    base = (base_url or OLLAMA_BASE_URL or "").strip()
+    if base:
+        # Remote generation
+        system = (
+            f"You are Jarvis Prime. Tone={mood}. Keep facts, numbers, links unchanged. "
+            f"Short, human, no lists, no 'Input/Output/Explanation'. Max 6 short lines."
+        )
+        prompt = f"{system}\n\nRewrite:\n{src}\n\nNew:"
+        out = _ollama_generate(base, prompt, model=(models_priority[0] if models_priority else "llama3.1")) or src
+        out = _strip_numbered_reasoning(out)
+        return _cap(out, 6, 400)
+
+    # Local model
     p = _ensure_model(Path(model_path) if model_path else MODEL_PATH)
     model = _load_model(p) if p else None
 
-    vibe_map = {
-        "serious": "clinical, confident, concise",
-        "playful": "cheeky, witty, upbeat",
-        "angry":   "furious, clipped, no-nonsense",
-        "happy":   "bright, helpful, warm",
-        "sad":     "reserved, minimal, calm",
-    }
-    vibe = vibe_map.get((mood or "").lower(), "confident, concise")
-    profanity = "neutral on profanity" if allow_profanity else "avoid profanity"
-
     if model:
         system = (
-            f"You are Jarvis Prime. Rewrite the input with {vibe}. "
-            f"Keep facts/URLs/numbers exactly. No lists. No 'Input/Output/Explanation'. "
-            f"2–6 short lines max. {profanity}. No concluding labels."
+            f"You are Jarvis Prime. Tone={mood}. Keep facts/URLs/numbers exactly. "
+            f"No lists. No 'Input/Output/Explanation'. 2–6 short lines."
         )
         prompt = f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
         try:
@@ -125,12 +196,10 @@ def rewrite(text: str, mood: str = "serious", timeout: int = 8, cpu_limit: int =
             print(f"[{BOT_NAME}] ⚠️ LLM generation failed: {e}", flush=True)
             out = src
     else:
-        out = src  # no model available
+        out = src
 
-    # Sanitize + clamp
     out = _strip_numbered_reasoning(out)
     out = _cap(out, 6, 400)
-    # Guarantee at least something meaningful
     if not out or len(out) < 2:
         out = src[:200]
     return out
