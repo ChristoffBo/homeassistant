@@ -66,7 +66,7 @@ def _load_json_file(path):
         with open(path, "r") as f:
             return json.load(f)
     except Exception:
-            print(f"[{BOT_NAME}] ⚠️ Failed to read config")
+        print(f"[" + BOT_NAME + "] ⚠️ Failed to read config")
         return {}
 
 merged = {}
@@ -96,6 +96,10 @@ try:
     BEAUTIFY_INLINE_IMAGES  = bool(merged.get("beautify_inline_images", False))
 
 except Exception as e:
+    print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
+    PROXY_ENABLED = PROXY_ENABLED_ENV
+    CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
+    DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
     
 # Normalize priority (HA UI provides string); ensure list
 try:
@@ -111,10 +115,6 @@ try:
         _os.environ["LLM_MODEL_PATH"] = str(LLM_MODEL_PATH)
 except Exception as _e:
     print(f"[{BOT_NAME}] ⚠️ LLM env export failed: {_e}")
-print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
-    PROXY_ENABLED = PROXY_ENABLED_ENV
-    CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
-    DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
 
 # -----------------------------
 # LLM settings (from options.json with env fallbacks)
