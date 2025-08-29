@@ -108,18 +108,23 @@ def engine_status() -> Dict[str,object]:
     base=OLLAMA_BASE_URL.strip()
     if base and requests:
         try:
-            r=requests.get(base.rstrip("/")+"/api/version",timeout=3)
+            r=requests.get(base.rstrip('/')+'/api/version',timeout=3)
             ok=r.ok
         except Exception:
             ok=False
-        return {"ready": bool(ok), "model_path":"", "backend":"ollama"}
+        return {'ready': bool(ok), 'model_path':'', 'backend':'ollama'}
+    p=_model_path or _resolve_model_path()
+    ok = bool(p and Path(p).exists() and AutoModelForCausalLM is not None)
+    return {'ready': ok, 'model_path': str(p) if p else '', 'backend': 'ctransformers'}
     p=_model_path or _resolve_model_path()
     return {"ready": bool(p and p.exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
 
 def _load_local_model(path: Path):
     global _loaded_model
     if _loaded_model is not None: return _loaded_model
-    if AutoModelForCausalLM is None: return None
+    if AutoModelForCausalLM is None:
+        print(f"[{BOT_NAME}] ❌ ctransformers not installed; local GGUF cannot load", flush=True)
+        return None
     try:
         _loaded_model = AutoModelForCausalLM.from_pretrained(
             str(path),
