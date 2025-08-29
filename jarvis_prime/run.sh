@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-# --- TLS bootstrap (idempotent) ---
-# Prefer system CAs; fall back to certifi for Python downloads.
-if command -v update-ca-certificates >/dev/null 2>&1; then
-  update-ca-certificates >/dev/null 2>&1 || true
-fi
-if python3 - <<'PY' >/dev/null 2>&1; then
-import certifi, sys
-print(certifi.where())
-PY
-then
-  export SSL_CERT_FILE="$(python3 -c 'import certifi;print(certifi.where())' 2>/dev/null)"
-  export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
-fi
-# --- end TLS bootstrap ---
 # shellcheck shell=bash
 set -euo pipefail
 

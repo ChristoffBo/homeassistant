@@ -75,16 +75,16 @@ def _safe_download(url: str, dst: Path) -> None:
             shutil.copyfileobj(r, f, length=1024*1024)
         os.replace(tmp, dst)
 
-def _pick_candidate(models_priority: Optional[List[str]], env: Dict[str,str]) -> tuple[str, Optional[str], Optional[str]]:
+def _iter_candidates(models_priority: Optional[List[str]], env: Dict[str,str]):
     """
     Return (key, url, path). Honors explicit LLM_MODEL_PATH/URL first, then per-model env overrides,
     finally built-in REGISTRY.
     """
     # Explicit single overrides
     if env.get("LLM_MODEL_PATH"):
-        return ("explicit", None, env["LLM_MODEL_PATH"])
+        yield ("explicit", None, env["LLM_MODEL_PATH"])
     if env.get("LLM_MODEL_URL"):
-        return ("explicit", env["LLM_MODEL_URL"], None)
+        yield ("explicit", env["LLM_MODEL_URL"], None)
 
     order = [m for m in (models_priority or env.get("LLM_MODELS_PRIORITY","").split(",")) if m] or DEFAULT_PRIORITY
     for key in order:
@@ -96,6 +96,10 @@ def _pick_candidate(models_priority: Optional[List[str]], env: Dict[str,str]) ->
     # nothing -> last resort TinyLlama
     return ("tinyllama", REGISTRY["tinyllama"], None)
 
+
+def _is_llama_family(key: str, path: Path) -> bool:
+    name = (path.name.lower() if path else "") + str(key).lower()
+    return any(tok in name for tok in ["llama", "llama-3", "tinyllama", "llama32"])  # very loose
 def _load_model(path: Path) -> object:
     # Prefer llama-cpp-python
     global _model_cache
@@ -137,7 +141,8 @@ def rewrite(*, text: str, mood: str = "neutral", timeout: int = 12, cpu_limit: i
         global MODELS_DIR
         MODELS_DIR = Path(env["LLM_MODELS_DIR"]); MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    key, url, path_str = _pick_candidate(models_priority, env)
+    candidates = list(_iter_candidates(models_priority, env))
+    key, url, path_str = candidates[0]
 
     # Resolve destination path
     if path_str:
@@ -182,6 +187,7 @@ def rewrite(*, text: str, mood: str = "neutral", timeout: int = 12, cpu_limit: i
 
 def engine_status() -> Dict[str,object]:
     # Ollama intentionally ignored in this build (no external server)
-    key, url, path_str = _pick_candidate(None, {k:os.getenv(k,"") for k in os.environ.keys()})
+    cands = list(_iter_candidates(None, {k:os.getenv(k,"") for k in os.environ.keys()}))
+    key, url, path_str = cands[0]
     path = Path(path_str) if path_str else MODELS_DIR / (Path(url).name if url else f"{key}.gguf")
     return {"ready": path.exists(), "model_path": str(path), "backend": "llama.cpp" if Llama else ("ctransformers" if AutoModelForCausalLM else "none")}
