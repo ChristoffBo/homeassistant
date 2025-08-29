@@ -297,55 +297,137 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
 
 def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
     """
-    LLM first, then Beautify. Returns (final_text, extras, used_llm, used_beautify).
+    Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
+    Returns (final_text, extras, used_llm, used_beautify)
     """
     used_llm = False
     used_beautify = False
     final = message
-    extras: Optional[dict] = None
+    extras = None
 
-    if LLM_ENABLED:
+    # LLM FIRST — no wake-word skip
+    if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
         try:
-            import importlib.util as _imp
-            _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
-            _llm = None
-            if _lspec and _lspec.loader:
-                _llm = _imp.module_from_spec(_lspec)
-                _lspec.loader.exec_module(_llm)
-            if _llm and hasattr(_llm, "rewrite"):
-                rewritten = _llm.rewrite(
-                    text=final,
-                    system_prompt=merged.get("llm_system_prompt", ""),
-                    timeout=LLM_TIMEOUT_SECONDS,
-                )
-                if isinstance(rewritten, str) and rewritten.strip() and rewritten.strip() != final.strip():
-                    final = rewritten.strip()
-                    used_llm = True
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ LLM rewrite failed: {e}")
+            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, mood={CHAT_MOOD})")
+            rewritten = _llm.rewrite(
+                text=final,
+                mood=CHAT_MOOD,
+                timeout=LLM_TIMEOUT_SECONDS,
+                cpu_limit=LLM_MAX_CPU_PERCENT,
+                models_priority=LLM_MODELS_PRIORITY,
+                base_url=OLLAMA_BASE_URL,
+                model_url=LLM_MODEL_URL,
+                model_path=LLM_MODEL_PATH,
+                model_sha256=LLM_MODEL_SHA256,
+                allow_profanity=PERSONALITY_ALLOW_PROFANITY,
+            )
+            if rewritten:
+                final = rewritten
+                used_llm = True
+                print(f"[{BOT_NAME}] ✓ LLM.rewrite done")
+        except Exception as _e:
+            print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
 
-    if BEAUTIFY_ENABLED:
+    # BEAUTIFY SECOND
+    if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            import importlib.util as _imp
-            _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
-            _beautify = None
-            if _bspec and _bspec.loader:
-                _beautify = _imp.module_from_spec(_bspec)
-                _bspec.loader.exec_module(_beautify)
-            if _beautify and hasattr(_beautify, "beautify"):
-                btxt, bextras = _beautify.beautify(
-                    title,
-                    final,
-                    allow_inline_images=bool(merged.get("beautify_inline_images", False)),
-                )
-                if isinstance(btxt, str) and btxt:
-                    final = btxt
-                extras = bextras
-                used_beautify = True
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ Beautify failed: {e}")
+            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
+            used_beautify = True
+        except Exception as _e:
+            print(f"[{BOT_NAME}] ⚠️ Beautify failed: {_e}")
+
+    # Ensure footer visible
+    foot = _footer(used_llm, used_beautify)
+    if final and not final.rstrip().endswith(foot):
+        final = f"{final.rstrip()}\n\n{foot}"
 
     return final, extras, used_llm, used_beautify
+
+# -----------------------------
+# Normalization + command extraction
+# -----------------------------
+def _clean(s):
+    return re.sub(r"\s+", " ", s.lower().strip())
+
+def normalize_cmd(cmd: str) -> str:
+    if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
+        try:
+            return _alias_mod.normalize_cmd(cmd)
+        except Exception:
+            pass
+    return _clean(cmd)
+
+def extract_command_from(title: str, message: str) -> str:
+    tlow, mlow = (title or "").lower(), (message or "").lower()
+    if tlow.startswith("jarvis"):
+        tcmd = tlow.replace("jarvis", "", 1).strip()
+        if tcmd: return tcmd
+        if mlow.startswith("jarvis"):
+            return mlow.replace("jarvis", "", 1).strip()
+        return mlow.strip()
+    if mlow.startswith("jarvis"):
+        return mlow.replace("jarvis", "", 1).strip()
+    return ""
+
+# -----------------------------
+# Startup HUD (high-tech boot card)
+# -----------------------------
+
+def post_startup_card():
+    # Warm-load the model in THIS process before status.
+    try:
+        if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
+            _llm.prefetch_model()
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Prefetch in bot failed: {e}")
+
+    # LLM engine status/model
+    st = {}
+    if _llm and hasattr(_llm, "engine_status"):
+        try:
+            st = _llm.engine_status() or {}
+        except Exception:
+            st = {}
+
+    online = bool(st.get("ready"))
+    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
+    model_name = os.path.basename(model_path) if model_path else ""
+
+    # Show clean engine status; report LLM family on its own line
+    engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
+
+    def _family_from_name(n: str) -> str:
+        n = (n or "").lower()
+        if 'phi' in n:
+            return 'Phi3'
+        if 'tiny' in n or 'tinyl' in n:
+            return 'TinyLlama'
+        if 'qwen' in n:
+            return 'Qwen'
+        return '—'
+
+    llm_line = f"🧠 LLM: {_family_from_name(model_name) if online else '—'}"
+
+    lines = [
+        "🧬 Prime Neural Boot",
+        f"🛰️ Engine: {engine_line}",
+        llm_line,
+        f"🎛️ Mood: {CHAT_MOOD}",
+        "",
+        "Modules:",
+        f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
+        f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
+        f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
+        f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
+        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
+        f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
+        f"📨 SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
+        f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
+        f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
+        "",
+        "Status: All systems nominal" if online else "Status: Neural Core warming up…",
+    ]
+    send_message("Startup", "\n".join(lines), priority=4)
 
 # -----------------------------
 # Command handling helpers (safe calls)
@@ -471,12 +553,7 @@ def _handle_command(ncmd: str):
 # Listener
 # -----------------------------
 async def listen():
-    ws_url = None
-    if GOTIFY_URL and CLIENT_TOKEN:
-        ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
-    else:
-        print(f"[{BOT_NAME}] ⚠️ Missing GOTIFY_URL or CLIENT_TOKEN; stream disabled.")
-        return
+    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
     print(f"[{BOT_NAME}] Connecting {ws_url}")
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         print(f"[{BOT_NAME}] ✅ Connected")
@@ -526,55 +603,6 @@ def main():
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ WS error, reconnecting in 3s: {e}")
             time.sleep(3)
-
-def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
-    """LLM first, then Beautify. Returns (final_text, extras, used_llm, used_beautify)."""
-    used_llm = False
-    used_beautify = False
-    final = message
-    extras: Optional[dict] = None
-
-    # LLM
-    if LLM_ENABLED:
-        try:
-            import importlib.util as _imp
-            _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
-            _llm = None
-            if _lspec and _lspec.loader:
-                _llm = _imp.module_from_spec(_lspec)
-                _lspec.loader.exec_module(_llm)
-            if _llm and hasattr(_llm, "rewrite"):
-                rewritten = _llm.rewrite(
-                    text=final,
-                    system_prompt=merged.get("llm_system_prompt", ""),
-                    timeout=LLM_TIMEOUT_SECONDS,
-                )
-                if isinstance(rewritten, str) and rewritten.strip() and rewritten.strip() != final.strip():
-                    final = rewritten.strip()
-                    used_llm = True
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ LLM rewrite failed: {e}")
-
-    # Beautify
-    if BEAUTIFY_ENABLED:
-        try:
-            import importlib.util as _imp
-            _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
-            _beautify = None
-            if _bspec and _bspec.loader:
-                _beautify = _imp.module_from_spec(_bspec)
-                _bspec.loader.exec_module(_beautify)
-            if _beautify and hasattr(_beautify, "beautify"):
-                btxt, bextras = _beautify.beautify(title, final, allow_inline_images=bool(merged.get("beautify_inline_images", False)))
-                if isinstance(btxt, str) and btxt:
-                    final = btxt
-                extras = bextras
-                used_beautify = True
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ Beautify failed: {e}")
-
-    return final, extras, used_llm, used_beautify
-
 
 if __name__ == "__main__":
     main()
