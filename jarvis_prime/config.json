@@ -21,7 +21,7 @@
   ],
   "options": {
     "bot_name": "Jarvis Prime",
-    "bot_icon": "🧠",
+    "bot_icon": "\ud83e\udde0",
     "gotify_url": "http://10.0.0.99:8091",
     "gotify_client_token": "CHANGE_ME_CLIENT",
     "gotify_app_token": "CHANGE_ME_APP",
@@ -99,7 +99,12 @@
     "llm_model_path": "",
     "llm_model_sha256": "",
     "llm_ollama_base_url": "",
-    "llm_model_preference": "phi3,tinyllama,qwen05"
+    "llm_model_preference": "phi3,tinyllama,qwen05",
+    "llm_choice": "off",
+    "llm_autodownload": true,
+    "allow_multiline": true,
+    "ollama_in_container": true,
+    "ollama_models_dir": "/share/jarvis_prime/ollama_models"
   },
   "schema": {
     "bot_name": "str",
@@ -181,6 +186,11 @@
     "llm_model_path": "str",
     "llm_model_sha256": "str",
     "llm_ollama_base_url": "str",
-    "llm_model_preference": "str"
+    "llm_model_preference": "str",
+    "llm_choice": "str",
+    "llm_autodownload": "bool",
+    "allow_multiline": "bool",
+    "ollama_in_container": "bool",
+    "ollama_models_dir": "str"
   }
 }
