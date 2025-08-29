@@ -317,87 +317,14 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
                 models_priority=LLM_MODELS_PRIORITY,
                 base_url=OLLAMA_BASE_URL,
                 model_url=LLM_MODEL_URL,
-                model_path=LLM_MODEL_PATH,
-                model_sha256=LLM_MODEL_SHA256,
-                allow_profanity=PERSONALITY_ALLOW_PROFANITY,
-            )
-            if rewritten:
-                final = rewritten
-                used_llm = True
-                print(f"[{BOT_NAME}] ✓ LLM.rewrite done")
-        except Exception as _e:
-            print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
-
-    # BEAUTIFY SECOND
-    if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
-        try:
-            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
-            used_beautify = True
-        except Exception as _e:
-            print(f"[{BOT_NAME}] ⚠️ Beautify failed: {_e}")
-
-    # Ensure footer visible
-    foot = _footer(used_llm, used_beautify)
-    if final and not final.rstrip().endswith(foot):
-        final = f"{final.rstrip()}\n\n{foot}"
-
-    return final, extras, used_llm, used_beautify
-
-# -----------------------------
-# Normalization + command extraction
-# -----------------------------
-def _clean(s):
-    return re.sub(r"\s+", " ", s.lower().strip())
-
-def normalize_cmd(cmd: str) -> str:
-    if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
-        try:
-            return _alias_mod.normalize_cmd(cmd)
-        except Exception:
-            pass
-    return _clean(cmd)
-
-def extract_command_from(title: str, message: str) -> str:
-    tlow, mlow = (title or "").lower(), (message or "").lower()
-    if tlow.startswith("jarvis"):
-        tcmd = tlow.replace("jarvis", "", 1).strip()
-        if tcmd: return tcmd
-        if mlow.startswith("jarvis"):
-            return mlow.replace("jarvis", "", 1).strip()
-        return mlow.strip()
-    if mlow.startswith("jarvis"):
-        return mlow.replace("jarvis", "", 1).strip()
-    return ""
-
-# -----------------------------
-# Startup HUD (high-tech boot card)
-# -----------------------------
-
-def post_startup_card():
-    # Warm-load the model in THIS process before status.
-    try:
-        if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
-            _llm.prefetch_model()
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Prefetch in bot failed: {e}")
-
-    # LLM engine status/model
-    st = {}
-    if _llm and hasattr(_llm, "engine_status"):
-        try:
-            st = _llm.engine_status() or {}
-        except Exception:
-            st = {}
-
-    online = bool(st.get("ready"))
-    engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
-    llm_short = (st.get("name") or os.getenv("LLM_ACTIVE_NAME", "—")).strip() or "—"
-    llm_line = f"LLM: {llm_short}"
+                engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
+llm_short = (st.get('name') or os.getenv('LLM_ACTIVE_NAME','—')).strip() or '—'
+engine_line += f" ({model_name})"
 
     lines = [
         "🧬 Prime Neural Boot",
-        f"🛰️ {engine_line}",
-        f"🧠 {llm_line}",
+        f"🛰️ Engine: {engine_line}",
+        f"🧠 LLM: {llm_short}",
         f"🎛️ Mood: {CHAT_MOOD}",
         "",
         "Modules:",
@@ -539,7 +466,12 @@ def _handle_command(ncmd: str):
 # Listener
 # -----------------------------
 async def listen():
-    ws_url = GOTIFY_URL.replace("http://", "ws://").replace("https://", "wss://") + f"/stream?token={CLIENT_TOKEN}"
+    ws_url = None
+    if GOTIFY_URL and CLIENT_TOKEN:
+        ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
+    else:
+        print(f"[{BOT_NAME}] ⚠️ Missing GOTIFY_URL or CLIENT_TOKEN; stream disabled.")
+        return
     print(f"[{BOT_NAME}] Connecting {ws_url}")
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         print(f"[{BOT_NAME}] ✅ Connected")
@@ -592,3 +524,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # Override core connection settings from options.json if present
+    GOTIFY_URL  = str(merged.get("gotify_url", GOTIFY_URL)).rstrip("/")
+    CLIENT_TOKEN = str(merged.get("gotify_client_token", CLIENT_TOKEN))
+    APP_TOKEN    = str(merged.get("gotify_app_token", APP_TOKEN))
+    APP_NAME     = str(merged.get("jarvis_app_name", APP_NAME))
+    RETENTION_HOURS  = int(merged.get("retention_hours", RETENTION_HOURS))
+    SILENT_REPOST    = bool(merged.get("silent_repost", SILENT_REPOST))
+    BEAUTIFY_ENABLED = bool(merged.get("beautify_enabled", BEAUTIFY_ENABLED))
+

@@ -5,162 +5,82 @@ set -euo pipefail
 CONFIG_PATH=/data/options.json
 
 log() { echo "[Jarvis Prime] $*"; }
-jqget() { jq -r "$1" "$CONFIG_PATH"; }
-bool() { [[ "$1" == "true" || "$1" == "1" || "$1" == "yes" || "$1" == "on" ]]; }
 
-# -------------------------------
-# Read options
-# -------------------------------
-LLM_ENABLED="$(jqget '.llm_enabled // false')"
-LLM_CLEANUP_ON_DISABLE="$(jqget '.llm_cleanup_on_disable // true')"
+# read a field from options.json with jq or default
+getoptj() { jq -r "$1 // empty" "$CONFIG_PATH" 2>/dev/null || true; }
 
-PHI3_ON="$(jqget '.llm_phi3_enabled // false')"
-PHI2_ON="$(jqget '.llm_phi2_enabled // false')"
-GEMMA2_ON="$(jqget '.llm_gemma2_enabled // false')"
-TINY_ON="$(jqget '.llm_tinyllama_enabled // false')"
-QWEN05_ON="$(jqget '.llm_qwen05_enabled // false')"
+# --- Read user options
+MODELS_DIR="$(getoptj '.ollama_models_dir')"
+[ -z "$MODELS_DIR" ] && MODELS_DIR="$(getoptj '.llm_models_dir')"
+[ -z "$MODELS_DIR" ] && MODELS_DIR="/share/jarvis_prime/models"
 
-# self-contained by default
-# accept either llm_models_dir or ollama_models_dir (back-compat)
-RAW_DIR_A="$(jqget '.llm_models_dir // empty')"
-RAW_DIR_B="$(jqget '.ollama_models_dir // empty')"
-if [[ -n "$RAW_DIR_A" ]]; then OLLAMA_MODELS_DIR="$RAW_DIR_A"; 
-elif [[ -n "$RAW_DIR_B" ]]; then OLLAMA_MODELS_DIR="$RAW_DIR_B"; 
-else OLLAMA_MODELS_DIR="/share/jarvis_prime/models"; fi
+PHI3_ON=$(getoptj '.llm_phi3_enabled');      [ "$PHI3_ON" = "true" ] || PHI3_ON="false"
+PHI2_ON=$(getoptj '.llm_phi2_enabled');      [ "$PHI2_ON" = "true" ] || PHI2_ON="false"
+GEMMA2_ON=$(getoptj '.llm_gemma2_enabled');  [ "$GEMMA2_ON" = "true" ] || GEMMA2_ON="false"
+TINY_ON=$(getoptj '.llm_tinyllama_enabled'); [ "$TINY_ON" = "true" ] || TINY_ON="false"
+QWEN_ON=$(getoptj '.llm_qwen05_enabled');    [ "$QWEN_ON" = "true" ] || QWEN_ON="false"
 
-EXT_BASE_URL="$(jqget '.llm_ollama_base_url // ""')"
+# choose the first enabled model; else empty
+ACTIVE_TAG=""
+ACTIVE_NAME="—"
+if [ "$PHI3_ON" = "true" ]; then ACTIVE_TAG="phi3:mini"; ACTIVE_NAME="Phi3"; fi
+if [ "$PHI2_ON" = "true" ]; then ACTIVE_TAG="phi:2.7b"; ACTIVE_NAME="Phi2"; fi
+if [ "$GEMMA2_ON" = "true" ]; then ACTIVE_TAG="gemma2:2b"; ACTIVE_NAME="Gemma2"; fi
+if [ "$TINY_ON" = "true" ]; then ACTIVE_TAG="tinyllama:latest"; ACTIVE_NAME="TinyLlama"; fi
+if [ "$QWEN_ON" = "true" ]; then ACTIVE_TAG="qwen2:0.5b"; ACTIVE_NAME="Qwen"; fi
 
-# Ensure persistent store exists (Ollama expects blobs/ and manifests/ inside this dir)
-mkdir -p "$OLLAMA_MODELS_DIR"/{blobs,manifests} || true
-chmod 755 "$OLLAMA_MODELS_DIR" || true
+export OLLAMA_MODELS="$MODELS_DIR"
+export LLM_OLLAMA_BASE_URL="${LLM_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+export OLLAMA_BASE_URL="$LLM_OLLAMA_BASE_URL"
+export LLM_ACTIVE_TAG="$ACTIVE_TAG"
+export LLM_ACTIVE_NAME="$ACTIVE_NAME"
 
-# -------------------------------
-# If LLM disabled, optional clean and run app
-# -------------------------------
-if ! bool "$LLM_ENABLED"; then
-  log "LLM disabled in options."
-  export LLM_ACTIVE_TAG=""
-  exec python3 /app/bot.py
+mkdir -p "$MODELS_DIR"
+
+# --- Start/ensure Ollama (install if missing for this boot)
+if ! command -v ollama >/dev/null 2>&1; then
+  log "Installing Ollama (one-time per boot)…"
+  curl -fsSL https://ollama.com/install.sh | OLLAMA_SKIP_START=1 sh
 fi
 
-# -------------------------------
-# Start or attach to Ollama
-# -------------------------------
-USE_EXTERNAL=0
-if [[ -n "$EXT_BASE_URL" && "$EXT_BASE_URL" != "null" ]]; then
-  USE_EXTERNAL=1
-fi
-
-wait_api() {
-  local base="$1"
-  local url="${base%/}/api/tags"
-  for i in $(seq 1 120); do
-    if curl -fsS "$url" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.5
+# run server if not healthy
+if ! curl -fsS "$OLLAMA_BASE_URL/api/tags" >/dev/null 2>&1; then
+  log "Starting internal Ollama (models at $MODELS_DIR)…"
+  nohup ollama serve >/tmp/ollama.log 2>&1 &
+  # wait for server
+  for i in {1..30}; do
+    sleep 1
+    curl -fsS "$OLLAMA_BASE_URL/api/tags" >/dev/null 2>&1 && break
   done
-  return 1
+fi
+
+# --- Manage model pulls (idempotent)
+pull_if_needed () {
+  tag="$1"
+  if [ -z "$tag" ]; then return; fi
+  if ! curl -fsS "$OLLAMA_BASE_URL/api/tags" | grep -q ""name":"$tag""; then
+    log "Pulling model: $tag"
+    ollama pull "$tag" || true
+  fi
 }
 
-if (( USE_EXTERNAL )); then
-  BASE="${EXT_BASE_URL%/}"
-  log "🔗 Using external Ollama at $BASE"
-  if ! wait_api "$BASE"; then
-    log "❌ External Ollama API not reachable at $BASE — continuing without LLM"
-    export LLM_ACTIVE_TAG=""
-    export OLLAMA_BASE_URL="$BASE"
-    exec python3 /app/bot.py
+# delete a tag if present
+delete_if_present () {
+  tag="$1"
+  if [ -z "$tag" ]; then return; fi
+  if curl -fsS "$OLLAMA_BASE_URL/api/tags" | grep -q ""name":"$tag""; then
+    log "Deleting model: $tag"
+    ollama rm "$tag" || true
   fi
-else
-  if ! command -v ollama >/dev/null 2>&1; then
-    log "📦 Installing Ollama (best effort)…"
-    if command -v curl >/dev/null 2>&1; then
-      bash -lc 'curl -fsSL https://ollama.com/install.sh | sh' || log "⚠️  Ollama install failed (continuing)"
-    else
-      log "⚠️ curl not found; cannot auto-install Ollama"
-    fi
-  fi
+}
 
-  export OLLAMA_MODELS="$OLLAMA_MODELS_DIR"
-  export OLLAMA_NOHISTORY=1
+# apply toggles
+if [ "$PHI3_ON" = "true" ]; then pull_if_needed "phi3:mini"; else delete_if_present "phi3:mini"; fi
+if [ "$PHI2_ON" = "true" ]; then pull_if_needed "phi:2.7b"; else delete_if_present "phi:2.7b"; fi
+if [ "$GEMMA2_ON" = "true" ]; then pull_if_needed "gemma2:2b"; else delete_if_present "gemma2:2b"; fi
+if [ "$TINY_ON" = "true" ]; then pull_if_needed "tinyllama:latest"; else delete_if_present "tinyllama:latest"; fi
+if [ "$QWEN_ON" = "true" ]; then pull_if_needed "qwen2:0.5b"; else delete_if_present "qwen2:0.5b"; fi
 
-  # Start server with explicit models dir
-  if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
-    log "🚀 Starting internal Ollama (models at $OLLAMA_MODELS_DIR)…"
-    nohup env OLLAMA_MODELS="$OLLAMA_MODELS_DIR" OLLAMA_NOHISTORY=1 ollama serve >/tmp/ollama.log 2>&1 &
-  fi
-
-  if ! wait_api "http://127.0.0.1:11434"; then
-    log "❌ Internal Ollama API not responding — LLM disabled."
-    export LLM_ACTIVE_TAG=""
-    exec python3 /app/bot.py
-  fi
-
-  BASE="http://127.0.0.1:11434"
-fi
-
-log "🗄  Ollama store: ${OLLAMA_MODELS_DIR:-external server store}"
-
-# -------------------------------
-# Desired tags from toggles
-# -------------------------------
-declare -A WANT
-bool "$PHI3_ON"   && WANT["phi3:mini"]=1
-bool "$PHI2_ON"   && WANT["phi:2.7b"]=1
-bool "$GEMMA2_ON" && WANT["gemma2:2b"]=1
-bool "$TINY_ON"   && WANT["tinyllama:1.1b"]=1
-bool "$QWEN05_ON" && WANT["qwen2.5:0.5b-instruct"]=1
-
-pull_tag() { curl -fsS -X POST "$BASE/api/pull"    -d "{\"name\":\"$1\"}" >/dev/null || true; }
-rm_tag()   { curl -fsS -X DELETE "$BASE/api/delete" -d "{\"name\":\"$1\"}" >/dev/null || true; }
-
-# Get current tags
-CURRENT="$(curl -fsS "$BASE/api/tags" | jq -r '.models[].name' || true)"
-
-# Pull enabled
-for tag in "${!WANT[@]}"; do
-  if ! grep -qx "$tag" <<< "$CURRENT"; then
-    log "⬇️  Pulling model: $tag"
-    pull_tag "$tag"
-  else
-    log "✓ Model present: $tag"
-  fi
-done
-
-# Refresh current list after pulls
-CURRENT="$(curl -fsS "$BASE/api/tags" | jq -r '.models[].name' || true)"
-
-# Remove disabled
-while read -r tag; do
-  [[ -z "$tag" ]] && continue
-  if [[ -z "${WANT[$tag]+x}" ]]; then
-    log "🗑  Removing disabled model: $tag"
-    rm_tag "$tag"
-  fi
-done <<< "$CURRENT"
-
-# Choose active tag by priority
-ACTIVE_TAG=""
-for cand in phi3:mini phi:2.7b gemma2:2b tinyllama:1.1b qwen2.5:0.5b-instruct; do
-  if [[ -n "${WANT[$cand]+x}" ]]; then
-    ACTIVE_TAG="$cand"
-    break
-  fi
-done
-
-export OLLAMA_BASE_URL="$BASE"
-export LLM_ACTIVE_TAG="$ACTIVE_TAG"
-case "$ACTIVE_TAG" in
-  phi3:mini)                export LLM_ACTIVE_NAME="Phi3" ;;
-  phi:2.7b)                 export LLM_ACTIVE_NAME="Phi2" ;;
-  gemma2:2b)                export LLM_ACTIVE_NAME="Gemma2" ;;
-  tinyllama:1.1b)           export LLM_ACTIVE_NAME="TinyLlama" ;;
-  qwen2.5:0.5b-instruct)    export LLM_ACTIVE_NAME="Qwen" ;;
-  *)                        export LLM_ACTIVE_NAME="—" ;;
-esac
-
-log "🔧 Active model: ${LLM_ACTIVE_TAG:-none} (name: ${LLM_ACTIVE_NAME}) via ${BASE}"
-log "📂 Expect to see 'blobs' and 'manifests' inside: $OLLAMA_MODELS_DIR"
-
-exec python3 /app/bot.py
+# export hint for Python
+echo "[Jarvis Prime] 🧲 Ollama store: $MODELS_DIR"
+echo "[Jarvis Prime] 🧠 Active model: ${ACTIVE_TAG:-OFF} (name: ${ACTIVE_NAME}) via $OLLAMA_BASE_URL"
