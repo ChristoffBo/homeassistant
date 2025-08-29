@@ -111,6 +111,10 @@ LLM_ENABLED           = bool(merged.get("llm_enabled", _bool_env("LLM_ENABLED", 
 LLM_TIMEOUT_SECONDS   = int(merged.get("llm_timeout_seconds", int(os.getenv("LLM_TIMEOUT_SECONDS", "12"))))
 LLM_MAX_CPU_PERCENT   = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))))
 LLM_MODELS_PRIORITY   = merged.get("llm_models_priority", [])
+# normalize: accept string "a,b,c" or list
+if isinstance(LLM_MODELS_PRIORITY, str):
+    import re as _re
+    LLM_MODELS_PRIORITY = [x.strip() for x in _re.split(r'[\s,]+', LLM_MODELS_PRIORITY) if x.strip()]
 OLLAMA_BASE_URL       = merged.get("ollama_base_url",  os.getenv("OLLAMA_BASE_URL", ""))
 LLM_MODEL_URL         = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
 LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
