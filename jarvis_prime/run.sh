@@ -176,15 +176,17 @@ import json, os
 cfg = json.load(open("/data/options.json"))
 try:
     from llm_client import rewrite
+    import os
+    env_path = os.getenv("LLM_MODEL_PATH","")
     out = rewrite(
         text="(prefetch)",
         mood=cfg.get("personality_mood","serious"),
         timeout=int(cfg.get("llm_timeout_seconds",5)),
         cpu_limit=int(cfg.get("llm_max_cpu_percent",70)),
         models_priority=[],
-        base_url=cfg.get("llm_ollama_base_url",""),
+        base_url=os.getenv("OLLAMA_BASE_URL", cfg.get("llm_ollama_base_url","")),
         model_url=cfg.get("llm_model_url",""),
-        model_path=cfg.get("llm_model_path",""),
+        model_path=(env_path if env_path else cfg.get("llm_model_path","")),
         model_sha256=cfg.get("llm_model_sha256","")
     )
     print("[Jarvis Prime] 🧠 Prefetch complete")

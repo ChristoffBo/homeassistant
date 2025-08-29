@@ -409,7 +409,8 @@ def post_startup_card():
             fam = "TinyLlama"
         elif "qwen" in mn:
             fam = "Qwen"
-        engine_line = f"{fam} — {'ONLINE' if online else 'OFFLINE'}"    lines = [
+        engine_line = f"{fam} — {'ONLINE' if online else 'OFFLINE'}"
+    lines = [
         "🧬 Prime Neural Boot",
         f"🛰️ Engine: {engine_line}",
         f"🎛️ Mood: {CHAT_MOOD}",
