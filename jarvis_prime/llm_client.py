@@ -187,6 +187,7 @@ def rewrite(*, text: str, mood: str = "neutral", timeout: int = 12, cpu_limit: i
 
 
 def prefetch(models_priority: Optional[List[str]] = None, model_url: str = "", model_path: str = "") -> dict:
+
     """
     Resolve the first candidate and download the GGUF if needed.
     Returns {"key": key, "path": str(path), "downloaded": bool}
@@ -212,6 +213,15 @@ def prefetch(models_priority: Optional[List[str]] = None, model_url: str = "", m
         _safe_download(url, path)
     after = path.exists() and path.stat().st_size > 0
     return {"key": key, "path": str(path), "downloaded": (not before) and after}
+
+def prefetch_model():
+    # Convenience wrapper that reads env and prefetches
+    pri = os.getenv("LLM_MODELS_PRIORITY","")
+    pri_list = [x.strip() for x in pri.split(",") if x.strip()] if pri else None
+    url = os.getenv("LLM_MODEL_URL","")
+    path = os.getenv("LLM_MODEL_PATH","")
+    return prefetch(pri_list, url, path)
+
 def engine_status() -> Dict[str,object]:
     # Ollama intentionally ignored in this build (no external server)
     cands = list(_iter_candidates(None, {k:os.getenv(k,"") for k in os.environ.keys()}))

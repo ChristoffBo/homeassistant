@@ -133,15 +133,6 @@ try:
 except Exception:
     pass
 
-# Prefetch LLM model at startup if enabled
-if LLM_ENABLED and _llm and hasattr(_llm, "prefetch"):
-    try:
-        info = _llm.prefetch(LLM_MODELS_PRIORITY, LLM_MODEL_URL, LLM_MODEL_PATH)
-        if info.get("path"):
-            print(f"[{BOT_NAME}] 🚚 Model candidate: {info.get('key')} -> {info.get('path')} (downloaded={info.get('downloaded')})")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ Prefetch failed: {e}")
-
 PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
 print(f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} rewrite={'yes' if LLM_ENABLED else 'no'} "
