@@ -412,7 +412,7 @@ def post_startup_card():
         engine_line = f"{fam} — {'ONLINE' if online else 'OFFLINE'}"
         if model_name and model_name != "—":
             engine_line += f" ({model_name})"
-lines = [
+    lines = [
         "🧬 Prime Neural Boot",
         f"🛰️ Engine: {engine_line}",
         f"🎛️ Mood: {CHAT_MOOD}",

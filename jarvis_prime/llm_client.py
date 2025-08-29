@@ -106,6 +106,7 @@ def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None
             _model_path = p
             return
     _model_path = _resolve_model_path()
+    print(f"[" + BOT_NAME + "] resolve→ {_model_path}", flush=True)
 def engine_status() -> Dict[str,object]:
     """Report backend readiness and chosen model path.
     - If OLLAMA_BASE_URL is set, we ping it and report that backend.
