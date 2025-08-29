@@ -297,15 +297,13 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
 
 def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
     """
-    Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
-    Returns (final_text, extras, used_llm, used_beautify)
+    LLM first, then Beautify. Returns (final_text, extras, used_llm, used_beautify).
     """
     used_llm = False
     used_beautify = False
     final = message
     extras: Optional[dict] = None
 
-    # LLM FIRST — no wake-word skip
     if LLM_ENABLED:
         try:
             import importlib.util as _imp
@@ -326,7 +324,6 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ LLM rewrite failed: {e}")
 
-    # BEAUTIFY second
     if BEAUTIFY_ENABLED:
         try:
             import importlib.util as _imp
@@ -336,7 +333,11 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
                 _beautify = _imp.module_from_spec(_bspec)
                 _bspec.loader.exec_module(_beautify)
             if _beautify and hasattr(_beautify, "beautify"):
-                btxt, bextras = _beautify.beautify(title, final, allow_inline_images=bool(merged.get("beautify_inline_images", False)))
+                btxt, bextras = _beautify.beautify(
+                    title,
+                    final,
+                    allow_inline_images=bool(merged.get("beautify_inline_images", False)),
+                )
                 if isinstance(btxt, str) and btxt:
                     final = btxt
                 extras = bextras
@@ -525,6 +526,55 @@ def main():
         except Exception as e:
             print(f"[{BOT_NAME}] ⚠️ WS error, reconnecting in 3s: {e}")
             time.sleep(3)
+
+def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
+    """LLM first, then Beautify. Returns (final_text, extras, used_llm, used_beautify)."""
+    used_llm = False
+    used_beautify = False
+    final = message
+    extras: Optional[dict] = None
+
+    # LLM
+    if LLM_ENABLED:
+        try:
+            import importlib.util as _imp
+            _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
+            _llm = None
+            if _lspec and _lspec.loader:
+                _llm = _imp.module_from_spec(_lspec)
+                _lspec.loader.exec_module(_llm)
+            if _llm and hasattr(_llm, "rewrite"):
+                rewritten = _llm.rewrite(
+                    text=final,
+                    system_prompt=merged.get("llm_system_prompt", ""),
+                    timeout=LLM_TIMEOUT_SECONDS,
+                )
+                if isinstance(rewritten, str) and rewritten.strip() and rewritten.strip() != final.strip():
+                    final = rewritten.strip()
+                    used_llm = True
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ LLM rewrite failed: {e}")
+
+    # Beautify
+    if BEAUTIFY_ENABLED:
+        try:
+            import importlib.util as _imp
+            _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
+            _beautify = None
+            if _bspec and _bspec.loader:
+                _beautify = _imp.module_from_spec(_bspec)
+                _bspec.loader.exec_module(_beautify)
+            if _beautify and hasattr(_beautify, "beautify"):
+                btxt, bextras = _beautify.beautify(title, final, allow_inline_images=bool(merged.get("beautify_inline_images", False)))
+                if isinstance(btxt, str) and btxt:
+                    final = btxt
+                extras = bextras
+                used_beautify = True
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Beautify failed: {e}")
+
+    return final, extras, used_llm, used_beautify
+
 
 if __name__ == "__main__":
     main()
