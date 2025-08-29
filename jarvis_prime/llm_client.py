@@ -79,6 +79,19 @@ def _extract_images(s: str):
             seen.add(u); out.append(u)
     return out
 
+# --- helpers: system prompt ---
+def _load_system_prompt() -> str:
+    """Load system prompt from memory dir; safe default if missing."""
+    try:
+        import os
+        base = os.getenv("LLM_MEMORY_DIR", "/share/jarvis_prime/memory")
+        path = Path(base) / "system_prompt.txt"
+        if path.exists():
+            return path.read_text(encoding="utf-8", errors="ignore").strip() or "You are Jarvis Prime."
+    except Exception:
+        pass
+    return "You are Jarvis Prime."
+
 _loaded_backend = ''
 _model_path: Optional[Path] = None
 
