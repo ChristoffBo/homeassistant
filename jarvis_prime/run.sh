@@ -3,6 +3,30 @@
 set -euo pipefail
 
 CONFIG_PATH=/data/options.json
+
+# Ensure models & memory dirs exist
+MODELS_DIR=$(jq -r '.llm_models_dir // "/share/jarvis_prime/models"' "$CONFIG_PATH")
+MEMORY_DIR="/share/jarvis_prime/memory"
+mkdir -p "$MODELS_DIR" || true
+mkdir -p "$MEMORY_DIR" || true
+
+# Seed default memory files if missing (no manual copying required)
+if [ ! -f "$MEMORY_DIR/flashcards.txt" ]; then
+  cat > "$MEMORY_DIR/flashcards.txt" <<'FLASH'
+=== JARVIS PRIME — FLASHCARD TRAINING PACK (bootstrapped) ===
+Use the strict shapes; never add commentary. If unknown, use "unknown".
+[Generic]
+❓ Generic: unknown message content. Ignored.
+FLASH
+fi
+if [ ! -f "$MEMORY_DIR/system_prompt.txt" ]; then
+  cat > "$MEMORY_DIR/system_prompt.txt" <<'SP'
+You are Jarvis Prime. Keep outputs concise and structured. Never fabricate data.
+When rewriting logs, prefer the flashcard patterns in /share/jarvis_prime/memory/flashcards.txt.
+If the message is not a log, return the Generic shape described in the flashcards.
+SP
+fi
+
 log() { echo "[$(jq -r '.bot_name' "$CONFIG_PATH")] $*"; }
 
 # Core
