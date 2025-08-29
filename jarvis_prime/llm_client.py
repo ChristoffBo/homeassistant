@@ -60,10 +60,19 @@ MODEL_URLS  = [u.strip() for u in os.getenv("LLM_MODEL_URLS","").split(",") if u
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL","")
 
 _loaded_model = None
+_loaded_backend = ''
 _model_path: Optional[Path] = None
 
 
 def _find_family(path: Path) -> str:
+
+def _candidate_types(path: Path):
+    fam = _find_family(path)
+    if fam == "phi3":
+        return ["phi3", "llama"]
+    if fam == "qwen":
+        return ["qwen", "llama"]
+    return ["llama"]
     name = path.name.lower()
     if "phi-3" in name or "phi3" in name or name.startswith("phi3") or name.startswith("phi-3"):
         return "phi3"
@@ -135,8 +144,42 @@ def engine_status() -> Dict[str,object]:
     ok = bool(p and Path(p).exists() and AutoModelForCausalLM is not None)
     return {'ready': ok, 'model_path': str(p) if p else '', 'backend': 'ctransformers'}
 def _load_local_model(path: Path):
-    global _loaded_model
-    if _loaded_model is not None: return _loaded_model
+    global _loaded_model, _loaded_backend
+    try:
+        from ctransformers import AutoModelForCausalLM  # type: ignore
+    except Exception:
+        AutoModelForCausalLM = None
+    # Try ctransformers with candidate types
+    if AutoModelForCausalLM is not None:
+        for mt in _candidate_types(path):
+            try:
+                _loaded_model = AutoModelForCausalLM.from_pretrained(
+                    str(path), model_type=mt,
+                    gpu_layers=int(os.getenv('LLM_GPU_LAYERS','0')),
+                    context_length=CTX,
+                )
+                _loaded_backend = 'ctransformers'
+                print(f"[{BOT_NAME}] ✅ ctransformers loaded as {mt}", flush=True)
+                return _loaded_model
+            except Exception as e:
+                print(f"[{BOT_NAME}] ⚠️ ctransformers {mt} load failed: {e}", flush=True)
+    # Fallback to llama_cpp
+    try:
+        from llama_cpp import Llama  # type: ignore
+        _loaded_model = Llama(
+            model_path=str(path),
+            n_ctx=CTX,
+            n_gpu_layers=int(os.getenv('LLM_GPU_LAYERS','0')),
+            logits_all=False,
+        )
+        _loaded_backend = 'llama_cpp'
+        print(f"[{BOT_NAME}] ✅ llama_cpp loaded", flush=True)
+        return _loaded_model
+    except Exception as e:
+        print(f"[{BOT_NAME}] ❌ Failed to load local model via any backend: {e}", flush=True)
+        _loaded_model = None
+        _loaded_backend = ''
+    return _loaded_model
     if AutoModelForCausalLM is None:
         print(f"[{BOT_NAME}] ❌ ctransformers not installed; local GGUF cannot load", flush=True)
         return None
@@ -317,6 +360,15 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     # 2) Local ctransformers
     p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
     if p and p.exists():
+        if p.is_dir():
+            cand = _choose_preferred(list(p.rglob('*.gguf')))
+            if cand:
+                print(f"[{BOT_NAME}] 🔎 picked {cand} inside {p}", flush=True)
+                p = cand
+            else:
+                print(f"[{BOT_NAME}] ⚠️ No .gguf in {p}", flush=True)
+                p = None
+    if p and p.exists() and p.is_file():
         if p.is_dir():
             cand = _choose_preferred(list(p.rglob("*.gguf")))
             if cand:
