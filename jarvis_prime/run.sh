@@ -92,13 +92,13 @@ PY
 pull_model() {
   local tag="$1"
   log "Pulling $tag (persist to $OLLAMA_MODELS)…"
-  curl -fsS -X POST -H 'Content-Type: application/json' -d "{"name":"$tag"}" "$OLLAMA_BASE_URL/api/pull" >/dev/null
+  curl -fsS -X POST -H 'Content-Type: application/json' -d "{"model":"$tag"}" "$OLLAMA_BASE_URL/api/pull" >/dev/null
 }
 
 delete_model() {
   local tag="$1"
   log "Deleting $tag…"
-  curl -fsS -X DELETE -H 'Content-Type: application/json' -d "{"name":"$tag"}" "$OLLAMA_BASE_URL/api/delete" >/dev/null || true
+  curl -fsS -X DELETE -H 'Content-Type: application/json' -d "{"model":"$tag"}" "$OLLAMA_BASE_URL/api/delete" >/dev/null || true
 }
 
 # Boot
