@@ -111,6 +111,38 @@ export LLM_SYSTEM_PROMPT=$(jq -r '.llm_system_prompt // ""' "$CONFIG_PATH")
 export LLM_MODEL_PREFERENCE=$(jq -r '.llm_model_preference // "phi,qwen,tinyllama"' "$CONFIG_PATH")
 export OLLAMA_BASE_URL=$(jq -r '.llm_ollama_base_url // ""' "$CONFIG_PATH")
 
+# Per-model toggles and URLs/paths
+PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
+TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
+QWEN_ON=$(jq -r '.llm_qwen05_enabled // false' "$CONFIG_PATH")
+
+PHI_URL=$(jq -r '.llm_phi3_url // ""' "$CONFIG_PATH");    PHI_PATH=$(jq -r '.llm_phi3_path // ""' "$CONFIG_PATH")
+TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH"); TINY_PATH=$(jq -r '.llm_tinyllama_path // ""' "$CONFIG_PATH")
+QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH");  QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH")
+
+# Default filenames if paths are empty
+[ -z "$PHI_PATH"  ]  && PHI_PATH="$MODELS_DIR/Phi-3-mini-4k-instruct-q4.gguf"
+[ -z "$TINY_PATH" ]  && TINY_PATH="$MODELS_DIR/TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf"
+[ -z "$QWEN_PATH" ]  && QWEN_PATH="$MODELS_DIR/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
+
+_active_path=""; _active_url=""
+if [ "$LLM_ENABLED" = "true" ]; then
+  if   [ "$PHI_ON" = "true" ]; then _active_path="$PHI_PATH"; _active_url="$PHI_URL";
+  elif [ "$TINY_ON" = "true" ]; then _active_path="$TINY_PATH"; _active_url="$TINY_URL";
+  elif [ "$QWEN_ON" = "true" ]; then _active_path="$QWEN_PATH"; _active_url="$QWEN_URL";
+  fi
+  # Download if URL provided and file missing
+  if [ -n "$_active_url" ] && [ ! -s "$_active_path" ]; then
+    echo "[Jarvis Prime] 🔮 Downloading model to $_active_path"
+    mkdir -p "$(dirname "$_active_path")" || true
+    curl -L --fail --retry 3 -o "$_active_path" "$_active_url" || true
+  fi
+  if [ -s "$_active_path" ]; then
+    export LLM_MODEL_PATH="$_active_path"
+  fi
+fi
+
+
 # -----------------------------
 # Startup banner
 # -----------------------------
@@ -121,7 +153,6 @@ echo "   → Personalities loaded"
 echo "   → Memory core mounted"
 echo "   → Network bridges linked"
 echo "   → LLM: $( [ "$LLM_ENABLED" = "true" ] && echo "enabled" || echo "disabled" )"
-echo "   → Model path: ${LLM_MODEL_PATH}"
 echo "🚀 Systems online — Jarvis is awake!"
 echo "──────────────────────────────────────────────"
 
