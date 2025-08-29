@@ -12,6 +12,7 @@ import subprocess
 import atexit
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List
+import llm_manager
 
 # -----------------------------
 # Dynamic modules dict
