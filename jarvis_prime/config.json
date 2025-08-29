@@ -117,7 +117,15 @@
     "llm_qwen15_path": "",
     "llm_llama32_1b_enabled": false,
     "llm_llama32_1b_url": "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf?download=true",
-    "llm_llama32_1b_path": ""
+    "llm_llama32_1b_path": "",
+    "allow_multiline": false,
+    "llm_autodownload": true,
+    "llm_timeout_seconds": 12,
+    "llm_max_cpu_percent": 70,
+    "ollama_base_url": "",
+    "ollama_models_dir": "",
+    "ollama_in_container": false,
+    "llm_gemma2_enabled": false
   },
   "schema": {
     "bot_name": "str",
@@ -201,7 +209,7 @@
     "llm_ollama_base_url": "str",
     "llm_model_preference": "str",
     "llm_choice": "str",
-    "llm_models_priority": "list",
+    "llm_models_priority": "list(str)",
     "llm_phi2_enabled": "bool",
     "llm_phi2_url": "str",
     "llm_phi2_path": "str",
@@ -210,6 +218,14 @@
     "llm_qwen15_path": "str",
     "llm_llama32_1b_enabled": "bool",
     "llm_llama32_1b_url": "str",
-    "llm_llama32_1b_path": "str"
+    "llm_llama32_1b_path": "str",
+    "allow_multiline": "bool",
+    "llm_autodownload": "bool",
+    "llm_timeout_seconds": "int(3,60)",
+    "llm_max_cpu_percent": "int(10,100)",
+    "ollama_base_url": "str",
+    "ollama_models_dir": "str",
+    "ollama_in_container": "bool",
+    "llm_gemma2_enabled": "bool"
   }
 }
