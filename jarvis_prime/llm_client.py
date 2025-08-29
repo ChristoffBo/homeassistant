@@ -1,63 +1,45 @@
 #!/usr/bin/env python3
-# /app/llm_client.py — Ollama-only client with safe kwargs
 from __future__ import annotations
+
 import os, requests
-from typing import Any, Dict, Optional
+from typing import Optional, Dict, Any
 
-def _env(name: str, default: str = "") -> str:
-    return os.getenv(name, default) or default
+def _bool_env(name: str, default: bool=False) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1","true","yes","on")
 
-OLLAMA_BASE_URL = (_env("LLM_OLLAMA_BASE_URL") or _env("OLLAMA_BASE_URL") or "http://127.0.0.1:11434").rstrip("/")
-ACTIVE_TAG  = (_env("LLM_ACTIVE_TAG") or "").strip()
-CTX_TOKENS  = int(_env("LLM_CTX_TOKENS", "1024") or "1024")
-LLM_ENABLED = (_env("LLM_ENABLED","false").lower() in ("1","true","yes","on"))
+# Env from run.sh
+OLLAMA_BASE_URL = os.getenv("LLM_OLLAMA_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
+ACTIVE_TAG      = os.getenv("LLM_ACTIVE_TAG", "").strip()  # empty means disabled
+LLM_ENABLED     = _bool_env("LLM_ENABLED", False)
 
-def _post(path: str, body: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
+def _post(path: str, json_body: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
     url = f"{OLLAMA_BASE_URL}{path}"
-    r = requests.post(url, json=body, timeout=timeout)
+    r = requests.post(url, json=json_body, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
-def engine_status() -> Dict[str, Any]:
+def status() -> Dict[str, Any]:
+    """Return readiness and active tag."""
     try:
-        r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=6)
+        r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
         r.raise_for_status()
-        j = r.json() or {}
-        names = [m.get("name","") for m in (j.get("models") or []) if isinstance(m, dict)]
-        ready = (ACTIVE_TAG and (ACTIVE_TAG in names)) or (len(names) > 0)
-        return {"ready": ready, "name": ACTIVE_TAG.split(":")[0], "tag": ACTIVE_TAG}
+        names = [m.get("name","") for m in (r.json().get("models") or []) if isinstance(m, dict)]
+        ready = bool(ACTIVE_TAG) and (ACTIVE_TAG in names)
+        return {"ready": ready, "active": ACTIVE_TAG, "available": names}
     except Exception:
-        return {"ready": False, "name": ACTIVE_TAG.split(":")[0], "tag": ACTIVE_TAG}
+        return {"ready": False, "active": ACTIVE_TAG, "available": []}
 
-def prefetch_model() -> None:
-    if not LLM_ENABLED: 
-        return
+def rewrite(src: str, system_prompt: Optional[str] = None, timeout: int = 12, **_) -> str:
+    """Return LLM rewrite of text or the original if disabled/unavailable."""
+    if (not LLM_ENABLED) or (not ACTIVE_TAG):
+        return src
+    prompt = src if not system_prompt else f"{system_prompt.strip()}\n\n{src}"
     try:
-        _post("/api/generate", {
-            "model": ACTIVE_TAG,
-            "prompt": "ping",
-            "stream": False,
-            "options": {"num_ctx": max(512, CTX_TOKENS)}
-        }, timeout=8)
-    except Exception:
-        # ignore prefetch failures
-        pass
-
-def rewrite(**kwargs) -> str:
-    if not LLM_ENABLED:
-        return kwargs.get("text") or kwargs.get("src") or ""
-    src = kwargs.get("text", kwargs.get("src", "")) or ""
-    system_prompt = kwargs.get("system_prompt")
-    if not src:
-        return ""
-    prompt = f"{system_prompt.strip()}\n\n{src}".strip() if system_prompt else src
-    try:
-        data = _post("/api/generate", {
-            "model": ACTIVE_TAG,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"num_ctx": max(512, CTX_TOKENS)}
-        }, timeout=int(kwargs.get("timeout", 12)) + 3)
+        body = {"model": ACTIVE_TAG, "prompt": prompt, "stream": False, "options": {"num_ctx": 1024}}
+        data = _post("/api/generate", body, timeout=max(10, timeout + 3))
         return (data.get("response") or "").strip() or src
     except Exception:
         return src

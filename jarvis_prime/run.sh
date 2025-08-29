@@ -1,149 +1,180 @@
-\
-    #!/usr/bin/env bash
-    # shellcheck shell=bash
-    set -euo pipefail
+#!/usr/bin/env bash
+# shellcheck shell=bash
+set -euo pipefail
 
-    CONFIG_PATH=/data/options.json
+CONFIG_PATH=/data/options.json
 
-    jqget()   { jq -r "$1 // empty" "$CONFIG_PATH"; }
-    jgbool()  { v=$(jq -r "$1 // false" "$CONFIG_PATH"); [[ "${v,,}" == "true" || "$v" == "1" ]]; }
+# -------- helper: banner --------
+banner() {
+  echo "──────────────────────────────────────────────"
+  echo "🧠 $(jq -r '.bot_name' "$CONFIG_PATH") $(jq -r '.bot_icon' "$CONFIG_PATH")"
+  echo "⚡ Boot sequence initiated..."
+  echo "   → Personalities loaded"
+  echo "   → Memory core mounted"
+  echo "   → Network bridges linked"
+  echo "   → LLM: $1"
+  echo "   → Engine: $2"
+  echo "   → Model path: $3"
+  echo "🚀 Systems online — Jarvis is awake!"
+  echo "──────────────────────────────────────────────"
+}
 
-    log(){ echo "[$(date -Iseconds)] $*"; }
+# -------- helper: simple Python downloader --------
+py_download() {
+python3 - "$1" "$2" <<'PY'
+import sys, os, urllib.request, shutil, pathlib
+url, dst = sys.argv[1], sys.argv[2]
+path = pathlib.Path(dst)
+path.parent.mkdir(parents=True, exist_ok=True)
+tmp = str(path)+".part"
+try:
+    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
+        shutil.copyfileobj(r, f, length=1024*1024)
+    os.replace(tmp, dst)
+    print(f"[Downloader] Fetched -> {dst}")
+except Exception as e:
+    try:
+        if os.path.exists(tmp): os.remove(tmp)
+    except: pass
+    print(f"[Downloader] Failed: {e}")
+    sys.exit(1)
+PY
+}
 
-    # -------- Core options (preserve existing env for other modules) --------
-    export BOT_NAME="$(jqget '.bot_name'       )"
-    export BOT_ICON="$(jqget '.bot_icon'       )"
-    export GOTIFY_URL="$(jqget '.gotify_url'   )"
-    export GOTIFY_CLIENT_TOKEN="$(jqget '.gotify_client_token')"
-    export GOTIFY_APP_TOKEN="$(jqget '.gotify_app_token')"
-    export JARVIS_APP_NAME="$(jqget '.jarvis_app_name')"
+# ========= CORE ENV (required by bot.py) =========
+export BOT_NAME=$(jq -r '.bot_name' "$CONFIG_PATH")
+export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
+export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_PATH")
+export GOTIFY_CLIENT_TOKEN=$(jq -r '.gotify_client_token' "$CONFIG_PATH")
+export GOTIFY_APP_TOKEN=$(jq -r '.gotify_app_token' "$CONFIG_PATH")
+export JARVIS_APP_NAME=$(jq -r '.jarvis_app_name' "$CONFIG_PATH")
 
-    export RETENTION_HOURS="$(jqget '.retention_hours')"
-    export BEAUTIFY_ENABLED="$(jqget '.beautify_enabled')"
-    export SILENT_REPOST="$(jqget '.silent_repost // "true"')"
-    export CHAT_MOOD="$(jqget '.personality_mood // "serious"')"
+export RETENTION_HOURS=$(jq -r '.retention_hours' "$CONFIG_PATH")
+export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' "$CONFIG_PATH")
+export SILENT_REPOST=$(jq -r '.silent_repost // "true"' "$CONFIG_PATH")
 
-    # Module toggles (unchanged behavior)
-    export weather_enabled="$(jqget '.weather_enabled // false')"
-    export digest_enabled="$(jqget '.digest_enabled // false')"
-    export radarr_enabled="$(jqget '.radarr_enabled // false')"
-    export sonarr_enabled="$(jqget '.sonarr_enabled // false')"
-    export technitium_enabled="$(jqget '.technitium_enabled // false')"
-    export uptimekuma_enabled="$(jqget '.uptimekuma_enabled // false')"
-    export smtp_enabled="$(jqget '.smtp_enabled // false')"
-    export proxy_enabled="$(jqget '.proxy_enabled // false')"
-    export proxy_bind="$(jqget '.proxy_bind // "0.0.0.0"')"
-    export proxy_port="$(jqget '.proxy_port // 2580')"
+# Weather
+export weather_enabled=$(jq -r '.weather_enabled // false' "$CONFIG_PATH")
+export weather_lat=$(jq -r '.weather_lat // 0' "$CONFIG_PATH")
+export weather_lon=$(jq -r '.weather_lon // 0' "$CONFIG_PATH")
+export weather_city=$(jq -r '.weather_city // ""' "$CONFIG_PATH")
+export weather_time=$(jq -r '.weather_time // "07:00"' "$CONFIG_PATH")
 
-    # -------- Ollama settings --------
-    LLM_ENABLED="$(jqget '.llm_enabled // false')"
-    OLLAMA_BASE_URL="$(jqget '.ollama_base_url // "http://127.0.0.1:11434"')"
-    MODELS_DIR="$(jqget '.ollama_models_dir // "/share/jarvis_prime/models"')"
-    CLEANUP_ON_DISABLE="$(jqget '.llm_cleanup_on_disable // true')"
-    export OLLAMA_MODELS="$MODELS_DIR"
+# Digest
+export digest_enabled=$(jq -r '.digest_enabled // false' "$CONFIG_PATH")
+export digest_time=$(jq -r '.digest_time // "08:00"' "$CONFIG_PATH")
 
-    mkdir -p "$MODELS_DIR"
+# Radarr/Sonarr
+export radarr_enabled=$(jq -r '.radarr_enabled // false' "$CONFIG_PATH")
+export radarr_url=$(jq -r '.radarr_url // ""' "$CONFIG_PATH")
+export radarr_api_key=$(jq -r '.radarr_api_key // ""' "$CONFIG_PATH")
+export radarr_time=$(jq -r '.radarr_time // "07:30"' "$CONFIG_PATH")
 
-    # Preferred tiny tags for each toggle
-    phi3_tag="phi3:mini"
-    tiny_tag="tinyllama:latest"
-    qwen_tag="qwen2.5:0.5b-instruct"
-    phi2_tag="phi:2"
-    gemm_tag="gemma2:2b-instruct"
+export sonarr_enabled=$(jq -r '.sonarr_enabled // false' "$CONFIG_PATH")
+export sonarr_url=$(jq -r '.sonarr_url // ""' "$CONFIG_PATH")
+export sonarr_api_key=$(jq -r '.sonarr_api_key // ""' "$CONFIG_PATH")
+export sonarr_time=$(jq -r '.sonarr_time // "07:30"' "$CONFIG_PATH")
 
-    # Which toggle is on?
-    phi_on=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
-    tiny_on=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
-    qwen_on=$(jq -r '.llm_qwen05_enabled // false' "$CONFIG_PATH")
-    phi2_on=$(jq -r '.llm_phi2_enabled // false' "$CONFIG_PATH")
-    gemm_on=$(jq -r '.llm_gemma2_enabled // false' "$CONFIG_PATH")
+# Technitium DNS
+export technitium_enabled=$(jq -r '.technitium_enabled // false' "$CONFIG_PATH")
+export technitium_url=$(jq -r '.technitium_url // ""' "$CONFIG_PATH")
+export technitium_api_key=$(jq -r '.technitium_api_key // ""' "$CONFIG_PATH")
+export technitium_user=$(jq -r '.technitium_user // ""' "$CONFIG_PATH")
+export technitium_pass=$(jq -r '.technitium_pass // ""' "$CONFIG_PATH")
 
-    # resolve active in priority order (phi3, tiny, qwen, phi2, gemma2)
-    ACTIVE_TAG=""
-    if [[ "${phi_on,,}"  == "true" ]]; then ACTIVE_TAG="$phi3_tag"; fi
-    if [[ "${tiny_on,,}" == "true" && -z "$ACTIVE_TAG" ]]; then ACTIVE_TAG="$tiny_tag"; fi
-    if [[ "${qwen_on,,}" == "true" && -z "$ACTIVE_TAG" ]]; then ACTIVE_TAG="$qwen_tag"; fi
-    if [[ "${phi2_on,,}" == "true" && -z "$ACTIVE_TAG" ]]; then ACTIVE_TAG="$phi2_tag"; fi
-    if [[ "${gemm_on,,}" == "true" && -z "$ACTIVE_TAG" ]]; then ACTIVE_TAG="$gemm_tag"; fi
+# Uptime Kuma
+export uptimekuma_enabled=$(jq -r '.uptimekuma_enabled // false' "$CONFIG_PATH")
+export uptimekuma_url=$(jq -r '.uptimekuma_url // ""' "$CONFIG_PATH")
+export uptimekuma_api_key=$(jq -r '.uptimekuma_api_key // ""' "$CONFIG_PATH")
+export uptimekuma_status_slug=$(jq -r '.uptimekuma_status_slug // ""' "$CONFIG_PATH")
 
-    export OLLAMA_BASE_URL
-    export LLM_ENABLED
-    export LLM_CTX_TOKENS="$(jqget '.llm_ctx_tokens // 1024')"
-    export LLM_ACTIVE_TAG="$ACTIVE_TAG"
-    export LLM_ACTIVE_NAME="Ollama"
+# SMTP intake
+export smtp_enabled=$(jq -r '.smtp_enabled // false' "$CONFIG_PATH")
+export smtp_bind=$(jq -r '.smtp_bind // "0.0.0.0"' "$CONFIG_PATH")
+export smtp_port=$(jq -r '.smtp_port // 2525' "$CONFIG_PATH")
+export smtp_max_bytes=$(jq -r '.smtp_max_bytes // 262144' "$CONFIG_PATH")
+export smtp_dummy_rcpt=$(jq -r '.smtp_dummy_rcpt // "alerts@jarvis.local"' "$CONFIG_PATH")
+export smtp_accept_any_auth=$(jq -r '.smtp_accept_any_auth // true' "$CONFIG_PATH")
+export smtp_rewrite_title_prefix=$(jq -r '.smtp_rewrite_title_prefix // "[SMTP]"' "$CONFIG_PATH")
+export smtp_allow_html=$(jq -r '.smtp_allow_html // false' "$CONFIG_PATH")
+export smtp_priority_default=$(jq -r '.smtp_priority_default // 5' "$CONFIG_PATH")
+export smtp_priority_map=$(jq -r '.smtp_priority_map // "{}"' "$CONFIG_PATH")
 
-    # -------- Helpers --------
-    have_model() {
-      local tag="$1"
-      local json; json="$(curl -fsS "$OLLAMA_BASE_URL/api/tags" || echo '{}')"
-      if command -v jq >/dev/null 2>&1; then
-        echo "$json" | jq -e '.models[] | select(.name=="'"$tag"'")' >/dev/null && return 0 || return 1
-      else
-        echo "$json" | grep -q '"name":"'"$tag"'"' && return 0 || return 1
-      fi
-    }
+# Proxy
+export proxy_enabled=$(jq -r '.proxy_enabled // false' "$CONFIG_PATH")
+export proxy_bind=$(jq -r '.proxy_bind // "0.0.0.0"' "$CONFIG_PATH")
+export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
+export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
+export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
-    pull_model() {
-      local tag="$1"
-      log "Pulling $tag (persisting under $OLLAMA_MODELS)…"
-      curl -fsS -X POST -H 'Content-Type: application/json' \
-        -d "{\"name\":\"$tag\"}" "$OLLAMA_BASE_URL/api/pull"
-    }
+# Personality
+export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
-    delete_model() {
-      local tag="$1"
-      log "Deleting $tag (exclusive mode)…"
-      curl -fsS -X DELETE -H 'Content-Type: application/json' \
-        -d "{\"name\":\"$tag\"}" "$OLLAMA_BASE_URL/api/delete" || true
-    }
+# ========= LLM per-model toggles =========
+LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
+CLEANUP=$(jq -r '.llm_cleanup_on_disable // true' "$CONFIG_PATH")
+MODELS_DIR=$(jq -r '.llm_models_dir // "/share/jarvis_prime/models"' "$CONFIG_PATH")
+mkdir -p "$MODELS_DIR" || true
 
-    ensure_serve() {
-      if pgrep -f "ollama serve" >/dev/null 2>&1; then
-        return 0
-      fi
-      log "Starting ollama serve (OLLAMA_MODELS=$OLLAMA_MODELS)…"
-      nohup ollama serve >/tmp/ollama.log 2>&1 &
-      for i in {1..40}; do
-        sleep 0.5
-        curl -fsS "$OLLAMA_BASE_URL/api/tags" >/dev/null 2>&1 && return 0
-      done
-      log "⚠️ ollama serve not responding at $OLLAMA_BASE_URL"; return 1
-    }
+PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
+TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
+QWEN_ON=$(jq -r '.llm_qwen05_enabled // false' "$CONFIG_PATH")
 
-    # -------- Boot sequence --------
-    if [[ "${LLM_ENABLED,,}" == "true" && -n "$ACTIVE_TAG" ]]; then
-      ensure_serve
-      # Pull once (skip if already present)
-      if have_model "$ACTIVE_TAG"; then
-        log "Model present: $ACTIVE_TAG"
-      else
-        pull_model "$ACTIVE_TAG"
-      fi
+PHI_URL=$(jq -r '.llm_phi3_url // ""' "$CONFIG_PATH");  PHI_PATH=$(jq -r '.llm_phi3_path // ""' "$CONFIG_PATH")
+TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH"); TINY_PATH=$(jq -r '.llm_tinyllama_path // ""' "$CONFIG_PATH")
+QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH");  QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH")
 
-      # Enforce exclusivity: remove the other candidate tags
-      for tag in "$phi3_tag" "$tiny_tag" "$qwen_tag" "$phi2_tag" "$gemm_tag"; do
-        if [[ "$tag" != "$ACTIVE_TAG" ]] && have_model "$tag"; then
-          delete_model "$tag"
-        fi
-      done
-    else
-      if [[ "${CLEANUP_ON_DISABLE,,}" == "true" ]]; then
-        ensure_serve || true
-        # delete all candidate models
-        for tag in "$phi3_tag" "$tiny_tag" "$qwen_tag" "$phi2_tag" "$gemm_tag"; do
-          have_model "$tag" && delete_model "$tag" || true
-        done
-      fi
+# defaults for LLM env
+export LLM_MODEL_PATH=""
+export LLM_MODEL_URLS=""
+export LLM_MODEL_URL=""
+export LLM_ENABLED
+
+# Cleanup when toggled off
+if [ "$CLEANUP" = "true" ]; then
+  if [ "$LLM_ENABLED" = "false" ]; then
+    rm -f "$PHI_PATH" "$TINY_PATH" "$QWEN_PATH" || true
+  else
+    [ "$PHI_ON"  = "false" ] && [ -f "$PHI_PATH" ]  && rm -f "$PHI_PATH"  || true
+    [ "$TINY_ON" = "false" ] && [ -f "$TINY_PATH" ] && rm -f "$TINY_PATH" || true
+    [ "$QWEN_ON" = "false" ] && [ -f "$QWEN_PATH" ] && rm -f "$QWEN_PATH" || true
+  fi
+fi
+
+ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
+if [ "$LLM_ENABLED" = "true" ]; then
+  COUNT=0
+  [ "$PHI_ON"  = "true" ] && COUNT=$((COUNT+1))
+  [ "$TINY_ON" = "true" ] && COUNT=$((COUNT+1))
+  [ "$QWEN_ON" = "true" ] && COUNT=$((COUNT+1))
+  if [ "$COUNT" -gt 1 ]; then
+    echo "[Jarvis Prime] ⚠️ Multiple models enabled; using first true (phi3→tinyllama→qwen05)."
+  fi
+  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";
+  elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL";
+  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL";
+  else ENGINE="none-selected"; fi
+
+  if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
+    if [ ! -s "$ACTIVE_PATH" ]; then
+      echo "[Jarvis Prime] 🔮 Downloading model ($ENGINE)…"
+      py_download "$ACTIVE_URL" "$ACTIVE_PATH"
     fi
+    if [ -s "$ACTIVE_PATH" ]; then
+      export LLM_MODEL_PATH="$ACTIVE_PATH"
+      export LLM_MODEL_URL="$ACTIVE_URL"
+      export LLM_MODEL_URLS="$ACTIVE_URL"
+    fi
+  fi
+fi
 
-    # -------- Banner --------
-    model_line="${ACTIVE_TAG:-disabled}"
-    echo "──────────────────────────────────────────────"
-    echo "🧠 $BOT_NAME $BOT_ICON"
-    echo "⚡ Engine: ${model_line}"
-    echo "💾 Store:  $OLLAMA_MODELS"
-    echo "API: $OLLAMA_BASE_URL"
-    echo "──────────────────────────────────────────────"
+# Guard against empty Gotify settings (prevent reconnect loop)
+if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
+  echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token in options.json — aborting."
+  exit 1
+fi
 
-    # -------- Run bot --------
-    exec python3 -u /app/bot.py
+banner "$( [ "$LLM_ENABLED" = "true" ] && echo 'enabled' || echo 'disabled' )" "$ENGINE" "$ACTIVE_PATH"
+
+# Hand off to bot
+exec python3 /app/bot.py
