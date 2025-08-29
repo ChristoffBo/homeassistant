@@ -185,6 +185,33 @@ def rewrite(*, text: str, mood: str = "neutral", timeout: int = 12, cpu_limit: i
         return ""
     return result_holder["out"]
 
+
+def prefetch(models_priority: Optional[List[str]] = None, model_url: str = "", model_path: str = "") -> dict:
+    """
+    Resolve the first candidate and download the GGUF if needed.
+    Returns {"key": key, "path": str(path), "downloaded": bool}
+    """
+    env = {k:os.getenv(k,"") for k in (
+        "LLM_MODEL_PATH","LLM_MODEL_URL","LLM_MODELS_PRIORITY","LLM_MODELS_DIR",
+        "LLM_TINYLLAMA_URL","LLM_QWEN05_URL","LLM_QWEN15_URL","LLM_PHI2_URL","LLM_PHI3_URL","LLM_LLAMA32_1B_URL"
+    )}
+    if model_url:
+        env["LLM_MODEL_URL"] = model_url
+    if model_path:
+        env["LLM_MODEL_PATH"] = model_path
+    cands = list(_iter_candidates(models_priority, env))
+    key, url, path_str = cands[0]
+    if path_str:
+        path = Path(path_str)
+        return {"key": key, "path": str(path), "downloaded": path.exists()}
+    fname = f"{key}.Q4_K_M.gguf" if url and "Q4_K_M" in url else (Path(url).name if url else f"{key}.gguf")
+    path = MODELS_DIR / fname
+    before = path.exists() and path.stat().st_size > 0
+    if url:
+        print(f"[Downloader] Prefetching model ({key})…")
+        _safe_download(url, path)
+    after = path.exists() and path.stat().st_size > 0
+    return {"key": key, "path": str(path), "downloaded": (not before) and after}
 def engine_status() -> Dict[str,object]:
     # Ollama intentionally ignored in this build (no external server)
     cands = list(_iter_candidates(None, {k:os.getenv(k,"") for k in os.environ.keys()}))
