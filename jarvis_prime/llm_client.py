@@ -63,24 +63,22 @@ _loaded_model = None
 _loaded_backend = ''
 _model_path: Optional[Path] = None
 
-
 def _find_family(path: Path) -> str:
+    name = path.name.lower()
+    if 'phi-3' in name or 'phi3' in name:
+        return 'phi3'
+    if 'qwen' in name:
+        return 'qwen'
+    # tinyllama / llama
+    return 'llama'
 
 def _candidate_types(path: Path):
     fam = _find_family(path)
-    if fam == "phi3":
-        return ["phi3", "llama"]
-    if fam == "qwen":
-        return ["qwen", "llama"]
-    return ["llama"]
-    name = path.name.lower()
-    if "phi-3" in name or "phi3" in name or name.startswith("phi3") or name.startswith("phi-3"):
-        return "phi3"
-    if "qwen" in name:
-        return "qwen"
-    if "tinyllama" in name or "tiny-llama" in name or "llama" in name:
-        return "llama"
-    return "llama"
+    if fam == 'phi3':
+        return ['phi3','llama']
+    if fam == 'qwen':
+        return ['qwen','llama']
+    return ['llama']
 def _download_to(url: str, dest: Path) -> bool:
     if not requests: return False
     try:
@@ -143,6 +141,7 @@ def engine_status() -> Dict[str,object]:
     p = _model_path or _resolve_model_path()
     ok = bool(p and Path(p).exists() and AutoModelForCausalLM is not None)
     return {'ready': ok, 'model_path': str(p) if p else '', 'backend': 'ctransformers'}
+
 def _load_local_model(path: Path):
     global _loaded_model, _loaded_backend
     try:
@@ -163,7 +162,7 @@ def _load_local_model(path: Path):
                 return _loaded_model
             except Exception as e:
                 print(f"[{BOT_NAME}] ⚠️ ctransformers {mt} load failed: {e}", flush=True)
-    # Fallback to llama_cpp
+    # Fallback to llama_cpp if available
     try:
         from llama_cpp import Llama  # type: ignore
         _loaded_model = Llama(
@@ -180,146 +179,7 @@ def _load_local_model(path: Path):
         _loaded_model = None
         _loaded_backend = ''
     return _loaded_model
-    if AutoModelForCausalLM is None:
-        print(f"[{BOT_NAME}] ❌ ctransformers not installed; local GGUF cannot load", flush=True)
-        return None
-    try:
-        _loaded_model = AutoModelForCausalLM.from_pretrained(
-            str(path),
-            model_type=_find_family(path),
-            gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
-            context_length=CTX,
-        )
-        return _loaded_model
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
-        return None
 
-IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
-IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
-PLACEHOLDER_RE = re.compile(r'\[([A-Z][A-Z0-9 _:/\-\.,]{2,})\]')
-UPSELL_RE = re.compile(r'(?i)\b(please review|confirm|support team|contact .*@|let us know|thank you|stay in touch|new feature|check out)\b')
-
-def _extract_images(src: str) -> str:
-    imgs = IMG_MD_RE.findall(src or '') + IMG_URL_RE.findall(src or '')
-    seen=set(); out=[]
-    for i in imgs:
-        if i not in seen:
-            seen.add(i); out.append(i)
-    return "\n".join(out)
-
-def _strip_reasoning(text: str) -> str:
-    lines=[]
-    for ln in (text or "").splitlines():
-        t=ln.strip()
-        if not t: continue
-        tl=t.lower()
-        if tl.startswith(("input:","output:","explanation:","reasoning:","analysis:","system:")): continue
-        if t in ("[SYSTEM]","[INPUT]","[OUTPUT]") or t.startswith(("[SYSTEM]","[INPUT]","[OUTPUT]")): continue
-        if t.startswith("[") and t.endswith("]") and len(t)<40: continue
-        if tl.startswith("note:"): continue
-        lines.append(t)
-    return "\n".join(lines)
-
-def _remove_placeholders(text: str) -> str:
-    s = PLACEHOLDER_RE.sub("", text or "")
-    s = re.sub(r'\(\s*\)', '', s)
-    s = re.sub(r'\s{2,}', ' ', s).strip()
-    return s
-
-def _drop_boilerplate(text: str) -> str:
-    kept=[]
-    for ln in (text or "").splitlines():
-        if not ln.strip(): continue
-        if UPSELL_RE.search(ln): continue
-        kept.append(ln.strip())
-    return "\n".join(kept)
-
-def _squelch_repeats(text: str) -> str:
-    parts = (text or "").split()
-    out = []
-    prev = None
-    count = 0
-    for w in parts:
-        wl = w.lower()
-        if wl == prev:
-            count += 1
-            if count <= 2:
-                out.append(w)
-        else:
-            prev = wl
-            count = 1
-            out.append(w)
-    s2 = " ".join(out)
-    s2 = re.sub(r'(\b\w+\s+\w+)(?:\s+\1){2,}', r'\1 \1', s2, flags=re.I)
-    return s2
-
-def _polish(text: str) -> str:
-    import re as _re
-    s = (text or "").strip()
-    s = _re.sub(r'[ \t]+', ' ', s)
-    s = _re.sub(r'[ \t]*\n[ \t]*', '\n', s)
-    s = _re.sub(r'([,:;.!?])(?=\S)', r'\1 ', s)
-    s = _re.sub(r'\s*…+\s*', '. ', s)
-    s = _re.sub(r'\s+([,:;.!?])', r'\1', s)
-    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
-    fixed = []
-    for ln in lines:
-        if not _re.search(r'[.!?]$', ln):
-            fixed.append(ln + '.')
-        else:
-            fixed.append(ln)
-    s = "\n".join(fixed)
-    seen=set(); out=[]
-    for ln in s.splitlines():
-        key = ln.lower()
-        if key in seen: 
-            continue
-        seen.add(key); out.append(ln)
-    return "\n".join(out)
-
-def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_chars: int = 800) -> str:
-    lines=[ln.strip() for ln in (text or "").splitlines() if ln.strip()]
-    if len(lines)>max_lines: lines=lines[:max_lines]
-    out="\n".join(lines)
-    if len(out)>max_chars: out=out[:max_chars].rstrip()
-    return out
-
-def _load_system_prompt() -> str:
-    sp = os.getenv("LLM_SYSTEM_PROMPT")
-    if sp: return sp
-    p = Path("/share/jarvis_prime/memory/system_prompt.txt")
-    if p.exists():
-        try:
-            return p.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    p2 = Path("/app/memory/system_prompt.txt")
-    if p2.exists():
-        try:
-            return p2.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    # fallback
-    return "YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
-
-def _trim_to_ctx(src: str, system: str) -> str:
-    if not src: return src
-    budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
-    budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
-    remaining = max(500, budget_chars - len(system))
-    if len(src) <= remaining:
-        return src
-    return src[-remaining:]
-
-def _finalize(text: str, imgs: str) -> str:
-    out = _strip_reasoning(text)
-    out = _remove_placeholders(out)
-    out = _drop_boilerplate(out)
-    out = _squelch_repeats(out)
-    out = _polish(out)
-    out = _cap(out)
-    return out + ("\n"+imgs if imgs else "")
 
 def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
