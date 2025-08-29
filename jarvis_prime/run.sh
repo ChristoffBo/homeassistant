@@ -84,3 +84,6 @@ if [ "$QWEN_ON" = "true" ]; then pull_if_needed "qwen2:0.5b"; else delete_if_pre
 # export hint for Python
 echo "[Jarvis Prime] 🧲 Ollama store: $MODELS_DIR"
 echo "[Jarvis Prime] 🧠 Active model: ${ACTIVE_TAG:-OFF} (name: ${ACTIVE_NAME}) via $OLLAMA_BASE_URL"
+
+log "Starting Jarvis Prime bot…"
+exec python3 -u /app/bot.py
