@@ -303,44 +303,48 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
     used_llm = False
     used_beautify = False
     final = message
-    extras = None
+    extras: Optional[dict] = None
 
     # LLM FIRST — no wake-word skip
-    if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
+    if LLM_ENABLED:
         try:
-            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, mood={CHAT_MOOD})")
-            rewritten = _llm.rewrite(
-                text=final,
-                mood=CHAT_MOOD,
-                timeout=LLM_TIMEOUT_SECONDS,
-                cpu_limit=LLM_MAX_CPU_PERCENT,
-                models_priority=LLM_MODELS_PRIORITY,
-                base_url=OLLAMA_BASE_URL,
-                model_url=LLM_MODEL_URL,
-                engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
-llm_short = (st.get('name') or os.getenv('LLM_ACTIVE_NAME','—')).strip() or '—'
-engine_line += f" ({model_name})"
+            import importlib.util as _imp
+            _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
+            _llm = None
+            if _lspec and _lspec.loader:
+                _llm = _imp.module_from_spec(_lspec)
+                _lspec.loader.exec_module(_llm)
+            if _llm and hasattr(_llm, "rewrite"):
+                rewritten = _llm.rewrite(
+                    text=final,
+                    system_prompt=merged.get("llm_system_prompt", ""),
+                    timeout=LLM_TIMEOUT_SECONDS,
+                )
+                if isinstance(rewritten, str) and rewritten.strip() and rewritten.strip() != final.strip():
+                    final = rewritten.strip()
+                    used_llm = True
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ LLM rewrite failed: {e}")
 
-    lines = [
-        "🧬 Prime Neural Boot",
-        f"🛰️ Engine: {engine_line}",
-        f"🧠 LLM: {llm_short}",
-        f"🎛️ Mood: {CHAT_MOOD}",
-        "",
-        "Modules:",
-        f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
-        f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
-        f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
-        f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
-        f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
-        f"📨 SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
-        f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
-        f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
-        "",
-        "Status: All systems nominal" if online else "Status: Neural Core warming up…",
-    ]
-    send_message("Startup", "\n".join(lines), priority=4)
+    # BEAUTIFY second
+    if BEAUTIFY_ENABLED:
+        try:
+            import importlib.util as _imp
+            _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
+            _beautify = None
+            if _bspec and _bspec.loader:
+                _beautify = _imp.module_from_spec(_bspec)
+                _bspec.loader.exec_module(_beautify)
+            if _beautify and hasattr(_beautify, "beautify"):
+                btxt, bextras = _beautify.beautify(title, final, allow_inline_images=bool(merged.get("beautify_inline_images", False)))
+                if isinstance(btxt, str) and btxt:
+                    final = btxt
+                extras = bextras
+                used_beautify = True
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Beautify failed: {e}")
+
+    return final, extras, used_llm, used_beautify
 
 # -----------------------------
 # Command handling helpers (safe calls)
