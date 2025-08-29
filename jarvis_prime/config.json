@@ -99,7 +99,16 @@
     "sonarr_time": "07:30",
     "sonarr_url": "http://10.0.0.240:8989",
     "personality_mood": "serious",
-    "personality_persistent": true
+    "personality_persistent": true,
+    "allow_multiline": false,
+    "llm_autodownload": true,
+    "llm_choice": "phi3:mini",
+    "ollama_in_container": true,
+    "llm_timeout_seconds": 12,
+    "llm_max_cpu_percent": 70,
+    "ollama_models_dir": "/share/jarvis_prime/models",
+    "llm_phi2_enabled": false,
+    "llm_gemma2_enabled": false
   },
   "schema": {
     "beautify_enabled": "bool",
@@ -181,6 +190,15 @@
     "heartbeat_enabled": "bool",
     "heartbeat_end": "str",
     "heartbeat_interval_minutes": "int",
-    "heartbeat_start": "str"
+    "heartbeat_start": "str",
+    "allow_multiline": "bool?",
+    "llm_autodownload": "bool?",
+    "llm_choice": "str?",
+    "ollama_in_container": "bool?",
+    "llm_timeout_seconds": "int?",
+    "llm_max_cpu_percent": "int?",
+    "ollama_models_dir": "str?",
+    "llm_phi2_enabled": "bool?",
+    "llm_gemma2_enabled": "bool?"
   }
 }
