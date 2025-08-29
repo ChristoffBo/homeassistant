@@ -109,6 +109,19 @@ export LLM_GEN_TOKENS=$(jq -r '.llm_gen_tokens // 180' "$CONFIG_PATH")
 export LLM_MAX_LINES=$(jq -r '.llm_max_lines // 10' "$CONFIG_PATH")
 export LLM_SYSTEM_PROMPT=$(jq -r '.llm_system_prompt // ""' "$CONFIG_PATH")
 export LLM_MODEL_PREFERENCE=$(jq -r '.llm_model_preference // "phi,qwen,tinyllama"' "$CONFIG_PATH")
+
+# AUTODEL: delete model files for toggles that are OFF (so user can free space)
+AUTODELETE=$(jq -r '.llm_autodelete_disabled // true' "$CONFIG_PATH")
+if [ "$AUTODELETE" = "true" ]; then
+  # Don't delete the active model path
+  for pair in "PHI:$PHI_ON:$PHI_PATH" "TINY:$TINY_ON:$TINY_PATH" "QWEN:$QWEN_ON:$QWEN_PATH"; do
+    NAME="${pair%%:*}"; rest="${pair#*:}"; ON="${rest%%:*}"; PATHF="${rest#*:}"
+    if [ "$ON" != "true" ] && [ -n "$PATHF" ] && [ -s "$PATHF" ] && [ "$PATHF" != "$_active_path" ]; then
+      echo "[Jarvis Prime] 🗑️ deleting disabled model $NAME at $PATHF"
+      rm -f "$PATHF" || true
+    fi
+  done
+fi
 export OLLAMA_BASE_URL=$(jq -r '.llm_ollama_base_url // ""' "$CONFIG_PATH")
 
 # Per-model toggles and URLs/paths

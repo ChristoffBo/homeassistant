@@ -92,6 +92,21 @@ def _load_system_prompt() -> str:
         pass
     return "You are Jarvis Prime."
 
+# --- helpers: context trimming & finalize ---
+def _trim_to_ctx(s: str, system_prompt: str, limit_tokens: int = CTX//2) -> str:
+    """Conservative trim based on characters (~4 chars/token). Keeps tail and includes system prompt length."""
+    if not s:
+        return s
+    # very rough char budget
+    sys_len = len(system_prompt or "")
+    max_chars = max(1024, int(limit_tokens * 4) - sys_len)
+    if max_chars < 1024:
+        max_chars = 1024
+    return s[-max_chars:] if len(s) > max_chars else s
+
+def _finalize(s: str, images=None) -> str:
+    return (s or "").strip()
+
 _loaded_backend = ''
 _model_path: Optional[Path] = None
 
