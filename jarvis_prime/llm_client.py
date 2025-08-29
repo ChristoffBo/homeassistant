@@ -62,6 +62,16 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL","")
 _loaded_model = None
 _model_path: Optional[Path] = None
 
+
+def _find_family(path: Path) -> str:
+    name = path.name.lower()
+    if "phi-3" in name or "phi3" in name or name.startswith("phi3") or name.startswith("phi-3"):
+        return "phi3"
+    if "qwen" in name:
+        return "qwen"
+    if "tinyllama" in name or "tiny-llama" in name or "llama" in name:
+        return "llama"
+    return "llama"
 def _download_to(url: str, dest: Path) -> bool:
     if not requests: return False
     try:
@@ -133,7 +143,7 @@ def _load_local_model(path: Path):
     try:
         _loaded_model = AutoModelForCausalLM.from_pretrained(
             str(path),
-            model_type="llama",
+            model_type=_find_family(path),
             gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
             context_length=CTX,
         )
@@ -307,6 +317,14 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     # 2) Local ctransformers
     p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
     if p and p.exists():
+        if p.is_dir():
+            cand = _choose_preferred(list(p.rglob("*.gguf")))
+            if cand:
+                p = cand
+            else:
+                print(f"[{BOT_NAME}] ⚠️ No .gguf in {p}", flush=True)
+                p = None
+    if p and p.exists() and p.is_file():
         m=_load_local_model(p)
         if m is not None:
             prompt=f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
