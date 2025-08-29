@@ -66,6 +66,7 @@ def _load_json_file(path):
         with open(path, "r") as f:
             return json.load(f)
     except Exception:
+            print(f"[{BOT_NAME}] ⚠️ Failed to read config")
         return {}
 
 merged = {}
@@ -130,6 +131,21 @@ OLLAMA_BASE_URL       = merged.get("ollama_base_url",  os.getenv("OLLAMA_BASE_UR
 LLM_MODEL_URL         = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
 LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
 LLM_MODEL_SHA256      = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
+# --- Normalize and export LLM selection ---
+try:
+    import re as _re, os as _os
+    if isinstance(LLM_MODELS_PRIORITY, str):
+        LLM_MODELS_PRIORITY = [x.strip() for x in _re.split(r"[\s,]+", LLM_MODELS_PRIORITY) if x.strip()]
+    if LLM_MODELS_PRIORITY:
+        _os.environ["LLM_MODELS_PRIORITY"] = ",".join(LLM_MODELS_PRIORITY)
+    if LLM_MODEL_URL:
+        _os.environ["LLM_MODEL_URL"] = str(LLM_MODEL_URL)
+    if LLM_MODEL_PATH:
+        _os.environ["LLM_MODEL_PATH"] = str(LLM_MODEL_PATH)
+except Exception as _e:
+    print(f"[{BOT_NAME}] ⚠️ LLM env export failed: {_e}")
+# --- end normalize/export ---
+
 PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
 print(f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} rewrite={'yes' if LLM_ENABLED else 'no'} "
