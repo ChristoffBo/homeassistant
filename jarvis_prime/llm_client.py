@@ -45,7 +45,7 @@ def _list_local_models() -> list[Path]:
 
 def _choose_preferred(paths: list[Path]) -> Optional[Path]:
     if not paths: return None
-    pref = (os.getenv("LLM_MODEL_PREFERENCE","phi3,tinyllama,qwen").lower()).split(",")
+    pref = (os.getenv("LLM_MODEL_PREFERENCE","phi,qwen,tinyllama").lower()).split(",")
     def score(p: Path):
         name=p.name.lower()
         fam = min([i for i,f in enumerate(pref) if f and f in name] + [999])
@@ -60,72 +60,8 @@ MODEL_URLS  = [u.strip() for u in os.getenv("LLM_MODEL_URLS","").split(",") if u
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL","")
 
 _loaded_model = None
-
-# --- helpers: image extraction ---
-def _extract_images(s: str):
-    """Return list of image URLs/paths found in markdown or HTML; safe fallback to empty list."""
-    if not s:
-        return []
-    urls = []
-    try:
-        import re as _re
-        urls += _re.findall(r'!\[[^\]]*\]\(([^)\s]+)\)', s)
-        urls += _re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', s, flags=_re.IGNORECASE)
-    except Exception:
-        return []
-    seen = set(); out = []
-    for u in urls:
-        if u and u not in seen:
-            seen.add(u); out.append(u)
-    return out
-
-# --- helpers: system prompt ---
-def _load_system_prompt() -> str:
-    """Load system prompt from memory dir; safe default if missing."""
-    try:
-        import os
-        base = os.getenv("LLM_MEMORY_DIR", "/share/jarvis_prime/memory")
-        path = Path(base) / "system_prompt.txt"
-        if path.exists():
-            return path.read_text(encoding="utf-8", errors="ignore").strip() or "You are Jarvis Prime."
-    except Exception:
-        pass
-    return "You are Jarvis Prime."
-
-# --- helpers: context trimming & finalize ---
-def _trim_to_ctx(s: str, system_prompt: str, limit_tokens: int = CTX//2) -> str:
-    """Conservative trim based on characters (~4 chars/token). Keeps tail and includes system prompt length."""
-    if not s:
-        return s
-    # very rough char budget
-    sys_len = len(system_prompt or "")
-    max_chars = max(1024, int(limit_tokens * 4) - sys_len)
-    if max_chars < 1024:
-        max_chars = 1024
-    return s[-max_chars:] if len(s) > max_chars else s
-
-def _finalize(s: str, images=None) -> str:
-    return (s or "").strip()
-
-_loaded_backend = ''
 _model_path: Optional[Path] = None
 
-def _find_family(path: Path) -> str:
-    name = path.name.lower()
-    if 'phi-3' in name or 'phi3' in name:
-        return 'phi3'
-    if 'qwen' in name:
-        return 'qwen'
-    # tinyllama / llama
-    return 'llama'
-
-def _candidate_types(path: Path):
-    fam = _find_family(path)
-    if fam == 'phi3':
-        return ['phi3','llama']
-    if fam == 'qwen':
-        return ['qwen','llama']
-    return ['llama']
 def _download_to(url: str, dest: Path) -> bool:
     if not requests: return False
     try:
@@ -160,73 +96,167 @@ def _resolve_model_path() -> Optional[Path]:
         if _download_to(u, dest): return dest
     return None
 
-def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None) -> None:
+def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None)->None:
     global _model_path
-    # Priority: explicit arg -> env LLM_MODEL_PATH -> resolve
-    cand = (model_path or os.getenv('LLM_MODEL_PATH','')).strip()
-    if cand:
-        p = Path(cand)
+    if model_path:
+        p=Path(model_path)
         if p.is_file():
-            _model_path = p
-            return
-    _model_path = _resolve_model_path()
-    print(f"[{BOT_NAME}] resolve→ { _model_path }", flush=True)
+            _model_path=p; return
+    _model_path=_resolve_model_path()
+
 def engine_status() -> Dict[str,object]:
-    """Report backend readiness and chosen model path.
-    - If OLLAMA_BASE_URL is set, we ping it and report that backend.
-    - Else we check local ctransformers + model file.
-    """
-    base = OLLAMA_BASE_URL.strip()
+    base=OLLAMA_BASE_URL.strip()
     if base and requests:
-        ok = False
         try:
-            r = requests.get(base.rstrip('/') + '/api/version', timeout=3)
-            ok = bool(r.ok)
+            r=requests.get(base.rstrip("/")+"/api/version",timeout=3)
+            ok=r.ok
         except Exception:
-            ok = False
-        return {'ready': ok, 'model_path': '', 'backend': 'ollama'}
-    p = _model_path or _resolve_model_path()
-    ok = bool(p and Path(p).exists() and AutoModelForCausalLM is not None)
-    return {'ready': ok, 'model_path': str(p) if p else '', 'backend': 'ctransformers'}
+            ok=False
+        return {"ready": bool(ok), "model_path":"", "backend":"ollama"}
+    p=_model_path or _resolve_model_path()
+    return {"ready": bool(p and p.exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
 
 def _load_local_model(path: Path):
-    global _loaded_model, _loaded_backend
+    global _loaded_model
+    if _loaded_model is not None: return _loaded_model
+    if AutoModelForCausalLM is None: return None
     try:
-        from ctransformers import AutoModelForCausalLM  # type: ignore
-    except Exception:
-        AutoModelForCausalLM = None
-    # Try ctransformers with candidate types
-    if AutoModelForCausalLM is not None:
-        for mt in _candidate_types(path):
-            try:
-                _loaded_model = AutoModelForCausalLM.from_pretrained(
-                    str(path), model_type=mt,
-                    gpu_layers=int(os.getenv('LLM_GPU_LAYERS','0')),
-                    context_length=CTX,
-                )
-                _loaded_backend = 'ctransformers'
-                print(f"[{BOT_NAME}] ✅ ctransformers loaded as {mt}", flush=True)
-                return _loaded_model
-            except Exception as e:
-                print(f"[{BOT_NAME}] ⚠️ ctransformers {mt} load failed: {e}", flush=True)
-    # Fallback to llama_cpp if available
-    try:
-        from llama_cpp import Llama  # type: ignore
-        _loaded_model = Llama(
-            model_path=str(path),
-            n_ctx=CTX,
-            n_gpu_layers=int(os.getenv('LLM_GPU_LAYERS','0')),
-            logits_all=False,
+        _loaded_model = AutoModelForCausalLM.from_pretrained(
+            str(path),
+            model_type="llama",
+            gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
+            context_length=CTX,
         )
-        _loaded_backend = 'llama_cpp'
-        print(f"[{BOT_NAME}] ✅ llama_cpp loaded", flush=True)
         return _loaded_model
     except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Failed to load local model via any backend: {e}", flush=True)
-        _loaded_model = None
-        _loaded_backend = ''
-    return _loaded_model
+        print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
+        return None
 
+IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
+IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
+PLACEHOLDER_RE = re.compile(r'\[([A-Z][A-Z0-9 _:/\-\.,]{2,})\]')
+UPSELL_RE = re.compile(r'(?i)\b(please review|confirm|support team|contact .*@|let us know|thank you|stay in touch|new feature|check out)\b')
+
+def _extract_images(src: str) -> str:
+    imgs = IMG_MD_RE.findall(src or '') + IMG_URL_RE.findall(src or '')
+    seen=set(); out=[]
+    for i in imgs:
+        if i not in seen:
+            seen.add(i); out.append(i)
+    return "\n".join(out)
+
+def _strip_reasoning(text: str) -> str:
+    lines=[]
+    for ln in (text or "").splitlines():
+        t=ln.strip()
+        if not t: continue
+        tl=t.lower()
+        if tl.startswith(("input:","output:","explanation:","reasoning:","analysis:","system:")): continue
+        if t in ("[SYSTEM]","[INPUT]","[OUTPUT]") or t.startswith(("[SYSTEM]","[INPUT]","[OUTPUT]")): continue
+        if t.startswith("[") and t.endswith("]") and len(t)<40: continue
+        if tl.startswith("note:"): continue
+        lines.append(t)
+    return "\n".join(lines)
+
+def _remove_placeholders(text: str) -> str:
+    s = PLACEHOLDER_RE.sub("", text or "")
+    s = re.sub(r'\(\s*\)', '', s)
+    s = re.sub(r'\s{2,}', ' ', s).strip()
+    return s
+
+def _drop_boilerplate(text: str) -> str:
+    kept=[]
+    for ln in (text or "").splitlines():
+        if not ln.strip(): continue
+        if UPSELL_RE.search(ln): continue
+        kept.append(ln.strip())
+    return "\n".join(kept)
+
+def _squelch_repeats(text: str) -> str:
+    parts = (text or "").split()
+    out = []
+    prev = None
+    count = 0
+    for w in parts:
+        wl = w.lower()
+        if wl == prev:
+            count += 1
+            if count <= 2:
+                out.append(w)
+        else:
+            prev = wl
+            count = 1
+            out.append(w)
+    s2 = " ".join(out)
+    s2 = re.sub(r'(\b\w+\s+\w+)(?:\s+\1){2,}', r'\1 \1', s2, flags=re.I)
+    return s2
+
+def _polish(text: str) -> str:
+    import re as _re
+    s = (text or "").strip()
+    s = _re.sub(r'[ \t]+', ' ', s)
+    s = _re.sub(r'[ \t]*\n[ \t]*', '\n', s)
+    s = _re.sub(r'([,:;.!?])(?=\S)', r'\1 ', s)
+    s = _re.sub(r'\s*…+\s*', '. ', s)
+    s = _re.sub(r'\s+([,:;.!?])', r'\1', s)
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    fixed = []
+    for ln in lines:
+        if not _re.search(r'[.!?]$', ln):
+            fixed.append(ln + '.')
+        else:
+            fixed.append(ln)
+    s = "\n".join(fixed)
+    seen=set(); out=[]
+    for ln in s.splitlines():
+        key = ln.lower()
+        if key in seen: 
+            continue
+        seen.add(key); out.append(ln)
+    return "\n".join(out)
+
+def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_chars: int = 800) -> str:
+    lines=[ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines)>max_lines: lines=lines[:max_lines]
+    out="\n".join(lines)
+    if len(out)>max_chars: out=out[:max_chars].rstrip()
+    return out
+
+def _load_system_prompt() -> str:
+    sp = os.getenv("LLM_SYSTEM_PROMPT")
+    if sp: return sp
+    p = Path("/share/jarvis_prime/memory/system_prompt.txt")
+    if p.exists():
+        try:
+            return p.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    p2 = Path("/app/memory/system_prompt.txt")
+    if p2.exists():
+        try:
+            return p2.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    # fallback
+    return "YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
+
+def _trim_to_ctx(src: str, system: str) -> str:
+    if not src: return src
+    budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
+    budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
+    remaining = max(500, budget_chars - len(system))
+    if len(src) <= remaining:
+        return src
+    return src[-remaining:]
+
+def _finalize(text: str, imgs: str) -> str:
+    out = _strip_reasoning(text)
+    out = _remove_placeholders(out)
+    out = _drop_boilerplate(out)
+    out = _squelch_repeats(out)
+    out = _polish(out)
+    out = _cap(out)
+    return out + ("\n"+imgs if imgs else "")
 
 def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
@@ -237,7 +267,7 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
 
     imgs=_extract_images(src)
     system=_load_system_prompt().format(mood=mood)
-    src=_trim_to_ctx(src, CTX//2)
+    src=_trim_to_ctx(src, system)
 
     # Special-case trivial tests
     if re.search(r'(?i)\btest\b', src) and len(src) < 600:
@@ -267,23 +297,6 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     # 2) Local ctransformers
     p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
     if p and p.exists():
-        if p.is_dir():
-            cand = _choose_preferred(list(p.rglob('*.gguf')))
-            if cand:
-                print(f"[{BOT_NAME}] 🔎 picked {cand} inside {p}", flush=True)
-                p = cand
-            else:
-                print(f"[{BOT_NAME}] ⚠️ No .gguf in {p}", flush=True)
-                p = None
-    if p and p.exists() and p.is_file():
-        if p.is_dir():
-            cand = _choose_preferred(list(p.rglob("*.gguf")))
-            if cand:
-                p = cand
-            else:
-                print(f"[{BOT_NAME}] ⚠️ No .gguf in {p}", flush=True)
-                p = None
-    if p and p.exists() and p.is_file():
         m=_load_local_model(p)
         if m is not None:
             prompt=f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"

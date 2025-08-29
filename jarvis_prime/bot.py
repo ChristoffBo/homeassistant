@@ -115,10 +115,6 @@ OLLAMA_BASE_URL       = merged.get("ollama_base_url",  os.getenv("OLLAMA_BASE_UR
 LLM_MODEL_URL         = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
 LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
 LLM_MODEL_SHA256      = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
-# Toggles for specific local models (if present in options.json)
-LLM_PHI3_ENABLED       = bool(merged.get("llm_phi3_enabled", False))
-LLM_TINYLLAMA_ENABLED  = bool(merged.get("llm_tinyllama_enabled", False))
-LLM_QWEN05_ENABLED     = bool(merged.get("llm_qwen05_enabled", False))
 PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
 print(f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} rewrite={'yes' if LLM_ENABLED else 'no'} "
@@ -327,12 +323,8 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
             )
             if rewritten:
                 final = rewritten
-                try:
-                    st = _llm.engine_status() or {}
-                    used_llm = bool(st.get("ready", False))
-                except Exception:
-                    used_llm = False
-                print(f"[{BOT_NAME}] ✓ LLM.rewrite done (used_llm={used_llm})")
+                used_llm = True
+                print(f"[{BOT_NAME}] ✓ LLM.rewrite done")
         except Exception as _e:
             print(f"[{BOT_NAME}] ⚠️ LLM skipped: {_e}")
 
@@ -384,7 +376,7 @@ def post_startup_card():
     # Warm-load the model in THIS process before status.
     try:
         if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
-            _llm.prefetch_model(model_path=os.getenv('LLM_MODEL_PATH',''), model_url=os.getenv('LLM_MODEL_URL',''))
+            _llm.prefetch_model()
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Prefetch in bot failed: {e}")
 
@@ -398,18 +390,10 @@ def post_startup_card():
     online = bool(st.get("ready"))
     model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
     model_name = os.path.basename(model_path) if model_path else "—"
-    if (not LLM_ENABLED) or not (LLM_PHI3_ENABLED or LLM_TINYLLAMA_ENABLED or LLM_QWEN05_ENABLED):
-        engine_line = "LLM — OFF"
-    else:
-        fam = "Unknown"
-        mn = (model_name or "").lower()
-        if "phi" in mn:
-            fam = "Phi-3"
-        elif "tinyllama" in mn or "tiny-llama" in mn or "tiny" in mn:
-            fam = "TinyLlama"
-        elif "qwen" in mn:
-            fam = "Qwen"
-        engine_line = f"{fam} — {'ONLINE' if online else 'OFFLINE'}"
+    engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
+    if model_name and model_name != "—":
+        engine_line += f" ({model_name})"
+
     lines = [
         "🧬 Prime Neural Boot",
         f"🛰️ Engine: {engine_line}",
@@ -426,7 +410,7 @@ def post_startup_card():
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         "",
-        "Status: All systems nominal" if online else "Status: LLM warming up…",
+        "Status: All systems nominal" if online else "Status: Neural Core warming up…",
     ]
     send_message("Startup", "\n".join(lines), priority=4)
 
@@ -597,8 +581,7 @@ def main():
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    loop = asyncio.get_event_loop()
     while True:
         try:
             loop.run_until_complete(listen())
