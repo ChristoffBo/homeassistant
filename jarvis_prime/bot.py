@@ -372,6 +372,7 @@ def extract_command_from(title: str, message: str) -> str:
 # -----------------------------
 # Startup HUD (high-tech boot card)
 # -----------------------------
+
 def post_startup_card():
     # Warm-load the model in THIS process before status.
     try:
@@ -387,16 +388,30 @@ def post_startup_card():
             st = _llm.engine_status() or {}
         except Exception:
             st = {}
+
     online = bool(st.get("ready"))
     model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
-    model_name = os.path.basename(model_path) if model_path else "—"
+    model_name = os.path.basename(model_path) if model_path else ""
+
+    # Show clean engine status; report LLM family on its own line
     engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
-    if model_name and model_name != "—":
-        engine_line += f" ({model_name})"
+
+    def _family_from_name(n: str) -> str:
+        n = (n or "").lower()
+        if 'phi' in n:
+            return 'Phi3'
+        if 'tiny' in n or 'tinyl' in n:
+            return 'TinyLlama'
+        if 'qwen' in n:
+            return 'Qwen'
+        return '—'
+
+    llm_line = f"🧠 LLM: {_family_from_name(model_name) if online else '—'}"
 
     lines = [
         "🧬 Prime Neural Boot",
         f"🛰️ Engine: {engine_line}",
+        llm_line,
         f"🎛️ Mood: {CHAT_MOOD}",
         "",
         "Modules:",
