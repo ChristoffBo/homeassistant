@@ -60,6 +60,25 @@ MODEL_URLS  = [u.strip() for u in os.getenv("LLM_MODEL_URLS","").split(",") if u
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL","")
 
 _loaded_model = None
+
+# --- helpers: image extraction ---
+def _extract_images(s: str):
+    """Return list of image URLs/paths found in markdown or HTML; safe fallback to empty list."""
+    if not s:
+        return []
+    urls = []
+    try:
+        import re as _re
+        urls += _re.findall(r'!\[[^\]]*\]\(([^)\s]+)\)', s)
+        urls += _re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', s, flags=_re.IGNORECASE)
+    except Exception:
+        return []
+    seen = set(); out = []
+    for u in urls:
+        if u and u not in seen:
+            seen.add(u); out.append(u)
+    return out
+
 _loaded_backend = ''
 _model_path: Optional[Path] = None
 
