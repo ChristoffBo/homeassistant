@@ -24,9 +24,9 @@ GEN_TOKENS = int(os.getenv("LLM_GEN_TOKENS", "180"))
 CHARS_PER_TOKEN = 4
 SAFETY_TOKENS = 32
 
-# Decoding knobs (safer & more precise defaults; can override via env if needed)
+# Decoding knobs (tight = precise/neutral)
 TEMP = float(os.getenv("LLM_TEMPERATURE", "0.05"))
-TOP_P = float(os.getenv("LLM_TOP_P", "0.8"))
+TOP_P = float(os.getenv("LLM_TOP_P", "0.7"))
 REPEAT_P = float(os.getenv("LLM_REPEAT_PENALTY", "1.4"))
 
 SEARCH_ROOTS = [Path("/share/jarvis_prime"), Path("/share/jarvis_prime/models"), Path("/share")]
@@ -210,35 +210,31 @@ def _polish(text: str) -> str:
     seen=set(); out=[]
     for ln in s.splitlines():
         key = ln.lower()
-        if key in seen: 
+        if key in seen:
             continue
         seen.add(key); out.append(ln)
     return "\n".join(out)
 
-def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_chars: int = 800) -> str:
+def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","25")), max_chars: int = int(os.getenv("LLM_MAX_CHARS","2400"))) -> str:
     lines=[ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     if len(lines)>max_lines: lines=lines[:max_lines]
     out="\n".join(lines)
     if len(out)>max_chars: out=out[:max_chars].rstrip()
     return out
 
-def _load_system_prompt() -> str:
+def _load_system_prompt_neutral() -> str:
     sp = os.getenv("LLM_SYSTEM_PROMPT")
-    if sp: return sp
-    p = Path("/share/jarvis_prime/memory/system_prompt.txt")
-    if p.exists():
-        try:
-            return p.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    p2 = Path("/app/memory/system_prompt.txt")
-    if p2.exists():
-        try:
-            return p2.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    # fallback
-    return "YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
+    if sp:
+        base = sp
+    else:
+        base = (
+            "YOU ARE A FACT EXTRACTOR. Output must be a concise, neutral rewrite of the INPUT.\n"
+            "- No opinions, no jokes, no mood, no emojis, no marketing language.\n"
+            "- Preserve all technical details (IP addresses, ports, paths, versions, error lines).\n"
+            "- Remove boilerplate and placeholders. If something is missing, say 'UNSURE'.\n"
+            "- Do NOT invent content. If uncertain, say 'UNSURE'."
+        )
+    return base
 
 def _trim_to_ctx(src: str, system: str) -> str:
     if not src: return src
@@ -266,12 +262,9 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     if not src: return src
 
     imgs=_extract_images(src)
-    system=_load_system_prompt().format(mood=mood)
+    # Force neutral/no persona at the LLM layer
+    system=_load_system_prompt_neutral()
     src=_trim_to_ctx(src, system)
-
-    # Special-case trivial tests
-    if re.search(r'(?i)\btest\b', src) and len(src) < 600:
-        return _finalize(src, imgs)
 
     # 1) Ollama path
     base=(base_url or OLLAMA_BASE_URL or "").strip()
