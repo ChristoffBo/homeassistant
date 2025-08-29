@@ -17,6 +17,59 @@ from __future__ import annotations
 import json, re
 from typing import Tuple, Optional, List, Dict
 
+# --- Duplicati helpers (added) ---
+import re as _re_be
+def _looks_like_duplicati(_title: str, _text: str) -> bool:
+    t = (_title or '').lower() + '\n' + (_text or '').lower()
+    keys = (
+        "deletedfiles:", "deletedfolders:", "modifiedfiles:", "examinedfiles:",
+        "sizeofmodifiedfiles:", "sizeofexaminedfiles:", "mainoperation:",
+        "parsedresult:", "duration:", "begintime:", "endtime:", "version:"
+    )
+    return ("duplicati" in t) or sum(k in t for k in keys) >= 4
+
+def _kv_dupl(text: str):
+    out = {}
+    for ln in (text or '').splitlines():
+        if ':' in ln:
+            k, v = ln.split(':', 1)
+            out[k.strip()] = v.strip()
+    return out
+
+def _interpret_duplicati(title: str, body: str):
+    kv = _kv_dupl(body)
+    m = _re_be.search(r'(?i)duplicati\s+backup\s+report\s+for\s+(.+)', title or '')
+    job = (m.group(1).strip() if m else 'not specified')
+
+    res = kv.get('ParsedResult', 'unknown')
+    op = kv.get('MainOperation', 'unknown')
+    dur = kv.get('Duration', 'unknown')
+    begin = kv.get('BeginTime', 'not specified')
+    end = kv.get('EndTime', 'not specified')
+
+    files_exam = kv.get('ExaminedFiles', 'unknown')
+    files_mod  = kv.get('ModifiedFiles', 'unknown')
+    files_add  = kv.get('AddedFiles', 'unknown')
+    files_del  = kv.get('DeletedFiles', 'unknown')
+
+    size_exam = kv.get('SizeOfExaminedFiles', 'unknown')
+    size_mod  = kv.get('SizeOfModifiedFiles', 'unknown')
+
+    warn = kv.get('WarningsActualLength', 'unknown')
+    err  = kv.get('ErrorsActualLength', 'unknown')
+
+    lines = []
+    lines.append(f"Duplicati: {job} — {res}.")
+    lines.append(f"Job: {job}. Operation: {op}. Result: {res}.")
+    lines.append(f"Duration: {dur}. Started: {begin}. Ended: {end}.")
+    lines.append(f"Files — examined {files_exam}, modified {files_mod}, added {files_add}, deleted {files_del}.")
+    lines.append(f"Data — examined {size_exam}, changed {size_mod}.")
+    lines.append(f"Warnings: {warn}; errors: {err}.")
+    return lines
+# --- end Duplicati helpers ---
+
+
+
 try:
     import yaml  # optional
 except Exception:
