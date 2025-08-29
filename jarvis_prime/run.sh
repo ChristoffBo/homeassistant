@@ -123,68 +123,49 @@ if [ "$AUTODELETE" = "true" ]; then
   done
 fi
 export OLLAMA_BASE_URL=$(jq -r '.llm_ollama_base_url // ""' "$CONFIG_PATH")
+# ---------------- LLM toggle selection (robust) ----------------
+MODELS_DIR=$(jq -r '.llm_models_dir // "/share/jarvis_prime/models"' "$CONFIG_PATH")
+mkdir -p "$MODELS_DIR" || true
 
-# Per-model toggles and URLs/paths
-PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
-TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
-QWEN_ON=$(jq -r '.llm_qwen05_enabled // false' "$CONFIG_PATH")
+# Always-strings; normalize to 'true'/'false'
+PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH");      [ "$PHI_ON" = "true" ] || PHI_ON=false
+TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH"); [ "$TINY_ON" = "true" ] || TINY_ON=false
+QWEN_ON=$(jq -r '.llm_qwen05_enabled // false' "$CONFIG_PATH");    [ "$QWEN_ON" = "true" ] || QWEN_ON=false
 
-PHI_URL=$(jq -r '.llm_phi3_url // ""' "$CONFIG_PATH");    PHI_PATH=$(jq -r '.llm_phi3_path // ""' "$CONFIG_PATH")
-TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH"); TINY_PATH=$(jq -r '.llm_tinyllama_path // ""' "$CONFIG_PATH")
-QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH");  QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH")
+PHI_URL=$(jq -r '.llm_phi3_url // ""' "$CONFIG_PATH")
+TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH")
+QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH")
 
-# Default filenames if paths are empty
-[ -z "$PHI_PATH"  ]  && PHI_PATH="$MODELS_DIR/Phi-3-mini-4k-instruct-q4.gguf"
-[ -z "$TINY_PATH" ]  && TINY_PATH="$MODELS_DIR/TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf"
-[ -z "$QWEN_PATH" ]  && QWEN_PATH="$MODELS_DIR/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
+PHI_PATH=$(jq -r '.llm_phi3_path // ""' "$CONFIG_PATH");   [ -n "$PHI_PATH"  ] || PHI_PATH="$MODELS_DIR/Phi-3-mini-4k-instruct-q4.gguf"
+TINY_PATH=$(jq -r '.llm_tinyllama_path // ""' "$CONFIG_PATH"); [ -n "$TINY_PATH" ] || TINY_PATH="$MODELS_DIR/TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf"
+QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH");  [ -n "$QWEN_PATH" ] || QWEN_PATH="$MODELS_DIR/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
 
 _active_path=""; _active_url=""
-if [ "$LLM_ENABLED" = "true" ]; then
-  if   [ "$PHI_ON" = "true" ]; then _active_path="$PHI_PATH"; _active_url="$PHI_URL";
+if [ "${LLM_ENABLED:-false}" = "true" ]; then
+  if   [ "$PHI_ON" = "true" ]; then _active_path="$PHI_PATH";  _active_url="$PHI_URL";
   elif [ "$TINY_ON" = "true" ]; then _active_path="$TINY_PATH"; _active_url="$TINY_URL";
   elif [ "$QWEN_ON" = "true" ]; then _active_path="$QWEN_PATH"; _active_url="$QWEN_URL";
   fi
-  # Download if URL provided and file missing
-  if [ -n "$_active_url" ] && [ ! -s "$_active_path" ]; then
-    echo "[Jarvis Prime] 🔮 Downloading model to $_active_path"
-    mkdir -p "$(dirname "$_active_path")" || true
-    curl -L --fail --retry 3 -o "$_active_path" "$_active_url" || true
-  fi
-  if [ -s "$_active_path" ]; then
-    export LLM_MODEL_PATH="$_active_path"
-  fi
 fi
 
-
-# -----------------------------
-# Startup banner
-# -----------------------------
-echo "──────────────────────────────────────────────"
-echo "🧠 ${BOT_NAME} ${BOT_ICON}"
-echo "⚡ Boot sequence initiated..."
-echo "   → Personalities loaded"
-echo "   → Memory core mounted"
-echo "   → Network bridges linked"
-echo "   → LLM: $( [ "$LLM_ENABLED" = "true" ] && echo "enabled" || echo "disabled" )"
-echo "🚀 Systems online — Jarvis is awake!"
-echo "──────────────────────────────────────────────"
-
-# Ensure share directories exist
-mkdir -p /share/jarvis_prime/memory
-if [ -n "$LLM_MODEL_PATH" ]; then
-  mkdir -p "$(dirname "$LLM_MODEL_PATH")"
+if [ -n "$_active_url" ] && [ ! -s "$_active_path" ]; then
+  echo "[Jarvis Prime] 🔮 Downloading model → $_active_path"
+  mkdir -p "$(dirname "$_active_path")" || true
+  curl -L --fail --retry 3 -o "$_active_path" "$_active_url"
 fi
 
-# Seed default system prompt to /share so you can edit without rebuilding
-if [ ! -s /share/jarvis_prime/memory/system_prompt.txt ] && [ -f /app/memory/system_prompt.txt ]; then
-  cp -f /app/memory/system_prompt.txt /share/jarvis_prime/memory/system_prompt.txt
-  echo "[${BOT_NAME}] Seeded system prompt -> /share/jarvis_prime/memory/system_prompt.txt"
+if [ -s "$_active_path" ]; then
+  export LLM_MODEL_PATH="$_active_path"
 fi
 
-# Prefetch once on startup so the model downloads immediately (or warms up)
-if [ "$LLM_ENABLED" = "true" ] && [ -n "$LLM_MODEL_URL" ] && [ -n "$LLM_MODEL_PATH" ]; then
-  echo "[${BOT_NAME}] 🔮 Prefetching LLM model..."
-  python3 - <<'PY'
+AUTODEL=$(jq -r '.llm_autodelete_disabled // true' "$CONFIG_PATH")
+if [ "$AUTODEL" = "true" ]; then
+  if [ "$PHI_ON" != "true" ]  && [ -s "$PHI_PATH"  ] && [ "$PHI_PATH"  != "$_active_path" ]; then rm -f "$PHI_PATH";  fi
+  if [ "$TINY_ON" != "true" ] && [ -s "$TINY_PATH" ] && [ "$TINY_PATH" != "$_active_path" ]; then rm -f "$TINY_PATH"; fi
+  if [ "$QWEN_ON" != "true" ] && [ -s "$QWEN_PATH" ] && [ "$QWEN_PATH" != "$_active_path" ]; then rm -f "$QWEN_PATH"; fi
+fi
+# --------------------------------------------------------------
+python3 - <<'PY'
 import json, os
 cfg = json.load(open("/data/options.json"))
 try:

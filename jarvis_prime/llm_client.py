@@ -237,7 +237,7 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
 
     imgs=_extract_images(src)
     system=_load_system_prompt().format(mood=mood)
-    src=_trim_to_ctx(src, system)
+    src=_trim_to_ctx(src, CTX//2)
 
     # Special-case trivial tests
     if re.search(r'(?i)\btest\b', src) and len(src) < 600:
