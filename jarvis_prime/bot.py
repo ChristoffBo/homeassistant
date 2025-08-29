@@ -13,146 +13,6 @@ import atexit
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List
 
-
-# -----------------------------
-# Ollama in-container bootstrap
-# -----------------------------
-def _model_tag_from_choice(choice: str) -> Optional[str]:
-    # Map config llm_choice to Ollama tags
-    c = (choice or "").strip().lower()
-    if c in ("off","none","disabled"): return None
-    if c in ("tinyllama","tiny"): return "tinyllama:latest"
-    if c in ("qwen-0.5b","qwen","qwen05","qwen2.5-0.5b"): return "qwen2.5:0.5b-instruct"
-    if c in ("gemma2-2b","gemma2","gemma"): return "gemma2:2b"
-    if c in ("phi2-2.7b","phi2","phi-2","phi2.7b"): return "phi:2.7b"
-    if c in ("phi3-mini","phi3","phi-3"): return "phi3:mini"
-    return None
-
-def _short_family(tag: str) -> str:
-    t = (tag or "").lower()
-    if "phi3" in t: return "Phi3"
-    if "phi:" in t: return "Phi2"
-    if "gemma2" in t: return "Gemma2"
-    if "tinyllama" in t: return "TinyLlama"
-    if "qwen" in t: return "Qwen"
-    return "—"
-
-def _ensure_ollama_installed():
-    try:
-        out = subprocess.run(["bash","-lc","ollama --version"], capture_output=True, text=True, timeout=5)
-        if out.returncode == 0:
-            print(f"[{BOT_NAME}] 🐋 Ollama present: {out.stdout.strip()}")
-            return True
-    except Exception as e:
-        print(f"[{BOT_NAME}] ℹ️ Ollama check failed: {e}")
-    # install
-    try:
-        print(f"[{BOT_NAME}] 📦 Installing Ollama...")
-        cmd = 'curl -fsSL https://ollama.com/install.sh | sh'
-        subprocess.run(["bash","-lc",cmd], check=True, timeout=120)
-        return True
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ Ollama install failed: {e}")
-        return False
-
-def _start_ollama_server(models_dir:str, port:int=11434):
-    env = os.environ.copy()
-    env["OLLAMA_MODELS"] = models_dir
-    # if already running, skip
-    try:
-        r = requests.get(f"http://127.0.0.1:{port}/api/version", timeout=2)
-        if r.ok:
-            print(f"[{BOT_NAME}] 🟢 Ollama server already running on :{port}")
-            return None
-    except Exception:
-        pass
-    print(f"[{BOT_NAME}] 🚀 Starting Ollama server on :{port} (models at {models_dir})")
-    p = subprocess.Popen(["bash","-lc",f"OLLAMA_MODELS='{models_dir}' ollama serve"], env=env,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    # wait up to 10s
-    for _ in range(20):
-        try:
-            r = requests.get(f"http://127.0.0.1:{port}/api/version", timeout=0.5)
-            if r.ok:
-                print(f"[{BOT_NAME}] 🟢 Ollama server ready")
-                break
-        except Exception:
-            time.sleep(0.5)
-    return p
-
-def _ollama_pull(tag:str, base_url:str="http://127.0.0.1:11434"):
-    try:
-        # if already present skip
-        r = requests.get(base_url.rstrip('/') + "/api/tags", timeout=5)
-        if r.ok and any( (m.get('name')==tag) for m in r.json().get('models',[]) ):
-            print(f"[{BOT_NAME}] ✅ Model already present: {tag}")
-            return True
-    except Exception:
-        pass
-    print(f"[{BOT_NAME}] ⬇️ Pulling model: {tag}")
-    # use CLI because background server sometimes needs pull via CLI for progress
-    try:
-        subprocess.run(["bash","-lc",f"OLLAMA_HOST={base_url} ollama pull {tag}"], check=True, timeout=1200)
-        return True
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ ollama pull failed: {e}")
-        return False
-
-def _ollama_rm_others(keep_tag:str, base_url:str="http://127.0.0.1:11434"):
-    try:
-        r = requests.get(base_url.rstrip('/') + "/api/tags", timeout=5)
-        if not r.ok: return
-        for m in r.json().get('models', []):
-            name = m.get('name')
-            if name and name != keep_tag:
-                try:
-                    subprocess.run(["bash","-lc",f"OLLAMA_HOST={base_url} ollama rm {name}"], check=True, timeout=60)
-                    print(f"[{BOT_NAME}] 🧹 Removed model: {name}")
-                except Exception as e:
-                    print(f"[{BOT_NAME}] ⚠️ Could not remove {name}: {e}")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ prune models failed: {e}")
-
-def start_ollama_if_configured():
-    global OLLAMA_BASE_URL, LLM_MODELS_PRIORITY
-    # read choices
-    llm_choice = str(merged.get("llm_choice", "off")).lower()
-    autodl = bool(merged.get("llm_autodownload", True))
-    models_dir = str(merged.get("ollama_models_dir", "/share/jarvis_prime/ollama_models"))
-    in_container = bool(merged.get("ollama_in_container", True))
-
-    tag = _model_tag_from_choice(llm_choice)
-    if not tag:
-        print(f"[{BOT_NAME}] ℹ️ LLM choice is OFF")
-        return None
-
-    if not in_container:
-        print(f"[{BOT_NAME}] ℹ️ ollama_in_container=false — expecting external Ollama at {OLLAMA_BASE_URL or 'http://127.0.0.1:11434'}")
-    else:
-        ok = _ensure_ollama_installed()
-        if not ok:
-            print(f"[{BOT_NAME}] ❌ Ollama not installed; LLM disabled")
-            return None
-        _start_ollama_server(models_dir)
-
-    base = OLLAMA_BASE_URL.strip() or "http://127.0.0.1:11434"
-    OLLAMA_BASE_URL = base  # normalize for llm_client
-
-    if autodl:
-        if not _ollama_pull(tag, base):
-            print(f"[{BOT_NAME}] ⚠️ Could not pull {tag}; continuing without LLM")
-            return None
-        # prune others
-        _ollama_rm_others(tag, base)
-
-    # pass down to llm_client via env + priority
-    os.environ["OLLAMA_BASE_URL"] = base
-    os.environ["OLLAMA_MODEL_TAG"] = tag
-    LLM_MODELS_PRIORITY = [tag]
-    print(f"[{BOT_NAME}] 🧠 Active model tag: {tag} ({_short_family(tag)})")
-    return tag
-
-
 # -----------------------------
 # Dynamic modules dict
 # -----------------------------
@@ -233,12 +93,6 @@ try:
     HEARTBEAT_START         = str(merged.get("heartbeat_start", HEARTBEAT_START))
     HEARTBEAT_END           = str(merged.get("heartbeat_end", HEARTBEAT_END))
     BEAUTIFY_INLINE_IMAGES  = bool(merged.get("beautify_inline_images", False))
-    # Multiline control for LLM outputs
-    os.environ["LLM_ALLOW_MULTILINE"] = "1" if bool(merged.get("allow_multiline", True)) else "0"
-    # Pass configured base URL if provided
-    if str(merged.get("llm_ollama_base_url","")).strip():
-        os.environ["OLLAMA_BASE_URL"] = str(merged.get("llm_ollama_base_url")).strip()
-
 
 except Exception as e:
     print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
@@ -518,6 +372,7 @@ def extract_command_from(title: str, message: str) -> str:
 # -----------------------------
 # Startup HUD (high-tech boot card)
 # -----------------------------
+
 def post_startup_card():
     # Warm-load the model in THIS process before status.
     try:
@@ -533,17 +388,16 @@ def post_startup_card():
             st = _llm.engine_status() or {}
         except Exception:
             st = {}
+
     online = bool(st.get("ready"))
-    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
-    model_name = os.path.basename(model_path) if model_path else "—"
     engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
-    if model_name and model_name != "—":
-        engine_line += f" ({model_name})"
+    llm_short = (st.get("name") or os.getenv("LLM_ACTIVE_NAME", "—")).strip() or "—"
+    llm_line = f"LLM: {llm_short}"
 
     lines = [
         "🧬 Prime Neural Boot",
-        f"🛰️ Engine: {engine_line}",
-        f"{llm_line}",
+        f"🛰️ {engine_line}",
+        f"🧠 {llm_line}",
         f"🎛️ Mood: {CHAT_MOOD}",
         "",
         "Modules:",
@@ -720,15 +574,9 @@ async def listen():
 # -----------------------------
 # Main
 # -----------------------------
-
 def main():
     resolve_app_id()
     try:
-        # Start Ollama (in-container) if configured
-        try:
-            start_ollama_if_configured()
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ Ollama bootstrap failed: {e}")
         start_sidecars()   # <- bring back proxy/smtp listeners
         post_startup_card()
     except Exception as e:
