@@ -384,7 +384,7 @@ def post_startup_card():
     # Warm-load the model in THIS process before status.
     try:
         if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
-            _llm.prefetch_model()
+            _llm.prefetch_model(model_path=os.getenv('LLM_MODEL_PATH',''), model_url=os.getenv('LLM_MODEL_URL',''))
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Prefetch in bot failed: {e}")
 
@@ -398,20 +398,21 @@ def post_startup_card():
     online = bool(st.get("ready"))
     model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
     model_name = os.path.basename(model_path) if model_path else "—"
-    if not LLM_ENABLED or not (LLM_PHI3_ENABLED or LLM_TINYLLAMA_ENABLED or LLM_QWEN05_ENABLED):
-    engine_line = "LLM — OFF"
-else:
-    # Friendly family names
-    fam = "Unknown"
-    mn = model_name.lower()
-    if "phi" in mn: fam = "Phi-3"
-    elif "tinyllama" in mn or "tiny-llama" in mn or "tiny" in mn: fam = "TinyLlama"
-    elif "qwen" in mn: fam = "Qwen"
-    engine_line = f"{fam} — {"ONLINE" if online else "OFFLINE"}"
-    if model_name and model_name != "—":
-        engine_line += f" ({model_name})"
-
-    lines = [
+    if (not LLM_ENABLED) or not (LLM_PHI3_ENABLED or LLM_TINYLLAMA_ENABLED or LLM_QWEN05_ENABLED):
+        engine_line = "LLM — OFF"
+    else:
+        fam = "Unknown"
+        mn = (model_name or "").lower()
+        if "phi" in mn:
+            fam = "Phi-3"
+        elif "tinyllama" in mn or "tiny-llama" in mn or "tiny" in mn:
+            fam = "TinyLlama"
+        elif "qwen" in mn:
+            fam = "Qwen"
+        engine_line = f"{fam} — {'ONLINE' if online else 'OFFLINE'}"
+        if model_name and model_name != "—":
+            engine_line += f" ({model_name})"
+lines = [
         "🧬 Prime Neural Boot",
         f"🛰️ Engine: {engine_line}",
         f"🎛️ Mood: {CHAT_MOOD}",
@@ -427,7 +428,7 @@ else:
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         "",
-        "Status: All systems nominal" if online else "Status: Neural Core warming up…",
+        "Status: All systems nominal" if online else "Status: LLM warming up…",
     ]
     send_message("Startup", "\n".join(lines), priority=4)
 

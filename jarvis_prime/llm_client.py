@@ -45,7 +45,7 @@ def _list_local_models() -> list[Path]:
 
 def _choose_preferred(paths: list[Path]) -> Optional[Path]:
     if not paths: return None
-    pref = (os.getenv("LLM_MODEL_PREFERENCE","phi,qwen,tinyllama").lower()).split(",")
+    pref = (os.getenv("LLM_MODEL_PREFERENCE","phi3,tinyllama,qwen").lower()).split(",")
     def score(p: Path):
         name=p.name.lower()
         fam = min([i for i,f in enumerate(pref) if f and f in name] + [999])
@@ -96,29 +96,33 @@ def _resolve_model_path() -> Optional[Path]:
         if _download_to(u, dest): return dest
     return None
 
-def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None)->None:
+def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None) -> None:
     global _model_path
-    if model_path:
-        p=Path(model_path)
+    # Priority: explicit arg -> env LLM_MODEL_PATH -> resolve
+    cand = (model_path or os.getenv('LLM_MODEL_PATH','')).strip()
+    if cand:
+        p = Path(cand)
         if p.is_file():
-            _model_path=p; return
-    _model_path=_resolve_model_path()
-
+            _model_path = p
+            return
+    _model_path = _resolve_model_path()
 def engine_status() -> Dict[str,object]:
-    base=OLLAMA_BASE_URL.strip()
+    """Report backend readiness and chosen model path.
+    - If OLLAMA_BASE_URL is set, we ping it and report that backend.
+    - Else we check local ctransformers + model file.
+    """
+    base = OLLAMA_BASE_URL.strip()
     if base and requests:
+        ok = False
         try:
-            r=requests.get(base.rstrip('/')+'/api/version',timeout=3)
-            ok=r.ok
+            r = requests.get(base.rstrip('/') + '/api/version', timeout=3)
+            ok = bool(r.ok)
         except Exception:
-            ok=False
-        return {'ready': bool(ok), 'model_path':'', 'backend':'ollama'}
-    p=_model_path or _resolve_model_path()
+            ok = False
+        return {'ready': ok, 'model_path': '', 'backend': 'ollama'}
+    p = _model_path or _resolve_model_path()
     ok = bool(p and Path(p).exists() and AutoModelForCausalLM is not None)
     return {'ready': ok, 'model_path': str(p) if p else '', 'backend': 'ctransformers'}
-    p=_model_path or _resolve_model_path()
-    return {"ready": bool(p and p.exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
-
 def _load_local_model(path: Path):
     global _loaded_model
     if _loaded_model is not None: return _loaded_model
