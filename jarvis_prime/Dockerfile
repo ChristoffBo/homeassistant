@@ -1,9 +1,8 @@
 FROM debian:stable-slim
 
 # Install dependencies
-RUN apt-get update && apt-get install -y libgomp1 \
-    python3 python3-pip curl jq ca-certificates \
-    && update-ca-certificates \
+RUN apt-get update && apt-get install -y \
+    python3 python3-pip curl jq \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -95,7 +95,22 @@ try:
     BEAUTIFY_INLINE_IMAGES  = bool(merged.get("beautify_inline_images", False))
 
 except Exception as e:
-    print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
+    
+# Normalize priority (HA UI provides string); ensure list
+try:
+    import re as _re, os as _os
+    if isinstance(LLM_MODELS_PRIORITY, str):
+        LLM_MODELS_PRIORITY = [x.strip() for x in _re.split(r"[\s,]+", LLM_MODELS_PRIORITY) if x.strip()]
+    # Export for llm_client (which reads env)
+    if LLM_MODELS_PRIORITY:
+        _os.environ["LLM_MODELS_PRIORITY"] = ",".join(LLM_MODELS_PRIORITY)
+    if LLM_MODEL_URL:
+        _os.environ["LLM_MODEL_URL"] = str(LLM_MODEL_URL)
+    if LLM_MODEL_PATH:
+        _os.environ["LLM_MODEL_PATH"] = str(LLM_MODEL_PATH)
+except Exception as _e:
+    print(f"[{BOT_NAME}] ⚠️ LLM env export failed: {_e}")
+print(f"[{BOT_NAME}] ⚠️ Could not load options/config json: {e}")
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
@@ -111,28 +126,10 @@ LLM_ENABLED           = bool(merged.get("llm_enabled", _bool_env("LLM_ENABLED", 
 LLM_TIMEOUT_SECONDS   = int(merged.get("llm_timeout_seconds", int(os.getenv("LLM_TIMEOUT_SECONDS", "12"))))
 LLM_MAX_CPU_PERCENT   = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))))
 LLM_MODELS_PRIORITY   = merged.get("llm_models_priority", [])
-# normalize: accept string "a,b,c" or list
-if isinstance(LLM_MODELS_PRIORITY, str):
-    import re as _re
-    LLM_MODELS_PRIORITY = [x.strip() for x in _re.split(r'[\s,]+', LLM_MODELS_PRIORITY) if x.strip()]
 OLLAMA_BASE_URL       = merged.get("ollama_base_url",  os.getenv("OLLAMA_BASE_URL", ""))
 LLM_MODEL_URL         = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
 LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
 LLM_MODEL_SHA256      = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
-# Export env so llm_client.engine_status can see our selection
-try:
-    import os as _os
-    if isinstance(LLM_MODELS_PRIORITY, (list, tuple)):
-        _os.environ["LLM_MODELS_PRIORITY"] = ",".join(LLM_MODELS_PRIORITY)
-    elif isinstance(LLM_MODELS_PRIORITY, str) and LLM_MODELS_PRIORITY.strip():
-        _os.environ["LLM_MODELS_PRIORITY"] = LLM_MODELS_PRIORITY.strip()
-    if LLM_MODEL_PATH:
-        _os.environ["LLM_MODEL_PATH"] = str(LLM_MODEL_PATH)
-    if LLM_MODEL_URL:
-        _os.environ["LLM_MODEL_URL"] = str(LLM_MODEL_URL)
-except Exception:
-    pass
-
 PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
 print(f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} rewrite={'yes' if LLM_ENABLED else 'no'} "
@@ -615,10 +612,10 @@ def main():
         print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
 
     try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     while True:
         try:
             loop.run_until_complete(listen())
