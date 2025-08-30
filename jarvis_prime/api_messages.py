@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 # api_messages.py — REST API for Jarvis Prime inbox
-# Exposes:
-#   GET  /api/messages?limit=50&q=...
-#   GET  /api/messages/{id}
-#   POST /api/messages/{id}/read   {"read": true}
-#   DELETE /api/messages/{id}
-#   GET  /api/inbox/settings
-#   PUT  /api/inbox/settings       {"retention_days": 30}
-#   PATCH /api/inbox/settings      {"retention_days": 30}
-#   POST /api/messages/purge       {"days": 30}   # optional
-#
-# Also serves /ui static (index.html) if present alongside this file.
+# Adds passive Gotify mirror: if GOTIFY_URL + GOTIFY_CLIENT_TOKEN are present,
+# it tails /stream and stores messages automatically.
 
 from __future__ import annotations
-import os, json, asyncio
+import os, json, asyncio, aiohttp, time
 from aiohttp import web
 import storage
 
@@ -21,6 +12,9 @@ API_BIND = os.getenv("JARVIS_API_BIND", "0.0.0.0")
 API_PORT = int(os.getenv("JARVIS_API_PORT", "2581"))
 DB_PATH  = os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
 UI_DIR   = os.getenv("JARVIS_UI_DIR", os.path.join(os.path.dirname(__file__), "ui"))
+
+GOTIFY_URL = os.getenv("GOTIFY_URL", "")
+GOTIFY_CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
 
 # ------------- Middleware: basic CORS + JSON errors -------------
 @web.middleware
@@ -31,7 +25,6 @@ async def cors_middleware(request, handler):
         resp = web.json_response({"error": e.reason}, status=e.status)
     except Exception as e:
         resp = web.json_response({"error": str(e)}, status=500)
-    # Allow local UI access
     if isinstance(resp, web.StreamResponse):
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
@@ -44,14 +37,10 @@ async def handle_options(request):
 # ------------- Routes ------------------------------------------
 async def get_messages(request: web.Request):
     q = request.rel_url.query.get("q") or None
-    try:
-        limit = int(request.rel_url.query.get("limit", "50"))
-    except Exception:
-        limit = 50
-    try:
-        offset = int(request.rel_url.query.get("offset", "0"))
-    except Exception:
-        offset = 0
+    try:    limit = int(request.rel_url.query.get("limit", "50"))
+    except: limit = 50
+    try:    offset = int(request.rel_url.query.get("offset", "0"))
+    except: offset = 0
     items = storage.list_messages(limit=limit, q=q, offset=offset)
     return web.json_response({"items": items})
 
@@ -96,6 +85,47 @@ async def post_purge(request: web.Request):
     removed = storage.purge_older_than(days)
     return web.json_response({"ok": True, "removed": removed, "days": days})
 
+# ------------- Background Gotify stream mirror ------------------
+async def mirror_gotify(app: web.Application):
+    if not GOTIFY_URL or not GOTIFY_CLIENT_TOKEN:
+        return  # no-op
+    url = GOTIFY_URL.rstrip('/') + "/stream?token=" + GOTIFY_CLIENT_TOKEN
+    while True:
+        try:
+            timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
+            async with aiohttp.ClientSession(timeout=timeout) as sess:
+                async with sess.get(url) as r:
+                    # Server-Sent Events: read line-by-line
+                    buf = []
+                    async for raw in r.content:
+                        line = raw.decode("utf-8", "ignore").rstrip()
+                        if line.startswith("data:"):
+                            payload = line[5:].strip()
+                            try:
+                                obj = json.loads(payload)
+                                title = obj.get("title") or ""
+                                message = obj.get("message") or ""
+                                priority = obj.get("priority", 5)
+                                ts = int(obj.get("date", time.time()))
+                                meta = {"priority": priority, "via": "gotify-stream"}
+                                delivered = {"gotify": {"status": 200}}
+                                storage.save_message("gotify", title, message, meta=meta, delivered=delivered, ts=ts)
+                            except Exception:
+                                pass
+                        # ignore other SSE lines (event:, id:, etc.)
+        except Exception:
+            await asyncio.sleep(5)  # reconnect backoff and continue
+
+async def on_startup(app: web.Application):
+    app["mirror_task"] = asyncio.create_task(mirror_gotify(app))
+
+async def on_cleanup(app: web.Application):
+    task = app.get("mirror_task")
+    if task:
+        task.cancel()
+        try: await task
+        except Exception: pass
+
 def create_app() -> web.Application:
     storage.init_db(DB_PATH)
     app = web.Application(middlewares=[cors_middleware])
@@ -112,10 +142,12 @@ def create_app() -> web.Application:
     # Static UI (served if present)
     if os.path.isdir(UI_DIR):
         app.router.add_static("/ui/", path=UI_DIR, name="ui", show_index=True)
-        # Redirect /ui -> /ui/index.html
         async def _redir(request): 
             raise web.HTTPFound("/ui/index.html")
         app.router.add_get("/ui", _redir)
+    # background mirror
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
     return app
 
 def run():

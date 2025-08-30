@@ -169,18 +169,18 @@ if [ "$LLM_ENABLED" = "true" ]; then
 fi
 
 # Guard against empty Gotify settings (prevent reconnect loop)
-if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
+if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ] ; then
   echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token in options.json — aborting."
   exit 1
 fi
 
 banner "$( [ "$LLM_ENABLED" = "true" ] && echo 'enabled' || echo 'disabled' )" "$ENGINE" "$ACTIVE_PATH"
 
-# ========= Start Inbox API/UI server (background, non-blocking) =========
-if [ -f /app/api_messages.py ]; then
-  echo "[Jarvis Prime] 🌐 Starting Inbox API/UI on ${JARVIS_API_BIND:-0.0.0.0}:${JARVIS_API_PORT:-2581}"
-  nohup python3 /app/api_messages.py >/dev/null 2>&1 &
-fi
+# NEW: start Inbox API (mirrors Gotify /stream into /data/jarvis.db)
+export JARVIS_API_BIND=0.0.0.0
+export JARVIS_API_PORT=${JARVIS_API_PORT:-2581}
+export JARVIS_DB_PATH=/data/jarvis.db
+python3 /app/api_messages.py &
 
-# ========= Hand off to bot (foreground) =========
+# Hand off to bot
 exec python3 /app/bot.py
