@@ -15,6 +15,11 @@ UI_DIR   = os.getenv("JARVIS_UI_DIR", os.path.join(os.path.dirname(__file__), "u
 
 GOTIFY_URL = os.getenv("GOTIFY_URL", "")
 GOTIFY_CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
+NTFY_URL = os.getenv('NTFY_URL','')
+NTFY_TOPIC = os.getenv('NTFY_TOPIC','')
+NTFY_TOKEN = os.getenv('NTFY_TOKEN','')
+NTFY_USER = os.getenv('NTFY_USER','')
+NTFY_PASS = os.getenv('NTFY_PASS','')
 
 # ------------- Middleware: basic CORS + JSON errors -------------
 @web.middleware
@@ -85,7 +90,7 @@ async def post_purge(request: web.Request):
     removed = storage.purge_older_than(days)
     return web.json_response({"ok": True, "removed": removed, "days": days})
 
-# ------------- Background Gotify stream mirror ------------------
+# ------------- Background Gotify & ntfy stream mirror ------------------
 async def mirror_gotify(app: web.Application):
     if not GOTIFY_URL or not GOTIFY_CLIENT_TOKEN:
         return  # no-op
@@ -125,6 +130,11 @@ async def on_cleanup(app: web.Application):
         task.cancel()
         try: await task
         except Exception: pass
+    task2 = app.get('mirror_ntfy_task')
+    if task2:
+        task2.cancel()
+        try: await task2
+        except Exception: pass
 
 def create_app() -> web.Application:
     storage.init_db(DB_PATH)
@@ -156,3 +166,47 @@ def run():
 
 if __name__ == "__main__":
     run()
+
+async def mirror_ntfy(app: web.Application):
+    # ntfy has SSE at /<topic>/sse (self-hosted) or /v1/events?topic=... (ntfy.sh)
+    if not NTFY_URL or not NTFY_TOPIC:
+        return
+    # prefer ntfy.sh style first
+    urls = []
+    base = NTFY_URL.rstrip('/')
+    urls.append(f"{base}/v1/events?topic={NTFY_TOPIC}")
+    urls.append(f"{base}/{NTFY_TOPIC}/sse")
+    import aiohttp, base64, json, time
+    headers = {}
+    if NTFY_TOKEN:
+        headers['Authorization'] = f"Bearer {NTFY_TOKEN}"
+    elif NTFY_USER and NTFY_PASS:
+        tok = base64.b64encode(f"{NTFY_USER}:{NTFY_PASS}".encode('utf-8')).decode('ascii')
+        headers['Authorization'] = "Basic " + tok
+    while True:
+        for url in urls:
+            try:
+                timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
+                async with aiohttp.ClientSession(timeout=timeout) as sess:
+                    async with sess.get(url, headers=headers) as r:
+                        async for raw in r.content:
+                            line = raw.decode('utf-8','ignore').strip()
+                            if not line or not line.startswith('{'):
+                                continue
+                            try:
+                                evt = json.loads(line)
+                            except Exception:
+                                continue
+                            # ntfy event has 'message' or 'title' depending on variant
+                            title = evt.get('title') or evt.get('topic') or 'ntfy'
+                            msg = evt.get('message') or evt.get('event') or ''
+                            priority = int(evt.get('priority', 3))
+                            meta = {'priority': priority, 'via': 'ntfy-stream'}
+                            delivered = {'ntfy': {'status': 200}}
+                            try:
+                                import storage
+                                storage.save_message('ntfy', title, msg, meta=meta, delivered=delivered)
+                            except Exception:
+                                pass
+            except Exception:
+                await asyncio.sleep(5)

@@ -70,6 +70,7 @@ except Exception:
 # ============================
 # Load optional modules
 # ============================
+
 def _load_module(name, path):
     try:
         import importlib.util as _imp
@@ -87,6 +88,7 @@ _personality = _load_module("personality", "/app/personality.py")
 _pstate = _load_module("personality_state", "/app/personality_state.py")
 _beautify = _load_module("beautify", "/app/beautify.py")
 _llm = _load_module("llm_client", "/app/llm_client.py")
+_ntfy = _load_module("ntfy_client", "/app/ntfy_client.py")
 
 ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
@@ -163,6 +165,15 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
         return True
+    except Exception:
+        return False
+    # also publish to ntfy if configured
+    try:
+        if _ntfy and hasattr(_ntfy, 'publish'):
+            _ntfy.publish(payload.get('title',''), payload.get('message',''), priority=priority, extras=extras)
+    except Exception:
+        pass
+    return True
     except Exception:
         return False
 

@@ -70,6 +70,16 @@ except Exception as e:
     llm = None
     print(f"[proxy] llm_client load failed: {e}")
 
+# ntfy client
+try:
+    import importlib.util as _imp
+    _nspec = _imp.spec_from_file_location('ntfy_client','/app/ntfy_client.py')
+    ntfy = _imp.module_from_spec(_nspec); _nspec.loader.exec_module(ntfy) if _nspec and _nspec.loader else None
+    print('[proxy] ntfy_client loaded')
+except Exception as e:
+    ntfy = None
+    print(f'[proxy] ntfy_client load failed: {e}')
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -125,6 +135,12 @@ def _post_gotify(title: str, message: str, extras=None):
     if extras: payload["extras"] = extras
     r = requests.post(url, json=payload, timeout=8)
     r.raise_for_status()
+    # mirror to ntfy (non-fatal)
+    try:
+        if ntfy and hasattr(ntfy,'publish'):
+            ntfy.publish(payload.get('title',''), payload.get('message',''), priority=payload.get('priority',5), extras=extras)
+    except Exception:
+        pass
 
 # -----------------------------
 # HTTP Server

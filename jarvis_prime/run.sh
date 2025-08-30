@@ -101,6 +101,15 @@ export smtp_priority_default=$(jq -r '.smtp_priority_default // 5' "$CONFIG_PATH
 export smtp_priority_map=$(jq -r '.smtp_priority_map // "{}"' "$CONFIG_PATH")
 
 # Proxy
+# ntfy
+export NTFY_ENABLED=$(jq -r '.ntfy_enabled // false' "$CONFIG_PATH")
+export NTFY_URL=$(jq -r '.ntfy_url // ""' "$CONFIG_PATH")
+export NTFY_TOPIC=$(jq -r '.ntfy_topic // ""' "$CONFIG_PATH")
+export NTFY_USER=$(jq -r '.ntfy_user // ""' "$CONFIG_PATH")
+export NTFY_PASS=$(jq -r '.ntfy_pass // ""' "$CONFIG_PATH")
+export NTFY_TOKEN=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
+
+# Proxy
 export proxy_enabled=$(jq -r '.proxy_enabled // false' "$CONFIG_PATH")
 export proxy_bind=$(jq -r '.proxy_bind // "0.0.0.0"' "$CONFIG_PATH")
 export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
