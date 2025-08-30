@@ -270,5 +270,6 @@
     "retention_days": "int(1,)",
     "auto_purge_policy": "str"
   },
-  "ingress_entry": "/ui/"
+  "ingress_entry": "/ui/",
+  "ingress_port": 2581
 }
