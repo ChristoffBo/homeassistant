@@ -1,10 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Jarvis Prime — Debian-based add-on image
-# - Ingest: Gotify/ntfy/SMTP
-# - Inbox API/UI with Ingress (port 2581 inside)
-# - Fan-out: Gotify/ntfy/SMTP (Gmail/relay)
-# - Keeps LLM, Beautifier, wake-words, and other modules intact
+# Jarvis Prime — Debian-based add-on image (with venv for Python deps)
 #
 FROM debian:bookworm-slim
 
@@ -20,14 +16,17 @@ RUN apt-get update && \
         ca-certificates tzdata curl dumb-init && \
     rm -rf /var/lib/apt/lists/*
 
+# Create virtualenv to avoid PEP 668 issues
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
 WORKDIR /app
 
 # Python deps first for better layer caching
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
 # App files
-# Copy everything (bot, modules, inbox API/UI, run.sh, etc.).
 COPY . /app/
 
 # Ensure launcher is executable
