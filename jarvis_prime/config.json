@@ -69,6 +69,15 @@
     "proxy_gotify_url": "",
     "proxy_ntfy_url": "",
     "personality_mood": "calm",
+    "personas_enabled": {
+      "dude": true,
+      "chick": true,
+      "nerd": true,
+      "angry": true,
+      "dry": true,
+      "ai": true,
+      "neutral": true
+    },
     "llm_enabled": true,
     "llm_cleanup_on_disable": true,
     "llm_models_dir": "/share/jarvis_prime/models",
@@ -136,6 +145,15 @@
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
     "personality_mood": "str",
+    "personas_enabled": {
+      "dude": "bool",
+      "chick": "bool",
+      "nerd": "bool",
+      "angry": "bool",
+      "dry": "bool",
+      "ai": "bool",
+      "neutral": "bool"
+    },
     "llm_enabled": "bool",
     "llm_cleanup_on_disable": "bool",
     "llm_models_dir": "str",
