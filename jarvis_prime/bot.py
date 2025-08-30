@@ -427,6 +427,33 @@ async def listen():
             except Exception:
                 pass
 
+
+# ============================
+# Daily scheduler (digest)
+# ============================
+_last_digest_date = None
+
+async def _digest_scheduler_loop():
+    """Check once a minute; when local time == digest_time and enabled, post digest once per day."""
+    global _last_digest_date
+    from datetime import datetime
+    while True:
+        try:
+            if merged.get("digest_enabled"):
+                target = str(merged.get("digest_time", "08:00")).strip()
+                now = datetime.now()
+                if now.strftime("%H:%M") == target and _last_digest_date != now.date():
+                    try:
+                        import digest as _digest_mod
+                        if hasattr(_digest_mod, "build_digest"):
+                            title, msg, pr = _digest_mod.build_digest(merged)
+                            send_message("Digest", msg, priority=pr)
+                            _last_digest_date = now.date()
+                    except Exception as e:
+                        print(f"[Scheduler] digest error: {e}")
+        except Exception as e:
+            print(f"[Scheduler] loop error: {e}")
+        await asyncio.sleep(60)
 # ============================
 # Main
 # ============================
@@ -440,6 +467,7 @@ def main():
     asyncio.run(_run_forever())
 
 async def _run_forever():
+    asyncio.create_task(_digest_scheduler_loop())
     while True:
         try:
             await listen()
