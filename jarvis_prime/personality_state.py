@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# /app/personality_state.py
 import os
 import json
 import datetime
@@ -18,32 +19,57 @@ def _load_config():
 def _save_state(state):
     try:
         with open(STATE_PATH, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
+            json.dump(state, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[Jarvis] ⚠️ Failed to save persona state: {e}", flush=True)
 
-def _current_time_of_day():
-    hour = datetime.datetime.now().hour
-    if 5 <= hour < 12:
+def _current_time_of_day(now=None):
+    now = now or datetime.datetime.now()
+    h = now.hour
+    if 5 <= h < 12:
         return "morning"
-    elif 12 <= hour < 17:
+    if 12 <= h < 17:
         return "afternoon"
-    elif 17 <= hour < 22:
+    if 17 <= h < 22:
         return "evening"
-    else:
-        return "night"
+    return "night"
+
+def _enabled_personas(cfg: dict):
+    # 1) explicit override string: active_persona: "dude"|"chick"|...
+    ap = str(cfg.get("active_persona", "") or "").strip().lower()
+    if ap and ap != "auto":
+        return [ap]
+
+    # 2) new-style map: personas_enabled: {dude:true,...}
+    pe = cfg.get("personas_enabled")
+    if isinstance(pe, dict) and pe:
+        enabled = [p for p, v in pe.items() if v]
+        if enabled:
+            return enabled
+
+    # 3) legacy flags: enable_dude, enable_chick, ...
+    legacy = []
+    for key in ("dude", "chick", "nerd", "angry", "dry", "ai", "neutral"):
+        if cfg.get(f"enable_{key}", False):
+            legacy.append(key)
+    if legacy:
+        return legacy
+
+    # 4) fallback
+    return [DEFAULT_PERSONA]
 
 def get_active_persona():
     cfg = _load_config()
-    personas_enabled = cfg.get("personas_enabled", {})
-    enabled_personas = [p for p, v in personas_enabled.items() if v]
+    enabled = _enabled_personas(cfg)
 
-    if not enabled_personas:
-        return DEFAULT_PERSONA, _current_time_of_day()
+    # Single persona enabled → pick it
+    if len(enabled) == 1:
+        persona = enabled[0]
+    else:
+        # deterministic rotation by day-of-month so it feels stable
+        day = datetime.datetime.now().day
+        persona = enabled[day % len(enabled)]
 
-    # Simple deterministic selection: rotate based on day of month
-    day = datetime.datetime.now().day
-    persona = enabled_personas[day % len(enabled_personas)]
     tod = _current_time_of_day()
 
     state = {"persona": persona, "time_of_day": tod}
@@ -51,5 +77,5 @@ def get_active_persona():
     return persona, tod
 
 if __name__ == "__main__":
-    persona, tod = get_active_persona()
-    print(f"[Jarvis] Active persona: {persona} ({tod})")
+    p, tod = get_active_persona()
+    print(f"[Jarvis] Active persona: {p} ({tod})")
