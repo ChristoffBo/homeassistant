@@ -38,6 +38,7 @@ COPY personality_state.py /app/personality_state.py
 # NEW: Inbox + API + UI
 COPY storage.py /app/storage.py
 COPY api_messages.py /app/api_messages.py
+COPY ntfy_client.py /app/ntfy_client.py
 RUN mkdir -p /app/ui
 COPY ui/ /app/ui/
 
