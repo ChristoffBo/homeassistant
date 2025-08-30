@@ -50,6 +50,7 @@ COPY index.html      /app/index.html
 COPY storage.py      /app/storage.py
 COPY ntfy_client.py  /app/ntfy_client.py
 COPY smtp_client.py  /app/smtp_client.py
+COPY ui/ /app/ui/
 
 # Permissions
 RUN chmod +x /run.sh
