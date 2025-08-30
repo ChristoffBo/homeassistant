@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-# Formatter-only LLM client for Jarvis Prime (ALWAYS-FIRES + ZERO-LOSS)
-# Purpose: First pass of beautification. Read incoming text and NEATEN ONLY.
-# No persona, no summaries, no added words. KEEP ALL INFORMATION EXACT.
-# Preserves numbers/units/keywords; if the LLM loses anything → fallback to normalized original.
-# Works with Ollama or local ctransformers (.gguf). If neither is available → normalized original.
-# Optional debug: export LLM_DEBUG=1 to see decisions in logs.
+# Jarvis Prime — llm_client.py
+# ROLE: First-pass formatter only. Neaten text. DO NOT change meaning.
+# GUARANTEES:
+#  - No persona, no summaries.
+#  - Keep ALL info. Numbers/units/Key:Value lines are preserved via placeholders.
+#  - LLM ALWAYS fires when available (Ollama → ctransformers). If loss detected → fallback.
 from __future__ import annotations
 
 import os, re
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 def _dbg(msg: str) -> None:
     if os.getenv("LLM_DEBUG", "0") == "1":
@@ -33,11 +33,13 @@ CTX = int(os.getenv("LLM_CTX_TOKENS", "4096"))
 GEN_TOKENS = int(os.getenv("LLM_GEN_TOKENS", "180"))
 CHARS_PER_TOKEN = 4
 SAFETY_TOKENS = 32
+SEED = int(os.getenv("LLM_SEED", "42"))
 
 # Decoding knobs (deterministic, conservative)
-TEMP = float(os.getenv("LLM_TEMPERATURE", "0.05"))
-TOP_P = float(os.getenv("LLM_TOP_P", "0.8"))
-REPEAT_P = float(os.getenv("LLM_REPEAT_PENALTY", "1.4"))
+TEMP = float(os.getenv("LLM_TEMPERATURE", "0.0"))  # greedy by default
+TOP_P = float(os.getenv("LLM_TOP_P", "1.0"))
+TOP_K = int(os.getenv("LLM_TOP_K", "40"))
+REPEAT_P = float(os.getenv("LLM_REPEAT_PENALTY", "1.05"))
 
 # Search roots for local models
 SEARCH_ROOTS = [Path("/share/jarvis_prime"), Path("/share/jarvis_prime/models"), Path("/share")]
@@ -123,7 +125,7 @@ def engine_status() -> Dict[str,object]:
     base=OLLAMA_BASE_URL.strip()
     if base and requests:
         try:
-            r=requests.get(base.rstrip("/")+"/api/version",timeout=3)
+            r=requests.get(base.rstrip('/')+'/api/version',timeout=3)
             ok=r.ok
         except Exception:
             ok=False
@@ -133,11 +135,14 @@ def engine_status() -> Dict[str,object]:
 
 # -------- Conservative helpers (preserve all info) --------
 
+CODE_RE = re.compile(r"```.*?```", re.S)
+KV_RE   = re.compile(r"(?mi)^[ \t]*([A-Za-z][\w ./%-]{0,48}):[ \t]*(.+)$")
+NUM_RE  = re.compile(r'(?<![\w.])[-+]?\d+(?:\.\d+)?(?![\w.])')  # strict-ish
+
 def _normalize_conservative(text: str) -> str:
-    # Conservative cleanup that keeps all tokens (no info loss).
+    # Keep everything, trim excess whitespace.
     if not text:
         return text
-    CODE_RE = re.compile(r"```.*?```", re.S)
     blocks = []
     def _hold(m):
         blocks.append(m.group(0))
@@ -153,28 +158,63 @@ def _normalize_conservative(text: str) -> str:
         s = s.replace(f"@@CODEBLOCK{i}@@", blk, 1)
     return s
 
-# --- Loss guard helpers ---
-NUM_RE = re.compile(r'[-+]?\d+(?:\.\d+)?')
+def _mask_segments(text: str) -> Tuple[str, Dict[str,str]]:
+    """
+    Lock down fragile parts with placeholders so the LLM can't mutate them.
+    - Whole 'Key: value' lines
+    - All numeric literals (including floats)
+    - Keep order stable; restore later
+    """
+    mapping: Dict[str,str] = {}
+    out = text
 
-def _numbers_in(text: str) -> List[str]:
-    return NUM_RE.findall(text or "" )
+    # 1) Mask Key: value lines first (whole line)
+    idx = 0
+    def repl_kv(m):
+        nonlocal idx, mapping
+        token = f"§KV{idx}§"
+        mapping[token] = m.group(0)
+        idx += 1
+        return token
+    out = KV_RE.sub(repl_kv, out)
+
+    # 2) Mask numbers everywhere else
+    def repl_num(m):
+        nonlocal idx, mapping
+        token = f"§N{idx}§"
+        mapping[token] = m.group(0)
+        idx += 1
+        return token
+    out = NUM_RE.sub(repl_num, out)
+
+    return out, mapping
+
+def _unmask(text: str, mapping: Dict[str,str]) -> str:
+    s = text
+    # restore in insertion order
+    for k,v in mapping.items():
+        s = s.replace(k, v)
+    return s
 
 def _looks_structured_metrics(text: str) -> bool:
-    # Detect classic Key: value lines; used only for strictness checks, not to skip LLM.
-    return bool(re.search(r"(?mi)^[A-Za-z][A-Za-z0-9 _-]+:\s+.+$", text or ""))
+    return bool(KV_RE.search(text or ""))
+
+def _numbers_in(text: str) -> List[str]:
+    return NUM_RE.findall(text or "")
 
 def _loss_detected(original: str, candidate: str) -> bool:
-    # True if any number from original is missing OR if headers disappeared for structured metrics.
+    # Numbers must all be present
     orig_nums = _numbers_in(original)
     cand = candidate or ""
     for n in orig_nums:
         if n and n not in cand:
             return True
+    # If we had Key:Value lines, make sure keys remain
     if _looks_structured_metrics(original):
-        orig_keys = set([m.group(1).strip().lower() for m in re.finditer(r"(?mi)^([A-Za-z][A-Za-z0-9 _-]+):", original or "")])
-        cand_low = (candidate or "").lower()
+        orig_keys = set([m.group(1).strip().lower() for m in KV_RE.finditer(original or "")])
+        cl = cand.lower()
         for k in orig_keys:
-            if k and (k + ":") not in cand_low:
+            if (k + ":") not in cl:
                 return True
     return False
 
@@ -230,13 +270,13 @@ def _load_local_model(path: Path):
 # -------- Formatter-only prompt (neutral & strict) --------
 
 FORMATTER_SYSTEM_PROMPT = (
-    "You are a formatter. Rewrite the text to be clean and readable.\n"
+    "You are a formatter. Neaten the text for readability.\n"
     "CRITICAL RULES:\n"
-    " - Do NOT add or remove ANY information.\n"
+    " - Do NOT add or remove any information.\n"
     " - Do NOT paraphrase or summarize.\n"
-    " - Preserve ALL numbers and units exactly.\n"
+    " - Keep placeholders like §KV0§ or §N3§ EXACTLY as-is.\n"
     " - Preserve line breaks, URLs, code, emojis, and markdown.\n"
-    " - Return ONLY the rewritten text, with minimal punctuation fixes."
+    " - Return ONLY the rewritten text with minimal punctuation fixes."
 )
 
 # -------- Public API --------
@@ -246,75 +286,81 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             model_url: Optional[str]=None, model_path: Optional[str]=None,
             model_sha256: Optional[str]=None, allow_profanity: bool=False) -> str:
     # Read inbound text and NEATEN ONLY while keeping ALL information.
-    # LLM ALWAYS fires when available; if its output loses content, we fall back to normalized original.
+    # LLM ALWAYS fires when available; if its output loses content, we fall back.
     src = (text or "").strip()
     if not src:
         _dbg("skip: empty input")
         return src
 
-    # 0) Precompute normalized original (used for fallback)
+    # Conservative normalize first
     normalized_src = _normalize_conservative(src)
 
-    # 1) Decide if we have an engine
+    # Mask fragile segments
+    masked_src, mapping = _mask_segments(normalized_src)
+
+    # Engine readiness
     base = (base_url or OLLAMA_BASE_URL or "").strip()
     have_ollama = bool(base and requests)
     local_path = _resolve_any_path(model_path, model_url)
     have_ctrans = bool(local_path and AutoModelForCausalLM is not None)
 
     if not have_ollama and not have_ctrans:
-        _dbg("no engine available → return normalized original")
+        _dbg("no engine → return normalized original")
         return normalized_src
 
-    # 2) Keep within context; if too long, we still DO NOT drop info — fall back
+    # Context safety — if too long, don't risk truncation
     budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
     budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
-    if len(src) > max(500, budget_chars - len(FORMATTER_SYSTEM_PROMPT)):
-        _dbg("input exceeds safe context → return normalized original")
+    if len(masked_src) > max(500, budget_chars - len(FORMATTER_SYSTEM_PROMPT)):
+        _dbg("input exceeds safe context → normalized original")
         return normalized_src
 
-    # 3) Try Ollama first
+    # Try Ollama
     if have_ollama:
         try:
             payload = {
                 "model": (models_priority[0] if models_priority else "llama3.1"),
-                "prompt": FORMATTER_SYSTEM_PROMPT + "\n\n" + src,
+                "prompt": FORMATTER_SYSTEM_PROMPT + "\n\n" + masked_src,
                 "stream": False,
                 "options": {
-                    "temperature": TEMP, "top_p": TOP_P, "repeat_penalty": REPEAT_P,
-                    "num_ctx": CTX, "num_predict": GEN_TOKENS
+                    "seed": SEED, "temperature": TEMP, "top_p": TOP_P, "top_k": TOP_K,
+                    "repeat_penalty": REPEAT_P, "num_ctx": CTX, "num_predict": GEN_TOKENS
                 }
             }
             r = requests.post(base.rstrip("/") + "/api/generate", json=payload, timeout=timeout)
             if r.ok:
                 out = str(r.json().get("response",""))
-                if _loss_detected(src, out):
-                    _dbg("ollama produced loss → fallback to normalized original")
+                # Unmask and validate
+                restored = _normalize_conservative(_unmask(out, mapping))
+                if _loss_detected(normalized_src, restored):
+                    _dbg("ollama loss → fallback")
                     return normalized_src
                 _dbg("ollama ok")
-                return _normalize_conservative(out)
+                return restored
             else:
                 _dbg(f"ollama HTTP {r.status_code}")
         except Exception as e:
             _dbg(f"ollama exception: {e}")
 
-    # 4) Try local ctransformers
+    # Try local ctransformers
     if have_ctrans and local_path and Path(local_path).exists():
         m = _load_local_model(local_path)
         if m is not None:
-            prompt = f"{FORMATTER_SYSTEM_PROMPT}\n\n{src}"
+            prompt = f"{FORMATTER_SYSTEM_PROMPT}\n\n{masked_src}"
             try:
                 out = m(prompt, max_new_tokens=GEN_TOKENS, temperature=TEMP,
-                        top_p=TOP_P, repetition_penalty=REPEAT_P)
+                        top_p=TOP_P, top_k=TOP_K, repetition_penalty=REPEAT_P, seed=SEED)
                 out_s = str(out or "")
-                if _loss_detected(src, out_s):
-                    _dbg("ctransformers produced loss → fallback to normalized original")
+                restored = _normalize_conservative(_unmask(out_s, mapping))
+                if _loss_detected(normalized_src, restored):
+                    _dbg("ctransformers loss → fallback")
                     return normalized_src
                 _dbg("ctransformers ok")
-                return _normalize_conservative(out_s)
+                return restored
             except Exception as e:
                 _dbg(f"ctransformers exception: {e}")
 
-    # 5) No usable result → normalized original
+    # Fallback
     _dbg("no usable result → normalized original")
     return normalized_src
 
