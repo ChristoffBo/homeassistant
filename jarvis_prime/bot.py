@@ -302,7 +302,7 @@ def post_startup_card():
         f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
         f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
         f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_ENV else 'OFF'}",
+        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
         f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
         f"✉️ SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if bool(merged.get('proxy_enabled', False)) else 'OFF'}",
@@ -360,6 +360,23 @@ def _handle_command(ncmd: str):
         else:
             send_message("Digest", "Digest module unavailable.")
         return True
+
+
+# Chat / Jokes
+if ncmd in ("chat", "joke", "pun"):
+    text = ""
+    try:
+        if m_chat and hasattr(m_chat, "handle_chat_command"):
+            resp = m_chat.handle_chat_command(ncmd)
+            if isinstance(resp, tuple) and resp:
+                text = resp[0] or ""
+            elif isinstance(resp, str):
+                text = resp
+    except Exception as e:
+        text = f"⚠️ Chat failed: {e}"
+    send_message("Joke" if ncmd != "chat" else "Chat", text or "No joke available right now.")
+    return True
+
 
     if ncmd in ("dns",):
         text, _ = _try_call(m_tech, "handle_dns_command", "dns")
@@ -443,6 +460,7 @@ def main():
     try:
         start_sidecars()
         post_startup_card()
+    _schedule_greetings()
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
     asyncio.run(_run_forever())

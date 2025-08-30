@@ -101,7 +101,15 @@
     "llm_qwen05_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true",
     "llm_qwen05_path": "/share/jarvis_prime/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     "custom_aliases": "{}",
-    "active_persona": "auto"
+    "active_persona": "auto",
+    "greeting_enabled": true,
+    "greeting_times": {
+      "morning": "06:00",
+      "afternoon": "12:00",
+      "evening": "18:00",
+      "late_night": "22:30",
+      "early_morning": "03:00"
+    }
   },
   "schema": {
     "bot_name": "str",
@@ -176,6 +184,8 @@
     "llm_qwen05_url": "str",
     "llm_qwen05_path": "str",
     "custom_aliases": "str?",
-    "active_persona": "str"
+    "active_persona": "str",
+    "greeting_enabled": "bool",
+    "greeting_times": "str"
   }
 }
