@@ -83,8 +83,8 @@ try:
     PROXY_ENABLED   = bool(merged.get("proxy_enabled", PROXY_ENABLED_ENV))
 
     global CHAT_ENABLED_FILE, DIGEST_ENABLED_FILE
-    CHAT_ENABLED_FILE   = merged.get("chat_enabled",   CHAT_ENABLED_ENV)
-    DIGEST_ENABLED_FILE = merged.get("digest_enabled", DIGEST_ENABLED_ENV)
+    CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled",   CHAT_ENABLED_ENV))
+    DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 
     # mood will be replaced with persona below; keep for back-compat
     CHAT_MOOD = str(merged.get("personality_mood", merged.get("chat_mood", CHAT_MOOD)))
@@ -367,7 +367,11 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
 # Normalization + command extraction
 # -----------------------------
 def _clean(s):
-    return re.sub(r"\s+", " ", s.lower().strip())
+    # lower, strip, remove punctuation, collapse spaces
+    s = s.lower().strip()
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 def normalize_cmd(cmd: str) -> str:
     if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
@@ -436,7 +440,7 @@ def post_startup_card():
         f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
         f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
         f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_ENV else 'OFF'}",
+        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
         f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
         f"✉️ SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
@@ -460,7 +464,7 @@ def _try_call(module, fn_name, *args, **kwargs):
 
 def _handle_command(ncmd: str):
     # Imports on demand so missing modules don't crash
-    m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None
+    m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None; m_chat = None
     try: m_arr = __import__("arr")
     except Exception: pass
     try: m_weather = __import__("weather")
@@ -470,6 +474,8 @@ def _handle_command(ncmd: str):
     try: m_tech = __import__("technitium")
     except Exception: pass
     try: m_digest = __import__("digest")
+    except Exception: pass
+    try: m_chat = __import__("chat")
     except Exception: pass
 
     if ncmd in ("help", "commands"):
@@ -493,7 +499,7 @@ def _handle_command(ncmd: str):
         if m_digest and hasattr(m_digest, "build_digest"):
             title2, msg2, pr = m_digest.build_digest(merged)
             if _personality and hasattr(_personality, "quip"):
-                try: msg2 += f"\n\n{_personality.quip(ACTIVE_PERSONA)}"
+                try: msg2 += f\"\n\n{_personality.quip(ACTIVE_PERSONA)}\"
                 except Exception: pass
             send_message("Digest", msg2, priority=pr)
         else:
@@ -532,6 +538,15 @@ def _handle_command(ncmd: str):
             except Exception as e:
                 text = f"⚠️ Forecast failed: {e}"
         send_message("Forecast", text or "No data.")
+        return True
+
+    # Jokes / chat
+    if ncmd in ("joke", "pun"):
+        if m_chat and hasattr(m_chat, "handle_chat_command"):
+            msg, _ = m_chat.handle_chat_command("joke")
+            send_message("Joke", msg or "No joke available right now.")
+        else:
+            send_message("Joke", "Chat engine unavailable.")
         return True
 
     # ARR commands
