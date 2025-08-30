@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-# Formatter-only LLM client for Jarvis Prime (STRICT NO-LOSS)
-# - Purpose: read incoming text and NEATEN ONLY. Keep ALL information. Remove NOTHING.
-# - Persona/styling handled later by Beautifier/Personas. No emojis, no quips, no added words.
-# - Preserves links, code blocks, emojis, markdown, numbers/units, and line breaks.
-# - If LLM output loses numbers/keywords, FALL BACK to original (normalized).
-#
+# Formatter-only LLM client for Jarvis Prime (ALWAYS-FIRES + ZERO-LOSS)
+# Purpose: First pass of beautification. Read incoming text and NEATEN ONLY.
+# No persona, no summaries, no added words. KEEP ALL INFORMATION EXACT.
+# Preserves numbers/units/keywords; if the LLM loses anything → fallback to normalized original.
+# Works with Ollama or local ctransformers (.gguf). If neither is available → normalized original.
+# Optional debug: export LLM_DEBUG=1 to see decisions in logs.
 from __future__ import annotations
 
 import os, re
 from pathlib import Path
 from typing import Optional, List, Dict
+
+def _dbg(msg: str) -> None:
+    if os.getenv("LLM_DEBUG", "0") == "1":
+        print(f"[LLM/formatter] {msg}", flush=True)
 
 # Optional deps
 try:
@@ -111,8 +115,9 @@ def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None
     if model_path:
         p=Path(model_path)
         if p.is_file():
-            _model_path=p; return
+            _model_path=p; _dbg(f"prefetch_model(explicit) -> {p}"); return
     _model_path=_resolve_model_path()
+    _dbg(f"prefetch_model(auto) -> {_model_path}")
 
 def engine_status() -> Dict[str,object]:
     base=OLLAMA_BASE_URL.strip()
@@ -128,65 +133,48 @@ def engine_status() -> Dict[str,object]:
 
 # -------- Conservative helpers (preserve all info) --------
 
-IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
-IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
-
 def _normalize_conservative(text: str) -> str:
-    \"\"\"Conservative cleanup that keeps all tokens:
-      - collapse >1 spaces to single (but do NOT touch inside code fences)
-      - normalize mixed Windows/Mac newlines
-      - ensure a space after punctuation if missing
-      - trim trailing spaces per line
-    \"\"\"
+    # Conservative cleanup that keeps all tokens (no info loss).
     if not text:
         return text
-    # Preserve code fences by placeholdering them
-    CODE_RE = re.compile(r\"```.*?```\", re.S)
+    CODE_RE = re.compile(r"```.*?```", re.S)
     blocks = []
     def _hold(m):
         blocks.append(m.group(0))
-        return f\"@@CODEBLOCK{len(blocks)-1}@@\"
+        return f"@@CODEBLOCK{len(blocks)-1}@@"
     s = CODE_RE.sub(_hold, text)
 
-    # normalize newlines and spaces (not removing content)
-    s = s.replace(\"\\r\\n\", \"\\n\").replace(\"\\r\", \"\\n\")
-    s = \"\\n\".join([ln.rstrip() for ln in s.split(\"\\n\")])
-    s = re.sub(r\"[ \\t]{2,}\", \" \", s)
-    s = re.sub(r\"([,:;.!?])(?=\\S)\", r\"\\1 \", s)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = "\n".join([ln.rstrip() for ln in s.split("\n")])
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    s = re.sub(r"([,:;.!?])(?=\S)", r"\1 ", s)
 
-    # restore code blocks
     for i,blk in enumerate(blocks):
-        s = s.replace(f\"@@CODEBLOCK{i}@@\", blk, 1)
+        s = s.replace(f"@@CODEBLOCK{i}@@", blk, 1)
     return s
 
 # --- Loss guard helpers ---
-NUM_RE = re.compile(r'[-+]?\\d+(?:\\.\\d+)?')
-SPEED_KWS = (\"ping\", \"upload\", \"download\", \"mbps\", \"ms\", \"speedtest\")
+NUM_RE = re.compile(r'[-+]?\d+(?:\.\d+)?')
 
 def _numbers_in(text: str) -> List[str]:
-    return NUM_RE.findall(text or \"\" )
+    return NUM_RE.findall(text or "" )
 
-def _has_speedtest_shape(text: str) -> bool:
-    low = (text or \"\").lower()
-    if any(k in low for k in SPEED_KWS):
-        if re.search(r\"(?mi)^(ping|upload|download)\\s*:\\s*[-+0-9]\", low):
-            return True
-        if \"speedtest\" in low and len(_numbers_in(text)) >= 2:
-            return True
-    return False
+def _looks_structured_metrics(text: str) -> bool:
+    # Detect classic Key: value lines; used only for strictness checks, not to skip LLM.
+    return bool(re.search(r"(?mi)^[A-Za-z][A-Za-z0-9 _-]+:\s+.+$", text or ""))
 
 def _loss_detected(original: str, candidate: str) -> bool:
+    # True if any number from original is missing OR if headers disappeared for structured metrics.
     orig_nums = _numbers_in(original)
-    if not orig_nums:
-        return False
-    cand = candidate or \"\"
+    cand = candidate or ""
     for n in orig_nums:
-        if n not in cand:
+        if n and n not in cand:
             return True
-    if _has_speedtest_shape(original):
-        low_c = cand.lower()
-        for kw in (\"ping\",\"upload\",\"download\"):
-            if kw in original.lower() and kw not in low_c:
+    if _looks_structured_metrics(original):
+        orig_keys = set([m.group(1).strip().lower() for m in re.finditer(r"(?mi)^([A-Za-z][A-Za-z0-9 _-]+):", original or "")])
+        cand_low = (candidate or "").lower()
+        for k in orig_keys:
+            if k and (k + ":") not in cand_low:
                 return True
     return False
 
@@ -194,12 +182,12 @@ def _loss_detected(original: str, candidate: str) -> bool:
 
 def _first_gguf_under(p: Path) -> Optional[Path]:
     try:
-        if p.is_file() and p.suffix.lower() == \".gguf\":
+        if p.is_file() and p.suffix.lower() == ".gguf":
             return p
         if p.is_dir():
-            cands = sorted(list(p.rglob(\"*.gguf\")),
-                           key=lambda x: (0 if str(x).startswith(\"/share/jarvis_prime/models\")
-                                          else (1 if str(x).startswith(\"/share/jarvis_prime\") else 2),
+            cands = sorted(list(p.rglob("*.gguf")),
+                           key=lambda x: (0 if str(x).startswith("/share/jarvis_prime/models")
+                                          else (1 if str(x).startswith("/share/jarvis_prime") else 2),
                                           x.stat().st_size if x.exists() else 1<<60))
             return cands[0] if cands else None
     except Exception:
@@ -230,87 +218,106 @@ def _load_local_model(path: Path):
     try:
         _loaded_model = AutoModelForCausalLM.from_pretrained(
             str(path),
-            model_type=\"llama\",
-            gpu_layers=int(os.getenv(\"LLM_GPU_LAYERS\", \"0\")),
+            model_type="llama",
+            gpu_layers=int(os.getenv("LLM_GPU_LAYERS", "0")),
             context_length=CTX,
         )
         return _loaded_model
     except Exception as e:
-        print(f\"[{BOT_NAME}] ⚠️ LLM load failed: {e}\", flush=True)
+        print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
         return None
 
 # -------- Formatter-only prompt (neutral & strict) --------
 
 FORMATTER_SYSTEM_PROMPT = (
-    \"You are a formatter. Rewrite the text to be clean and readable.\\n\"
-    \"CRITICAL RULES:\\n\"
-    \" - Do NOT add or remove ANY information.\\n\"
-    \" - Do NOT paraphrase or summarize.\\n\"
-    \" - Preserve ALL numbers and units exactly.\\n\"
-    \" - Preserve line breaks, URLs, code, emojis, and markdown.\\n\"
-    \" - Return ONLY the rewritten text, with minimal punctuation fixes.\"
+    "You are a formatter. Rewrite the text to be clean and readable.\n"
+    "CRITICAL RULES:\n"
+    " - Do NOT add or remove ANY information.\n"
+    " - Do NOT paraphrase or summarize.\n"
+    " - Preserve ALL numbers and units exactly.\n"
+    " - Preserve line breaks, URLs, code, emojis, and markdown.\n"
+    " - Return ONLY the rewritten text, with minimal punctuation fixes."
 )
 
 # -------- Public API --------
 
-def rewrite(text: str, mood: str=\"serious\", timeout: int=8, cpu_limit: int=70,
+def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
             model_url: Optional[str]=None, model_path: Optional[str]=None,
             model_sha256: Optional[str]=None, allow_profanity: bool=False) -> str:
-    \"\"\"Read inbound text and NEATEN ONLY while keeping ALL information.
-    If the LLM is unavailable or output loses content, fall back to conservative normalization.\"\"\"
-    src = (text or \"\").strip()
+    # Read inbound text and NEATEN ONLY while keeping ALL information.
+    # LLM ALWAYS fires when available; if its output loses content, we fall back to normalized original.
+    src = (text or "").strip()
     if not src:
+        _dbg("skip: empty input")
         return src
 
-    if _has_speedtest_shape(src):
-        return _normalize_conservative(src)
+    # 0) Precompute normalized original (used for fallback)
+    normalized_src = _normalize_conservative(src)
 
+    # 1) Decide if we have an engine
+    base = (base_url or OLLAMA_BASE_URL or "").strip()
+    have_ollama = bool(base and requests)
+    local_path = _resolve_any_path(model_path, model_url)
+    have_ctrans = bool(local_path and AutoModelForCausalLM is not None)
+
+    if not have_ollama and not have_ctrans:
+        _dbg("no engine available → return normalized original")
+        return normalized_src
+
+    # 2) Keep within context; if too long, we still DO NOT drop info — fall back
     budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
-    budget_chars = max(1000, budget_tokens * 4)
+    budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
     if len(src) > max(500, budget_chars - len(FORMATTER_SYSTEM_PROMPT)):
-        return _normalize_conservative(src)
+        _dbg("input exceeds safe context → return normalized original")
+        return normalized_src
 
-    # 1) Try Ollama (if configured)
-    base = (base_url or OLLAMA_BASE_URL or \"\").strip()
-    if base and requests:
+    # 3) Try Ollama first
+    if have_ollama:
         try:
             payload = {
-                \"model\": (models_priority[0] if models_priority else \"llama3.1\"),
-                \"prompt\": FORMATTER_SYSTEM_PROMPT + \"\\n\\n\" + src,
-                \"stream\": False,
-                \"options\": {
-                    \"temperature\": TEMP, \"top_p\": TOP_P, \"repeat_penalty\": REPEAT_P,
-                    \"num_ctx\": CTX, \"num_predict\": GEN_TOKENS
+                "model": (models_priority[0] if models_priority else "llama3.1"),
+                "prompt": FORMATTER_SYSTEM_PROMPT + "\n\n" + src,
+                "stream": False,
+                "options": {
+                    "temperature": TEMP, "top_p": TOP_P, "repeat_penalty": REPEAT_P,
+                    "num_ctx": CTX, "num_predict": GEN_TOKENS
                 }
             }
-            r = requests.post(base.rstrip(\"/\") + \"/api/generate\", json=payload, timeout=timeout)
+            r = requests.post(base.rstrip("/") + "/api/generate", json=payload, timeout=timeout)
             if r.ok:
-                out = str(r.json().get(\"response\",\"\"))
+                out = str(r.json().get("response",""))
                 if _loss_detected(src, out):
-                    return _normalize_conservative(src)
+                    _dbg("ollama produced loss → fallback to normalized original")
+                    return normalized_src
+                _dbg("ollama ok")
                 return _normalize_conservative(out)
+            else:
+                _dbg(f"ollama HTTP {r.status_code}")
         except Exception as e:
-            print(f\"[{BOT_NAME}] ⚠️ Ollama call failed: {e}\", flush=True)
+            _dbg(f"ollama exception: {e}")
 
-    # 2) Try local ctransformers (.gguf)
-    p = _resolve_any_path(model_path, model_url)
-    if p and p.exists():
-        m = _load_local_model(p)
+    # 4) Try local ctransformers
+    if have_ctrans and local_path and Path(local_path).exists():
+        m = _load_local_model(local_path)
         if m is not None:
-            prompt = f\"{FORMATTER_SYSTEM_PROMPT}\\n\\n{src}\"
+            prompt = f"{FORMATTER_SYSTEM_PROMPT}\n\n{src}"
             try:
                 out = m(prompt, max_new_tokens=GEN_TOKENS, temperature=TEMP,
                         top_p=TOP_P, repetition_penalty=REPEAT_P)
-                out = str(out or \"\")
-                if _loss_detected(src, out):
-                    return _normalize_conservative(src)
-                return _normalize_conservative(out)
+                out_s = str(out or "")
+                if _loss_detected(src, out_s):
+                    _dbg("ctransformers produced loss → fallback to normalized original")
+                    return normalized_src
+                _dbg("ctransformers ok")
+                return _normalize_conservative(out_s)
             except Exception as e:
-                print(f\"[{BOT_NAME}] ⚠️ Generation failed: {e}\", flush=True)
+                _dbg(f"ctransformers exception: {e}")
 
-    return _normalize_conservative(src)
+    # 5) No usable result → normalized original
+    _dbg("no usable result → normalized original")
+    return normalized_src
 
-if __name__ == \"__main__\":
-    sample = \"A speedtest is finished:\\nPing: 48 ms\\nUpload: 119.40 Mbps\\nDownload: 672.17 Mbps\"
+if __name__ == "__main__":
+    sample = "A speedtest is finished:\nPing: 48 ms\nUpload: 119.40 Mbps\nDownload: 672.17 Mbps"
     print(rewrite(sample))
