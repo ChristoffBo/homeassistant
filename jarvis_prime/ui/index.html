@@ -1,203 +1,66 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Jarvis Prime — Inbox</title>
-    <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@1.5.10/css/pico.min.css">
-    <style>
-      body { padding: 1.25rem; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      .fit { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48ch; }
-      details > summary { cursor: pointer; }
-      .ok { font-weight: 600; }
-      .muted { opacity: .7; }
-      .pill { padding: .15rem .5rem; border-radius: 999px; font-size: .8rem; }
-      .pill.ok { background: var(--primary); color: var(--primary-inverse); }
-      .pill.warn { background: var(--del-color); color: var(--del-color-inverse); }
-      table thead th { position: sticky; top: 0; background: var(--background-color); }
-    </style>
-  </head>
-  <body>
-    <main class="container">
-      <header>
-        <h2>📥 Jarvis Prime — Inbox</h2>
-        <p class="muted">View stored messages, search, delete, and manage retention.</p>
-      </header>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis Prime — Inbox</title>
+  <link rel="icon" href="./icon.png" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="./icon.png" alt="Jarvis" class="logo" />
+    <div class="titles">
+      <h1>Jarvis Prime</h1>
+      <div class="subtitle">Unified Inbox</div>
+    </div>
+  </div>
+  <div class="actions">
+    <button id="btn-refresh" class="btn">Refresh</button>
+  </div>
+</header>
 
-      <section>
-        <form id="searchForm" role="search" onsubmit="return false;">
-          <div class="grid">
-            <input id="q" name="q" type="search" placeholder="Search title, body, source…" />
-            <select id="limit">
-              <option value="25">25</option>
-              <option value="50" selected>50</option>
-              <option value="100">100</option>
-            </select>
-            <button id="btnSearch">Search</button>
-            <button id="btnRefresh" class="secondary outline">Refresh</button>
-          </div>
-        </form>
-      </section>
+<section class="toolbar">
+  <div class="search-row">
+    <div class="input-wrap">
+      <span class="icon">🔎</span>
+      <input id="q" type="search" placeholder="Search title, body, source…" />
+    </div>
+    <select id="limit">
+      <option value="25">25</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+    <button id="btn-search" class="btn primary">Search</button>
+    <span class="spacer"></span>
+    <label class="retention">
+      <span>Retention (days)</span>
+      <input id="retention" type="number" min="1" value="30" />
+      <button id="btn-save-retention" class="btn">Save</button>
+    </label>
+    <label class="retention">
+      <span>Purge now</span>
+      <input id="purge-days" type="number" min="1" value="30" />
+      <button id="btn-purge" class="btn danger">Purge</button>
+    </label>
+  </div>
+</section>
 
-      <section>
-        <article>
-          <header><strong>Retention</strong></header>
-          <div class="grid">
-            <label>
-              <span>Days</span>
-              <input id="retentionDays" type="number" min="1" value="30" style="max-width: 12rem;">
-            </label>
-            <button id="btnSaveRetention">Save</button>
-            <button id="btnPurgeNow" class="contrast">Purge now</button>
-          </div>
-        </article>
-      </section>
+<main class="layout">
+  <aside class="list" id="list"></aside>
+  <section class="preview" id="preview">
+    <div class="empty">
+      <h2>Welcome 👋</h2>
+      <p>Select a message on the left to preview it here.</p>
+      <p class="hint">Tip: use <kbd>/</kbd> to focus search, <kbd>r</kbd> to refresh, <kbd>Del</kbd> to delete.</p>
+    </div>
+  </section>
+</main>
 
-      <section>
-        <table id="tbl" role="grid">
-          <thead>
-            <tr><th>Time</th><th>Source</th><th>Title</th><th>Delivered</th><th>Actions</th></tr>
-          </thead>
-          <tbody id="rows">
-            <tr><td colspan="5" class="muted">Loading…</td></tr>
-          </tbody>
-        </table>
-      </section>
-    </main>
+<footer class="footer" id="footer"></footer>
 
-    <template id="rowTpl">
-      <tr>
-        <td class="mono ts"></td>
-        <td class="source"></td>
-        <td class="fit">
-          <details>
-            <summary class="title"></summary>
-            <pre class="mono body"></pre>
-            <div class="muted small meta"></div>
-          </details>
-        </td>
-        <td class="delivered"></td>
-        <td class="actions"></td>
-      </tr>
-    </template>
-
-    <script>
-      const API_BASE = location.pathname.replace(/\/ui\/.*$/, "") || ""; // assumes /ui is served by same host
-      const el = (sel) => document.querySelector(sel);
-      const rows = el("#rows");
-      const rowTpl = el("#rowTpl");
-
-      function fmtTs(ts) {
-        try {
-          return new Date(ts * 1000).toLocaleString();
-        } catch { return ts; }
-      }
-
-      function renderDelivered(d) {
-        try {
-          const obj = typeof d === "string" ? JSON.parse(d) : (d || {});
-          const keys = Object.keys(obj);
-          if (keys.length === 0) return "<span class='muted'>—</span>";
-          let ok = 0, fail = 0;
-          for (const k of keys) {
-            const v = obj[k];
-            const code = (v && (v.status || v.code || v.http || v.status_code)) ?? 0;
-            if (Number(code) >= 200 && Number(code) < 400) ok++; else fail++;
-          }
-          const pills = [];
-          if (ok)  pills.push(`<span class="pill ok">OK ${ok}</span>`);
-          if (fail) pills.push(`<span class="pill warn">Fail ${fail}</span>`);
-          return pills.join(" ");
-        } catch {
-          return "<span class='muted'>—</span>";
-        }
-      }
-
-      function rowFromItem(it) {
-        const frag = rowTpl.content.cloneNode(true);
-        frag.querySelector(".ts").textContent = fmtTs(it.ts);
-        frag.querySelector(".source").textContent = it.source;
-        frag.querySelector(".title").textContent = it.title;
-        frag.querySelector(".body").textContent = it.body || "";
-        frag.querySelector(".meta").textContent = it.meta ? JSON.stringify(it.meta) : "";
-        frag.querySelector(".delivered").innerHTML = renderDelivered(it.delivered);
-        const act = frag.querySelector(".actions");
-        const btnDel = document.createElement("button");
-        btnDel.className = "secondary outline";
-        btnDel.textContent = "Delete";
-        btnDel.addEventListener("click", () => doDelete(it.id));
-        act.appendChild(btnDel);
-        return frag;
-      }
-
-      async function loadSettings() {
-        try {
-          const r = await fetch(`${API_BASE}/api/inbox/settings`);
-          const j = await r.json();
-          el("#retentionDays").value = j.retention_days ?? 30;
-        } catch (e) { console.warn(e); }
-      }
-
-      async function saveRetention() {
-        const days = Number(el("#retentionDays").value || 30);
-        const r = await fetch(`${API_BASE}/api/inbox/settings`, {
-          method: "PUT",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({retention_days: days})
-        });
-        if (r.ok) {
-          alert("Retention saved.");
-        } else {
-          alert("Failed to save retention.");
-        }
-      }
-
-      async function purgeNow() {
-        const days = Number(el("#retentionDays").value || 30);
-        if (!confirm(`Purge messages older than ${days} days?`)) return;
-        const r = await fetch(`${API_BASE}/api/messages/purge`, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({days})
-        });
-        if (r.ok) {
-          await loadMessages();
-        } else {
-          alert("Purge failed.");
-        }
-      }
-
-      async function doDelete(id) {
-        if (!confirm("Delete this message?")) return;
-        const r = await fetch(`${API_BASE}/api/messages/${id}`, { method: "DELETE" });
-        if (r.ok) {
-          await loadMessages();
-        }
-      }
-
-      async function loadMessages() {
-        const q = encodeURIComponent(el("#q").value || "");
-        const limit = encodeURIComponent(el("#limit").value || "50");
-        rows.innerHTML = `<tr><td colspan="5" class="muted">Loading…</td></tr>`;
-        const r = await fetch(`${API_BASE}/api/messages?limit=${limit}${q ? `&q=${q}` : ""}`);
-        const j = await r.json();
-        rows.innerHTML = "";
-        (j.items || []).forEach(it => rows.appendChild(rowFromItem(it)));
-        if (!j.items || j.items.length === 0) {
-          rows.innerHTML = `<tr><td colspan="5" class="muted">No messages.</td></tr>`;
-        }
-      }
-
-      el("#btnSearch").addEventListener("click", loadMessages);
-      el("#btnRefresh").addEventListener("click", loadMessages);
-      el("#btnSaveRetention").addEventListener("click", saveRetention);
-      el("#btnPurgeNow").addEventListener("click", purgeNow);
-
-      (async function boot() {
-        await loadSettings();
-        await loadMessages();
-      })();
-    </script>
-  </body>
+<script src="./app.js"></script>
+</body>
 </html>
