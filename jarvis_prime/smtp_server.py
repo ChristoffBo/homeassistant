@@ -1,4 +1,3 @@
-import storage
 #!/usr/bin/env python3
 # /app/smtp_server.py
 import os
@@ -66,15 +65,6 @@ try:
 except Exception as e:
     llm = None
     print(f"[smtp] llm_client load failed: {e}")
-# ntfy client
-try:
-    import importlib.util as _imp
-    _nspec = _imp.spec_from_file_location('ntfy_client','/app/ntfy_client.py')
-    ntfy = _imp.module_from_spec(_nspec); _nspec.loader.exec_module(ntfy) if _nspec and _nspec.loader else None
-    print('[smtp] ntfy_client loaded')
-except Exception as e:
-    ntfy = None
-    print(f'[smtp] ntfy_client load failed: {e}')
 
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []

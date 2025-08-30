@@ -1,4 +1,3 @@
-import storage
 #!/usr/bin/env python3
 # /app/bot.py
 import os
@@ -70,7 +69,6 @@ except Exception:
 # ============================
 # Load optional modules
 # ============================
-
 def _load_module(name, path):
     try:
         import importlib.util as _imp
@@ -88,7 +86,6 @@ _personality = _load_module("personality", "/app/personality.py")
 _pstate = _load_module("personality_state", "/app/personality_state.py")
 _beautify = _load_module("beautify", "/app/beautify.py")
 _llm = _load_module("llm_client", "/app/llm_client.py")
-_ntfy = _load_module("ntfy_client", "/app/ntfy_client.py")
 
 ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
@@ -165,15 +162,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
         return True
-    except Exception:
-        return False
-    # also publish to ntfy if configured
-    try:
-        if _ntfy and hasattr(_ntfy, 'publish'):
-            _ntfy.publish(payload.get('title',''), payload.get('message',''), priority=priority, extras=extras)
-    except Exception:
-        pass
-    return True
     except Exception:
         return False
 
@@ -466,46 +454,10 @@ async def _digest_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
-
-# ============================
-# Boot banner (stdout; mirrors run.sh)
-# ============================
-def print_boot_banner(llm_enabled: bool, engine: str, model_path: str):
-    lines = [
-        "──────────────────────────────────────────────",
-        f"🧠 {BOT_NAME} {BOT_ICON}",
-        "⚡ Boot sequence initiated...",
-        "   → Personalities loaded",
-        "   → Memory core mounted",
-        "   → Network bridges linked",
-        f"   → LLM: {'enabled' if llm_enabled else 'disabled'}",
-        f"   → Engine: {engine or 'disabled'}",
-        f"   → Model path: {model_path or ''}",
-        "🚀 Systems online — Jarvis is awake!",
-        "──────────────────────────────────────────────",
-    ]
-    for ln in lines:
-        try:
-            print(ln, flush=True)
-        except Exception:
-            pass
-
 # ============================
 # Main
 # ============================
 def main():
-    # Local boot banner to stdout (even if run.sh isn't used)
-    try:
-        llm_enabled = bool(merged.get('llm_enabled'))
-        engine = 'disabled'
-        if llm_enabled:
-            if merged.get('llm_phi3_enabled'): engine = 'phi3'
-            elif merged.get('llm_tinyllama_enabled'): engine = 'tinyllama'
-            elif merged.get('llm_qwen05_enabled'): engine = 'qwen05'
-        model_path = merged.get('llm_model_path','') or merged.get('llm_phi3_path','') or merged.get('llm_tinyllama_path','') or merged.get('llm_qwen05_path','')
-        print_boot_banner(llm_enabled, engine, model_path)
-    except Exception:
-        pass
     resolve_app_id()
     try:
         start_sidecars()

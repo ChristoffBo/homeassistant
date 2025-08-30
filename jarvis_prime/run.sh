@@ -101,15 +101,6 @@ export smtp_priority_default=$(jq -r '.smtp_priority_default // 5' "$CONFIG_PATH
 export smtp_priority_map=$(jq -r '.smtp_priority_map // "{}"' "$CONFIG_PATH")
 
 # Proxy
-# ntfy
-export NTFY_ENABLED=$(jq -r '.ntfy_enabled // false' "$CONFIG_PATH")
-export NTFY_URL=$(jq -r '.ntfy_url // ""' "$CONFIG_PATH")
-export NTFY_TOPIC=$(jq -r '.ntfy_topic // ""' "$CONFIG_PATH")
-export NTFY_USER=$(jq -r '.ntfy_user // ""' "$CONFIG_PATH")
-export NTFY_PASS=$(jq -r '.ntfy_pass // ""' "$CONFIG_PATH")
-export NTFY_TOKEN=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
-
-# Proxy
 export proxy_enabled=$(jq -r '.proxy_enabled // false' "$CONFIG_PATH")
 export proxy_bind=$(jq -r '.proxy_bind // "0.0.0.0"' "$CONFIG_PATH")
 export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
@@ -119,11 +110,15 @@ export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 # Personality
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
-# ========= LLM per-model toggles =========
+# ========= LLM controls =========
 LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
 CLEANUP=$(jq -r '.llm_cleanup_on_disable // true' "$CONFIG_PATH")
 MODELS_DIR=$(jq -r '.llm_models_dir // "/share/jarvis_prime/models"' "$CONFIG_PATH")
 mkdir -p "$MODELS_DIR" || true
+
+# Performance knobs (new)
+export LLM_TIMEOUT_SECONDS=$(jq -r '.llm_timeout_seconds // 8' "$CONFIG_PATH")
+export LLM_MAX_CPU_PERCENT=$(jq -r '.llm_max_cpu_percent // 70' "$CONFIG_PATH")
 
 PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
 TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
@@ -138,6 +133,7 @@ export LLM_MODEL_PATH=""
 export LLM_MODEL_URLS=""
 export LLM_MODEL_URL=""
 export LLM_ENABLED
+export LLM_STATUS="Disabled"
 
 # Cleanup when toggled off
 if [ "$CLEANUP" = "true" ]; then
@@ -159,10 +155,10 @@ if [ "$LLM_ENABLED" = "true" ]; then
   if [ "$COUNT" -gt 1 ]; then
     echo "[Jarvis Prime] ⚠️ Multiple models enabled; using first true (phi3→tinyllama→qwen05)."
   fi
-  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";
-  elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL";
-  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL";
-  else ENGINE="none-selected"; fi
+  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi‑3";
+  elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL"; LLM_STATUS="TinyLlama";
+  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen‑0.5b";
+  else ENGINE="none-selected"; LLM_STATUS="Disabled"; fi
 
   if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
     if [ ! -s "$ACTIVE_PATH" ]; then
@@ -178,18 +174,14 @@ if [ "$LLM_ENABLED" = "true" ]; then
 fi
 
 # Guard against empty Gotify settings (prevent reconnect loop)
-if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ] ; then
+if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
   echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token in options.json — aborting."
   exit 1
 fi
 
-banner "$( [ "$LLM_ENABLED" = "true" ] && echo 'enabled' || echo 'disabled' )" "$ENGINE" "$ACTIVE_PATH"
-
-# NEW: start Inbox API (mirrors Gotify /stream into /data/jarvis.db)
-export JARVIS_API_BIND=0.0.0.0
-export JARVIS_API_PORT=${JARVIS_API_PORT:-2581}
-export JARVIS_DB_PATH=/data/jarvis.db
-python3 /app/api_messages.py &
+# Banner reflects OFF state too
+BANNER_LLM="$( [ "$LLM_ENABLED" = "true" ] && echo "$LLM_STATUS" || echo "Disabled" )"
+banner "$BANNER_LLM" "$ENGINE" "${LLM_MODEL_PATH:-}"
 
 # Hand off to bot
 exec python3 /app/bot.py
