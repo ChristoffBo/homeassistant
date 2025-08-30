@@ -134,48 +134,38 @@ def _persona_line(quip_text: str) -> str:
     # Keep it minimal so it aligns nicely with Gotify cards
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
-def send_message(title, message, priority=5, extras=None, decorate=True):
-    orig_title = title
+def send_message(title: str, message: str, priority: int = 5, extras: dict | None = None):
+    """Send a message to Gotify and mirror it to the Jarvis Inbox.
+    Safe: never raises; returns True/False.
+    """
+    url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
+    payload = {
+        "title": title,
+        "message": message,
+        "priority": priority,
+    }
+    if extras:
+        payload["extras"] = extras
 
-    # Decorate body, but keep the original title so it doesn't become a banner
-    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
-        title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
-        title = orig_title
-    elif decorate and _personality and hasattr(_personality, "decorate"):
-        title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
-        title = orig_title
-
-    # Persona speaking line at the top
-    try:
-        quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
-    except Exception:
-        quip_text = ""
-    header = _persona_line(quip_text)
-    message = (header + ("\n" + (message or ""))) if header else (message or "")
-
-    # Priority tweak via personality if present
-    if _personality and hasattr(_personality, "apply_priority"):
-        try: priority = _personality.apply_priority(priority, CHAT_MOOD)
-        except Exception: pass
-
-    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
-    if extras: payload["extras"] = extras
+    ok = False
+    status = None
     try:
         r = requests.post(url, json=payload, timeout=8)
+        status = r.status_code
         r.raise_for_status()
-        return True
-    except Exception:
-        return False
-    # also publish to ntfy if configured
+        ok = True
+    except Exception as e:
+        print(f"[Jarvis Prime] ⚠️ send_message failed: {e}", flush=True)
+
+    # Mirror into Inbox storage (non-fatal if unavailable)
     try:
-        if _ntfy and hasattr(_ntfy, 'publish'):
-            _ntfy.publish(payload.get('title',''), payload.get('message',''), priority=priority, extras=extras)
+        import storage
+        delivered = {"gotify": {"status": status}} if status is not None else {}
+        storage.save_message("bot", title, message, meta={"via": "bot"}, delivered=delivered)
     except Exception:
         pass
-    return True
-    except Exception:
-        return False
+
+    return ok
 
 def delete_original_message(msg_id: int):
     try:
