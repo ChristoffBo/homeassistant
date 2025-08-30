@@ -1,8 +1,8 @@
 {
   "name": "Jarvis Prime",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "slug": "jarvis_prime",
-  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, SMTP intake, proxy, and optional local LLM (download-on-toggle).",
+  "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, SMTP intake, proxy, and optional local LLM.",
   "arch": [
     "aarch64",
     "amd64",
@@ -12,17 +12,17 @@
   "boot": "auto",
   "init": false,
   "ingress": false,
+  "map": [
+    "share:rw"
+  ],
   "ports": {
     "2525/tcp": 2525,
     "2580/tcp": 2580
   },
-  "map": [
-    "share:rw"
-  ],
   "options": {
     "bot_name": "Jarvis Prime",
     "bot_icon": "🧠",
-    "gotify_url": "http://10.0.0.99:8091",
+    "gotify_url": "http://127.0.0.1:8091",
     "gotify_client_token": "CHANGE_ME_CLIENT",
     "gotify_app_token": "CHANGE_ME_APP",
     "jarvis_app_name": "Jarvis Prime",
@@ -83,16 +83,16 @@
     "llm_qwen05_enabled": false,
     "llm_qwen05_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true",
     "llm_qwen05_path": "/share/jarvis_prime/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-    "custom_aliases": {}
+    "custom_aliases": "{}"
   },
   "schema": {
     "bot_name": "str",
     "bot_icon": "str",
-    "gotify_url": "str",
+    "gotify_url": "url",
     "gotify_client_token": "str",
     "gotify_app_token": "str",
     "jarvis_app_name": "str",
-    "retention_hours": "int",
+    "retention_hours": "int(1,)",
     "beautify_enabled": "bool",
     "silent_repost": "bool",
     "weather_enabled": "bool",
@@ -121,8 +121,8 @@
     "uptimekuma_status_slug": "str",
     "smtp_enabled": "bool",
     "smtp_bind": "str",
-    "smtp_port": "int",
-    "smtp_max_bytes": "int",
+    "smtp_port": "port",
+    "smtp_max_bytes": "int(0,)",
     "smtp_dummy_rcpt": "str",
     "smtp_accept_any_auth": "bool",
     "smtp_rewrite_title_prefix": "str",
@@ -131,15 +131,15 @@
     "smtp_priority_map": "str",
     "proxy_enabled": "bool",
     "proxy_bind": "str",
-    "proxy_port": "int",
+    "proxy_port": "port",
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
     "personality_mood": "str",
     "llm_enabled": "bool",
     "llm_cleanup_on_disable": "bool",
     "llm_models_dir": "str",
-    "llm_timeout_seconds": "int",
-    "llm_max_cpu_percent": "int",
+    "llm_timeout_seconds": "int(1,)",
+    "llm_max_cpu_percent": "int(1,100)",
     "llm_phi3_enabled": "bool",
     "llm_phi3_url": "str",
     "llm_phi3_path": "str",
@@ -149,6 +149,6 @@
     "llm_qwen05_enabled": "bool",
     "llm_qwen05_url": "str",
     "llm_qwen05_path": "str",
-    "custom_aliases": "dict"
+    "custom_aliases": "str?"
   }
 }
