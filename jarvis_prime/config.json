@@ -134,7 +134,12 @@
     "llm_autodownload": true,
     "ollama_base_url": "http://127.0.0.1:11434",
     "ollama_models_dir": "/share/jarvis_prime/models",
-    "ollama_in_container": true
+    "ollama_in_container": true,
+    "personality_enabled": true,
+    "personality_min_interval_minutes": 90,
+    "personality_interval_jitter_pct": 20,
+    "personality_daily_max": 6,
+    "personality_family_friendly": true
   },
   "schema": {
     "bot_name": "str",
@@ -240,6 +245,11 @@
     "llm_llama32_1b_url": "str",
     "llm_llama32_1b_path": "str",
     "allow_multiline": "bool",
-    "llm_autodownload": "bool"
+    "llm_autodownload": "bool",
+    "personality_enabled": "bool",
+    "personality_min_interval_minutes": "int(1,)",
+    "personality_interval_jitter_pct": "int(0,100)",
+    "personality_daily_max": "int(1,)",
+    "personality_family_friendly": "bool"
   }
 }
