@@ -122,12 +122,14 @@ atexit.register(stop_sidecars)
 # ============================
 # Gotify helpers
 # ============================
-def _persona_header(text: str) -> str:
-    """Tiny, neat 'Jarvis is speaking' line above the content."""
+def _persona_line(quip_text: str) -> str:
+    """Clean single-line persona 'speaks' header placed at TOP of message body."""
     who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
-    # Trim the first sentence to keep it tidy
-    preview = (text or "").strip().splitlines()[0][:120]
-    return f"💬 {who} says: {preview}".strip()
+    quip_text = (quip_text or "").strip().replace("\n", " ")
+    if len(quip_text) > 140:
+        quip_text = quip_text[:137] + "..."
+    # Keep it minimal so it aligns nicely with Gotify cards
+    return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
@@ -140,12 +142,13 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
         title = orig_title
 
-    # Small persona header ABOVE the content (no borders, aligned, subtle)
-    header = _persona_header(message or "")
-    if header and message:
-        message = f"{header}\n{message}"
-    elif header:
-        message = header
+    # Persona speaking line at the top
+    try:
+        quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
+    except Exception:
+        quip_text = ""
+    header = _persona_line(quip_text)
+    message = (header + ("\n" + (message or ""))) if header else (message or "")
 
     # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
@@ -314,9 +317,11 @@ def _handle_command(ncmd: str) -> bool:
     if ncmd in ("digest", "daily digest", "summary"):
         if m_digest and hasattr(m_digest, "build_digest"):
             title2, msg2, pr = m_digest.build_digest(merged)
-            if _personality and hasattr(_personality, "quip"):
-                try: msg2 += f\"\n\n{_personality.quip(ACTIVE_PERSONA)}\"
-                except Exception: pass
+            try:
+                if _personality and hasattr(_personality, "quip"):
+                    msg2 += f"\n\n{_personality.quip(ACTIVE_PERSONA)}"
+            except Exception:
+                pass
             send_message("Digest", msg2, priority=pr)
         else:
             send_message("Digest", "Digest module unavailable.")
@@ -354,7 +359,8 @@ def _handle_command(ncmd: str) -> bool:
         send_message("Forecast", text or "No data.")
         return True
 
-    if ncmd in ("joke", "pun", "tell me a joke", "make me laugh"):
+    # Jokes / chat
+    if ncmd in ("joke", "pun", "tell me a joke", "make me laugh", "chat"):
         if m_chat and hasattr(m_chat, "handle_chat_command"):
             try:
                 msg, _ = m_chat.handle_chat_command("joke")
