@@ -1,5 +1,7 @@
 🧩 Jarvis Prime — Home Assistant Add-on
 
+Jarvis Prime is mostly wokring currently in deep ALPHA
+
 Jarvis Prime is your Notification AI (kind of). Now with real AI builtin.It is a full-fat, Gotify-aware assistant that runs inside Home Assistant. It listens to incoming notifications, beautifies them into sleek AI-style cards, reposts them to your Jarvis app in Gotify, and responds to wake-word commands like “Jarvis digest” or “Jarvis weather”. Prime also includes a unified Beautify Engine, a LAN SMTP intake (Mailrise replacement), and a lightweight HTTP proxy for Gotify/ntfy so anything you throw at it arrives looking polished and consistent.
 
 What it is and what it does
