@@ -119,7 +119,6 @@
     "llm_model_preference": "phi,qwen,tinyllama",
     "tinyllama_enabled": false,
     "llama32_3b_enabled": false,
-    "mistral7b_enabled": true,
     "llm_choice": "off",
     "llm_models_priority": "qwen15,phi2,llama32_1b,tinyllama,qwen05,phi3",
     "llm_phi2_enabled": true,
@@ -135,8 +134,7 @@
     "llm_autodownload": true,
     "ollama_base_url": "http://127.0.0.1:11434",
     "ollama_models_dir": "/share/jarvis_prime/models",
-    "ollama_in_container": true,
-    "llm_gemma2_enabled": false
+    "ollama_in_container": true
   },
   "schema": {
     "bot_name": "str",
