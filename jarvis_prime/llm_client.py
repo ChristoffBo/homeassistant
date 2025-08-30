@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-# Jarvis Prime — llm_client.py
+# Jarvis Prime — llm_client.py (Metrics-SAFE)
 # ROLE: First-pass formatter only. Neaten text. DO NOT change meaning.
 # GUARANTEES:
-#  - No persona, no summaries.
-#  - Keep ALL info. Numbers/units/Key:Value lines are preserved via placeholders.
-#  - LLM ALWAYS fires when available (Ollama → ctransformers). If loss detected → fallback.
+#  - If we detect Speedtest-style metrics (Ping/Upload/Download), we BYPASS the LLM entirely
+#    and return a conservative normalized original so nothing can be lost.
+#  - Otherwise, we call the LLM (Ollama -> ctransformers) but verify for loss and fallback.
 from __future__ import annotations
 
 import os, re
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 
 def _dbg(msg: str) -> None:
     if os.getenv("LLM_DEBUG", "0") == "1":
@@ -36,7 +36,7 @@ SAFETY_TOKENS = 32
 SEED = int(os.getenv("LLM_SEED", "42"))
 
 # Decoding knobs (deterministic, conservative)
-TEMP = float(os.getenv("LLM_TEMPERATURE", "0.0"))  # greedy by default
+TEMP = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 TOP_P = float(os.getenv("LLM_TOP_P", "1.0"))
 TOP_K = int(os.getenv("LLM_TOP_K", "40"))
 REPEAT_P = float(os.getenv("LLM_REPEAT_PENALTY", "1.05"))
@@ -92,17 +92,14 @@ def _download_to(url: str, dest: Path) -> bool:
         return False
 
 def _resolve_model_path() -> Optional[Path]:
-    # explicit path
     if str(MODEL_PATH):
         p=Path(MODEL_PATH)
         if p.is_file() and p.suffix.lower()==".gguf": return p
         if p.is_dir():
             best=_choose_preferred(list(p.rglob("*.gguf")))
             if best: return best
-    # search local
     best=_choose_preferred(_list_local_models())
     if best: return best
-    # download if URL(s) provided
     urls = MODEL_URLS or ([MODEL_URL] if MODEL_URL else [])
     for u in urls:
         name=u.split("/")[-1] or "model.gguf"
@@ -136,11 +133,9 @@ def engine_status() -> Dict[str,object]:
 # -------- Conservative helpers (preserve all info) --------
 
 CODE_RE = re.compile(r"```.*?```", re.S)
-KV_RE   = re.compile(r"(?mi)^[ \t]*([A-Za-z][\w ./%-]{0,48}):[ \t]*(.+)$")
-NUM_RE  = re.compile(r'(?<![\w.])[-+]?\d+(?:\.\d+)?(?![\w.])')  # strict-ish
+NUM_RE  = re.compile(r'[-+]?\d+(?:\.\d+)?')
 
 def _normalize_conservative(text: str) -> str:
-    # Keep everything, trim excess whitespace.
     if not text:
         return text
     blocks = []
@@ -158,63 +153,25 @@ def _normalize_conservative(text: str) -> str:
         s = s.replace(f"@@CODEBLOCK{i}@@", blk, 1)
     return s
 
-def _mask_segments(text: str) -> Tuple[str, Dict[str,str]]:
-    """
-    Lock down fragile parts with placeholders so the LLM can't mutate them.
-    - Whole 'Key: value' lines
-    - All numeric literals (including floats)
-    - Keep order stable; restore later
-    """
-    mapping: Dict[str,str] = {}
-    out = text
+SPEED_KEYS = ("ping:", "upload:", "download:")
 
-    # 1) Mask Key: value lines first (whole line)
-    idx = 0
-    def repl_kv(m):
-        nonlocal idx, mapping
-        token = f"§KV{idx}§"
-        mapping[token] = m.group(0)
-        idx += 1
-        return token
-    out = KV_RE.sub(repl_kv, out)
-
-    # 2) Mask numbers everywhere else
-    def repl_num(m):
-        nonlocal idx, mapping
-        token = f"§N{idx}§"
-        mapping[token] = m.group(0)
-        idx += 1
-        return token
-    out = NUM_RE.sub(repl_num, out)
-
-    return out, mapping
-
-def _unmask(text: str, mapping: Dict[str,str]) -> str:
-    s = text
-    # restore in insertion order
-    for k,v in mapping.items():
-        s = s.replace(k, v)
-    return s
-
-def _looks_structured_metrics(text: str) -> bool:
-    return bool(KV_RE.search(text or ""))
+def _has_speed_metrics(text: str) -> bool:
+    low = (text or "").lower()
+    return any(k in low for k in SPEED_KEYS)
 
 def _numbers_in(text: str) -> List[str]:
     return NUM_RE.findall(text or "")
 
 def _loss_detected(original: str, candidate: str) -> bool:
-    # Numbers must all be present
-    orig_nums = _numbers_in(original)
-    cand = candidate or ""
-    for n in orig_nums:
-        if n and n not in cand:
+    # check numbers
+    for n in _numbers_in(original):
+        if n and n not in (candidate or ""):
             return True
-    # If we had Key:Value lines, make sure keys remain
-    if _looks_structured_metrics(original):
-        orig_keys = set([m.group(1).strip().lower() for m in KV_RE.finditer(original or "")])
-        cl = cand.lower()
-        for k in orig_keys:
-            if (k + ":") not in cl:
+    # check speed keys if present originally
+    if _has_speed_metrics(original):
+        low_c = (candidate or "").lower()
+        for k in SPEED_KEYS:
+            if k in (original or "").lower() and k not in low_c:
                 return True
     return False
 
@@ -267,52 +224,45 @@ def _load_local_model(path: Path):
         print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
         return None
 
-# -------- Formatter-only prompt (neutral & strict) --------
-
 FORMATTER_SYSTEM_PROMPT = (
     "You are a formatter. Neaten the text for readability.\n"
     "CRITICAL RULES:\n"
     " - Do NOT add or remove any information.\n"
     " - Do NOT paraphrase or summarize.\n"
-    " - Keep placeholders like §KV0§ or §N3§ EXACTLY as-is.\n"
     " - Preserve line breaks, URLs, code, emojis, and markdown.\n"
     " - Return ONLY the rewritten text with minimal punctuation fixes."
 )
-
-# -------- Public API --------
 
 def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
             model_url: Optional[str]=None, model_path: Optional[str]=None,
             model_sha256: Optional[str]=None, allow_profanity: bool=False) -> str:
-    # Read inbound text and NEATEN ONLY while keeping ALL information.
-    # LLM ALWAYS fires when available; if its output loses content, we fall back.
     src = (text or "").strip()
     if not src:
         _dbg("skip: empty input")
         return src
 
-    # Conservative normalize first
     normalized_src = _normalize_conservative(src)
 
-    # Mask fragile segments
-    masked_src, mapping = _mask_segments(normalized_src)
+    # BYPASS rule: if it contains speed metrics, do not touch with LLM
+    if _has_speed_metrics(normalized_src):
+        _dbg("metrics detected → bypass LLM")
+        return normalized_src
 
-    # Engine readiness
+    # engine readiness
     base = (base_url or OLLAMA_BASE_URL or "").strip()
     have_ollama = bool(base and requests)
     local_path = _resolve_any_path(model_path, model_url)
     have_ctrans = bool(local_path and AutoModelForCausalLM is not None)
 
     if not have_ollama and not have_ctrans:
-        _dbg("no engine → return normalized original")
+        _dbg("no engine → normalized original")
         return normalized_src
 
-    # Context safety — if too long, don't risk truncation
     budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
     budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
-    if len(masked_src) > max(500, budget_chars - len(FORMATTER_SYSTEM_PROMPT)):
-        _dbg("input exceeds safe context → normalized original")
+    if len(src) > max(500, budget_chars - len(FORMATTER_SYSTEM_PROMPT)):
+        _dbg("input too long → normalized original")
         return normalized_src
 
     # Try Ollama
@@ -320,7 +270,7 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
         try:
             payload = {
                 "model": (models_priority[0] if models_priority else "llama3.1"),
-                "prompt": FORMATTER_SYSTEM_PROMPT + "\n\n" + masked_src,
+                "prompt": FORMATTER_SYSTEM_PROMPT + "\n\n" + src,
                 "stream": False,
                 "options": {
                     "seed": SEED, "temperature": TEMP, "top_p": TOP_P, "top_k": TOP_K,
@@ -330,15 +280,11 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             r = requests.post(base.rstrip("/") + "/api/generate", json=payload, timeout=timeout)
             if r.ok:
                 out = str(r.json().get("response",""))
-                # Unmask and validate
-                restored = _normalize_conservative(_unmask(out, mapping))
-                if _loss_detected(normalized_src, restored):
-                    _dbg("ollama loss → fallback")
+                if _loss_detected(src, out):
+                    _dbg("ollama loss → normalized original")
                     return normalized_src
                 _dbg("ollama ok")
-                return restored
-            else:
-                _dbg(f"ollama HTTP {r.status_code}")
+                return _normalize_conservative(out)
         except Exception as e:
             _dbg(f"ollama exception: {e}")
 
@@ -346,24 +292,22 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     if have_ctrans and local_path and Path(local_path).exists():
         m = _load_local_model(local_path)
         if m is not None:
-            prompt = f"{FORMATTER_SYSTEM_PROMPT}\n\n{masked_src}"
+            prompt = f"{FORMATTER_SYSTEM_PROMPT}\n\n{src}"
             try:
                 out = m(prompt, max_new_tokens=GEN_TOKENS, temperature=TEMP,
                         top_p=TOP_P, top_k=TOP_K, repetition_penalty=REPEAT_P, seed=SEED)
                 out_s = str(out or "")
-                restored = _normalize_conservative(_unmask(out_s, mapping))
-                if _loss_detected(normalized_src, restored):
-                    _dbg("ctransformers loss → fallback")
+                if _loss_detected(src, out_s):
+                    _dbg("ctransformers loss → normalized original")
                     return normalized_src
                 _dbg("ctransformers ok")
-                return restored
+                return _normalize_conservative(out_s)
             except Exception as e:
                 _dbg(f"ctransformers exception: {e}")
 
-    # Fallback
     _dbg("no usable result → normalized original")
     return normalized_src
 
 if __name__ == "__main__":
-    sample = "A speedtest is finished:\nPing: 48 ms\nUpload: 119.40 Mbps\nDownload: 672.17 Mbps"
+    sample = "A speedtest is finished:\nPing: 59 ms\nUpload: 117.10 Mbps\nDownload: 609.24 Mbps"
     print(rewrite(sample))
