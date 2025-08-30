@@ -397,13 +397,16 @@ def post_startup_card():
     engine_line = f"Neural Core — {'ONLINE' if engine_is_online else 'OFFLINE'}"
 
     def _family_from_name(n: str) -> str:
-        n = (n or "").lower()
-        if 'phi' in n:
-            return 'Phi3'
-        if 'tiny' in n or 'tinyl' in n:
-            return 'TinyLlama'
-        if 'qwen' in n:
-            return 'Qwen'
+    n = (n or "").lower()
+    if 'phi' in n:
+        return 'Phi3'
+    if 'tiny' in n or 'tinyl' in n:
+        return 'TinyLlama'
+    if 'qwen' in n:
+        return 'Qwen'
+    if 'formatter' in n:
+        return 'Formatter'
+    return 'Disabled'
         return 'Disabled'
 
     llm_line_value = _family_from_name(model_name) if engine_is_online else 'Disabled'
