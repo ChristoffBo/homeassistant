@@ -57,8 +57,7 @@ RUN chmod +x /run.sh
 # ---- Networking ----
 # 2525 = SMTP intake, 2580 = HTTP proxy (if used), 2581 = Inbox API/UI (LAN access)
 EXPOSE 2525/tcp 2580/tcp 2581/tcp
-EXPOSE 2581    # inbox API/UI
-EXPOSE 2580    # proxy (if used)
+
 
 # Simple healthcheck: Inbox API responds
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
