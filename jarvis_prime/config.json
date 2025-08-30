@@ -68,7 +68,6 @@
     "proxy_port": 2580,
     "proxy_gotify_url": "",
     "proxy_ntfy_url": "",
-    "personality_mood": "",
     "enable_dude": false,
     "enable_chick": false,
     "enable_nerd": false,
@@ -100,7 +99,8 @@
       "dry": false,
       "ai": false,
       "neutral": true
-    }
+    },
+    "active_persona": "auto"
   },
   "schema": {
     "bot_name": "str",
@@ -151,7 +151,6 @@
     "proxy_port": "port",
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
-    "personality_mood": "str",
     "enable_dude": "bool",
     "enable_chick": "bool",
     "enable_nerd": "bool",
@@ -174,6 +173,7 @@
     "llm_qwen05_url": "str",
     "llm_qwen05_path": "str",
     "custom_aliases": "str?",
-    "chat_enabled": "bool"
+    "chat_enabled": "bool",
+    "active_persona": "str"
   }
 }
