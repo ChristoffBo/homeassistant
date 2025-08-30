@@ -104,8 +104,7 @@ except Exception as e:
 # LLM settings (from options.json with env fallbacks)
 # -----------------------------
 def _bool_env(name, default=False):
-    if os.getenv(name) is None:
-        return default
+    if os.getenv(name) is None: return default
     return os.getenv(name, "").strip().lower() in ("1","true","yes","on")
 
 LLM_ENABLED           = bool(merged.get("llm_enabled", _bool_env("LLM_ENABLED", False)))
@@ -300,10 +299,7 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
-    """
-    Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
-    Returns (final_text, extras, used_llm, used_beautify)
-    """
+    # Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
     used_llm = False
     used_beautify = False
     final = message
@@ -376,6 +372,8 @@ def extract_command_from(title: str, message: str) -> str:
 # -----------------------------
 # Startup HUD (high-tech boot card)
 # -----------------------------
+
+
 def post_startup_card():
     # Warm-load the model in THIS process before status if enabled.
     try:
@@ -395,15 +393,13 @@ def post_startup_card():
     # Respect explicit LLM_ENABLED flag for UI lines
     engine_is_online = bool(st.get("ready")) if LLM_ENABLED else False
     model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip() if LLM_ENABLED else ""
-    model_name = os.path.basename(model_path) if model_path else ""
-
-    engine_line = f"Neural Core — {'ONLINE' if engine_is_online else 'OFFLINE'}"
+    backend = (st.get("backend") or "").strip()
 
     def _family_from_name(n: str) -> str:
         n = (n or "").lower()
         if 'phi' in n:
             return 'Phi3'
-        if 'tiny' in n or 'tinyl' in n:
+        if 'tiny' in n or 'tinyl' in n or 'tinyllama' in n:
             return 'TinyLlama'
         if 'qwen' in n:
             return 'Qwen'
@@ -411,7 +407,10 @@ def post_startup_card():
             return 'Formatter'
         return 'Disabled'
 
-    llm_line_value = _family_from_name(model_name) if engine_is_online else 'Disabled'
+    # Prefer basename of model path; if blank, fall back to backend name.
+    model_token = os.path.basename(model_path) if model_path else backend
+    llm_line_value = _family_from_name(model_token) if engine_is_online else 'Disabled'
+    engine_line = f"Neural Core — {'ONLINE' if engine_is_online else 'OFFLINE'}"
     llm_line = f"🧠 LLM: {llm_line_value}"
 
     lines = [
@@ -452,24 +451,19 @@ def _handle_command(ncmd: str):
     m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None
     try:
         m_arr = __import__("arr")
-    except Exception:
-        pass
+    except Exception: pass
     try:
         m_weather = __import__("weather")
-    except Exception:
-        pass
+    except Exception: pass
     try:
         m_kuma = __import__("uptimekuma")
-    except Exception:
-        pass
+    except Exception: pass
     try:
         m_tech = __import__("technitium")
-    except Exception:
-        pass
+    except Exception: pass
     try:
         m_digest = __import__("digest")
-    except Exception:
-        pass
+    except Exception: pass
 
     if ncmd in ("help", "commands"):
         help_text = (
