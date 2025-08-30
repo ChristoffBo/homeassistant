@@ -68,6 +68,8 @@
     "proxy_port": 2580,
     "proxy_gotify_url": "",
     "proxy_ntfy_url": "",
+    "chat_enabled": false,
+    "personality_quiet_hours": "23:00-06:00",
     "enable_dude": false,
     "enable_chick": false,
     "enable_nerd": false,
@@ -75,6 +77,15 @@
     "enable_dry": false,
     "enable_ai": false,
     "enable_neutral": true,
+    "personas_enabled": {
+      "dude": false,
+      "chick": false,
+      "nerd": false,
+      "angry": false,
+      "dry": false,
+      "ai": false,
+      "neutral": true
+    },
     "llm_enabled": true,
     "llm_cleanup_on_disable": true,
     "llm_models_dir": "/share/jarvis_prime/models",
@@ -90,16 +101,6 @@
     "llm_qwen05_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true",
     "llm_qwen05_path": "/share/jarvis_prime/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     "custom_aliases": "{}",
-    "chat_enabled": false,
-    "personas_enabled": {
-      "dude": false,
-      "chick": false,
-      "nerd": false,
-      "angry": false,
-      "dry": false,
-      "ai": false,
-      "neutral": true
-    },
     "active_persona": "auto"
   },
   "schema": {
@@ -151,6 +152,8 @@
     "proxy_port": "port",
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
+    "chat_enabled": "bool",
+    "personality_quiet_hours": "str",
     "enable_dude": "bool",
     "enable_chick": "bool",
     "enable_nerd": "bool",
@@ -173,7 +176,6 @@
     "llm_qwen05_url": "str",
     "llm_qwen05_path": "str",
     "custom_aliases": "str?",
-    "chat_enabled": "bool",
     "active_persona": "str"
   }
 }
