@@ -1,3 +1,4 @@
+import storage
 #!/usr/bin/env python3
 # /app/bot.py
 import os
@@ -9,7 +10,6 @@ import re
 import subprocess
 import atexit
 from typing import Optional, Tuple, List
-import storage
 
 # ============================
 # Basic env
@@ -159,10 +159,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
     if extras: payload["extras"] = extras
-    try:
-        storage.save_message(\"bot\", title, message, meta={\"via\":\"bot\"}, delivered={})
-    except Exception:
-        pass
     try:
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()

@@ -1,10 +1,10 @@
+import storage
 #!/usr/bin/env python3
 # /app/proxy.py
 import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
-import storage
 
 # -----------------------------
 # Config load (match bot.py behavior)
@@ -123,10 +123,6 @@ def _post_gotify(title: str, message: str, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": 5}
     if extras: payload["extras"] = extras
-    try:
-        storage.save_message(\"proxy\", title, message, meta={\"via\":\"proxy\"}, delivered={})
-    except Exception:
-        pass
     r = requests.post(url, json=payload, timeout=8)
     r.raise_for_status()
 
