@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Jarvis Prime — Inbox</title>
+    <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@1.5.10/css/pico.min.css">
+    <style>
+      :root {
+        --card-h: calc(100vh - 11rem);
+      }
+      body { padding: 1.25rem; }
+      .muted { opacity: .7; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .pill { padding: .15rem .5rem; border-radius: 999px; font-size: .8rem; }
+      .pill.ok { background: var(--primary); color: var(--primary-inverse); }
+      .pill.warn { background: var(--del-color); color: var(--del-color-inverse); }
+      .grid-2 { display: grid; grid-template-columns: 360px 1fr; gap: 1rem; }
+      .list { height: var(--card-h); overflow: auto; }
+      .preview { height: var(--card-h); overflow: auto; }
+      .row { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding:.5rem; border-bottom: 1px solid var(--muted-border-color); cursor:pointer; }
+      .row:hover { background: rgba(255,255,255,.04); }
+      .row .meta { font-size: .8rem; opacity:.75; }
+      .toolbar { display:flex; gap:.5rem; align-items:center; }
+      pre { white-space: pre-wrap; }
+      .k { font-weight:600; }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h2>📥 Jarvis Prime — Inbox</h2>
+        <p class="muted">Unified inbox with dark-mode preview, purge, and search.</p>
+      </header>
+
+      <section>
+        <form id="searchForm" role="search" onsubmit="return false;">
+          <div class="grid">
+            <input id="q" name="q" type="search" placeholder="Search title, body, source…" />
+            <select id="limit">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+            <button id="btnSearch">Search</button>
+            <button id="btnRefresh" class="secondary outline">Refresh</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="grid-2">
+        <article class="list" id="list"></article>
+        <article class="preview" id="preview">
+          <header class="toolbar">
+            <button id="btnDelete" class="secondary outline" disabled>Delete</button>
+            <button id="btnCopy" class="secondary outline" disabled>Copy</button>
+            <span class="muted" id="status"></span>
+          </header>
+          <div id="view">
+            <p class="muted">Select a message to preview.</p>
+          </div>
+        </article>
+      </section>
+
+      <section>
+        <article>
+          <header><strong>Retention</strong></header>
+          <div class="grid">
+            <label>
+              <span>Policy</span>
+              <select id="autoPurge">
+                <option value="off">Off</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            <label>
+              <span>Days</span>
+              <input id="retentionDays" type="number" min="1" value="30" style="max-width: 12rem;">
+            </label>
+            <button id="btnSaveRetention">Save</button>
+            <button id="btnPurgeNow" class="contrast">Purge now</button>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <template id="item">
+      <div class="row">
+        <div class="l">
+          <div class="k title"></div>
+          <div class="meta mono"><span class="ts"></span> • <span class="source"></span></div>
+        </div>
+        <div class="r delivered"></div>
+      </div>
+    </template>
+
+    <script>
+      const API_BASE = location.pathname.replace(/\/ui\/.*$/, "") || "";
+      const el = (s)=>document.querySelector(s);
+      const list = el("#list");
+      const itemTpl = el("#item");
+      const view = el("#view");
+      const btnDelete = el("#btnDelete");
+      const btnCopy = el("#btnCopy");
+      const statusEl = el("#status");
+      let currentId = null;
+      let currentItem = null;
+
+      function fmtTs(sec) {
+        try { return new Date(sec*1000).toLocaleString(); } catch { return sec; }
+      }
+      function renderDelivered(d) {
+        try {
+          const obj = typeof d === "string" ? JSON.parse(d) : (d||{});
+          const keys = Object.keys(obj);
+          if (keys.length === 0) return "<span class='muted'>—</span>";
+          let ok=0, fail=0;
+          for (const k of keys) {
+            const v = obj[k];
+            const code = (v && (v.status||v.code||v.http||v.status_code)) ?? 0;
+            if (Number(code)>=200 && Number(code)<400 || Number(code)===250) ok++; else fail++;
+          }
+          const pills = [];
+          if (ok) pills.push(`<span class="pill ok">OK ${ok}</span>`);
+          if (fail) pills.push(`<span class="pill warn">Fail ${fail}</span>`);
+          return pills.join(" ");
+        } catch { return "<span class='muted'>—</span>"; }
+      }
+      function itemNode(it) {
+        const frag = itemTpl.content.cloneNode(true);
+        frag.querySelector(".title").textContent = it.title;
+        frag.querySelector(".ts").textContent = fmtTs(it.ts);
+        frag.querySelector(".source").textContent = it.source;
+        frag.querySelector(".delivered").innerHTML = renderDelivered(it.delivered);
+        const div = frag.firstElementChild;
+        div.addEventListener("click", () => select(it, div));
+        return frag;
+      }
+      function select(it, node) {
+        currentId = it.id;
+        currentItem = node;
+        btnDelete.disabled = false; btnCopy.disabled = false;
+        const meta = it.meta ? (typeof it.meta === "string" ? it.meta : JSON.stringify(it.meta, null, 2)) : "";
+        const delivered = it.delivered ? (typeof it.delivered === "string" ? it.delivered : JSON.stringify(it.delivered, null, 2)) : "";
+        view.innerHTML = `
+          <h3 class="mono">${it.title}</h3>
+          <p class="muted mono">${fmtTs(it.ts)} • ${it.source}</p>
+          <pre class="mono">${(it.body||"").replace(/[<>&]/g, s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+          <details><summary>Meta</summary><pre class="mono">${meta}</pre></details>
+          <details><summary>Delivered</summary><pre class="mono">${delivered}</pre></details>
+        `;
+      }
+      async function loadSettings() {
+        try {
+          const r = await fetch(`${API_BASE}/api/inbox/settings`);
+          const j = await r.json();
+          el("#retentionDays").value = j.retention_days ?? 30;
+          el("#autoPurge").value = (j.auto_purge || "off");
+        } catch {}
+      }
+      async function saveRetention() {
+        const days = Number(el("#retentionDays").value || 30);
+        const pol  = el("#autoPurge").value || "off";
+        const r = await fetch(`${API_BASE}/api/inbox/settings`, {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({retention_days: days, auto_purge: pol})
+        });
+        if (r.ok) statusEl.textContent = "Retention saved."; else statusEl.textContent = "Save failed.";
+        setTimeout(()=>statusEl.textContent="", 2000);
+      }
+      async function purgeNow() {
+        const days = Number(el("#retentionDays").value || 30);
+        if (!confirm(`Purge messages older than ${days} days?`)) return;
+        const r = await fetch(`${API_BASE}/api/messages/purge`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({days})
+        });
+        if (r.ok) load(); else alert("Purge failed");
+      }
+      async function removeCurrent() {
+        if (!currentId) return;
+        if (!confirm("Delete this message?")) return;
+        const r = await fetch(`${API_BASE}/api/messages/${currentId}`, {method:"DELETE"});
+        if (r.ok) load();
+      }
+      async function copyCurrent() {
+        try {
+          const sel = view.innerText;
+          await navigator.clipboard.writeText(sel);
+          statusEl.textContent = "Copied.";
+          setTimeout(()=>statusEl.textContent="", 1500);
+        } catch {}
+      }
+      async function load() {
+        list.innerHTML = "<article class='muted'>Loading…</article>";
+        const q = encodeURIComponent(el("#q").value||"");
+        const limit = encodeURIComponent(el("#limit").value||"50");
+        const r = await fetch(`${API_BASE}/api/messages?limit=${limit}${q?`&q=${q}`:""}`);
+        const j = await r.json();
+        list.innerHTML = "";
+        (j.items||[]).forEach(it => list.appendChild(itemNode(it)));
+        if (j.items && j.items.length) {
+          select(j.items[0], list.firstElementChild);
+        } else {
+          view.innerHTML = "<p class='muted'>No messages.</p>";
+          currentId = null; btnDelete.disabled = true; btnCopy.disabled = true;
+        }
+      }
+      el("#btnSearch").addEventListener("click", load);
+      el("#btnRefresh").addEventListener("click", load);
+      el("#btnSaveRetention").addEventListener("click", saveRetention);
+      el("#btnPurgeNow").addEventListener("click", purgeNow);
+      el("#btnDelete").addEventListener("click", removeCurrent);
+      el("#btnCopy").addEventListener("click", copyCurrent);
+      (async function boot(){ await loadSettings(); await load(); })();
+    </script>
+  </body>
+</html>
