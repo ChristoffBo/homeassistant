@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # api_messages.py — REST API for Jarvis Prime inbox
-# - Serves /ui/ (static) + JSON API
-# - Mirrors Gotify /stream and ntfy SSE into storage
-# - Compatible with storage.init_db() that takes no arguments
+# Adds passive Gotify mirror: if GOTIFY_URL + GOTIFY_CLIENT_TOKEN are present,
+# it tails /stream and stores messages automatically.
 
 from __future__ import annotations
 import os, json, asyncio, aiohttp, time
@@ -14,17 +13,13 @@ API_PORT = int(os.getenv("JARVIS_API_PORT", "2581"))
 DB_PATH  = os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
 UI_DIR   = os.getenv("JARVIS_UI_DIR", os.path.join(os.path.dirname(__file__), "ui"))
 
-# Ensure storage sees the DB path if it reads from env
-os.environ.setdefault("JARVIS_DB_PATH", DB_PATH)
-
 GOTIFY_URL = os.getenv("GOTIFY_URL", "")
 GOTIFY_CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
-
-NTFY_URL   = os.getenv('NTFY_URL','')
+NTFY_URL = os.getenv('NTFY_URL','')
 NTFY_TOPIC = os.getenv('NTFY_TOPIC','')
 NTFY_TOKEN = os.getenv('NTFY_TOKEN','')
-NTFY_USER  = os.getenv('NTFY_USER','')
-NTFY_PASS  = os.getenv('NTFY_PASS','')
+NTFY_USER = os.getenv('NTFY_USER','')
+NTFY_PASS = os.getenv('NTFY_PASS','')
 
 # ------------- Middleware: basic CORS + JSON errors -------------
 @web.middleware
@@ -62,7 +57,7 @@ async def get_message(request: web.Request):
     return web.json_response(item)
 
 async def post_read(request: web.Request):
-    mid = int(request.match_info()["id"] if "id" in request.match_info else request.match_info["id"])
+    mid = int(request.match_info["id"])
     data = await request.json(loads=json.loads)
     read = bool(data.get("read", True))
     ok = storage.mark_read(mid, read=read)
@@ -95,56 +90,100 @@ async def post_purge(request: web.Request):
     removed = storage.purge_older_than(days)
     return web.json_response({"ok": True, "removed": removed, "days": days})
 
-# ------------- Background Gotify mirror ------------------
+# ------------- Background Gotify & ntfy stream mirror ------------------
 async def mirror_gotify(app: web.Application):
     if not GOTIFY_URL or not GOTIFY_CLIENT_TOKEN:
-        print("[inbox] gotify mirror disabled (missing GOTIFY_URL or GOTIFY_CLIENT_TOKEN)")
         return  # no-op
     url = GOTIFY_URL.rstrip('/') + "/stream?token=" + GOTIFY_CLIENT_TOKEN
-    print(f"[inbox] gotify mirror connecting -> {url}")
     while True:
         try:
             timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
             async with aiohttp.ClientSession(timeout=timeout) as sess:
                 async with sess.get(url) as r:
+                    # Server-Sent Events: read line-by-line
+                    buf = []
                     async for raw in r.content:
                         line = raw.decode("utf-8", "ignore").rstrip()
-                        if not line.startswith("data:"):
-                            continue
-                        payload = line[5:].strip()
-                        if not payload:
-                            continue
-                        try:
-                            obj = json.loads(payload)
-                            title = obj.get("title") or ""
-                            message = obj.get("message") or ""
-                            priority = obj.get("priority", 5)
-                            ts = int(obj.get("date", time.time()))
-                            meta = {"priority": priority, "via": "gotify-stream"}
-                            delivered = {"gotify": {"status": 200}}
-                            storage.save_message("gotify", title, message, meta=meta, delivered=delivered, ts=ts)
-                        except Exception:
-                            pass
+                        if line.startswith("data:"):
+                            payload = line[5:].strip()
+                            try:
+                                obj = json.loads(payload)
+                                title = obj.get("title") or ""
+                                message = obj.get("message") or ""
+                                priority = obj.get("priority", 5)
+                                ts = int(obj.get("date", time.time()))
+                                meta = {"priority": priority, "via": "gotify-stream"}
+                                delivered = {"gotify": {"status": 200}}
+                                storage.save_message("gotify", title, message, meta=meta, delivered=delivered, ts=ts)
+                            except Exception:
+                                pass
+                        # ignore other SSE lines (event:, id:, etc.)
         except Exception:
             await asyncio.sleep(5)  # reconnect backoff and continue
 
-# ------------- Background ntfy mirror ------------------
+async def on_startup(app: web.Application):
+    app["mirror_task"] = asyncio.create_task(mirror_gotify(app))
+
+async def on_cleanup(app: web.Application):
+    task = app.get("mirror_task")
+    if task:
+        task.cancel()
+        try: await task
+        except Exception: pass
+    task2 = app.get('mirror_ntfy_task')
+    if task2:
+        task2.cancel()
+        try: await task2
+        except Exception: pass
+
+def create_app() -> web.Application:
+    storage.init_db(DB_PATH)
+    app = web.Application(middlewares=[cors_middleware])
+    # API
+    app.router.add_route("OPTIONS", "/{tail:.*}", handle_options)
+    app.router.add_get   ("/api/messages",          get_messages)
+    app.router.add_get   ("/api/messages/{id}",     get_message)
+    app.router.add_post  ("/api/messages/{id}/read",post_read)
+    app.router.add_delete("/api/messages/{id}",     delete_message)
+    app.router.add_get   ("/api/inbox/settings",    get_settings)
+    app.router.add_put   ("/api/inbox/settings",    put_settings)
+    app.router.add_patch ("/api/inbox/settings",    put_settings)
+    app.router.add_post  ("/api/messages/purge",    post_purge)
+    # Static UI (served if present)
+    if os.path.isdir(UI_DIR):
+        app.router.add_static("/ui/", path=UI_DIR, name="ui", show_index=False)
+                async def _index(request):
+            return web.FileResponse(os.path.join(UI_DIR, "index.html"))
+        app.router.add_get("/ui", _index)
+        app.router.add_get("/ui/", _index)
+    # background mirror
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+    return app
+
+def run():
+    app = create_app()
+    web.run_app(app, host=API_BIND, port=API_PORT)
+
+if __name__ == "__main__":
+    run()
+
 async def mirror_ntfy(app: web.Application):
+    # ntfy has SSE at /<topic>/sse (self-hosted) or /v1/events?topic=... (ntfy.sh)
     if not NTFY_URL or not NTFY_TOPIC:
-        print("[inbox] ntfy mirror disabled (missing NTFY_URL or NTFY_TOPIC)")
         return
+    # prefer ntfy.sh style first
     urls = []
     base = NTFY_URL.rstrip('/')
     urls.append(f"{base}/v1/events?topic={NTFY_TOPIC}")
     urls.append(f"{base}/{NTFY_TOPIC}/sse")
-    import base64
+    import aiohttp, base64, json, time
     headers = {}
     if NTFY_TOKEN:
         headers['Authorization'] = f"Bearer {NTFY_TOKEN}"
     elif NTFY_USER and NTFY_PASS:
         tok = base64.b64encode(f"{NTFY_USER}:{NTFY_PASS}".encode('utf-8')).decode('ascii')
         headers['Authorization'] = "Basic " + tok
-    print(f"[inbox] ntfy mirror connecting -> {urls[0]} (fallback {urls[1]})")
     while True:
         for url in urls:
             try:
@@ -159,55 +198,16 @@ async def mirror_ntfy(app: web.Application):
                                 evt = json.loads(line)
                             except Exception:
                                 continue
+                            # ntfy event has 'message' or 'title' depending on variant
                             title = evt.get('title') or evt.get('topic') or 'ntfy'
                             msg = evt.get('message') or evt.get('event') or ''
                             priority = int(evt.get('priority', 3))
                             meta = {'priority': priority, 'via': 'ntfy-stream'}
                             delivered = {'ntfy': {'status': 200}}
-                            storage.save_message('ntfy', title, msg, meta=meta, delivered=delivered)
+                            try:
+                                import storage
+                                storage.save_message('ntfy', title, msg, meta=meta, delivered=delivered)
+                            except Exception:
+                                pass
             except Exception:
                 await asyncio.sleep(5)
-
-async def on_startup(app: web.Application):
-    app["mirror_task"] = asyncio.create_task(mirror_gotify(app))
-    app["mirror_ntfy_task"] = asyncio.create_task(mirror_ntfy(app))
-
-async def on_cleanup(app: web.Application):
-    for key in ("mirror_task","mirror_ntfy_task"):
-        task = app.get(key)
-        if task:
-            task.cancel()
-            try: await task
-            except Exception: pass
-
-def create_app() -> web.Application:
-    # storage.init_db expects no args; it reads env JARVIS_DB_PATH or defaults internally
-    storage.init_db()
-    app = web.Application(middlewares=[cors_middleware])
-    # API
-    app.router.add_route("OPTIONS", "/{tail:.*}", handle_options)
-    app.router.add_get   ("/api/messages",          get_messages)
-    app.router.add_get   ("/api/messages/{id}",     get_message)
-    app.router.add_post  ("/api/messages/{id}/read",post_read)
-    app.router.add_delete("/api/messages/{id}",     delete_message)
-    app.router.add_get   ("/api/inbox/settings",    get_settings)
-    app.router.add_put   ("/api/inbox/settings",    put_settings)
-    app.router.add_patch ("/api/inbox/settings",    put_settings)
-    app.router.add_post  ("/api/messages/purge",    post_purge)
-    # Static UI (served if present)
-    if os.path.isdir(UI_DIR):
-        app.router.add_static("/ui/", path=UI_DIR, name="ui", show_index=True)
-        async def _redir(request): 
-            raise web.HTTPFound("/ui/index.html")
-        app.router.add_get("/ui", _redir)
-    # background mirrors
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
-    return app
-
-def run():
-    app = create_app()
-    web.run_app(app, host=API_BIND, port=API_PORT)
-
-if __name__ == "__main__":
-    run()
