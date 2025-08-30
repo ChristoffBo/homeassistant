@@ -43,7 +43,7 @@ KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","t
 SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
-# Persona-first: keep mood token for compatibility, but we will set it to persona later.
+# Mood
 CHAT_MOOD = "serious"
 
 # Uptime tracking
@@ -83,10 +83,9 @@ try:
     PROXY_ENABLED   = bool(merged.get("proxy_enabled", PROXY_ENABLED_ENV))
 
     global CHAT_ENABLED_FILE, DIGEST_ENABLED_FILE
-    CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled",   CHAT_ENABLED_ENV))
-    DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
+    CHAT_ENABLED_FILE   = merged.get("chat_enabled",   CHAT_ENABLED_ENV)
+    DIGEST_ENABLED_FILE = merged.get("digest_enabled", DIGEST_ENABLED_ENV)
 
-    # mood will be replaced with persona below; keep for back-compat
     CHAT_MOOD = str(merged.get("personality_mood", merged.get("chat_mood", CHAT_MOOD)))
 
     HEARTBEAT_ENABLED       = bool(merged.get("heartbeat_enabled", HEARTBEAT_ENABLED))
@@ -118,11 +117,8 @@ LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH
 LLM_MODEL_SHA256      = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
 PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
-# Also accept LLM_STATUS from run.sh for banner parity
-LLM_STATUS = os.getenv("LLM_STATUS", "").strip()
-
 print(f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} rewrite={'yes' if LLM_ENABLED else 'no'} "
-      f"beautify={'yes' if BEAUTIFY_ENABLED else 'no'}")
+      f"beautify={'yes' if BEAUTIFY_ENABLED else 'no'} mood={CHAT_MOOD}")
 
 jarvis_app_id = None  # resolved at runtime
 
@@ -160,20 +156,6 @@ try:
         print(f"[{BOT_NAME}] ✅ personality.py loaded")
 except Exception as _e:
     print(f"[{BOT_NAME}] ⚠️ personality.py not loaded: {_e}")
-
-# persona state provider
-ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
-try:
-    import importlib.util as _imp
-    _sspec = _imp.spec_from_file_location("personality_state", "/app/personality_state.py")
-    if _sspec and _sspec.loader:
-        _pstate = _imp.module_from_spec(_sspec)
-        _sspec.loader.exec_module(_pstate)
-        ACTIVE_PERSONA, PERSONA_TOD = _pstate.get_active_persona()
-        print(f"[{BOT_NAME}] 🎭 Persona active: {ACTIVE_PERSONA} ({PERSONA_TOD})")
-        CHAT_MOOD = ACTIVE_PERSONA  # pass persona token downstream for compatibility
-except Exception as _e:
-    print(f"[{BOT_NAME}] ⚠️ persona state not loaded: {_e}")
 
 _beautify = None
 try:
@@ -234,17 +216,12 @@ atexit.register(stop_sidecars)
 # -----------------------------
 # Utils
 # -----------------------------
-def send_message(title, message, priority=5, extras=None, decorate=True):
-    # Persona-first decoration + bias priority
-    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
-        title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
-    elif decorate and _personality and hasattr(_personality, "decorate"):
+def send_message(title, message, priority=5, extras=None):
+    # Always decorate + bias priority
+    if _personality and hasattr(_personality, "decorate"):
         title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
     if _personality and hasattr(_personality, "apply_priority"):
-        try:
-            priority = _personality.apply_priority(priority, CHAT_MOOD)
-        except Exception:
-            pass
+        priority = _personality.apply_priority(priority, CHAT_MOOD)
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
     if extras:
@@ -319,7 +296,10 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
-    # Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
+    """
+    Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
+    Returns (final_text, extras, used_llm, used_beautify)
+    """
     used_llm = False
     used_beautify = False
     final = message
@@ -328,10 +308,10 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
     # LLM FIRST — no wake-word skip
     if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
         try:
-            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, cpu={LLM_MAX_CPU_PERCENT}%)")
+            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, mood={CHAT_MOOD})")
             rewritten = _llm.rewrite(
                 text=final,
-                mood=CHAT_MOOD,  # persona token propagated
+                mood=CHAT_MOOD,
                 timeout=LLM_TIMEOUT_SECONDS,
                 cpu_limit=LLM_MAX_CPU_PERCENT,
                 models_priority=LLM_MODELS_PRIORITY,
@@ -367,11 +347,7 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
 # Normalization + command extraction
 # -----------------------------
 def _clean(s):
-    # lower, strip, remove punctuation, collapse spaces
-    s = s.lower().strip()
-    s = re.sub(r"[^\w\s]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return re.sub(r"\s+", " ", s.lower().strip())
 
 def normalize_cmd(cmd: str) -> str:
     if _alias_mod and hasattr(_alias_mod, "normalize_cmd"):
@@ -394,10 +370,11 @@ def extract_command_from(title: str, message: str) -> str:
     return ""
 
 # -----------------------------
-# Startup HUD (persona-first)
+# Startup HUD (high-tech boot card)
 # -----------------------------
+
 def post_startup_card():
-    # Warm-load the model in THIS process before status if enabled.
+    # Warm-load the model in THIS process before status.
     try:
         if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
             _llm.prefetch_model()
@@ -412,28 +389,30 @@ def post_startup_card():
         except Exception:
             st = {}
 
-    engine_is_online = bool(st.get("ready")) if LLM_ENABLED else False
-    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip() if LLM_ENABLED else ""
-    backend = (st.get("backend") or "").strip()
+    online = bool(st.get("ready"))
+    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
+    model_name = os.path.basename(model_path) if model_path else ""
+
+    # Show clean engine status; report LLM family on its own line
+    engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
 
     def _family_from_name(n: str) -> str:
         n = (n or "").lower()
-        if 'phi' in n: return 'Phi3'
-        if 'tiny' in n or 'tinyl' in n or 'tinyllama' in n: return 'TinyLlama'
-        if 'qwen' in n: return 'Qwen'
-        if 'formatter' in n: return 'Formatter'
-        return 'Disabled'
+        if 'phi' in n:
+            return 'Phi3'
+        if 'tiny' in n or 'tinyl' in n:
+            return 'TinyLlama'
+        if 'qwen' in n:
+            return 'Qwen'
+        return '—'
 
-    model_token = os.path.basename(model_path) if model_path else backend
-    llm_line_value = _family_from_name(model_token) if engine_is_online else 'Disabled'
-    engine_line = f"Neural Core — {'ONLINE' if engine_is_online else 'OFFLINE'}"
-    llm_line = f"🧠 LLM: {llm_line_value}"
+    llm_line = f"🧠 LLM: {_family_from_name(model_name) if online else '—'}"
 
     lines = [
         "🧬 Prime Neural Boot",
         f"🛰️ Engine: {engine_line}",
         llm_line,
-        f"🎭 Persona: {ACTIVE_PERSONA} ({PERSONA_TOD})",
+        f"🎛️ Mood: {CHAT_MOOD}",
         "",
         "Modules:",
         f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
@@ -442,13 +421,13 @@ def post_startup_card():
         f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
         f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
         f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
-        f"✉️ SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
+        f"📨 SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         "",
-        "Status: All systems nominal",
+        "Status: All systems nominal" if online else "Status: Neural Core warming up…",
     ]
-    send_message("Startup", "\n".join(lines), priority=4, decorate=False)
+    send_message("Startup", "\n".join(lines), priority=4)
 
 # -----------------------------
 # Command handling helpers (safe calls)
@@ -464,24 +443,27 @@ def _try_call(module, fn_name, *args, **kwargs):
 
 def _handle_command(ncmd: str):
     # Imports on demand so missing modules don't crash
-    m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None; m_chat = None
-    try: m_arr = __import__("arr")
+    m_arr = None; m_weather = None; m_kuma = None; m_tech = None; m_digest = None
+    try:
+        m_arr = __import__("arr")
     except Exception: pass
-    try: m_weather = __import__("weather")
+    try:
+        m_weather = __import__("weather")
     except Exception: pass
-    try: m_kuma = __import__("uptimekuma")
+    try:
+        m_kuma = __import__("uptimekuma")
     except Exception: pass
-    try: m_tech = __import__("technitium")
+    try:
+        m_tech = __import__("technitium")
     except Exception: pass
-    try: m_digest = __import__("digest")
-    except Exception: pass
-    try: m_chat = __import__("chat")
+    try:
+        m_digest = __import__("digest")
     except Exception: pass
 
     if ncmd in ("help", "commands"):
         help_text = (
             "🤖 Jarvis Prime — Commands\n"
-            f"Persona: {ACTIVE_PERSONA} ({PERSONA_TOD})\n\n"
+            f"Mood: {CHAT_MOOD}\n\n"
             "Core:\n"
             "  • dns — Technitium DNS summary\n"
             "  • kuma — Uptime Kuma status (aliases: uptime, monitor)\n"
@@ -499,9 +481,8 @@ def _handle_command(ncmd: str):
         if m_digest and hasattr(m_digest, "build_digest"):
             title2, msg2, pr = m_digest.build_digest(merged)
             if _personality and hasattr(_personality, "quip"):
-                try: msg2 += f\"\n\n{_personality.quip(ACTIVE_PERSONA)}\"
-                except Exception: pass
-            send_message("Digest", msg2, priority=pr)
+                msg2 += f"\n\n{_personality.quip(CHAT_MOOD)}"
+            send_message(title2, msg2, priority=pr)
         else:
             send_message("Digest", "Digest module unavailable.")
         return True
@@ -538,15 +519,6 @@ def _handle_command(ncmd: str):
             except Exception as e:
                 text = f"⚠️ Forecast failed: {e}"
         send_message("Forecast", text or "No data.")
-        return True
-
-    # Jokes / chat
-    if ncmd in ("joke", "pun"):
-        if m_chat and hasattr(m_chat, "handle_chat_command"):
-            msg, _ = m_chat.handle_chat_command("joke")
-            send_message("Joke", msg or "No joke available right now.")
-        else:
-            send_message("Joke", "Chat engine unavailable.")
         return True
 
     # ARR commands
@@ -596,6 +568,7 @@ async def listen():
 
                 title   = data.get("title", "")   or ""
                 message = data.get("message", "") or ""
+
                 # Commands (do NOT skip LLM anymore)
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd:
@@ -613,25 +586,23 @@ async def listen():
                 print(f"[{BOT_NAME}] ⚠️ Stream handling error: {e}")
 
 # -----------------------------
-# Main (asyncio.run to avoid 3.12 'no current event loop' crash)
+# Main
 # -----------------------------
-async def _run_forever():
-    while True:
-        try:
-            await listen()
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ WS error, reconnecting in 3s: {e}")
-            await asyncio.sleep(3)
-
 def main():
     resolve_app_id()
     try:
-        start_sidecars()   # proxy/smtp listeners
+        start_sidecars()   # <- bring back proxy/smtp listeners
         post_startup_card()
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
-    # Python 3.12-safe loop management
-    asyncio.run(_run_forever())
+
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            loop.run_until_complete(listen())
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ WS error, reconnecting in 3s: {e}")
+            time.sleep(3)
 
 if __name__ == "__main__":
     main()
