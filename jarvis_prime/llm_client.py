@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
-# Jarvis Prime — llm_client.py (Metrics-SAFE)
-# ROLE: First-pass formatter only. Neaten text. DO NOT change meaning.
-# GUARANTEES:
-#  - If we detect Speedtest-style metrics (Ping/Upload/Download), we BYPASS the LLM entirely
-#    and return a conservative normalized original so nothing can be lost.
-#  - Otherwise, we call the LLM (Ollama -> ctransformers) but verify for loss and fallback.
 from __future__ import annotations
 
-import os, re
+import os
+import re
 from pathlib import Path
 from typing import Optional, List, Dict
 
-def _dbg(msg: str) -> None:
-    if os.getenv("LLM_DEBUG", "0") == "1":
-        print(f"[LLM/formatter] {msg}", flush=True)
-
-# Optional deps
 try:
     from ctransformers import AutoModelForCausalLM
 except Exception:
@@ -33,15 +23,12 @@ CTX = int(os.getenv("LLM_CTX_TOKENS", "4096"))
 GEN_TOKENS = int(os.getenv("LLM_GEN_TOKENS", "180"))
 CHARS_PER_TOKEN = 4
 SAFETY_TOKENS = 32
-SEED = int(os.getenv("LLM_SEED", "42"))
 
-# Decoding knobs (deterministic, conservative)
-TEMP = float(os.getenv("LLM_TEMPERATURE", "0.0"))
-TOP_P = float(os.getenv("LLM_TOP_P", "1.0"))
-TOP_K = int(os.getenv("LLM_TOP_K", "40"))
-REPEAT_P = float(os.getenv("LLM_REPEAT_PENALTY", "1.05"))
+# Decoding knobs (safer & more precise defaults; can override via env if needed)
+TEMP = float(os.getenv("LLM_TEMPERATURE", "0.05"))
+TOP_P = float(os.getenv("LLM_TOP_P", "0.8"))
+REPEAT_P = float(os.getenv("LLM_REPEAT_PENALTY", "1.4"))
 
-# Search roots for local models
 SEARCH_ROOTS = [Path("/share/jarvis_prime"), Path("/share/jarvis_prime/models"), Path("/share")]
 
 def _list_local_models() -> list[Path]:
@@ -114,15 +101,14 @@ def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None
     if model_path:
         p=Path(model_path)
         if p.is_file():
-            _model_path=p; _dbg(f"prefetch_model(explicit) -> {p}"); return
+            _model_path=p; return
     _model_path=_resolve_model_path()
-    _dbg(f"prefetch_model(auto) -> {_model_path}")
 
 def engine_status() -> Dict[str,object]:
     base=OLLAMA_BASE_URL.strip()
     if base and requests:
         try:
-            r=requests.get(base.rstrip('/')+'/api/version',timeout=3)
+            r=requests.get(base.rstrip("/")+"/api/version",timeout=3)
             ok=r.ok
         except Exception:
             ok=False
@@ -130,84 +116,238 @@ def engine_status() -> Dict[str,object]:
     p=_model_path or _resolve_model_path()
     return {"ready": bool(p and p.exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
 
-# -------- Conservative helpers (preserve all info) --------
+def _load_local_model(path: Path):
+    global _loaded_model
+    if _loaded_model is not None: return _loaded_model
+    if AutoModelForCausalLM is None: return None
+    try:
+        _loaded_model = AutoModelForCausalLM.from_pretrained(
+            str(path),
+            model_type="llama",
+            gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
+            context_length=CTX,
+        )
+        return _loaded_model
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
+        return None
 
-CODE_RE = re.compile(r"```.*?```", re.S)
-NUM_RE  = re.compile(r'[-+]?\d+(?:\.\d+)?')
+IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
+IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
+PLACEHOLDER_RE = re.compile(r'\[([A-Z][A-Z0-9 _:/\-\.,]{2,})\]')
+UPSELL_RE = re.compile(r'(?i)\b(please review|confirm|support team|contact .*@|let us know|thank you|stay in touch|new feature|check out)\b')
 
-def _normalize_conservative(text: str) -> str:
-    if not text:
-        return text
-    blocks = []
-    def _hold(m):
-        blocks.append(m.group(0))
-        return f"@@CODEBLOCK{len(blocks)-1}@@"
-    s = CODE_RE.sub(_hold, text)
+def _extract_images(src: str) -> str:
+    imgs = IMG_MD_RE.findall(src or '') + IMG_URL_RE.findall(src or '')
+    seen=set(); out=[]
+    for i in imgs:
+        if i not in seen:
+            seen.add(i); out.append(i)
+    return "\n".join(out)
 
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = "\n".join([ln.rstrip() for ln in s.split("\n")])
-    s = re.sub(r"[ \t]{2,}", " ", s)
-    s = re.sub(r"([,:;.!?])(?=\S)", r"\1 ", s)
+def _strip_reasoning(text: str) -> str:
+    lines=[]
+    for ln in (text or "").splitlines():
+        t=ln.strip()
+        if not t: continue
+        tl=t.lower()
+        if tl.startswith(("input:","output:","explanation:","reasoning:","analysis:","system:")): continue
+        if t in ("[SYSTEM]","[INPUT]","[OUTPUT]") or t.startswith(("[SYSTEM]","[INPUT]","[OUTPUT]")): continue
+        if t.startswith("[") and t.endswith("]") and len(t)<40: continue
+        if tl.startswith("note:"): continue
+        lines.append(t)
+    return "\n".join(lines)
 
-    for i,blk in enumerate(blocks):
-        s = s.replace(f"@@CODEBLOCK{i}@@", blk, 1)
+def _remove_placeholders(text: str) -> str:
+    s = PLACEHOLDER_RE.sub("", text or "")
+    s = re.sub(r'\(\s*\)', '', s)
+    s = re.sub(r'\s{2,}', ' ', s).strip()
     return s
 
-SPEED_KEYS = ("ping:", "upload:", "download:")
+def _drop_boilerplate(text: str) -> str:
+    kept=[]
+    for ln in (text or "").splitlines():
+        if not ln.strip(): continue
+        if UPSELL_RE.search(ln): continue
+        kept.append(ln.strip())
+    return "\n".join(kept)
 
-def _has_speed_metrics(text: str) -> bool:
-    low = (text or "").lower()
-    return any(k in low for k in SPEED_KEYS)
+def _squelch_repeats(text: str) -> str:
+    parts = (text or "").split()
+    out = []
+    prev = None
+    count = 0
+    for w in parts:
+        wl = w.lower()
+        if wl == prev:
+            count += 1
+            if count <= 2:
+                out.append(w)
+        else:
+            prev = wl
+            count = 1
+            out.append(w)
+    s2 = " ".join(out)
+    s2 = re.sub(r'(\b\w+\s+\w+)(?:\s+\1){2,}', r'\1 \1', s2, flags=re.I)
+    return s2
 
-def _numbers_in(text: str) -> List[str]:
-    return NUM_RE.findall(text or "")
+def _polish(text: str) -> str:
+    import re as _re
+    s = (text or "").strip()
+    s = _re.sub(r'[ \t]+', ' ', s)
+    s = _re.sub(r'[ \t]*\n[ \t]*', '\n', s)
+    s = _re.sub(r'([,:;.!?])(?=\S)', r'\1 ', s)
+    s = _re.sub(r'\s*…+\s*', '. ', s)
+    s = _re.sub(r'\s+([,:;.!?])', r'\1', s)
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    fixed = []
+    for ln in lines:
+        if not _re.search(r'[.!?]$', ln):
+            fixed.append(ln + '.')
+        else:
+            fixed.append(ln)
+    s = "\n".join(fixed)
+    seen=set(); out=[]
+    for ln in s.splitlines():
+        key = ln.lower()
+        if key in seen: 
+            continue
+        seen.add(key); out.append(ln)
+    return "\n".join(out)
 
-def _loss_detected(original: str, candidate: str) -> bool:
-    # check numbers
-    for n in _numbers_in(original):
-        if n and n not in (candidate or ""):
-            return True
-    # check speed keys if present originally
-    if _has_speed_metrics(original):
-        low_c = (candidate or "").lower()
-        for k in SPEED_KEYS:
-            if k in (original or "").lower() and k not in low_c:
-                return True
-    return False
+def _cap(text: str, max_lines: int = int(os.getenv("LLM_MAX_LINES","10")), max_chars: int = 800) -> str:
+    lines=[ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines)>max_lines: lines=lines[:max_lines]
+    out="\n".join(lines)
+    if len(out)>max_chars: out=out[:max_chars].rstrip()
+    return out
 
-# -------- LLM loading --------
+def _load_system_prompt() -> str:
+    sp = os.getenv("LLM_SYSTEM_PROMPT")
+    if sp: return sp
+    p = Path("/share/jarvis_prime/memory/system_prompt.txt")
+    if p.exists():
+        try:
+            return p.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    p2 = Path("/app/memory/system_prompt.txt")
+    if p2.exists():
+        try:
+            return p2.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    # fallback
+    return "YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
+
+def _trim_to_ctx(src: str, system: str) -> str:
+    if not src: return src
+    budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
+    budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
+    remaining = max(500, budget_chars - len(system))
+    if len(src) <= remaining:
+        return src
+    return src[-remaining:]
+
+def _finalize(text: str, imgs: str) -> str:
+    out = _strip_reasoning(text)
+    out = _remove_placeholders(out)
+    out = _drop_boilerplate(out)
+    out = _squelch_repeats(out)
+    out = _polish(out)
+    out = _cap(out)
+    return out + ("\n"+imgs if imgs else "")
+
+def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
+            models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
+            model_url: Optional[str]=None, model_path: Optional[str]=None,
+            model_sha256: Optional[str]=None, allow_profanity: bool=False) -> str:
+    src=(text or "").strip()
+    if not src: return src
+
+    imgs=_extract_images(src)
+    system=_load_system_prompt().format(mood=mood)
+    src=_trim_to_ctx(src, system)
+
+    # Special-case trivial tests
+    if re.search(r'(?i)\btest\b', src) and len(src) < 600:
+        return _finalize(src, imgs)
+
+    # 1) Ollama path
+    base=(base_url or OLLAMA_BASE_URL or "").strip()
+    if base and requests:
+        try:
+            payload={
+                "model": (models_priority[0] if models_priority else "llama3.1"),
+                "prompt": system + "\n\nINPUT:\n" + src + "\n\nOUTPUT:\n",
+                "stream": False,
+                "options": {
+                    "temperature": TEMP, "top_p": TOP_P, "repeat_penalty": REPEAT_P,
+                    "num_ctx": CTX, "num_predict": GEN_TOKENS,
+                    "stop": ["[SYSTEM]", "[INPUT]", "[OUTPUT]"]
+                }
+            }
+            r=requests.post(base.rstrip("/")+"/api/generate", json=payload, timeout=timeout)
+            if r.ok:
+                out=str(r.json().get("response",""))
+                return _finalize(out, imgs)
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Ollama call failed: {e}", flush=True)
+
+    # 2) Local ctransformers
+    p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
+    if p and p.exists():
+        m=_load_local_model(p)
+        if m is not None:
+            prompt=f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
+            try:
+                out=m(prompt, max_new_tokens=GEN_TOKENS, temperature=TEMP,
+                       top_p=TOP_P, repetition_penalty=REPEAT_P, stop=["[SYSTEM]","[INPUT]","[OUTPUT]"])
+                return _finalize(str(out or ""), imgs)
+            except Exception as e:
+                print(f"[{BOT_NAME}] ⚠️ Generation failed: {e}", flush=True)
+
+    # 3) Fallback
+    return _finalize(src, imgs)
+
+
+# === PATCH: robust path resolution for local models and clean boot ===
 
 def _first_gguf_under(p: Path) -> Optional[Path]:
     try:
         if p.is_file() and p.suffix.lower() == ".gguf":
             return p
         if p.is_dir():
-            cands = sorted(list(p.rglob("*.gguf")),
-                           key=lambda x: (0 if str(x).startswith("/share/jarvis_prime/models")
-                                          else (1 if str(x).startswith("/share/jarvis_prime") else 2),
-                                          x.stat().st_size if x.exists() else 1<<60))
+            # Prefer models under /share/jarvis_prime/models, then /share
+            cands = sorted(list(p.rglob("*.gguf")), key=lambda x: (0 if str(x).startswith("/share/jarvis_prime/models") else (1 if str(x).startswith("/share/jarvis_prime") else 2), x.stat().st_size if x.exists() else 1<<60))
             return cands[0] if cands else None
     except Exception:
         pass
     return None
 
 def _resolve_any_path(model_path: Optional[str], model_url: Optional[str]) -> Optional[Path]:
+    # 1) explicit path (file or dir)
     if model_path:
         p = Path(model_path)
         f = _first_gguf_under(p)
         if f:
             return f
+    # 2) already-prefetched
     if _model_path and Path(_model_path).exists():
         mp = Path(_model_path)
         return _first_gguf_under(mp) or mp
-    return _resolve_model_path()
+    # 3) default resolver (may download if URL(s) provided)
+    p = _resolve_model_path()
+    return p
 
+# override: ensure we always pass a concrete .gguf file to ctransformers
 def _load_local_model(path: Path):
     global _loaded_model
     if _loaded_model is not None:
         return _loaded_model
     if AutoModelForCausalLM is None:
         return None
+    # If a directory was passed, pick a .gguf inside it
     if path.is_dir():
         gg = _first_gguf_under(path)
         if gg:
@@ -224,90 +364,66 @@ def _load_local_model(path: Path):
         print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
         return None
 
-FORMATTER_SYSTEM_PROMPT = (
-    "You are a formatter. Neaten the text for readability.\n"
-    "CRITICAL RULES:\n"
-    " - Do NOT add or remove any information.\n"
-    " - Do NOT paraphrase or summarize.\n"
-    " - Preserve line breaks, URLs, code, emojis, and markdown.\n"
-    " - Return ONLY the rewritten text with minimal punctuation fixes."
-)
-
 def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
             models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
             model_url: Optional[str]=None, model_path: Optional[str]=None,
             model_sha256: Optional[str]=None, allow_profanity: bool=False) -> str:
     src = (text or "").strip()
     if not src:
-        _dbg("skip: empty input")
         return src
 
-    normalized_src = _normalize_conservative(src)
+    imgs = _extract_images(src)
+    system = _load_system_prompt().format(mood=mood)
+    src = _trim_to_ctx(src, system)
 
-    # BYPASS rule: if it contains speed metrics, do not touch with LLM
-    if _has_speed_metrics(normalized_src):
-        _dbg("metrics detected → bypass LLM")
-        return normalized_src
-
-    # engine readiness
+    # 1) Ollama (if configured)
     base = (base_url or OLLAMA_BASE_URL or "").strip()
-    have_ollama = bool(base and requests)
-    local_path = _resolve_any_path(model_path, model_url)
-    have_ctrans = bool(local_path and AutoModelForCausalLM is not None)
-
-    if not have_ollama and not have_ctrans:
-        _dbg("no engine → normalized original")
-        return normalized_src
-
-    budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
-    budget_chars = max(1000, budget_tokens * CHARS_PER_TOKEN)
-    if len(src) > max(500, budget_chars - len(FORMATTER_SYSTEM_PROMPT)):
-        _dbg("input too long → normalized original")
-        return normalized_src
-
-    # Try Ollama
-    if have_ollama:
+    if base and requests:
         try:
             payload = {
                 "model": (models_priority[0] if models_priority else "llama3.1"),
-                "prompt": FORMATTER_SYSTEM_PROMPT + "\n\n" + src,
+                "prompt": system + "\\n\\nINPUT:\\n" + src + "\\n\\nOUTPUT:\\n",
                 "stream": False,
                 "options": {
-                    "seed": SEED, "temperature": TEMP, "top_p": TOP_P, "top_k": TOP_K,
-                    "repeat_penalty": REPEAT_P, "num_ctx": CTX, "num_predict": GEN_TOKENS
+                    "temperature": TEMP, "top_p": TOP_P, "repeat_penalty": REPEAT_P,
+                    "num_ctx": CTX, "num_predict": GEN_TOKENS,
+                    "stop": ["[SYSTEM]", "[INPUT]", "[OUTPUT]"]
                 }
             }
             r = requests.post(base.rstrip("/") + "/api/generate", json=payload, timeout=timeout)
             if r.ok:
                 out = str(r.json().get("response",""))
-                if _loss_detected(src, out):
-                    _dbg("ollama loss → normalized original")
-                    return normalized_src
-                _dbg("ollama ok")
-                return _normalize_conservative(out)
+                return _finalize(out, imgs)
         except Exception as e:
-            _dbg(f"ollama exception: {e}")
+            print(f"[{BOT_NAME}] ⚠️ Ollama call failed: {e}", flush=True)
 
-    # Try local ctransformers
-    if have_ctrans and local_path and Path(local_path).exists():
-        m = _load_local_model(local_path)
+    # 2) Local ctransformers (.gguf)
+    p = _resolve_any_path(model_path, model_url)
+    if p and p.exists():
+        m = _load_local_model(p)
         if m is not None:
-            prompt = f"{FORMATTER_SYSTEM_PROMPT}\n\n{src}"
+            prompt = f"[SYSTEM]\\n{system}\\n[INPUT]\\n{src}\\n[OUTPUT]\\n"
             try:
                 out = m(prompt, max_new_tokens=GEN_TOKENS, temperature=TEMP,
-                        top_p=TOP_P, top_k=TOP_K, repetition_penalty=REPEAT_P, seed=SEED)
-                out_s = str(out or "")
-                if _loss_detected(src, out_s):
-                    _dbg("ctransformers loss → normalized original")
-                    return normalized_src
-                _dbg("ctransformers ok")
-                return _normalize_conservative(out_s)
+                        top_p=TOP_P, repetition_penalty=REPEAT_P,
+                        stop=["[SYSTEM]","[INPUT]","[OUTPUT]"])
+                return _finalize(str(out or ""), imgs)
             except Exception as e:
-                _dbg(f"ctransformers exception: {e}")
+                print(f"[{BOT_NAME}] ⚠️ Generation failed: {e}", flush=True)
 
-    _dbg("no usable result → normalized original")
-    return normalized_src
+    # 3) Fallback (no LLM)
+    return _finalize(src, imgs)
 
-if __name__ == "__main__":
-    sample = "A speedtest is finished:\nPing: 59 ms\nUpload: 117.10 Mbps\nDownload: 609.24 Mbps"
-    print(rewrite(sample))
+
+def engine_status() -> Dict[str,object]:
+    base = OLLAMA_BASE_URL.strip()
+    if base and requests:
+        try:
+            r = requests.get(base.rstrip("/") + "/api/version", timeout=3)
+            ok = r.ok
+        except Exception:
+            ok = False
+        return {"ready": bool(ok), "model_path": "", "backend": "ollama"}
+
+    p = _resolve_any_path(os.getenv("LLM_MODEL_PATH",""), os.getenv("LLM_MODEL_URL",""))
+    return {"ready": bool(p and Path(p).exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
