@@ -110,11 +110,15 @@ export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 # Personality
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
-# ========= LLM per-model toggles =========
+# ========= LLM controls =========
 LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
 CLEANUP=$(jq -r '.llm_cleanup_on_disable // true' "$CONFIG_PATH")
 MODELS_DIR=$(jq -r '.llm_models_dir // "/share/jarvis_prime/models"' "$CONFIG_PATH")
 mkdir -p "$MODELS_DIR" || true
+
+# Performance knobs (new)
+export LLM_TIMEOUT_SECONDS=$(jq -r '.llm_timeout_seconds // 8' "$CONFIG_PATH")
+export LLM_MAX_CPU_PERCENT=$(jq -r '.llm_max_cpu_percent // 70' "$CONFIG_PATH")
 
 PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
 TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
@@ -129,6 +133,7 @@ export LLM_MODEL_PATH=""
 export LLM_MODEL_URLS=""
 export LLM_MODEL_URL=""
 export LLM_ENABLED
+export LLM_STATUS="Disabled"
 
 # Cleanup when toggled off
 if [ "$CLEANUP" = "true" ]; then
@@ -150,10 +155,10 @@ if [ "$LLM_ENABLED" = "true" ]; then
   if [ "$COUNT" -gt 1 ]; then
     echo "[Jarvis Prime] ⚠️ Multiple models enabled; using first true (phi3→tinyllama→qwen05)."
   fi
-  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";
-  elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL";
-  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL";
-  else ENGINE="none-selected"; fi
+  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi‑3";
+  elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL"; LLM_STATUS="TinyLlama";
+  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen‑0.5b";
+  else ENGINE="none-selected"; LLM_STATUS="Disabled"; fi
 
   if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
     if [ ! -s "$ACTIVE_PATH" ]; then
@@ -174,7 +179,9 @@ if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
   exit 1
 fi
 
-banner "$( [ "$LLM_ENABLED" = "true" ] && echo 'enabled' || echo 'disabled' )" "$ENGINE" "$ACTIVE_PATH"
+# Banner reflects OFF state too
+BANNER_LLM="$( [ "$LLM_ENABLED" = "true" ] && echo "$LLM_STATUS" || echo "Disabled" )"
+banner "$BANNER_LLM" "$ENGINE" "${LLM_MODEL_PATH:-}"
 
 # Hand off to bot
 exec python3 /app/bot.py
