@@ -172,6 +172,9 @@ def _load_options():
         data = {}
     merged = json.loads(json.dumps(DEFAULTS))
     merged.update(data)
+    # alias: accept chat_enabled as toggle
+    if 'chat_enabled' in merged and 'personality_enabled' not in merged:
+        merged['personality_enabled'] = bool(merged.get('chat_enabled'))
     _opts = merged
     return merged
 

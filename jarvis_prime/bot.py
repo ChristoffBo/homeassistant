@@ -170,22 +170,33 @@ def stop_sidecars():
         except Exception: pass
 atexit.register(stop_sidecars)
 
-def send_message(title, message, priority=5, extras=None):
-    # Persona-first decoration
-    if _personality and hasattr(_personality, "decorate_by_persona"):
-        title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
-    elif _personality and hasattr(_personality, "decorate"):
-        # fallback to legacy decorate(title, message, mood)
-        title, message = _personality.decorate(title, message, ACTIVE_PERSONA, chance=1.0)
+def send_message(title, message, priority=5, extras=None, decorate=True, decorate_title=True):
+    # Persona-first decoration (optionally keep title clean)
+    t = title
+    b = message
+    if decorate:
+        try:
+            if _personality and hasattr(_personality, "decorate_by_persona"):
+                if decorate_title:
+                    t, b = _personality.decorate_by_persona(t, b, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
+                else:
+                    _t2, b = _personality.decorate_by_persona(t, b, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
+            elif _personality and hasattr(_personality, "decorate"):
+                if decorate_title:
+                    t, b = _personality.decorate(t, b, ACTIVE_PERSONA, chance=1.0)
+                else:
+                    _t2, b = _personality.decorate(t, b, ACTIVE_PERSONA, chance=1.0)
+        except Exception:
+            pass
     if _personality and hasattr(_personality, "apply_priority"):
         try: priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
         except Exception: pass
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
+    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {t}", "message": b, "priority": priority}
     if extras: payload["extras"] = extras
     try:
         r = requests.post(url, json=payload, timeout=8); r.raise_for_status()
-        print(f"[{BOT_NAME}] ✅ Sent: {title}"); return True
+        print(f"[{BOT_NAME}] ✅ Sent: {t}"); return True
     except Exception as e:
         print(f"[{BOT_NAME}] ❌ Failed to send message: {e}"); return False
 
@@ -302,7 +313,7 @@ def post_startup_card():
         f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
         f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
         f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_ENV else 'OFF'}",
+        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
         f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
         f"✉️ SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if bool(merged.get('proxy_enabled', False)) else 'OFF'}",
@@ -310,7 +321,7 @@ def post_startup_card():
         "",
         "Status: All systems nominal",
     ]
-    send_message("Startup", "\n".join(lines), priority=4)
+    send_message("Startup", "\n".join(lines), priority=4, decorate_title=False)
 
 def _try_call(module, fn_name, *args, **kwargs):
     try:
@@ -386,6 +397,26 @@ def _handle_command(ncmd: str):
                 if isinstance(text, tuple): text = text[0]
             except Exception as e: text = f"⚠️ Forecast failed: {e}"
         send_message("Forecast", text or "No data."); return True
+# Joke command via chat module
+if ncmd in ("joke", "pun", "jarvis - joke"):
+    text = None
+    try:
+        m_chat = __import__("chat")
+    except Exception:
+        m_chat = None
+    if m_chat and hasattr(m_chat, "handle_chat_command"):
+        try:
+            t, _e = m_chat.handle_chat_command("joke")
+        except Exception:
+            t = None
+        text = t or text
+    if not text and m_chat and hasattr(m_chat, "get_joke"):
+        try:
+            text = m_chat.get_joke()
+        except Exception:
+            text = None
+    send_message("Joke", text or "No joke available right now."); return True
+
 
     if ncmd in ("upcoming movies", "upcoming films", "movies upcoming", "films upcoming"):
         msg, _ = _try_call(m_arr, "upcoming_movies", 7)
@@ -443,6 +474,18 @@ def main():
     try:
         start_sidecars()
         post_startup_card()
+        # Try to start chat/personality engine if enabled
+        try:
+            if CHAT_ENABLED_ENV or bool(merged.get("chat_enabled", False)):
+                try:
+                    m_chat = __import__("chat")
+                except Exception:
+                    m_chat = None
+                if m_chat and hasattr(m_chat, "start_personality_engine"):
+                    ok = m_chat.start_personality_engine()
+                    print(f"[{BOT_NAME}] 💬 chat engine {'started' if ok else 'disabled'}")
+        except Exception as _ce:
+            print(f"[{BOT_NAME}] ⚠️ Chat engine start failed: {_ce}")
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
     asyncio.run(_run_forever())
