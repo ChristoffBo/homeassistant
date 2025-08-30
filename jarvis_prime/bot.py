@@ -195,11 +195,14 @@ atexit.register(stop_sidecars)
 # Gotify helpers
 # -----------------------------
 def send_message(title, message, priority=5, extras=None, decorate=True):
-    # persona-aware decoration
+    orig_title = title
+    # persona-aware decoration (we will keep the original title to avoid big persona banner)
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
+    title = orig_title
     elif decorate and _personality and hasattr(_personality, "decorate"):
         title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
+    title = orig_title
     if _personality and hasattr(_personality, "apply_priority"):
         try: priority = _personality.apply_priority(priority, CHAT_MOOD)
         except Exception: pass
@@ -499,18 +502,19 @@ async def listen():
         async for msg in ws:
             try:
                 data = json.loads(msg); msg_id = data.get("id")
-                if _is_our_post(data):  # skip our own posts
-                    continue
-
                 title = data.get("title") or ""
                 message = data.get("message") or ""
 
-                # wake-word commands
+                # wake-word commands — process even if posted via same Gotify app
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd:
                     if _handle_command(ncmd):
                         _purge_after(msg_id)
                         continue
+
+                # skip our own non-command posts to avoid loops
+                if _is_our_post(data):
+                    continue
 
                 # normal pass-through → LLM + Beautify
                 final, extras, used_llm, used_beautify = _llm_then_beautify(title, message)
