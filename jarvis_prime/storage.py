@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-# storage.py — SQLite inbox store for Jarvis Prime (with auto‑migrations)
+# storage.py — SQLite inbox store for Jarvis Prime (handles legacy schemas with `ts`)
 from __future__ import annotations
 import os, json, sqlite3, threading, time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 DB_PATH = os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
 _db_lock = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
 
 # ---------------------- internal helpers ----------------------
+def _columns(conn: sqlite3.Connection) -> Set[str]:
+    return {row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create tables and backfill any missing columns on existing DBs."""
+    """Create tables and backfill any missing columns on existing DBs.
+       Supports old DBs that used a NOT NULL `ts` column instead of `created_at`.
+    """
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -19,10 +24,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     # base tables
     conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            title      TEXT NOT NULL,
-            body       TEXT NOT NULL,
-            source     TEXT NOT NULL
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            title  TEXT NOT NULL,
+            body   TEXT NOT NULL,
+            source TEXT NOT NULL
         );
     """)
     conn.execute("""
@@ -32,22 +37,25 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         );
     """)
 
-    # discover existing columns
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+    cols = _columns(conn)
 
     # add missing columns expected by the app
-    # priority
     if "priority" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN priority INTEGER NOT NULL DEFAULT 5")
-    # created_at (unix seconds)
-    if "created_at" not in cols:
+        cols.add("priority")
+
+    # At least one time column must exist (created_at preferred).
+    if "created_at" not in cols and "ts" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
-    # read flag
+        cols.add("created_at")
+
     if "read" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN read INTEGER NOT NULL DEFAULT 0")
-    # extras (JSON text)
+        cols.add("read")
+
     if "extras" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN extras TEXT")
+        cols.add("extras")
 
 def _connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10, isolation_level=None)  # autocommit
@@ -80,14 +88,34 @@ def save_message(title: str, body: str, source: str, priority: int = 5, extras: 
     ts = int(created_at or time.time())
     ex = json.dumps(extras or {}, ensure_ascii=False)
     with _conn() as c:
-        cur = c.execute(
-            "INSERT INTO messages(title, body, source, priority, created_at, read, extras) VALUES(?,?,?,?,?,0,?)",
-            (title, body, source, int(priority), ts, ex),
-        )
+        cols = _columns(c)
+        # Build INSERT dynamically depending on whether legacy `ts` exists
+        time_cols = []
+        params = [title, body, source, int(priority)]
+        if "created_at" in cols:
+            time_cols.append("created_at")
+            params.append(ts)
+        if "ts" in cols:
+            time_cols.append("ts")
+            params.append(ts)
+        # ensure read/extras exist (migrations should have added them)
+        columns_sql = "title, body, source, priority"
+        if time_cols:
+            columns_sql += ", " + ", ".join(time_cols)
+        columns_sql += ", read, extras"
+        sql = f"INSERT INTO messages({columns_sql}) VALUES({','.join(['?']* (4 + len(time_cols) + 2))})"
+        params.extend([0, ex])
+        cur = c.execute(sql, params)
         return int(cur.lastrowid)
 
 def list_messages(limit: int = 50, q: Optional[str] = None, offset: int = 0) -> List[Dict[str, Any]]:
-    sql = "SELECT id, title, body, source, priority, created_at, read, extras FROM messages"
+    c = _conn()
+    cols = _columns(c)
+    time_expr = "COALESCE(created_at, ts)" if "ts" in cols else "created_at"
+    if "created_at" not in cols and "ts" in cols:
+        # Fallback when only legacy `ts` exists
+        time_expr = "ts"
+    sql = f"SELECT id, title, body, source, priority, {time_expr} AS created_at, read, extras FROM messages"
     args: List[Any] = []
     if q:
         like = f"%{q}%"
@@ -95,12 +123,17 @@ def list_messages(limit: int = 50, q: Optional[str] = None, offset: int = 0) -> 
         args += [like, like, like]
     sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
     args += [int(limit), int(offset)]
-    cur = _conn().execute(sql, args)
+    cur = c.execute(sql, args)
     return [_row_to_dict(r) for r in cur.fetchall()]
 
 def get_message(mid: int) -> Optional[Dict[str, Any]]:
-    cur = _conn().execute(
-        "SELECT id, title, body, source, priority, created_at, read, extras FROM messages WHERE id=?",
+    c = _conn()
+    cols = _columns(c)
+    time_expr = "COALESCE(created_at, ts)" if "ts" in cols else "created_at"
+    if "created_at" not in cols and "ts" in cols:
+        time_expr = "ts"
+    cur = c.execute(
+        f"SELECT id, title, body, source, priority, {time_expr} AS created_at, read, extras FROM messages WHERE id=?",
         (int(mid),),
     )
     r = cur.fetchone()
@@ -117,9 +150,13 @@ def mark_read(mid: int, read: bool = True) -> bool:
         return cur.rowcount > 0
 
 def purge_older_than(days: int) -> int:
+    # Use whichever time column is available
+    c = _conn()
+    cols = _columns(c)
+    tcol = "created_at" if "created_at" in cols else ("ts" if "ts" in cols else "created_at")
     cutoff = int(time.time()) - (int(days) * 86400)
-    with _conn() as c:
-        cur = c.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
+    with c:
+        cur = c.execute(f"DELETE FROM messages WHERE {tcol} < ?", (cutoff,))
         return int(cur.rowcount)
 
 def get_retention_days(default: int = 30) -> int:
