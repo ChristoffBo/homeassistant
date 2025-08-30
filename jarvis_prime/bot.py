@@ -134,38 +134,48 @@ def _persona_line(quip_text: str) -> str:
     # Keep it minimal so it aligns nicely with Gotify cards
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
-def send_message(title: str, message: str, priority: int = 5, extras: dict | None = None):
-    """Send a message to Gotify and mirror it to the Jarvis Inbox.
-    Safe: never raises; returns True/False.
-    """
-    url = f"{GOTIFY_URL}/message?token={CLIENT_TOKEN}"
-    payload = {
-        "title": title,
-        "message": message,
-        "priority": priority,
-    }
-    if extras:
-        payload["extras"] = extras
+def send_message(title, message, priority=5, extras=None, decorate=True):
+    orig_title = title
 
-    ok = False
-    status = None
+    # Decorate body, but keep the original title so it doesn't become a banner
+    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
+        title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
+        title = orig_title
+    elif decorate and _personality and hasattr(_personality, "decorate"):
+        title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
+        title = orig_title
+
+    # Persona speaking line at the top
+    try:
+        quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
+    except Exception:
+        quip_text = ""
+    header = _persona_line(quip_text)
+    message = (header + ("\n" + (message or ""))) if header else (message or "")
+
+    # Priority tweak via personality if present
+    if _personality and hasattr(_personality, "apply_priority"):
+        try: priority = _personality.apply_priority(priority, CHAT_MOOD)
+        except Exception: pass
+
+    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
+    if extras: payload["extras"] = extras
     try:
         r = requests.post(url, json=payload, timeout=8)
-        status = r.status_code
         r.raise_for_status()
-        ok = True
-    except Exception as e:
-        print(f"[Jarvis Prime] ⚠️ send_message failed: {e}", flush=True)
-
-    # Mirror into Inbox storage (non-fatal if unavailable)
+        return True
+    except Exception:
+        return False
+    # also publish to ntfy if configured
     try:
-        import storage
-        delivered = {"gotify": {"status": status}} if status is not None else {}
-        storage.save_message("bot", title, message, meta={"via": "bot"}, delivered=delivered)
+        if _ntfy and hasattr(_ntfy, 'publish'):
+            _ntfy.publish(payload.get('title',''), payload.get('message',''), priority=priority, extras=extras)
     except Exception:
         pass
-
-    return ok
+    return True
+    except Exception:
+        return False
 
 def delete_original_message(msg_id: int):
     try:
@@ -456,10 +466,46 @@ async def _digest_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
+
+# ============================
+# Boot banner (stdout; mirrors run.sh)
+# ============================
+def print_boot_banner(llm_enabled: bool, engine: str, model_path: str):
+    lines = [
+        "──────────────────────────────────────────────",
+        f"🧠 {BOT_NAME} {BOT_ICON}",
+        "⚡ Boot sequence initiated...",
+        "   → Personalities loaded",
+        "   → Memory core mounted",
+        "   → Network bridges linked",
+        f"   → LLM: {'enabled' if llm_enabled else 'disabled'}",
+        f"   → Engine: {engine or 'disabled'}",
+        f"   → Model path: {model_path or ''}",
+        "🚀 Systems online — Jarvis is awake!",
+        "──────────────────────────────────────────────",
+    ]
+    for ln in lines:
+        try:
+            print(ln, flush=True)
+        except Exception:
+            pass
+
 # ============================
 # Main
 # ============================
 def main():
+    # Local boot banner to stdout (even if run.sh isn't used)
+    try:
+        llm_enabled = bool(merged.get('llm_enabled'))
+        engine = 'disabled'
+        if llm_enabled:
+            if merged.get('llm_phi3_enabled'): engine = 'phi3'
+            elif merged.get('llm_tinyllama_enabled'): engine = 'tinyllama'
+            elif merged.get('llm_qwen05_enabled'): engine = 'qwen05'
+        model_path = merged.get('llm_model_path','') or merged.get('llm_phi3_path','') or merged.get('llm_tinyllama_path','') or merged.get('llm_qwen05_path','')
+        print_boot_banner(llm_enabled, engine, model_path)
+    except Exception:
+        pass
     resolve_app_id()
     try:
         start_sidecars()
