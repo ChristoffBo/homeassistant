@@ -1408,3 +1408,24 @@ def pick_persona_line(persona: str, time_of_day: str) -> str:
     if not lines:
         return ''
     return random.choice(lines)
+
+
+# --- Added compatibility wrapper (persona-first) ---
+def decorate_by_persona(title: str, message: str, persona: str, time_of_day: str = "", chance: float = 1.0):
+    """
+    Lightweight wrapper that uses pick_persona_line() and prefixes a persona line.
+    Falls back to original decorate() behavior if needed.
+    """
+    try:
+        quip = pick_persona_line(persona, time_of_day) if 'pick_persona_line' in globals() else ''
+        if quip:
+            message = f"{quip}\n\n{message}"
+    except Exception:
+        pass
+    # If an older decorate(title, message, mood, chance) exists, we pass persona as 'mood' token.
+    if 'decorate' in globals():
+        try:
+            return decorate(title, message, persona, chance=chance)
+        except Exception:
+            return title, message
+    return title, message

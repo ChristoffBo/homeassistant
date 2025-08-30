@@ -3,12 +3,18 @@
   "version": "1.1.1",
   "slug": "jarvis_prime",
   "description": "Gotify Smart Bot assistant (Prime edition) with beautifying, monitoring, SMTP intake, proxy, and optional local LLM.",
-  "arch": ["aarch64","amd64","armv7"],
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7"
+  ],
   "startup": "services",
   "boot": "auto",
   "init": false,
   "ingress": false,
-  "map": ["share:rw"],
+  "map": [
+    "share:rw"
+  ],
   "ports": {
     "2525/tcp": 2525,
     "2580/tcp": 2580
@@ -30,28 +36,23 @@
     "weather_time": "07:00",
     "digest_enabled": true,
     "digest_time": "08:00",
-
     "radarr_enabled": false,
     "radarr_url": "",
     "radarr_api_key": "",
     "radarr_time": "07:30",
-
     "sonarr_enabled": false,
     "sonarr_url": "",
     "sonarr_api_key": "",
     "sonarr_time": "07:30",
-
     "technitium_enabled": false,
     "technitium_url": "",
     "technitium_api_key": "",
     "technitium_user": "",
     "technitium_pass": "",
-
     "uptimekuma_enabled": false,
     "uptimekuma_url": "",
     "uptimekuma_api_key": "",
     "uptimekuma_status_slug": "",
-
     "smtp_enabled": false,
     "smtp_bind": "0.0.0.0",
     "smtp_port": 2525,
@@ -61,16 +62,13 @@
     "smtp_rewrite_title_prefix": "[SMTP]",
     "smtp_allow_html": false,
     "smtp_priority_default": 5,
-    "smtp_priority_map": "{}", 
-
+    "smtp_priority_map": "{}",
     "proxy_enabled": false,
     "proxy_bind": "0.0.0.0",
     "proxy_port": 2580,
     "proxy_gotify_url": "",
     "proxy_ntfy_url": "",
-
-    "personality_mood": "calm",
-
+    "personality_mood": "",
     "enable_dude": false,
     "enable_chick": false,
     "enable_nerd": false,
@@ -78,27 +76,31 @@
     "enable_dry": false,
     "enable_ai": false,
     "enable_neutral": true,
-
     "llm_enabled": true,
     "llm_cleanup_on_disable": true,
     "llm_models_dir": "/share/jarvis_prime/models",
     "llm_timeout_seconds": 8,
     "llm_max_cpu_percent": 70,
-
     "llm_phi3_enabled": false,
     "llm_phi3_url": "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf?download=true",
     "llm_phi3_path": "/share/jarvis_prime/models/phi3-mini-q4.gguf",
-
     "llm_tinyllama_enabled": true,
     "llm_tinyllama_url": "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf?download=true",
     "llm_tinyllama_path": "/share/jarvis_prime/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-
     "llm_qwen05_enabled": false,
     "llm_qwen05_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true",
     "llm_qwen05_path": "/share/jarvis_prime/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-
     "custom_aliases": "{}",
-    "chat_enabled": false
+    "chat_enabled": false,
+    "personas_enabled": {
+      "dude": false,
+      "chick": false,
+      "nerd": false,
+      "angry": false,
+      "dry": false,
+      "ai": false,
+      "neutral": true
+    }
   },
   "schema": {
     "bot_name": "str",
@@ -117,28 +119,23 @@
     "weather_time": "str",
     "digest_enabled": "bool",
     "digest_time": "str",
-
     "radarr_enabled": "bool",
     "radarr_url": "str",
     "radarr_api_key": "str",
     "radarr_time": "str",
-
     "sonarr_enabled": "bool",
     "sonarr_url": "str",
     "sonarr_api_key": "str",
     "sonarr_time": "str",
-
     "technitium_enabled": "bool",
     "technitium_url": "str",
     "technitium_api_key": "str",
     "technitium_user": "str",
     "technitium_pass": "str",
-
     "uptimekuma_enabled": "bool",
     "uptimekuma_url": "str",
     "uptimekuma_api_key": "str",
     "uptimekuma_status_slug": "str",
-
     "smtp_enabled": "bool",
     "smtp_bind": "str",
     "smtp_port": "port",
@@ -149,15 +146,12 @@
     "smtp_allow_html": "bool",
     "smtp_priority_default": "int",
     "smtp_priority_map": "str",
-
     "proxy_enabled": "bool",
     "proxy_bind": "str",
     "proxy_port": "port",
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
-
     "personality_mood": "str",
-
     "enable_dude": "bool",
     "enable_chick": "bool",
     "enable_nerd": "bool",
@@ -165,25 +159,20 @@
     "enable_dry": "bool",
     "enable_ai": "bool",
     "enable_neutral": "bool",
-
     "llm_enabled": "bool",
     "llm_cleanup_on_disable": "bool",
     "llm_models_dir": "str",
     "llm_timeout_seconds": "int(1,)",
     "llm_max_cpu_percent": "int(1,100)",
-
     "llm_phi3_enabled": "bool",
     "llm_phi3_url": "str",
     "llm_phi3_path": "str",
-
     "llm_tinyllama_enabled": "bool",
     "llm_tinyllama_url": "str",
     "llm_tinyllama_path": "str",
-
     "llm_qwen05_enabled": "bool",
     "llm_qwen05_url": "str",
     "llm_qwen05_path": "str",
-
     "custom_aliases": "str?",
     "chat_enabled": "bool"
   }
