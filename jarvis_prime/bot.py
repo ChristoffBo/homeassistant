@@ -8,13 +8,11 @@ import websockets
 import re
 import subprocess
 import atexit
-import textwrap
-from datetime import datetime, timezone
 from typing import Optional, Tuple, List
 
-# ---------------------------------
+# ============================
 # Basic env
-# ---------------------------------
+# ============================
 BOT_NAME  = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON  = os.getenv("BOT_ICON", "🧠")
 GOTIFY_URL   = os.getenv("GOTIFY_URL", "").rstrip("/")
@@ -25,7 +23,7 @@ APP_NAME     = os.getenv("JARVIS_APP_NAME", "Jarvis")
 SILENT_REPOST    = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
 
-# Feature toggles (env defaults; overridable by /data/options.json)
+# Feature toggles (env defaults; can be overridden by /data/options.json)
 RADARR_ENABLED     = os.getenv("radarr_enabled", "false").lower() in ("1","true","yes")
 SONARR_ENABLED     = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
 WEATHER_ENABLED    = os.getenv("weather_enabled", "false").lower() in ("1","true","yes")
@@ -36,12 +34,11 @@ KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","t
 SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
-# Persona compatibility token for downstream modules
-CHAT_MOOD = "neutral"
+CHAT_MOOD = "neutral"  # compatibility token; real persona comes from personality_state
 
-# ---------------------------------
-# Load /data/options.json overrides
-# ---------------------------------
+# ============================
+# Load /data/options.json
+# ============================
 def _load_json(path):
     try:
         with open(path, "r") as f:
@@ -62,38 +59,16 @@ try:
     KUMA_ENABLED    = bool(merged.get("uptimekuma_enabled", KUMA_ENABLED))
     SMTP_ENABLED    = bool(merged.get("smtp_enabled", SMTP_ENABLED))
     PROXY_ENABLED   = bool(merged.get("proxy_enabled", PROXY_ENABLED_ENV))
-
-    CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled",   CHAT_ENABLED_ENV))
+    CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
-
-    CHAT_MOOD = str(merged.get("personality_mood", merged.get("chat_mood", CHAT_MOOD)))
-except Exception as e:
-    print(f"[{BOT_NAME}] ⚠️ options load failed: {e}")
+except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
 
-# ---------------------------------
-# LLM settings
-# ---------------------------------
-def _bool_env(name, default=False):
-    v = os.getenv(name)
-    if v is None: return default
-    return v.strip().lower() in ("1","true","yes","on")
-
-LLM_ENABLED           = bool(merged.get("llm_enabled", _bool_env("LLM_ENABLED", False)))
-LLM_TIMEOUT_SECONDS   = int(merged.get("llm_timeout_seconds", int(os.getenv("LLM_TIMEOUT_SECONDS", "12"))))
-LLM_MAX_CPU_PERCENT   = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))))
-LLM_MODELS_PRIORITY   = merged.get("llm_models_priority", [])
-OLLAMA_BASE_URL       = merged.get("ollama_base_url",  os.getenv("OLLAMA_BASE_URL", ""))
-LLM_MODEL_URL         = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
-LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
-LLM_MODEL_SHA256      = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
-PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
-
-# ---------------------------------
-# Optional modules
-# ---------------------------------
+# ============================
+# Load optional modules
+# ============================
 def _load_module(name, path):
     try:
         import importlib.util as _imp
@@ -102,8 +77,8 @@ def _load_module(name, path):
             mod = _imp.module_from_spec(spec)
             spec.loader.exec_module(mod)
             return mod
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ load {name} failed: {e}")
+    except Exception:
+        pass
     return None
 
 _aliases = _load_module("aliases", "/app/aliases.py")
@@ -120,23 +95,22 @@ if _pstate and hasattr(_pstate, "get_active_persona"):
     except Exception:
         pass
 
-# ---------------------------------
+# ============================
 # Sidecars
-# ---------------------------------
+# ============================
 _sidecars: List[subprocess.Popen] = []
 
 def _start_sidecar(cmd, label):
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _sidecars.append(p)
-        print(f"[{BOT_NAME}] ▶️ {label} started (pid={p.pid})")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ {label} failed: {e}")
+    except Exception:
+        pass
 
 def start_sidecars():
-    if bool(os.getenv("proxy_enabled", str(PROXY_ENABLED)).lower() in ("1","true","yes")) or PROXY_ENABLED:
+    if PROXY_ENABLED:
         _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
-    if bool(SMTP_ENABLED):
+    if SMTP_ENABLED:
         _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
 
 def stop_sidecars():
@@ -145,29 +119,20 @@ def stop_sidecars():
         except Exception: pass
 atexit.register(stop_sidecars)
 
-# ---------------------------------
+# ============================
 # Gotify helpers
-# ---------------------------------
-def _bubble_block(text: str, persona: str, position: str = "below", width: int = 64) -> str:
-    """Render a small 'speech bubble' block with subtle box-drawing."""
-    wrap = textwrap.fill(text.strip(), width=width)
-    lines = wrap.splitlines() or [""]
-    head = f"┌─ 🗣️ {persona} says ─"
-    top = head + ("─" * max(0, width - len(head)))
-    body = "\n".join([f"│ {ln}" for ln in lines])
-    bot = "└" + "─" * width
-    block = f"{top}\n{body}\n{bot}"
-    if position == "above":
-        return f"{block}\n\n"
-    return f"\n\n{block}"
-
-_BUBBLE_FLIP = False  # alternates above/below
+# ============================
+def _persona_header(text: str) -> str:
+    """Tiny, neat 'Jarvis is speaking' line above the content."""
+    who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
+    # Trim the first sentence to keep it tidy
+    preview = (text or "").strip().splitlines()[0][:120]
+    return f"💬 {who} says: {preview}".strip()
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
-    global _BUBBLE_FLIP
     orig_title = title
 
-    # persona-aware decoration (keep original title to avoid big banner look)
+    # Decorate body, but keep the original title so it doesn't become a banner
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
         title = orig_title
@@ -175,12 +140,14 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
         title = orig_title
 
-    # turn persona voice into a neat bubble block in body
-    bubble_pos = "above" if _BUBBLE_FLIP else "below"
-    _BUBBLE_FLIP = not _BUBBLE_FLIP
-    persona_tag = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
-    message = f"{message}{_bubble_block(' ' if message is None else '', persona_tag, bubble_pos, width=56)}" if message else _bubble_block("", persona_tag, bubble_pos, width=56)
+    # Small persona header ABOVE the content (no borders, aligned, subtle)
+    header = _persona_header(message or "")
+    if header and message:
+        message = f"{header}\n{message}"
+    elif header:
+        message = header
 
+    # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
         try: priority = _personality.apply_priority(priority, CHAT_MOOD)
         except Exception: pass
@@ -192,8 +159,7 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
         return True
-    except Exception as e:
-        print(f"[{BOT_NAME}] ❌ send_message failed: {e}")
+    except Exception:
         return False
 
 def delete_original_message(msg_id: int):
@@ -215,9 +181,8 @@ def resolve_app_id():
         for app in r.json():
             if app.get("name") == APP_NAME:
                 jarvis_app_id = app.get("id"); break
-        print(f"[{BOT_NAME}] 🆔 app id = {jarvis_app_id}")
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ app id resolve failed: {e}")
+    except Exception:
+        pass
 
 def _is_our_post(data: dict) -> bool:
     try:
@@ -234,9 +199,9 @@ def _should_purge() -> bool:
 def _purge_after(msg_id: int):
     if _should_purge(): delete_original_message(msg_id)
 
-# ---------------------------------
-# LLM + Beautify pipeline
-# ---------------------------------
+# ============================
+# LLM + Beautify
+# ============================
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []
     if used_llm: tags.append("Neural Core ✓")
@@ -244,39 +209,40 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     if not tags: tags.append("Relay Path")
     return "— " + " · ".join(tags)
 
-def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
+def _llm_then_beautify(title: str, message: str):
     used_llm = False; used_beautify = False; final = message or ""; extras = None
-    if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
+    if merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
-            rewritten = _llm.rewrite(
-                text=final, mood=CHAT_MOOD, timeout=LLM_TIMEOUT_SECONDS, cpu_limit=LLM_MAX_CPU_PERCENT,
-                models_priority=LLM_MODELS_PRIORITY, base_url=OLLAMA_BASE_URL,
-                model_url=LLM_MODEL_URL, model_path=LLM_MODEL_PATH, model_sha256=LLM_MODEL_SHA256,
-                allow_profanity=PERSONALITY_ALLOW_PROFANITY,
-            )
-            if rewritten:
-                final = rewritten; used_llm = True
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ LLM skipped: {e}")
+            final2 = _llm.rewrite(text=final, mood=CHAT_MOOD, timeout=int(merged.get("llm_timeout_seconds",12)),
+                                  cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
+                                  models_priority=merged.get("llm_models_priority", []),
+                                  base_url=merged.get("ollama_base_url",""),
+                                  model_url=merged.get("llm_model_url",""),
+                                  model_path=merged.get("llm_model_path",""),
+                                  model_sha256=merged.get("llm_model_sha256",""),
+                                  allow_profanity=bool(merged.get("personality_allow_profanity", False)))
+            if final2: final = final2; used_llm = True
+        except Exception:
+            pass
 
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
             final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
             used_beautify = True
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ beautify error: {e}")
+        except Exception:
+            pass
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
         final = f"{final.rstrip()}\n\n{foot}"
     return final, extras, used_llm, used_beautify
 
-# ---------------------------------
-# Command parsing
-# ---------------------------------
+# ============================
+# Commands
+# ============================
 def _clean(s: str) -> str:
     s = s.lower().strip()
-    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"[^\w\s]", " ", s)  # strip punctuation
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -291,30 +257,16 @@ def normalize_cmd(cmd: str) -> str:
 def extract_command_from(title: str, message: str) -> str:
     tlow, mlow = (title or "").lower(), (message or "").lower()
     if tlow.startswith("jarvis"):
-        rest = tlow.replace("jarvis", "", 1).strip()
+        rest = tlow.replace("jarvis","",1).strip()
         return rest or (mlow.replace("jarvis","",1).strip() if mlow.startswith("jarvis") else mlow.strip())
     if mlow.startswith("jarvis"): return mlow.replace("jarvis","",1).strip()
     return ""
 
-# ---------------------------------
-# Startup HUD
-# ---------------------------------
 def post_startup_card():
-    st = {}
-    if LLM_ENABLED and _llm and hasattr(_llm, "engine_status"):
-        try: st = _llm.engine_status() or {}
-        except Exception: st = {}
-
-    engine_online = bool(st.get("ready")) if LLM_ENABLED else False
-    backend = (st.get("backend") or "").strip()
-    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
-    model_token = os.path.basename(model_path) if model_path else backend
-    llm_line = f"🧠 LLM: {('Disabled' if not engine_online else (model_token or 'Formatter'))}"
-
     lines = [
         "🧬 Prime Neural Boot",
-        f"🛰️ Engine: {'Neural Core — ONLINE' if engine_online else 'Neural Core — OFFLINE'}",
-        llm_line,
+        "🛰️ Engine: Neural Core — ONLINE" if merged.get("llm_enabled") else "🛰️ Engine: Neural Core — OFFLINE",
+        f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
         f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
         "",
         "Modules:",
@@ -332,9 +284,6 @@ def post_startup_card():
     ]
     send_message("Startup", "\n".join(lines), priority=4, decorate=False)
 
-# ---------------------------------
-# Command handling
-# ---------------------------------
 def _try_call(module, fn_name, *args, **kwargs):
     try:
         if module and hasattr(module, fn_name):
@@ -344,7 +293,6 @@ def _try_call(module, fn_name, *args, **kwargs):
     return None, None
 
 def _handle_command(ncmd: str) -> bool:
-    # lazy imports
     m_arr = m_weather = m_kuma = m_tech = m_digest = m_chat = None
     try: m_arr = __import__("arr")
     except Exception: pass
@@ -360,20 +308,14 @@ def _handle_command(ncmd: str) -> bool:
     except Exception: pass
 
     if ncmd in ("help", "commands"):
-        help_text = (
-            "🤖 Jarvis Prime — Commands\n"
-            f"Persona: {ACTIVE_PERSONA} ({PERSONA_TOD})\n\n"
-            "Core: dns | kuma | weather | forecast | digest | joke\n"
-            "ARR: upcoming movies | upcoming series | movie count | series count | longest movie | longest series"
-        )
-        send_message("Help", help_text)
+        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...")
         return True
 
     if ncmd in ("digest", "daily digest", "summary"):
         if m_digest and hasattr(m_digest, "build_digest"):
             title2, msg2, pr = m_digest.build_digest(merged)
             if _personality and hasattr(_personality, "quip"):
-                try: msg2 += f"\n\n{_personality.quip(ACTIVE_PERSONA)}"
+                try: msg2 += f\"\n\n{_personality.quip(ACTIVE_PERSONA)}\"
                 except Exception: pass
             send_message("Digest", msg2, priority=pr)
         else:
@@ -451,12 +393,11 @@ def _handle_command(ncmd: str) -> bool:
 
     return False
 
-# ---------------------------------
+# ============================
 # WebSocket listener
-# ---------------------------------
+# ============================
 async def listen():
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
-    print(f"[{BOT_NAME}] WS → {ws_url}")
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         async for raw in ws:
             try:
@@ -464,7 +405,7 @@ async def listen():
                 title = data.get("title") or ""
                 message = data.get("message") or ""
 
-                # wake-word first (works even if posted via same app)
+                # wake-word first so commands work even if posted via same app
                 ncmd = normalize_cmd(extract_command_from(title, message))
                 if ncmd and _handle_command(ncmd):
                     _purge_after(msg_id)
@@ -477,27 +418,26 @@ async def listen():
                 final, extras, used_llm, used_beautify = _llm_then_beautify(title, message)
                 send_message(title or "Notification", final, priority=5, extras=extras)
                 _purge_after(msg_id)
-            except Exception as e:
-                print(f"[{BOT_NAME}] ⚠️ stream error: {e}")
+            except Exception:
+                pass
 
-# ---------------------------------
+# ============================
 # Main
-# ---------------------------------
+# ============================
 def main():
     resolve_app_id()
     try:
         start_sidecars()
         post_startup_card()
-    except Exception as e:
-        print(f"[{BOT_NAME}] ⚠️ startup error: {e}")
+    except Exception:
+        pass
     asyncio.run(_run_forever())
 
 async def _run_forever():
     while True:
         try:
             await listen()
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ reconnect in 3s: {e}")
+        except Exception:
             await asyncio.sleep(3)
 
 if __name__ == "__main__":
