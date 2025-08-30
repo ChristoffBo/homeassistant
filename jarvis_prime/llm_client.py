@@ -61,7 +61,76 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL","")
 _loaded_model = None
 _model_path: Optional[Path] = None
 
-# === Utils for cleaning ===
+def _download_to(url: str, dest: Path) -> bool:
+    if not requests: return False
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".part")
+        with requests.get(url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(1<<20):
+                    if chunk: f.write(chunk)
+        tmp.replace(dest)
+        return True
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ Download failed: {e}", flush=True)
+        return False
+
+def _resolve_model_path() -> Optional[Path]:
+    if str(MODEL_PATH):
+        p=Path(MODEL_PATH)
+        if p.is_file() and p.suffix.lower()==".gguf": return p
+        if p.is_dir():
+            best=_choose_preferred(list(p.rglob("*.gguf")))
+            if best: return best
+    best=_choose_preferred(_list_local_models())
+    if best: return best
+    urls = MODEL_URLS or ([MODEL_URL] if MODEL_URL else [])
+    for u in urls:
+        name=u.split("/")[-1] or "model.gguf"
+        if not name.endswith(".gguf"): name += ".gguf"
+        dest=Path("/share/jarvis_prime/models")/name
+        if dest.exists(): return dest
+        if _download_to(u, dest): return dest
+    return None
+
+def prefetch_model(model_path: Optional[str]=None, model_url: Optional[str]=None)->None:
+    global _model_path
+    if model_path:
+        p=Path(model_path)
+        if p.is_file():
+            _model_path=p; return
+    _model_path=_resolve_model_path()
+
+def engine_status() -> Dict[str,object]:
+    base=OLLAMA_BASE_URL.strip()
+    if base and requests:
+        try:
+            r=requests.get(base.rstrip("/")+"/api/version",timeout=3)
+            ok=r.ok
+        except Exception:
+            ok=False
+        return {"ready": bool(ok), "model_path":"", "backend":"ollama"}
+    p=_model_path or _resolve_model_path()
+    return {"ready": bool(p and p.exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
+
+def _load_local_model(path: Path):
+    global _loaded_model
+    if _loaded_model is not None: return _loaded_model
+    if AutoModelForCausalLM is None: return None
+    try:
+        _loaded_model = AutoModelForCausalLM.from_pretrained(
+            str(path),
+            model_type="llama",
+            gpu_layers=int(os.getenv("LLM_GPU_LAYERS","0")),
+            context_length=CTX,
+        )
+        return _loaded_model
+    except Exception as e:
+        print(f"[{BOT_NAME}] ⚠️ LLM load failed: {e}", flush=True)
+        return None
+
 IMG_MD_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
 IMG_URL_RE = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
 PLACEHOLDER_RE = re.compile(r'\[([A-Z][A-Z0-9 _:/\-\.,]{2,})\]')
@@ -161,18 +230,65 @@ def _finalize(text: str, imgs: str) -> str:
     out = _cap(out)
     return out + ("\n"+imgs if imgs else "")
 
-# =================== Formatter-only LLM ===================
+def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
+            models_priority: Optional[List[str]] = None, base_url: Optional[str]=None,
+            model_url: Optional[str]=None, model_path: Optional[str]=None,
+            model_sha256: Optional[str]=None, allow_profanity: bool=False) -> str:
+    src=(text or "").strip()
+    if not src: return src
 
-def rewrite(text: str, **kwargs) -> str:
-    """Strict formatter: clean, concise, remove nothing, no personality"""
-    src = (text or "").strip()
-    if not src:
-        return src
-    imgs = _extract_images(src)
+    imgs=_extract_images(src)
+    src=_trim_to_ctx(src, "")
+
+    # 1) Try local ctransformers
+    p = Path(model_path) if model_path else (_model_path or _resolve_model_path())
+    if p and p.exists():
+        m=_load_local_model(p)
+        if m is not None:
+            try:
+                out=m(src, max_new_tokens=GEN_TOKENS, temperature=TEMP,
+                       top_p=TOP_P, repetition_penalty=REPEAT_P, stop=[])
+                return _finalize(str(out or ""), imgs)
+            except Exception as e:
+                print(f"[{BOT_NAME}] ⚠️ Generation failed: {e}", flush=True)
+
+    # 2) Fallback: strict formatting only
     return _finalize(src, imgs)
 
-# =================== Status ===================
+# === PATCH: robust path resolution ===
+
+def _first_gguf_under(p: Path) -> Optional[Path]:
+    try:
+        if p.is_file() and p.suffix.lower() == ".gguf":
+            return p
+        if p.is_dir():
+            cands = sorted(list(p.rglob("*.gguf")), key=lambda x: (0 if str(x).startswith("/share/jarvis_prime/models") else (1 if str(x).startswith("/share/jarvis_prime") else 2), x.stat().st_size if x.exists() else 1<<60))
+            return cands[0] if cands else None
+    except Exception:
+        pass
+    return None
+
+def _resolve_any_path(model_path: Optional[str], model_url: Optional[str]) -> Optional[Path]:
+    if model_path:
+        p = Path(model_path)
+        f = _first_gguf_under(p)
+        if f:
+            return f
+    if _model_path and Path(_model_path).exists():
+        mp = Path(_model_path)
+        return _first_gguf_under(mp) or mp
+    p = _resolve_model_path()
+    return p
 
 def engine_status() -> Dict[str,object]:
-    p=_model_path or _resolve_model_path()
+    base = OLLAMA_BASE_URL.strip()
+    if base and requests:
+        try:
+            r = requests.get(base.rstrip("/") + "/api/version", timeout=3)
+            ok = r.ok
+        except Exception:
+            ok = False
+        return {"ready": bool(ok), "model_path": "", "backend": "ollama"}
+
+    p = _resolve_any_path(os.getenv("LLM_MODEL_PATH",""), os.getenv("LLM_MODEL_URL",""))
     return {"ready": bool(p and Path(p).exists()), "model_path": str(p or ""), "backend": "ctransformers" if p else "none"}
