@@ -1,43 +1,44 @@
 #!/usr/bin/env python3
-# /app/ntfy_client.py — tiny publisher for ntfy (self-hosted or ntfy.sh)
-import os, base64, requests
+from __future__ import annotations
+import os, json, requests
 from typing import Optional, Dict, Any
 
-NTFY_URL   = (os.getenv("NTFY_URL","") or "").rstrip("/")
-NTFY_TOPIC = os.getenv("NTFY_TOPIC","") or ""
-NTFY_USER  = os.getenv("NTFY_USER","") or ""
-NTFY_PASS  = os.getenv("NTFY_PASS","") or ""
-NTFY_TOKEN = os.getenv("NTFY_TOKEN","") or ""
-NTFY_ENABLED = (os.getenv("NTFY_ENABLED","false").strip().lower() in ("1","true","yes"))
+NTFY_URL   = (os.getenv("NTFY_URL", "") or "").rstrip("/")
+NTFY_TOPIC = os.getenv("NTFY_TOPIC", "jarvis")
+NTFY_USER  = os.getenv("NTFY_USER", "")
+NTFY_PASS  = os.getenv("NTFY_PASS", "")
+NTFY_TOKEN = os.getenv("NTFY_TOKEN", "")
 
 _session = requests.Session()
 
-def _headers(priority: int = 3, tags: Optional[str] = None, extras: Optional[Dict[str,Any]] = None):
-    h = {"X-Priority": str(priority)}
-    if tags: h["X-Tags"] = tags
+def _auth_headers() -> Dict[str,str]:
+    h = {}
     if NTFY_TOKEN:
         h["Authorization"] = f"Bearer {NTFY_TOKEN}"
-    elif NTFY_USER and NTFY_PASS:
-        tok = base64.b64encode(f"{NTFY_USER}:{NTFY_PASS}".encode("utf-8")).decode("ascii")
-        h["Authorization"] = "Basic " + tok
-    if extras:
-        try:
-            # Attach extras as json in a custom header (visible in payload in some clients)
-            import json as _json
-            h["X-Attachments"] = _json.dumps(extras)[:1500]
-        except Exception:
-            pass
     return h
 
-def publish(title: str, message: str, priority: int = 3, tags: Optional[str] = None, extras=None) -> bool:
-    if not NTFY_ENABLED or not NTFY_URL or not NTFY_TOPIC:
-        return False
+def publish(title: str, message: str, *, topic: Optional[str] = None,
+            click: Optional[str] = None, tags: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Publish to ntfy topic via HTTP POST (docs: https://docs.ntfy.sh/publish/).
+    Returns dict: {"status": http_status, "id": "..."} or {"error": "..."}.
+    """
+    base = NTFY_URL or "https://ntfy.sh"
+    t = topic or (NTFY_TOPIC or "jarvis")
+    url = f"{base}/{t}"
+    headers = _auth_headers()
+    data = {"title": title or "", "message": message or ""}
+    if click: headers["X-Click"] = click
+    if tags:  headers["X-Tags"] = tags
     try:
-        url = f"{NTFY_URL}/{NTFY_TOPIC}"
-        data = message or ""
-        h = _headers(priority=priority, tags=tags, extras=extras)
-        if title: h["Title"] = title
-        r = _session.post(url, data=data.encode("utf-8"), headers=h, timeout=8)
-        return 200 <= r.status_code < 300
-    except Exception:
-        return False
+        if NTFY_USER or NTFY_PASS:
+            r = _session.post(url, headers=headers, data=data, auth=(NTFY_USER, NTFY_PASS), timeout=8)
+        else:
+            r = _session.post(url, headers=headers, data=data, timeout=8)
+        try:
+            j = r.json()
+        except Exception:
+            j = {}
+        return {"status": r.status_code, **({"id": j.get("id")} if isinstance(j, dict) else {})}
+    except Exception as e:
+        return {"error": str(e)}

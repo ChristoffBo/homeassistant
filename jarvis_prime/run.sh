@@ -1,187 +1,101 @@
 #!/usr/bin/env bash
-# shellcheck shell=bash
 set -euo pipefail
 
-CONFIG_PATH=/data/options.json
+echo "──────────────────────────────────────────────"
+echo "🧠 Jarvis Prime — Universal Notify Orchestrator"
+echo "⚙️  Booting services..."
+echo "──────────────────────────────────────────────"
 
-# -------- helper: banner --------
-banner() {
-  echo "──────────────────────────────────────────────"
-  echo "🧠 $(jq -r '.bot_name' "$CONFIG_PATH") $(jq -r '.bot_icon' "$CONFIG_PATH")"
-  echo "⚡ Boot sequence initiated..."
-  echo "   → Personalities loaded"
-  echo "   → Memory core mounted"
-  echo "   → Network bridges linked"
-  echo "   → LLM: $1"
-  echo "   → Engine: $2"
-  echo "   → Model path: $3"
-  echo "🚀 Systems online — Jarvis is awake!"
-  echo "──────────────────────────────────────────────"
-}
+OPTIONS_FILE="/data/options.json"
 
-# -------- helper: simple Python downloader --------
-py_download() {
-python3 - "$1" "$2" <<'PY'
-import sys, os, urllib.request, shutil, pathlib
-url, dst = sys.argv[1], sys.argv[2]
-path = pathlib.Path(dst)
-path.parent.mkdir(parents=True, exist_ok=True)
-tmp = str(path)+".part"
-try:
-    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
-        shutil.copyfileobj(r, f, length=1024*1024)
-    os.replace(tmp, dst)
-    print(f"[Downloader] Fetched -> {dst}")
-except Exception as e:
+# Parse /data/options.json safely using Python (jq not guaranteed)
+export_envs=$(python3 - <<'PY'
+import json, sys, os, pathlib
+p=pathlib.Path("/data/options.json")
+d={}
+if p.exists():
     try:
-        if os.path.exists(tmp): os.remove(tmp)
-    except: pass
-    print(f"[Downloader] Failed: {e}")
-    sys.exit(1)
+        d=json.loads(p.read_text())
+    except Exception as e:
+        print(f"# options.json parse error: {e}")
+def env_bool(key, default):
+    v = d.get(key, default)
+    if isinstance(v, bool): return "true" if v else "false"
+    if isinstance(v, str):  return "true" if v.lower() in ("1","true","yes","on") else "false"
+    return "true" if v else "false"
+def env_int(key, default):
+    try: return str(int(d.get(key, default)))
+    except: return str(default)
+def env_str(key, default=""):
+    v = d.get(key, default)
+    return str(v)
+
+out = {}
+# Ingest toggles
+out["INGEST_GOTIFY_ENABLED"] = env_bool("ingest_gotify_enabled", True)
+out["INGEST_NTFY_ENABLED"]   = env_bool("ingest_ntfy_enabled", False)
+out["INGEST_SMTP_ENABLED"]   = env_bool("ingest_smtp_enabled", True)
+# Gotify
+out["GOTIFY_URL"]            = env_str("gotify_url", "")
+out["GOTIFY_CLIENT_TOKEN"]   = env_str("gotify_client_token", "")
+out["GOTIFY_APP_TOKEN"]      = env_str("gotify_app_token", "")
+# ntfy
+out["NTFY_URL"]              = env_str("ntfy_url", "")
+out["NTFY_TOPIC"]            = env_str("ntfy_topic", "jarvis")
+out["NTFY_USER"]             = env_str("ntfy_user", "")
+out["NTFY_PASS"]             = env_str("ntfy_pass", "")
+out["NTFY_TOKEN"]            = env_str("ntfy_token", "")
+# Inbound SMTP
+out["INTAKE_SMTP_HOST"]      = env_str("smtp_host","0.0.0.0")
+out["INTAKE_SMTP_PORT"]      = env_int("smtp_port",2525)
+# Fan-out toggles
+out["PUSH_GOTIFY_ENABLED"]   = env_bool("push_gotify_enabled", True)
+out["PUSH_NTFY_ENABLED"]     = env_bool("push_ntfy_enabled", False)
+out["PUSH_SMTP_ENABLED"]     = env_bool("push_smtp_enabled", False)
+# Outbound SMTP
+out["OUT_SMTP_HOST"]         = env_str("push_smtp_host","smtp.gmail.com")
+out["OUT_SMTP_PORT"]         = env_int("push_smtp_port",587)
+out["OUT_SMTP_USER"]         = env_str("push_smtp_user","")
+out["OUT_SMTP_PASS"]         = env_str("push_smtp_pass","")
+out["OUT_SMTP_TO"]           = env_str("push_smtp_to","")
+# Inbox retention
+out["RETENTION_DAYS"]        = env_int("retention_days",30)
+out["AUTO_PURGE_POLICY"]     = env_str("auto_purge_policy","off")
+for k,v in out.items():
+    print(f'export {k}="{v}"')
 PY
-}
+)
 
-# ========= CORE ENV (required by bot.py) =========
-export BOT_NAME=$(jq -r '.bot_name' "$CONFIG_PATH")
-export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
-export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_PATH")
-export GOTIFY_CLIENT_TOKEN=$(jq -r '.gotify_client_token' "$CONFIG_PATH")
-export GOTIFY_APP_TOKEN=$(jq -r '.gotify_app_token' "$CONFIG_PATH")
-export JARVIS_APP_NAME=$(jq -r '.jarvis_app_name' "$CONFIG_PATH")
+# shellcheck disable=SC2086
+eval "${export_envs}"
 
-export RETENTION_HOURS=$(jq -r '.retention_hours' "$CONFIG_PATH")
-export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' "$CONFIG_PATH")
-export SILENT_REPOST=$(jq -r '.silent_repost // "true"' "$CONFIG_PATH")
+# Show boot card
+echo "   → Ingest: gotify=${INGEST_GOTIFY_ENABLED} ntfy=${INGEST_NTFY_ENABLED} smtp=${INGEST_SMTP_ENABLED}"
+echo "   → Push:   gotify=${PUSH_GOTIFY_ENABLED} ntfy=${PUSH_NTFY_ENABLED} smtp=${PUSH_SMTP_ENABLED}"
+echo "   → Inbox:  retention_days=${RETENTION_DAYS} policy=${AUTO_PURGE_POLICY}"
+echo "   → URLs:   gotify=${GOTIFY_URL:-unset} ntfy=${NTFY_URL:-unset}"
 
-# Weather
-export weather_enabled=$(jq -r '.weather_enabled // false' "$CONFIG_PATH")
-export weather_lat=$(jq -r '.weather_lat // 0' "$CONFIG_PATH")
-export weather_lon=$(jq -r '.weather_lon // 0' "$CONFIG_PATH")
-export weather_city=$(jq -r '.weather_city // ""' "$CONFIG_PATH")
-export weather_time=$(jq -r '.weather_time // "07:00"' "$CONFIG_PATH")
+# Start Inbox API/UI
+echo "[launcher] starting inbox server (api_messages.py) on :2581"
+python3 -u /app/api_messages.py &
+PID_INBOX=$!
 
-# Digest
-export digest_enabled=$(jq -r '.digest_enabled // false' "$CONFIG_PATH")
-export digest_time=$(jq -r '.digest_time // "08:00"' "$CONFIG_PATH")
-
-# Radarr/Sonarr
-export radarr_enabled=$(jq -r '.radarr_enabled // false' "$CONFIG_PATH")
-export radarr_url=$(jq -r '.radarr_url // ""' "$CONFIG_PATH")
-export radarr_api_key=$(jq -r '.radarr_api_key // ""' "$CONFIG_PATH")
-export radarr_time=$(jq -r '.radarr_time // "07:30"' "$CONFIG_PATH")
-
-export sonarr_enabled=$(jq -r '.sonarr_enabled // false' "$CONFIG_PATH")
-export sonarr_url=$(jq -r '.sonarr_url // ""' "$CONFIG_PATH")
-export sonarr_api_key=$(jq -r '.sonarr_api_key // ""' "$CONFIG_PATH")
-export sonarr_time=$(jq -r '.sonarr_time // "07:30"' "$CONFIG_PATH")
-
-# Technitium DNS
-export technitium_enabled=$(jq -r '.technitium_enabled // false' "$CONFIG_PATH")
-export technitium_url=$(jq -r '.technitium_url // ""' "$CONFIG_PATH")
-export technitium_api_key=$(jq -r '.technitium_api_key // ""' "$CONFIG_PATH")
-export technitium_user=$(jq -r '.technitium_user // ""' "$CONFIG_PATH")
-export technitium_pass=$(jq -r '.technitium_pass // ""' "$CONFIG_PATH")
-
-# Uptime Kuma
-export uptimekuma_enabled=$(jq -r '.uptimekuma_enabled // false' "$CONFIG_PATH")
-export uptimekuma_url=$(jq -r '.uptimekuma_url // ""' "$CONFIG_PATH")
-export uptimekuma_api_key=$(jq -r '.uptimekuma_api_key // ""' "$CONFIG_PATH")
-export uptimekuma_status_slug=$(jq -r '.uptimekuma_status_slug // ""' "$CONFIG_PATH")
-
-# SMTP intake
-export smtp_enabled=$(jq -r '.smtp_enabled // false' "$CONFIG_PATH")
-export smtp_bind=$(jq -r '.smtp_bind // "0.0.0.0"' "$CONFIG_PATH")
-export smtp_port=$(jq -r '.smtp_port // 2525' "$CONFIG_PATH")
-export smtp_max_bytes=$(jq -r '.smtp_max_bytes // 262144' "$CONFIG_PATH")
-export smtp_dummy_rcpt=$(jq -r '.smtp_dummy_rcpt // "alerts@jarvis.local"' "$CONFIG_PATH")
-export smtp_accept_any_auth=$(jq -r '.smtp_accept_any_auth // true' "$CONFIG_PATH")
-export smtp_rewrite_title_prefix=$(jq -r '.smtp_rewrite_title_prefix // "[SMTP]"' "$CONFIG_PATH")
-export smtp_allow_html=$(jq -r '.smtp_allow_html // false' "$CONFIG_PATH")
-export smtp_priority_default=$(jq -r '.smtp_priority_default // 5' "$CONFIG_PATH")
-export smtp_priority_map=$(jq -r '.smtp_priority_map // "{}"' "$CONFIG_PATH")
-
-# Proxy
-export proxy_enabled=$(jq -r '.proxy_enabled // false' "$CONFIG_PATH")
-export proxy_bind=$(jq -r '.proxy_bind // "0.0.0.0"' "$CONFIG_PATH")
-export proxy_port=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
-export proxy_gotify_url=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
-export proxy_ntfy_url=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
-
-# Personality
-export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
-
-# ========= LLM controls =========
-LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
-CLEANUP=$(jq -r '.llm_cleanup_on_disable // true' "$CONFIG_PATH")
-MODELS_DIR=$(jq -r '.llm_models_dir // "/share/jarvis_prime/models"' "$CONFIG_PATH")
-mkdir -p "$MODELS_DIR" || true
-
-# Performance knobs (new)
-export LLM_TIMEOUT_SECONDS=$(jq -r '.llm_timeout_seconds // 8' "$CONFIG_PATH")
-export LLM_MAX_CPU_PERCENT=$(jq -r '.llm_max_cpu_percent // 70' "$CONFIG_PATH")
-
-PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
-TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
-QWEN_ON=$(jq -r '.llm_qwen05_enabled // false' "$CONFIG_PATH")
-
-PHI_URL=$(jq -r '.llm_phi3_url // ""' "$CONFIG_PATH");  PHI_PATH=$(jq -r '.llm_phi3_path // ""' "$CONFIG_PATH")
-TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH"); TINY_PATH=$(jq -r '.llm_tinyllama_path // ""' "$CONFIG_PATH")
-QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH");  QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH")
-
-# defaults for LLM env
-export LLM_MODEL_PATH=""
-export LLM_MODEL_URLS=""
-export LLM_MODEL_URL=""
-export LLM_ENABLED
-export LLM_STATUS="Disabled"
-
-# Cleanup when toggled off
-if [ "$CLEANUP" = "true" ]; then
-  if [ "$LLM_ENABLED" = "false" ]; then
-    rm -f "$PHI_PATH" "$TINY_PATH" "$QWEN_PATH" || true
-  else
-    [ "$PHI_ON"  = "false" ] && [ -f "$PHI_PATH" ]  && rm -f "$PHI_PATH"  || true
-    [ "$TINY_ON" = "false" ] && [ -f "$TINY_PATH" ] && rm -f "$TINY_PATH" || true
-    [ "$QWEN_ON" = "false" ] && [ -f "$QWEN_PATH" ] && rm -f "$QWEN_PATH" || true
-  fi
+# Start SMTP intake if enabled
+if [ "${INGEST_SMTP_ENABLED}" = "true" ]; then
+  echo "[launcher] starting SMTP intake (smtp_server.py) on ${INTAKE_SMTP_HOST}:${INTAKE_SMTP_PORT}"
+  python3 -u /app/smtp_server.py &
+  PID_SMTP=$!
+else
+  PID_SMTP=
 fi
 
-ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
-if [ "$LLM_ENABLED" = "true" ]; then
-  COUNT=0
-  [ "$PHI_ON"  = "true" ] && COUNT=$((COUNT+1))
-  [ "$TINY_ON" = "true" ] && COUNT=$((COUNT+1))
-  [ "$QWEN_ON" = "true" ] && COUNT=$((COUNT+1))
-  if [ "$COUNT" -gt 1 ]; then
-    echo "[Jarvis Prime] ⚠️ Multiple models enabled; using first true (phi3→tinyllama→qwen05)."
-  fi
-  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi‑3";
-  elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL"; LLM_STATUS="TinyLlama";
-  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen‑0.5b";
-  else ENGINE="none-selected"; LLM_STATUS="Disabled"; fi
-
-  if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
-    if [ ! -s "$ACTIVE_PATH" ]; then
-      echo "[Jarvis Prime] 🔮 Downloading model ($ENGINE)…"
-      py_download "$ACTIVE_URL" "$ACTIVE_PATH"
-    fi
-    if [ -s "$ACTIVE_PATH" ]; then
-      export LLM_MODEL_PATH="$ACTIVE_PATH"
-      export LLM_MODEL_URL="$ACTIVE_URL"
-      export LLM_MODEL_URLS="$ACTIVE_URL"
-    fi
-  fi
+# Start proxy (optional, ignore errors if not present)
+if [ -f /app/proxy.py ]; then
+  echo "[launcher] starting proxy (proxy.py)"
+  python3 -u /app/proxy.py &
+  PID_PROXY=$! || true
 fi
 
-# Guard against empty Gotify settings (prevent reconnect loop)
-if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
-  echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token in options.json — aborting."
-  exit 1
-fi
-
-# Banner reflects OFF state too
-BANNER_LLM="$( [ "$LLM_ENABLED" = "true" ] && echo "$LLM_STATUS" || echo "Disabled" )"
-banner "$BANNER_LLM" "$ENGINE" "${LLM_MODEL_PATH:-}"
-
-# Hand off to bot
-exec python3 /app/bot.py
+# Finally start bot
+echo "[launcher] starting bot (bot.py)"
+exec python3 -u /app/bot.py

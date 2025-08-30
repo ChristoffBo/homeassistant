@@ -1,43 +1,45 @@
-FROM debian:stable-slim
+# syntax=docker/dockerfile:1.7
+#
+# Jarvis Prime — Debian-based add-on image
+# - Ingest: Gotify/ntfy/SMTP
+# - Inbox API/UI with Ingress (port 2581 inside)
+# - Fan-out: Gotify/ntfy/SMTP (Gmail/relay)
+# - Keeps LLM, Beautifier, wake-words, and other modules intact
+#
+FROM debian:bookworm-slim
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    python3 python3-pip curl jq \
-    && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Africa/Johannesburg \
+    DEBIAN_FRONTEND=noninteractive
+
+# Base OS deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        ca-certificates tzdata curl dumb-init && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy requirements and install Python deps
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+# Python deps first for better layer caching
+COPY requirements.txt /app/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/requirements.txt
 
-# Default system prompt (baked into image). Runtime falls back to /share/jarvis_prime/memory if present.
-RUN mkdir -p /app/memory
-COPY memory/system_prompt.txt /app/memory/system_prompt.txt
+# App files
+# Copy everything (bot, modules, inbox API/UI, run.sh, etc.).
+COPY . /app/
 
-# Copy all modules and run script
-COPY run.sh /run.sh
-COPY bot.py /app/bot.py
-COPY chat.py /app/chat.py
-COPY arr.py /app/arr.py
-COPY weather.py /app/weather.py
-COPY technitium.py /app/technitium.py
-COPY digest.py /app/digest.py
-COPY uptimekuma.py /app/uptimekuma.py
-COPY aliases.py /app/aliases.py
-COPY personality.py /app/personality.py
-COPY smtp_server.py /app/smtp_server.py
-COPY proxy.py /app/proxy.py
-COPY beautify.py /app/beautify.py
+# Ensure launcher is executable
+RUN chmod +x /app/run.sh
 
-# New modules for LLM + Memory
-COPY llm_client.py /app/llm_client.py
-COPY llm_memory.py /app/llm_memory.py
-COPY personality_state.py /app/personality_state.py
+# Expose service ports (SMTP intake, proxy if used, Inbox API/UI)
+EXPOSE 2525/tcp 2580/tcp 2581/tcp
 
-# Optional defaults for LLM behaviour
-ENV LLM_MAX_LINES=10
+# Simple healthcheck: Inbox API responds
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
+    CMD curl -fsS http://127.0.0.1:2581/api/messages?limit=1 || exit 1
 
-RUN chmod +x /run.sh
-
-CMD [ "/run.sh" ]
+# Use dumb-init to reap zombies and forward signals cleanly
+ENTRYPOINT ["/usr/bin/dumb-init","--"]
+CMD ["/app/run.sh"]
