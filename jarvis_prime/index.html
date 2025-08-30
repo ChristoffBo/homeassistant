@@ -2,221 +2,177 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Jarvis Prime — Inbox</title>
     <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@1.5.10/css/pico.min.css">
     <style>
       :root {
-        --card-h: calc(100vh - 11rem);
+        --jarvis-accent: #00b3ff;
+        --jarvis-bg: #0b0f14;
       }
-      body { padding: 1.25rem; }
+      body { background: var(--jarvis-bg); }
+      header h1 { letter-spacing: .02em; }
+      .toolbar { display: grid; grid-template-columns: 1fr 150px auto auto; gap: .75rem; align-items: center; }
+      .shell { display: grid; grid-template-columns: 380px 1fr; gap: 1rem; height: calc(100vh - 200px); }
+      .list { border-radius: 14px; background: rgba(255,255,255,.03); overflow: hidden; display: flex; flex-direction: column; }
+      .items { overflow: auto; }
+      .item { padding: .85rem 1rem; border-bottom: 1px solid rgba(255,255,255,.06); cursor: pointer; }
+      .item:hover { background: rgba(255,255,255,.06); }
+      .item.active { background: rgba(0,179,255,.14); border-left: 3px solid var(--jarvis-accent); }
+      .item .meta { font-size: .8rem; opacity: .7; display: flex; gap: .5rem; }
+      .preview { border-radius: 14px; background: rgba(255,255,255,.03); padding: 1rem; overflow: auto; }
       .muted { opacity: .7; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      .pill { padding: .15rem .5rem; border-radius: 999px; font-size: .8rem; }
-      .pill.ok { background: var(--primary); color: var(--primary-inverse); }
-      .pill.warn { background: var(--del-color); color: var(--del-color-inverse); }
-      .grid-2 { display: grid; grid-template-columns: 360px 1fr; gap: 1rem; }
-      .list { height: var(--card-h); overflow: auto; }
-      .preview { height: var(--card-h); overflow: auto; }
-      .row { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding:.5rem; border-bottom: 1px solid var(--muted-border-color); cursor:pointer; }
-      .row:hover { background: rgba(255,255,255,.04); }
-      .row .meta { font-size: .8rem; opacity:.75; }
-      .toolbar { display:flex; gap:.5rem; align-items:center; }
+      .pill { padding: .15rem .5rem; border-radius: 999px; font-size: .75rem; }
+      .ok { background: #16a34a; color: white; }
+      .warn { background: #e11d48; color: white; }
       pre { white-space: pre-wrap; }
-      .k { font-weight:600; }
+      .actions { display: flex; gap: .5rem; }
     </style>
   </head>
   <body>
     <main class="container">
-      <header>
-        <h2>📥 Jarvis Prime — Inbox</h2>
-        <p class="muted">Unified inbox with dark-mode preview, purge, and search.</p>
+      <header style="margin: 1.2rem 0 0.6rem;">
+        <h1>📥 Jarvis Prime — Inbox</h1>
+        <p class="muted">Unified inbox with real-time preview, dark mode, purge & search.</p>
       </header>
 
-      <section>
-        <form id="searchForm" role="search" onsubmit="return false;">
-          <div class="grid">
-            <input id="q" name="q" type="search" placeholder="Search title, body, source…" />
-            <select id="limit">
-              <option value="25">25</option>
-              <option value="50" selected>50</option>
-              <option value="100">100</option>
-            </select>
-            <button id="btnSearch">Search</button>
-            <button id="btnRefresh" class="secondary outline">Refresh</button>
-          </div>
-        </form>
+      <section class="toolbar">
+        <input id="q" name="q" type="search" placeholder="Search title, body, source…" />
+        <select id="limit">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+        <button id="btnSearch">Search</button>
+        <button id="btnRefresh" class="secondary outline">Refresh</button>
       </section>
 
-      <section class="grid-2">
-        <article class="list" id="list"></article>
-        <article class="preview" id="preview">
-          <header class="toolbar">
-            <button id="btnDelete" class="secondary outline" disabled>Delete</button>
-            <button id="btnCopy" class="secondary outline" disabled>Copy</button>
-            <span class="muted" id="status"></span>
-          </header>
-          <div id="view">
-            <p class="muted">Select a message to preview.</p>
+      <section style="margin-top: .5rem;">
+        <div class="shell">
+          <div class="list">
+            <div style="padding: .75rem 1rem; display:flex; justify-content:space-between; align-items:center;">
+              <strong>Messages</strong>
+              <div class="actions">
+                <label class="muted">Retention (days)</label>
+                <input id="retentionDays" type="number" min="1" value="30" style="max-width: 6rem;">
+                <button id="btnSaveRetention" class="outline">Save</button>
+                <button id="btnPurgeNow" class="contrast">Purge</button>
+              </div>
+            </div>
+            <div id="items" class="items"></div>
           </div>
-        </article>
-      </section>
-
-      <section>
-        <article>
-          <header><strong>Retention</strong></header>
-          <div class="grid">
-            <label>
-              <span>Policy</span>
-              <select id="autoPurge">
-                <option value="off">Off</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </label>
-            <label>
-              <span>Days</span>
-              <input id="retentionDays" type="number" min="1" value="30" style="max-width: 12rem;">
-            </label>
-            <button id="btnSaveRetention">Save</button>
-            <button id="btnPurgeNow" class="contrast">Purge now</button>
+          <div class="preview" id="preview">
+            <h3 class="muted">Select a message</h3>
           </div>
-        </article>
+        </div>
       </section>
     </main>
 
-    <template id="item">
-      <div class="row">
-        <div class="l">
-          <div class="k title"></div>
-          <div class="meta mono"><span class="ts"></span> • <span class="source"></span></div>
-        </div>
-        <div class="r delivered"></div>
-      </div>
-    </template>
-
     <script>
-      const API_BASE = location.pathname.replace(/\/ui\/.*$/, "") || "";
-      const el = (s)=>document.querySelector(s);
-      const list = el("#list");
-      const itemTpl = el("#item");
-      const view = el("#view");
-      const btnDelete = el("#btnDelete");
-      const btnCopy = el("#btnCopy");
-      const statusEl = el("#status");
-      let currentId = null;
-      let currentItem = null;
+      const API_BASE = location.pathname.replace(/\/ui\/?$/, "").replace(/\/ui\/.*$/, "");
 
-      function fmtTs(sec) {
-        try { return new Date(sec*1000).toLocaleString(); } catch { return sec; }
+      const el = (s) => document.querySelector(s);
+      const itemsEl = el("#items");
+      const previewEl = el("#preview");
+
+      function fmtTs(ts){ try{ return new Date(ts*1000).toLocaleString(); }catch{ return ts; } }
+      function pill(ok,fail){
+        const parts=[];
+        if(ok) parts.push(`<span class="pill ok">OK ${ok}</span>`);
+        if(fail) parts.push(`<span class="pill warn">Fail ${fail}</span>`);
+        return parts.join(" ");
       }
-      function renderDelivered(d) {
-        try {
-          const obj = typeof d === "string" ? JSON.parse(d) : (d||{});
-          const keys = Object.keys(obj);
-          if (keys.length === 0) return "<span class='muted'>—</span>";
+      function okFail(delivered){
+        try{
+          const d = (typeof delivered==="string")?JSON.parse(delivered): (delivered||{});
           let ok=0, fail=0;
-          for (const k of keys) {
-            const v = obj[k];
-            const code = (v && (v.status||v.code||v.http||v.status_code)) ?? 0;
-            if (Number(code)>=200 && Number(code)<400 || Number(code)===250) ok++; else fail++;
+          for(const k of Object.keys(d)){
+            const v=d[k]||{}; const code=Number(v.status||v.code||v.status_code||v.http||0);
+            if(code>=200 && code<400) ok++; else fail++;
           }
-          const pills = [];
-          if (ok) pills.push(`<span class="pill ok">OK ${ok}</span>`);
-          if (fail) pills.push(`<span class="pill warn">Fail ${fail}</span>`);
-          return pills.join(" ");
-        } catch { return "<span class='muted'>—</span>"; }
+          return [ok,fail];
+        }catch{return [0,0];}
       }
-      function itemNode(it) {
-        const frag = itemTpl.content.cloneNode(true);
-        frag.querySelector(".title").textContent = it.title;
-        frag.querySelector(".ts").textContent = fmtTs(it.ts);
-        frag.querySelector(".source").textContent = it.source;
-        frag.querySelector(".delivered").innerHTML = renderDelivered(it.delivered);
-        const div = frag.firstElementChild;
-        div.addEventListener("click", () => select(it, div));
-        return frag;
+
+      function renderItem(it, active=false){
+        const [ok,fail] = okFail(it.delivered);
+        const div = document.createElement("div");
+        div.className = "item" + (active?" active":"");
+        div.innerHTML = \`
+          <div style="display:flex; justify-content:space-between; gap:1rem;">
+            <div>
+              <div><strong>\${it.title || "(no title)"} </strong></div>
+              <div class="meta"><span>\${it.source}</span><span>•</span><span>\${fmtTs(it.ts)}</span></div>
+            </div>
+            <div>\${pill(ok,fail)}</div>
+          </div>\`;
+        div.addEventListener("click", () => showPreview(it, div));
+        return div;
       }
-      function select(it, node) {
-        currentId = it.id;
-        currentItem = node;
-        btnDelete.disabled = false; btnCopy.disabled = false;
-        const meta = it.meta ? (typeof it.meta === "string" ? it.meta : JSON.stringify(it.meta, null, 2)) : "";
-        const delivered = it.delivered ? (typeof it.delivered === "string" ? it.delivered : JSON.stringify(it.delivered, null, 2)) : "";
-        view.innerHTML = `
-          <h3 class="mono">${it.title}</h3>
-          <p class="muted mono">${fmtTs(it.ts)} • ${it.source}</p>
-          <pre class="mono">${(it.body||"").replace(/[<>&]/g, s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
-          <details><summary>Meta</summary><pre class="mono">${meta}</pre></details>
-          <details><summary>Delivered</summary><pre class="mono">${delivered}</pre></details>
-        `;
+
+      async function loadSettings(){
+        try{ const r=await fetch(\`\${API_BASE}/api/inbox/settings\`);
+          const j=await r.json(); el("#retentionDays").value = j.retention_days ?? 30;
+        }catch(e){ console.warn(e); }
       }
-      async function loadSettings() {
-        try {
-          const r = await fetch(`${API_BASE}/api/inbox/settings`);
-          const j = await r.json();
-          el("#retentionDays").value = j.retention_days ?? 30;
-          el("#autoPurge").value = (j.auto_purge || "off");
-        } catch {}
-      }
-      async function saveRetention() {
+
+      async function saveRetention(){
         const days = Number(el("#retentionDays").value || 30);
-        const pol  = el("#autoPurge").value || "off";
-        const r = await fetch(`${API_BASE}/api/inbox/settings`, {
-          method: "PUT",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({retention_days: days, auto_purge: pol})
-        });
-        if (r.ok) statusEl.textContent = "Retention saved."; else statusEl.textContent = "Save failed.";
-        setTimeout(()=>statusEl.textContent="", 2000);
+        const r = await fetch(\`\${API_BASE}/api/inbox/settings\`, { method:"PUT", headers:{ "Content-Type":"application/json"}, body: JSON.stringify({retention_days:days}) });
+        if(r.ok) alert("Retention saved."); else alert("Failed to save retention.");
       }
-      async function purgeNow() {
+
+      async function purgeNow(){
         const days = Number(el("#retentionDays").value || 30);
-        if (!confirm(`Purge messages older than ${days} days?`)) return;
-        const r = await fetch(`${API_BASE}/api/messages/purge`, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({days})
-        });
-        if (r.ok) load(); else alert("Purge failed");
+        if(!confirm(\`Purge messages older than \${days} days?\`)) return;
+        const r = await fetch(\`\${API_BASE}/api/messages/purge\`, { method:"POST", headers:{ "Content-Type":"application/json"}, body: JSON.stringify({days}) });
+        if(r.ok){ await loadMessages(); } else { alert("Purge failed."); }
       }
-      async function removeCurrent() {
-        if (!currentId) return;
-        if (!confirm("Delete this message?")) return;
-        const r = await fetch(`${API_BASE}/api/messages/${currentId}`, {method:"DELETE"});
-        if (r.ok) load();
+
+      function showPreview(it, div){
+        document.querySelectorAll(".item").forEach(x => x.classList.remove("active"));
+        if(div) div.classList.add("active");
+        const [ok,fail] = okFail(it.delivered);
+        previewEl.innerHTML = \`
+          <article>
+            <header><h3>\${it.title || "(no title)"} </h3></header>
+            <p class="muted">\${it.source} • \${fmtTs(it.ts)} • \${pill(ok,fail)}</p>
+            <pre>\${(it.body || "").replace(/[<>]/g, s => ({"<":"&lt;",">":"&gt;"}[s]))}</pre>
+            <footer style="display:flex; gap:.5rem;">
+              <button class="secondary outline" onclick="doDelete(\${it.id})">Delete</button>
+              <button class="outline" onclick="navigator.clipboard.writeText(it.body||'');">Copy body</button>
+            </footer>
+          </article>\`;
       }
-      async function copyCurrent() {
-        try {
-          const sel = view.innerText;
-          await navigator.clipboard.writeText(sel);
-          statusEl.textContent = "Copied.";
-          setTimeout(()=>statusEl.textContent="", 1500);
-        } catch {}
+
+      async function doDelete(id){
+        if(!confirm("Delete this message?")) return;
+        const r = await fetch(\`\${API_BASE}/api/messages/\${id}\`, { method: "DELETE" });
+        if(r.ok){ await loadMessages(); }
       }
-      async function load() {
-        list.innerHTML = "<article class='muted'>Loading…</article>";
-        const q = encodeURIComponent(el("#q").value||"");
-        const limit = encodeURIComponent(el("#limit").value||"50");
-        const r = await fetch(`${API_BASE}/api/messages?limit=${limit}${q?`&q=${q}`:""}`);
+
+      async function loadMessages(){
+        const q = encodeURIComponent(el("#q").value || "");
+        const limit = encodeURIComponent(el("#limit").value || "50");
+        itemsEl.innerHTML = '<div class="item"><span class="muted">Loading…</span></div>';
+        const r = await fetch(\`\${API_BASE}/api/messages?limit=\${limit}\${q?`&q=\${q}`:""}\`);
         const j = await r.json();
-        list.innerHTML = "";
-        (j.items||[]).forEach(it => list.appendChild(itemNode(it)));
-        if (j.items && j.items.length) {
-          select(j.items[0], list.firstElementChild);
+        itemsEl.innerHTML = "";
+        (j.items || []).forEach((it, idx) => itemsEl.appendChild(renderItem(it, idx===0)));
+        if((j.items || []).length){
+          showPreview(j.items[0]);
         } else {
-          view.innerHTML = "<p class='muted'>No messages.</p>";
-          currentId = null; btnDelete.disabled = true; btnCopy.disabled = true;
+          previewEl.innerHTML = '<h3 class="muted">No messages</h3>';
+          itemsEl.innerHTML = '<div class="item"><span class="muted">No messages.</span></div>';
         }
       }
-      el("#btnSearch").addEventListener("click", load);
-      el("#btnRefresh").addEventListener("click", load);
+
+      el("#btnSearch").addEventListener("click", loadMessages);
+      el("#btnRefresh").addEventListener("click", loadMessages);
       el("#btnSaveRetention").addEventListener("click", saveRetention);
       el("#btnPurgeNow").addEventListener("click", purgeNow);
-      el("#btnDelete").addEventListener("click", removeCurrent);
-      el("#btnCopy").addEventListener("click", copyCurrent);
-      (async function boot(){ await loadSettings(); await load(); })();
+
+      (async function boot(){ await loadSettings(); await loadMessages(); })();
     </script>
   </body>
 </html>
