@@ -1,54 +1,61 @@
 #!/usr/bin/env python3
-# storage.py — SQLite inbox store for Jarvis Prime
-# - WAL mode + synchronous=NORMAL for performance (see SQLite docs)
-# - Emoji/UTF‑8 safe
-# - Simple helpers for UI & API
-
+# storage.py — SQLite inbox store for Jarvis Prime (with auto‑migrations)
 from __future__ import annotations
 import os, json, sqlite3, threading, time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 DB_PATH = os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
-
-# internal lock to serialize schema/setting changes
 _db_lock = threading.RLock()
+_CONN: Optional[sqlite3.Connection] = None
 
-def _connect(path: str = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, timeout=10, isolation_level=None)  # autocommit
+# ---------------------- internal helpers ----------------------
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create tables and backfill any missing columns on existing DBs."""
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    # schema
-    conn.execute(
-        """
+
+    # base tables
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            title       TEXT NOT NULL,
-            body        TEXT NOT NULL,
-            source      TEXT NOT NULL,
-            priority    INTEGER NOT NULL DEFAULT 5,
-            created_at  INTEGER NOT NULL,
-            read        INTEGER NOT NULL DEFAULT 0,
-            extras      TEXT
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            title      TEXT NOT NULL,
+            body       TEXT NOT NULL,
+            source     TEXT NOT NULL
         );
-        """
-    )
-    conn.execute(
-        """
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT
         );
-        """
-    )
+    """)
+
+    # discover existing columns
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+
+    # add missing columns expected by the app
+    # priority
+    if "priority" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN priority INTEGER NOT NULL DEFAULT 5")
+    # created_at (unix seconds)
+    if "created_at" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+    # read flag
+    if "read" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN read INTEGER NOT NULL DEFAULT 0")
+    # extras (JSON text)
+    if "extras" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN extras TEXT")
+
+def _connect(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, timeout=10, isolation_level=None)  # autocommit
+    _ensure_schema(conn)
     return conn
 
-# Keep a single connection per process
-_CONN: Optional[sqlite3.Connection] = None
-
 def init_db(path: str = DB_PATH) -> None:
-    """Ensure database and schema exist."""
+    """Ensure database exists and is upgraded to latest schema."""
     global _CONN
     with _db_lock:
         _CONN = _connect(path)
@@ -60,23 +67,22 @@ def _conn() -> sqlite3.Connection:
     return _CONN
 
 def _row_to_dict(r: sqlite3.Row) -> Dict[str, Any]:
-    out = dict(r)
-    # decode extras if present
-    if out.get("extras"):
+    d = dict(r)
+    if d.get("extras"):
         try:
-            out["extras"] = json.loads(out["extras"])
+            d["extras"] = json.loads(d["extras"])
         except Exception:
             pass
-    return out
+    return d
 
-# -------------------- Message ops --------------------
+# ---------------------- public API ----------------------
 def save_message(title: str, body: str, source: str, priority: int = 5, extras: Optional[Dict[str, Any]] = None, created_at: Optional[int] = None) -> int:
     ts = int(created_at or time.time())
     ex = json.dumps(extras or {}, ensure_ascii=False)
     with _conn() as c:
         cur = c.execute(
             "INSERT INTO messages(title, body, source, priority, created_at, read, extras) VALUES(?,?,?,?,?,0,?)",
-            (title, body, source, int(priority), ts, ex)
+            (title, body, source, int(priority), ts, ex),
         )
         return int(cur.lastrowid)
 
@@ -84,9 +90,9 @@ def list_messages(limit: int = 50, q: Optional[str] = None, offset: int = 0) -> 
     sql = "SELECT id, title, body, source, priority, created_at, read, extras FROM messages"
     args: List[Any] = []
     if q:
-        qlike = f"%{q}%"
+        like = f"%{q}%"
         sql += " WHERE title LIKE ? OR body LIKE ? OR source LIKE ?"
-        args += [qlike, qlike, qlike]
+        args += [like, like, like]
     sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
     args += [int(limit), int(offset)]
     cur = _conn().execute(sql, args)
@@ -95,7 +101,7 @@ def list_messages(limit: int = 50, q: Optional[str] = None, offset: int = 0) -> 
 def get_message(mid: int) -> Optional[Dict[str, Any]]:
     cur = _conn().execute(
         "SELECT id, title, body, source, priority, created_at, read, extras FROM messages WHERE id=?",
-        (int(mid),)
+        (int(mid),),
     )
     r = cur.fetchone()
     return _row_to_dict(r) if r else None
@@ -116,11 +122,9 @@ def purge_older_than(days: int) -> int:
         cur = c.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
         return int(cur.rowcount)
 
-# -------------------- Settings helpers --------------------
 def get_retention_days(default: int = 30) -> int:
     try:
-        cur = _conn().execute("SELECT value FROM settings WHERE key='retention_days'")
-        r = cur.fetchone()
+        r = _conn().execute("SELECT value FROM settings WHERE key='retention_days'").fetchone()
         return int(r["value"]) if r else int(default)
     except Exception:
         return int(default)
