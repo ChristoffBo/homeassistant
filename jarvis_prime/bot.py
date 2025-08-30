@@ -117,6 +117,9 @@ LLM_MODEL_PATH        = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH
 LLM_MODEL_SHA256      = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
 PERSONALITY_ALLOW_PROFANITY = bool(merged.get("personality_allow_profanity", _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
+# Also accept LLM_STATUS from run.sh for banner parity
+LLM_STATUS = os.getenv("LLM_STATUS", "").strip()
+
 print(f"[{BOT_NAME}] LLM_ENABLED={LLM_ENABLED} rewrite={'yes' if LLM_ENABLED else 'no'} "
       f"beautify={'yes' if BEAUTIFY_ENABLED else 'no'} mood={CHAT_MOOD}")
 
@@ -296,10 +299,7 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], bool, bool]:
-    """
-    Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
-    Returns (final_text, extras, used_llm, used_beautify)
-    """
+    # Always attempt LLM first when enabled. If it fails or times out, continue to Beautify.
     used_llm = False
     used_beautify = False
     final = message
@@ -308,7 +308,7 @@ def _llm_then_beautify(title: str, message: str) -> Tuple[str, Optional[dict], b
     # LLM FIRST — no wake-word skip
     if LLM_ENABLED and _llm and hasattr(_llm, "rewrite"):
         try:
-            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, mood={CHAT_MOOD})")
+            print(f"[{BOT_NAME}] → LLM.rewrite start (timeout={LLM_TIMEOUT_SECONDS}s, cpu={LLM_MAX_CPU_PERCENT}%)")
             rewritten = _llm.rewrite(
                 text=final,
                 mood=CHAT_MOOD,
@@ -374,7 +374,7 @@ def extract_command_from(title: str, message: str) -> str:
 # -----------------------------
 
 def post_startup_card():
-    # Warm-load the model in THIS process before status.
+    # Warm-load the model in THIS process before status if enabled.
     try:
         if LLM_ENABLED and _llm and hasattr(_llm, "prefetch_model"):
             _llm.prefetch_model()
@@ -389,12 +389,12 @@ def post_startup_card():
         except Exception:
             st = {}
 
-    online = bool(st.get("ready"))
-    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip()
+    # Respect explicit LLM_ENABLED flag for UI lines
+    engine_is_online = bool(st.get("ready")) if LLM_ENABLED else False
+    model_path = (st.get("model_path") or LLM_MODEL_PATH or "").strip() if LLM_ENABLED else ""
     model_name = os.path.basename(model_path) if model_path else ""
 
-    # Show clean engine status; report LLM family on its own line
-    engine_line = f"Neural Core — {'ONLINE' if online else 'OFFLINE'}"
+    engine_line = f"Neural Core — {'ONLINE' if engine_is_online else 'OFFLINE'}"
 
     def _family_from_name(n: str) -> str:
         n = (n or "").lower()
@@ -404,9 +404,10 @@ def post_startup_card():
             return 'TinyLlama'
         if 'qwen' in n:
             return 'Qwen'
-        return '—'
+        return 'Disabled'
 
-    llm_line = f"🧠 LLM: {_family_from_name(model_name) if online else '—'}"
+    llm_line_value = _family_from_name(model_name) if engine_is_online else 'Disabled'
+    llm_line = f"🧠 LLM: {llm_line_value}"
 
     lines = [
         "🧬 Prime Neural Boot",
@@ -425,7 +426,7 @@ def post_startup_card():
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         "",
-        "Status: All systems nominal" if online else "Status: Neural Core warming up…",
+        "Status: All systems nominal" if engine_is_online or not LLM_ENABLED else "Status: Neural Core warming up…",
     ]
     send_message("Startup", "\n".join(lines), priority=4)
 
@@ -596,6 +597,7 @@ def main():
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Startup error: {e}")
 
+    # Async WS loop
     loop = asyncio.get_event_loop()
     while True:
         try:
