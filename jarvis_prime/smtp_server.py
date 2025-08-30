@@ -2,6 +2,7 @@
 # /app/smtp_server.py
 import os
 import asyncio
+import storage
 from email.parser import BytesParser
 import json
 import requests
@@ -116,6 +117,10 @@ def _post(title: str, message: str, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": 5}
     if extras: payload["extras"] = extras
+        try:
+            storage.save_message(\"smtp\", title, message, meta={\"via\":\"smtp\"}, delivered={})
+        except Exception:
+            pass
     r = requests.post(url, json=payload, timeout=8); r.raise_for_status()
 
 class Handler:
