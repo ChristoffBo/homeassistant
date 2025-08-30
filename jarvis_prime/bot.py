@@ -266,6 +266,11 @@ def extract_command_from(title: str, message: str) -> str:
     return ""
 
 def post_startup_card():
+    try:
+        from storage import save_message
+    except Exception:
+        save_message = None
+
     lines = [
         "🧬 Prime Neural Boot",
         "🛰️ Engine: Neural Core — ONLINE" if merged.get("llm_enabled") else "🛰️ Engine: Neural Core — OFFLINE",
