@@ -1,213 +1,186 @@
 #!/usr/bin/env python3
-# api_messages.py — REST API for Jarvis Prime inbox
-# Adds passive Gotify mirror: if GOTIFY_URL + GOTIFY_CLIENT_TOKEN are present,
-# it tails /stream and stores messages automatically.
-
 from __future__ import annotations
-import os, json, asyncio, aiohttp, time
+
+import os
+import json
+from typing import Any, Dict, List
 from aiohttp import web
+import aiohttp
+
+# Local storage module (already present in the project)
 import storage
 
+# -------------------------------------------------------------------
+# Configuration
+# -------------------------------------------------------------------
 API_BIND = os.getenv("JARVIS_API_BIND", "0.0.0.0")
 API_PORT = int(os.getenv("JARVIS_API_PORT", "2581"))
 DB_PATH  = os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
-UI_DIR   = os.getenv("JARVIS_UI_DIR", os.path.join(os.path.dirname(__file__), "ui"))
 
-GOTIFY_URL = os.getenv("GOTIFY_URL", "")
-GOTIFY_CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
-NTFY_URL = os.getenv('NTFY_URL','')
-NTFY_TOPIC = os.getenv('NTFY_TOPIC','')
-NTFY_TOKEN = os.getenv('NTFY_TOKEN','')
-NTFY_USER = os.getenv('NTFY_USER','')
-NTFY_PASS = os.getenv('NTFY_PASS','')
+# UI can be overridden via host share; otherwise serve the built-in UI
+DEFAULT_UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
+UI_DIR = os.getenv("JARVIS_UI_DIR", DEFAULT_UI_DIR)
 
-# ------------- Middleware: basic CORS + JSON errors -------------
-@web.middleware
-async def cors_middleware(request, handler):
-    try:
-        resp = await handler(request)
-    except web.HTTPException as e:
-        resp = web.json_response({"error": e.reason}, status=e.status)
-    except Exception as e:
-        resp = web.json_response({"error": str(e)}, status=500)
-    if isinstance(resp, web.StreamResponse):
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-    return resp
+# Make sure storage knows where to create/open the DB if it reads env
+os.environ.setdefault("JARVIS_DB_PATH", DB_PATH)
 
-async def handle_options(request):
+
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
+def _ok(data: Dict[str, Any] | List[Any] | None = None) -> web.Response:
+    return web.json_response(data if data is not None else {"ok": True})
+
+def _bad_request(msg: str) -> web.Response:
+    return web.json_response({"error": msg}, status=400)
+
+
+# -------------------------------------------------------------------
+# API Handlers
+# -------------------------------------------------------------------
+async def handle_options(request: web.Request) -> web.Response:
+    # Simple CORS-friendly empty 204
     return web.Response(status=204)
 
-# ------------- Routes ------------------------------------------
-async def get_messages(request: web.Request):
+async def api_list_messages(request: web.Request) -> web.Response:
     q = request.rel_url.query.get("q") or None
-    try:    limit = int(request.rel_url.query.get("limit", "50"))
-    except: limit = 50
-    try:    offset = int(request.rel_url.query.get("offset", "0"))
-    except: offset = 0
-    items = storage.list_messages(limit=limit, q=q, offset=offset)
-    return web.json_response({"items": items})
+    try:
+        limit = int(request.rel_url.query.get("limit", "50"))
+        offset = int(request.rel_url.query.get("offset", "0"))
+    except ValueError:
+        return _bad_request("limit/offset must be integers")
 
-async def get_message(request: web.Request):
-    mid = int(request.match_info["id"])
+    items = storage.list_messages(limit=limit, q=q, offset=offset)
+    return _ok({"items": items})
+
+async def api_get_message(request: web.Request) -> web.Response:
+    try:
+        mid = int(request.match_info["id"])
+    except Exception:
+        return _bad_request("invalid id")
+
     item = storage.get_message(mid)
     if not item:
-        raise web.HTTPNotFound()
-    return web.json_response(item)
+        raise web.HTTPNotFound(text="message not found")
+    return _ok(item)
 
-async def post_read(request: web.Request):
-    mid = int(request.match_info["id"])
-    data = await request.json(loads=json.loads)
-    read = bool(data.get("read", True))
-    ok = storage.mark_read(mid, read=read)
-    if not ok:
-        raise web.HTTPNotFound()
-    return web.json_response({"ok": True, "id": mid, "read": read})
+async def api_delete_message(request: web.Request) -> web.Response:
+    try:
+        mid = int(request.match_info["id"])
+    except Exception:
+        return _bad_request("invalid id")
 
-async def delete_message(request: web.Request):
-    mid = int(request.match_info["id"])
     ok = storage.delete_message(mid)
     if not ok:
-        raise web.HTTPNotFound()
-    return web.json_response({"ok": True, "id": mid})
+        raise web.HTTPNotFound(text="message not found")
+    return _ok({"deleted": mid})
 
-async def get_settings(request: web.Request):
-    return web.json_response({"retention_days": storage.get_retention_days()})
-
-async def put_settings(request: web.Request):
-    data = await request.json(loads=json.loads)
-    days = int(data.get("retention_days", storage.get_retention_days()))
-    storage.set_retention_days(days)
-    return web.json_response({"ok": True, "retention_days": storage.get_retention_days()})
-
-async def post_purge(request: web.Request):
+async def api_mark_read(request: web.Request) -> web.Response:
     try:
-        data = await request.json(loads=json.loads)
+        mid = int(request.match_info["id"])
+    except Exception:
+        return _bad_request("invalid id")
+
+    try:
+        data = await request.json()
     except Exception:
         data = {}
-    days = int(data.get("days", storage.get_retention_days()))
+    read = bool(data.get("read", True))
+
+    ok = storage.mark_read(mid, read=read)
+    if not ok:
+        raise web.HTTPNotFound(text="message not found")
+    return _ok({"id": mid, "read": read})
+
+async def api_get_settings(request: web.Request) -> web.Response:
+    days = storage.get_retention_days()
+    return _ok({"retention_days": int(days)})
+
+async def api_put_settings(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        days = int(data.get("retention_days"))
+    except Exception:
+        return _bad_request("retention_days must be an integer")
+    storage.set_retention_days(days)
+    return _ok({"retention_days": days})
+
+async def api_purge(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        days = int(data.get("days"))
+    except Exception:
+        # default to current retention days if not provided
+        days = int(storage.get_retention_days())
     removed = storage.purge_older_than(days)
-    return web.json_response({"ok": True, "removed": removed, "days": days})
+    return _ok({"removed": int(removed), "days": int(days)})
 
-# ------------- Background Gotify & ntfy stream mirror ------------------
-async def mirror_gotify(app: web.Application):
-    if not GOTIFY_URL or not GOTIFY_CLIENT_TOKEN:
-        return  # no-op
-    url = GOTIFY_URL.rstrip('/') + "/stream?token=" + GOTIFY_CLIENT_TOKEN
-    while True:
-        try:
-            timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
-            async with aiohttp.ClientSession(timeout=timeout) as sess:
-                async with sess.get(url) as r:
-                    # Server-Sent Events: read line-by-line
-                    buf = []
-                    async for raw in r.content:
-                        line = raw.decode("utf-8", "ignore").rstrip()
-                        if line.startswith("data:"):
-                            payload = line[5:].strip()
-                            try:
-                                obj = json.loads(payload)
-                                title = obj.get("title") or ""
-                                message = obj.get("message") or ""
-                                priority = obj.get("priority", 5)
-                                ts = int(obj.get("date", time.time()))
-                                meta = {"priority": priority, "via": "gotify-stream"}
-                                delivered = {"gotify": {"status": 200}}
-                                storage.save_message("gotify", title, message, meta=meta, delivered=delivered, ts=ts)
-                            except Exception:
-                                pass
-                        # ignore other SSE lines (event:, id:, etc.)
-        except Exception:
-            await asyncio.sleep(5)  # reconnect backoff and continue
 
-async def on_startup(app: web.Application):
-    app["mirror_task"] = asyncio.create_task(mirror_gotify(app))
+# -------------------------------------------------------------------
+# UI Handlers
+# -------------------------------------------------------------------
+async def ui_index(request: web.Request) -> web.StreamResponse:
+    """Serve the SPA entry file for both /ui and /ui/. """
+    index_path = os.path.join(UI_DIR, "index.html")
+    if not os.path.exists(index_path):
+        raise web.HTTPNotFound(text="index.html missing in UI directory")
+    return web.FileResponse(index_path)
 
-async def on_cleanup(app: web.Application):
-    task = app.get("mirror_task")
-    if task:
-        task.cancel()
-        try: await task
-        except Exception: pass
-    task2 = app.get('mirror_ntfy_task')
-    if task2:
-        task2.cancel()
-        try: await task2
-        except Exception: pass
 
+# -------------------------------------------------------------------
+# App Factory
+# -------------------------------------------------------------------
 def create_app() -> web.Application:
-    storage.init_db(DB_PATH)
-    app = web.Application(middlewares=[cors_middleware])
-    # API
+    # Initialize DB (storage reads path from env)
+    try:
+        storage.init_db()  # takes no positional args in this project
+    except TypeError:
+        # In case an older variant expects a path, try it
+        try:
+            storage.init_db(DB_PATH)  # type: ignore
+        except Exception:
+            raise
+
+    app = web.Application()
+
+    # CORS preflight fallback
     app.router.add_route("OPTIONS", "/{tail:.*}", handle_options)
-    app.router.add_get   ("/api/messages",          get_messages)
-    app.router.add_get   ("/api/messages/{id}",     get_message)
-    app.router.add_post  ("/api/messages/{id}/read",post_read)
-    app.router.add_delete("/api/messages/{id}",     delete_message)
-    app.router.add_get   ("/api/inbox/settings",    get_settings)
-    app.router.add_put   ("/api/inbox/settings",    put_settings)
-    app.router.add_patch ("/api/inbox/settings",    put_settings)
-    app.router.add_post  ("/api/messages/purge",    post_purge)
-    # Static UI (served if present)
-    if os.path.isdir(UI_DIR):
-        app.router.add_static("/ui/", path=UI_DIR, name="ui", show_index=False)
-                async def _index(request):
-            return web.FileResponse(os.path.join(UI_DIR, "index.html"))
-        app.router.add_get("/ui", _index)
-        app.router.add_get("/ui/", _index)
-    # background mirror
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
+
+    # API routes
+    app.router.add_get("/api/messages", api_list_messages)
+    app.router.add_get("/api/messages/{id}", api_get_message)
+    app.router.add_delete("/api/messages/{id}", api_delete_message)
+    app.router.add_post("/api/messages/{id}/read", api_mark_read)
+    app.router.add_get("/api/inbox/settings", api_get_settings)
+    app.router.add_put("/api/inbox/settings", api_put_settings)
+    app.router.add_post("/api/messages/purge", api_purge)
+
+    # UI routes (no directory listing; always serve index for /ui and /ui/)
+    app.router.add_get("/ui", ui_index)
+    app.router.add_get("/ui/", ui_index)
+    app.router.add_static("/ui/", path=UI_DIR, name="ui", show_index=False)
+
+    # Optional root redirect to /ui/
+    async def root_redirect(request: web.Request) -> web.Response:
+        raise web.HTTPFound("/ui/")
+
+    app.router.add_get("/", root_redirect)
+
     return app
 
-def run():
+
+# -------------------------------------------------------------------
+# Main
+# -------------------------------------------------------------------
+def run() -> None:
     app = create_app()
     web.run_app(app, host=API_BIND, port=API_PORT)
 
 if __name__ == "__main__":
     run()
-
-async def mirror_ntfy(app: web.Application):
-    # ntfy has SSE at /<topic>/sse (self-hosted) or /v1/events?topic=... (ntfy.sh)
-    if not NTFY_URL or not NTFY_TOPIC:
-        return
-    # prefer ntfy.sh style first
-    urls = []
-    base = NTFY_URL.rstrip('/')
-    urls.append(f"{base}/v1/events?topic={NTFY_TOPIC}")
-    urls.append(f"{base}/{NTFY_TOPIC}/sse")
-    import aiohttp, base64, json, time
-    headers = {}
-    if NTFY_TOKEN:
-        headers['Authorization'] = f"Bearer {NTFY_TOKEN}"
-    elif NTFY_USER and NTFY_PASS:
-        tok = base64.b64encode(f"{NTFY_USER}:{NTFY_PASS}".encode('utf-8')).decode('ascii')
-        headers['Authorization'] = "Basic " + tok
-    while True:
-        for url in urls:
-            try:
-                timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
-                async with aiohttp.ClientSession(timeout=timeout) as sess:
-                    async with sess.get(url, headers=headers) as r:
-                        async for raw in r.content:
-                            line = raw.decode('utf-8','ignore').strip()
-                            if not line or not line.startswith('{'):
-                                continue
-                            try:
-                                evt = json.loads(line)
-                            except Exception:
-                                continue
-                            # ntfy event has 'message' or 'title' depending on variant
-                            title = evt.get('title') or evt.get('topic') or 'ntfy'
-                            msg = evt.get('message') or evt.get('event') or ''
-                            priority = int(evt.get('priority', 3))
-                            meta = {'priority': priority, 'via': 'ntfy-stream'}
-                            delivered = {'ntfy': {'status': 200}}
-                            try:
-                                import storage
-                                storage.save_message('ntfy', title, msg, meta=meta, delivered=delivered)
-                            except Exception:
-                                pass
-            except Exception:
-                await asyncio.sleep(5)
