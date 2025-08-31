@@ -23,9 +23,6 @@
     "2581/tcp": 2581
   },
   "ingress": true,
-  "ingress_entry": "/",
-  "ingress_port": 2581,
-  "ingress_stream": true,
   "options": {
     "bot_name": "Jarvis Prime",
     "bot_icon": "\ud83e\udde0",
@@ -272,5 +269,7 @@
     "push_smtp_to": "str",
     "retention_days": "int(1,)",
     "auto_purge_policy": "str"
-  }
+  },
+  "ingress_entry": "/ui/index.html",
+  "ingress_port": 2581
 }
