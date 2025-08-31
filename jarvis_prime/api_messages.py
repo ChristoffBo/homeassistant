@@ -107,7 +107,10 @@ async def index(request: web.Request):
     return web.FileResponse(path=str(index_file))
 
 def create_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[
+        # Ensure '/ui' redirects to '/ui/' and collapse duplicate slashes for HA Ingress
+        web.normalize_path_middleware(append_slash=True, merge_slashes=True)
+    ])
     # API
     app.router.add_post("/api/messages", api_create_message)
     app.router.add_get("/api/messages", api_list_messages)
