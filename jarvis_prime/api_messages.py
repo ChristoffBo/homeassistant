@@ -100,11 +100,8 @@ async def api_purge(request: web.Request):
 
 # ----- Static UI -----
 async def index(request: web.Request):
-    root = _ui_root()
-    index_file = root / "index.html"
-    if not index_file.exists():
-        return web.Response(text="UI is not installed. Place files in /share/jarvis_prime/ui/", status=404)
-    return web.FileResponse(path=str(index_file))
+    # Always redirect root/dir to the actual static file so it works under Ingress
+    raise web.HTTPFound('/ui/index.html')
 
 def create_app() -> web.Application:
     app = web.Application(middlewares=[
