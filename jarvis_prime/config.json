@@ -269,12 +269,12 @@
     "retention_days": "int(1,)",
     "auto_purge_policy": "str"
   },
-  "ingress": true,
-  "ingress_port": 2581,
-  "ingress_entry": "/ui/",
-  "panel_icon": "mdi:robot",
-  "panel_title": "Jarvis Prime"
-  "ingress_entry": "/ui/",
-  "panel_icon": "mdi:robot",
-  "panel_title": "Jarvis Prime"
+    "ingress": true,
+    "ingress_port": 2581,
+    "ingress_entry": "/ui/",
+    "panel_icon": "mdi:robot",
+    "panel_title": "Jarvis Prime"
+    "ingress_entry": "/ui/",
+    "panel_icon": "mdi:robot",
+    "panel_title": "Jarvis Prime"
 }
