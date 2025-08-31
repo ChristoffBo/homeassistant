@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis Prime — Inbox</title>
+  <title>Jarvis Prime — Inbox v3.1</title>
   <link rel="icon" href="./icon.png" />
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -13,10 +13,12 @@
     <img src="./icon.png" alt="Jarvis" class="logo" />
     <div class="titles">
       <h1>Jarvis Prime</h1>
-      <div class="subtitle">Unified Inbox</div>
+      <div class="subtitle">Unified Inbox • <span id="live-badge" class="live ok">LIVE</span> • v3.1</div>
     </div>
   </div>
-  <div class="actions">
+  <div class="wake">
+    <input id="wake-text" type="text" placeholder="Jarvis …" />
+    <button id="wake-send" class="btn primary">Send</button>
     <button id="btn-refresh" class="btn">Refresh</button>
   </div>
 </header>
@@ -34,6 +36,7 @@
       <option value="200">200</option>
     </select>
     <button id="btn-search" class="btn primary">Search</button>
+    <button id="btn-saved" class="btn">Saved only: OFF</button>
     <span class="spacer"></span>
     <label class="retention">
       <span>Retention (days)</span>
