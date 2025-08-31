@@ -46,7 +46,6 @@ COPY personality_state.py /app/personality_state.py
 
 # ---- NEW: Inbox server + UI + storage + fan-out clients ----
 COPY api_messages.py /app/api_messages.py
-COPY index.html      /app/index.html
 COPY storage.py      /app/storage.py
 COPY ntfy_client.py  /app/ntfy_client.py
 COPY smtp_client.py  /app/smtp_client.py
