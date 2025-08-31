@@ -121,3 +121,29 @@ main { width:100%; }
 body, main { margin:0; padding:0; width:100%; }
 .grid { width:100%; }
 .feed { width:100%; padding-right:0; margin-right:0; }
+
+/* v4.11: explicit grid areas */
+.grid{
+  display:grid;
+  grid-template-areas: "rail detail list";
+}
+.rail,[data-area="rail"]{ grid-area: rail; }
+.detail,[data-area='detail']{ grid-area: detail; }
+.feed,[data-area='feed']{ grid-area: list; }
+
+/* Right list flush to the border */
+.grid{ padding:16px 0 16px 16px; }   /* no right padding */
+.feed{ width:100%; padding-right:0; margin-right:0; justify-self:stretch; }
+
+/* Row list: single-line, compact */
+.feed .card{
+  display:flex; align-items:center; gap:10px;
+  padding:6px 10px; border-radius:8px;
+  min-height:32px; max-height:32px;
+}
+.feed .card .title{ flex:1 1 auto; font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.feed .card .meta{ flex:0 0 auto; font-size:10px; color:var(--muted) }
+.feed .card .src{ opacity:.8 }
+
+/* Middle detail uses the space */
+.detail .wrap{ width:100%; max-width:none; }
