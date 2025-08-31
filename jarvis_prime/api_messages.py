@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # api_messages.py — Inbox HTTP API + static UI for Jarvis Prime
-# Full file: SSE stream, CRUD, purge, settings, and optional /api/wake proxy to bot's internal wake server.
+# Serves UI from /app/www (bundled in the add-on). Also exposes JSON API + optional /api/wake passthrough.
 
 import os, json, asyncio
 from pathlib import Path
@@ -35,13 +35,13 @@ async def _sse(request: web.Request):
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
     # initial ping
-    await resp.write(b": hello\n\n")
+    await resp.write(b": hello\\n\\n")
     try:
         while True:
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             try:
-                await resp.write(b"data: " + payload + b"\n\n")
+                await resp.write(b"data: " + payload + b"\\n\\n")
             except (ConnectionResetError, RuntimeError, BrokenPipeError):
                 break
     except asyncio.CancelledError:
@@ -69,11 +69,8 @@ def _json(data, status=200):
     return web.Response(text=json.dumps(data, ensure_ascii=False), status=status, content_type="application/json")
 
 def _ui_root() -> Path:
-    # prefer /share (persisted), fallback to /app/ui (bundled)
-    cand = Path("/share/jarvis_prime/ui")
-    if cand.is_dir():
-        return cand
-    return _THIS_DIR / "ui"
+    # Home Assistant add-on convention: serve bundled UI from /app/www
+    return Path("/app/www")
 
 # ----- API handlers -----
 async def api_create_message(request: web.Request):
@@ -209,26 +206,27 @@ def _make_app() -> web.Application:
     app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
     app.router.add_post("/api/messages", api_create_message)
-    app.router.add_get("/api/messages/{id:\d+}", api_get_message)
-    app.router.add_delete("/api/messages/{id:\d+}", api_delete_message)
+    app.router.add_get("/api/messages/{id:\\d+}", api_get_message)
+    app.router.add_delete("/api/messages/{id:\\d+}", api_delete_message)
     app.router.add_delete("/api/messages", api_delete_all)  # ?keep_saved=1
-    app.router.add_post("/api/messages/{id:\d+}/read", api_mark_read)
-    app.router.add_post("/api/messages/{id:\d+}/save", api_toggle_saved)
+    app.router.add_post("/api/messages/{id:\\d+}/read", api_mark_read)
+    app.router.add_post("/api/messages/{id:\\d+}/save", api_toggle_saved)
     app.router.add_get("/api/inbox/settings", api_get_settings)
     app.router.add_post("/api/inbox/settings", api_save_settings)
     app.router.add_post("/api/inbox/purge", api_purge)
     app.router.add_post("/api/wake", api_wake)  # optional back-compat
 
-    # Static UI at / (ingress-safe base in index.html)
+    # Static UI from /app/www
     ui_root = _ui_root()
-    # Serve index.html
+    idx = ui_root / "index.html"
     async def _index(_):
-        idx = ui_root / "index.html"
         if not idx.exists():
-            return web.Response(text="UI missing", status=404)
+            return web.Response(text="UI missing (expected /app/www/index.html)", status=404)
         return web.FileResponse(path=str(idx))
+    # Serve at / and /ui/
     app.router.add_get("/", _index)
-    # Serve static assets
+    app.router.add_get("/ui/", _index)
+    app.router.add_static("/ui/", str(ui_root))
     app.router.add_static("/", str(ui_root))
     return app
 
