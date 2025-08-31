@@ -1,4 +1,4 @@
-// Jarvis v4.4 — Ingress '/ui/' root fix + diagnostics
+// Jarvis v4.5 — Ingress '/ui/' root fix + diagnostics
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
@@ -71,7 +71,7 @@
     async setRetention(days){ return jfetch(u('api/inbox/settings'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}); },
     async purge(days){ return jfetch(u('api/inbox/purge'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}); },
     async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
-    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); }
+    async wake(text){ return jfetch(u('api/messages'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Jarvis', body:text, source:'ui'})}); }
   };
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis Prime — Inbox v4.4</title>
+  <title>Jarvis Prime — Inbox v4.5</title>
   <!-- Robust dynamic base: use the directory of the current URL, not the full pathname -->
   <script>
     (function(){
@@ -23,7 +23,7 @@
     <div class="titles">
       <h1>Jarvis Prime</h1>
       <div class="subtitle">
-        Unified Inbox • <span id="live-badge" class="live err">OFFLINE</span> • v4.4
+        Unified Inbox • <span id="live-badge" class="live err">OFFLINE</span> • v4.5
       </div>
     </div>
   </div>
@@ -97,9 +97,16 @@
     </div>
   </aside>
 
+  <section class="detail" id="detail">
+    <div class="empty">
+      <h2>Inbox</h2>
+      <p>No message selected.</p>
+    </div>
+  </section>
+
   <section class="feed" id="feed"></section>
 
-  <section class="detail" id="detail">
+  <section class="detail-ghost" style="display:none"></section>
     <div class="empty">
       <h2>Inbox</h2>
       <p>No message selected.</p>
