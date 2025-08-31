@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# api_messages.py — Inbox HTTP API + static UI for Jarvis Prime (JP7)
-# Adds: delete-all, save/unsave, SSE stream, wake endpoint, better UI mounting.
+# api_messages.py — Inbox HTTP API + static UI for Jarvis Prime
+# Full file: SSE stream, CRUD, purge, settings, and optional /api/wake proxy to bot's internal wake server.
 
 import os, json, asyncio
 from pathlib import Path
@@ -35,18 +35,14 @@ async def _sse(request: web.Request):
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
     # initial ping
-    await resp.write(b": hello
-
-")
+    await resp.write(b": hello\n\n")
     try:
         while True:
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             try:
-                await resp.write(b"data: " + payload + b"
-
-")
-            except ConnectionResetError:
+                await resp.write(b"data: " + payload + b"\n\n")
+            except (ConnectionResetError, RuntimeError, BrokenPipeError):
                 break
     except asyncio.CancelledError:
         pass
@@ -107,7 +103,10 @@ async def api_list_messages(request: web.Request):
     saved = request.rel_url.query.get("saved")
     saved_bool = None
     if saved is not None:
-        saved_bool = bool(int(saved))
+        try:
+            saved_bool = bool(int(saved))
+        except Exception:
+            saved_bool = saved.lower() in ('1','true','yes')
     items = storage.list_messages(limit=limit, q=q, offset=offset, saved=saved_bool)  # type: ignore
     return _json({"items": items})
 
@@ -154,7 +153,7 @@ async def api_toggle_saved(request: web.Request):
         data = await request.json()
     except Exception:
         data = {}
-    saved = bool(int(data.get("saved", 1)))
+    saved = bool(int(data.get("saved", 1))) if isinstance(data.get("saved", 1), (int, str)) else bool(data.get("saved", True))
     ok = storage.set_saved(mid, saved)  # type: ignore
     if ok:
         _broadcast("saved", id=int(mid), saved=bool(saved))
@@ -165,7 +164,10 @@ async def api_get_settings(request: web.Request):
     return _json({"retention_days": int(days)})
 
 async def api_save_settings(request: web.Request):
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     days = int(data.get("retention_days", 30))
     storage.set_retention_days(days)  # type: ignore
     return _json({"ok": True})
@@ -180,62 +182,56 @@ async def api_purge(request: web.Request):
     _broadcast("purged", days=int(days), deleted=int(n))
     return _json({"purged": int(n)})
 
+# Optional backward-compat endpoint: forward to bot's internal wake server
 async def api_wake(request: web.Request):
-    """Accept a wake phrase from UI. Store a message so downstream agents can respond."""
     try:
         data = await request.json()
     except Exception:
-        return _json({"error":"bad json"}, status=400)
-    text = str(data.get("text") or "").strip()
-    if not text:
-        return _json({"error":"empty"}, status=400)
-    mid = storage.save_message(title="Wake", body=text, source="ui", priority=3, extras={"kind":"wake"})  # type: ignore
-    _broadcast("wake", id=int(mid))
-    return _json({"ok": True, "id": int(mid)})
+        return _json({"error": "bad json"}, status=400)
+    text = str(data.get("text") or "")
+    # Save UI wake to inbox first
+    mid = storage.save_message("UI Wake", text, "ui", 5, {})  # type: ignore
+    _broadcast("created", id=int(mid))
+    # Forward to bot
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post("http://127.0.0.1:2599/internal/wake", json={"text": text}, timeout=10) as r:
+                resp = await r.json()
+    except Exception as e:
+        resp = {"ok": False, "error": str(e)}
+    return _json(resp)
 
-# ----- Static UI -----
-async def index(request: web.Request):
-    root = _ui_root()
-    index_file = root / "index.html"
-    if not index_file.exists():
-        return web.Response(text="UI is not installed. Place files in /share/jarvis_prime/ui/", status=404)
-    return web.FileResponse(path=str(index_file))
-
-def create_app() -> web.Application:
+# ----- App factory and routes -----
+def _make_app() -> web.Application:
     app = web.Application()
-    # API
-    app.router.add_post("/api/messages", api_create_message)
+    # API routes
+    app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
-    app.router.add_get("/api/messages/{id:\\d+}", api_get_message)
-    app.router.add_delete("/api/messages/{id:\\d+}", api_delete_message)
-    app.router.add_delete("/api/messages", api_delete_all)
-    app.router.add_post("/api/messages/{id:\\d+}/read", api_mark_read)
-    app.router.add_post("/api/messages/{id:\\d+}/save", api_toggle_saved)
-
+    app.router.add_post("/api/messages", api_create_message)
+    app.router.add_get("/api/messages/{id:\d+}", api_get_message)
+    app.router.add_delete("/api/messages/{id:\d+}", api_delete_message)
+    app.router.add_delete("/api/messages", api_delete_all)  # ?keep_saved=1
+    app.router.add_post("/api/messages/{id:\d+}/read", api_mark_read)
+    app.router.add_post("/api/messages/{id:\d+}/save", api_toggle_saved)
     app.router.add_get("/api/inbox/settings", api_get_settings)
     app.router.add_post("/api/inbox/settings", api_save_settings)
     app.router.add_post("/api/inbox/purge", api_purge)
+    app.router.add_post("/api/wake", api_wake)  # optional back-compat
 
-    app.router.add_post("/api/wake", api_wake)
-
-    # SSE
-    app.router.add_get("/api/stream", _sse)
-
-    # UI routes
-    app.router.add_get("/", index)
-    app.router.add_get("/ui", index)   # no trailing slash
-    app.router.add_get("/ui/", index)  # trailing slash
-    # static assets
+    # Static UI at / (ingress-safe base in index.html)
     ui_root = _ui_root()
-    app.router.add_static("/ui/", path=str(ui_root), name="static", show_index=False)
+    # Serve index.html
+    async def _index(_):
+        idx = ui_root / "index.html"
+        if not idx.exists():
+            return web.Response(text="UI missing", status=404)
+        return web.FileResponse(path=str(idx))
+    app.router.add_get("/", _index)
+    # Serve static assets
+    app.router.add_static("/", str(ui_root))
     return app
 
-def run():
-    app = create_app()
-    host = os.getenv("inbox_bind", "0.0.0.0")
-    port = int(os.getenv("inbox_port", "2581"))
-    print(f"======= Running on http://{host}:{port} =======")
-    web.run_app(app, host=host, port=port)
-
 if __name__ == "__main__":
-    run()
+    port = int(os.getenv("INBOX_PORT", "2581"))
+    web.run_app(_make_app(), host="0.0.0.0", port=port)
