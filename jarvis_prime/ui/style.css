@@ -76,3 +76,8 @@ kbd{ background:#182337; border:1px solid var(--edge); border-bottom-width:2px; 
   .layout{ grid-template-columns: 1fr; }
   .preview{ min-height:40vh; }
 }
+
+
+/* Extra tiny UX touches */
+.footer.blink { animation: footerblink .4s ease-in-out 1; }
+@keyframes footerblink { from { opacity:.4 } to { opacity:1 } }
