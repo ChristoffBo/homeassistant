@@ -106,3 +106,13 @@ h1{ margin:0 }
 .feed .card .meta{ flex:0 0 auto; font-size:10px; color:var(--muted) }
 .feed .card .src{ opacity:.8 }
 .feed .card.new{ outline:1px solid var(--accent); box-shadow:0 0 0 2px rgba(59,130,246,.12) inset }
+
+/* v4.9 alignment fixes */
+html, body { width:100%; height:100%; margin:0; padding:0; }
+main { width:100%; }
+.grid{ width:100%; box-sizing:border-box; padding:16px; }
+.feed{ width:100%; padding-right:0; }
+.feed .card{ min-height:32px; max-height:32px; padding:6px 10px }
+.feed .card .title{ font-size:13px }
+.feed .card .meta{ font-size:10px }
+.detail .wrap{ width:100%; max-width:none; }
