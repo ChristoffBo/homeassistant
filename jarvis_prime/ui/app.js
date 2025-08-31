@@ -22,7 +22,7 @@
 
   // ---- Base-path safe URL builder ----
   const base = document.baseURI;
-  const u = (path) => new URL(path.replace(/^\//?, ''), base).toString();
+  const u = (path) => new URL(path.replace(/^\/?/, ''), base).toString();
 
   // ---- API client ----
   const API = {
@@ -94,7 +94,7 @@
       return d.toLocaleString();
     }catch(e){ return ''; }
   }
-  function escapeHtml(s){ return (s||'').replace(/[&<>\"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m])); }
+  function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
   // ---- UI rendering ----
   function renderList(items){

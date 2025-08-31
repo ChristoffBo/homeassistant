@@ -29,7 +29,7 @@ h1,h2,h3{ margin:0; }
 .titles h1{ font-size:22px; letter-spacing:.4px; }
 .subtitle{ color:var(--muted); font-size:12px; }
 
-.toolbar{ padding:12px 18px; border-bottom:1px solid var(--edge); background:linear-gradient(180deg, rgba(16,26,44,65), rgba(11,17,29,35)); position:sticky; top:66px; z-index:3;}
+.toolbar{ padding:12px 18px; border-bottom:1px solid var(--edge); background:linear-gradient(180deg, rgba(16,26,44,.65), rgba(11,17,29,.35)); position:sticky; top:66px; z-index:3;}
 .search-row{ display:flex; gap:10px; align-items:center; }
 .input-wrap{ position:relative; display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--edge); padding:10px 12px; border-radius:999px; min-width:340px; }
 .input-wrap input{ flex:1; background:transparent; border:0; outline:none; color:var(--text); font-size:14px; }
@@ -38,7 +38,7 @@ select, input[type=number]{
   background:var(--panel); color:var(--text); border:1px solid var(--edge); border-radius:12px; padding:9px 12px; font-size:14px;
 }
 .btn{ background:var(--panel); border:1px solid var(--edge); color:var(--text); padding:10px 14px; border-radius:12px; cursor:pointer; transition:all .15s; }
-.btn:hover{ border-color:var(--accent); box-shadow:0 0 0 3px rgba(46,168,255,15) inset; }
+.btn:hover{ border-color:var(--accent); box-shadow:0 0 0 3px rgba(46,168,255,.15) inset; }
 .btn.primary{ background:linear-gradient(180deg,#1c87d6,#1564b1); border:none; }
 .btn.danger{ background:linear-gradient(180deg,#c54a4a,#a53838); border:none; }
 .spacer{ flex:1; }
