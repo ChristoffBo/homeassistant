@@ -1,187 +1,202 @@
-// Jarvis Prime Inbox UI — API client + renderer
-const API = {
-  async list(q, limit=50, offset=0){
-    const url = new URL('/api/messages', location.origin);
-    if(q) url.searchParams.set('q', q);
-    url.searchParams.set('limit', limit);
-    url.searchParams.set('offset', offset);
-    const r = await fetch(url); if(!r.ok) throw new Error('Failed to list messages');
-    return (await r.json()).items || [];
-  },
-  async get(id){
-    const r = await fetch(`/api/messages/${id}`);
-    if(!r.ok) throw new Error('Message not found');
-    return await r.json();
-  },
-  async del(id){
-    const r = await fetch(`/api/messages/${id}`, { method:'DELETE' });
-    if(!r.ok) throw new Error('Delete failed');
-    return await r.json();
-  },
-  async read(id, read=true){
-    const r = await fetch(`/api/messages/${id}/read`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({read})
+
+/* Jarvis Prime Inbox Frontend (Ingress-safe)
+   - All API calls are RELATIVE (no leading slash) so HA ingress prefix works.
+   - Auto-refresh (5s) and optional SSE at "api/stream".
+   - Wakeword push, delete one/all, purge, retention.
+*/
+(() => {
+  // Resolve base path for static and API under HA Ingress
+  const BASE = (() => {
+    // e.g. https://ha.local/api/hassio_ingress/XYZ/ -> keep trailing slash
+    const u = new URL(window.location.href);
+    return u.pathname.endsWith('/') ? u.pathname : u.pathname + '/';
+  })();
+
+  // Helper to join BASE with a relative "api/..." path safely
+  const url = (rel) => BASE + rel.replace(/^\/+/, '');
+
+  const els = {
+    list: document.getElementById("list"),
+    preview: document.getElementById("preview"),
+    footer: document.getElementById("footer"),
+    q: document.getElementById("q"),
+    limit: document.getElementById("limit"),
+    btnSearch: document.getElementById("btn-search"),
+    btnRefresh: document.getElementById("btn-refresh"),
+    btnDeleteAll: document.getElementById("btn-delete-all"),
+    retention: document.getElementById("retention"),
+    btnSaveRetention: document.getElementById("btn-save-retention"),
+    purgeDays: document.getElementById("purge-days"),
+    btnPurge: document.getElementById("btn-purge"),
+    wakeText: document.getElementById("wake-text"),
+    btnWake: document.getElementById("btn-wake"),
+  };
+
+  let state = { items: [], selectedId: null, autoTimer: null, sse: null };
+
+  const fetchJSON = async (path, opts = {}) => {
+    // Cache-bust to avoid stale ingress caching
+    const bust = `_=${Date.now()}`;
+    const sep = path.includes('?') ? '&' : '?';
+    const res = await fetch(url(path + sep + bust), {
+      headers: { "Content-Type": "application/json" },
+      ...opts,
     });
-    if(!r.ok) throw new Error('Read toggle failed');
-    return await r.json();
-  },
-  async getSettings(){
-    const r = await fetch('/api/inbox/settings'); if(!r.ok) throw new Error('settings');
-    return await r.json();
-  },
-  async setRetention(days){
-    const r = await fetch('/api/inbox/settings', {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({retention_days: days})
-    });
-    if(!r.ok) throw new Error('save settings'); return await r.json();
-  },
-  async purge(days){
-    const r = await fetch('/api/messages/purge', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({days})
-    });
-    if(!r.ok) throw new Error('purge failed'); return await r.json();
-  }
-};
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+    const ct = res.headers.get("content-type") || "";
+    return ct.includes("application/json") ? res.json() : res.text();
+  };
 
-const els = {
-  list: document.getElementById('list'),
-  preview: document.getElementById('preview'),
-  q: document.getElementById('q'),
-  limit: document.getElementById('limit'),
-  refresh: document.getElementById('btn-refresh'),
-  search: document.getElementById('btn-search'),
-  retention: document.getElementById('retention'),
-  saveRetention: document.getElementById('btn-save-retention'),
-  purgeDays: document.getElementById('purge-days'),
-  purge: document.getElementById('btn-purge'),
-  footer: document.getElementById('footer'),
-};
+  const toast = (msg) => { els.footer.textContent = msg; els.footer.classList.add("blink"); setTimeout(() => els.footer.classList.remove("blink"), 400); };
 
-let state = { items:[], activeId:null };
+  const loadMessages = async () => {
+    try {
+      const p = new URLSearchParams();
+      p.set("limit", els.limit.value || "50");
+      if (els.q.value.trim()) p.set("q", els.q.value.trim());
+      const data = await fetchJSON(`api/messages?${p.toString()}`);
+      state.items = Array.isArray(data.items || data) ? (data.items || data) : [];
+      renderList();
+      if (state.selectedId && !state.items.find(x => String(x.id) === String(state.selectedId))) {
+        state.selectedId = null; renderEmpty();
+      }
+      toast(`Loaded ${state.items.length} message(s)`);
+    } catch (e) { toast(`Load failed: ${e.message}`); }
+  };
 
-function fmtTime(ts){
-  try{
-    const d = new Date((ts||0)*1000);
-    return d.toLocaleString();
-  }catch(e){ return ''; }
-}
+  const renderList = () => {
+    els.list.innerHTML = "";
+    if (!state.items.length) {
+      els.list.innerHTML = `<div class="empty" style="padding:16px;color:var(--muted)">No messages.</div>`;
+      return;
+    }
+    for (const it of state.items) {
+      const row = document.createElement("div");
+      row.className = "item" + (String(it.id) === String(state.selectedId) ? " active" : "");
+      row.dataset.id = it.id;
+      row.innerHTML = `<div><div class="title">${escapeHtml(it.title || "(No title)")}</div>
+        <div class="meta">${it.created_at ? new Date(it.created_at).toLocaleString() : ""}${it.source ? ` · ${escapeHtml(it.source)}` : ""}</div></div>
+        <div class="row-actions"><button class="btn danger _del">Delete</button></div>`;
+      row.addEventListener("click", () => openMessage(it.id));
+      row.querySelector("._del").addEventListener("click", (ev) => { ev.stopPropagation(); deleteMessage(it.id); });
+      els.list.appendChild(row);
+    }
+  };
 
-function renderList(items){
-  els.list.innerHTML = '';
-  if(!items.length){
-    els.list.innerHTML = '<div class="item"><div class="title">No messages</div><div class="meta">—</div></div>';
-    return;
-  }
-  for(const it of items){
-    const div = document.createElement('div');
-    div.className = 'item';
-    div.dataset.id = it.id;
-    div.innerHTML = `
-      <div>
-        <div class="title">${escapeHtml(it.title || '(no title)')}</div>
-        <div class="meta">${fmtTime(it.ts)} • <span class="source">${escapeHtml(it.source||'?')}</span></div>
-      </div>
-      <div class="meta">#${it.id}</div>
-    `;
-    div.addEventListener('click', () => select(it.id));
-    els.list.appendChild(div);
-  }
-}
+  const renderEmpty = () => {
+    els.preview.innerHTML = `<div class="empty"><h2>Welcome 👋</h2><p>Select a message on the left to preview it here.</p><p class="hint">Tip: <kbd>/</kbd> search, <kbd>r</kbd> refresh, <kbd>w</kbd> wake, <kbd>Del</kbd> delete.</p></div>`;
+  };
 
-function escapeHtml(s){
-  return (s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
+  const openMessage = async (id) => {
+    state.selectedId = id;
+    try {
+      const data = await fetchJSON(`api/messages/${encodeURIComponent(id)}`);
+      const m = data || {};
+      els.preview.innerHTML = `<div class="detail">
+        <h2>${escapeHtml(m.title || "(No title)")}</h2>
+        <div class="meta">
+          <span class="badge">${m.source ? escapeHtml(m.source) : "unknown"}</span>
+          <span class="badge">${m.severity || "info"}</span>
+          <span class="badge">${m.read ? "read" : "unread"}</span>
+          <span class="badge">${m.created_at ? new Date(m.created_at).toLocaleString() : ""}</span>
+        </div>
+        <div class="body">${escapeHtml(m.body || "")}</div>
+        <div class="row-actions"><button class="btn danger" id="pv-del">Delete</button></div>
+      </div>`;
+      document.getElementById("pv-del").addEventListener("click", () => deleteMessage(id));
+      markRead(id).catch(()=>{});
+      highlightSelected();
+    } catch (e) { toast(`Open failed: ${e.message}`); }
+  };
 
-async function select(id){
-  state.activeId = id;
-  [...els.list.querySelectorAll('.item')].forEach(el => el.classList.toggle('active', el.dataset.id==id));
-  const it = await API.get(id);
-  renderPreview(it);
-}
+  const highlightSelected = () => {
+    [...els.list.querySelectorAll(".item")].forEach(el => el.classList.toggle("active", el.dataset.id === String(state.selectedId)));
+  };
 
-function renderPreview(it){
-  els.preview.innerHTML = '';
-  const meta = [];
-  if(it.source) meta.push(`<span class="badge">Source: ${escapeHtml(it.source)}</span>`);
-  if(it.priority!=null) meta.push(`<span class="badge">Priority: ${it.priority}</span>`);
-  if(it.ts) meta.push(`<span class="badge">${fmtTime(it.ts)}</span>`);
-  if(it.meta && it.meta.via) meta.push(`<span class="badge">Via: ${escapeHtml(it.meta.via)}</span>`);
-  const body = (it.body || it.message || '').trim();
+  const deleteMessage = async (id) => {
+    if (!confirm("Delete this message?")) return;
+    try {
+      await fetchJSON(`api/messages/${encodeURIComponent(id)}`, { method: "DELETE" });
+      toast("Deleted");
+      await loadMessages();
+    } catch (e) { toast(`Delete failed: ${e.message}`); }
+  };
 
-  const root = document.createElement('div');
-  root.className = 'detail';
-  root.innerHTML = `
-    <h2>${escapeHtml(it.title || '(no title)')}</h2>
-    <div class="meta">${meta.join(' ')}</div>
-    <div class="body">${escapeHtml(body)}</div>
-    <div class="row-actions">
-      <button id="btn-copy" class="btn">Copy</button>
-      <button id="btn-delete" class="btn danger">Delete</button>
-    </div>
-  `;
-  els.preview.appendChild(root);
+  const deleteAll = async () => {
+    if (!confirm("Delete ALL messages? This cannot be undone.")) return;
+    try {
+      // Prefer bulk endpoint; fallback loop
+      let ok = false;
+      try { await fetchJSON(`api/messages`, { method: "DELETE" }); ok = true; }
+      catch (_e) {
+        for (const it of state.items) { await fetchJSON(`api/messages/${encodeURIComponent(it.id)}`, { method: "DELETE" }); }
+        ok = true;
+      }
+      if (ok) { toast("All messages deleted"); state.selectedId = null; await loadMessages(); }
+    } catch (e) { toast(`Delete all failed: ${e.message}`); }
+  };
 
-  root.querySelector('#btn-copy').addEventListener('click', () => {
-    const text = `${it.title || ''}
+  const purge = async () => {
+    const days = parseInt(els.purgeDays.value || "30", 10);
+    if (!confirm(`Purge messages older than ${days} day(s)?`)) return;
+    try { await fetchJSON(`api/messages/purge`, { method: "POST", body: JSON.stringify({ days }) }); toast("Purge complete"); await loadMessages(); }
+    } catch (e) { toast(`Purge failed: ${e.message}`); }
+  };
 
-${body}`.trim();
-    navigator.clipboard.writeText(text).then(()=>toast('Copied'));
+  const saveRetention = async () => {
+    const days = parseInt(els.retention.value || "30", 10);
+    try { await fetchJSON(`api/retention`, { method: "POST", body: JSON.stringify({ days }) }); toast("Retention saved"); }
+    catch (e) { toast(`Retention save failed: ${e.message}`); }
+  };
+
+  const markRead = async (id) => { try { await fetchJSON(`api/messages/${encodeURIComponent(id)}/read`, { method: "POST" }); } catch (_e) {} };
+
+  const sendWake = async () => {
+    const text = (els.wakeText.value || "").trim();
+    if (!text) { els.wakeText.focus(); return; }
+    try {
+      await fetchJSON(`api/wake`, { method: "POST", body: JSON.stringify({ text }) });
+      toast("Wake sent"); els.wakeText.value = ""; await loadMessages();
+    } catch (e) { toast(`Wake failed: ${e.message}`); }
+  };
+
+  const startSSE = () => {
+    try {
+      if (state.sse) state.sse.close();
+      const sse = new EventSource(url('api/stream'));
+      sse.onmessage = () => loadMessages();
+      sse.onerror = () => { try { sse.close(); } catch(_e){} state.sse = null; startAutoRefresh(); };
+      state.sse = sse; toast("Live updates enabled"); stopAutoRefresh();
+    } catch (_e) { startAutoRefresh(); }
+  };
+
+  const startAutoRefresh = () => { stopAutoRefresh(); state.autoTimer = setInterval(loadMessages, 5000); };
+  const stopAutoRefresh = () => { if (state.autoTimer) clearInterval(state.autoTimer); state.autoTimer = null; };
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // Wire events
+  els.btnSearch.addEventListener("click", loadMessages);
+  els.btnRefresh.addEventListener("click", loadMessages);
+  els.btnDeleteAll.addEventListener("click", deleteAll);
+  els.btnSaveRetention.addEventListener("click", saveRetention);
+  els.btnPurge.addEventListener("click", purge);
+  els.btnWake.addEventListener("click", sendWake);
+  els.wakeText.addEventListener("keydown", (e) => { if (e.key === "Enter") sendWake(); });
+  els.q.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMessages(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "/") { e.preventDefault(); els.q.focus(); }
+    else if (e.key.toLowerCase() === "r") { loadMessages(); }
+    else if (e.key.toLowerCase() === "w") { els.wakeText.focus(); }
+    else if (e.key === "Delete" && state.selectedId) { deleteMessage(state.selectedId); }
   });
-  root.querySelector('#btn-delete').addEventListener('click', async () => {
-    if(!confirm('Delete this message?')) return;
-    await API.del(it.id);
-    toast('Deleted');
-    load();
-  });
-}
 
-function toast(msg){
-  els.footer.textContent = msg;
-  setTimeout(() => els.footer.textContent = '', 1800);
-}
-
-async function load(){
-  const q = els.q.value.trim();
-  const limit = parseInt(els.limit.value,10)||50;
-  const items = await API.list(q, limit, 0);
-  state.items = items;
-  renderList(items);
-  if(items[0]) select(items[0].id);
-}
-
-async function loadSettings(){
-  try{
-    const s = await API.getSettings();
-    if(s && s.retention_days) els.retention.value = s.retention_days;
-    els.purgeDays.value = els.retention.value;
-  }catch(e){ /* ignore */ }
-}
-
-els.refresh.addEventListener('click', load);
-els.search.addEventListener('click', load);
-els.limit.addEventListener('change', load);
-els.q.addEventListener('keydown', e => { if(e.key==='Enter') load(); });
-window.addEventListener('keydown', e => {
-  if(e.key==='r') load();
-  if(e.key==='/'){ e.preventDefault(); els.q.focus(); }
-  if(e.key==='Delete' && state.activeId){ API.del(state.activeId).then(load); }
-});
-
-els.saveRetention.addEventListener('click', async () => {
-  const days = parseInt(els.retention.value,10)||30;
-  await API.setRetention(days);
-  toast('Retention saved');
-});
-els.purge.addEventListener('click', async () => {
-  const days = parseInt(els.purgeDays.value,10)||30;
-  if(!confirm(`Purge messages older than ${days} days?`)) return;
-  const res = await API.purge(days);
-  toast(`Purged ${res.removed||0} items`);
-  load();
-});
-
-// boot
-loadSettings().then(load);
+  // init
+  renderEmpty();
+  loadMessages();
+  // Try SSE first (will fall back to polling automatically)
+  startSSE();
+})();

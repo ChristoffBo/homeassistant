@@ -1,4 +1,4 @@
-/* Jarvis Prime Inbox UI — Dark neon theme */
+/* Jarvis Prime Inbox UI — Dark neon theme (extended) */
 :root{
   --bg:#0b0f14;
   --panel:#121826;
@@ -34,7 +34,7 @@ h1,h2,h3{ margin:0; }
 .input-wrap{ position:relative; display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--edge); padding:10px 12px; border-radius:999px; min-width:340px; }
 .input-wrap input{ flex:1; background:transparent; border:0; outline:none; color:var(--text); font-size:14px; }
 .icon{ opacity:.7; }
-select, input[type=number]{
+select, input[type=number], .wake-input{
   background:var(--panel); color:var(--text); border:1px solid var(--edge); border-radius:12px; padding:9px 12px; font-size:14px;
 }
 .btn{ background:var(--panel); border:1px solid var(--edge); color:var(--text); padding:10px 14px; border-radius:12px; cursor:pointer; transition:all .15s; }
@@ -44,6 +44,10 @@ select, input[type=number]{
 .spacer{ flex:1; }
 .retention{ display:flex; align-items:center; gap:8px; background:var(--panel-2); padding:8px 10px; border-radius:12px; border:1px solid var(--edge); }
 .retention span{ color:var(--muted); font-size:12px; }
+
+.actions{ display:flex; gap:10px; align-items:center; }
+.wake-wrap{ display:flex; gap:8px; align-items:center; background:var(--panel-2); padding:6px 8px; border-radius:12px; border:1px solid var(--edge); }
+.wake-input{ min-width:260px; }
 
 .layout{ display:grid; grid-template-columns: 420px 1fr; gap:16px; padding:16px; }
 .list{ background:var(--panel); border:1px solid var(--edge); border-radius:var(--radius); overflow:auto; min-height:70vh; box-shadow:var(--shadow); }
@@ -72,3 +76,10 @@ kbd{ background:#182337; border:1px solid var(--edge); border-bottom-width:2px; 
   .layout{ grid-template-columns: 1fr; }
   .preview{ min-height:40vh; }
 }
+
+
+/* Extra tiny UX touches */
+.footer.blink { animation: footerblink .4s ease-in-out 1; }
+@keyframes footerblink { from { opacity:.4 } to { opacity:1 } }
+
+.footer.blink{animation:footerblink .4s ease-in-out 1}@keyframes footerblink{from{opacity:.4}to{opacity:1}}
