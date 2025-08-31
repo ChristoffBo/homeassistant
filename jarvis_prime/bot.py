@@ -8,7 +8,18 @@ import websockets
 import re
 import subprocess
 import atexit
+import time
 from typing import Optional, Tuple, List
+
+# ============================
+# Inbox storage
+# ============================
+try:
+    import storage  # /app/storage.py
+    storage.init_db()
+except Exception as _e:
+    storage = None
+    print(f"[bot] ⚠️ storage init failed: {_e}")
 
 # ============================
 # Basic env
@@ -104,8 +115,8 @@ def _start_sidecar(cmd, label):
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _sidecars.append(p)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[bot] sidecar {label} start failed: {e}")
 
 def start_sidecars():
     if PROXY_ENABLED:
@@ -123,7 +134,7 @@ atexit.register(stop_sidecars)
 # Gotify helpers
 # ============================
 def _persona_line(quip_text: str) -> str:
-    """Clean single-line persona 'speaks' header placed at TOP of message body."""
+    # Single-line persona 'speaks' header placed at TOP of message body.
     who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
     quip_text = (quip_text or "").strip().replace("\n", " ")
     if len(quip_text) > 140:
@@ -161,9 +172,28 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     try:
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
-        return True
-    except Exception:
-        return False
+        ok = True
+        status = r.status_code
+    except Exception as e:
+        ok = False
+        status = 0
+        print(f"[bot] send_message error: {e}")
+
+    # Mirror to Inbox DB
+    if storage:
+        try:
+            storage.save_message(
+                source="gotify",
+                title=orig_title or "Notification",
+                body=message or "",
+                meta={"extras": extras or {}, "priority": priority},
+                delivered={"gotify": {"status": status}},
+                ts=int(time.time())
+            )
+        except Exception as e:
+            print(f"[bot] storage save failed: {e}")
+
+    return ok
 
 def delete_original_message(msg_id: int):
     try:
@@ -225,15 +255,15 @@ def _llm_then_beautify(title: str, message: str):
                                   model_sha256=merged.get("llm_model_sha256",""),
                                   allow_profanity=bool(merged.get("personality_allow_profanity", False)))
             if final2: final = final2; used_llm = True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[bot] LLM rewrite failed: {e}")
 
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
             final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
             used_beautify = True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[bot] Beautify failed: {e}")
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
@@ -424,8 +454,8 @@ async def listen():
                 final, extras, used_llm, used_beautify = _llm_then_beautify(title, message)
                 send_message(title or "Notification", final, priority=5, extras=extras)
                 _purge_after(msg_id)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[bot] listen loop err: {e}")
 
 
 # ============================
@@ -434,7 +464,7 @@ async def listen():
 _last_digest_date = None
 
 async def _digest_scheduler_loop():
-    """Check once a minute; when local time == digest_time and enabled, post digest once per day."""
+    # Check once a minute; when local time == digest_time and enabled, post digest once per day.
     global _last_digest_date
     from datetime import datetime
     while True:

@@ -4,6 +4,17 @@ import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
+import time
+
+# -----------------------------
+# Inbox storage
+# -----------------------------
+try:
+    import storage
+    storage.init_db()
+except Exception as _e:
+    storage = None
+    print(f"[proxy] ⚠️ storage init failed: {_e}")
 
 # -----------------------------
 # Config load (match bot.py behavior)
@@ -116,7 +127,7 @@ def _pipeline(title: str, body: str, mood: str):
     foot = _footer(used_llm, used_beautify)
     if not out.rstrip().endswith(foot):
         out = f"{out.rstrip()}\n\n{foot}"
-    return out, extras
+    return out, extras, used_llm, used_beautify
 
 def _post_gotify(title: str, message: str, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -124,6 +135,7 @@ def _post_gotify(title: str, message: str, extras=None):
     if extras: payload["extras"] = extras
     r = requests.post(url, json=payload, timeout=8)
     r.raise_for_status()
+    return r.status_code
 
 # -----------------------------
 # HTTP Server
@@ -158,8 +170,23 @@ class H(BaseHTTPRequestHandler):
             else:
                 body = raw.decode("utf-8", "ignore")
 
-            out, extras = _pipeline(title, body, CHAT_MOOD)
-            _post_gotify(title, out, extras)
+            out, extras, used_llm, used_beautify = _pipeline(title, body, CHAT_MOOD)
+            status = _post_gotify(title, out, extras)
+
+            # Mirror to Inbox DB
+            if storage:
+                try:
+                    storage.save_message(
+                        source="proxy",
+                        title=title or "Proxy",
+                        body=out or "",
+                        meta={"extras": extras or {}, "mood": CHAT_MOOD, "used_llm": used_llm, "used_beautify": used_beautify},
+                        delivered={"gotify": {"status": int(status)}},
+                        ts=int(time.time())
+                    )
+                except Exception as e:
+                    print(f"[proxy] storage save failed: {e}")
+
             return self._send(200, "ok")
         except Exception as e:
             print(f"[proxy] error: {e}")
