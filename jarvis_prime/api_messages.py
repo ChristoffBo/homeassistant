@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# api_messages.py — Inbox HTTP API + static UI for Jarvis Prime (robust SSE, internal wake alias)
-
 import os, json, asyncio
 from pathlib import Path
 from aiohttp import web
@@ -8,7 +6,7 @@ import importlib.util
 
 _THIS_DIR = Path(__file__).resolve().parent
 
-# ----- storage loader -----
+# ---- storage ----
 _STORAGE_FILE = _THIS_DIR / "storage.py"
 spec = importlib.util.spec_from_file_location("jarvis_storage", str(_STORAGE_FILE))
 storage = importlib.util.module_from_spec(spec)  # type: ignore
@@ -16,7 +14,29 @@ assert spec and spec.loader, "Cannot load storage.py"
 spec.loader.exec_module(storage)  # type: ignore
 storage.init_db(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
 
-# ----- SSE -----
+# ---- choose ONE UI root ----
+CANDIDATES = [
+    Path("/share/jarvis_prime/ui"),
+    Path("/app/www"),
+    Path("/app/ui"),
+    _THIS_DIR,
+]
+
+def pick_ui_root():
+    for d in CANDIDATES:
+        idx = d / "index.html"
+        if d.is_dir() and idx.exists():
+            return d, idx
+    # last resort: first existing dir even if index missing
+    for d in CANDIDATES:
+        if d.is_dir():
+            return d, d / "index.html"
+    return Path("/app/www"), Path("/app/www/index.html")
+
+UI_ROOT, UI_INDEX = pick_ui_root()
+print(f"[inbox] UI root: {UI_ROOT} (index={UI_INDEX.exists()})")
+
+# ---- SSE ----
 _listeners = set()
 
 async def _sse(request: web.Request):
@@ -32,9 +52,8 @@ async def _sse(request: web.Request):
     await resp.prepare(request)
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
-    # initial ping
     try:
-        await resp.write(b": hello\n\n")
+        await resp.write(b": hello\\n\\n")
     except Exception:
         pass
     try:
@@ -42,7 +61,7 @@ async def _sse(request: web.Request):
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             try:
-                await resp.write(b"data: " + payload + b"\n\n")
+                await resp.write(b"data: " + payload + b"\\n\\n")
             except (ConnectionResetError, RuntimeError, BrokenPipeError):
                 break
     except asyncio.CancelledError:
@@ -68,20 +87,7 @@ def _broadcast(event: str, **kw):
 def _json(data, status=200):
     return web.Response(text=json.dumps(data, ensure_ascii=False), status=status, content_type="application/json")
 
-def _candidate_ui_dirs():
-    return [Path("/app/www"), Path("/app/ui"), _THIS_DIR, Path("/share/jarvis_prime/ui")]
-
-def _existing_dirs():
-    return [d for d in _candidate_ui_dirs() if d.exists() and d.is_dir()]
-
-def _find_index():
-    for d in _existing_dirs():
-        idx = d / "index.html"
-        if idx.exists():
-            return idx
-    return None
-
-# ----- API handlers -----
+# ---- API ----
 async def api_create_message(request: web.Request):
     try:
         data = await request.json()
@@ -188,7 +194,7 @@ async def api_purge(request: web.Request):
     _broadcast("purged", days=int(days), deleted=int(n))
     return _json({"purged": int(n)})
 
-# Back-compat & UI path: forward to bot internal wake
+# UI wake passthrough -> bot internal wake
 async def api_wake(request: web.Request):
     try:
         data = await request.json()
@@ -201,17 +207,21 @@ async def api_wake(request: web.Request):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post("http://127.0.0.1:2599/internal/wake", json={"text": text}, timeout=10) as r:
+                ok = (r.status == 200)
                 try:
-                    resp = await r.json()
+                    body = await r.json()
+                    if isinstance(body, dict) and "ok" in body:
+                        ok = bool(body["ok"])
                 except Exception:
-                    resp = {"ok": r.status == 200}
+                    pass
     except Exception as e:
-        resp = {"ok": False, "error": str(e)}
-    return _json(resp)
+        return _json({"ok": False, "error": str(e)})
+    return _json({"ok": ok})
 
+# ---- app ----
 def _make_app() -> web.Application:
     app = web.Application()
-    # API
+    # API routes
     app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
     app.router.add_post("/api/messages", api_create_message)
@@ -226,23 +236,22 @@ def _make_app() -> web.Application:
     app.router.add_post("/api/wake", api_wake)
     app.router.add_post("/internal/wake", api_wake)
 
-    # Static UI (mount only existing dirs)
-    roots = _existing_dirs()
-    idx = _find_index()
-
+    # ONE static root only
     async def _index(_):
-        if idx and idx.exists():
-            return web.FileResponse(path=str(idx))
-        attempted = [str(p) for p in _candidate_ui_dirs()]
-        return web.Response(text="UI missing. Tried: " + ", ".join(attempted), status=404)
+        if UI_INDEX.exists():
+            return web.FileResponse(path=str(UI_INDEX))
+        return web.Response(text="UI index.html missing in " + str(UI_ROOT), status=404)
 
     app.router.add_get("/", _index)
     app.router.add_get("/ui/", _index)
-    for r in roots:
-        try: app.router.add_static("/ui/", str(r))
-        except Exception: pass
-        try: app.router.add_static("/", str(r))
-        except Exception: pass
+    app.router.add_static("/ui/", str(UI_ROOT))
+    app.router.add_static("/", str(UI_ROOT))
+
+    # diagnostics
+    async def _debug_ui_root(_):
+        return _json({"ui_root": str(UI_ROOT), "index_exists": UI_INDEX.exists()})
+    app.router.add_get("/debug/ui-root", _debug_ui_root)
+
     return app
 
 if __name__ == "__main__":
