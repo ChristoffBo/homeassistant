@@ -36,6 +36,15 @@ PY
 }
 
 # ===== Core options -> env =====
+# Standalone intake + push toggles
+export BOT_INPUT_SSE=$(jq -r '.bot_input_sse // true' "$CONFIG_PATH")
+export BOT_INPUT_GOTIFY=$(jq -r '.bot_input_gotify // true' "$CONFIG_PATH")
+export BOT_INPUT_NTFY=$(jq -r '.bot_input_ntfy // false' "$CONFIG_PATH")
+export JARVIS_BASE=$(jq -r '.jarvis_base // "http://127.0.0.1:2581"' "$CONFIG_PATH")
+
+export PUSH_GOTIFY_ENABLED=$(jq -r '.push_gotify_enabled // true' "$CONFIG_PATH")
+export PUSH_NTFY_ENABLED=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
+
 export BOT_NAME=$(jq -r '.bot_name' "$CONFIG_PATH")
 export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
 export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_PATH")

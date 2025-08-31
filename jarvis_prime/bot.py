@@ -35,6 +35,11 @@ SILENT_REPOST    = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","ye
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
 
 
+PUSH_GOTIFY_ENABLED = os.getenv("PUSH_GOTIFY_ENABLED", os.getenv("push_gotify_enabled", "true")).lower() in ("1","true","yes")
+PUSH_NTFY_ENABLED   = os.getenv("PUSH_NTFY_ENABLED",   os.getenv("push_ntfy_enabled", "false")).lower() in ("1","true","yes")
+NTFY_URL   = os.getenv("NTFY_URL", "").rstrip("/")
+NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+
 # ===== Standalone intake toggles =====
 BOT_INPUT_SSE     = os.getenv("BOT_INPUT_SSE", "true").lower() in ("1","true","yes")
 BOT_INPUT_GOTIFY  = os.getenv("BOT_INPUT_GOTIFY", "true").lower() in ("1","true","yes")
@@ -174,16 +179,31 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         try: priority = _personality.apply_priority(priority, CHAT_MOOD)
         except Exception: pass
 
-    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
-    if extras: payload["extras"] = extras
+
+# Prepare payload once
+url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
+if extras: payload["extras"] = extras
+
+status = 0
+# Optional: push to Gotify
+if PUSH_GOTIFY_ENABLED and GOTIFY_URL and APP_TOKEN:
     try:
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
         status = r.status_code
     except Exception as e:
         status = 0
-        print(f"[bot] send_message error: {e}")
+        print(f"[bot] send_message gotify error: {e}")
+
+# Optional: push to ntfy
+if PUSH_NTFY_ENABLED and NTFY_URL and NTFY_TOPIC:
+    try:
+        ntfy_url = f"{NTFY_URL}/{NTFY_TOPIC}"
+        _ = requests.post(ntfy_url, data=(message or "").encode("utf-8"), timeout=8)
+    except Exception as e:
+        print(f"[bot] send_message ntfy error: {e}")
+
 
     # Mirror to Inbox DB (UI-first)
     if storage:
