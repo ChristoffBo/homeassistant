@@ -1,157 +1,139 @@
 #!/usr/bin/env python3
-# api_messages.py — REST API for Jarvis Prime Unified Inbox + simple push endpoint
+# api_messages.py — Inbox HTTP API + static UI for Jarvis Prime
+# Serves the /ui app and exposes CRUD to the SQLite store.
+
 import os
 import json
-from wsgiref.simple_server import make_server
-from urllib.parse import parse_qs
-from io import BytesIO
-import traceback
-import requests
+from pathlib import Path
+from aiohttp import web
+import importlib.util
 
-# Local modules
-import storage
+# ----- load local storage module by file path (avoid name clashes) -----
+_THIS_DIR = Path(__file__).resolve().parent
+_STORAGE_FILE = _THIS_DIR / "storage.py"
+spec = importlib.util.spec_from_file_location("jarvis_storage", str(_STORAGE_FILE))
+storage = importlib.util.module_from_spec(spec)  # type: ignore
+assert spec and spec.loader, "Cannot load storage.py"
+spec.loader.exec_module(storage)  # type: ignore
 
-# ----- Config -----
-HOST = os.getenv("API_BIND", "0.0.0.0")
-PORT = int(os.getenv("API_PORT", "8080"))
-PROXY_BIND = os.getenv("proxy_bind", "127.0.0.1")
-PROXY_PORT = int(os.getenv("proxy_port", "2580"))
+# init DB (path configurable via env JARVIS_DB_PATH)
+storage.init_db(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
 
-def _resp(start_response, code=200, body=b"ok", ctype="application/json", extra_headers=None):
-    headers = [
-        ("Content-Type", ctype),
-        ("Cache-Control", "no-store"),
-        ("Access-Control-Allow-Origin", "*"),
-        ("Access-Control-Allow-Headers", "Content-Type"),
-        ("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS"),
-    ]
-    if extra_headers:
-        headers.extend(extra_headers)
-    start_response(f"{code} OK" if code == 200 else f"{code} ERROR", headers)
-    return [body if isinstance(body, (bytes, bytearray)) else body.encode("utf-8")]
+# ----- helpers -----
+def _json(data, status=200):
+    return web.Response(text=json.dumps(data, ensure_ascii=False), status=status, content_type="application/json")
 
-def _json(start_response, obj, code=200):
-    return _resp(start_response, code=code, body=json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+def _ui_root() -> Path:
+    # prefer /share (persisted), fallback to /app/ui (bundled)
+    cand = Path("/share/jarvis_prime/ui")
+    if cand.is_dir():
+        return cand
+    return _THIS_DIR / "ui"
 
-def _bad(start_response, msg="bad request", code=400):
-    return _json(start_response, {"error": msg}, code=code)
-
-def _read_json(env):
+# ----- API handlers -----
+async def api_create_message(request: web.Request):
     try:
-        length = int(env.get("CONTENT_LENGTH", "0"))
-        raw = env["wsgi.input"].read(length) if length > 0 else b""
-        if not raw:
-            return {}
-        return json.loads(raw.decode("utf-8"))
+        data = await request.json()
     except Exception:
-        return {}
+        return _json({"error":"bad json"}, status=400)
+    title = str(data.get("title") or "Untitled")
+    body = str(data.get("body") or "")
+    source = str(data.get("source") or "api")
+    priority = int(data.get("priority", 5))
+    extras = data.get("extras") or {}
+    mid = storage.save_message(title, body, source, priority, extras)  # type: ignore
+    return _json({"id": int(mid)})
 
-def _route_messages(env, start_response, path):
-    # GET /api/messages?limit=50&q=...&offset=0
-    if env["REQUEST_METHOD"] == "GET":
-        qs = parse_qs(env.get("QUERY_STRING",""))
-        limit = int(qs.get("limit", ["50"])[0])
-        q = qs.get("q", [""])[0] or None
-        offset = int(qs.get("offset", ["0"])[0])
-        try:
-            data = storage.list_messages(limit=limit, q=q, offset=offset)
-            return _json(start_response, {"items": data, "count": len(data)})
-        except Exception as e:
-            print("[api] list_messages error:", e)
-            traceback.print_exc()
-            return _bad(start_response, "list error", code=500)
-    # DELETE /api/messages/<id>
-    if env["REQUEST_METHOD"] == "DELETE":
-        try:
-            mid = int(path.split("/")[-1])
-            ok = storage.delete_message(mid)
-            return _json(start_response, {"deleted": bool(ok)})
-        except Exception:
-            return _bad(start_response, "delete error", code=500)
-    # OPTIONS
-    if env["REQUEST_METHOD"] == "OPTIONS":
-        return _resp(start_response, 200, b"", "text/plain")
-    return _bad(start_response, "method not allowed", code=405)
-
-def _route_message(env, start_response, mid):
-    if env["REQUEST_METHOD"] == "GET":
-        m = storage.get_message(int(mid))
-        return _json(start_response, {"item": m} if m else {"item": None})
-    if env["REQUEST_METHOD"] == "OPTIONS":
-        return _resp(start_response, 200, b"", "text/plain")
-    return _bad(start_response, "method not allowed", code=405)
-
-def _route_settings(env, start_response):
-    if env["REQUEST_METHOD"] == "GET":
-        days = storage.get_retention_days()
-        return _json(start_response, {"retention_days": days})
-    if env["REQUEST_METHOD"] == "POST":
-        data = _read_json(env)
-        days = int(data.get("retention_days", 30))
-        storage.set_retention_days(days)
-        return _json(start_response, {"retention_days": storage.get_retention_days()})
-    if env["REQUEST_METHOD"] == "OPTIONS":
-        return _resp(start_response, 200, b"", "text/plain")
-    return _bad(start_response, "method not allowed", code=405)
-
-def _route_purge(env, start_response):
-    if env["REQUEST_METHOD"] == "POST":
-        data = _read_json(env)
-        days = int(data.get("days", 30))
-        n = storage.purge_older_than(days)
-        return _json(start_response, {"purged": n})
-    if env["REQUEST_METHOD"] == "OPTIONS":
-        return _resp(start_response, 200, b"", "text/plain")
-    return _bad(start_response, "method not allowed", code=405)
-
-def _route_push(env, start_response):
-    """POST /api/push  -> forwards to local proxy so normal pipeline runs (LLM/beautify + DB save)."""
-    if env["REQUEST_METHOD"] == "POST":
-        data = _read_json(env)
-        title = (data.get("title") or "Message").strip()
-        message = str(data.get("message") or "").strip()
-        priority = int(data.get("priority") or 5)
-        if not message:
-            return _bad(start_response, "message required")
-        try:
-            url = f"http://{PROXY_BIND}:{PROXY_PORT}/"
-            payload = {"title": title, "message": message, "priority": priority}
-            r = requests.post(url, json=payload, headers={"Content-Type":"application/json", "X-Title": title}, timeout=8)
-            r.raise_for_status()
-            return _json(start_response, {"ok": True})
-        except Exception as e:
-            print("[api] push error:", e)
-            return _bad(start_response, f"push failed: {e}", code=500)
-    if env["REQUEST_METHOD"] == "OPTIONS":
-        return _resp(start_response, 200, b"", "text/plain")
-    return _bad(start_response, "method not allowed", code=405)
-
-def app(env, start_response):
+async def api_list_messages(request: web.Request):
+    q = request.rel_url.query.get("q")
     try:
-        path = env.get("PATH_INFO","")
-        if path == "/":
-            return _resp(start_response, 200, b"ok", "text/plain")
-        if path.startswith("/api/messages/") and env["REQUEST_METHOD"] in ("GET","DELETE","OPTIONS"):
-            return _route_messages(env, start_response, path)
-        if path == "/api/messages" and env["REQUEST_METHOD"] in ("GET","OPTIONS"):
-            return _route_messages(env, start_response, path)
-        if path.startswith("/api/message/"):
-            mid = path.split("/")[-1]
-            return _route_message(env, start_response, mid)
-        if path == "/api/inbox/settings":
-            return _route_settings(env, start_response)
-        if path == "/api/inbox/purge":
-            return _route_purge(env, start_response)
-        if path == "/api/push":
-            return _route_push(env, start_response)
-        return _bad(start_response, "not found", code=404)
-    except Exception as e:
-        print("[api] fatal:", e)
-        traceback.print_exc()
-        return _bad(start_response, "internal error", code=500)
+        limit = int(request.rel_url.query.get("limit", "50"))
+    except Exception:
+        limit = 50
+    try:
+        offset = int(request.rel_url.query.get("offset", "0"))
+    except Exception:
+        offset = 0
+    items = storage.list_messages(limit=limit, q=q, offset=offset)  # type: ignore
+    return _json({"items": items})
+
+async def api_get_message(request: web.Request):
+    mid = int(request.match_info["id"])
+    m = storage.get_message(mid)  # type: ignore
+    if not m:
+        return _json({"error": "not found"}, status=404)
+    return _json(m)
+
+async def api_delete_message(request: web.Request):
+    mid = int(request.match_info["id"])
+    ok = storage.delete_message(mid)  # type: ignore
+    return _json({"ok": bool(ok)})
+
+async def api_mark_read(request: web.Request):
+    mid = int(request.match_info["id"])
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    read = bool(body.get("read", True))
+    ok = storage.mark_read(mid, read)  # type: ignore
+    return _json({"ok": bool(ok)})
+
+async def api_get_settings(request: web.Request):
+    days = storage.get_retention_days()  # type: ignore
+    return _json({"retention_days": int(days)})
+
+async def api_save_settings(request: web.Request):
+    data = await request.json()
+    days = int(data.get("retention_days", 30))
+    storage.set_retention_days(days)  # type: ignore
+    return _json({"ok": True})
+
+async def api_purge(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    days = int(data.get("days", storage.get_retention_days()))  # type: ignore
+    n = storage.purge_older_than(days)  # type: ignore
+    return _json({"purged": int(n)})
+
+# ----- Static UI -----
+async def index(request: web.Request):
+    root = _ui_root()
+    index_file = root / "index.html"
+    if not index_file.exists():
+        return web.Response(text="UI is not installed. Place files in /share/jarvis_prime/ui/", status=404)
+    return web.FileResponse(path=str(index_file))
+
+def create_app() -> web.Application:
+    app = web.Application()
+    # API
+    app.router.add_post("/api/messages", api_create_message)
+    app.router.add_get("/api/messages", api_list_messages)
+    app.router.add_get("/api/messages/{id:\d+}", api_get_message)
+    app.router.add_delete("/api/messages/{id:\d+}", api_delete_message)
+    app.router.add_post("/api/messages/{id:\d+}/read", api_mark_read)
+
+    app.router.add_get("/api/inbox/settings", api_get_settings)
+    app.router.add_post("/api/inbox/settings", api_save_settings)
+    app.router.add_post("/api/inbox/purge", api_purge)
+
+    # UI routes
+    app.router.add_get("/", index)
+    app.router.add_get("/ui", index)   # no trailing slash
+    app.router.add_get("/ui/", index)  # trailing slash
+    # static assets
+    ui_root = _ui_root()
+    app.router.add_static("/ui/", path=str(ui_root), name="static", show_index=False)
+    return app
+
+def run():
+    app = create_app()
+    host = os.getenv("inbox_bind", "0.0.0.0")
+    port = int(os.getenv("inbox_port", "2581"))
+    print(f"======= Running on http://{host}:{port} =======")
+    web.run_app(app, host=host, port=port)
 
 if __name__ == "__main__":
-    storage.init_db()
-    httpd = make_server(HOST, PORT, app)
-    print(f"[api] listening on {HOST}:{PORT} (proxy forward {PROXY_BIND}:{PROXY_PORT})")
-    httpd.serve_forever()
+    run()
