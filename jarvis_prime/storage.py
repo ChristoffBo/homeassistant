@@ -155,10 +155,13 @@ def delete_message(mid: int) -> bool:
         cur = c.execute("DELETE FROM messages WHERE id=?", (int(mid),))
         return cur.rowcount > 0
 
-def delete_all() -> int:
+def delete_all(keep_saved: bool=False) -> int:
     with _db_lock:
         c = _conn()
-        cur = c.execute("DELETE FROM messages")
+        if keep_saved:
+            cur = c.execute("DELETE FROM messages WHERE saved=0")
+        else:
+            cur = c.execute("DELETE FROM messages")
         return int(cur.rowcount)
 
 def mark_read(mid: int, read: bool = True) -> bool:

@@ -118,9 +118,16 @@ async def api_delete_message(request: web.Request):
     return _json({"ok": bool(ok)})
 
 async def api_delete_all(request: web.Request):
-    n = storage.delete_all()  # type: ignore
-    _broadcast("deleted_all", count=int(n))
-    return _json({"deleted": int(n)})
+    keep = request.rel_url.query.get('keep_saved')
+    keep_saved = False
+    if keep is not None:
+        try:
+            keep_saved = bool(int(keep))
+        except Exception:
+            keep_saved = keep.lower() in ('1','true','yes')
+    n = storage.delete_all(keep_saved=keep_saved)  # type: ignore
+    _broadcast("deleted_all", count=int(n), keep_saved=bool(keep_saved))
+    return _json({"deleted": int(n), "keep_saved": bool(keep_saved)})
 
 async def api_mark_read(request: web.Request):
     mid = int(request.match_info["id"])
