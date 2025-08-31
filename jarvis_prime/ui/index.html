@@ -1,64 +1,66 @@
 <!doctype html>
-<html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Jarvis Prime — Unified Inbox</title>
-<link rel='stylesheet' href='https://unpkg.com/@picocss/pico@1.5.10/css/pico.min.css'>
-<style>:root{--bg:#0b1220;--card:#121a2b;--muted:#9bb3ff;--accent:#4776ff;--accent-2:#8f7bff;--txt:#dbe2ff;--txt-dim:#99a6d6;--danger:#ff5d5d;--radius:18px}
-html,body{background:radial-gradient(1200px 800px at 70% -20%,rgba(71,118,255,.15),transparent),linear-gradient(#0b1220,#0b1220);color:var(--txt)}
-header.hero{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,rgba(11,18,32,.85),rgba(11,18,32,.55) 70%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.05)}
-.brand{display:flex;align-items:center;gap:12px;padding:10px 8px}.avatar{width:38px;height:38px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#4d86ff,#1b2b55);box-shadow:0 0 40px rgba(71,118,255,.35),0 0 120px rgba(143,123,255,.18);position:relative;overflow:hidden}
-.avatar::after{content:'';position:absolute;inset:-20%;background:conic-gradient(from 0deg,transparent,rgba(143,123,255,.4),transparent);animation:spin 6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}.title{font-weight:700;letter-spacing:.3px}.sub{color:var(--txt-dim);font-size:.9rem}
-.controls{display:flex;gap:10px;align-items:center;justify-content:flex-end;padding:10px 8px}.grid{display:grid;grid-template-columns:360px 1fr;gap:18px;padding:14px}
-.panel{background:linear-gradient(180deg,rgba(18,26,43,.88),rgba(18,26,43,.72));border:1px solid rgba(255,255,255,.06);border-radius:var(--radius);box-shadow:0 0 40px rgba(71,118,255,.25)}
-.list{height:calc(100vh - 170px);overflow:auto;padding:8px 10px}.viewer{height:calc(100vh - 170px);overflow:auto;padding:16px}
-.badge{background:rgba(71,118,255,.18);color:var(--muted);border:1px solid rgba(71,118,255,.35)}.btn-accent{background:linear-gradient(135deg,var(--accent),var(--accent-2));border:0;color:#fff}
-.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,.15);color:var(--txt)}.tag{display:inline-block;padding:.2rem .5rem;border-radius:999px;margin-right:.25rem;font-size:.78rem}
-.cardish{border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:12px 14px;background:rgba(11,18,32,.35)}.muted{color:var(--txt-dim)}.danger{color:var(--danger)}
-dialog{border:1px solid rgba(255,255,255,.1);background:rgba(11,18,32,.95);color:var(--txt);border-radius:14px}dialog::backdrop{background:rgba(0,0,0,.6);backdrop-filter:blur(2px)}
-.kbd{padding:.1rem .4rem;border-radius:6px;border:1px solid rgba(255,255,255,.2);font-family:ui-monospace,Menlo,Consolas,monospace}</style>
-</head><body>
-<header class='hero container-fluid'><div class='grid' style='grid-template-columns:1fr 1fr'>
-  <div class='brand'><div class='avatar' aria-hidden='true'></div><div><div class='title'>Jarvis Prime</div><div class='sub'>Unified Inbox • Neural Orchestrator</div></div></div>
-  <div class='controls'>
-    <input id='search' type='search' placeholder='Search title, body, source...' style='max-width:380px'>
-    <select id='limit'><option value='50'>50</option><option value='100'>100</option><option value='200'>200</option></select>
-    <button class='btn-ghost' onclick='refreshList()'>Search</button><div style='flex:1'></div>
-    <input id='retention' type='number' min='1' value='30' style='max-width:88px'><button class='btn-ghost' onclick='saveRetention()'>Save</button>
-    <button class='btn-ghost' onclick='purgeNow()'>Purge</button><button class='btn-accent' onclick='openCompose()'>Compose</button>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis Prime — Inbox</title>
+  <link rel="icon" href="./icon.png" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="./icon.png" alt="Jarvis" class="logo" />
+    <div class="titles">
+      <h1>Jarvis Prime</h1>
+      <div class="subtitle">Unified Inbox</div>
+    </div>
   </div>
-</div></header>
-<main class='container-fluid grid'><section class='panel'><div class='list' id='list'></div></section>
-<section class='panel'><div class='viewer' id='viewer'><h3>Welcome 👋</h3><p>Select a message on the left to preview it here.</p><p class='muted'>Tip: <span class='kbd'>/</span> focus • <span class='kbd'>r</span> refresh • <span class='kbd'>Del</span> delete • <span class='kbd'>n</span> compose</p></div></section></main>
-<dialog id='compose'><article><header><strong>Compose</strong></header>
-<label>Title <input id='c_title' placeholder='Jarvis — Command or Title'></label>
-<label>Priority <input id='c_priority' type='number' value='5' min='1' max='10'></label>
-<label>Message <textarea id='c_body' rows='6' placeholder='Try: "jarvis forecast" or "Deploy completed ✅"'></textarea></label>
-<footer><button class='btn-ghost' onclick='closeCompose()'>Cancel</button><button class='btn-accent' onclick='sendCompose()'>Send</button></footer></article></dialog>
-<script>
-const API = location.origin.replace(/\/ui\/?$/,''); const listEl=document.getElementById('list'), viewer=document.getElementById('viewer');
-const searchEl=document.getElementById('search'), limitEl=document.getElementById('limit'), retentionEl=document.getElementById('retention');
-async function api(path,opts={}){const r=await fetch(API+path,Object.assign({headers:{'Content-Type':'application/json'}},opts)); if(!r.ok) throw new Error(await r.text()); return await r.json().catch(()=>({}));}
-async function loadSettings(){try{const res=await api('/api/inbox/settings');retentionEl.value=res.retention_days??30;}catch(e){}}
-function fmtDate(ts){if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleString();}
-function itemRow(it){return `<div class="cardish" data-id="${it.id}" onclick="openMsg(${it.id})" style="cursor:pointer;margin-bottom:10px">
-<div style="display:flex;align-items:center;justify-content:space-between;"><strong>${escapeHtml(it.title)}</strong><span class="muted">${fmtDate(it.created_at||0)}</span></div>
-<div class="muted" style="margin-top:6px;">${escapeHtml((it.body||'').slice(0,160))}</div>
-<div style="margin-top:8px;"><span class="tag badge">Source: ${escapeHtml(it.source||'')}</span><span class="tag badge">Priority: ${it.priority||5}</span></div></div>`;}
-function renderList(items){listEl.innerHTML=items.length?items.map(itemRow).join(''):`<p class='muted'>No messages</p>`;}
-async function refreshList(){const q=searchEl.value.trim(); const limit=+limitEl.value; const res=await api(`/api/messages?limit=${limit}${q?`&q=${encodeURIComponent(q)}`:''}`); renderList(res.items||[]);}
-async function openMsg(id){const res=await api(`/api/message/${id}`); const it=res.item; if(!it) return;
-viewer.innerHTML=`<h4>${escapeHtml(it.title)}</h4><div style="margin-bottom:10px;"><span class="tag badge">Source: ${escapeHtml(it.source||'')}</span><span class="tag badge">Priority: ${it.priority||5}</span></div>
-<pre style="white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace">${escapeHtml(it.body||'')}</pre>
-<div style="display:flex;gap:8px;margin-top:10px;"><button class="btn-ghost" onclick="copyText(${JSON.stringify(''+(res.item?.body||''))})">Copy</button>
-<button class="btn-ghost danger" onclick="delMsg(${id})">Delete</button></div>`;}
-async function delMsg(id){if(!confirm('Delete this message?')) return; await fetch(API+`/api/messages/${id}`,{method:'DELETE'}); refreshList(); viewer.innerHTML='<p class="muted">Deleted.</p>';}
-async function saveRetention(){const days=+retentionEl.value||30; await api('/api/inbox/settings',{method:'POST',body:JSON.stringify({retention_days:days})});}
-async function purgeNow(){const days=+prompt('Purge items older than N days:','30'); if(!days) return; await api('/api/inbox/purge',{method:'POST',body:JSON.stringify({days})}); refreshList();}
-const dlg=document.getElementById('compose'); function openCompose(){dlg.showModal();} function closeCompose(){dlg.close();}
-async function sendCompose(){const title=(document.getElementById('c_title').value.trim()||'Message'); const message=document.getElementById('c_body').value.trim(); const priority=+document.getElementById('c_priority').value||5;
-if(!message){alert('Please enter a message.'); return;} await api('/api/push',{method:'POST',body:JSON.stringify({title,message,priority})}); dlg.close(); document.getElementById('c_body').value=''; refreshList();}
-function startStream(){try{const es=new EventSource(API+'/api/stream'); es.onmessage=()=>refreshList(); es.addEventListener('inbox',()=>refreshList()); es.onerror=()=>{es.close();setTimeout(startStream,3000);};}catch(e){setTimeout(startStream,3000);}}
-function escapeHtml(s){return (s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
-function copyText(t){navigator.clipboard.writeText(t||'').catch(()=>{});} window.addEventListener('keydown',e=>{if(e.key=== '/') {e.preventDefault();searchEl.focus();} if(e.key==='r'){refreshList();} if(e.key==='n'){openCompose();}
-if(e.key==='Delete'){const active=listEl.querySelector('[data-id]'); if(active){delMsg(+active.getAttribute('data-id'));}}}); loadSettings().then(()=>{refreshList(); startStream();});</script>
-</body></html>
+  <div class="actions">
+    <button id="btn-refresh" class="btn">Refresh</button>
+  </div>
+</header>
+
+<section class="toolbar">
+  <div class="search-row">
+    <div class="input-wrap">
+      <span class="icon">🔎</span>
+      <input id="q" type="search" placeholder="Search title, body, source…" />
+    </div>
+    <select id="limit">
+      <option value="25">25</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+    <button id="btn-search" class="btn primary">Search</button>
+    <span class="spacer"></span>
+    <label class="retention">
+      <span>Retention (days)</span>
+      <input id="retention" type="number" min="1" value="30" />
+      <button id="btn-save-retention" class="btn">Save</button>
+    </label>
+    <label class="retention">
+      <span>Purge now</span>
+      <input id="purge-days" type="number" min="1" value="30" />
+      <button id="btn-purge" class="btn danger">Purge</button>
+    </label>
+  </div>
+</section>
+
+<main class="layout">
+  <aside class="list" id="list"></aside>
+  <section class="preview" id="preview">
+    <div class="empty">
+      <h2>Welcome 👋</h2>
+      <p>Select a message on the left to preview it here.</p>
+      <p class="hint">Tip: use <kbd>/</kbd> to focus search, <kbd>r</kbd> to refresh, <kbd>Del</kbd> to delete.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer" id="footer"></footer>
+
+<script src="./app.js"></script>
+</body>
+</html>
