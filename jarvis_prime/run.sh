@@ -205,3 +205,5 @@ else
 fi
 
 wait "$API_PID"
+
+export BOT_INTERNAL_PORT=${BOT_INTERNAL_PORT:-2599}
