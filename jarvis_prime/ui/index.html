@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis Prime — Inbox v3.1</title>
+  <title>Jarvis Prime — Inbox v3.2</title>
   <link rel="icon" href="./icon.png" />
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -13,7 +13,7 @@
     <img src="./icon.png" alt="Jarvis" class="logo" />
     <div class="titles">
       <h1>Jarvis Prime</h1>
-      <div class="subtitle">Unified Inbox • <span id="live-badge" class="live ok">LIVE</span> • v3.1</div>
+      <div class="subtitle">Unified Inbox • <span id="live-badge" class="live err">OFF</span> • v3.2</div>
     </div>
   </div>
   <div class="wake">
@@ -38,15 +38,28 @@
     <button id="btn-search" class="btn primary">Search</button>
     <button id="btn-saved" class="btn">Saved only: OFF</button>
     <span class="spacer"></span>
+
     <label class="retention">
       <span>Retention (days)</span>
-      <input id="retention" type="number" min="1" value="30" />
+      <select id="retention">
+        <option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option>
+      </select>
       <button id="btn-save-retention" class="btn">Save</button>
     </label>
+
     <label class="retention">
       <span>Purge now</span>
-      <input id="purge-days" type="number" min="1" value="30" />
+      <select id="purge-days">
+        <option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option>
+        <option value="custom">Custom…</option>
+      </select>
       <button id="btn-purge" class="btn danger">Purge</button>
+    </label>
+
+    <label class="retention">
+      <span>Delete all</span>
+      <label class="mini"><input id="keep-fav" type="checkbox" checked/> Keep favorites</label>
+      <button id="btn-delall" class="btn danger">Delete</button>
     </label>
   </div>
 </section>
