@@ -4,10 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Jarvis Prime — Inbox</title>
-
-  <!-- Force all assets to resolve relative to /ui/ (Ingress fix) -->
-  <base href="./">
-
   <link rel="icon" href="./icon.png" />
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -21,6 +17,10 @@
     </div>
   </div>
   <div class="actions">
+    <div class="wake-wrap">
+      <input id="wake-text" class="wake-input" type="text" placeholder="Wake phrase (e.g., hey jarvis)" />
+      <button id="btn-wake" class="btn primary">Send</button>
+    </div>
     <button id="btn-refresh" class="btn">Refresh</button>
   </div>
 </header>
@@ -49,6 +49,7 @@
       <input id="purge-days" type="number" min="1" value="30" />
       <button id="btn-purge" class="btn danger">Purge</button>
     </label>
+    <button id="btn-delete-all" class="btn danger">Delete all</button>
   </div>
 </section>
 
@@ -58,7 +59,7 @@
     <div class="empty">
       <h2>Welcome 👋</h2>
       <p>Select a message on the left to preview it here.</p>
-      <p class="hint">Tip: use <kbd>/</kbd> to focus search, <kbd>r</kbd> to refresh, <kbd>Del</kbd> to delete.</p>
+      <p class="hint">Tip: <kbd>/</kbd> search, <kbd>r</kbd> refresh, <kbd>w</kbd> wake, <kbd>Del</kbd> delete.</p>
     </div>
   </section>
 </main>
