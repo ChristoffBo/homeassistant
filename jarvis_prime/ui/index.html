@@ -4,9 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Jarvis Prime — Inbox</title>
-  <meta name="jarvis-api-base" content="api" />
   <link rel="icon" href="./icon.png" />
-  <link rel="stylesheet" href="./style.css?v=jp7" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
 <header class="topbar">
@@ -18,10 +17,6 @@
     </div>
   </div>
   <div class="actions">
-    <div class="wake-wrap">
-      <input id="wake-text" class="wake-input" type="text" placeholder="Wake phrase (e.g., jarvis weather)" />
-      <button id="btn-wake" class="btn primary">Send</button>
-    </div>
     <button id="btn-refresh" class="btn">Refresh</button>
   </div>
 </header>
@@ -39,8 +34,6 @@
       <option value="200">200</option>
     </select>
     <button id="btn-search" class="btn primary">Search</button>
-    <button id="btn-follow" class="btn">Follow new</button>
-    <button id="btn-filter-saved" class="btn">Saved only</button>
     <span class="spacer"></span>
     <label class="retention">
       <span>Retention (days)</span>
@@ -48,14 +41,10 @@
       <button id="btn-save-retention" class="btn">Save</button>
     </label>
     <label class="retention">
-      <span>Purge</span>
-      <div class="purge-group">
-        <button data-days="1" class="btn danger small">1d</button>
-        <button data-days="7" class="btn danger small">7d</button>
-        <button data-days="30" class="btn danger small">30d</button>
-      </div>
+      <span>Purge now</span>
+      <input id="purge-days" type="number" min="1" value="30" />
+      <button id="btn-purge" class="btn danger">Purge</button>
     </label>
-    <button id="btn-delete-all" class="btn danger">Delete all</button>
   </div>
 </section>
 
@@ -65,13 +54,13 @@
     <div class="empty">
       <h2>Welcome 👋</h2>
       <p>Select a message on the left to preview it here.</p>
-      <p class="hint">Shortcuts: <kbd>/</kbd> search, <kbd>r</kbd> refresh, <kbd>w</kbd> wake, <kbd>Del</kbd> delete.</p>
+      <p class="hint">Tip: use <kbd>/</kbd> to focus search, <kbd>r</kbd> to refresh, <kbd>Del</kbd> to delete.</p>
     </div>
   </section>
 </main>
 
 <footer class="footer" id="footer"></footer>
 
-<script src="./app.js?v=jp7" defer></script>
+<script src="./app.js"></script>
 </body>
 </html>
