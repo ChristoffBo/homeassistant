@@ -207,3 +207,17 @@ fi
 wait "$API_PID"
 
 export BOT_INTERNAL_PORT=${BOT_INTERNAL_PORT:-2599}
+
+
+# --- HARD-OFF for push endpoints (if toggles are false, blank the URLs so nothing can push) ---
+if [ "$PUSH_GOTIFY_ENABLED" != "true" ] && [ "$PUSH_GOTIFY_ENABLED" != "1" ] && [ "$PUSH_GOTIFY_ENABLED" != "yes" ]; then
+  export GOTIFY_URL=""
+  export GOTIFY_APP_TOKEN=""
+  export GOTIFY_CLIENT_TOKEN=""
+  echo "[launcher] hard-off: Gotify env cleared"
+fi
+if [ "$PUSH_NTFY_ENABLED" != "true" ] && [ "$PUSH_NTFY_ENABLED" != "1" ] && [ "$PUSH_NTFY_ENABLED" != "yes" ]; then
+  export NTFY_URL=""
+  export NTFY_TOPIC=""
+  echo "[launcher] hard-off: ntfy env cleared"
+fi
