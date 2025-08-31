@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-# api_messages.py — Inbox HTTP API + static UI for Jarvis Prime
-# Serves the /ui app and exposes CRUD to the SQLite store.
+# api_messages.py — Inbox HTTP API + static UI for Jarvis Prime (JP7)
+# Adds: delete-all, save/unsave, SSE stream, wake endpoint, better UI mounting.
 
-import os
-import json
+import os, json, asyncio
 from pathlib import Path
 from aiohttp import web
 import importlib.util
@@ -18,6 +17,49 @@ spec.loader.exec_module(storage)  # type: ignore
 
 # init DB (path configurable via env JARVIS_DB_PATH)
 storage.init_db(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
+
+# ----- SSE broadcaster -----
+_listeners = set()
+
+async def _sse(request: web.Request):
+    resp = web.StreamResponse(
+        status=200,
+        reason='OK',
+        headers={
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        }
+    )
+    await resp.prepare(request)
+    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    _listeners.add(q)
+    # initial ping
+    await resp.write(b": hello\n\n")
+    try:
+        while True:
+            data = await q.get()
+            payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
+            await resp.write(b"data: " + payload + b"\n\n")
+    except asyncio.CancelledError:
+        pass
+    finally:
+        _listeners.discard(q)
+        try:
+            await resp.write_eof()
+        except Exception:
+            pass
+    return resp
+
+def _broadcast(event: str, **kw):
+    dead = []
+    for q in list(_listeners):
+        try:
+            q.put_nowait({"event": event, **kw})
+        except Exception:
+            dead.append(q)
+    for q in dead:
+        _listeners.discard(q)
 
 # ----- helpers -----
 def _json(data, status=200):
@@ -42,6 +84,7 @@ async def api_create_message(request: web.Request):
     priority = int(data.get("priority", 5))
     extras = data.get("extras") or {}
     mid = storage.save_message(title, body, source, priority, extras)  # type: ignore
+    _broadcast("created", id=int(mid))
     return _json({"id": int(mid)})
 
 async def api_list_messages(request: web.Request):
@@ -54,7 +97,11 @@ async def api_list_messages(request: web.Request):
         offset = int(request.rel_url.query.get("offset", "0"))
     except Exception:
         offset = 0
-    items = storage.list_messages(limit=limit, q=q, offset=offset)  # type: ignore
+    saved = request.rel_url.query.get("saved")
+    saved_bool = None
+    if saved is not None:
+        saved_bool = bool(int(saved))
+    items = storage.list_messages(limit=limit, q=q, offset=offset, saved=saved_bool)  # type: ignore
     return _json({"items": items})
 
 async def api_get_message(request: web.Request):
@@ -67,7 +114,13 @@ async def api_get_message(request: web.Request):
 async def api_delete_message(request: web.Request):
     mid = int(request.match_info["id"])
     ok = storage.delete_message(mid)  # type: ignore
+    _broadcast("deleted", id=int(mid))
     return _json({"ok": bool(ok)})
+
+async def api_delete_all(request: web.Request):
+    n = storage.delete_all()  # type: ignore
+    _broadcast("deleted_all", count=int(n))
+    return _json({"deleted": int(n)})
 
 async def api_mark_read(request: web.Request):
     mid = int(request.match_info["id"])
@@ -77,6 +130,20 @@ async def api_mark_read(request: web.Request):
         body = {}
     read = bool(body.get("read", True))
     ok = storage.mark_read(mid, read)  # type: ignore
+    if ok:
+        _broadcast("marked", id=int(mid), read=bool(read))
+    return _json({"ok": bool(ok)})
+
+async def api_toggle_saved(request: web.Request):
+    mid = int(request.match_info["id"])
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    saved = bool(int(data.get("saved", 1)))
+    ok = storage.set_saved(mid, saved)  # type: ignore
+    if ok:
+        _broadcast("saved", id=int(mid), saved=bool(saved))
     return _json({"ok": bool(ok)})
 
 async def api_get_settings(request: web.Request):
@@ -96,7 +163,21 @@ async def api_purge(request: web.Request):
         data = {}
     days = int(data.get("days", storage.get_retention_days()))  # type: ignore
     n = storage.purge_older_than(days)  # type: ignore
+    _broadcast("purged", days=int(days), deleted=int(n))
     return _json({"purged": int(n)})
+
+async def api_wake(request: web.Request):
+    """Accept a wake phrase from UI. Store a message so downstream agents can respond."""
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error":"bad json"}, status=400)
+    text = str(data.get("text") or "").strip()
+    if not text:
+        return _json({"error":"empty"}, status=400)
+    mid = storage.save_message(title="Wake", body=text, source="ui", priority=3, extras={"kind":"wake"})  # type: ignore
+    _broadcast("wake", id=int(mid))
+    return _json({"ok": True, "id": int(mid)})
 
 # ----- Static UI -----
 async def index(request: web.Request):
@@ -111,13 +192,20 @@ def create_app() -> web.Application:
     # API
     app.router.add_post("/api/messages", api_create_message)
     app.router.add_get("/api/messages", api_list_messages)
-    app.router.add_get("/api/messages/{id:\d+}", api_get_message)
-    app.router.add_delete("/api/messages/{id:\d+}", api_delete_message)
-    app.router.add_post("/api/messages/{id:\d+}/read", api_mark_read)
+    app.router.add_get("/api/messages/{id:\\d+}", api_get_message)
+    app.router.add_delete("/api/messages/{id:\\d+}", api_delete_message)
+    app.router.add_delete("/api/messages", api_delete_all)
+    app.router.add_post("/api/messages/{id:\\d+}/read", api_mark_read)
+    app.router.add_post("/api/messages/{id:\\d+}/save", api_toggle_saved)
 
     app.router.add_get("/api/inbox/settings", api_get_settings)
     app.router.add_post("/api/inbox/settings", api_save_settings)
     app.router.add_post("/api/inbox/purge", api_purge)
+
+    app.router.add_post("/api/wake", api_wake)
+
+    # SSE
+    app.router.add_get("/api/stream", _sse)
 
     # UI routes
     app.router.add_get("/", index)

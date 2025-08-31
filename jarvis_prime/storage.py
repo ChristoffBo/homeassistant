@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# storage.py — SQLite inbox store for Jarvis Prime (thread-safe, WAL, cross-thread connection)
+# storage.py — SQLite inbox store for Jarvis Prime (JP7)
 from __future__ import annotations
 import os, json, sqlite3, threading, time
 from typing import Any, Dict, List, Optional, Set
@@ -39,12 +39,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
     cols = _columns(conn)
 
-    # add missing columns expected by the app
     if "priority" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN priority INTEGER NOT NULL DEFAULT 5")
         cols.add("priority")
 
-    # At least one time column must exist (created_at preferred).
     if "created_at" not in cols and "ts" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
         cols.add("created_at")
@@ -56,6 +54,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     if "extras" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN extras TEXT")
         cols.add("extras")
+
+    if "saved" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN saved INTEGER NOT NULL DEFAULT 0")
+        cols.add("saved")
 
 def _connect(path: str) -> sqlite3.Connection:
     # Enable cross-thread use to support aiosmtpd worker thread
@@ -82,6 +84,8 @@ def _row_to_dict(r: sqlite3.Row) -> Dict[str, Any]:
             d["extras"] = json.loads(d["extras"])
         except Exception:
             pass
+    d["saved"] = bool(int(d.get("saved", 0)))
+    d["read"] = bool(int(d.get("read", 0)))
     return d
 
 # ---------------------- public API ----------------------
@@ -100,29 +104,33 @@ def save_message(title: str, body: str, source: str, priority: int = 5, extras: 
         if "ts" in cols:
             time_cols.append("ts")
             params.append(ts)
-        # ensure read/extras exist (migrations should have added them)
         columns_sql = "title, body, source, priority"
         if time_cols:
             columns_sql += ", " + ", ".join(time_cols)
-        columns_sql += ", read, extras"
-        sql = f"INSERT INTO messages({columns_sql}) VALUES({','.join(['?']* (4 + len(time_cols) + 2))})"
-        params.extend([0, ex])
+        columns_sql += ", read, extras, saved"
+        sql = f"INSERT INTO messages({columns_sql}) VALUES({','.join(['?']* (4 + len(time_cols) + 3))})"
+        params.extend([0, ex, 0])
         cur = c.execute(sql, params)
         return int(cur.lastrowid)
 
-def list_messages(limit: int = 50, q: Optional[str] = None, offset: int = 0) -> List[Dict[str, Any]]:
+def list_messages(limit: int = 50, q: Optional[str] = None, offset: int = 0, saved: Optional[bool] = None) -> List[Dict[str, Any]]:
     c = _conn()
     cols = _columns(c)
     time_expr = "COALESCE(created_at, ts)" if "ts" in cols else "created_at"
     if "created_at" not in cols and "ts" in cols:
-        # Fallback when only legacy `ts` exists
         time_expr = "ts"
-    sql = f"SELECT id, title, body, source, priority, {time_expr} AS created_at, read, extras FROM messages"
+    sql = f"SELECT id, title, body, source, priority, {time_expr} AS created_at, read, extras, saved FROM messages"
     args: List[Any] = []
+    clauses = []
     if q:
         like = f"%{q}%"
-        sql += " WHERE title LIKE ? OR body LIKE ? OR source LIKE ?"
+        clauses.append("(title LIKE ? OR body LIKE ? OR source LIKE ?)")
         args += [like, like, like]
+    if saved is not None:
+        clauses.append("saved=?")
+        args.append(1 if saved else 0)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
     args += [int(limit), int(offset)]
     cur = c.execute(sql, args)
@@ -135,7 +143,7 @@ def get_message(mid: int) -> Optional[Dict[str, Any]]:
     if "created_at" not in cols and "ts" in cols:
         time_expr = "ts"
     cur = c.execute(
-        f"SELECT id, title, body, source, priority, {time_expr} AS created_at, read, extras FROM messages WHERE id=?",
+        f"SELECT id, title, body, source, priority, {time_expr} AS created_at, read, extras, saved FROM messages WHERE id=?",
         (int(mid),),
     )
     r = cur.fetchone()
@@ -147,14 +155,25 @@ def delete_message(mid: int) -> bool:
         cur = c.execute("DELETE FROM messages WHERE id=?", (int(mid),))
         return cur.rowcount > 0
 
+def delete_all() -> int:
+    with _db_lock:
+        c = _conn()
+        cur = c.execute("DELETE FROM messages")
+        return int(cur.rowcount)
+
 def mark_read(mid: int, read: bool = True) -> bool:
     with _db_lock:
         c = _conn()
         cur = c.execute("UPDATE messages SET read=? WHERE id=?", (1 if read else 0, int(mid)))
         return cur.rowcount > 0
 
+def set_saved(mid: int, saved: bool = True) -> bool:
+    with _db_lock:
+        c = _conn()
+        cur = c.execute("UPDATE messages SET saved=? WHERE id=?", (1 if saved else 0, int(mid)))
+        return cur.rowcount > 0
+
 def purge_older_than(days: int) -> int:
-    # Use whichever time column is available
     with _db_lock:
         c = _conn()
         cols = _columns(c)
@@ -181,5 +200,6 @@ def set_retention_days(days: int) -> None:
 
 __all__ = [
     "init_db", "save_message", "list_messages", "get_message", "delete_message",
-    "mark_read", "purge_older_than", "get_retention_days", "set_retention_days"
+    "delete_all", "mark_read", "set_saved", "purge_older_than",
+    "get_retention_days", "set_retention_days"
 ]
