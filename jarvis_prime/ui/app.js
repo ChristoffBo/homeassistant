@@ -1,10 +1,21 @@
-// Jarvis v4.0 — New layout + Ingress base + SSE + 2s poll
+// Jarvis v4.3 — Ingress '/ui/' root fix + diagnostics
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
 
-  // All URLs resolve against document.baseURI (dynamic <base> inserted in <head>)
-  const u = (path) => new URL(path.replace(/^\/+/, ''), document.baseURI).toString();
+  function apiRoot() {
+    let b = document.baseURI;
+    try {
+      const url = new URL(b);
+      let p = url.pathname;
+      if (p.endsWith('/ui/')) p = p.slice(0, -4); // strip 'ui/'
+      if (!p.endsWith('/')) p += '/';
+      url.pathname = p;
+      return url.toString();
+    } catch { return b; }
+  }
+  const ROOT = apiRoot();
+  const u = (path) => new URL(path.replace(/^\/+/, ''), ROOT).toString();
 
   const els = {
     feed: $('#feed'), detail: $('#detail'),
@@ -23,35 +34,46 @@
     chime: $('#chime'), ding: $('#ding')
   };
 
+  function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; els.toast.appendChild(d); setTimeout(()=> d.remove(), 3500); }
+  const esc = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  const fmt = (ts) => { try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); } catch { return '' } };
+
+  async function jfetch(url, opts){
+    try{
+      const r = await fetch(url, opts);
+      if(!r.ok){
+        const t = await r.text().catch(()=>'');
+        throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t);
+      }
+      const ct = r.headers.get('content-type')||'';
+      return ct.includes('application/json') ? r.json() : r.text();
+    }catch(e){
+      console.error('Request failed:', e);
+      toast('HTTP error: ' + e.message);
+      throw e;
+    }
+  }
+
   const API = {
     async list(q, limit=50, offset=0){
       const url = new URL(u('api/messages'));
       if(q) url.searchParams.set('q', q);
       url.searchParams.set('limit', limit);
       url.searchParams.set('offset', offset);
-      const r = await fetch(url); if(!r.ok) throw new Error('list'); return (await r.json()).items || [];
+      const data = await jfetch(url.toString());
+      return (data && data.items) ? data.items : (Array.isArray(data)?data:[]);
     },
-    async get(id){ const r=await fetch(u('api/messages/'+id)); if(!r.ok) throw new Error('get'); return r.json(); },
-    async del(id){ const r=await fetch(u('api/messages/'+id), {method:'DELETE'}); if(!r.ok) throw new Error('del'); return r.json(); },
-    async setArchived(id,val){ const r=await fetch(u(`api/messages/${id}/save`),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({saved:val})}); if(!r.ok) throw new Error('arch'); return r.json(); },
-    async getSettings(){ const r=await fetch(u('api/inbox/settings')); if(!r.ok) throw new Error('settings'); return r.json(); },
-    async setRetention(days){ const r=await fetch(u('api/inbox/settings'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}); if(!r.ok) throw new Error('set'); return r.json(); },
-    async purge(days){ const r=await fetch(u('api/inbox/purge'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}); if(!r.ok) throw new Error('purge'); return r.json(); },
-    async deleteAll(keep){ const r=await fetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); if(!r.ok) throw new Error('delall'); return r.json(); },
-    async wake(text){ const r=await fetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); if(!r.ok) throw new Error('wake'); return r.json(); }
+    async get(id){ return jfetch(u('api/messages/'+id)); },
+    async del(id){ return jfetch(u('api/messages/'+id), {method:'DELETE'}); },
+    async setArchived(id,val){ return jfetch(u(`api/messages/${id}/save`),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({saved:val})}); },
+    async getSettings(){ return jfetch(u('api/inbox/settings')); },
+    async setRetention(days){ return jfetch(u('api/inbox/settings'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}); },
+    async purge(days){ return jfetch(u('api/inbox/purge'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}); },
+    async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
+    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); }
   };
 
-  const state = {
-    items: [], active: null,
-    tab: 'all', // all, unread, archived, errors
-    source: '', // '', 'smtp', 'gotify', 'ui'
-    newestSeen: 0
-  };
-
-  const esc = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-  const fmt = (ts) => { try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); } catch { return '' } };
-
-  function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; $('#toast').appendChild(d); setTimeout(()=> d.remove(), 2500); }
+  const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
 
   function counts(items){
     const c = { all:items.length, unread:0, arch:0, smtp:0, gotify:0, ui:0 };
@@ -116,7 +138,7 @@
   }
 
   async function load(selectId=null){
-    const items = await API.list(els.q.value.trim(), parseInt(els.limit.value,10)||50, 0);
+    const items = await API.list($('#q')?.value?.trim()||'', parseInt(els.limit.value,10)||50, 0);
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
     state.items = items;
     counts(items);
@@ -126,11 +148,10 @@
   }
 
   async function loadSettings(){
-    try{ const s=await API.getSettings(); if(s && s.retention_days) els.retention.value=String(s.retention_days); els.purgeDays.value=els.retention.value; }catch{}
+    try{ const s=await API.getSettings(); if(s && s.retention_days) els.retention.value=String(s.retention_days); els.purgeDays.value=els.retention.value; }catch(e){}
   }
 
   function startLive(){
-    // SSE
     try{
       const src = new EventSource(u('api/stream'));
       src.onopen = ()=>{ els.live.textContent='LIVE'; els.live.classList.remove('err'); els.live.classList.add('ok'); };
@@ -139,21 +160,20 @@
         try{
           const data = JSON.parse(e.data||'{}');
           if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
-            if(els.chime.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
+            if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
             load(state.active);
           }
         }catch{}
       };
-    }catch{}
-    // Poll fallback every 2s
+    }catch(e){ console.warn('SSE failed:', e); }
     setInterval(()=> load(state.active), 2000);
   }
 
   // Events
-  els.refresh.addEventListener('click', ()=> load(state.active));
-  els.search.addEventListener('click', ()=> load());
-  els.limit.addEventListener('change', ()=> load());
-  els.q.addEventListener('keydown', e=>{ if(e.key==='Enter') load(); });
+  $('#btn-refresh')?.addEventListener('click', ()=> load(state.active));
+  $('#btn-search')?.addEventListener('click', ()=> load());
+  els.limit?.addEventListener('change', ()=> load());
+  $('#q')?.addEventListener('keydown', e=>{ if(e.key==='Enter') load(); });
   $$('.tabs .tab').forEach(t=> t.addEventListener('click', ()=>{
     $$('.tabs .tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
     state.tab = t.dataset.tab; renderFeed(state.items);
@@ -163,37 +183,38 @@
     c.classList.add('active'); state.source = c.dataset.src || ''; renderFeed(state.items);
   }));
 
-  els.saveRetention.addEventListener('click', async()=>{ const d=parseInt(els.retention.value,10)||30; await API.setRetention(d); toast('Retention saved'); });
-  els.purge.addEventListener('click', async()=>{
+  $('#btn-save-retention')?.addEventListener('click', async()=>{ const d=parseInt(els.retention.value,10)||30; await API.setRetention(d); toast('Retention saved'); });
+  $('#btn-purge')?.addEventListener('click', async()=>{
     let v=els.purgeDays.value; if(v==='custom'){ const s=prompt('Days to purge older than?', '30'); if(!s) return; v=s; }
     const d=parseInt(v,10)||30; if(!confirm(`Purge messages older than ${d} days?`)) return; await API.purge(d); toast('Purge started'); load();
   });
-  els.delAll.addEventListener('click', async()=>{ if(!confirm('Delete ALL messages?')) return; await API.deleteAll(els.keepArch.checked); toast('All deleted'); load(); });
+  $('#btn-delall')?.addEventListener('click', async()=>{ if(!confirm('Delete ALL messages?')) return; await API.deleteAll(els.keepArch.checked); toast('All deleted'); load(); });
 
   // Wake
-  els.wakeSend.addEventListener('click', async()=>{
+  $('#wake-send')?.addEventListener('click', async()=>{
     const t = els.wakeText.value.trim(); if(!t) return;
     try{
       await API.wake(t);
-      // optimistic: insert a temporary item at top so user sees it immediately
       const now = Math.floor(Date.now()/1000);
       const temp = { id:'ui-'+now, title:'Wake', message:t, body:t, source:'ui', created_at: now };
       state.items.unshift(temp); renderFeed(state.items); select(temp.id);
       toast('Wake sent'); els.wakeText.value='';
       setTimeout(()=> load(temp.id), 1200);
-    }catch{ toast('Wake failed'); }
+    }catch{ /* toast shown in jfetch */ }
   });
-  els.chips.forEach(ch => ch.addEventListener('click', ()=>{ const v = ch.getAttribute('data-wake'); els.wakeText.value = v; els.wakeSend.click(); }));
+  els.chips.forEach(ch => ch.addEventListener('click', ()=>{ const v = ch.getAttribute('data-wake'); els.wakeText.value = v; $('#wake-send').click(); }));
 
   // Keyboard
   document.addEventListener('keydown', (e)=>{
-    if(e.key==='/' && document.activeElement!==els.q){ e.preventDefault(); els.q.focus(); }
+    if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
     if(e.key==='r'){ load(state.active); }
     if(e.key==='a' && state.active){ API.setArchived(state.active, true).then(()=>{ toast('Archived'); load(state.active); }); }
     if(e.key==='Delete' && state.active){ if(confirm('Delete this message?')) API.del(state.active).then(()=>{ toast('Deleted'); load(); }); }
   });
 
   // Boot
-  loadSettings().then(()=> load());
+  console.log('[Jarvis UI] BASE =', document.baseURI);
+  console.log('[Jarvis UI] ROOT =', ROOT);
+  loadSettings().then(()=> load()).catch(()=>{});
   startLive();
 })();
