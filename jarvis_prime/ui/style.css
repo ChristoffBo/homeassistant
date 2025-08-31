@@ -81,3 +81,5 @@ kbd{ background:#182337; border:1px solid var(--edge); border-bottom-width:2px; 
 /* Extra tiny UX touches */
 .footer.blink { animation: footerblink .4s ease-in-out 1; }
 @keyframes footerblink { from { opacity:.4 } to { opacity:1 } }
+
+.footer.blink{animation:footerblink .4s ease-in-out 1}@keyframes footerblink{from{opacity:.4}to{opacity:1}}
