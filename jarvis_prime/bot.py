@@ -34,6 +34,14 @@ APP_NAME     = os.getenv("JARVIS_APP_NAME", "Jarvis")
 SILENT_REPOST    = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
 
+
+# ===== Standalone intake toggles =====
+BOT_INPUT_SSE     = os.getenv("BOT_INPUT_SSE", "true").lower() in ("1","true","yes")
+BOT_INPUT_GOTIFY  = os.getenv("BOT_INPUT_GOTIFY", "true").lower() in ("1","true","yes")
+BOT_INPUT_NTFY    = os.getenv("BOT_INPUT_NTFY", "false").lower() in ("1","true","yes")
+JARVIS_BASE       = os.getenv("JARVIS_BASE", "http://127.0.0.1:2581").rstrip("/")
+DEDUPE_TTL_SECONDS= int(os.getenv("DEDUPE_TTL_SECONDS", "120"))
+WORKERS           = int(os.getenv("WORKERS", "2"))
 # Feature toggles (env defaults; can be overridden by /data/options.json)
 RADARR_ENABLED     = os.getenv("radarr_enabled", "false").lower() in ("1","true","yes")
 SONARR_ENABLED     = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
@@ -456,6 +464,107 @@ async def listen():
                 print(f"[bot] listen loop err: {e}")
 
 
+
+# ============================
+# Standalone SSE intake (Jarvis Prime) + Dedupe + Workers
+# ============================
+import hashlib, threading, queue, aiohttp
+
+_recent = {}
+_recent_lock = asyncio.Lock()
+_workq: "queue.Queue[tuple]" = queue.Queue()
+
+def _dedupe_key_from_msg(msg: dict) -> str:
+    mid = msg.get("id")
+    if mid is not None:
+        return f"id:{mid}"
+    h = hashlib.sha1()
+    h.update((msg.get("title","") + "|" + msg.get("body","") + "|" + str(msg.get("created_at",""))).encode("utf-8", "ignore"))
+    return "h:"+h.hexdigest()
+
+async def _mark_seen(k: str) -> None:
+    async with _recent_lock:
+        _recent[k] = time.time() + DEDUPE_TTL_SECONDS
+        # GC
+        now = time.time()
+        for kk, exp in list(_recent.items()):
+            if exp < now:
+                _recent.pop(kk, None)
+
+async def _is_seen(k: str) -> bool:
+    async with _recent_lock:
+        now = time.time()
+        for kk, exp in list(_recent.items()):
+            if exp < now:
+                _recent.pop(kk, None)
+        return k in _recent
+
+def _enqueue(kind: str, text: str, msg: dict) -> None:
+    try:
+        _workq.put_nowait((kind, text, msg))
+    except Exception:
+        pass
+
+async def _sse_consumer():
+    url = f"{JARVIS_BASE}/api/stream"
+    headers = {}
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=None) as resp:
+                    if resp.status != 200:
+                        print(f"[bot] SSE connect failed: {resp.status}")
+                        await asyncio.sleep(2); continue
+                    async for raw in resp.content:
+                        try:
+                            line = raw.decode("utf-8", "ignore").strip()
+                            if not line.startswith("data: "): continue
+                            data = json.loads(line[6:].strip())
+                            if data.get("event") != "created": continue
+                            mid = data.get("id")
+                            if mid is None: continue
+                            r = requests.get(f"{JARVIS_BASE}/api/messages/{mid}", timeout=6)
+                            r.raise_for_status()
+                            msg = r.json()
+                            k = _dedupe_key_from_msg(msg)
+                            if await _is_seen(k): 
+                                continue
+                            await _mark_seen(k)
+                            title = msg.get("title","")
+                            body  = msg.get("body","") or msg.get("message","")
+                            text = f"{title} {body}".strip()
+                            ncmd = normalize_cmd(extract_command_from(title, body))
+                            if ncmd:
+                                _enqueue("wake", ncmd, msg)
+                            else:
+                                _enqueue("other", text, msg)
+                        except Exception as e:
+                            # swallow parse errors, continue stream
+                            pass
+        except Exception as e:
+            print(f"[bot] SSE error: {e}")
+            await asyncio.sleep(2)
+
+def _worker_loop():
+    while True:
+        try:
+            kind, text, msg = _workq.get()
+        except Exception:
+            time.sleep(0.1); continue
+        try:
+            if kind == "wake":
+                _handle_command(text)
+            else:
+                # fallback: LLM then beautify like ws path
+                title = (msg.get("title") or "Notification")
+                message = (msg.get("body") or msg.get("message") or "")
+                final, extras, used_llm, used_beautify = _llm_then_beautify(title, message)
+                send_message(title, final, priority=5, extras=extras)
+        except Exception as e:
+            print(f"[bot] worker error: {e}")
+        finally:
+            try: _workq.task_done()
+            except Exception: pass
 # ============================
 # Daily scheduler (digest)
 # ============================
@@ -495,12 +604,25 @@ def main():
     asyncio.run(_run_forever())
 
 async def _run_forever():
+    # Start periodic digest
     asyncio.create_task(_digest_scheduler_loop())
+    # Start SSE intake if enabled
+    if BOT_INPUT_SSE:
+        asyncio.create_task(_sse_consumer())
+        # start worker threads
+        for _ in range(max(1, WORKERS)):
+            threading.Thread(target=_worker_loop, daemon=True).start()
+    # Gotify listener loop (keep reconnecting) if enabled
     while True:
         try:
-            await listen()
+            if BOT_INPUT_GOTIFY:
+                await listen()
+            else:
+                await asyncio.sleep(5)
         except Exception:
             await asyncio.sleep(3)
 
 if __name__ == "__main__":
+    main()
+
     main()

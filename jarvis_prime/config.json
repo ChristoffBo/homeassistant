@@ -22,7 +22,11 @@
     "2580/tcp": 2580,
     "2581/tcp": 2581
   },
-  "options": {
+  "options": {"bot_input_sse": true,
+    "bot_input_gotify": true,
+    "bot_input_ntfy": false,
+    "jarvis_base": "http://127.0.0.1:2581",
+
     "bot_name": "Jarvis Prime",
     "bot_icon": "\ud83e\udde0",
     "gotify_url": "http://10.0.0.99:8091",
@@ -144,7 +148,11 @@
     "retention_days": 30,
     "auto_purge_policy": "off"
   },
-  "schema": {
+  "schema": {"bot_input_sse": "bool",
+    "bot_input_gotify": "bool",
+    "bot_input_ntfy": "bool",
+    "jarvis_base": "str",
+
     "bot_name": "str",
     "bot_icon": "str",
     "gotify_url": "str",
