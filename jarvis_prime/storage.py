@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# storage.py — SQLite inbox store for Jarvis Prime (handles legacy schemas with `ts`)
+# storage.py — SQLite inbox store for Jarvis Prime (thread-safe, WAL, cross-thread connection)
 from __future__ import annotations
 import os, json, sqlite3, threading, time
 from typing import Any, Dict, List, Optional, Set
@@ -58,7 +58,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         cols.add("extras")
 
 def _connect(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, timeout=10, isolation_level=None)  # autocommit
+    # Enable cross-thread use to support aiosmtpd worker thread
+    conn = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False)  # autocommit
     _ensure_schema(conn)
     return conn
 
@@ -87,7 +88,8 @@ def _row_to_dict(r: sqlite3.Row) -> Dict[str, Any]:
 def save_message(title: str, body: str, source: str, priority: int = 5, extras: Optional[Dict[str, Any]] = None, created_at: Optional[int] = None) -> int:
     ts = int(created_at or time.time())
     ex = json.dumps(extras or {}, ensure_ascii=False)
-    with _conn() as c:
+    with _db_lock:
+        c = _conn()
         cols = _columns(c)
         # Build INSERT dynamically depending on whether legacy `ts` exists
         time_cols = []
@@ -140,22 +142,24 @@ def get_message(mid: int) -> Optional[Dict[str, Any]]:
     return _row_to_dict(r) if r else None
 
 def delete_message(mid: int) -> bool:
-    with _conn() as c:
+    with _db_lock:
+        c = _conn()
         cur = c.execute("DELETE FROM messages WHERE id=?", (int(mid),))
         return cur.rowcount > 0
 
 def mark_read(mid: int, read: bool = True) -> bool:
-    with _conn() as c:
+    with _db_lock:
+        c = _conn()
         cur = c.execute("UPDATE messages SET read=? WHERE id=?", (1 if read else 0, int(mid)))
         return cur.rowcount > 0
 
 def purge_older_than(days: int) -> int:
     # Use whichever time column is available
-    c = _conn()
-    cols = _columns(c)
-    tcol = "created_at" if "created_at" in cols else ("ts" if "ts" in cols else "created_at")
-    cutoff = int(time.time()) - (int(days) * 86400)
-    with c:
+    with _db_lock:
+        c = _conn()
+        cols = _columns(c)
+        tcol = "created_at" if "created_at" in cols else ("ts" if "ts" in cols else "created_at")
+        cutoff = int(time.time()) - (int(days) * 86400)
         cur = c.execute(f"DELETE FROM messages WHERE {tcol} < ?", (cutoff,))
         return int(cur.rowcount)
 
@@ -167,7 +171,8 @@ def get_retention_days(default: int = 30) -> int:
         return int(default)
 
 def set_retention_days(days: int) -> None:
-    with _conn() as c:
+    with _db_lock:
+        c = _conn()
         c.execute(
             "INSERT INTO settings(key, value) VALUES('retention_days', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
