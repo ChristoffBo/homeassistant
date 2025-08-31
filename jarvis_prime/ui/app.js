@@ -1,4 +1,4 @@
-// Jarvis v4.7 — Ingress '/ui/' root fix + diagnostics
+// Jarvis v4.8 — Ingress '/ui/' root fix + diagnostics
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));

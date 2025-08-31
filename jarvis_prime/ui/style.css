@@ -94,3 +94,15 @@ h1{ margin:0 }
 
 /* v4.7: right list flush to border */
 .feed{ padding-right: 6px }
+
+/* v4.8: row list on the right */
+.feed{ padding-right:0; }
+.feed .card{
+  display:flex; align-items:center; gap:10px;
+  padding:8px 10px; border-radius:8px;
+  min-height:36px; max-height:36px;
+}
+.feed .card .title{ flex:1 1 auto; font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.feed .card .meta{ flex:0 0 auto; font-size:10px; color:var(--muted) }
+.feed .card .src{ opacity:.8 }
+.feed .card.new{ outline:1px solid var(--accent); box-shadow:0 0 0 2px rgba(59,130,246,.12) inset }
