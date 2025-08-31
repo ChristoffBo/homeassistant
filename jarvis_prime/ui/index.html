@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis Prime — Inbox v3.2</title>
+  <title>Jarvis Prime — Inbox v3.3</title>
   <link rel="icon" href="./icon.png" />
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -13,12 +13,17 @@
     <img src="./icon.png" alt="Jarvis" class="logo" />
     <div class="titles">
       <h1>Jarvis Prime</h1>
-      <div class="subtitle">Unified Inbox • <span id="live-badge" class="live err">OFF</span> • v3.2</div>
+      <div class="subtitle">Unified Inbox • <span id="live-badge" class="live err">OFFLINE</span> • v3.3</div>
     </div>
   </div>
   <div class="wake">
-    <input id="wake-text" type="text" placeholder="Jarvis …" />
+    <input id="wake-text" type="text" placeholder="Jarvis … e.g. weather" />
     <button id="wake-send" class="btn primary">Send</button>
+    <div class="quick-actions">
+      <button class="chip" data-wake="weather">Weather</button>
+      <button class="chip" data-wake="status">Status</button>
+      <button class="chip" data-wake="help">Help</button>
+    </div>
     <button id="btn-refresh" class="btn">Refresh</button>
   </div>
 </header>
@@ -36,11 +41,11 @@
       <option value="200">200</option>
     </select>
     <button id="btn-search" class="btn primary">Search</button>
-    <button id="btn-saved" class="btn">Saved only: OFF</button>
+    <button id="btn-archived" class="btn">Archived only: OFF</button>
     <span class="spacer"></span>
 
     <label class="retention">
-      <span>Retention (days)</span>
+      <span>Retention</span>
       <select id="retention">
         <option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option>
       </select>
@@ -48,17 +53,17 @@
     </label>
 
     <label class="retention">
-      <span>Purge now</span>
+      <span>Purge</span>
       <select id="purge-days">
         <option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option>
         <option value="custom">Custom…</option>
       </select>
-      <button id="btn-purge" class="btn danger">Purge</button>
+      <button id="btn-purge" class="btn danger">Run</button>
     </label>
 
     <label class="retention">
       <span>Delete all</span>
-      <label class="mini"><input id="keep-fav" type="checkbox" checked/> Keep favorites</label>
+      <label class="mini"><input id="keep-fav" type="checkbox" checked/> Keep archived</label>
       <button id="btn-delall" class="btn danger">Delete</button>
     </label>
   </div>
@@ -68,9 +73,8 @@
   <aside class="list" id="list"></aside>
   <section class="preview" id="preview">
     <div class="empty">
-      <h2>Welcome 👋</h2>
-      <p>Select a message on the left to preview it here.</p>
-      <p class="hint">Tip: use <kbd>/</kbd> to focus search, <kbd>r</kbd> to refresh, <kbd>Del</kbd> to delete.</p>
+      <h2>Inbox</h2>
+      <p>No messages yet.</p>
     </div>
   </section>
 </main>
