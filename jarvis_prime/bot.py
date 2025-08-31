@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # /app/bot.py
 import os
+import inspect
 import json
 import asyncio
 import requests
