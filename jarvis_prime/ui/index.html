@@ -1,97 +1,66 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis Prime</title>
-  <link rel="icon" href="icon.png" />
-  <link rel="stylesheet" href="style.css" />
+  <title>Jarvis Prime — Inbox</title>
+  <link rel="icon" href="./icon.png" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <!-- Sticky Header / Command Bar -->
-  <header class="jarvis-header">
-    <div class="brand">
-      <img src="icon.png" alt="Jarvis" class="logo"/>
-      <div class="title">
-        <span class="name">Jarvis Prime</span>
-        <span id="liveBadge" class="live ok">LIVE</span>
-        <span id="unreadCount" class="badge">0</span>
-      </div>
+<header class="topbar">
+  <div class="brand">
+    <img src="./icon.png" alt="Jarvis" class="logo" />
+    <div class="titles">
+      <h1>Jarvis Prime</h1>
+      <div class="subtitle">Unified Inbox</div>
     </div>
-    <div class="wakebar">
-      <input id="wakeInput" type="text" placeholder="Jarvis …" autocomplete="off" />
-      <button id="wakeSend" class="btn primary">Send</button>
+  </div>
+  <div class="actions">
+    <button id="btn-refresh" class="btn">Refresh</button>
+  </div>
+</header>
+
+<section class="toolbar">
+  <div class="search-row">
+    <div class="input-wrap">
+      <span class="icon">🔎</span>
+      <input id="q" type="search" placeholder="Search title, body, source…" />
     </div>
-    <div class="quick">
-      <button id="savedToggle" class="chip" aria-pressed="false">Saved</button>
-      <button id="unreadToggle" class="chip" aria-pressed="false">Unread</button>
-      <input id="searchBox" type="search" placeholder="Search…" />
+    <select id="limit">
+      <option value="25">25</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+    <button id="btn-search" class="btn primary">Search</button>
+    <span class="spacer"></span>
+    <label class="retention">
+      <span>Retention (days)</span>
+      <input id="retention" type="number" min="1" value="30" />
+      <button id="btn-save-retention" class="btn">Save</button>
+    </label>
+    <label class="retention">
+      <span>Purge now</span>
+      <input id="purge-days" type="number" min="1" value="30" />
+      <button id="btn-purge" class="btn danger">Purge</button>
+    </label>
+  </div>
+</section>
+
+<main class="layout">
+  <aside class="list" id="list"></aside>
+  <section class="preview" id="preview">
+    <div class="empty">
+      <h2>Welcome 👋</h2>
+      <p>Select a message on the left to preview it here.</p>
+      <p class="hint">Tip: use <kbd>/</kbd> to focus search, <kbd>r</kbd> to refresh, <kbd>Del</kbd> to delete.</p>
     </div>
-  </header>
+  </section>
+</main>
 
-  <!-- Layout: Now (detail) + Stream (list) -->
-  <main class="jarvis-main">
-    <section id="now" class="now">
-      <article id="nowCard" class="card empty">
-        <div class="empty-text">No messages yet.</div>
-      </article>
-      <div class="action-row">
-        <button id="favBtn" class="btn ghost" disabled>★ Save</button>
-        <button id="copyBtn" class="btn ghost" disabled>Copy</button>
-        <button id="delBtn" class="btn danger" disabled>Delete</button>
-      </div>
-    </section>
+<footer class="footer" id="footer"></footer>
 
-    <aside class="stream">
-      <div class="actions-dock">
-        <label class="purge">
-          Purge
-          <select id="purgeDays">
-            <option value="7">7 days</option>
-            <option value="14">14 days</option>
-            <option value="30" selected>30 days</option>
-            <option value="custom">Custom…</option>
-          </select>
-        </label>
-        <button id="purgeBtn" class="btn">Run</button>
-
-        <label class="retention">
-          Retention
-          <select id="retentionDays">
-            <option value="7">7</option>
-            <option value="14">14</option>
-            <option value="30" selected>30</option>
-            <option value="60">60</option>
-            <option value="90">90</option>
-          </select>
-        </label>
-        <button id="saveRetention" class="btn">Save</button>
-
-        <label class="keepFavs">
-          <input type="checkbox" id="keepFavs" checked/> Keep favorites
-        </label>
-        <button id="deleteAll" class="btn danger">Delete all</button>
-      </div>
-
-      <ul id="msgList" class="msg-list" aria-live="polite" aria-busy="false"></ul>
-    </aside>
-  </main>
-
-  <footer class="jarvis-footer">
-    <span id="statusText">Ready.</span>
-  </footer>
-
-  <template id="msgItemTpl">
-    <li class="msg-item">
-      <button class="star" title="Save">★</button>
-      <div class="meta">
-        <div class="title"></div>
-        <div class="preview"></div>
-      </div>
-      <time class="ts"></time>
-    </li>
-  </template>
-
-  <script src="app.js"></script>
+<script src="./app.js"></script>
 </body>
 </html>
