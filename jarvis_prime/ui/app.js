@@ -71,7 +71,7 @@
     async setRetention(days){ return jfetch(u('api/inbox/settings'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}); },
     async purge(days){ return jfetch(u('api/inbox/purge'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}); },
     async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
-    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text: 'Jarvis ' + text})}); }
+    async wake(text){ return jfetch(u('internal/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text: 'Jarvis ' + text})}); }
   };
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
