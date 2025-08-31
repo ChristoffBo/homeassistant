@@ -4,6 +4,7 @@ import os
 import json
 import asyncio
 import requests
+from aiohttp import web
 import websockets
 import re
 import subprocess
@@ -648,3 +649,37 @@ if __name__ == "__main__":
     main()
 
     main()
+
+# ===== Internal Wake HTTP (UI -> Bot direct) =====
+_internal_app = web.Application()
+
+async def _internal_wake(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    text = (data.get("text") or "").strip()
+    if text:
+        try:
+            _handle_command(text)
+        except Exception as e:
+            print(f"[bot] internal wake error: {e}")
+    return web.json_response({"ok": True})
+
+_internal_app.add_routes([web.post("/internal/wake", _internal_wake)])
+
+def _run_internal_http():
+    try:
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        web.run_app(_internal_app, host="127.0.0.1", port=int(os.getenv("BOT_INTERNAL_PORT", "2599")))
+    except Exception as e:
+        print(f"[bot] internal http failed: {e}")
+
+# Boot the tiny internal server in the background
+try:
+    t = threading.Thread(target=_run_internal_http, daemon=True)
+    t.start()
+    print("[bot] internal wake server on 127.0.0.1:%s" % os.getenv("BOT_INTERNAL_PORT", "2599"))
+except Exception as e:
+    print(f"[bot] internal wake thread error: {e}")

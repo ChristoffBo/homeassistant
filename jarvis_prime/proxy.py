@@ -212,7 +212,7 @@ class H(BaseHTTPRequestHandler):
 def main():
     host = os.getenv("proxy_bind", "0.0.0.0")
     port = int(os.getenv("proxy_port", "2580"))
-    srv = HTTPServer((host, port), H)
+    srv = ReuseHTTPServer((host, port), H)
     print(f"[proxy] listening on {host}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD})")
     srv.serve_forever()
 

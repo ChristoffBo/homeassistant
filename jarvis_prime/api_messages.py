@@ -186,7 +186,7 @@ async def api_wake(request: web.Request):
     mid = storage.save_message(title="Wake", body=text, source="ui", priority=3, extras={"kind":"wake"})  # type: ignore
     try:
         # Forward to local proxy so it executes the command without Gotify
-        requests.post("http://127.0.0.1:2580", json={"title":"Wake","text": text}, timeout=3)
+        requests.post("http://127.0.0.1:2599/internal/wake", json={"text": text}, timeout=3)
     except Exception as e:
         print(f"[api] wake forward error: {e}")
     _broadcast("wake", id=int(mid))
