@@ -147,3 +147,30 @@ body, main { margin:0; padding:0; width:100%; }
 
 /* Middle detail uses the space */
 .detail .wrap{ width:100%; max-width:none; }
+
+
+
+/* --- Even 3-pane layout & spacing fixes --- */
+.main-grid, .inbox-layout, .panes {
+  display: grid;
+  grid-template-columns: 280px 1fr 420px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1200px) {
+  .main-grid, .inbox-layout, .panes {
+    grid-template-columns: 260px 1fr 360px;
+    gap: 12px;
+  }
+}
+@media (max-width: 900px) {
+  .main-grid, .inbox-layout, .panes {
+    grid-template-columns: 1fr;
+  }
+}
+.card, .panel, .list, .detail {
+  border-radius: 12px;
+  padding: 16px;
+}
+.list { min-height: 60vh; }
+.detail { min-height: 60vh; }
