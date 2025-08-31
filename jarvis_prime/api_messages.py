@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 # api_messages.py — Inbox HTTP API + static UI for Jarvis Prime
-# Serves UI from /app/www (bundled in the add-on). Also exposes JSON API + optional /api/wake passthrough.
+# Resilient UI serving: tries /app/www, /app/ui, /app (module dir), /share/jarvis_prime/ui
 
 import os, json, asyncio
 from pathlib import Path
 from aiohttp import web
 import importlib.util
 
-# ----- load local storage module by file path (avoid name clashes) -----
 _THIS_DIR = Path(__file__).resolve().parent
+
+# ----- storage loader -----
 _STORAGE_FILE = _THIS_DIR / "storage.py"
 spec = importlib.util.spec_from_file_location("jarvis_storage", str(_STORAGE_FILE))
 storage = importlib.util.module_from_spec(spec)  # type: ignore
 assert spec and spec.loader, "Cannot load storage.py"
 spec.loader.exec_module(storage)  # type: ignore
-
-# init DB (path configurable via env JARVIS_DB_PATH)
 storage.init_db(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
 
-# ----- SSE broadcaster -----
+# ----- SSE -----
 _listeners = set()
 
 async def _sse(request: web.Request):
@@ -34,7 +33,6 @@ async def _sse(request: web.Request):
     await resp.prepare(request)
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
-    # initial ping
     await resp.write(b": hello\\n\\n")
     try:
         while True:
@@ -55,24 +53,35 @@ async def _sse(request: web.Request):
     return resp
 
 def _broadcast(event: str, **kw):
-    dead = []
     for q in list(_listeners):
         try:
             q.put_nowait({"event": event, **kw})
         except Exception:
-            dead.append(q)
-    for q in dead:
-        _listeners.discard(q)
+            _listeners.discard(q)
 
 # ----- helpers -----
 def _json(data, status=200):
     return web.Response(text=json.dumps(data, ensure_ascii=False), status=status, content_type="application/json")
 
-def _ui_root() -> Path:
-    # Home Assistant add-on convention: serve bundled UI from /app/www
-    return Path("/app/www")
+def _candidate_ui_dirs():
+    return [
+        Path("/app/www"),
+        Path("/app/ui"),
+        _THIS_DIR,  # /app
+        Path("/share/jarvis_prime/ui"),
+    ]
 
-# ----- API handlers -----
+def _existing_dirs():
+    return [d for d in _candidate_ui_dirs() if d.exists() and d.is_dir()]
+
+def _find_index():
+    for d in _existing_dirs():
+        idx = d / "index.html"
+        if idx.exists():
+            return idx
+    return None
+
+# ----- API: messages -----
 async def api_create_message(request: web.Request):
     try:
         data = await request.json()
@@ -89,14 +98,8 @@ async def api_create_message(request: web.Request):
 
 async def api_list_messages(request: web.Request):
     q = request.rel_url.query.get("q")
-    try:
-        limit = int(request.rel_url.query.get("limit", "50"))
-    except Exception:
-        limit = 50
-    try:
-        offset = int(request.rel_url.query.get("offset", "0"))
-    except Exception:
-        offset = 0
+    limit = int(request.rel_url.query.get("limit", "50"))
+    offset = int(request.rel_url.query.get("offset", "0"))
     saved = request.rel_url.query.get("saved")
     saved_bool = None
     if saved is not None:
@@ -179,17 +182,14 @@ async def api_purge(request: web.Request):
     _broadcast("purged", days=int(days), deleted=int(n))
     return _json({"purged": int(n)})
 
-# Optional backward-compat endpoint: forward to bot's internal wake server
 async def api_wake(request: web.Request):
     try:
         data = await request.json()
     except Exception:
         return _json({"error": "bad json"}, status=400)
     text = str(data.get("text") or "")
-    # Save UI wake to inbox first
     mid = storage.save_message("UI Wake", text, "ui", 5, {})  # type: ignore
     _broadcast("created", id=int(mid))
-    # Forward to bot
     import aiohttp
     try:
         async with aiohttp.ClientSession() as session:
@@ -199,35 +199,48 @@ async def api_wake(request: web.Request):
         resp = {"ok": False, "error": str(e)}
     return _json(resp)
 
-# ----- App factory and routes -----
+# ----- App factory -----
 def _make_app() -> web.Application:
     app = web.Application()
+
     # API routes
     app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
     app.router.add_post("/api/messages", api_create_message)
     app.router.add_get("/api/messages/{id:\\d+}", api_get_message)
     app.router.add_delete("/api/messages/{id:\\d+}", api_delete_message)
-    app.router.add_delete("/api/messages", api_delete_all)  # ?keep_saved=1
+    app.router.add_delete("/api/messages", api_delete_all)
     app.router.add_post("/api/messages/{id:\\d+}/read", api_mark_read)
     app.router.add_post("/api/messages/{id:\\d+}/save", api_toggle_saved)
     app.router.add_get("/api/inbox/settings", api_get_settings)
     app.router.add_post("/api/inbox/settings", api_save_settings)
     app.router.add_post("/api/inbox/purge", api_purge)
-    app.router.add_post("/api/wake", api_wake)  # optional back-compat
+    app.router.add_post("/api/wake", api_wake)
 
-    # Static UI from /app/www
-    ui_root = _ui_root()
-    idx = ui_root / "index.html"
+    # Static UI: try whichever exists; do not add_static for missing dirs
+    roots = _existing_dirs()
+    idx = _find_index()
+
     async def _index(_):
-        if not idx.exists():
-            return web.Response(text="UI missing (expected /app/www/index.html)", status=404)
-        return web.FileResponse(path=str(idx))
-    # Serve at / and /ui/
+        if idx and idx.exists():
+            return web.FileResponse(path=str(idx))
+        attempted = [str(p) for p in _candidate_ui_dirs()]
+        return web.Response(text="UI missing. Tried: " + ", ".join(attempted), status=404)
+
     app.router.add_get("/", _index)
     app.router.add_get("/ui/", _index)
-    app.router.add_static("/ui/", str(ui_root))
-    app.router.add_static("/", str(ui_root))
+
+    for r in roots:
+        # mount each root under both "/" and "/ui/"
+        try:
+            app.router.add_static("/ui/", str(r))
+        except Exception:
+            pass
+        try:
+            app.router.add_static("/", str(r))
+        except Exception:
+            pass
+
     return app
 
 if __name__ == "__main__":
