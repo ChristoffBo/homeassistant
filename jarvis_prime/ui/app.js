@@ -1,262 +1,273 @@
-// Jarvis UI v2 - desktop + Android friendly
+// Jarvis Prime Inbox UI — Ingress-ready v3 (desktop + Android)
+// - Uses base-path-safe URLs so Home Assistant Ingress "just works"
+// - Correct API methods/paths (POST settings+purge, delete-all with keep_saved)
+// - Uses created_at timestamps, extras JSON, saved/favorite toggle
+// - SSE live updates with polling fallback
 (function(){
-  const $ = (sel, root=document) => root.querySelector(sel);
-  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
-
-  // Elements
-  const msgList = $('#msgList');
-  const nowCard = $('#nowCard');
-  const favBtn = $('#favBtn');
-  const delBtn = $('#delBtn');
-  const copyBtn = $('#copyBtn');
-  const liveBadge = $('#liveBadge');
-  const unreadCount = $('#unreadCount');
-  const wakeInput = $('#wakeInput');
-  const wakeSend = $('#wakeSend');
-  const savedToggle = $('#savedToggle');
-  const unreadToggle = $('#unreadToggle');
-  const searchBox = $('#searchBox');
-  const purgeBtn = $('#purgeBtn');
-  const purgeDays = $('#purgeDays');
-  const retentionDays = $('#retentionDays');
-  const saveRetention = $('#saveRetention');
-  const keepFavs = $('#keepFavs');
-  const deleteAllBtn = $('#deleteAll');
-  const statusText = $('#statusText');
-
-  // State
-  let messages = [];
-  let filtered = [];
-  let selectedId = null;
-  let unread = new Set();
-  let stream;
-
-  const fmt = (ts) => {
-    try{
-      const d = new Date(ts || Date.now());
-      return d.toLocaleString();
-    }catch(e){ return ''}
+  const $ = (s, r=document) => r.querySelector(s);
+  const els = {
+    list: $('#list'),
+    preview: $('#preview'),
+    q: $('#q'),
+    limit: $('#limit'),
+    refresh: $('#btn-refresh'),
+    search: $('#btn-search'),
+    retention: $('#retention'),
+    saveRetention: $('#btn-save-retention'),
+    purgeDays: $('#purge-days'),
+    purge: $('#btn-purge'),
+    footer: $('#footer'),
+    savedOnly: null // inserted later
   };
 
-  function setStatus(t){ statusText.textContent = t; }
+  // ---- Base-path safe URL builder ----
+  const base = document.baseURI;
+  const u = (path) => new URL(path.replace(/^\//?, ''), base).toString();
 
-  function renderList(){
-    msgList.innerHTML = '';
-    filtered.forEach(it => {
-      const node = $('#msgItemTpl').content.firstElementChild.cloneNode(true);
-      node.dataset.id = it.id;
-      const star = $('.star', node);
-      const ttl = $('.title', node);
-      const prev = $('.preview', node);
-      const ts = $('.ts', node);
-
-      star.classList.toggle('active', !!it.saved);
-      ttl.textContent = it.title || (it.extras && it.extras.source) || 'Message';
-      prev.textContent = it.message || '';
-      ts.textContent = fmt(it.created_at);
-
-      star.addEventListener('click', async (ev)=>{
-        ev.stopPropagation();
-        await toggleSave(it);
+  // ---- API client ----
+  const API = {
+    async list(q, limit=50, offset=0, savedOnly=null){
+      const url = new URL(u('api/messages'));
+      if(q) url.searchParams.set('q', q);
+      url.searchParams.set('limit', limit);
+      url.searchParams.set('offset', offset);
+      if(savedOnly!==null) url.searchParams.set('saved', savedOnly ? '1' : '0');
+      const r = await fetch(url);
+      if(!r.ok) throw new Error('Failed to list messages');
+      return (await r.json()).items || [];
+    },
+    async get(id){
+      const r = await fetch(u(`api/messages/${id}`));
+      if(!r.ok) throw new Error('Message not found');
+      return await r.json();
+    },
+    async del(id){
+      const r = await fetch(u(`api/messages/${id}`), { method:'DELETE' });
+      if(!r.ok) throw new Error('Delete failed');
+      return await r.json();
+    },
+    async read(id, read=true){
+      const r = await fetch(u(`api/messages/${id}/read`), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({read})
       });
+      if(!r.ok) throw new Error('Read toggle failed');
+      return await r.json();
+    },
+    async setSaved(id, saved=true){
+      const r = await fetch(u(`api/messages/${id}/save`), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({saved})
+      });
+      if(!r.ok) throw new Error('Save toggle failed');
+      return await r.json();
+    },
+    async getSettings(){
+      const r = await fetch(u('api/inbox/settings')); if(!r.ok) throw new Error('settings');
+      return await r.json();
+    },
+    async setRetention(days){
+      const r = await fetch(u('api/inbox/settings'), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({retention_days: days})
+      });
+      if(!r.ok) throw new Error('save settings'); return await r.json();
+    },
+    async purge(days){
+      const r = await fetch(u('api/inbox/purge'), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({days})
+      });
+      if(!r.ok) throw new Error('purge failed'); return await r.json();
+    },
+    async deleteAll(keepSaved=false){
+      const r = await fetch(u(`api/messages?keep_saved=${keepSaved?1:0}`), { method:'DELETE' });
+      if(!r.ok) throw new Error('delete all failed'); return await r.json();
+    }
+  };
 
-      node.addEventListener('click', ()=> select(it.id));
-
-      msgList.appendChild(node);
-    });
-    unreadCount.textContent = String(unread.size);
+  // ---- State ----
+  let state = { items:[], activeId:null, savedOnly:false };
+  function fmtTime(ts){
+    try{
+      const d = new Date(((ts||0))*1000);
+      return d.toLocaleString();
+    }catch(e){ return ''; }
   }
+  function escapeHtml(s){ return (s||'').replace(/[&<>\"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m])); }
 
-  function renderNow(it){
-    if(!it){
-      nowCard.classList.add('empty');
-      nowCard.innerHTML = '<div class="empty-text">No messages yet.</div>';
-      [favBtn, delBtn, copyBtn].forEach(b=>b.disabled = true);
+  // ---- UI rendering ----
+  function renderList(items){
+    const root = els.list;
+    root.innerHTML = '';
+    if(!items.length){
+      root.innerHTML = '<div class="item"><div class="title">No messages</div><div class="meta">—</div></div>';
       return;
     }
-    nowCard.classList.remove('empty');
-    nowCard.innerHTML = `
-      <h2>${escapeHtml(it.title || 'Message')}</h2>
-      <div class="subtitle">${fmt(it.created_at)} ${it.extras && it.extras.via ? '· '+escapeHtml(it.extras.via): ''}</div>
-      <div class="body">${escapeHtml(it.message || '')}</div>
-    `;
-    favBtn.disabled = delBtn.disabled = copyBtn.disabled = false;
-    favBtn.textContent = it.saved ? '★ Saved' : '☆ Save';
-  }
-
-  function escapeHtml(s){return String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
-
-  function applyFilters(){
-    const q = searchBox.value.trim().toLowerCase();
-    filtered = messages.filter(m => {
-      if(savedToggle.getAttribute('aria-pressed')==='true' && !m.saved) return false;
-      if(unreadToggle.getAttribute('aria-pressed')==='true' && !unread.has(m.id)) return false;
-      if(q && !(String(m.title||'').toLowerCase().includes(q) || String(m.message||'').toLowerCase().includes(q))) return false;
-      return true;
-    });
-    renderList();
-  }
-
-  function upsert(msg, makeUnread=true){
-    const i = messages.findIndex(x=>x.id===msg.id);
-    if(i>=0) messages[i]=msg; else messages.unshift(msg);
-    if(makeUnread) unread.add(msg.id);
-    applyFilters();
-    if(!selectedId) select(msg.id);
-  }
-
-  function select(id){
-    selectedId = id;
-    const it = messages.find(m=>m.id===id);
-    if(it){ unread.delete(id); renderNow(it); applyFilters(); }
-  }
-
-  async function fetchMessages(){
-    setStatus('Loading…');
-    const r = await fetch('/api/messages?limit=200');
-    const js = await r.json();
-    messages = (js.items||js||[]).map(mapBackend);
-    filtered = messages.slice();
-    renderList();
-    renderNow(messages[0]);
-    setStatus('Ready.');
-  }
-
-  function mapBackend(o){
-    // Normalize different field spellings safely
-    return {
-      id: o.id || o._id || o.uuid,
-      title: o.title || o.topic || '',
-      message: o.message || o.text || '',
-      created_at: o.created_at || o.ts || o.timestamp || Date.now(),
-      saved: !!(o.saved || o.favorite || o.favourite),
-      extras: o.extras || o.meta || {}
-    };
-  }
-
-  async function toggleSave(it){
-    const want = !it.saved;
-    const r = await fetch(`/api/messages/${encodeURIComponent(it.id)}/save`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ saved: want })
-    });
-    if(!r.ok){ setStatus('Save failed'); return; }
-    it.saved = want;
-    if(selectedId===it.id) renderNow(it);
-    applyFilters();
-  }
-
-  async function delSelected(){
-    if(!selectedId) return;
-    const id = selectedId;
-    if(!confirm('Delete this message?')) return;
-    const r = await fetch(`/api/messages/${encodeURIComponent(id)}`, {method:'DELETE'});
-    if(r.ok){
-      messages = messages.filter(m=>m.id!==id);
-      selectedId = null;
-      applyFilters();
-      renderNow(messages[0]);
-    }else setStatus('Delete failed');
-  }
-
-  async function deleteAll(){
-    if(!confirm('Delete ALL messages?')) return;
-    const keep = keepFavs.checked ? 1 : 0;
-    const r = await fetch(`/api/messages?keep_saved=${keep}`, {method:'DELETE'});
-    if(r.ok){
-      messages = [];
-      filtered = [];
-      selectedId = null;
-      renderList(); renderNow(null);
-    }else setStatus('Delete all failed');
-  }
-
-  async function doPurge(){
-    let days = purgeDays.value;
-    if(days==='custom'){
-      const val = prompt('Purge messages older than how many days?', '30');
-      if(!val) return;
-      days = parseInt(val,10);
-      if(!Number.isFinite(days) || days<=0){ alert('Invalid number'); return; }
-    }else{
-      days = parseInt(days,10);
+    for(const it of items){
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.dataset.id = it.id;
+      div.innerHTML = `
+        <div>
+          <div class="title">${escapeHtml(it.title || '(no title)')}</div>
+          <div class="meta">${fmtTime(it.created_at)} • <span class="source">${escapeHtml(it.source||'?')}</span>${it.saved?' • ★':''}</div>
+        </div>
+        <div class="meta">#${it.id}</div>
+      `;
+      div.addEventListener('click', () => select(it.id));
+      root.appendChild(div);
     }
-    const r = await fetch('/api/inbox/purge', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ days })
-    });
-    if(r.ok){ setStatus('Purge started'); } else setStatus('Purge failed');
   }
 
-  async function saveRet(){
-    const days = parseInt(retentionDays.value,10);
-    const r = await fetch('/api/inbox/settings', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ retention_days: days })
+  async function renderPreview(it){
+    els.preview.innerHTML = '';
+    const meta = [];
+    if(it.source) meta.push(`<span class="badge">Source: ${escapeHtml(it.source)}</span>`);
+    if(it.priority!=null) meta.push(`<span class="badge">Priority: ${it.priority}</span>`);
+    if(it.created_at) meta.push(`<span class="badge">${fmtTime(it.created_at)}</span>`);
+    if(it.extras && it.extras.via) meta.push(`<span class="badge">Via: ${escapeHtml(it.extras.via)}</span>`);
+    const body = (it.body || it.message || '').trim();
+
+    const root = document.createElement('div');
+    root.className = 'detail';
+    root.innerHTML = `
+      <h2>${escapeHtml(it.title || '(no title)')}</h2>
+      <div class="meta">${meta.join(' ')}</div>
+      <div class="body">${escapeHtml(body)}</div>
+      <div class="row-actions">
+        <button id="btn-save" class="btn">${it.saved?'★ Unsave':'☆ Save'}</button>
+        <button id="btn-copy" class="btn">Copy</button>
+        <button id="btn-delete" class="btn danger">Delete</button>
+        <span class="spacer"></span>
+        <button id="btn-delete-all" class="btn danger" title="Delete all messages">Delete all</button>
+        <label class="retention"><span>Keep favorites</span><input id="keep-fav" type="checkbox" checked/></label>
+      </div>
+    `;
+    els.preview.appendChild(root);
+
+    root.querySelector('#btn-copy').addEventListener('click', () => {
+      const text = `${it.title || ''}\n\n${body}`.trim();
+      navigator.clipboard.writeText(text).then(()=>toast('Copied'));
     });
-    setStatus(r.ok ? 'Retention saved' : 'Retention failed');
+    root.querySelector('#btn-delete').addEventListener('click', async () => {
+      if(!confirm('Delete this message?')) return;
+      await API.del(it.id);
+      toast('Deleted');
+      load();
+    });
+    root.querySelector('#btn-save').addEventListener('click', async () => {
+      const want = !it.saved;
+      await API.setSaved(it.id, want);
+      it.saved = want;
+      toast(want?'Saved':'Unsaved');
+      load(it.id);
+    });
+    root.querySelector('#btn-delete-all').addEventListener('click', async () => {
+      if(!confirm('Delete ALL messages?')) return;
+      const keep = root.querySelector('#keep-fav').checked;
+      await API.deleteAll(keep);
+      toast('All deleted');
+      load();
+    });
   }
 
-  async function sendWake(){
-    const text = wakeInput.value.trim();
-    if(!text) return;
-    const r = await fetch('/api/wake', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ text })
-    });
-    if(r.ok){
-      wakeInput.value='';
-      setStatus('Sent');
-    }else setStatus('Send failed');
+  function toast(msg){
+    els.footer.textContent = msg;
+    setTimeout(() => els.footer.textContent = '', 1800);
   }
 
-  function startSSE(){
+  // ---- Loaders ----
+  async function select(id){
+    state.activeId = id;
+    [...els.list.querySelectorAll('.item')].forEach(el => el.classList.toggle('active', el.dataset.id==id));
+    const it = await API.get(id);
+    renderPreview(it);
+  }
+
+  async function load(selectId=null){
+    const q = els.q.value.trim();
+    const limit = parseInt(els.limit.value,10)||50;
+    const items = await API.list(q, limit, 0, state.savedOnly);
+    state.items = items;
+    renderList(items);
+    if(selectId && items.find(i=>i.id===selectId)){ select(selectId); return; }
+    if(items[0]) select(items[0].id);
+    else els.preview.innerHTML = '<div class="empty"><h2>Welcome 👋</h2><p>No messages found.</p></div>';
+  }
+
+  async function loadSettings(){
     try{
-      if(stream) stream.close();
-      stream = new EventSource('/api/stream');
-      stream.onopen = ()=> { liveBadge.classList.remove('err'); liveBadge.classList.add('ok'); };
-      stream.onerror = ()=> { liveBadge.classList.remove('ok'); liveBadge.classList.add('err'); };
-      stream.onmessage = (e)=>{
+      const s = await API.getSettings();
+      if(s && s.retention_days) els.retention.value = s.retention_days;
+      els.purgeDays.value = els.retention.value;
+    }catch(e){ /* ignore */ }
+  }
+
+  // ---- SSE + Poll fallback ----
+  function startLive(){
+    let pollTimer = null;
+    try{
+      const src = new EventSource(u('api/stream'));
+      src.onmessage = (e)=>{
         try{
-          const data = JSON.parse(e.data);
-          const msg = mapBackend(data);
-          upsert(msg, true);
-        }catch(err){ console.error('SSE parse', err); }
+          const data = JSON.parse(e.data||'{}');
+          const ev = data.event;
+          if(ev==='created' || ev==='deleted' || ev==='deleted_all' || ev==='saved' || ev==='purged'){
+            // Refresh list; keep current selection if possible
+            const id = state.activeId;
+            load(id);
+          }
+        }catch(_){ /* ignore */ }
       };
-    }catch(e){ console.warn('SSE not available', e); }
+      src.onerror = ()=>{
+        // fallback to polling every 5s
+        if(!pollTimer){
+          pollTimer = setInterval(()=> load(state.activeId), 5000);
+        }
+      };
+    }catch(e){
+      pollTimer = setInterval(()=> load(state.activeId), 5000);
+    }
   }
 
-  // Events
-  savedToggle.addEventListener('click', ()=>{
-    const p = savedToggle.getAttribute('aria-pressed')==='true' ? 'false':'true';
-    savedToggle.setAttribute('aria-pressed', p);
-    applyFilters();
-  });
-  unreadToggle.addEventListener('click', ()=>{
-    const p = unreadToggle.getAttribute('aria-pressed')==='true' ? 'false':'true';
-    unreadToggle.setAttribute('aria-pressed', p);
-    applyFilters();
-  });
-  searchBox.addEventListener('input', applyFilters);
-  purgeBtn.addEventListener('click', doPurge);
-  saveRetention.addEventListener('click', saveRet);
-  deleteAllBtn.addEventListener('click', deleteAll);
-  delBtn.addEventListener('click', delSelected);
-  favBtn.addEventListener('click', ()=>{
-    const it = messages.find(m=>m.id===selectedId); if(it) toggleSave(it);
-  });
-  copyBtn.addEventListener('click', async ()=>{
-    const it = messages.find(m=>m.id===selectedId);
-    if(!it) return;
-    try{
-      await navigator.clipboard.writeText(it.message||'');
-      setStatus('Copied');
-    }catch{ setStatus('Copy failed');}
-  });
-  wakeSend.addEventListener('click', sendWake);
-  wakeInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') sendWake(); });
+  // ---- Small UI wiring ----
+  function addSavedToggle(){
+    const toggle = document.createElement('button');
+    toggle.className = 'btn';
+    toggle.textContent = 'Saved only: OFF';
+    toggle.title = 'Show only favorited messages';
+    toggle.addEventListener('click', ()=>{
+      state.savedOnly = !state.savedOnly;
+      toggle.textContent = 'Saved only: ' + (state.savedOnly?'ON':'OFF');
+      load(state.activeId);
+    });
+    // Insert after Search button
+    els.search.insertAdjacentElement('afterend', toggle);
+    els.savedOnly = toggle;
+  }
 
-  // Init
-  fetchMessages();
-  startSSE();
+  // ---- Events ----
+  els.refresh.addEventListener('click', ()=>load(state.activeId));
+  els.search.addEventListener('click', ()=>load());
+  els.limit.addEventListener('change', ()=>load());
+  els.q.addEventListener('keydown', e => { if(e.key==='Enter') load(); });
+
+  els.saveRetention.addEventListener('click', async () => {
+    const days = parseInt(els.retention.value,10)||30;
+    await API.setRetention(days);
+    toast('Retention saved');
+  });
+  els.purge.addEventListener('click', async () => {
+    const days = parseInt(els.purgeDays.value,10)||30;
+    if(!confirm(`Purge messages older than ${days} days?`)) return;
+    const res = await API.purge(days);
+    toast(`Purged ${res.purged||res.removed||0} items`);
+    load();
+  });
+
+  // boot
+  addSavedToggle();
+  loadSettings().then(()=>load());
+  startLive();
 })();
