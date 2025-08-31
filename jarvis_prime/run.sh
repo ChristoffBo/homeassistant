@@ -36,15 +36,6 @@ PY
 }
 
 # ===== Core options -> env =====
-# Standalone intake + push toggles
-export BOT_INPUT_SSE=$(jq -r '.bot_input_sse // true' "$CONFIG_PATH")
-export BOT_INPUT_GOTIFY=$(jq -r '.bot_input_gotify // true' "$CONFIG_PATH")
-export BOT_INPUT_NTFY=$(jq -r '.bot_input_ntfy // false' "$CONFIG_PATH")
-export JARVIS_BASE=$(jq -r '.jarvis_base // "http://127.0.0.1:2581"' "$CONFIG_PATH")
-
-export PUSH_GOTIFY_ENABLED=$(jq -r '.push_gotify_enabled // true' "$CONFIG_PATH")
-export PUSH_NTFY_ENABLED=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
-
 export BOT_NAME=$(jq -r '.bot_name' "$CONFIG_PATH")
 export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
 export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_PATH")
@@ -125,6 +116,26 @@ export NTFY_TOPIC=$(jq -r '.ntfy_topic // ""' "$CONFIG_PATH")
 export NTFY_USER=$(jq -r '.ntfy_user // ""' "$CONFIG_PATH")
 export NTFY_PASS=$(jq -r '.ntfy_pass // ""' "$CONFIG_PATH")
 export NTFY_TOKEN=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
+# Push gating toggles
+export push_gotify_enabled=$(jq -r '.push_gotify_enabled // false' "$CONFIG_PATH")
+export push_ntfy_enabled=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
+
+echo "[launcher] toggles: push_gotify_enabled=$push_gotify_enabled, push_ntfy_enabled=$push_ntfy_enabled"
+
+# Hard-off pushes by blanking env if disabled
+if [ "$push_gotify_enabled" != "true" ] && [ "$push_gotify_enabled" != "1" ]; then
+  export GOTIFY_URL=""
+  export GOTIFY_CLIENT_TOKEN=""
+  export GOTIFY_APP_TOKEN=""
+  echo "[launcher] hard-off: Gotify pushes disabled (env blanked)"
+fi
+
+if [ "$push_ntfy_enabled" != "true" ] && [ "$push_ntfy_enabled" != "1" ]; then
+  export NTFY_URL=""
+  export NTFY_TOPIC=""
+  echo "[launcher] hard-off: ntfy pushes disabled (env blanked)"
+fi
+
 
 # Personalities
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
@@ -205,19 +216,3 @@ else
 fi
 
 wait "$API_PID"
-
-export BOT_INTERNAL_PORT=${BOT_INTERNAL_PORT:-2599}
-
-
-# --- HARD-OFF for push endpoints (if toggles are false, blank the URLs so nothing can push) ---
-if [ "$PUSH_GOTIFY_ENABLED" != "true" ] && [ "$PUSH_GOTIFY_ENABLED" != "1" ] && [ "$PUSH_GOTIFY_ENABLED" != "yes" ]; then
-  export GOTIFY_URL=""
-  export GOTIFY_APP_TOKEN=""
-  export GOTIFY_CLIENT_TOKEN=""
-  echo "[launcher] hard-off: Gotify env cleared"
-fi
-if [ "$PUSH_NTFY_ENABLED" != "true" ] && [ "$PUSH_NTFY_ENABLED" != "1" ] && [ "$PUSH_NTFY_ENABLED" != "yes" ]; then
-  export NTFY_URL=""
-  export NTFY_TOPIC=""
-  echo "[launcher] hard-off: ntfy env cleared"
-fi

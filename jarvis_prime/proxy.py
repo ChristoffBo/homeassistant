@@ -2,7 +2,14 @@
 # /app/proxy.py
 import os
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ReuseHTTPServer
+import socket
+
+class ReuseReuseHTTPServer(ReuseHTTPServer):
+    allow_reuse_address = True
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        super().server_bind()
 import requests
 import time
 
@@ -51,13 +58,11 @@ LLM_MAX_CPU_PERCENT = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_M
 LLM_MODEL_URL       = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
 LLM_MODEL_PATH      = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
 LLM_MODEL_SHA256    = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
-
-PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", _bool_env("PUSH_GOTIFY_ENABLED", True)))
-PUSH_NTFY_ENABLED   = bool(merged.get("push_ntfy_enabled",   _bool_env("PUSH_NTFY_ENABLED", False)))
-NTFY_URL   = os.getenv("NTFY_URL", "").rstrip("/")
-NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 ALLOW_PROFANITY     = bool(merged.get("personality_allow_profanity",
                          _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
+
+PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", _bool_env("PUSH_GOTIFY_ENABLED", False)))
+PUSH_NTFY_ENABLED = bool(merged.get("push_ntfy_enabled", _bool_env("PUSH_NTFY_ENABLED", False)))
 
 # -----------------------------
 # Module imports
@@ -135,24 +140,14 @@ def _pipeline(title: str, body: str, mood: str):
     return out, extras, used_llm, used_beautify
 
 def _post_gotify(title: str, message: str, extras=None):
-    status = 0
+    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": 5}
+    if extras: payload["extras"] = extras
     if PUSH_GOTIFY_ENABLED and GOTIFY_URL and APP_TOKEN:
-        try:
-            url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-            payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": 5}
-            if extras: payload["extras"] = extras
-            r = requests.post(url, json=payload, timeout=8)
-            r.raise_for_status()
-            status = r.status_code
-        except Exception as e:
-            print(f"[proxy] gotify push error: {e}")
-    if PUSH_NTFY_ENABLED and NTFY_URL and NTFY_TOPIC:
-        try:
-            ntfy_url = f"{NTFY_URL}/{NTFY_TOPIC}"
-            _ = requests.post(ntfy_url, data=(message or "").encode("utf-8"), timeout=8)
-        except Exception as e:
-            print(f"[proxy] ntfy push error: {e}")
-    return status
+        r = requests.post(url, json=payload, timeout=8)
+        r.raise_for_status()
+        return r.status_code
+    return 0
 
 # -----------------------------
 # HTTP Server
@@ -213,7 +208,6 @@ def main():
     host = os.getenv("proxy_bind", "0.0.0.0")
     port = int(os.getenv("proxy_port", "2580"))
     srv = ReuseHTTPServer((host, port), H)
-    print(f"[proxy] listening on {host}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={MOOD})")
     print(f"[proxy] listening on {host}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD})")
     srv.serve_forever()
 

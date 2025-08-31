@@ -5,7 +5,6 @@
 import os, json, asyncio
 from pathlib import Path
 from aiohttp import web
-import requests
 import importlib.util
 
 # ----- load local storage module by file path (avoid name clashes) -----
@@ -42,7 +41,7 @@ async def _sse(request: web.Request):
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             await resp.write(b"data: " + payload + b"\n\n")
-    except (asyncio.CancelledError, ConnectionResetError, RuntimeError):
+    except asyncio.CancelledError:
         pass
     finally:
         _listeners.discard(q)
@@ -184,11 +183,6 @@ async def api_wake(request: web.Request):
     if not text:
         return _json({"error":"empty"}, status=400)
     mid = storage.save_message(title="Wake", body=text, source="ui", priority=3, extras={"kind":"wake"})  # type: ignore
-    try:
-        # Forward to local proxy so it executes the command without Gotify
-        requests.post("http://127.0.0.1:2599/internal/wake", json={"text": text}, timeout=3)
-    except Exception as e:
-        print(f"[api] wake forward error: {e}")
     _broadcast("wake", id=int(mid))
     return _json({"ok": True, "id": int(mid)})
 
