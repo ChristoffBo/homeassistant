@@ -175,9 +175,11 @@ if [ "$LLM_ENABLED" = "true" ]; then
   fi
 fi
 
-# Require Gotify core settings for the bot to run
-if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
-  echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token — aborting."; exit 1
+# Require Gotify core settings ONLY if push_gotify_enabled is true
+if [ "${push_gotify_enabled}" = "true" ] || [ "${push_gotify_enabled}" = "1" ]; then
+  if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
+    echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token — aborting."; exit 1
+  fi
 fi
 
 # ===== Inbox service (API + UI) =====
