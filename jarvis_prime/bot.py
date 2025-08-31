@@ -548,19 +548,15 @@ async def _sse_consumer():
                             r = requests.get(f"{JARVIS_BASE}/api/messages/{mid}", timeout=6)
                             r.raise_for_status()
                             msg = r.json()
-                            k = _dedupe_key_from_msg(msg)
-                            if await _is_seen(k): 
-                                continue
-                            await _mark_seen(k)
-                            title = msg.get("title","")
-                            body  = msg.get("body","") or msg.get("message","")
-                            text = f"{title} {body}".strip()
-                            ncmd = normalize_cmd(extract_command_from(title, body))
+                         title = msg.get("title","") or ""
+                            body  = (msg.get("body") or msg.get("message") or "").strip()
+                            is_ui_wake = (msg.get("source") == "ui") or (title.strip().lower() in ("wake","jarvis"))
+                            raw_cmd = body if is_ui_wake else extract_command_from(title, body)
+                            ncmd = normalize_cmd(raw_cmd)
                             if ncmd:
                                 _enqueue("wake", ncmd, msg)
                             else:
-                                _enqueue("other", text, msg)
-                        except Exception as e:
+                                _enqueue("other", f"{title} {body}".strip(), msg)                    except Exception as e:
                             # swallow parse errors, continue stream
                             pass
         except Exception as e:

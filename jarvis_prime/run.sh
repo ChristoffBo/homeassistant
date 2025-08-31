@@ -166,7 +166,6 @@ fi
 
 # Require Gotify core settings for the bot to run
 if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
-  echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token — aborting."; exit 1
 fi
 
 # ===== Inbox service (API + UI) =====
