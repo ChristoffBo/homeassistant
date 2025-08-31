@@ -1,11 +1,11 @@
-/* style.css — reverted safe layout with even spacing tweaks (does not override unknown existing rules) */
-
-/* Do NOT force a CSS grid on .grid; keep default flow so UI remains stable */
-.grid{ display:block; }
-
-/* Keep feed list usable on wide screens */
-.feed{ max-width:360px; }
-
-/* Gentle spacing improvements without layout breakage */
-section, .card, .panel, .list, .detail{ border-radius:12px; }
-.container{ padding:12px; }
+:root{ color-scheme: dark; }
+body{ font-family: system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:#0d1220; color:#cfe3ff; }
+.top{ display:flex; align-items:center; gap:16px; padding:14px 16px; background:linear-gradient(180deg,#0f1a34,#0b1020); position:sticky; top:0; z-index:5; }
+.top h1{ margin:0; font-size:20px; color:#a7c7ff; }
+.wake{ margin-left:auto; display:flex; gap:8px; }
+.wake input{ width:360px; max-width:60vw; padding:10px 12px; border-radius:10px; border:1px solid #243255; background:#0e1730; color:#eaf2ff; }
+.wake button{ padding:10px 16px; border-radius:10px; border:1px solid #3852a5; background:#1a2b57; color:#d9e6ff; cursor:pointer; }
+#inbox{ padding:16px; }
+.card{ background:#101a31; border:1px solid #1d2a4f; border-radius:14px; padding:14px; margin-bottom:12px; }
+.card .meta{ font-size:12px; color:#99b3e8; margin-bottom:6px; }
+.card .title{ font-weight:600; margin-bottom:4px; }
