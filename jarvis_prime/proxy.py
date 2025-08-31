@@ -2,7 +2,14 @@
 # /app/proxy.py
 import os
 import json
-from http.server import BaseHTTPRequestHandler, ReuseHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import socket
+
+class ReuseHTTPServer(HTTPServer):
+    allow_reuse_address = True
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        super().server_bind()
 import socket
 
 class ReuseReuseHTTPServer(ReuseHTTPServer):

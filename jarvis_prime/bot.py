@@ -182,9 +182,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         except Exception as e:
             status = 0
             print(f"[bot] send_message error: {e}")
-    except Exception as e:
-        status = 0
-        print(f"[bot] send_message error: {e}")
 
     # Mirror to Inbox DB (UI-first)
     if storage:
@@ -539,13 +536,12 @@ async def _internal_wake(request):
     # Route to existing command handler
     try:
         cmd = extract_command_from(title, text) if 'extract_command_from' in globals() else text
-        # Prefer a dedicated _handle_command if present
         if '_handle_command' in globals():
             out_title, out_body, priority = _handle_command(title, text, cmd)
         else:
             out_title, out_body, priority = ("Wake", "Processed: " + text, 5)
     except Exception as e:
-        out_title, out_body, priority = ("Wake Error", f\"{e}\", 5)
+        out_title, out_body, priority = ("Wake Error", str(e), 5)
     # Save bot response into inbox
     try:
         if storage:
@@ -555,7 +551,7 @@ async def _internal_wake(request):
     return web.json_response({"ok": True, "title": out_title, "body": out_body, "priority": int(priority)})
 
 async def _start_internal_wake_server():
-    if web is None: 
+    if web is None:
         print("[bot] aiohttp not available; internal wake disabled")
         return
     app = web.Application()
@@ -566,15 +562,12 @@ async def _start_internal_wake_server():
     await site.start()
     print("[bot] internal wake server listening on 127.0.0.1:2599")
 
-
-async def _bootstrap_internal():
-    await _start_internal_wake_server()
-
+# Bootstrap
 try:
     loop = asyncio.get_event_loop()
 except Exception:
     loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
 try:
-    loop.create_task(_bootstrap_internal())
+    loop.create_task(_start_internal_wake_server())
 except Exception as e:
     print("[bot] failed to start internal wake:", e)

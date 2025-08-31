@@ -32,6 +32,7 @@ async def _sse(request: web.Request):
         }
     )
     await resp.prepare(request)
+    disconnected = False
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
     # initial ping
@@ -40,7 +41,14 @@ async def _sse(request: web.Request):
         while True:
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
-            await resp.write(b"data: " + payload + b"\n\n")
+            try:
+        await resp.write(b"data: " + payload + b"\n\n")
+      except ConnectionResetError:
+        disconnected = True
+        break
+      except Exception:
+        disconnected = True
+        break
     except asyncio.CancelledError:
         pass
     finally:
