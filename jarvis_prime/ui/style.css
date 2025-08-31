@@ -44,7 +44,7 @@ h1{ margin:0 }
 .btn.danger{ background:linear-gradient(180deg,#c54a4a,#a53838); border:none; color:#fff }
 
 /* Main grid */
-.grid{ display:grid; grid-template-columns: 260px 360px 1fr; gap:16px; padding:16px }
+.grid{ display:grid; grid-template-columns: 260px 360px 1fr; gap:16px; padding:16px 0 16px 16px }
 .rail,.feed,.detail{ background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); min-height:65vh; overflow:auto }
 
 /* Rail */
@@ -91,3 +91,6 @@ h1{ margin:0 }
 .detail { min-height: 60vh; }
 .detail .wrap { max-width: none; width: 100%; }
 .detail .body { white-space: pre-wrap; line-height: 1.45; }
+
+/* v4.7: right list flush to border */
+.feed{ padding-right: 6px }
