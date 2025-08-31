@@ -19,7 +19,8 @@
   ],
   "ports": {
     "2525/tcp": 2525,
-    "2580/tcp": 2580
+    "2580/tcp": 2580,
+    "2581/tcp": 2581
   },
   "ingress": true,
   "options": {
@@ -269,9 +270,6 @@
     "retention_days": "int(1,)",
     "auto_purge_policy": "str"
   },
-    "ingress": true,
-    "ingress_port": 2581,
-    "ingress_entry": "/ui/",
-    "panel_icon": "mdi:robot",
-    "panel_title": "Jarvis Prime"
+  "ingress_entry": "/ui/",
+  "ingress_port": 2581
 }

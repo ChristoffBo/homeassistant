@@ -100,14 +100,14 @@ async def api_purge(request: web.Request):
 
 # ----- Static UI -----
 async def index(request: web.Request):
-    # Always redirect root/dir to the actual static file so it works under Ingress
-    raise web.HTTPFound('/ui/index.html')
+    root = _ui_root()
+    index_file = root / "index.html"
+    if not index_file.exists():
+        return web.Response(text="UI is not installed. Place files in /share/jarvis_prime/ui/", status=404)
+    return web.FileResponse(path=str(index_file))
 
 def create_app() -> web.Application:
-    app = web.Application(middlewares=[
-        # Ensure '/ui' redirects to '/ui/' and collapse duplicate slashes for HA Ingress
-        web.normalize_path_middleware(append_slash=True, merge_slashes=True)
-    ])
+    app = web.Application()
     # API
     app.router.add_post("/api/messages", api_create_message)
     app.router.add_get("/api/messages", api_list_messages)
