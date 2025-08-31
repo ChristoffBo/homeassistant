@@ -41,7 +41,7 @@ async def _sse(request: web.Request):
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             await resp.write(b"data: " + payload + b"\n\n")
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, ConnectionResetError, RuntimeError):
         pass
     finally:
         _listeners.discard(q)

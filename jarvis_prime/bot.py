@@ -155,6 +155,7 @@ def _persona_line(quip_text: str) -> str:
     # Keep it minimal so it aligns nicely with Gotify cards
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
+
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
@@ -176,43 +177,44 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 
     # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
-        try: priority = _personality.apply_priority(priority, CHAT_MOOD)
-        except Exception: pass
+        try:
+            priority = _personality.apply_priority(priority, CHAT_MOOD)
+        except Exception:
+            pass
 
+    # Prepare payload once (for Gotify)
+    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
+    if extras:
+        payload["extras"] = extras
 
-# Prepare payload once
-url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
-if extras: payload["extras"] = extras
+    status = 0
+    # Optional: push to Gotify
+    if PUSH_GOTIFY_ENABLED and GOTIFY_URL and APP_TOKEN:
+        try:
+            r = requests.post(url, json=payload, timeout=8)
+            r.raise_for_status()
+            status = r.status_code
+        except Exception as e:
+            status = 0
+            print(f"[bot] send_message gotify error: {e}")
 
-status = 0
-# Optional: push to Gotify
-if PUSH_GOTIFY_ENABLED and GOTIFY_URL and APP_TOKEN:
-    try:
-        r = requests.post(url, json=payload, timeout=8)
-        r.raise_for_status()
-        status = r.status_code
-    except Exception as e:
-        status = 0
-        print(f"[bot] send_message gotify error: {e}")
-
-# Optional: push to ntfy
-if PUSH_NTFY_ENABLED and NTFY_URL and NTFY_TOPIC:
-    try:
-        ntfy_url = f"{NTFY_URL}/{NTFY_TOPIC}"
-        _ = requests.post(ntfy_url, data=(message or "").encode("utf-8"), timeout=8)
-    except Exception as e:
-        print(f"[bot] send_message ntfy error: {e}")
-
+    # Optional: push to ntfy
+    if PUSH_NTFY_ENABLED and NTFY_URL and NTFY_TOPIC:
+        try:
+            ntfy_url = f"{NTFY_URL}/{NTFY_TOPIC}"
+            _ = requests.post(ntfy_url, data=(message or "").encode("utf-8"), timeout=8)
+        except Exception as e:
+            print(f"[bot] send_message ntfy error: {e}")
 
     # Mirror to Inbox DB (UI-first)
     if storage:
         try:
             storage.save_message(
-                title=orig_title or "Notification",
+                title=orig_title or title,
                 body=message or "",
-                source="gotify",
-                priority=int(priority),
+                source="bot",
+                priority=priority,
                 extras={"extras": extras or {}, "status": status},
                 created_at=int(time.time())
             )
