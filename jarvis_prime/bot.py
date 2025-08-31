@@ -32,8 +32,6 @@ APP_TOKEN    = os.getenv("GOTIFY_APP_TOKEN", "")
 APP_NAME     = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 SILENT_REPOST    = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
-PUSH_GOTIFY_ENABLED = False
-PUSH_NTFY_ENABLED = False
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
 
 # Feature toggles (env defaults; can be overridden by /data/options.json)
@@ -74,8 +72,6 @@ try:
     PROXY_ENABLED   = bool(merged.get("proxy_enabled", PROXY_ENABLED_ENV))
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
-    PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", False))
-    PUSH_NTFY_ENABLED = bool(merged.get("push_ntfy_enabled", False))
 except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
@@ -170,18 +166,16 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         try: priority = _personality.apply_priority(priority, CHAT_MOOD)
         except Exception: pass
 
-    status = 0
-    if PUSH_GOTIFY_ENABLED and GOTIFY_URL and APP_TOKEN:
-        url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-        payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
-        if extras: payload["extras"] = extras
-        try:
-            r = requests.post(url, json=payload, timeout=8)
-            r.raise_for_status()
-            status = r.status_code
-        except Exception as e:
-            status = 0
-            print(f"[bot] send_message error: {e}")
+    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
+    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
+    if extras: payload["extras"] = extras
+    try:
+        r = requests.post(url, json=payload, timeout=8)
+        r.raise_for_status()
+        status = r.status_code
+    except Exception as e:
+        status = 0
+        print(f"[bot] send_message error: {e}")
 
     # Mirror to Inbox DB (UI-first)
     if storage:
@@ -500,16 +494,6 @@ def main():
         pass
     asyncio.run(_run_forever())
 
-async def _run_forever():
-    asyncio.create_task(_digest_scheduler_loop())
-    while True:
-        try:
-            await listen()
-        except Exception:
-            await asyncio.sleep(3)
-
-if __name__ == "__main__":
-    main()
 
 
 # ============================
@@ -525,49 +509,48 @@ async def _internal_wake(request):
         data = await request.json()
     except Exception:
         data = {}
-    text = str(data.get("text") or "")
-    title = "UI Wake"
-    # Save the incoming wake message into inbox first
+    text = str(data.get("text") or "").strip()
+    # Normalize typical prefixes like "jarvis ..."
+    cmd = text
+    for kw in ("jarvis", "hey jarvis", "ok jarvis"):
+        if cmd.lower().startswith(kw):
+            cmd = cmd[len(kw):].strip()
+            break
+    ok = False
     try:
-        if storage:
-            storage.save_message(title, text, "ui", 5, {}, int(time.time()))
+        ok = bool(_handle_command(cmd))
     except Exception as e:
-        print(f"[bot] storage save failed (wake in): {e}")
-    # Route to existing command handler
-    try:
-        cmd = extract_command_from(title, text) if 'extract_command_from' in globals() else text
-        if '_handle_command' in globals():
-            out_title, out_body, priority = _handle_command(title, text, cmd)
-        else:
-            out_title, out_body, priority = ("Wake", "Processed: " + text, 5)
-    except Exception as e:
-        out_title, out_body, priority = ("Wake Error", str(e), 5)
-    # Save bot response into inbox
-    try:
-        if storage:
-            storage.save_message(out_title, out_body, "bot", int(priority), {}, int(time.time()))
-    except Exception as e:
-        print(f"[bot] storage save failed (wake out): {e}")
-    return web.json_response({"ok": True, "title": out_title, "body": out_body, "priority": int(priority)})
+        try:
+            send_message("Wake Error", f"{e}", priority=5)
+        except Exception:
+            pass
+    return web.json_response({"ok": bool(ok)})
 
 async def _start_internal_wake_server():
     if web is None:
         print("[bot] aiohttp not available; internal wake disabled")
         return
-    app = web.Application()
-    app.router.add_post("/internal/wake", _internal_wake)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 2599)
-    await site.start()
-    print("[bot] internal wake server listening on 127.0.0.1:2599")
+    try:
+        app = web.Application()
+        app.router.add_post("/internal/wake", _internal_wake)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 2599)
+        await site.start()
+        print("[bot] internal wake server listening on 127.0.0.1:2599")
+    except Exception as e:
+        print(f"[bot] failed to start internal wake server: {e}")
 
-# Bootstrap
-try:
-    loop = asyncio.get_event_loop()
-except Exception:
-    loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
-try:
-    loop.create_task(_start_internal_wake_server())
-except Exception as e:
-    print("[bot] failed to start internal wake:", e)
+async def _run_forever():
+    try:
+        asyncio.create_task(_start_internal_wake_server())
+    except Exception: pass
+    asyncio.create_task(_digest_scheduler_loop())
+    while True:
+        try:
+            await listen()
+        except Exception:
+            await asyncio.sleep(3)
+
+if __name__ == "__main__":
+    main()
