@@ -172,28 +172,26 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     try:
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
-        ok = True
         status = r.status_code
     except Exception as e:
-        ok = False
         status = 0
         print(f"[bot] send_message error: {e}")
 
-    # Mirror to Inbox DB
+    # Mirror to Inbox DB (UI-first)
     if storage:
         try:
             storage.save_message(
-                source="gotify",
                 title=orig_title or "Notification",
                 body=message or "",
-                meta={"extras": extras or {}, "priority": priority},
-                delivered={"gotify": {"status": status}},
-                ts=int(time.time())
+                source="gotify",
+                priority=int(priority),
+                extras={"extras": extras or {}, "status": status},
+                created_at=int(time.time())
             )
         except Exception as e:
             print(f"[bot] storage save failed: {e}")
 
-    return ok
+    return True
 
 def delete_original_message(msg_id: int):
     try:

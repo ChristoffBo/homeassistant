@@ -5,10 +5,21 @@ import asyncio
 from email.parser import BytesParser
 import json
 import requests
+import time
 from aiosmtpd.controller import Controller
 
 # -----------------------------
-# Config load (match bot.py behavior)
+# Inbox storage
+# -----------------------------
+try:
+    import storage
+    storage.init_db()
+except Exception as _e:
+    storage = None
+    print(f"[smtp] ⚠️ storage init failed: {_e}")
+
+# -----------------------------
+# Config load (match bot/proxy behavior)
 # -----------------------------
 def _load_json(path):
     try:
@@ -110,13 +121,14 @@ def _transform(title: str, body: str, mood: str):
     footer = _footer(used_llm, used_beautify)
     if not out.rstrip().endswith(footer):
         out = f"{out.rstrip()}\n\n{footer}"
-    return out, extras
+    return out, extras, used_llm, used_beautify
 
 def _post(title: str, message: str, extras=None):
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": 5}
     if extras: payload["extras"] = extras
     r = requests.post(url, json=payload, timeout=8); r.raise_for_status()
+    return r.status_code
 
 class Handler:
     async def handle_DATA(self, server, session, envelope):
@@ -137,8 +149,23 @@ class Handler:
             else:
                 body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
 
-            out, extras = _transform(title, body, CHAT_MOOD)
-            _post(title, out, extras)
+            out, extras, used_llm, used_beautify = _transform(title, body, CHAT_MOOD)
+            status = _post(title, out, extras)
+
+            # Mirror to Inbox DB (UI-first)
+            if storage:
+                try:
+                    storage.save_message(
+                        title=title,
+                        body=out or "",
+                        source="smtp",
+                        priority=5,
+                        extras={"extras": extras or {}, "mood": CHAT_MOOD, "used_llm": used_llm, "used_beautify": used_beautify, "status": int(status)},
+                        created_at=int(time.time())
+                    )
+                except Exception as e:
+                    print(f"[smtp] storage save failed: {e}")
+
             return "250 OK"
         except Exception as e:
             print(f"[smtp] error: {e}")

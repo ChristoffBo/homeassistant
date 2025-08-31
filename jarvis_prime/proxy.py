@@ -173,16 +173,16 @@ class H(BaseHTTPRequestHandler):
             out, extras, used_llm, used_beautify = _pipeline(title, body, CHAT_MOOD)
             status = _post_gotify(title, out, extras)
 
-            # Mirror to Inbox DB
+            # Mirror to Inbox DB (UI-first)
             if storage:
                 try:
                     storage.save_message(
-                        source="proxy",
                         title=title or "Proxy",
                         body=out or "",
-                        meta={"extras": extras or {}, "mood": CHAT_MOOD, "used_llm": used_llm, "used_beautify": used_beautify},
-                        delivered={"gotify": {"status": int(status)}},
-                        ts=int(time.time())
+                        source="proxy",
+                        priority=5,
+                        extras={"extras": extras or {}, "mood": CHAT_MOOD, "used_llm": used_llm, "used_beautify": used_beautify, "status": int(status)},
+                        created_at=int(time.time())
                     )
                 except Exception as e:
                     print(f"[proxy] storage save failed: {e}")
