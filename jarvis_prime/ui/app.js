@@ -1,4 +1,4 @@
-// Jarvis v4.3 — Ingress '/ui/' root fix + diagnostics
+// Jarvis v4.4 — Ingress '/ui/' root fix + diagnostics
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
@@ -39,11 +39,12 @@
   const fmt = (ts) => { try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); } catch { return '' } };
 
   async function jfetch(url, opts){
+    const isTemp = /\/api\/messages\/ui-\d+$/.test(String(url));
     try{
       const r = await fetch(url, opts);
       if(!r.ok){
         const t = await r.text().catch(()=>'');
-        throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t);
+        if(!(isTemp && r.status===404)) throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t); else return Promise.reject(new Error('temp-404'));
       }
       const ct = r.headers.get('content-type')||'';
       return ct.includes('application/json') ? r.json() : r.text();
@@ -74,6 +75,11 @@
   };
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
+
+  const byId = new Map();
+  function indexItems(items){ byId.clear(); for(const it of items){ byId.set(String(it.id), it); } }
+  let lastTop = null, lastCount = 0;
+
 
   function counts(items){
     const c = { all:items.length, unread:0, arch:0, smtp:0, gotify:0, ui:0 };
@@ -133,18 +139,25 @@
 
   async function select(id){
     state.active = id;
-    const it = await API.get(id);
-    renderDetail(it);
+    if(String(id).startsWith('ui-')){
+      const temp = byId.get(String(id));
+      if(temp) return renderDetail(temp);
+    }
+    try{
+      const it = await API.get(id);
+      renderDetail(it);
+    }catch(e){ /* suppress 404 toast here; jfetch already notified */ }
   }
 
   async function load(selectId=null){
     const items = await API.list($('#q')?.value?.trim()||'', parseInt(els.limit.value,10)||50, 0);
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
-    state.items = items;
+    const top = items[0]?.id || null; const cnt = items.length;
+    state.items = items; indexItems(items);
     counts(items);
-    renderFeed(items);
+    if(top!==lastTop || cnt!==lastCount){ renderFeed(items); lastTop = top; lastCount = cnt; }
     if(selectId && items.find(i=>String(i.id)===String(selectId))) select(selectId);
-    else if(items[0]) select(items[0].id);
+    else if(!state.active && items[0]) select(items[0].id);
   }
 
   async function loadSettings(){
@@ -197,7 +210,7 @@
       await API.wake(t);
       const now = Math.floor(Date.now()/1000);
       const temp = { id:'ui-'+now, title:'Wake', message:t, body:t, source:'ui', created_at: now };
-      state.items.unshift(temp); renderFeed(state.items); select(temp.id);
+      state.items.unshift(temp); lastTop = null; lastCount = 0; renderFeed(state.items);
       toast('Wake sent'); els.wakeText.value='';
       setTimeout(()=> load(temp.id), 1200);
     }catch{ /* toast shown in jfetch */ }
