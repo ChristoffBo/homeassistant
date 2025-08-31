@@ -85,3 +85,9 @@ h1{ margin:0 }
   .grid{ grid-template-columns: 1fr; }
   .detail{ order:3 }
 }
+
+
+/* v4.6 detail sizing */
+.detail { min-height: 60vh; }
+.detail .wrap { max-width: none; width: 100%; }
+.detail .body { white-space: pre-wrap; line-height: 1.45; }

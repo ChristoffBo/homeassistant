@@ -1,4 +1,4 @@
-// Jarvis v4.5 — Ingress '/ui/' root fix + diagnostics
+// Jarvis v4.6 — Ingress '/ui/' root fix + diagnostics
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
@@ -71,7 +71,7 @@
     async setRetention(days){ return jfetch(u('api/inbox/settings'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}); },
     async purge(days){ return jfetch(u('api/inbox/purge'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}); },
     async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
-    async wake(text){ return jfetch(u('api/messages'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Jarvis', body:text, source:'ui'})}); }
+    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Jarvis', body:text, source:'ui'})}); }
   };
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
@@ -210,7 +210,7 @@
       await API.wake(t);
       const now = Math.floor(Date.now()/1000);
       const temp = { id:'ui-'+now, title:'Wake', message:t, body:t, source:'ui', created_at: now };
-      state.items.unshift(temp); lastTop = null; lastCount = 0; renderFeed(state.items);
+      state.items.unshift(temp); lastTop = null; lastCount = 0; renderFeed(state.items); /* keep selection */
       toast('Wake sent'); els.wakeText.value='';
       setTimeout(()=> load(temp.id), 1200);
     }catch{ /* toast shown in jfetch */ }
