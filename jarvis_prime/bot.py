@@ -151,6 +151,19 @@ def _persona_line(persona: str) -> str:
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
+    # ---- LIVE REFRESH: persona for each message (rotation without restart)
+    try:
+        if _pstate and hasattr(_pstate, "get_active_persona"):
+            persona_now, tod_now = _pstate.get_active_persona()
+            if persona_now:
+                # update globals so all downstream callers see it
+                globals()["ACTIVE_PERSONA"] = persona_now
+                globals()["PERSONA_TOD"] = tod_now
+                globals()["CHAT_MOOD"] = persona_now
+    except Exception:
+        pass
+    # ---------------------------------------------
+
     # Decorate body, but keep the original title so it doesn't become a banner
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
@@ -574,3 +587,4 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
+```0
