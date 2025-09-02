@@ -5,6 +5,7 @@ import re
 import json
 import html
 import importlib
+import random
 from typing import List, Tuple, Optional, Dict, Any, Set
 from dataclasses import dataclass
 
@@ -13,12 +14,10 @@ IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s
 MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\((https?://[^\s)]+)\)', re.I)
 KV_RE      = re.compile(r'^\s*[-*]?\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
 
-# timestamps and types
 TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
 DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
 TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
 
-# Strict IPv4
 IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b')
 HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
@@ -157,6 +156,9 @@ def _persona_overlay_line(persona: Optional[str], *, enable_quip: bool) -> Optio
                 quip = str(mod.quip(canon) or "").strip()
             except Exception:
                 quip = ""
+        # always pick a quip from bank
+        if not quip and hasattr(mod, "QUIPS") and canon in mod.QUIPS:
+            quip = random.choice(mod.QUIPS[canon])
         return f"💬 {shown} says: {'— ' + quip if quip else ''}".rstrip()
     except Exception:
         return "💬 neutral says:"
@@ -289,15 +291,19 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     stripped = _strip_noise(original_body)
     normalized = _normalize(stripped)
     normalized = html.unescape(normalized)  # fix posters/logos escaping
+
     body_wo_imgs, images = _harvest_images_md(normalized)
     if not images and _looks_pure_json(normalized):
         images = _harvest_images_json(normalized)
+
     kind = _detect_type(title, body_wo_imgs)
     facts, details, kv_status = _categorize_bullets(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs, kv_status)
+
     lines: List[str] = []; lines += _header(kind, badge)
     pol = _persona_overlay_line(persona, enable_quip=persona_quip)
     if pol: lines += [pol]
+
     if facts: lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
     if images:
@@ -305,11 +311,14 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         if len(images) > 1:
             more = ", ".join(f"[img{i+1}]({u})" for i,u in enumerate(images[1:]))
             lines += [f"_Gallery_: {more}"]
+
     path = f"{MUSE} + {AEGIS}" if llm_used else f"{AEGIS}"
     lines += ["", f"— Path: {path}"]
+
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
     text = _linewise_dedup_markdown(text)
+
     report = _verify_preservation(title + "\n" + original_body, text)
     MIN_COVERAGE = 0.7
     if report.coverage < MIN_COVERAGE or report.missing:
@@ -319,18 +328,4 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         if facts: retry_lines += ["", "📄 Facts", *facts]
         if details: retry_lines += ["", "📄 Details", *details]
         if images: retry_lines += ["", f"![poster]({images[0]})"]
-        retry_lines += ["", "📄 Raw Extract", "```text", original_body.strip(), "```", "", f"— Path: {path}"]
-        retry_text = "\n".join(retry_lines).strip()
-        retry_text = _format_align_check(retry_text)
-        retry_report = _verify_preservation(title + "\n" + original_body, retry_text)
-        if retry_report.coverage >= report.coverage:
-            text = retry_text; report = retry_report
-    status = "verified"
-    if report.coverage < 0.5:
-        status = "fallback_raw"
-        raw_lines = []
-        raw_lines += _header("Raw Message", badge)
-        raw_lines += ["", f"**Subject:** {title.strip() or '(no title)'}", "", "```text", original_body.strip(), "```"]
-        if images: raw_lines += ["", f"![poster]({images[0]})"]
-        raw_lines += ["", f"— Path: {path}"]
-        text =
+        retry_lines +=
