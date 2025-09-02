@@ -145,24 +145,22 @@ def _persona_line(quip_text: str) -> str:
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
-    is_beautified = isinstance(extras, dict) and extras.get('jarvis::beautified') is True
 
     # Decorate body, but keep the original title so it doesn't become a banner
-    if decorate and not is_beautified and _personality and hasattr(_personality, "decorate_by_persona"):
+    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
         title = orig_title
-    elif decorate and not is_beautified and _personality and hasattr(_personality, "decorate"):
+    elif decorate and _personality and hasattr(_personality, "decorate"):
         title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
         title = orig_title
 
-    # Persona speaking line at the top (skip if beautified already added overlay)
-    if not is_beautified:
-        try:
-            quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
-        except Exception:
-            quip_text = ""
-        header = _persona_line(quip_text)
-        message = (header + ("\n" + (message or ""))) if header else (message or "")
+    # Persona speaking line at the top
+    try:
+        quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
+    except Exception:
+        quip_text = ""
+    header = _persona_line(quip_text)
+    message = (header + ("\n" + (message or ""))) if header else (message or "")
 
     # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
@@ -261,13 +259,7 @@ def _llm_then_beautify(title: str, message: str):
 
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            final, extras = _beautify.beautify_message(
-                title, final,
-                mood=CHAT_MOOD,
-                mode=str(merged.get('beautify_mode','standard')),
-                persona=ACTIVE_PERSONA,
-                persona_quip=bool(merged.get('personality_quips', True))
-            )
+            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
             used_beautify = True
         except Exception as e:
             print(f"[bot] Beautify failed: {e}")
@@ -357,8 +349,8 @@ def _handle_command(ncmd: str) -> bool:
             try:
                 if _personality and hasattr(_personality, "quip"):
                     msg2 += f"\n\n{_personality.quip(ACTIVE_PERSONA)}"
-                except Exception:
-                    pass
+            except Exception:
+                pass
             send_message("Digest", msg2, priority=pr)
         else:
             send_message("Digest", "Digest module unavailable.")
