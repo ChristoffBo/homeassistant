@@ -135,32 +135,32 @@ atexit.register(stop_sidecars)
 # Gotify helpers
 # ============================
 def _persona_line(quip_text: str) -> str:
-    # Single-line persona 'speaks' header placed at TOP of message body.
     who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
     quip_text = (quip_text or "").strip().replace("\n", " ")
     if len(quip_text) > 140:
         quip_text = quip_text[:137] + "..."
-    # Keep it minimal so it aligns nicely with Gotify cards
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
+    is_beautified = isinstance(extras, dict) and extras.get("jarvis::beautified") is True
 
     # Decorate body, but keep the original title so it doesn't become a banner
-    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
+    if decorate and not is_beautified and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
         title = orig_title
-    elif decorate and _personality and hasattr(_personality, "decorate"):
+    elif decorate and not is_beautified and _personality and hasattr(_personality, "decorate"):
         title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
         title = orig_title
 
-    # Persona speaking line at the top
-    try:
-        quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
-    except Exception:
-        quip_text = ""
-    header = _persona_line(quip_text)
-    message = (header + ("\n" + (message or ""))) if header else (message or "")
+    # Persona speaking line at the top (skip if beautifier already placed overlay)
+    if not is_beautified:
+        try:
+            quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
+        except Exception:
+            quip_text = ""
+        header = _persona_line(quip_text)
+        message = (header + ("\n" + (message or ""))) if header else (message or "")
 
     # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
@@ -178,7 +178,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         status = 0
         print(f"[bot] send_message error: {e}")
 
-    # Mirror to Inbox DB (UI-first)
     if storage:
         try:
             storage.save_message(
@@ -262,7 +261,7 @@ def _llm_then_beautify(title: str, message: str):
             final, extras = _beautify.beautify_message(
                 title, final,
                 mood=CHAT_MOOD,
-                mode=str(merged.get('beautify_mode', 'standard')),
+                mode=str(merged.get('beautify_mode','standard')),
                 persona=ACTIVE_PERSONA,
                 persona_quip=bool(merged.get('personality_quips', True))
             )
@@ -489,19 +488,6 @@ async def _digest_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
-# ============================
-# Main
-# ============================
-def main():
-    resolve_app_id()
-    try:
-        start_sidecars()
-        post_startup_card()
-    except Exception:
-        pass
-    asyncio.run(_run_forever())
-
-
 
 # ============================
 # Internal wake HTTP server
@@ -558,6 +544,18 @@ async def _run_forever():
             await listen()
         except Exception:
             await asyncio.sleep(3)
+
+# ============================
+# Main
+# ============================
+def main():
+    resolve_app_id()
+    try:
+        start_sidecars()
+        post_startup_card()
+    except Exception:
+        pass
+    asyncio.run(_run_forever())
 
 if __name__ == "__main__":
     main()
