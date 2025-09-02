@@ -20,7 +20,8 @@
   "ports": {
     "2525/tcp": 2525,
     "2580/tcp": 2580,
-    "2581/tcp": 2581
+    "2581/tcp": 2581,
+    "2590/tcp": 2590
   },
   "options": {
     "bot_name": "Jarvis Prime",
@@ -69,6 +70,12 @@
     "proxy_port": 2580,
     "proxy_gotify_url": "http://10.0.0.99:8091",
     "proxy_ntfy_url": "http://10.0.0.99:8080",
+
+    "webhook_enabled": true,
+    "webhook_bind": "0.0.0.0",
+    "webhook_port": 2590,
+    "webhook_token": "",
+
     "enable_dude": true,
     "enable_chick": false,
     "enable_nerd": false,
@@ -191,6 +198,12 @@
     "proxy_port": "int(1,)",
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
+
+    "webhook_enabled": "bool",
+    "webhook_bind": "str",
+    "webhook_port": "int(1,)",
+    "webhook_token": "str",
+
     "enable_dude": "bool",
     "enable_chick": "bool",
     "enable_nerd": "bool",
