@@ -1,4 +1,4 @@
-/* Jarvis Prime — Notify (Outlook/ntfy Dark) */
+/* Jarvis Prime — Notify (Outlook/ntfy Dark, Android/Ingress safe) */
 :root{
   --bg:#0b0f14; --g1:#0f1a2c; --g2:#0c1424;
   --panel:#121826; --panel-2:#0f1623; --edge:#1f2a44;
@@ -45,6 +45,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   padding:14px 16px 16px 16px;
   height: calc(100vh - 56px);
 }
+@supports (height: 100svh){
+  .layout{ height: calc(100svh - 56px); }
+}
 .rail{ grid-area: rail; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; height:100% }
 .rail-head{ display:flex; justify-content:space-between; align-items:center; padding:12px; color:var(--muted); font-size:12px }
 .tabs{ display:grid; gap:6px; padding:0 12px }
@@ -59,7 +62,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .lbl.inline{ justify-content:flex-start }
 .btn.full{ width:100%; text-align:center }
 
-.feed{ grid-area: feed; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow-y:auto; height:100%; padding:8px }
+.feed{ grid-area: feed; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow-y:auto; height:100%; padding:8px; -webkit-overflow-scrolling: touch; }
 .row{
   display:grid; grid-template-columns: 6px 1fr auto; align-items:center;
   gap:10px; padding:10px 12px; border-radius:10px; cursor:pointer;
@@ -73,7 +76,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .row .snippet{ color:var(--muted); margin-left:6px }
 .row + .row{ margin-top:6px }
 
-.detail{ grid-area: detail; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow-y:auto; height:100% }
+.detail{ grid-area: detail; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow-y:auto; height:100%; -webkit-overflow-scrolling: touch; }
 .detail .wrap{ padding:20px; display:grid; gap:14px }
 .detail h2{ margin:0; font-size:28px; line-height:1.2 }
 .badges{ display:flex; gap:8px; flex-wrap:wrap }
@@ -85,48 +88,4 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .fab{ position:fixed; right:20px; bottom:20px; width:56px; height:56px; border-radius:999px; background:linear-gradient(180deg,#1c87d6,#1564b1); color:#fff; font-size:28px; border:none; cursor:pointer; box-shadow:0 10px 30px rgba(0,0,0,.4); z-index:120 }
 .compose{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; background:rgba(0,0,0,.35); z-index:120 }
 .compose.open{ display:flex }
-.sheet{ width:min(640px, 92vw); background:var(--panel); border:1px solid var(--edge); border-radius:12px 12px 0 0; box-shadow:var(--shadow) }
-.sheet-head{ display:flex; justify-content:space-between; align-items:center; padding:12px; border-bottom:1px solid var(--edge) }
-.sheet-title{ font-weight:700 }
-.sheet-body{ padding:12px }
-.sheet-body input{ width:100% }
-.sheet-actions{ padding:12px; display:flex; justify-content:flex-end; gap:8px }
-
-/* Settings drawer */
-.drawer{ position:fixed; top:0; right:-420px; width:400px; height:100%; background:var(--panel); border-left:1px solid var(--edge); box-shadow:var(--shadow); transition:right .25s ease; z-index:110; display:flex; flex-direction:column }
-.drawer.open{ right:0 }
-.drawer-head{ display:flex; align-items:center; gap:8px; padding:12px; border-bottom:1px solid var(--edge) }
-.drawer-title{ font-weight:700; margin-right:auto }
-.drawer-tabs{ display:flex; gap:6px; flex-wrap:wrap }
-.dtab{ background:var(--panel-2); border:1px solid var(--edge); color:var(--text); padding:6px 10px; border-radius:8px; cursor:pointer; font-size:12px }
-.dtab.active{ outline:2px solid var(--accent) }
-.drawer-body{ padding:12px; overflow:auto }
-.pane{ display:none } .pane.show{ display:block }
-.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:8px }
-.drawer-actions{ margin-top:10px; display:flex; justify-content:flex-end; gap:8px }
-
-/* Toasts */
-#toast{ position:fixed; right:16px; bottom:16px; z-index:140 }
-.toast{ background:var(--panel); border:1px solid var(--edge); padding:10px 14px; border-radius:10px; margin-top:8px; min-width:220px; box-shadow:var(--shadow) }
-
-.detail .empty{ padding:24px; color:var(--muted) }
-
-/* Tablet */
-@media (max-width: 1100px){
-  .layout{ grid-template-columns: 220px 1fr 40%; }
-}
-/* Phone: hide rail, stack feed then detail */
-@media (max-width: 900px){
-  .layout{
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "feed"
-      "detail";
-    height: calc(100vh - 56px);
-    padding: 10px 12px;
-    gap: 10px;
-  }
-  .rail{ display:none !important; }
-  .feed, .detail{ height: 70vh; }
-  .detail{ min-height: 40vh; }
-}
+.sheet{ width:min(640px, 92vw); background:var(--panel); border
