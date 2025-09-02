@@ -240,6 +240,13 @@ def _load_system_prompt() -> str:
     # fallback
     return "YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
 
+# NEW: only replace the {mood} token; leave all other braces intact (e.g., {$schema})
+def _format_system_prompt(s: str, mood: str) -> str:
+    try:
+        return s.replace("{mood}", mood)
+    except Exception:
+        return s
+
 def _trim_to_ctx(src: str, system: str) -> str:
     if not src: return src
     budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
@@ -266,12 +273,8 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     if not src: return src
 
     imgs=_extract_images(src)
-    system=_load_system_prompt().format(mood=mood)
+    system=_format_system_prompt(_load_system_prompt(), mood)
     src=_trim_to_ctx(src, system)
-
-    # Special-case trivial tests
-    if re.search(r'(?i)\btest\b', src) and len(src) < 600:
-        return _finalize(src, imgs)
 
     # 1) Ollama path
     base=(base_url or OLLAMA_BASE_URL or "").strip()
@@ -373,7 +376,7 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
         return src
 
     imgs = _extract_images(src)
-    system = _load_system_prompt().format(mood=mood)
+    system = _format_system_prompt(_load_system_prompt(), mood)
     src = _trim_to_ctx(src, system)
 
     # 1) Ollama (if configured)
