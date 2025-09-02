@@ -46,6 +46,11 @@ KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","t
 SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
+# --- NEW: webhook feature toggles (safe defaults; overridden by /data/options.json if present)
+WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true","yes")
+WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
+WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
+
 CHAT_MOOD = "neutral"  # compatibility token; real persona comes from personality_state
 
 # ============================
@@ -73,10 +78,19 @@ try:
     PROXY_ENABLED   = bool(merged.get("proxy_enabled", PROXY_ENABLED_ENV))
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
+
+    # --- NEW: read webhook settings from merged options (non-breaking)
+    WEBHOOK_ENABLED = bool(merged.get("webhook_enabled", WEBHOOK_ENABLED))
+    WEBHOOK_BIND    = str(merged.get("webhook_bind", WEBHOOK_BIND))
+    try:
+        WEBHOOK_PORT = int(merged.get("webhook_port", WEBHOOK_PORT))
+    except Exception:
+        pass
 except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
+    # webhook fall back to env defaults (already set)
 
 # ============================
 # Load optional modules
@@ -124,6 +138,17 @@ def start_sidecars():
         _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
     if SMTP_ENABLED:
         _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
+    # --- NEW: optional webhook sidecar
+    if WEBHOOK_ENABLED:
+        # Pass bind/port via environment for webhook_server.py (if it uses them)
+        env = os.environ.copy()
+        env["webhook_bind"] = WEBHOOK_BIND
+        env["webhook_port"] = str(WEBHOOK_PORT)
+        try:
+            p = subprocess.Popen(["python3","/app/webhook_server.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+            _sidecars.append(p)
+        except Exception as e:
+            print(f"[bot] sidecar webhook_server.py start failed: {e}")
 
 def stop_sidecars():
     for p in _sidecars:
@@ -311,6 +336,7 @@ def post_startup_card():
         f"✉️ SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
+        f"🔗 Webhook — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",   # <-- NEW: shows webhook state
         "",
         "Status: All systems nominal",
     ]
