@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Header: icon + title, search, gear -->
+  <!-- Header -->
   <header class="hdr">
     <div class="hdr-left">
       <img src="icon.png" alt="Jarvis" class="logo" />
@@ -36,40 +36,42 @@
     </div>
   </header>
 
-  <!-- Main two-pane layout -->
+  <!-- Two-pane layout -->
   <main class="layout">
-    <!-- Left rail: small section header + list + delete-all pinned bottom -->
+    <!-- Left: list + filters + Delete All bottom -->
     <aside class="rail" id="rail">
-      <div class="rail-top">
-        <div class="list-head">
-          <div class="when" id="list-when">Today</div>
-          <div class="count"><span id="c-all">0</span> messages</div>
-        </div>
-        <nav class="tabs">
-          <button class="tab active" data-tab="all">All</button>
-          <button class="tab" data-tab="unread">Unread</button>
-          <button class="tab" data-tab="archived">Archived</button>
-          <button class="tab" data-tab="errors">Errors</button>
-        </nav>
-        <div class="sources">
-          <button class="chip src active" data-src="">Any</button>
-          <button class="chip src" data-src="smtp">SMTP</button>
-          <button class="chip src" data-src="gotify">Gotify</button>
-          <button class="chip src" data-src="ntfy">ntfy</button>
-          <button class="chip src" data-src="ui">UI</button>
-        </div>
-        <!-- Inbox list lives in FEED; this rail only holds filters -->
+      <div class="rail-head">
+        <div class="when">Today</div>
+        <div class="count"><span id="c-all">0</span> messages</div>
       </div>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="all">All</button>
+        <button class="tab" data-tab="unread">Unread</button>
+        <button class="tab" data-tab="archived">Archived</button>
+        <button class="tab" data-tab="errors">Errors</button>
+      </nav>
+
+      <div class="sources">
+        <button class="chip src active" data-src="">Any</button>
+        <button class="chip src" data-src="smtp">SMTP</button>
+        <button class="chip src" data-src="gotify">Gotify</button>
+        <button class="chip src" data-src="ntfy">ntfy</button>
+        <button class="chip src" data-src="ui">UI</button>
+      </div>
+
+      <div class="rail-spacer"></div>
+
       <div class="rail-bottom">
         <label class="lbl inline"><input id="keep-arch" type="checkbox" checked /> Keep archived</label>
         <button id="rail-delall" class="btn danger full">🗑 Delete All</button>
       </div>
     </aside>
 
-    <!-- Middle feed: compact rows -->
+    <!-- Middle: compact inbox list -->
     <section class="feed" id="feed"></section>
 
-    <!-- Right detail: title, body, actions -->
+    <!-- Right: detail -->
     <section class="detail" id="detail">
       <div class="empty">
         <h2>Inbox</h2>
@@ -78,8 +80,8 @@
     </section>
   </main>
 
-  <!-- Floating compose (“Wake Jarvis”) -->
-  <button id="fab" class="fab" title="Compose">＋</button>
+  <!-- Floating compose -->
+  <button id="fab" class="fab" title="Ask Jarvis">＋</button>
   <div id="compose" class="compose">
     <div class="sheet">
       <div class="sheet-head">
@@ -91,11 +93,12 @@
       </div>
       <div class="sheet-actions">
         <button id="wake-send" class="btn primary">Send</button>
+        <label class="chip toggle"><input id="chime" type="checkbox" /> Sound</label>
       </div>
     </div>
   </div>
 
-  <!-- Settings drawer (gear) -->
+  <!-- Gear Settings drawer -->
   <aside id="drawer" class="drawer">
     <div class="drawer-head">
       <div class="drawer-title">Settings</div>
@@ -110,7 +113,6 @@
       <button id="drawer-close" class="btn icon">✕</button>
     </div>
     <div class="drawer-body">
-      <!-- Channels -->
       <section class="pane show" data-pane="channels">
         <h3>Email (Gmail/SMTP)</h3>
         <div class="grid2">
@@ -155,7 +157,6 @@
         </div>
       </section>
 
-      <!-- Routing -->
       <section class="pane" data-pane="routing">
         <p>Choose which channels receive which messages.</p>
         <div id="routing-matrix" class="matrix"></div>
@@ -164,7 +165,6 @@
         </div>
       </section>
 
-      <!-- Quiet Hours -->
       <section class="pane" data-pane="quiet">
         <div class="grid2">
           <input id="qh-tz" placeholder="Africa/Johannesburg" />
@@ -177,7 +177,6 @@
         </div>
       </section>
 
-      <!-- Personas -->
       <section class="pane" data-pane="personas">
         <div class="grid2">
           <label class="lbl"><input id="p-dude" type="checkbox" /> Dude</label>
@@ -190,14 +189,12 @@
         </div>
       </section>
 
-      <!-- Retention -->
       <section class="pane" data-pane="retention">
         <div class="grid2">
           <label class="lbl">Retention days
             <select id="retention"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option></select>
           </label>
           <button id="btn-save-retention" class="btn">Save</button>
-
           <label class="lbl">Purge older than
             <select id="purge-days"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option><option value="custom">Custom…</option></select>
           </label>
@@ -205,18 +202,15 @@
         </div>
       </section>
 
-      <!-- About -->
       <section class="pane" data-pane="about">
         <p>Jarvis Notify — Outlook/ntfy-style UI.</p>
-        <p>Build v5.0 (UI only). Uses /api/messages, /api/stream and related endpoints.</p>
+        <p>UI build v5.0. Uses /api/messages, /api/stream and related endpoints.</p>
       </section>
     </div>
   </aside>
 
-  <!-- Toasts + audio -->
   <div id="toast"></div>
   <audio id="ding"><source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3"></audio>
-
   <script src="app.js"></script>
 </body>
 </html>
