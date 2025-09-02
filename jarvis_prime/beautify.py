@@ -311,6 +311,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     # Extras with images (hero restored)
     extras: Dict[str, Any] = {"client::display": {"contentType": "text/markdown"},
+                              "jarvis::beautified": True,
                               "jarvis::allImageUrls": images}
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
