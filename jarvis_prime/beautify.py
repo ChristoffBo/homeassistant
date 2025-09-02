@@ -8,7 +8,6 @@ IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s
 # tolerate spaces/newlines between ] and (, and angle-bracketed URLs
 MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
 KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
-PUNCT_SPLIT = re.compile(r'([.!?])')
 
 # timestamps and types
 TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
@@ -55,20 +54,28 @@ def _normalize(text: str) -> str:
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s.strip()
 
-def _dedup_sentences(text: str) -> str:
-    parts: List[str] = []; buf = ""
-    for piece in PUNCT_SPLIT.split(text):
-        if PUNCT_SPLIT.fullmatch(piece):
-            if buf: parts.append(buf + piece); buf = ""
-        else:
-            buf += piece
-    if buf.strip(): parts.append(buf)
-    seen=set(); out=[]
-    for frag in parts:
-        n = re.sub(r'\s+',' ', frag.strip()).lower()
-        if n not in seen:
-            seen.add(n); out.append(frag)
-    return "".join(out)
+def _linewise_dedup_markdown(text: str) -> str:
+    """Safe de-dup that never splits on '.' so IPs like 10.0.0.249 remain intact."""
+    lines = text.splitlines()
+    out: List[str] = []
+    seen: set = set()
+    in_code = False
+    for ln in lines:
+        t = ln.rstrip()
+        if t.strip().startswith("```"):
+            in_code = not in_code
+            out.append(t)
+            continue
+        if in_code:
+            out.append(t)
+            continue
+        key = re.sub(r'\s+', ' ', t.strip()).lower()
+        if key and key not in seen:
+            seen.add(key); out.append(t)
+        elif t.strip() == "":
+            if out and out[-1].strip() != "":
+                out.append(t)
+    return "\n".join(out).strip()
 
 def _harvest_images(text: str) -> Tuple[str, List[str]]:
     if not text: return "", []
@@ -208,16 +215,13 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
         ver = m.group(0)
         if any(ver in ip for ip in ip_list):  # skip if part of IP
             continue
-        tail = (body or "")[m.end(): m.end()+2]
-        if tail.startswith('.') and len(tail) > 1 and tail[1].isdigit():
-            continue
         details.append(_fmt_kv("version", ver))
 
     if not facts:
         first = _first_nonempty_line(body)
         if first: facts.append(_fmt_kv("Info", first))
 
-    # De-dup
+    # De-dup linewise (safe)
     def _uniq(lines: List[str]) -> List[str]:
         seen=set(); out=[]
         for ln in lines:
@@ -229,9 +233,7 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
 
 def _format_align_check(text: str) -> str:
     lines = [ln.rstrip() for ln in text.splitlines()]
-    # ensure zero leading blanks
     while lines and lines[0].strip() == "": lines.pop(0)
-    # ensure one blank between header/overlay and Facts
     out=[]
     for ln in lines:
         if ln.strip() == "":
@@ -268,9 +270,13 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if details:
         lines += ["", "📄 Details", *details]
 
+    # Inline the first image so the app view shows a poster (while push uses bigImageUrl)
+    if images:
+        lines += ["", f"![poster]({images[0]})"]
+
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
-    text = _dedup_sentences(text)
+    text = _linewise_dedup_markdown(text)
 
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
