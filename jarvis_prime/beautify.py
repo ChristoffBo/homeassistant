@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import json
+import html
 import importlib
 from typing import List, Tuple, Optional, Dict, Any, Set
 from dataclasses import dataclass
@@ -146,16 +147,19 @@ def _fmt_kv(label: str, value: str) -> str:
 
 # ====== Persona overlay ======
 def _persona_overlay_line(persona: Optional[str], *, enable_quip: bool) -> Optional[str]:
-    if not persona: return None
     try:
         mod = importlib.import_module("personality")
+        canon = getattr(mod, "canonical", lambda n: (n or "ops"))(persona)
+        shown = getattr(mod, "label", lambda n: (n or "neutral"))(persona)
         quip = ""
         if enable_quip and hasattr(mod, "quip"):
-            try: quip = str(mod.quip(persona) or "").strip()
-            except Exception: quip = ""
-        return f"💬 {persona} says: {'— ' + quip if quip else ''}".rstrip()
+            try:
+                quip = str(mod.quip(canon) or "").strip()
+            except Exception:
+                quip = ""
+        return f"💬 {shown} says: {'— ' + quip if quip else ''}".rstrip()
     except Exception:
-        return f"💬 {persona} says:"
+        return "💬 neutral says:"
 
 # ====== Header & badges ======
 def _header(kind: str, badge: str = "") -> List[str]:
@@ -284,6 +288,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     original_body = body or ""
     stripped = _strip_noise(original_body)
     normalized = _normalize(stripped)
+    normalized = html.unescape(normalized)  # fix posters/logos escaping
     body_wo_imgs, images = _harvest_images_md(normalized)
     if not images and _looks_pure_json(normalized):
         images = _harvest_images_json(normalized)
@@ -328,13 +333,4 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         raw_lines += ["", f"**Subject:** {title.strip() or '(no title)'}", "", "```text", original_body.strip(), "```"]
         if images: raw_lines += ["", f"![poster]({images[0]})"]
         raw_lines += ["", f"— Path: {path}"]
-        text = "\n".join(raw_lines).strip()
-    extras: Dict[str, Any] = {
-        "client::display": {"contentType": "text/markdown"},
-        "jarvis::beautified": True,
-        "jarvis::beautify_status": status,
-        "jarvis::coverage_ratio": round(report.coverage, 3),
-        "jarvis::missing_artifacts": sorted(list(report.missing)),
-        "jarvis::allImageUrls": images,
-        "jarvis::path": path,
-        "
+        text =
