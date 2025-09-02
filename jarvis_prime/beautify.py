@@ -7,11 +7,12 @@ import html
 import importlib
 from typing import List, Tuple, Optional, Dict, Any, Set
 from dataclasses import dataclass
-from datetime import datetime
 
 # ====== Regex library ======
+# Allow spaces/newlines between `]` and `(` so "![] (url)" is caught
+MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\s*\((https?://[^\s)]+)\)', re.I | re.S)
+# Bare image URLs (keep it generous but only common image extensions)
 IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
-MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\((https?://[^\s)]+)\)', re.I)
 KV_RE      = re.compile(r'^\s*[-*]?\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
 
 # timestamps and types
@@ -86,15 +87,29 @@ def _linewise_dedup_markdown(text: str) -> str:
     return "\n".join(out).strip()
 
 def _harvest_images_md(text: str) -> tuple[str, List[str]]:
-    if not text: return "", []
+    """Remove inline images and collect URLs; also strip any leftover bare image URLs."""
+    if not text:
+        return "", []
     urls: List[str] = []
-    def _md(m):  urls.append(m.group(1)); return ""
-    def _bare(m): urls.append(m.group(1)); return ""
+
+    def _md(m):
+        urls.append(m.group(1))
+        return ""  # remove the entire ![](url)
+
+    def _bare(m):
+        urls.append(m.group(1))
+        return ""  # remove the raw image URL from the text
+
+    # 1) Markdown images (with optional whitespace between ] and ()
     text = MD_IMG_RE.sub(_md, text)
+    # 2) Bare image URLs
     text = IMG_URL_RE.sub(_bare, text)
+
+    # Unique & stable order
     uniq=[]; seen=set()
     for u in sorted(urls, key=_prefer_host_key):
-        if u not in seen: seen.add(u); uniq.append(u)
+        if u not in seen:
+            seen.add(u); uniq.append(u)
     return text.strip(), uniq
 
 def _harvest_images_json(body: str) -> List[str]:
@@ -148,37 +163,10 @@ def _fmt_kv(label: str, value: str) -> str:
         v = f"`{v}`"
     return f"- **{label.strip()}:** {v}"
 
-def _tod() -> str:
-    h = datetime.now().hour
-    if 5 <= h < 12: return "morning"
-    if 12 <= h < 17: return "afternoon"
-    if 17 <= h < 22: return "evening"
-    return "night"
-
 # ====== Persona overlay ======
 def _persona_overlay_line(persona: Optional[str], *, enable_quip: bool) -> Optional[str]:
-    """
-    Produces: '💬 {label} says: — quip'
-    - Pulls label + quip from personality.py when available.
-    - If quip is empty, synthesizes a short fallback quip with persona spice.
-    """
-    # Persona spice (fallbacks)
-    tod = _tod()
-    spice: Dict[str, Dict[str, str]] = {
-        "neutral":  {"any": "ack.", "morning": "standing by.", "evening": "systems nominal."},
-        "ai":       {"any": "operation complete.", "morning": "boot sequence green.", "evening": "latency within norms."},
-        "commander":{"any": "on it.", "morning": "we move.", "evening": "hold the line."},
-        "comedian": {"any": "how dull.", "morning": "coffee deployed.", "evening": "file under ‘works’. 😑"},
-        "nerd":     {"any": "compiled. ship it.", "morning": "bits are awake.", "evening": "GC complete."},
-        "angry":    {"any": "don’t make me reboot this.", "morning": "let’s get this over with.", "evening": "I was promised chaos."},
-        "dry":      {"any": "noted.", "morning": "thrilling.", "evening": "earth-shattering."},
-        "dude":     {"any": "solid.", "morning": "let’s roll.", "evening": "vibes acceptable."},
-        "chick":    {"any": "cute.", "morning": "hi hi ☀️", "evening": "we slay."},
-        "ops":      {"any": "confirmed.", "morning": "scheduled.", "evening": "running."},
-    }
     try:
         mod = importlib.import_module("personality")
-        # Canonical key used by personality.py if provided
         canon = getattr(mod, "canonical", lambda n: (n or "ops"))(persona)
         shown = getattr(mod, "label", lambda n: (n or "neutral"))(persona)
         quip = ""
@@ -187,16 +175,9 @@ def _persona_overlay_line(persona: Optional[str], *, enable_quip: bool) -> Optio
                 quip = str(mod.quip(canon) or "").strip()
             except Exception:
                 quip = ""
-        # Fallback quip if the bank is empty
-        if not quip:
-            bucket = spice.get(str(canon or "").lower(), spice["neutral"])
-            quip = bucket.get(tod, bucket["any"])
         return f"💬 {shown} says: {'— ' + quip if quip else ''}".rstrip()
     except Exception:
-        # Robust fallback with a little flavor
-        bucket = spice["neutral"]
-        quip = bucket.get(tod, bucket["any"])
-        return f"💬 neutral says: — {quip}"
+        return "💬 neutral says:"
 
 # ====== Header & badges ======
 def _header(kind: str, badge: str = "") -> List[str]:
@@ -340,19 +321,17 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     lines: List[str] = []
     lines += _header(kind, badge)
 
-    # persona overlay with label + quip (stronger fallback personality)
+    # persona overlay with label + quip
     pol = _persona_overlay_line(persona, enable_quip=persona_quip)
     if pol: lines += [pol]
 
     if facts:   lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
 
-    if images:
-        # keep a small inline poster so the text view has context
-        lines += ["", f"![poster]({images[0]})"]
-        if len(images) > 1:
-            more = ", ".join(f"[img{i+1}]({u})" for i,u in enumerate(images[1:]))
-            lines += [f"_Gallery_: {more}"]
+    # (No inline poster here; we let Gotify show the big image preview instead)
+    if images and len(images) > 1:
+        more = ", ".join(f"[img{i+1}]({u})" for i,u in enumerate(images[1:]))
+        lines += ["", f"_Gallery_: {more}"]
 
     path = f"{MUSE} + {AEGIS}" if llm_used else f"{AEGIS}"
     lines += ["", f"— Path: {path}"]
@@ -370,7 +349,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         if pol: retry_lines += [pol]
         if facts: retry_lines += ["", "📄 Facts", *facts]
         if details: retry_lines += ["", "📄 Details", *details]
-        if images: retry_lines += ["", f"![poster]({images[0]})"]
+        # raw extract helps retention while keeping posters in extras only
         retry_lines += ["", "📄 Raw Extract", "```text", original_body.strip(), "```", "", f"— Path: {path}"]
         retry_text = "\n".join(retry_lines).strip()
         retry_text = _format_align_check(retry_text)
@@ -384,7 +363,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         raw_lines = []
         raw_lines += _header("Raw Message", badge)
         raw_lines += ["", f"**Subject:** {title.strip() or '(no title)'}", "", "```text", original_body.strip(), "```"]
-        if images: raw_lines += ["", f"![poster]({images[0]})"]
         raw_lines += ["", f"— Path: {path}"]
         text = "\n".join(raw_lines).strip()
 
@@ -397,7 +375,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         "jarvis::allImageUrls": images,
         "jarvis::path": path,
     }
-    # 🔔 ensure Gotify big image preview
+    # 🔔 ensure Gotify big image preview (first image only)
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
 
