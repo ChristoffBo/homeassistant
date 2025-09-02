@@ -269,10 +269,6 @@ def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
     system=_load_system_prompt().format(mood=mood)
     src=_trim_to_ctx(src, system)
 
-    # Special-case trivial tests
-    if re.search(r'(?i)\btest\b', src) and len(src) < 600:
-        return _finalize(src, imgs)
-
     # 1) Ollama path
     base=(base_url or OLLAMA_BASE_URL or "").strip()
     if base and requests:
