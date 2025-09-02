@@ -137,46 +137,11 @@ atexit.register(stop_sidecars)
 def _persona_line(quip_text: str) -> str:
     # Single-line persona 'speaks' header placed at TOP of message body.
     who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
-    # map to friendly display label if available (e.g., "Jarvis", "Comedian", "Rager")
-    shown = None
-    try:
-        if _personality and hasattr(_personality, "label"):
-            shown = _personality.label(who)
-    except Exception:
-        shown = None
-    shown = shown or who
-
     quip_text = (quip_text or "").strip().replace("\n", " ")
     if len(quip_text) > 140:
         quip_text = quip_text[:137] + "..."
     # Keep it minimal so it aligns nicely with Gotify cards
-    return f"💬 {shown} says: {quip_text}" if quip_text else f"💬 {shown} says:"
-
-def _ensure_markdown_and_bigimage(extras_in: Optional[dict]) -> dict:
-    """
-    Ensure extras contain markdown display and preserve bigImageUrl if present.
-    """
-    ex = dict(extras_in or {})
-    # client::display
-    disp = ex.get("client::display") or {}
-    if not isinstance(disp, dict):
-        disp = {}
-    if str(disp.get("contentType") or "").lower() != "text/markdown":
-        disp["contentType"] = "text/markdown"
-    ex["client::display"] = disp
-    # if beautify left image list, forward first as bigImageUrl (non-destructive)
-    imgs = []
-    try:
-        imgs = ex.get("jarvis::allImageUrls") or []
-    except Exception:
-        imgs = []
-    notif = ex.get("client::notification") or {}
-    if not isinstance(notif, dict):
-        notif = {}
-    if imgs and not notif.get("bigImageUrl"):
-        notif["bigImageUrl"] = imgs[0]
-    ex["client::notification"] = notif
-    return ex
+    return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
@@ -202,22 +167,13 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         try: priority = _personality.apply_priority(priority, CHAT_MOOD)
         except Exception: pass
 
-    # Normalize/ensure extras for markdown + big image preview
-    extras = _ensure_markdown_and_bigimage(extras)
-
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
     if extras: payload["extras"] = extras
     try:
-        # JSON post is REQUIRED for extras to be honored by Gotify
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
         status = r.status_code
-        try:
-            img_dbg = extras.get("client::notification", {}).get("bigImageUrl") if isinstance(extras, dict) else None
-            print(f"[bot] sent -> {status} title='{title}' markdown=on bigImageUrl={'yes' if img_dbg else 'no'}")
-        except Exception:
-            pass
     except Exception as e:
         status = 0
         print(f"[bot] send_message error: {e}")
@@ -287,8 +243,6 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
 
 def _llm_then_beautify(title: str, message: str):
     used_llm = False; used_beautify = False; final = message or ""; extras = None
-
-    # Muse (LLM)
     if merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
             final2 = _llm.rewrite(text=final, mood=CHAT_MOOD, timeout=int(merged.get("llm_timeout_seconds",12)),
@@ -303,48 +257,16 @@ def _llm_then_beautify(title: str, message: str):
         except Exception as e:
             print(f"[bot] LLM rewrite failed: {e}")
 
-    # Aegis (Beautify)
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            final, extras = _beautify.beautify_message(
-                title,
-                final,
-                mood=CHAT_MOOD,
-                persona=ACTIVE_PERSONA,  # ensure overlay/label matches header
-                persona_quip=bool(merged.get("personality_enabled", True)),
-                llm_used=used_llm
-            )
+            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
             used_beautify = True
         except Exception as e:
             print(f"[bot] Beautify failed: {e}")
-    else:
-        if not BEAUTIFY_ENABLED:
-            print("[bot] Beautify is disabled (BEAUTIFY_ENABLED=false).")
-        elif not _beautify:
-            print("[bot] Beautify module not loaded.")
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
         final = f"{final.rstrip()}\n\n{foot}"
-
-    # Enrich extras with engine flags for UI/debug
-    if not isinstance(extras, dict):
-        extras = {}
-    try:
-        engines = {"llm": bool(used_llm), "beautify": bool(used_beautify)}
-        ex2 = extras.get("jarvis::engines") or {}
-        if not isinstance(ex2, dict):
-            ex2 = {}
-        ex2.update(engines)
-        extras["jarvis::engines"] = ex2
-    except Exception:
-        pass
-
-    try:
-        print(f"[bot] pipeline -> LLM={'on' if used_llm else 'off'} | Beautify={'on' if used_beautify else 'off'}")
-    except Exception:
-        pass
-
     return final, extras, used_llm, used_beautify
 
 # ============================
@@ -373,20 +295,11 @@ def extract_command_from(title: str, message: str) -> str:
     return ""
 
 def post_startup_card():
-    # Show friendly display name for the persona if available
-    who_label = None
-    try:
-        if _personality and hasattr(_personality, "label"):
-            who_label = _personality.label(ACTIVE_PERSONA)
-    except Exception:
-        who_label = None
-    who_label = who_label or (ACTIVE_PERSONA or "neutral")
-
     lines = [
         "🧬 Prime Neural Boot",
         "🛰️ Engine: Neural Core — ONLINE" if merged.get("llm_enabled") else "🛰️ Engine: Neural Core — OFFLINE",
         f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
-        f"🗣️ Persona speaking: {who_label} ({PERSONA_TOD})",
+        f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
         "",
         "Modules:",
         f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
@@ -526,7 +439,6 @@ async def listen():
                 data = json.loads(raw); msg_id = data.get("id")
                 title = data.get("title") or ""
                 message = data.get("message") or ""
-                print(f"[bot] <- gotify title='{title}' id={msg_id}")
 
                 # wake-word first so commands work even if posted via same app
                 ncmd = normalize_cmd(extract_command_from(title, message))
@@ -543,6 +455,7 @@ async def listen():
                 _purge_after(msg_id)
             except Exception as e:
                 print(f"[bot] listen loop err: {e}")
+
 
 # ============================
 # Daily scheduler (digest)
@@ -570,7 +483,6 @@ async def _digest_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
-
 # ============================
 # Main
 # ============================
@@ -582,6 +494,8 @@ def main():
     except Exception:
         pass
     asyncio.run(_run_forever())
+
+
 
 # ============================
 # Internal wake HTTP server
@@ -641,4 +555,3 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
-```0
