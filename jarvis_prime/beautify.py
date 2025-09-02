@@ -7,6 +7,7 @@ import html
 import importlib
 from typing import List, Tuple, Optional, Dict, Any, Set
 from dataclasses import dataclass
+from datetime import datetime
 
 # ====== Regex library ======
 IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
@@ -147,10 +148,37 @@ def _fmt_kv(label: str, value: str) -> str:
         v = f"`{v}`"
     return f"- **{label.strip()}:** {v}"
 
+def _tod() -> str:
+    h = datetime.now().hour
+    if 5 <= h < 12: return "morning"
+    if 12 <= h < 17: return "afternoon"
+    if 17 <= h < 22: return "evening"
+    return "night"
+
 # ====== Persona overlay ======
 def _persona_overlay_line(persona: Optional[str], *, enable_quip: bool) -> Optional[str]:
+    """
+    Produces: '💬 {label} says: — quip'
+    - Pulls label + quip from personality.py when available.
+    - If quip is empty, synthesizes a short fallback quip with persona spice.
+    """
+    # Persona spice (fallbacks)
+    tod = _tod()
+    spice: Dict[str, Dict[str, str]] = {
+        "neutral":  {"any": "ack.", "morning": "standing by.", "evening": "systems nominal."},
+        "ai":       {"any": "operation complete.", "morning": "boot sequence green.", "evening": "latency within norms."},
+        "commander":{"any": "on it.", "morning": "we move.", "evening": "hold the line."},
+        "comedian": {"any": "how dull.", "morning": "coffee deployed.", "evening": "file under ‘works’. 😑"},
+        "nerd":     {"any": "compiled. ship it.", "morning": "bits are awake.", "evening": "GC complete."},
+        "angry":    {"any": "don’t make me reboot this.", "morning": "let’s get this over with.", "evening": "I was promised chaos."},
+        "dry":      {"any": "noted.", "morning": "thrilling.", "evening": "earth-shattering."},
+        "dude":     {"any": "solid.", "morning": "let’s roll.", "evening": "vibes acceptable."},
+        "chick":    {"any": "cute.", "morning": "hi hi ☀️", "evening": "we slay."},
+        "ops":      {"any": "confirmed.", "morning": "scheduled.", "evening": "running."},
+    }
     try:
         mod = importlib.import_module("personality")
+        # Canonical key used by personality.py if provided
         canon = getattr(mod, "canonical", lambda n: (n or "ops"))(persona)
         shown = getattr(mod, "label", lambda n: (n or "neutral"))(persona)
         quip = ""
@@ -159,9 +187,16 @@ def _persona_overlay_line(persona: Optional[str], *, enable_quip: bool) -> Optio
                 quip = str(mod.quip(canon) or "").strip()
             except Exception:
                 quip = ""
+        # Fallback quip if the bank is empty
+        if not quip:
+            bucket = spice.get(str(canon or "").lower(), spice["neutral"])
+            quip = bucket.get(tod, bucket["any"])
         return f"💬 {shown} says: {'— ' + quip if quip else ''}".rstrip()
     except Exception:
-        return "💬 neutral says:"
+        # Robust fallback with a little flavor
+        bucket = spice["neutral"]
+        quip = bucket.get(tod, bucket["any"])
+        return f"💬 neutral says: — {quip}"
 
 # ====== Header & badges ======
 def _header(kind: str, badge: str = "") -> List[str]:
@@ -305,7 +340,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     lines: List[str] = []
     lines += _header(kind, badge)
 
-    # persona overlay with label + quip
+    # persona overlay with label + quip (stronger fallback personality)
     pol = _persona_overlay_line(persona, enable_quip=persona_quip)
     if pol: lines += [pol]
 
@@ -313,7 +348,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if details: lines += ["", "📄 Details", *details]
 
     if images:
-        # inline poster + gallery links
+        # keep a small inline poster so the text view has context
         lines += ["", f"![poster]({images[0]})"]
         if len(images) > 1:
             more = ", ".join(f"[img{i+1}]({u})" for i,u in enumerate(images[1:]))
