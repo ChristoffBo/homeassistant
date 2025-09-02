@@ -1,4 +1,4 @@
-// Jarvis Prime — Notify (Outlook/ntfy layout), gear Settings, SSE, ingress-safe
+// Jarvis Prime — Notify (Outlook/ntfy layout), SSE, ingress-safe
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
@@ -24,7 +24,7 @@
     q: $('#q'), search: $('#btn-search'), refresh: $('#btn-refresh'),
     keepArch: $('#keep-arch'), railDelAll: $('#rail-delall'),
     railTabs: $$('.tab[data-tab]'), srcChips: $$('.chip.src'),
-    listCount: $('#c-all'), listWhen: $('#list-when'),
+    listCount: $('#c-all'),
     // Compose
     fab: $('#fab'), compose: $('#compose'), composeClose: $('#compose-close'),
     wakeText: $('#wake-text'), wakeSend: $('#wake-send'),
@@ -32,22 +32,17 @@
     // Settings drawer
     settingsBtn: $('#btn-settings'), drawer: $('#drawer'), drawerClose: $('#drawer-close'),
     dtabs: $$('.dtab'),
-    // Retention/Purge inside drawer
+    // Retention/Purge in drawer
     retention: $('#retention'), saveRetention: $('#btn-save-retention'),
     purgeDays: $('#purge-days'), purge: $('#btn-purge'),
-    // Counters (subset kept)
-    counts: { all: $('#c-all') },
+    // Toast
     toast: $('#toast')
   };
 
-  // Toast helper
-  function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; els.toast.appendChild(d); setTimeout(()=> d.remove(), 3500); }
-
-  // Escape/format
+  function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; els.toast.appendChild(d); setTimeout(()=> d.remove(), 3200); }
   const esc = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const fmt = (ts) => { try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); } catch { return '' } };
 
-  // Fetch wrapper
   async function jfetch(url, opts){
     const isTemp = /\/api\/messages\/ui-\d+$/.test(String(url));
     try{
@@ -65,7 +60,6 @@
     }
   }
 
-  // API
   const API = {
     async list(q, limit=50, offset=0){
       const url = new URL(u('api/messages'));
@@ -84,7 +78,7 @@
     async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
     async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text: 'Jarvis ' + text})}); },
 
-    // Optional notify settings/test endpoints (no-ops if not implemented)
+    // Optional notify/settings endpoints (safe if 404)
     async saveChannels(payload){ return jfetch(u('api/notify/channels'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
     async test(kind){ return jfetch(u(`api/notify/test/${kind}`), { method:'POST' }); },
     async saveRouting(payload){ return jfetch(u('api/notify/routing'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
@@ -92,19 +86,23 @@
     async savePersonas(payload){ return jfetch(u('api/notify/personas'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); }
   };
 
-  // State
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
 
-  // Feed render
   function renderFeed(items){
     const list = items
-      .filter(i => state.tab==='archived' ? i.saved : state.tab==='errors' ? /error|fail|exception/i.test((i.title||'') + ' ' + (i.body||i.message||'')) : state.tab==='unread' ? (state.newestSeen && i.created_at>state.newestSeen) : true)
+      .filter(i => state.tab==='archived' ? i.saved :
+                   state.tab==='errors' ? /error|fail|exception/i.test((i.title||'') + ' ' + (i.body||i.message||'')) :
+                   state.tab==='unread' ? (state.newestSeen && i.created_at>state.newestSeen) : true)
       .filter(i => state.source ? (String(i.source||'').toLowerCase()===state.source) : true);
 
-    els.feed.innerHTML = '';
-    if(!list.length){ els.feed.innerHTML = '<div class="toast">No messages</div>'; els.listCount.textContent = '0'; return; }
+    const root = els.feed; root.innerHTML='';
+    if(!list.length){
+      root.innerHTML = '<div class="toast">No messages</div>';
+      if(els.listCount) els.listCount.textContent = String(items.length||0);
+      return;
+    }
+    if(els.listCount) els.listCount.textContent = String(items.length);
 
-    els.listCount.textContent = String(items.length);
     for(const it of list){
       const row = document.createElement('div');
       const isNew = state.newestSeen && it.created_at>state.newestSeen;
@@ -114,19 +112,19 @@
       const title = esc(it.title || '(no title)');
       const time = fmt(it.created_at);
       const src  = esc(it.source || '?');
-      const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,80));
+      const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,90));
 
       row.innerHTML = `
         <div class="dot"></div>
         <div class="title">${title}<span class="src"> • ${src}</span><span class="snippet"> — ${snippet}</span></div>
         <div class="meta">${time}</div>`;
       row.addEventListener('click', ()=> select(it.id));
-      els.feed.appendChild(row);
+      root.appendChild(row);
     }
   }
 
   async function renderDetail(it){
-    els.detail.innerHTML = '';
+    els.detail.innerHTML='';
     const w = document.createElement('div'); w.className='wrap';
     const badges = [];
     if(it.source) badges.push(`<span class="badge">Source: ${esc(it.source)}</span>`);
@@ -149,15 +147,15 @@
 
   async function select(id){
     state.active = id;
-    if(String(id).startsWith('ui-')){ // optimistic UI item
-      const it = state.items.find(x=> String(x.id)===String(id));
-      if(it) return renderDetail(it);
+    if(String(id).startsWith('ui-')){
+      const temp = state.items.find(x=> String(x.id)===String(id));
+      if(temp) return renderDetail(temp);
     }
     try{ const it = await API.get(id); renderDetail(it); }catch{}
   }
 
   async function load(selectId=null){
-    const items = await API.list(els.q?.value?.trim()||'', 100, 0);
+    const items = await API.list($('#q')?.value?.trim()||'', 100, 0);
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
     state.items = items;
     renderFeed(items);
@@ -165,7 +163,6 @@
     else if(!state.active && items[0]) select(items[0].id);
   }
 
-  // SSE (no badges; subtle toasts)
   function startLive(){
     let backoff = 1000;
     function connect(){
@@ -184,10 +181,9 @@
       };
     }
     connect();
-    setInterval(()=> load(state.active), 300000); // safety refresh
+    setInterval(()=> load(state.active), 300000);
   }
 
-  // ----- UI wiring -----
   // Filters
   els.railTabs.forEach(t=> t.addEventListener('click', ()=>{
     els.railTabs.forEach(x=>x.classList.remove('active')); t.classList.add('active');
@@ -198,12 +194,12 @@
     c.classList.add('active'); state.source = (c.dataset.src||'').toLowerCase(); renderFeed(state.items);
   }));
 
-  // Actions
+  // Actions & search
   els.search?.addEventListener('click', ()=> load());
   els.refresh?.addEventListener('click', ()=> load(state.active));
   $('#q')?.addEventListener('keydown', e=>{ if(e.key==='Enter') load(); });
 
-  // Delete all (rail)
+  // Delete all
   els.railDelAll?.addEventListener('click', async()=>{
     if(!confirm('Delete ALL messages?')) return;
     await API.deleteAll(els.keepArch.checked);
@@ -225,7 +221,7 @@
     }catch{}
   });
 
-  // Drawer (Settings)
+  // Settings drawer
   els.settingsBtn?.addEventListener('click', ()=> els.drawer.classList.add('open'));
   els.drawerClose?.addEventListener('click', ()=> els.drawer.classList.remove('open'));
   els.dtabs.forEach(b=> b.addEventListener('click', ()=>{
@@ -234,7 +230,7 @@
     $(`.pane[data-pane="${b.dataset.pane}"]`)?.classList.add('show');
   }));
 
-  // Retention/Purge inside drawer
+  // Retention/Purge
   els.saveRetention?.addEventListener('click', async()=>{
     const d = parseInt(els.retention.value,10)||30;
     await API.setRetention(d); toast('Retention saved');
@@ -246,7 +242,7 @@
     await API.purge(d); toast('Purge started'); load();
   });
 
-  // Channel tests (if backend available)
+  // Channel tests (optional)
   $('#test-email')?.addEventListener('click', ()=> API.test('email').then(()=>toast('Email test sent')).catch(()=>toast('Email test failed')));
   $('#test-gotify')?.addEventListener('click', ()=> API.test('gotify').then(()=>toast('Gotify test sent')).catch(()=>toast('Gotify test failed')));
   $('#test-ntfy')?.addEventListener('click', ()=> API.test('ntfy').then(()=>toast('ntfy test sent')).catch(()=>toast('ntfy test failed')));
@@ -263,28 +259,24 @@
   });
 
   $('#save-routing')?.addEventListener('click', async()=>{
-    try{ await API.saveRouting({/* collect from a matrix if you add inputs later */}); toast('Routing saved'); }catch{ toast('Save failed'); }
+    try{ await API.saveRouting({}); toast('Routing saved'); }catch{ toast('Save failed'); }
   });
 
   $('#save-quiet')?.addEventListener('click', async()=>{
     try{
-      await API.saveQuiet({
-        tz: $('#qh-tz').value, start: $('#qh-start').value, end: $('#qh-end').value, allow_critical: $('#qh-allow-critical').checked
-      });
+      await API.saveQuiet({ tz: $('#qh-tz').value, start: $('#qh-start').value, end: $('#qh-end').value, allow_critical: $('#qh-allow-critical').checked });
       toast('Quiet hours saved');
     }catch{ toast('Save failed'); }
   });
 
   $('#save-personas')?.addEventListener('click', async()=>{
     try{
-      await API.savePersonas({
-        dude: $('#p-dude').checked, chick: $('#p-chick').checked, nerd: $('#p-nerd').checked, rager: $('#p-rager').checked
-      });
+      await API.savePersonas({ dude: $('#p-dude').checked, chick: $('#p-chick').checked, nerd: $('#p-nerd').checked, rager: $('#p-rager').checked });
       toast('Personas saved');
     }catch{ toast('Save failed'); }
   });
 
-  // Keyboard
+  // Keyboard niceties
   document.addEventListener('keydown', (e)=>{
     if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
     if(e.key==='r'){ load(state.active); }
