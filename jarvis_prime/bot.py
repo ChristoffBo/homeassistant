@@ -259,7 +259,13 @@ def _llm_then_beautify(title: str, message: str):
 
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
+            final, extras = _beautify.beautify_message(
+                title, final,
+                mood=CHAT_MOOD,
+                mode=str(merged.get('beautify_mode', 'standard')),
+                persona=ACTIVE_PERSONA,
+                persona_quip=bool(merged.get('personality_quips', True))
+            )
             used_beautify = True
         except Exception as e:
             print(f"[bot] Beautify failed: {e}")
