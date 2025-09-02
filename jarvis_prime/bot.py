@@ -137,11 +137,20 @@ atexit.register(stop_sidecars)
 def _persona_line(quip_text: str) -> str:
     # Single-line persona 'speaks' header placed at TOP of message body.
     who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
+    # map to friendly display label if available (e.g., "Jarvis", "Comedian", "Rager")
+    shown = None
+    try:
+        if _personality and hasattr(_personality, "label"):
+            shown = _personality.label(who)
+    except Exception:
+        shown = None
+    shown = shown or who
+
     quip_text = (quip_text or "").strip().replace("\n", " ")
     if len(quip_text) > 140:
         quip_text = quip_text[:137] + "..."
     # Keep it minimal so it aligns nicely with Gotify cards
-    return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
+    return f"💬 {shown} says: {quip_text}" if quip_text else f"💬 {shown} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
@@ -243,6 +252,8 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
 
 def _llm_then_beautify(title: str, message: str):
     used_llm = False; used_beautify = False; final = message or ""; extras = None
+
+    # Muse (LLM)
     if merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
             final2 = _llm.rewrite(text=final, mood=CHAT_MOOD, timeout=int(merged.get("llm_timeout_seconds",12)),
@@ -257,12 +268,25 @@ def _llm_then_beautify(title: str, message: str):
         except Exception as e:
             print(f"[bot] LLM rewrite failed: {e}")
 
+    # Aegis (Beautify)
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
+            final, extras = _beautify.beautify_message(
+                title,
+                final,
+                mood=CHAT_MOOD,
+                persona=ACTIVE_PERSONA,  # ensure overlay/label matches header
+                persona_quip=bool(merged.get("personality_enabled", True)),
+                llm_used=used_llm
+            )
             used_beautify = True
         except Exception as e:
             print(f"[bot] Beautify failed: {e}")
+    else:
+        if not BEAUTIFY_ENABLED:
+            print("[bot] Beautify is disabled (BEAUTIFY_ENABLED=false).")
+        elif not _beautify:
+            print("[bot] Beautify module not loaded.")
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
@@ -295,11 +319,20 @@ def extract_command_from(title: str, message: str) -> str:
     return ""
 
 def post_startup_card():
+    # Show friendly display name for the persona if available
+    who_label = None
+    try:
+        if _personality and hasattr(_personality, "label"):
+            who_label = _personality.label(ACTIVE_PERSONA)
+    except Exception:
+        who_label = None
+    who_label = who_label or (ACTIVE_PERSONA or "neutral")
+
     lines = [
         "🧬 Prime Neural Boot",
         "🛰️ Engine: Neural Core — ONLINE" if merged.get("llm_enabled") else "🛰️ Engine: Neural Core — OFFLINE",
         f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
-        f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
+        f"🗣️ Persona speaking: {who_label} ({PERSONA_TOD})",
         "",
         "Modules:",
         f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
@@ -456,7 +489,6 @@ async def listen():
             except Exception as e:
                 print(f"[bot] listen loop err: {e}")
 
-
 # ============================
 # Daily scheduler (digest)
 # ============================
@@ -483,6 +515,7 @@ async def _digest_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
+
 # ============================
 # Main
 # ============================
@@ -494,8 +527,6 @@ def main():
     except Exception:
         pass
     asyncio.run(_run_forever())
-
-
 
 # ============================
 # Internal wake HTTP server
