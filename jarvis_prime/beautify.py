@@ -9,10 +9,23 @@ from typing import List, Tuple, Optional, Dict, Any, Set
 from dataclasses import dataclass
 
 # ====== Regex library ======
-# Allow spaces/newlines between `]` and `(` so "![] (url)" is caught
-MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\s*\((https?://[^\s)]+)\)', re.I | re.S)
-# Bare image URLs (keep it generous but only common image extensions)
-IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
+# 1) Markdown images:
+#    - allow optional alt text
+#    - allow spaces/newlines between ] and (
+#    - allow angle-bracketed URLs: ![]( <https://…> )
+#    - be resilient to zero-width/junk characters sometimes inserted by apps
+MD_IMG_RE  = re.compile(
+    r'!\[[^\]]*\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)',
+    re.I | re.S
+)
+
+# 2) Bare image URLs (tolerate trailing punctuation and parentheses)
+IMG_URL_RE = re.compile(
+    r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)',
+    re.I
+)
+
+# K/V and token matchers
 KV_RE      = re.compile(r'^\s*[-*]?\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
 
 # timestamps and types
@@ -86,31 +99,39 @@ def _linewise_dedup_markdown(text: str) -> str:
                 out.append(ln)
     return "\n".join(out).strip()
 
-def _harvest_images_md(text: str) -> tuple[str, List[str]]:
-    """Remove inline images and collect URLs; also strip any leftover bare image URLs."""
+def _harvest_images_md(text: str) -> tuple[str, List[str], int, int]:
+    """Remove inline/markdown/bare image URLs and collect them."""
     if not text:
-        return "", []
+        return "", [], 0, 0
     urls: List[str] = []
 
+    md_hits = 0
     def _md(m):
+        nonlocal md_hits
+        md_hits += 1
         urls.append(m.group(1))
         return ""  # remove the entire ![](url)
 
+    bare_hits = 0
     def _bare(m):
-        urls.append(m.group(1))
-        return ""  # remove the raw image URL from the text
+        nonlocal bare_hits
+        # Trim trailing punctuation that some posters append
+        u = m.group(1).rstrip('.,;:)]}>"\'')
+        urls.append(u)
+        bare_hits += 1
+        return ""  # strip raw URL from text
 
-    # 1) Markdown images (with optional whitespace between ] and ()
+    # 1) Markdown images (with optional whitespace/newlines/angle brackets)
     text = MD_IMG_RE.sub(_md, text)
     # 2) Bare image URLs
     text = IMG_URL_RE.sub(_bare, text)
 
-    # Unique & stable order
+    # Unique & stable order (prefer known poster hosts)
     uniq=[]; seen=set()
     for u in sorted(urls, key=_prefer_host_key):
         if u not in seen:
             seen.add(u); uniq.append(u)
-    return text.strip(), uniq
+    return text.strip(), uniq, md_hits, bare_hits
 
 def _harvest_images_json(body: str) -> List[str]:
     try:
@@ -125,7 +146,9 @@ def _harvest_images_json(body: str) -> List[str]:
             for i in x: walk(i)
         elif isinstance(x, str):
             m = IMG_URL_RE.search(x)
-            if m: found.add(m.group(1))
+            if m:
+                u = m.group(1).rstrip('.,;:)]}>"\'')
+                found.add(u)
     walk(obj)
     return sorted(found, key=_prefer_host_key)
 
@@ -310,7 +333,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     normalized = html.unescape(normalized)  # fix posters/logos escaping
 
     # images from markdown/plain or JSON payloads
-    body_wo_imgs, images = _harvest_images_md(normalized)
+    body_wo_imgs, images, md_hits, bare_hits = _harvest_images_md(normalized)
     if not images and _looks_pure_json(normalized):
         images = _harvest_images_json(normalized)
 
@@ -367,16 +390,19 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         text = "\n".join(raw_lines).strip()
 
     extras: Dict[str, Any] = {
-        "client::display": {"contentType": "text/markdown"},
+        "client::display": {"contentType": "text/markdown"},  # ensure markdown in clients
         "jarvis::beautified": True,
         "jarvis::beautify_status": status,
         "jarvis::coverage_ratio": round(report.coverage, 3),
         "jarvis::missing_artifacts": sorted(list(report.missing)),
         "jarvis::allImageUrls": images,
         "jarvis::path": path,
+        "jarvis::debug": {"images_found": len(images), "md_hits": md_hits, "bare_hits": bare_hits},
     }
     # 🔔 ensure Gotify big image preview (first image only)
     if images:
-        extras["client::notification"] = {"bigImageUrl": images[0]}
+        # Preserve/merge if caller already set it
+        notif = {"bigImageUrl": images[0]}
+        extras["client::notification"] = {**(extras.get("client::notification", {}) or {}), **notif}
 
     return text, extras
