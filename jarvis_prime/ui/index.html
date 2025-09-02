@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis Prime — Inbox v4.11</title>
-  <!-- Robust dynamic base: use the directory of the current URL, not the full pathname -->
+  <title>Jarvis Prime — Notify</title>
+  <!-- Ingress-safe base: directory of current URL -->
   <script>
     (function(){
       var path = location.pathname;
@@ -17,115 +17,206 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <img src="icon.png" alt="Jarvis" class="logo" />
-    <div class="titles">
-      <h1>Jarvis Prime</h1>
-      <div class="subtitle">
-        Unified Inbox • <span id="live-badge" class="live err">OFFLINE</span> • v4.11
+  <!-- Header: icon + title, search, gear -->
+  <header class="hdr">
+    <div class="hdr-left">
+      <img src="icon.png" alt="Jarvis" class="logo" />
+      <div class="brand">
+        <div class="title">Jarvis Prime</div>
+        <div class="subtitle">Notify</div>
+      </div>
+    </div>
+    <div class="hdr-right">
+      <div class="search-wrap">
+        <input id="q" type="search" placeholder="Search…" />
+        <button id="btn-search" class="btn icon" title="Search" aria-label="Search">🔎</button>
+      </div>
+      <button id="btn-refresh" class="btn icon" title="Refresh" aria-label="Refresh">↻</button>
+      <button id="btn-settings" class="btn icon" title="Settings" aria-label="Settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- Main two-pane layout -->
+  <main class="layout">
+    <!-- Left rail: small section header + list + delete-all pinned bottom -->
+    <aside class="rail" id="rail">
+      <div class="rail-top">
+        <div class="list-head">
+          <div class="when" id="list-when">Today</div>
+          <div class="count"><span id="c-all">0</span> messages</div>
+        </div>
+        <nav class="tabs">
+          <button class="tab active" data-tab="all">All</button>
+          <button class="tab" data-tab="unread">Unread</button>
+          <button class="tab" data-tab="archived">Archived</button>
+          <button class="tab" data-tab="errors">Errors</button>
+        </nav>
+        <div class="sources">
+          <button class="chip src active" data-src="">Any</button>
+          <button class="chip src" data-src="smtp">SMTP</button>
+          <button class="chip src" data-src="gotify">Gotify</button>
+          <button class="chip src" data-src="ntfy">ntfy</button>
+          <button class="chip src" data-src="ui">UI</button>
+        </div>
+        <!-- Inbox list lives in FEED; this rail only holds filters -->
+      </div>
+      <div class="rail-bottom">
+        <label class="lbl inline"><input id="keep-arch" type="checkbox" checked /> Keep archived</label>
+        <button id="rail-delall" class="btn danger full">🗑 Delete All</button>
+      </div>
+    </aside>
+
+    <!-- Middle feed: compact rows -->
+    <section class="feed" id="feed"></section>
+
+    <!-- Right detail: title, body, actions -->
+    <section class="detail" id="detail">
+      <div class="empty">
+        <h2>Inbox</h2>
+        <p>No message selected.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Floating compose (“Wake Jarvis”) -->
+  <button id="fab" class="fab" title="Compose">＋</button>
+  <div id="compose" class="compose">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="sheet-title">Ask Jarvis</div>
+        <button id="compose-close" class="btn icon">✕</button>
+      </div>
+      <div class="sheet-body">
+        <input id="wake-text" type="text" placeholder="e.g., weather, status, help" />
+      </div>
+      <div class="sheet-actions">
+        <button id="wake-send" class="btn primary">Send</button>
       </div>
     </div>
   </div>
-  <div class="ask">
-    <div class="ask-row">
-      <input id="wake-text" type="text" placeholder="Ask Jarvis… e.g., weather" />
-      <button id="wake-send" class="btn primary">Send</button>
-      <button id="btn-refresh" class="btn">Refresh</button>
-    </div>
-    <div class="chips">
-      <button class="chip" data-wake="weather">Weather</button>
-      <button class="chip" data-wake="status">Status</button>
-      <button class="chip" data-wake="help">Help</button>
-      <label class="chip toggle"><input id="chime" type="checkbox" /> Sound</label>
-    </div>
-  </div>
-</header>
 
-<section class="pulse" id="pulse">
-  <div class="pulse-card"><div class="k">All</div><div class="v" id="c-all">0</div></div>
-  <div class="pulse-card"><div class="k">Unread</div><div class="v" id="c-unread">0</div></div>
-  <div class="pulse-card"><div class="k">Archived</div><div class="v" id="c-arch">0</div></div>
-  <div class="pulse-card"><div class="k">SMTP</div><div class="v" id="c-smtp">0</div></div>
-  <div class="pulse-card"><div class="k">Gotify</div><div class="v" id="c-gotify">0</div></div>
-  <div class="pulse-card"><div class="k">UI</div><div class="v" id="c-ui">0</div></div>
-</section>
-
-<section class="toolbar">
-  <div class="search">
-    <div class="search-wrap">
-      <span>🔎</span>
-      <input id="q" type="search" placeholder="Search title, body, source…" />
-    </div>
-    <div class="controls">
-      <label>Limit
-        <select id="limit">
-          <option>25</option><option selected>50</option><option>100</option><option>200</option>
-        </select>
-      </label>
-      <label>Retention
-        <select id="retention"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option></select>
-        <button id="btn-save-retention" class="btn">Save</button>
-      </label>
-      <label>Purge
-        <select id="purge-days"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option><option value="custom">Custom…</option></select>
-        <button id="btn-purge" class="btn danger">Run</button>
-      </label>
-      <label class="inline">
-        <input id="keep-arch" type="checkbox" checked/> Keep archived
-      </label>
-      <button id="btn-delall" class="btn danger">Delete all</button>
-      <button id="btn-search" class="btn primary">Search</button>
-    </div>
-  </div>
-</section>
-
-<main class="grid">
-  <aside class="rail" data-area="rail" id="rail">
-    <div>
-      <div class="tabs">
-        <button class="tab active" data-tab="all">All</button>
-        <button class="tab" data-tab="unread">Unread</button>
-        <button class="tab" data-tab="archived">Archived</button>
-        <button class="tab" data-tab="errors">Errors</button>
+  <!-- Settings drawer (gear) -->
+  <aside id="drawer" class="drawer">
+    <div class="drawer-head">
+      <div class="drawer-title">Settings</div>
+      <div class="drawer-tabs">
+        <button class="dtab active" data-pane="channels">Channels</button>
+        <button class="dtab" data-pane="routing">Routing</button>
+        <button class="dtab" data-pane="quiet">Quiet Hours</button>
+        <button class="dtab" data-pane="personas">Personas</button>
+        <button class="dtab" data-pane="retention">Retention</button>
+        <button class="dtab" data-pane="about">About</button>
       </div>
-      <div class="sources">
-        <div class="label">Sources</div>
-        <button class="chip" data-src="">Any</button>
-        <button class="chip" data-src="smtp">SMTP</button>
-        <button class="chip" data-src="gotify">Gotify</button>
-        <button class="chip" data-src="ui">UI</button>
-      </div>
+      <button id="drawer-close" class="btn icon">✕</button>
     </div>
+    <div class="drawer-body">
+      <!-- Channels -->
+      <section class="pane show" data-pane="channels">
+        <h3>Email (Gmail/SMTP)</h3>
+        <div class="grid2">
+          <input id="smtp-host" placeholder="smtp.gmail.com" />
+          <input id="smtp-port" placeholder="587" />
+          <label class="lbl"><input id="smtp-tls" type="checkbox" checked /> TLS</label>
+          <input id="smtp-user" placeholder="username" />
+          <input id="smtp-pass" type="password" placeholder="password" />
+          <input id="smtp-from" placeholder="From name" />
+        </div>
+        <button id="test-email" class="btn">Test Email</button>
 
-    <!-- Bottom rail action -->
-    <div class="rail-bottom">
-      <button id="rail-delall" class="btn danger">🗑 Delete All</button>
+        <h3>Gotify</h3>
+        <div class="grid2">
+          <input id="gotify-url" placeholder="https://gotify.example" />
+          <input id="gotify-token" placeholder="App token" />
+          <input id="gotify-priority" placeholder="Priority 1–10" />
+          <input id="gotify-click" placeholder="Click URL (optional)" />
+        </div>
+        <button id="test-gotify" class="btn">Test Gotify</button>
+
+        <h3>ntfy</h3>
+        <div class="grid2">
+          <input id="ntfy-url" placeholder="https://ntfy.example" />
+          <input id="ntfy-topic" placeholder="topic" />
+          <input id="ntfy-tags" placeholder="tags: fire,alert" />
+          <input id="ntfy-priority" placeholder="Priority" />
+        </div>
+        <button id="test-ntfy" class="btn">Test ntfy</button>
+
+        <h3>WhatsApp (Cloud API)</h3>
+        <div class="grid2">
+          <input id="wa-token" placeholder="App token" />
+          <input id="wa-phone" placeholder="Phone number ID" />
+          <input id="wa-template" placeholder="template_name" />
+          <input id="wa-lang" placeholder="en_US" />
+        </div>
+        <button id="test-wa" class="btn">Test WhatsApp</button>
+
+        <div class="drawer-actions">
+          <button id="save-channels" class="btn primary">Save Channels</button>
+        </div>
+      </section>
+
+      <!-- Routing -->
+      <section class="pane" data-pane="routing">
+        <p>Choose which channels receive which messages.</p>
+        <div id="routing-matrix" class="matrix"></div>
+        <div class="drawer-actions">
+          <button id="save-routing" class="btn primary">Save Routing</button>
+        </div>
+      </section>
+
+      <!-- Quiet Hours -->
+      <section class="pane" data-pane="quiet">
+        <div class="grid2">
+          <input id="qh-tz" placeholder="Africa/Johannesburg" />
+          <input id="qh-start" placeholder="22:00" />
+          <input id="qh-end" placeholder="06:00" />
+          <label class="lbl"><input id="qh-allow-critical" type="checkbox" checked /> Allow WhatsApp for Critical</label>
+        </div>
+        <div class="drawer-actions">
+          <button id="save-quiet" class="btn primary">Save Quiet Hours</button>
+        </div>
+      </section>
+
+      <!-- Personas -->
+      <section class="pane" data-pane="personas">
+        <div class="grid2">
+          <label class="lbl"><input id="p-dude" type="checkbox" /> Dude</label>
+          <label class="lbl"><input id="p-chick" type="checkbox" /> Chick</label>
+          <label class="lbl"><input id="p-nerd" type="checkbox" /> Nerd</label>
+          <label class="lbl"><input id="p-rager" type="checkbox" /> Rager</label>
+        </div>
+        <div class="drawer-actions">
+          <button id="save-personas" class="btn primary">Save Personas</button>
+        </div>
+      </section>
+
+      <!-- Retention -->
+      <section class="pane" data-pane="retention">
+        <div class="grid2">
+          <label class="lbl">Retention days
+            <select id="retention"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option></select>
+          </label>
+          <button id="btn-save-retention" class="btn">Save</button>
+
+          <label class="lbl">Purge older than
+            <select id="purge-days"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option><option value="custom">Custom…</option></select>
+          </label>
+          <button id="btn-purge" class="btn danger">Run Purge</button>
+        </div>
+      </section>
+
+      <!-- About -->
+      <section class="pane" data-pane="about">
+        <p>Jarvis Notify — Outlook/ntfy-style UI.</p>
+        <p>Build v5.0 (UI only). Uses /api/messages, /api/stream and related endpoints.</p>
+      </section>
     </div>
   </aside>
 
-  <section class="detail" id="detail" data-area="detail">
-    <div class="empty">
-      <h2>Inbox</h2>
-      <p>No message selected.</p>
-    </div>
-  </section>
+  <!-- Toasts + audio -->
+  <div id="toast"></div>
+  <audio id="ding"><source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3"></audio>
 
-  <section class="feed" id="feed" data-area="feed"></section>
-
-  <section class="detail-ghost" style="display:none"></section>
-    <div class="empty">
-      <h2>Inbox</h2>
-      <p>No message selected.</p>
-    </div>
-  </section>
-</main>
-
-<div id="toast"></div>
-<audio id="ding"><source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3"></audio>
-
-<footer class="footer" id="footer"></footer>
-
-<script src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
