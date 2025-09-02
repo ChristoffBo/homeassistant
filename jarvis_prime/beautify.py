@@ -5,7 +5,6 @@ import re
 import json
 import html
 import importlib
-import random
 from typing import List, Tuple, Optional, Dict, Any, Set
 from dataclasses import dataclass
 
@@ -14,16 +13,20 @@ IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s
 MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\((https?://[^\s)]+)\)', re.I)
 KV_RE      = re.compile(r'^\s*[-*]?\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
 
+# timestamps and types
 TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
 DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
 TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
 
+# Strict IPv4
 IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b')
 HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
 URL_RE  = re.compile(r'\bhttps?://[^\s)]+', re.I)
 
-EMOJI_RE = re.compile("[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]")
+EMOJI_RE = re.compile(
+    "[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]"
+)
 
 LIKELY_POSTER_HOSTS = (
     "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
@@ -49,7 +52,7 @@ def _prefer_host_key(url: str) -> int:
         return 1
 
 def _strip_noise(text: str) -> str:
-    if not text: 
+    if not text:
         return ""
     s = EMOJI_RE.sub("", text)
     NOISE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
@@ -156,9 +159,6 @@ def _persona_overlay_line(persona: Optional[str], *, enable_quip: bool) -> Optio
                 quip = str(mod.quip(canon) or "").strip()
             except Exception:
                 quip = ""
-        # always pick a quip from bank
-        if not quip and hasattr(mod, "QUIPS") and canon in mod.QUIPS:
-            quip = random.choice(mod.QUIPS[canon])
         return f"💬 {shown} says: {'— ' + quip if quip else ''}".rstrip()
     except Exception:
         return "💬 neutral says:"
@@ -257,7 +257,7 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str], Op
 def _format_align_check(text: str) -> str:
     lines = [ln.rstrip() for ln in text.splitlines()]
     while lines and lines[0].strip() == "": lines.pop(0)
-    out=[]; 
+    out=[]
     for ln in lines:
         if ln.strip() == "":
             if out and out[-1].strip() == "": continue
@@ -287,11 +287,13 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: str | None = None, mode: str = "standard",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      llm_used: bool = False) -> Tuple[str, Optional[dict]]:
+
     original_body = body or ""
     stripped = _strip_noise(original_body)
     normalized = _normalize(stripped)
     normalized = html.unescape(normalized)  # fix posters/logos escaping
 
+    # images from markdown/plain or JSON payloads
     body_wo_imgs, images = _harvest_images_md(normalized)
     if not images and _looks_pure_json(normalized):
         images = _harvest_images_json(normalized)
@@ -300,13 +302,18 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     facts, details, kv_status = _categorize_bullets(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs, kv_status)
 
-    lines: List[str] = []; lines += _header(kind, badge)
+    lines: List[str] = []
+    lines += _header(kind, badge)
+
+    # persona overlay with label + quip
     pol = _persona_overlay_line(persona, enable_quip=persona_quip)
     if pol: lines += [pol]
 
-    if facts: lines += ["", "📄 Facts", *facts]
+    if facts:   lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
+
     if images:
+        # inline poster + gallery links
         lines += ["", f"![poster]({images[0]})"]
         if len(images) > 1:
             more = ", ".join(f"[img{i+1}]({u})" for i,u in enumerate(images[1:]))
@@ -319,6 +326,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     text = _format_align_check(text)
     text = _linewise_dedup_markdown(text)
 
+    # verify we didn’t drop important tokens
     report = _verify_preservation(title + "\n" + original_body, text)
     MIN_COVERAGE = 0.7
     if report.coverage < MIN_COVERAGE or report.missing:
@@ -328,4 +336,34 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         if facts: retry_lines += ["", "📄 Facts", *facts]
         if details: retry_lines += ["", "📄 Details", *details]
         if images: retry_lines += ["", f"![poster]({images[0]})"]
-        retry_lines +=
+        retry_lines += ["", "📄 Raw Extract", "```text", original_body.strip(), "```", "", f"— Path: {path}"]
+        retry_text = "\n".join(retry_lines).strip()
+        retry_text = _format_align_check(retry_text)
+        retry_report = _verify_preservation(title + "\n" + original_body, retry_text)
+        if retry_report.coverage >= report.coverage:
+            text = retry_text; report = retry_report
+
+    status = "verified"
+    if report.coverage < 0.5:
+        status = "fallback_raw"
+        raw_lines = []
+        raw_lines += _header("Raw Message", badge)
+        raw_lines += ["", f"**Subject:** {title.strip() or '(no title)'}", "", "```text", original_body.strip(), "```"]
+        if images: raw_lines += ["", f"![poster]({images[0]})"]
+        raw_lines += ["", f"— Path: {path}"]
+        text = "\n".join(raw_lines).strip()
+
+    extras: Dict[str, Any] = {
+        "client::display": {"contentType": "text/markdown"},
+        "jarvis::beautified": True,
+        "jarvis::beautify_status": status,
+        "jarvis::coverage_ratio": round(report.coverage, 3),
+        "jarvis::missing_artifacts": sorted(list(report.missing)),
+        "jarvis::allImageUrls": images,
+        "jarvis::path": path,
+    }
+    # 🔔 ensure Gotify big image preview
+    if images:
+        extras["client::notification"] = {"bigImageUrl": images[0]}
+
+    return text, extras
