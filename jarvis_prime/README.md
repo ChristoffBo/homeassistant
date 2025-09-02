@@ -1,27 +1,25 @@
 # 🧩 Jarvis Prime — Home Assistant Add-on
 
-Jarvis Prime is in active ALPHA and under heavy development.  
-It is your standalone Notification Orchestrator and Server — one flat self-sufficient hub that runs inside Home Assistant.  
-Jarvis Prime ingests, rewrites, and beautifies notifications into sleek AI-style cards, reposts them to Gotify/ntfy/email, shows them in its own dark-mode Web UI, and responds to wake-word commands like “Jarvis weather” or “Jarvis dns”.
+Jarvis Prime is your standalone Notification Orchestrator and Server. It can run fully self-contained, or side-by-side with Gotify or ntfy for mobile review. It centralizes, beautifies, and orchestrates notifications from across your homelab, turning raw events into sleek, unified cards with personality. Jarvis listens to multiple intakes (SMTP, Proxy, Webhook), rewrites and beautifies messages, and pushes them back out through Gotify, ntfy, email, or its own dark-mode web UI.
 
-Jarvis is the point — it is one unified app. SMTP intake, HTTP proxy, webhook ingestion, LLM-driven Neural Core, Beautifier (Aesthetic Engine), ARR stats, DNS, Weather, Kuma, Personas, Retention — all in a single orchestrator.
+Jarvis is not just a bridge — it is the core. It centralizes formatting, command handling, and orchestration of messages across your home systems. Every notification you throw at it arrives polished, consistent, and alive with personality.
 
-✅ Features  
-• Standalone Notification Orchestrator and Server  
-• Neural Core (LLM rewrite) + Aesthetic Engine (beautifier) pipeline  
-• Personas: Dude, Chick, Nerd, Rager, Comedian, Action, Jarvis, Ops — overlay tone on any message  
-• SMTP Intake (Mailrise replacement): LAN-only, accepts any auth, subject/body → unified Jarvis card  
-• HTTP Proxy Intake (Gotify/ntfy): POST into Jarvis, unified & optionally reposted  
-• Webhook Intake: POST to /webhook or /hook/*, JSON or text payloads accepted  
-• Built-in dark-mode Web UI: inbox, filters, purge, retention, wake-word push  
+Features
+• Standalone Notification Orchestrator and Server (no Gotify required)  
+• Optional review via Gotify or ntfy apps (mobile push, history, filters)  
+• Beautify Engine (LLM + Aesthetic pipeline) to normalize and render events  
+• SMTP Intake (Mailrise replacement): LAN-only, accepts any auth, subject/body → beautified  
+• HTTP Proxy Intake (Gotify/ntfy): POST → beautified and optionally forwarded  
+• Webhook Intake: POST /webhook, parses JSON or raw text (GitHub, health checks, generic)  
+• Built-in dark-mode Web UI: inbox, filters, live updates, purge, retention, wakeword push  
 • ARR module: Radarr/Sonarr counts, posters, upcoming events  
 • Technitium DNS: totals, blocked, failures, live stats  
 • Weather forecast: current and multi-day snapshot  
 • Uptime Kuma: on-demand status (no duplicate alerts)  
+• Multiple selectable personalities (The Dude, Chick, Nerd, Rager, Comedian, Action, Ops)  
 • Purge & Retention: configurable lifecycle for messages  
-• Full Home Assistant Ingress support  
 
-📡 Supported Sources  
+Supported Sources
 • Radarr / Sonarr → Posters, runtime, SxxEyy, quality, size  
 • QNAP / Unraid → system/storage notices normalized  
 • Watchtower → container update summaries  
@@ -29,12 +27,36 @@ Jarvis is the point — it is one unified app. SMTP intake, HTTP proxy, webhook 
 • Technitium DNS → blocking/failure stats  
 • Weather forecast → current + multi-day  
 • Uptime Kuma → status checks  
+• JSON/YAML → parsed into bullet facts  
 • Email → via SMTP intake  
 • Gotify & ntfy → via proxy intake  
-• Webhook → any service that can POST JSON/text  
+• Webhooks → POST events from any app or script  
 • Generic text → framed as Jarvis Cards  
 
-🗣️ Wake-Word & Commands  
+Webhook Intake Examples
+Jarvis’ webhook endpoint is flexible. Send JSON or raw text and it will parse intelligently.
+
+Generic text webhook:
+curl -X POST http://10.0.0.100:2590/webhook \
+  -H "Content-Type: text/plain" \
+  -d 'Hello Jarvis, something happened on my server.'
+
+JSON webhook:
+curl -X POST http://10.0.0.100:2590/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Backup Complete","message":"Proxmox node 1 finished nightly backup.","priority":7}'
+
+GitHub style webhook (auto-detected by headers):
+curl -X POST http://10.0.0.100:2590/webhook \
+  -H "X-GitHub-Event: push" \
+  -d '{"repository":"homeassistant","pusher":"Christoff"}'
+
+Health check webhook:
+curl -X POST http://10.0.0.100:2590/webhook \
+  -H "X-Health-Check: true" \
+  -d 'Service heartbeat OK'
+
+Wake-Word & Commands
 Wake-word is “Jarvis …” in the title or body. Examples:  
 • Jarvis dns → DNS summary  
 • Jarvis weather / forecast → Weather snapshot or forecast  
@@ -42,7 +64,7 @@ Wake-word is “Jarvis …” in the title or body. Examples:
 • Jarvis upcoming movies / series, counts, longest → ARR queries  
 • Jarvis help → Command list  
 
-⚙️ Configuration (options.json)  
+Configuration (options.json)
 {
   "bot_name": "Jarvis Prime",
   "bot_icon": "🧠",
@@ -53,73 +75,28 @@ Wake-word is “Jarvis …” in the title or body. Examples:
   "retention_hours": 24,
   "beautify_enabled": true,
   "silent_repost": true,
-
   "smtp_enabled": true,
-  "smtp_bind": "0.0.0.0",
   "smtp_port": 2525,
-
   "proxy_enabled": true,
-  "proxy_bind": "0.0.0.0",
   "proxy_port": 2580,
-
   "webhook_enabled": true,
   "webhook_bind": "0.0.0.0",
   "webhook_port": 2590,
   "webhook_token": "",
-
   "weather_enabled": true,
   "radarr_enabled": true,
   "sonarr_enabled": true,
   "technitium_enabled": true,
-  "uptimekuma_enabled": true,
-
-  "llm_enabled": true,
-  "llm_timeout_seconds": 20,
-  "llm_max_cpu_percent": 80,
-  "llm_ctx_tokens": 6096,
-  "llm_gen_tokens": 300,
-  "llm_models_priority": "qwen15,phi2,llama32_1b,tinyllama,qwen05,phi3",
-
-  "enable_dude": true,
-  "enable_chick": false,
-  "enable_nerd": false,
-  "enable_rager": false,
-  "enable_comedian": false,
-  "enable_action": false,
-  "enable_jarvis": false,
-  "enable_ops": false
+  "uptimekuma_enabled": true
 }
 
-🧪 Options Explained  
-- `smtp_enabled`: enable LAN SMTP intake (default port 2525)  
-- `proxy_enabled`: enable Gotify/ntfy HTTP proxy intake (default port 2580)  
-- `webhook_enabled`: enable generic webhook intake (default port 2590)  
-- `webhook_token`: optional shared secret; if set, must be passed via header X-Webhook-Token or ?token=...  
-- `llm_enabled`: turn Neural Core on/off  
-- `llm_timeout_seconds`: maximum LLM rewrite time before fallback to Beautifier  
-- `llm_max_cpu_percent`: throttle LLM usage  
-- `llm_ctx_tokens` / `llm_gen_tokens`: context size and output tokens  
-- `enable_*`: toggles for each persona overlay  
-
-🌍 Webhook Access  
-POST JSON or text to:  
-http://<JARVIS_HOST>:2590/webhook  
-or alias:  
-http://<JARVIS_HOST>:2590/hook  
-http://<JARVIS_HOST>:2590/hook/<any>  
-
-Example:  
-curl -X POST http://10.0.0.100:2590/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Webhook Check","message":"Hello from webhook","priority":5}'
-
-🔌 Ports  
+Ports
 • 2525/tcp → SMTP intake (if enabled)  
-• 2580/tcp → Proxy intake (if enabled)  
-• 2581/tcp → Home Assistant Ingress (UI)  
+• 2580/tcp → Proxy intake (Gotify/ntfy if enabled)  
+• 2581/tcp → Web UI (Ingress)  
 • 2590/tcp → Webhook intake (if enabled)  
 
-📁 File Map  
+File Map
 • /app/bot.py → core brain  
 • /app/beautify.py → beautify engine  
 • /app/smtp_server.py → smtp intake  
@@ -129,11 +106,22 @@ curl -X POST http://10.0.0.100:2590/webhook \
 • /app/weather.py → Weather forecast  
 • /app/technitium.py → DNS  
 • /app/uptimekuma.py → Kuma  
-• /app/personality.py → personality engine with personas  
-• /app/aliases.py → command normalization  
-• /app/llm_client.py → local LLM Neural Core  
-• /app/storage.py → inbox persistence  
-• /app/ui/ → dark-mode web UI assets  
+• /app/personality.py → personality engine  
+• /app/alias.py → command normalization  
 • /data/options.json → configuration  
+• /data/beautify_rules.yaml → optional custom rules  
 
-🧠 Jarvis Prime is your fully flat standalone Notification Orchestrator and AI-driven Notification Server. It unifies every message, powers them with personality, and ensures your home notifications are sleek, reliable, and alive.
+Gotify/ntfy Review
+Jarvis can run fully standalone with its own UI. But if you want mobile notifications, simply configure:  
+• gotify_url + gotify_app_token → Jarvis will repost to Gotify  
+• ntfy_url + ntfy_topic → Jarvis will repost to ntfy  
+This way you can review messages via the Gotify or ntfy app while still keeping Jarvis as the core brain.
+
+Roadmap
+Jarvis Prime is evolving fast. Planned additions:  
+• DNS + DHCP with ad-blocking module (TechNitium-lite)  
+• Ansible-lite orchestration (run playbooks via SSH, schedule jobs, push logs into Jarvis Inbox)  
+• Full WebUI rewrite to accommodate every option from config.json (UI-driven setup)  
+• More integrations for homelab sources and monitoring  
+
+Jarvis Prime is your fully flat standalone Notification Orchestrator and AI-driven Notification Server. It unifies every message, powers them with personality, and ensures your home notifications are sleek, reliable, and alive.
