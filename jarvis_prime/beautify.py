@@ -259,11 +259,14 @@ def _load_persona_from_module(persona_name: Optional[str]) -> Dict[str, Any]:
     return {}
 
 def _apply_persona_overlay(text: str, persona_name: Optional[str], add_quip: bool) -> str:
+    print(f"[beautify] overlay request persona={persona_name!r}")
     data = _load_persona_from_module(persona_name)
+    print(f"[beautify] loaded persona data keys={list(data.keys()) if isinstance(data, dict) else 'N/A'}")
     label = (data.get("label") or "").strip() if isinstance(data, dict) else ""
     quips = data.get("quips") if isinstance(data, dict) else None
 
     if not label:
+        print('[beautify] no label found; persona neutral/ops/unknown — no overlay')
         return text  # neutral/ops/unknown -> no overlay
 
     quip_line = ""
@@ -272,6 +275,7 @@ def _apply_persona_overlay(text: str, persona_name: Optional[str], add_quip: boo
             quip_line = f'“{random.choice(list(quips))}”'
         except Exception:
             quip_line = ""
+    print(f"[beautify] overlay label={label!r} quip_included={bool(quip_line)}")
 
     lines = text.splitlines()
     # Insert persona label after the header block if present
@@ -286,6 +290,7 @@ def _apply_persona_overlay(text: str, persona_name: Optional[str], add_quip: boo
 def beautify_message(title: str, body: str, *, mood: str = "serious",
                      source_hint: str | None = None, mode: str = "standard",
                      persona: Optional[str] = None, persona_quip: bool = True) -> Tuple[str, Optional[dict]]:
+    print(f"[beautify] called mode={mode} persona={persona!r} quip={persona_quip}")
     # Stage 1: INGEST
     ctx = _ingest(title, body, mood, source_hint)
 
