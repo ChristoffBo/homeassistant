@@ -89,9 +89,7 @@ def _load_module(name, path):
             mod = _imp.module_from_spec(spec)
             spec.loader.exec_module(mod)
             return mod
-    except Exception as e:
-        # ADDITIVE: log loader errors so we know why a module failed to import
-        print(f"[bot] module load failed {name} at {path}: {e}")
+    except Exception:
         pass
     return None
 
@@ -100,26 +98,6 @@ _personality = _load_module("personality", "/app/personality.py")
 _pstate = _load_module("personality_state", "/app/personality_state.py")
 _beautify = _load_module("beautify", "/app/beautify.py")
 _llm = _load_module("llm_client", "/app/llm_client.py")
-
-# ADDITIVE: fallback normal imports if file-location import failed
-if not _beautify:
-    try:
-        import beautify as _beautify  # relies on /app in PYTHONPATH
-    except Exception as _e_b:
-        print(f"[bot] beautify import failed: {_e_b}")
-        _beautify = None
-if not _llm:
-    try:
-        import llm_client as _llm
-    except Exception as _e_l:
-        print(f"[bot] llm_client import failed: {_e_l}")
-        _llm = None
-
-# ADDITIVE: startup visibility for engine availability
-try:
-    print(f"[bot] load-check -> beautify={'ok' if _beautify else 'MISSING'} enabled={BEAUTIFY_ENABLED} llm={'ok' if _llm else 'MISSING'}")
-except Exception:
-    pass
 
 ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
@@ -283,18 +261,6 @@ def _llm_then_beautify(title: str, message: str):
         try:
             final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
             used_beautify = True
-            # ADDITIVE: augment with persona + llm_used so footer/path/extras are correct
-            try:
-                final2, extras2 = _beautify.beautify_message(
-                    title, final, mood=CHAT_MOOD,
-                    persona=ACTIVE_PERSONA, persona_quip=True,
-                    llm_used=used_llm
-                )
-                if final2:
-                    final = final2
-                    if extras2: extras = extras2
-            except Exception as e2:
-                print(f"[bot] Beautify (augment) failed: {e2}")
         except Exception as e:
             print(f"[bot] Beautify failed: {e}")
 
@@ -589,4 +555,3 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
-```0
