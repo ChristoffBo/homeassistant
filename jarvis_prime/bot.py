@@ -136,45 +136,22 @@ atexit.register(stop_sidecars)
 # ============================
 def _persona_line(quip_text: str) -> str:
     # Single-line persona 'speaks' header placed at TOP of message body.
-    # Use friendly label (personality.label) and live persona name.
-    who_raw = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
-    try:
-        shown = _personality.label(who_raw) if _personality and hasattr(_personality, "label") else who_raw
-    except Exception:
-        shown = who_raw
-    qt = (quip_text or "").strip().replace("\n", " ")
-    if len(qt) > 140:
-        qt = qt[:137] + "..."
+    who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
+    quip_text = (quip_text or "").strip().replace("\n", " ")
+    if len(quip_text) > 140:
+        quip_text = quip_text[:137] + "..."
     # Keep it minimal so it aligns nicely with Gotify cards
-    return f"💬 {shown} says: {qt}" if qt else f"💬 {shown} says:"
+    return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
-    # ===== LIVE REFRESH of persona each send (rotation/override without restart)
-    try:
-        if _pstate and hasattr(_pstate, "get_active_persona"):
-            persona_now, tod_now = _pstate.get_active_persona()
-            if persona_now:
-                globals()["ACTIVE_PERSONA"] = persona_now
-                globals()["PERSONA_TOD"] = tod_now
-                globals()["CHAT_MOOD"] = persona_now
-    except Exception:
-        pass
-    # ========================================================================
-
     # Decorate body, but keep the original title so it doesn't become a banner
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
-        try:
-            title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
-        except Exception:
-            pass
+        title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
         title = orig_title
     elif decorate and _personality and hasattr(_personality, "decorate"):
-        try:
-            title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
-        except Exception:
-            pass
+        title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
         title = orig_title
 
     # Persona speaking line at the top
@@ -282,14 +259,7 @@ def _llm_then_beautify(title: str, message: str):
 
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            # Pass persona through so overlay/quip matches the header
-            final, extras = _beautify.beautify_message(
-                title, final,
-                mood=CHAT_MOOD,
-                persona=ACTIVE_PERSONA,
-                persona_quip=bool(merged.get("personality_enabled", True)),
-                llm_used=used_llm
-            )
+            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
             used_beautify = True
         except Exception as e:
             print(f"[bot] Beautify failed: {e}")
@@ -325,20 +295,11 @@ def extract_command_from(title: str, message: str) -> str:
     return ""
 
 def post_startup_card():
-    # Show friendly label for persona instead of raw token
-    who_label = None
-    try:
-        if _personality and hasattr(_personality, "label"):
-            who_label = _personality.label(ACTIVE_PERSONA)
-    except Exception:
-        who_label = None
-    who_label = who_label or (ACTIVE_PERSONA or "neutral")
-
     lines = [
         "🧬 Prime Neural Boot",
         "🛰️ Engine: Neural Core — ONLINE" if merged.get("llm_enabled") else "🛰️ Engine: Neural Core — OFFLINE",
         f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
-        f"🗣️ Persona speaking: {who_label} ({PERSONA_TOD})",
+        f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
         "",
         "Modules:",
         f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
