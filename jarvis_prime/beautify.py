@@ -1,14 +1,12 @@
 # /app/beautify.py
-# Jarvis Prime — Beautify Engine (Clean bullets + Persona + Image-Preserving + Format Alignment Check)
-# Stages:
-# 1) Strip → remove emojis/boilerplate noise.
-# 2) Normalize → tidy spacing/newlines.
-# 3) Detect → light heuristics for card title.
-# 4) Harvest images → strip image lines from body, keep list, set hero.
-# 5) Rebuild → professional Markdown bullets (📄 Facts + 📄 Message).
-# 6) Persona overlay → label/emoji/quip from personality.py under header.
-# 7) Format alignment check → enforce bullet/section/header spacing and alignment.
-# 8) Render → dedupe sentences; return with hero + allImageUrls in extras.
+# Jarvis Prime — Beautify Engine (Polished)
+# Design goals:
+# - Clean, professional card: Header → persona overlay → 📄 Facts → (optional) 📄 Details.
+# - Bold labels and monospace values for scannability.
+# - Category grouping for bullets (Status, Metrics, Actions, Errors/Warnings, Sources).
+# - Severity badge in header.
+# - Preserve images: extras.client::notification.bigImageUrl (hero) + extras["jarvis::allImageUrls"].
+# - No raw fallback; always produce a tidy card.
 from __future__ import annotations
 import re, json, importlib, random
 from typing import List, Tuple, Optional, Dict, Any
@@ -21,9 +19,10 @@ TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[
 DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
 TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
 IP_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
 KV_RE = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
-YESNO_RE = re.compile(r'\b(?:YES|NO|TRUE|FALSE|SUCCESS|FAILED|ERROR|WARNING|OK)\b', re.I)
+YESNO_RE = re.compile(r'\b(?:YES|NO|TRUE|FALSE|SUCCESS|FAILED|ERROR|WARNING|OK|UP|DOWN)\b', re.I)
 EMOJI_RE = re.compile("["
     "\U0001F300-\U0001F6FF"
     "\U0001F900-\U0001F9FF"
@@ -33,6 +32,7 @@ EMOJI_RE = re.compile("["
     "\U0001F1E6-\U0001F1FF"
     "]", flags=re.UNICODE)
 SIGNAL_LINE_RE = re.compile(r'(?i)\b(error|failed|failure|warning|reboot|restarted|updated|upgraded|packages|status|success|ok|critical|offline|online|ping|upload|download)\b')
+UNIT_TOKEN_RE = re.compile(r'(?i)\b(?:ms|mbps|gbps|gb|mb|kb|%|c|°c|°f|s|sec|secs|seconds|minutes|min|hrs|hours)\b')
 
 LIKELY_POSTER_HOSTS = (
     "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
@@ -68,7 +68,7 @@ def _dedup_sentences(text: str) -> str:
             seen.add(n); out.append(frag)
     return "".join(out)
 
-# ---------- Stage 1: Strip ----------
+# ---------- Strip & Normalize ----------
 _NOISE_LINE_RE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
 def _strip_noise(text: str) -> str:
     if not text: return ""
@@ -76,7 +76,6 @@ def _strip_noise(text: str) -> str:
     kept = [ln for ln in s.splitlines() if not _NOISE_LINE_RE.match(ln)]
     return "\n".join(kept)
 
-# ---------- Stage 2: Normalize ----------
 def _normalize(s: str) -> str:
     if not s: return ""
     s = s.replace("\t","  ")
@@ -84,10 +83,11 @@ def _normalize(s: str) -> str:
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s.strip()
 
-# ---------- Stage 3: Detect (light) ----------
+# ---------- Detection ----------
 def _looks_json(body: str) -> bool:
     try: json.loads(body); return True
     except Exception: return False
+
 def _detect_type(title: str, body: str) -> str:
     tb = (title + " " + body).lower()
     if "speedtest" in tb: return "SpeedTest"
@@ -96,10 +96,10 @@ def _detect_type(title: str, body: str) -> str:
     if "sonarr" in tb: return "Sonarr"
     if "radarr" in tb: return "Radarr"
     if _looks_json(body): return "JSON"
-    if "error" in tb or "warning" in tb: return "Log Event"
+    if "error" in tb or "warning" in tb or "failed" in tb: return "Log Event"
     return "Message"
 
-# ---------- Stage 4a: Harvest images ----------
+# ---------- Images ----------
 def _harvest_images(text: str) -> Tuple[str, List[str]]:
     if not text: return "", []
     urls: List[str] = []
@@ -115,54 +115,11 @@ def _harvest_images(text: str) -> Tuple[str, List[str]]:
             seen.add(u); uniq.append(u)
     return text.strip(), uniq
 
-# ---------- Stage 4b: Rebuild (neat bullets) ----------
-def _header(kind: str) -> List[str]:
-    return ["———————————————", f"📟 Jarvis Prime — {kind}", "———————————————"]
-def _kv(label: str, value: str) -> str: return f"- {label}: {value}"
-def _b(line: str) -> str: return f"- {line}"
+# ---------- Header / Persona ----------
+def _header(kind: str, badge: str = "") -> List[str]:
+    h = f"📟 Jarvis Prime — {kind} {badge}".rstrip()
+    return ["———————————————", h, "———————————————"]
 
-def _harvest_timestamp(text: str, title: str) -> Optional[str]:
-    for src in (text or "", title or ""):
-        for rx in (TS_RE, DATE_ONLY_RE, TIME_ONLY_RE):
-            m = rx.search(src)
-            if m: return m.group(0).strip()
-    return None
-
-def _extract_keyvals(text: str) -> List[Tuple[str,str]]:
-    out: List[Tuple[str,str]] = []
-    for ln in (text or "").splitlines():
-        m = KV_RE.match(ln)
-        if m:
-            k = m.group(1).strip(); v = m.group(2).strip()
-            if k and v: out.append((k, v))
-    return out
-
-def _bullet_card(kind: str, title: str, body: str) -> List[str]:
-    bullets: List[str] = []
-    ts = _harvest_timestamp(body, title)
-    if ts: bullets.append(_kv("Time", ts))
-    if title.strip(): bullets.append(_kv("Subject", title.strip()))
-    first = _first_nonempty_line(body)
-    if first and first != title.strip(): bullets.append(_kv("Info", first))
-
-    for k,v in _extract_keyvals(body): bullets.append(_kv(k, v))
-
-    # Also bulletize short signal lines
-    for ln in (body or "").splitlines():
-        if KV_RE.match(ln): continue
-        if SIGNAL_LINE_RE.search(ln): bullets.append(_b(ln.strip()))
-
-    # Fallback: basic lines if nothing collected
-    if not bullets:
-        for ln in (body or "").splitlines():
-            t = ln.strip()
-            if t: bullets.append(_b(t))
-            if len(bullets) >= 10: break
-
-    lines = _header(kind) + ["", "📄 Facts", *bullets]
-    return lines
-
-# ---------- Stage 5: Persona overlay ----------
 def _load_persona(persona_name: Optional[str]) -> Dict[str, Any]:
     if not persona_name: return {}
     key = (persona_name or "").strip().lower()
@@ -185,75 +142,177 @@ def _load_persona(persona_name: Optional[str]) -> Dict[str, Any]:
             if isinstance(obj, dict): return obj
     return {}
 
-def _apply_persona(lines: List[str], persona: Optional[str], persona_quip: bool) -> List[str]:
+def _persona_overlay(persona: Optional[str], persona_quip: bool) -> List[str]:
     data = _load_persona(persona)
-    label = (data.get("label") or "").strip() if isinstance(data, dict) else ""
-    emoji = (data.get("emoji") or "").strip() if isinstance(data, dict) else ""
-    quips = data.get("quips") if isinstance(data, dict) else None
+    overlay: List[str] = []
+    if isinstance(data, dict):
+        label = (data.get("label") or "").strip()
+        emoji = (data.get("emoji") or "").strip()
+        quips = data.get("quips") if isinstance(data.get("quips"), (list,tuple)) else None
+        if label or emoji:
+            overlay.append(f"{emoji} {label}".strip())
+        if persona_quip and quips:
+            try: overlay.append(f'“{random.choice(list(quips))}”')
+            except Exception: pass
+    return overlay
 
-    overlay = []
-    if emoji or label:
-        overlay.append(f"{emoji} {label}".strip())
-    if persona_quip and isinstance(quips,(list,tuple)) and quips:
-        try: overlay.append(f'“{random.choice(list(quips))}”')
-        except Exception: pass
+# ---------- Severity badge ----------
+def _severity_badge(text: str) -> str:
+    low = text.lower()
+    if re.search(r'\b(error|failed|critical)\b', low): return "❌"
+    if re.search(r'\b(warn|warning)\b', low): return "⚠️"
+    if re.search(r'\b(success|ok|online|completed)\b', low): return "✅"
+    return ""
 
-    if not overlay: return lines
-    insert_at = 3 if len(lines) >= 3 and lines[0].startswith("—") and "Jarvis Prime" in lines[1] else 0
-    return lines[:insert_at] + overlay + lines[insert_at:]
+# ---------- Bullet helpers ----------
+def _fmt_kv(label: str, value: str) -> str:
+    # Normalize units & emphasize numbers in monospace if unit present
+    v = value.strip()
+    # backtick wrap if there's a unit token or numeric pattern
+    if UNIT_TOKEN_RE.search(v) or re.search(r'\d', v):
+        v_disp = f"`{v}`"
+    else:
+        v_disp = v
+    return f"- **{label.strip()}:** {v_disp}"
 
-# ---------- Stage 7: Format alignment check ----------
+def _b(line: str) -> str:
+    return f"- {line.strip()}"
+
+def _harvest_timestamp(title: str, body: str) -> Optional[str]:
+    for src in (title or "", body or ""):
+        for rx in (TS_RE, DATE_ONLY_RE, TIME_ONLY_RE):
+            m = rx.search(src)
+            if m: return m.group(0).strip()
+    return None
+
+def _extract_keyvals(text: str) -> List[Tuple[str,str]]:
+    out: List[Tuple[str,str]] = []
+    for ln in (text or "").splitlines():
+        m = KV_RE.match(ln)
+        if m:
+            k = m.group(1).strip(); v = m.group(2).strip()
+            if k and v: out.append((k, v))
+    return out
+
+# ---------- Categorize → Build sections ----------
+def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
+    facts: List[str] = []
+    details: List[str] = []
+
+    # Core facts
+    ts = _harvest_timestamp(title, body)
+    if ts: facts.append(_fmt_kv("Time", ts))
+    if title.strip(): facts.append(_fmt_kv("Subject", title.strip()))
+
+    # KVs
+    for k,v in _extract_keyvals(body):
+        label = k.strip().lower()
+        if label in ("ping","download","upload","latency","jitter","loss","speed"):
+            facts.append(_fmt_kv(k, v))
+        elif label in ("status","result","state","ok","success","warning","error"):
+            facts.append(_fmt_kv(k, v))
+        else:
+            details.append(_fmt_kv(k, v))
+
+    # IPs/hosts/versions
+    for ip in IP_RE.findall(body or ""):
+        details.append(_fmt_kv("ip", ip))
+    for host in HOST_RE.findall(body or ""):
+        # Avoid treating IPs as hosts and avoid duplicates with domains in URLs
+        if not re.match(IP_RE, host):
+            details.append(_fmt_kv("host", host))
+    for ver in VER_RE.findall(body or ""):
+        details.append(_fmt_kv("version", ver))
+
+    # Signal lines to categories
+    for ln in (body or "").splitlines():
+        if KV_RE.match(ln): 
+            continue
+        if SIGNAL_LINE_RE.search(ln):
+            text = ln.strip()
+            if re.search(r'(?i)\b(error|failed|failure|critical)\b', text):
+                details.append(_b(f"Error: {text}"))
+            elif re.search(r'(?i)\b(warn|warning)\b', text):
+                details.append(_b(f"Warning: {text}"))
+            elif re.search(r'(?i)\b(reboot|restart|updated|upgraded)\b', text):
+                details.append(_b(f"Action: {text}"))
+            else:
+                # metrics like ping/upload/download might slip here
+                details.append(_b(text))
+
+    # Fallback: if nothing, turn first nonempty line into Info
+    if not facts:
+        first = _first_nonempty_line(body)
+        if first: facts.append(_fmt_kv("Info", first))
+
+    # Prune duplicates while keeping order
+    def _unique(seq: List[str]) -> List[str]:
+        seen=set(); out=[]
+        for x in seq:
+            key = re.sub(r'\s+',' ', x.strip()).lower()
+            if key and key not in seen:
+                seen.add(key); out.append(x)
+        return out
+
+    return _unique(facts), _unique(details)
+
+# ---------- Format alignment check ----------
 def _format_align_check(text: str) -> str:
-    # Ensure header separation and bullet alignment
     lines = [ln.rstrip() for ln in text.splitlines()]
-    # Ensure there is an empty line after header ruler section
+    # Ensure blank line after header
     if len(lines) >= 3 and lines[0].startswith("—") and "Jarvis Prime" in lines[1]:
-        if (len(lines) == 3) or (lines[3].strip() != ""):
+        if len(lines) == 3 or lines[3].strip() != "":
             lines = lines[:3] + [""] + lines[3:]
-    # Normalize bullets to "- " (not "• ")
+    # Normalize all bullets to "- " and sections to start with "📄 "
     for i, ln in enumerate(lines):
         if re.match(r'^\s*[•*]\s+', ln):
             lines[i] = re.sub(r'^\s*[•*]\s+', '- ', ln)
         elif re.match(r'^\s*-\s*', ln):
-            # keep "- "; collapse extra spaces after "-"
             lines[i] = re.sub(r'^\s*-\s*', '- ', ln, count=1)
-    # Ensure section titles are not duplicated and spaced
-    out: List[str] = []
-    prev_blank = False
+    # Collapse duplicate blank lines
+    out=[]; prev_blank=False
     for ln in lines:
-        if ln.strip() == "" and prev_blank:
+        if ln.strip()=="" and prev_blank: 
             continue
-        out.append(ln)
-        prev_blank = (ln.strip() == "")
+        out.append(ln); prev_blank = (ln.strip()=="")
     return "\n".join(out).strip()
 
-# ---------- Stage 8: Public API ----------
+# ---------- Public API ----------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: str | None = None, mode: str = "standard",
                      persona: Optional[str] = None, persona_quip: bool = True) -> Tuple[str, Optional[dict]]:
-    # 1) Strip + 2) Normalize
+    # Strip + normalize
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
 
-    # 3) Detect
-    kind = _detect_type(title, normalized)
+    # Images (remove from body, keep list)
+    body_wo_imgs, images = _harvest_images(normalized)
 
-    # 4) Images
-    text_wo_imgs, images = _harvest_images(normalized)
+    # Detect kind + severity badge
+    kind = _detect_type(title, body_wo_imgs)
+    badge = _severity_badge(title + " " + body_wo_imgs)
 
-    # 5) Rebuild
-    lines = _bullet_card(kind, title, text_wo_imgs)
+    # Build header + overlay
+    lines: List[str] = _header(kind, badge)
+    overlay = _persona_overlay(persona, persona_quip)
+    if overlay: lines += overlay + [""]
 
-    # 6) Persona overlay
-    lines = _apply_persona(lines, persona, persona_quip)
+    # Build bullet sections
+    facts, details = _categorize_bullets(title, body_wo_imgs)
+    if facts:
+        lines += ["📄 Facts", *facts, ""]
+    if details:
+        lines += ["📄 Details", *details, ""]
 
-    # 7) Format alignment check
-    text = _format_align_check("\n".join(lines))
-
-    # 8) Render
+    # Join + align
+    text = "\n".join(lines).strip()
+    text = _format_align_check(text)
     text = _dedup_sentences(text)
+
+    # Extras with images (hero restored)
     extras: Dict[str, Any] = {"client::display": {"contentType": "text/markdown"},
                               "jarvis::allImageUrls": images}
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
+
     return text, extras
