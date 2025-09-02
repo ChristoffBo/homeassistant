@@ -31,7 +31,8 @@
     srcChips: $$('.sources .chip'),
     toast: $('#toast'),
     counts: { all: $('#c-all'), unread: $('#c-unread'), arch: $('#c-arch'), smtp: $('#c-smtp'), gotify: $('#c-gotify'), ui: $('#c-ui') },
-    chime: $('#chime'), ding: $('#ding')
+    chime: $('#chime'), ding: $('#ding'),
+    railDelAll: $('#rail-delall') // NEW
   };
 
   function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; els.toast.appendChild(d); setTimeout(()=> d.remove(), 3500); }
@@ -79,7 +80,6 @@
   const byId = new Map();
   function indexItems(items){ byId.clear(); for(const it of items){ byId.set(String(it.id), it); } }
   let lastTop = null, lastCount = 0;
-
 
   function counts(items){
     const c = { all:items.length, unread:0, arch:0, smtp:0, gotify:0, ui:0 };
@@ -202,6 +202,14 @@
     const d=parseInt(v,10)||30; if(!confirm(`Purge messages older than ${d} days?`)) return; await API.purge(d); toast('Purge started'); load();
   });
   $('#btn-delall')?.addEventListener('click', async()=>{ if(!confirm('Delete ALL messages?')) return; await API.deleteAll(els.keepArch.checked); toast('All deleted'); load(); });
+
+  // NEW: Left-rail Delete All
+  els.railDelAll?.addEventListener('click', async()=>{
+    if(!confirm('Delete ALL messages?')) return;
+    await API.deleteAll(els.keepArch.checked);
+    toast('All deleted');
+    load();
+  });
 
   // Wake
   $('#wake-send')?.addEventListener('click', async()=>{
