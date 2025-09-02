@@ -1,22 +1,24 @@
 # /app/beautify.py
-# Jarvis Prime – Beautify Engine (Universal, image-preserving)
+# Jarvis Prime – Beautify Engine
+# Universal, image‑preserving, with dynamic Persona Overlays loaded from personality.py
+#
 # Stages:
-# 1) INGEST       : take raw title/body + optional hint (ignored for source)
-# 2) NORMALIZE    : collect image URLs (WITHOUT removing from body); strip noise in facts
-# 3) INTERPRET    : universal synthesis (header + facts + message)
-# 4) RENDER       : assemble Jarvis card sections (leave markdown images intact)
-# 5) DEDUPE LINES : remove duplicated lines (case/space-insensitive)
-# 6) DEDUPE SENTS : remove duplicated sentences
-# 7) HERO IMAGE   : attach a single big poster via extras.client::notification.bigImageUrl
+# 1) INGEST       : wrap raw inputs
+# 2) NORMALIZE    : collect image URLs (do NOT remove from body)
+# 3) INTERPRET    : universal synthesis (header + facts + body)
+# 4) RENDER       : assemble card (header, facts, sections)
+# 5) DEDUPE LINES : case/space-insensitive
+# 6) DEDUPE SENTS : punctuation-aware sentence dedupe
+# 7) HERO IMAGE   : choose one poster and attach as extras.client::notification.bigImageUrl
+# 8) PERSONA      : overlay loaded at runtime from personality.py (hot‑reload on each call)
 #
 # Notes:
-# - Unlike earlier versions, we DO NOT strip images from the body. All image markdown/URLs remain.
-# - We still choose one "hero" image for Gotify's bigImageUrl.
-# - Persona quips are added outside this file.
+# - This file no longer hardcodes personas. It defers to /app/personalilty.py (module name: personality).
+# - Keep persona definitions in that file (legacy ones still active; new edits picked up without restart).
 #
 from __future__ import annotations
-import json, re
-from typing import Tuple, Optional, List, Dict
+import json, re, random, importlib
+from typing import Tuple, Optional, List, Dict, Any
 
 try:
     import yaml  # optional, used only for sniffing
@@ -191,7 +193,7 @@ def _interpret_universal(title: str, body: str) -> List[str]:
     first = _first_nonempty_line(body)
     if first: facts.append(_kv("Info", first))
     lines = _lines(_header("Message"), *facts)
-    body_lines = [ln.rstrip() for ln in body.splitlines() if ln.strip() or ln.strip()=="" ]
+    body_lines = [ln.rstrip() for ln in body.splitlines()]
     if body_lines: lines += ["", _section("Message"), *body_lines]
     return lines
 
@@ -216,19 +218,85 @@ def _finalize(text: str, images: List[str]) -> Tuple[str, Optional[dict]]:
     return text, extras
 
 # ---------------------------
+# Stage 8: PERSONA OVERLAY (dynamic from personality.py)
+# ---------------------------
+def _load_persona_from_module(persona_name: Optional[str]) -> Dict[str, Any]:
+    """
+    Looks for a 'personality' module alongside this file and tries, in order:
+      1) personality.get_persona(name) -> dict
+      2) personality.PERSONAS[name_lower] -> dict
+      3) personality.PERSONA_STYLES[name_lower] -> dict
+      4) personality.STYLES[name_lower] -> dict
+    Expected dict keys: 'label' (str) and optional 'quips' (List[str]).
+    Returns {} for neutral/ops/unknown.
+    Hot‑reloads the module each call so edits take effect immediately.
+    """
+    if not persona_name:
+        return {}
+    key = (persona_name or "").strip().lower()
+    if key in ("neutral", "ops", "operations", "ops_mode", "none"):
+        return {}
+    try:
+        mod = importlib.import_module("personality")
+        mod = importlib.reload(mod)
+    except Exception:
+        return {}
+    # 1) get_persona function
+    try:
+        if hasattr(mod, "get_persona"):
+            data = mod.get_persona(key)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    # 2..4) dict lookups across common names
+    for attr in ("PERSONAS", "PERSONA_STYLES", "STYLES", "profiles", "overlays"):
+        data = getattr(mod, attr, None)
+        if isinstance(data, dict):
+            obj = data.get(key) or data.get(key.lower())
+            if isinstance(obj, dict):
+                return obj
+    return {}
+
+def _apply_persona_overlay(text: str, persona_name: Optional[str], add_quip: bool) -> str:
+    data = _load_persona_from_module(persona_name)
+    label = (data.get("label") or "").strip() if isinstance(data, dict) else ""
+    quips = data.get("quips") if isinstance(data, dict) else None
+
+    if not label:
+        return text  # neutral/ops/unknown -> no overlay
+
+    quip_line = ""
+    if add_quip and isinstance(quips, (list, tuple)) and quips:
+        try:
+            quip_line = f'“{random.choice(list(quips))}”'
+        except Exception:
+            quip_line = ""
+
+    lines = text.splitlines()
+    # Insert persona label after the header block if present
+    insert_at = 3 if len(lines) >= 3 and lines[0].startswith("—") and "Jarvis Prime" in lines[1] else 0
+    overlay_lines = [f"{label}"] + ([quip_line] if quip_line else [])
+    new_lines = lines[:insert_at] + overlay_lines + lines[insert_at:]
+    return "\n".join(new_lines)
+
+# ---------------------------
 # Public: full pipeline
 # ---------------------------
 def beautify_message(title: str, body: str, *, mood: str = "serious",
-                     source_hint: str | None = None, mode: str = "standard") -> Tuple[str, Optional[dict]]:
+                     source_hint: str | None = None, mode: str = "standard",
+                     persona: Optional[str] = None, persona_quip: bool = True) -> Tuple[str, Optional[dict]]:
     # Stage 1: INGEST
     ctx = _ingest(title, body, mood, source_hint)
 
-    # Early tiny payloads: wrap minimal (still keep as-is, no image strip)
+    # Early tiny payloads: wrap minimal (keep body intact; no image stripping)
     if len(ctx["body"]) < 2 and not IMG_URL_RE.search(ctx["title"] + " " + ctx["body"]):
-        return "\n".join(_dedup_lines(_lines(_header("Message"), ctx["body"]))).strip(), None
+        base = "\n".join(_dedup_lines(_lines(_header("Message"), ctx["body"]))).strip()
+        text = _apply_persona_overlay(base, persona, persona_quip)
+        return text, None
 
-    # Stage 2: UNIVERSAL KIND
-    kind = _kind_universal()
+    # Stage 2: UNIVERSAL KIND (kept for future)
+    _ = _kind_universal()
 
     # Stage 3: collect images without modifying body
     images = _collect_only(ctx["body"])
@@ -249,4 +317,9 @@ def beautify_message(title: str, body: str, *, mood: str = "serious",
         text = "\n".join(first_block).strip()
 
     # Stage 6 & 7: de-dup sentences + hero
-    return _finalize(text, images)
+    text, extras = _finalize(text, images)
+
+    # Stage 8: persona overlay (dynamic from personality.py)
+    text = _apply_persona_overlay(text, persona, persona_quip)
+
+    return text, extras
