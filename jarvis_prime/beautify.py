@@ -1,273 +1,169 @@
+
 # /app/beautify.py
 from __future__ import annotations
-import re, json, importlib, random
-from typing import List, Tuple, Optional, Dict, Any
+import re, json, importlib
+from typing import List, Tuple, Optional, Dict
 
-# -------- Regex library --------
+# ---------- Regexes ----------
 IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
 MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\((https?://[^\s)]+)\)', re.I)
-KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
+
+# Strict IPv4 (0-255 each octet)
+OCT = r'(?:25[0-5]|2[0-4]\d|1?\d{1,2})'
+IPV4_STRICT_RE = re.compile(rf'\b{OCT}\.{OCT}\.{OCT}\.{OCT}\b')
+
 PUNCT_SPLIT = re.compile(r'([.!?])')
 
-# timestamps and types
-TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
-DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
-TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
-
-# Strict IPv4: each octet 0-255
-IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b')
-HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
-VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
-
-EMOJI_RE = re.compile("["
-    "\U0001F300-\U0001F6FF"
-    "\U0001F900-\U0001F9FF"
-    "\U00002600-\U000026FF"
-    "\U00002700-\U000027BF"
-    "\U0001FA70-\U0001FAFF"
-    "\U0001F1E6-\U0001F1FF"
-    "]", flags=re.UNICODE)
-
-LIKELY_POSTER_HOSTS = (
-    "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
-)
-
-# -------- Helpers --------
-def _prefer_host_key(url: str) -> int:
-    try:
-        from urllib.parse import urlparse
-        host = (urlparse(url).netloc or "").lower()
-        return 0 if any(k in host for k in LIKELY_POSTER_HOSTS) else 1
-    except Exception:
-        return 1
-
-def _strip_noise(text: str) -> str:
-    if not text: return ""
-    s = EMOJI_RE.sub("", text)
-    NOISE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
-    kept = [ln for ln in s.splitlines() if not NOISE.match(ln)]
-    return "\n".join(kept)
-
-def _normalize(text: str) -> str:
-    s = (text or "").replace("\t","  ")
-    s = re.sub(r'[ \t]+$', "", s, flags=re.M)
-    s = re.sub(r'\n{3,}', '\n\n', s)
-    return s.strip()
+# ---------- Helpers ----------
+def _dedup_lines(lines: List[str]) -> List[str]:
+    seen = set(); out: List[str] = []
+    for ln in lines:
+        base = re.sub(r'\s+', ' ', (ln or '').strip()).lower()
+        if base and base not in seen:
+            seen.add(base); out.append(ln)
+        elif not base and (not out or out[-1] != ''):
+            out.append('')
+    while out and out[0] == '': out.pop(0)
+    while out and out[-1] == '': out.pop()
+    return out
 
 def _dedup_sentences(text: str) -> str:
-    parts: List[str] = []; buf = ""
+    parts: List[str] = []
+    buf = ''
     for piece in PUNCT_SPLIT.split(text):
         if PUNCT_SPLIT.fullmatch(piece):
-            if buf: parts.append(buf + piece); buf = ""
+            if buf:
+                parts.append(buf + piece); buf = ''
         else:
             buf += piece
     if buf.strip(): parts.append(buf)
-    seen=set(); out=[]
+    seen = set(); out = []
     for frag in parts:
-        n = re.sub(r'\s+',' ', frag.strip()).lower()
-        if n not in seen:
-            seen.add(n); out.append(frag)
-    return "".join(out)
+        norm = re.sub(r'\s+',' ',frag.strip()).lower()
+        if norm and norm not in seen:
+            seen.add(norm); out.append(frag)
+    return ''.join(out)
 
-def _harvest_images(text: str) -> tuple[str, List[str]]:
-    if not text: return "", []
+def _harvest_images(text: str) -> Tuple[str, List[str]]:
+    if not text: return '', []
     urls: List[str] = []
-    def _md(m):  urls.append(m.group(1)); return ""
-    def _bare(m): urls.append(m.group(1)); return ""
+    def _md(m):
+        urls.append(m.group(1)); return ''
     text = MD_IMG_RE.sub(_md, text)
+    def _bare(m):
+        urls.append(m.group(1)); return ''
     text = IMG_URL_RE.sub(_bare, text)
-    uniq=[]; seen=set()
-    for u in sorted(urls, key=_prefer_host_key):
-        if u not in seen: seen.add(u); uniq.append(u)
-    return text.strip(), uniq
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    # unique preserve order
+    seen=set(); uniq=[]
+    for u in urls:
+        if u not in seen:
+            seen.add(u); uniq.append(u)
+    return text, uniq
 
-def _find_ips(*texts: str) -> List[str]:
-    ips=[]; seen=set()
-    for t in texts:
-        if not t: continue
-        for m in IP_RE.finditer(t):
-            ip = m.group(0)
-            if ip not in seen: seen.add(ip); ips.append(ip)
-    return ips
+def _find_ipv4s(*chunks: str) -> List[str]:
+    buf = ' '.join([c for c in chunks if c])
+    return IPV4_STRICT_RE.findall(buf)
 
-def _repair_ipv4(val: str, *contexts: str) -> str:
-    cand = re.sub(r'\s*\.\s*', '.', (val or '').strip())
-    m = IP_RE.search(cand)
-    if m: return m.group(0)
-    parts = re.findall(r'\d{1,3}', cand)
-    if len(parts) == 4:
-        j = '.'.join(parts)
-        if IP_RE.fullmatch(j): return j
-    for ctx in contexts:
-        m = IP_RE.search(ctx or "")
-        if m: return m.group(0)
-    return val.strip()
+def _repair_ipv4(value: str, title: str, body: str) -> str:
+    # If already strict, return
+    if IPV4_STRICT_RE.fullmatch((value or '').strip()): return value.strip()
+    # Collapse stray spaces around dots
+    compact = re.sub(r'\s*\.\s*', '.', (value or '').strip())
+    if IPV4_STRICT_RE.fullmatch(compact): return compact
+    # If looks like 2-3 octets, try to find a strict IPv4 in title/body
+    found = _find_ipv4s(title, body)
+    if found: return found[0]
+    return value.strip()
 
-def _first_nonempty_line(s: str) -> str:
-    for ln in (s or "").splitlines():
-        t = ln.strip()
-        if t: return t
-    return ""
+def _section_title(label: str) -> str:
+    return f"\n📄 {label}\n"
 
-def _fmt_kv(label: str, value: str) -> str:
-    v = value.strip()
-    if re.search(r'\d', v):  # emphasize numeric values
-        v = f"`{v}`"
-    return f"- **{label.strip()}:** {v}"
+def _b_fact(label: str, value: str) -> str:
+    return f"• - **{label}:** {value}"
 
-# -------- Persona overlay --------
-def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
-    if not persona: return None
+def _persona_overlay(persona: Optional[str], allow_quip: bool=True) -> str:
+    if not persona: return ''
+    quip = ''
     try:
-        mod = importlib.import_module("personality")
+        mod = importlib.import_module('personality')
         mod = importlib.reload(mod)
-        quip = ""
-        if hasattr(mod, "quip"):
-            try: quip = str(mod.quip(persona) or "").strip()
-            except Exception: quip = ""
-        return f"💬 {persona} says: {'— ' + quip if quip else ''}".rstrip()
+        if allow_quip and hasattr(mod, 'quip'):
+            q = mod.quip(persona) or ''
+            quip = (' — ' + str(q).strip()) if str(q).strip() else ''
     except Exception:
-        return f"💬 {persona} says:"
+        pass
+    return f"💬 {persona} says:{quip}".rstrip()
 
-# -------- Minimal header (no dash bars) --------
-def _header(kind: str, badge: str = "") -> List[str]:
-    return [f"📟 Jarvis Prime — {kind} {badge}".rstrip()]
+def _header(kind: str) -> str:
+    return f"📟 Jarvis Prime — {kind}".rstrip()
 
-def _severity_badge(text: str) -> str:
-    low = text.lower()
-    if re.search(r'\b(error|failed|critical)\b', low): return "❌"
-    if re.search(r'\b(warn|warning)\b', low): return "⚠️"
-    if re.search(r'\b(success|ok|online|completed)\b', low): return "✅"
-    return ""
-
-def _looks_json(body: str) -> bool:
-    try: json.loads(body); return True
-    except Exception: return False
-
-def _detect_type(title: str, body: str) -> str:
-    tb = (title + " " + body).lower()
-    if "speedtest" in tb: return "SpeedTest"
-    if "apt" in tb or "dpkg" in tb: return "APT Update"
-    if "watchtower" in tb: return "Watchtower"
-    if "sonarr" in tb: return "Sonarr"
-    if "radarr" in tb: return "Radarr"
-    if _looks_json(body): return "JSON"
-    if "error" in tb or "warning" in tb or "failed" in tb: return "Log Event"
-    return "Message"
-
-def _harvest_timestamp(title: str, body: str) -> Optional[str]:
-    for src in (title or "", body or ""):
-        for rx in (TS_RE, DATE_ONLY_RE, TIME_ONLY_RE):
-            m = rx.search(src)
-            if m: return m.group(0).strip()
-    return None
-
-def _extract_keyvals(text: str) -> List[Tuple[str,str]]:
-    out: List[Tuple[str,str]] = []
-    for ln in (text or "").splitlines():
-        m = KV_RE.match(ln)
-        if m:
-            out.append((m.group(1).strip(), m.group(2).strip()))
-    return out
-
-def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
-    facts: List[str] = []
-    details: List[str] = []
-
-    ts = _harvest_timestamp(title, body)
-    if ts: facts.append(_fmt_kv("Time", ts))
-    if title.strip(): facts.append(_fmt_kv("Subject", title.strip()))
-
-    for k,v in _extract_keyvals(body):
-        key = k.strip().lower()
-        val = v
-        if key in ("ip","ip address","address"):
-            val = _repair_ipv4(v, title, body)
-            details.append(_fmt_kv("IP", val))
-        elif key in ("ping","download","upload","latency","jitter","loss","speed"):
-            facts.append(_fmt_kv(k, v))
-        elif key in ("status","result","state","ok","success","warning","error"):
-            facts.append(_fmt_kv(k, v))
-        else:
-            details.append(_fmt_kv(k, v))
-
-    # also infer IPs/hosts/versions
-    ip_list = _find_ips(title, body)
-    for ip in ip_list:
-        if f"`{ip}`" not in " ".join(details):  # avoid dup
-            details.append(_fmt_kv("IP", ip))
-    for host in HOST_RE.findall(body or ""):
-        if not IP_RE.match(host):
-            details.append(_fmt_kv("host", host))
-
-    for m in VER_RE.finditer(body or ""):
-        ver = m.group(0)
-        if any(ver in ip for ip in ip_list):  # skip if part of IP
-            continue
-        tail = (body or "")[m.end(): m.end()+2]
-        if tail.startswith('.') and len(tail) > 1 and tail[1].isdigit():
-            continue
-        details.append(_fmt_kv("version", ver))
-
-    if not facts:
-        first = _first_nonempty_line(body)
-        if first: facts.append(_fmt_kv("Info", first))
-
-    # De-dup
-    def _uniq(lines: List[str]) -> List[str]:
-        seen=set(); out=[]
-        for ln in lines:
-            key = re.sub(r'\s+',' ', ln.strip()).lower()
-            if key and key not in seen: seen.add(key); out.append(ln)
-        return out
-
-    return _uniq(facts), _uniq(details)
-
-def _format_align_check(text: str) -> str:
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    # ensure zero leading blanks
-    while lines and lines[0].strip() == "": lines.pop(0)
-    # ensure one blank between header/overlay and Facts
-    out=[]; blank_count=0
-    for ln in lines:
-        if ln.strip() == "":
-            if out and out[-1].strip() == "":
-                continue
-        out.append(ln)
-    return "\n".join(out).strip()
-
-# -------- Public API --------
-def beautify_message(title: str, body: str, *, mood: str = "neutral",
-                     source_hint: str | None = None, mode: str = "standard",
-                     persona: Optional[str] = None, persona_quip: bool = True) -> Tuple[str, Optional[dict]]:
-
-    stripped = _strip_noise(body)
-    normalized = _normalize(stripped)
-
-    # images: strip from text, preserve list
-    body_wo_imgs, images = _harvest_images(normalized)
-
-    kind = _detect_type(title, body_wo_imgs)
-    badge = _severity_badge(title + " " + body_wo_imgs)
-
+# ---------- Public API ----------
+def beautify_message(title: str, body: str, *, mood: str='serious',
+                     mode: str='standard', persona: Optional[str]=None,
+                     persona_quip: bool=True) -> Tuple[str, Optional[dict]]:
+    # 1) strip & harvest images
+    clean_body, images = _harvest_images(body or '')
+    # 2) header + persona one-liner
     lines: List[str] = []
-    lines += _header(kind, badge)
+    lines.append(_header('Message'))
+    pol = _persona_overlay(persona, allow_quip=persona_quip)
+    if pol: lines.append(pol)
 
-    # persona overlay line inside the card
-    pol = _persona_overlay_line(persona)
-    if pol: lines += [pol]
+    # 3) build Facts
+    facts: List[str] = []
+    subj = (title or '').strip()
+    if subj: facts.append(_b_fact('Subject', subj))
 
-    facts, details = _categorize_bullets(title, body_wo_imgs)
+    # time (best-effort simple extraction)
+    dt = re.search(r'(\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', body or '')
+    if not dt:
+        dt = re.search(r'\b(\d{2}[\-/]\d{2}[\-/]\d{2,4})\b', body or '')
+    if dt: facts.append(_b_fact('Time', dt.group(1)))
+
+    # 4) details: parse simple k:v lines
+    details: List[str] = []
+    for raw in (clean_body or '').splitlines():
+        s = raw.strip()
+        if not s: continue
+        m = re.match(r'\s*[-•\u2022]*\s*([A-Za-z0-9_ ./()]+?)\s*[:：]\s*(.+)$', s)
+        if m:
+            k, v = m.group(1).strip(), m.group(2).strip()
+            # normalize IP label
+            if k.lower() in ('ip','ip address','host ip','addr','address'):
+                v = _repair_ipv4(v, title or '', body or '')
+                k = 'IP'
+            details.append(_b_fact(k, v))
+        else:
+            # fall back: keep as bullet line
+            details.append(_b_fact('Info', s))
+
+    # If we saw no details but we do have numbers like speedtest, try to extract
+    if not details:
+        # speed items
+        p = re.search(r'ping\D+([\d.]+)\s*ms', body or '', re.I)
+        up = re.search(r'up(?:load)?\D+([\d.]+)\s*([A-Za-z/]+)', body or '', re.I)
+        dn = re.search(r'down(?:load)?\D+([\d.]+)\s*([A-Za-z/]+)', body or '', re.I)
+        if p: details.append(_b_fact('Ping', f"{p.group(1)} ms"))
+        if up: details.append(_b_fact('Upload', f"{up.group(1)} {up.group(2)}"))
+        if dn: details.append(_b_fact('Download', f"{dn.group(1)} {dn.group(2)}"))
+
+    # 5) Assemble
+    out: List[str] = []
+    out.extend(_dedup_lines(lines))
     if facts:
-        lines += ["", "📄 Facts", *facts]
+        out.append(_section_title('Facts').strip())
+        out.extend(facts)
     if details:
-        lines += ["", "📄 Details", *details]
+        out.append(_section_title('Details').strip())
+        out.extend(details)
 
-    text = "\n".join(lines).strip()
-    text = _format_align_check(text)
+    text = '\n'.join(out).strip()
     text = _dedup_sentences(text)
 
-    extras: Dict[str, Any] = {
+    # 6) extras (hero + full list)
+    extras = {
         "client::display": {"contentType": "text/markdown"},
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images
