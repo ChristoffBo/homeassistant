@@ -152,6 +152,32 @@ def _persona_line(quip_text: str) -> str:
     # Keep it minimal so it aligns nicely with Gotify cards
     return f"💬 {shown} says: {quip_text}" if quip_text else f"💬 {shown} says:"
 
+def _ensure_markdown_and_bigimage(extras_in: Optional[dict]) -> dict:
+    """
+    Ensure extras contain markdown display and preserve bigImageUrl if present.
+    """
+    ex = dict(extras_in or {})
+    # client::display
+    disp = ex.get("client::display") or {}
+    if not isinstance(disp, dict):
+        disp = {}
+    if str(disp.get("contentType") or "").lower() != "text/markdown":
+        disp["contentType"] = "text/markdown"
+    ex["client::display"] = disp
+    # if beautify left image list, forward first as bigImageUrl (non-destructive)
+    imgs = []
+    try:
+        imgs = ex.get("jarvis::allImageUrls") or []
+    except Exception:
+        imgs = []
+    notif = ex.get("client::notification") or {}
+    if not isinstance(notif, dict):
+        notif = {}
+    if imgs and not notif.get("bigImageUrl"):
+        notif["bigImageUrl"] = imgs[0]
+    ex["client::notification"] = notif
+    return ex
+
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
@@ -176,13 +202,22 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         try: priority = _personality.apply_priority(priority, CHAT_MOOD)
         except Exception: pass
 
+    # Normalize/ensure extras for markdown + big image preview
+    extras = _ensure_markdown_and_bigimage(extras)
+
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
     payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
     if extras: payload["extras"] = extras
     try:
+        # JSON post is REQUIRED for extras to be honored by Gotify
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
         status = r.status_code
+        try:
+            img_dbg = extras.get("client::notification", {}).get("bigImageUrl") if isinstance(extras, dict) else None
+            print(f"[bot] sent -> {status} title='{title}' markdown=on bigImageUrl={'yes' if img_dbg else 'no'}")
+        except Exception:
+            pass
     except Exception as e:
         status = 0
         print(f"[bot] send_message error: {e}")
@@ -291,6 +326,25 @@ def _llm_then_beautify(title: str, message: str):
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
         final = f"{final.rstrip()}\n\n{foot}"
+
+    # Enrich extras with engine flags for UI/debug
+    if not isinstance(extras, dict):
+        extras = {}
+    try:
+        engines = {"llm": bool(used_llm), "beautify": bool(used_beautify)}
+        ex2 = extras.get("jarvis::engines") or {}
+        if not isinstance(ex2, dict):
+            ex2 = {}
+        ex2.update(engines)
+        extras["jarvis::engines"] = ex2
+    except Exception:
+        pass
+
+    try:
+        print(f"[bot] pipeline -> LLM={'on' if used_llm else 'off'} | Beautify={'on' if used_beautify else 'off'}")
+    except Exception:
+        pass
+
     return final, extras, used_llm, used_beautify
 
 # ============================
@@ -472,6 +526,7 @@ async def listen():
                 data = json.loads(raw); msg_id = data.get("id")
                 title = data.get("title") or ""
                 message = data.get("message") or ""
+                print(f"[bot] <- gotify title='{title}' id={msg_id}")
 
                 # wake-word first so commands work even if posted via same app
                 ncmd = normalize_cmd(extract_command_from(title, message))
@@ -586,3 +641,4 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
+```0
