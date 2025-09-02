@@ -82,18 +82,25 @@
 
 <main class="grid">
   <aside class="rail" data-area="rail" id="rail">
-    <div class="tabs">
-      <button class="tab active" data-tab="all">All</button>
-      <button class="tab" data-tab="unread">Unread</button>
-      <button class="tab" data-tab="archived">Archived</button>
-      <button class="tab" data-tab="errors">Errors</button>
+    <div>
+      <div class="tabs">
+        <button class="tab active" data-tab="all">All</button>
+        <button class="tab" data-tab="unread">Unread</button>
+        <button class="tab" data-tab="archived">Archived</button>
+        <button class="tab" data-tab="errors">Errors</button>
+      </div>
+      <div class="sources">
+        <div class="label">Sources</div>
+        <button class="chip" data-src="">Any</button>
+        <button class="chip" data-src="smtp">SMTP</button>
+        <button class="chip" data-src="gotify">Gotify</button>
+        <button class="chip" data-src="ui">UI</button>
+      </div>
     </div>
-    <div class="sources">
-      <div class="label">Sources</div>
-      <button class="chip" data-src="">Any</button>
-      <button class="chip" data-src="smtp">SMTP</button>
-      <button class="chip" data-src="gotify">Gotify</button>
-      <button class="chip" data-src="ui">UI</button>
+
+    <!-- Bottom rail action -->
+    <div class="rail-bottom">
+      <button id="rail-delall" class="btn danger">🗑 Delete All</button>
     </div>
   </aside>
 
