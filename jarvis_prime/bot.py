@@ -134,46 +134,55 @@ atexit.register(stop_sidecars)
 # ============================
 # Gotify helpers
 # ============================
-def _persona_line(persona: str) -> str:
-    """Header line with persona display label + a random quip from personality.py."""
+def _persona_line(quip_text: str) -> str:
+    # Single-line persona 'speaks' header placed at TOP of message body.
+    # Use friendly label (personality.label) and live persona name.
+    who_raw = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
     try:
-        # Friendly label (e.g., 'Jarvis', 'Rager') + quip from persona's bank
-        shown = _personality.label(persona) if hasattr(_personality, "label") else (persona or "neutral")
-        quip_text = _personality.quip(persona) if hasattr(_personality, "quip") else ""
-        quip_text = (quip_text or "").strip().replace("\n", " ")
-        if len(quip_text) > 140:
-            quip_text = quip_text[:137] + "..."
-        return f"💬 {shown} says: {quip_text}" if quip_text else f"💬 {shown} says:"
-    except Exception as e:
-        print(f"[bot] persona_line error: {e}")
-        return f"💬 {persona or 'neutral'} says:"
+        shown = _personality.label(who_raw) if _personality and hasattr(_personality, "label") else who_raw
+    except Exception:
+        shown = who_raw
+    qt = (quip_text or "").strip().replace("\n", " ")
+    if len(qt) > 140:
+        qt = qt[:137] + "..."
+    # Keep it minimal so it aligns nicely with Gotify cards
+    return f"💬 {shown} says: {qt}" if qt else f"💬 {shown} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
-    # ---- LIVE REFRESH: persona for each message (rotation without restart)
+    # ===== LIVE REFRESH of persona each send (rotation/override without restart)
     try:
         if _pstate and hasattr(_pstate, "get_active_persona"):
             persona_now, tod_now = _pstate.get_active_persona()
             if persona_now:
-                # update globals so all downstream callers see it
                 globals()["ACTIVE_PERSONA"] = persona_now
                 globals()["PERSONA_TOD"] = tod_now
                 globals()["CHAT_MOOD"] = persona_now
     except Exception:
         pass
-    # ---------------------------------------------
+    # ========================================================================
 
     # Decorate body, but keep the original title so it doesn't become a banner
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
-        title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
+        try:
+            title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
+        except Exception:
+            pass
         title = orig_title
     elif decorate and _personality and hasattr(_personality, "decorate"):
-        title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
+        try:
+            title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
+        except Exception:
+            pass
         title = orig_title
 
-    # Persona speaking line at the top (uses label + random quip)
-    header = _persona_line(ACTIVE_PERSONA)
+    # Persona speaking line at the top
+    try:
+        quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
+    except Exception:
+        quip_text = ""
+    header = _persona_line(quip_text)
     message = (header + ("\n" + (message or ""))) if header else (message or "")
 
     # Priority tweak via personality if present
@@ -259,25 +268,21 @@ def _llm_then_beautify(title: str, message: str):
     used_llm = False; used_beautify = False; final = message or ""; extras = None
     if merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
-            final2 = _llm.rewrite(
-                text=final,
-                mood=CHAT_MOOD,
-                timeout=int(merged.get("llm_timeout_seconds",12)),
-                cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
-                models_priority=merged.get("llm_models_priority", []),
-                base_url=merged.get("ollama_base_url",""),
-                model_url=merged.get("llm_model_url",""),
-                model_path=merged.get("llm_model_path",""),
-                model_sha256=merged.get("llm_model_sha256",""),
-                allow_profanity=bool(merged.get("personality_allow_profanity", False))
-            )
+            final2 = _llm.rewrite(text=final, mood=CHAT_MOOD, timeout=int(merged.get("llm_timeout_seconds",12)),
+                                  cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
+                                  models_priority=merged.get("llm_models_priority", []),
+                                  base_url=merged.get("ollama_base_url",""),
+                                  model_url=merged.get("llm_model_url",""),
+                                  model_path=merged.get("llm_model_path",""),
+                                  model_sha256=merged.get("llm_model_sha256",""),
+                                  allow_profanity=bool(merged.get("personality_allow_profanity", False)))
             if final2: final = final2; used_llm = True
         except Exception as e:
             print(f"[bot] LLM rewrite failed: {e}")
 
     if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            # pass persona through so overlay/quip matches the header
+            # Pass persona through so overlay/quip matches the header
             final, extras = _beautify.beautify_message(
                 title, final,
                 mood=CHAT_MOOD,
@@ -320,7 +325,7 @@ def extract_command_from(title: str, message: str) -> str:
     return ""
 
 def post_startup_card():
-    # show friendly label for persona
+    # Show friendly label for persona instead of raw token
     who_label = None
     try:
         if _personality and hasattr(_personality, "label"):
@@ -490,6 +495,7 @@ async def listen():
             except Exception as e:
                 print(f"[bot] listen loop err: {e}")
 
+
 # ============================
 # Daily scheduler (digest)
 # ============================
@@ -516,7 +522,6 @@ async def _digest_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
-
 # ============================
 # Main
 # ============================
@@ -528,6 +533,8 @@ def main():
     except Exception:
         pass
     asyncio.run(_run_forever())
+
+
 
 # ============================
 # Internal wake HTTP server
@@ -587,4 +594,3 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
-```0
