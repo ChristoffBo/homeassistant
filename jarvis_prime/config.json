@@ -159,7 +159,11 @@
     "push_smtp_pass": "",
     "push_smtp_to": "",
     "retention_days": 30,
-    "auto_purge_policy": "off"
+    "auto_purge_policy": "off",
+
+    "llm_rewrite_enabled": false,
+    "llm_persona_riffs_enabled": true,
+    "llm_persona_lines_max": 3
   },
   "schema": {
     "bot_name": "str",
@@ -299,7 +303,11 @@
     "push_smtp_pass": "str",
     "push_smtp_to": "str",
     "retention_days": "int(1,)",
-    "auto_purge_policy": "str"
+    "auto_purge_policy": "str",
+
+    "llm_rewrite_enabled": "bool",
+    "llm_persona_riffs_enabled": "bool",
+    "llm_persona_lines_max": "int(1,10)"
   },
   "ingress": true,
   "ingress_port": 2581,
@@ -307,3 +315,4 @@
   "auth_api": false,
   "hassio_api": false
 }
+```0
