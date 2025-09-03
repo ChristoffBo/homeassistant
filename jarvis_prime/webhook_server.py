@@ -7,6 +7,7 @@ import json
 import asyncio
 import traceback
 from typing import Any, Dict, Optional, Tuple
+from datetime import datetime  # ADDITIVE: for riff facts timestamp
 
 # Web server
 try:
@@ -184,11 +185,37 @@ async def handle_webhook(request: web.Request) -> web.Response:
 
     title, message, priority, extras = _extract_payload(req_json, raw_text, request.headers)
 
+    # ---------- ADDITIVE: attach riff hint + facts so Beautify can riff ----------
+    try:
+        client_ip = request.headers.get("X-Forwarded-For") or request.remote or ""
+    except Exception:
+        client_ip = ""
+    facts = {
+        "time": datetime.now().isoformat(timespec="seconds"),
+        "subject": title,
+        "provider": "Webhook",
+        "path": request.rel_url.path,
+        "method": request.method,
+        "ip": client_ip,
+        "user_agent": request.headers.get("User-Agent", "")
+    }
+    riff_pack = {"riff_hint": True, "source": "webhook", "facts": facts}
+    if isinstance(extras, dict):
+        # keep caller extras but ensure riff fields are present
+        merged_extras = dict(extras)
+        # don't let caller override the hint/facts accidentally
+        merged_extras.setdefault("riff_hint", True)
+        merged_extras.setdefault("source", "webhook")
+        merged_extras.setdefault("facts", facts)
+    else:
+        merged_extras = riff_pack
+    # ---------------------------------------------------------------------------
+
     # Minor safety: avoid accidentally tagging as our own repost
     # (bot.py skips messages whose title starts with "🧠 Jarvis Prime: ...")
     # We deliberately do NOT add that prefix here.
 
-    ok, status, info = _post_gotify(title, message, priority, extras)
+    ok, status, info = _post_gotify(title, message, priority, merged_extras)
     result = {"ok": bool(ok), "status": status, "info": info}
     return web.json_response(result, status=(200 if ok else 502))
 
