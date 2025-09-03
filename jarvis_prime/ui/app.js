@@ -36,12 +36,22 @@
     retention: $('#retention'), saveRetention: $('#btn-save-retention'),
     purgeDays: $('#purge-days'), purge: $('#btn-purge'),
     // Toast
-    toast: $('#toast')
+    toast: $('#toast'),
+    // Mobile back
+    back: $('#btn-back')
   };
 
-  function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; els.toast.appendChild(d); setTimeout(()=> d.remove(), 3200); }
+  function toast(msg){
+    const d=document.createElement('div');
+    d.className='toast'; d.textContent=msg;
+    els.toast.appendChild(d);
+    setTimeout(()=> d.remove(), 3200);
+  }
   const esc = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-  const fmt = (ts) => { try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); } catch { return '' } };
+  const fmt = (ts) => {
+    try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); }
+    catch { return '' }
+  };
 
   async function jfetch(url, opts){
     const isTemp = /\/api\/messages\/ui-\d+$/.test(String(url));
@@ -49,7 +59,8 @@
       const r = await fetch(url, opts);
       if(!r.ok){
         const t = await r.text().catch(()=> '');
-        if(!(isTemp && r.status===404)) throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t); else return Promise.reject(new Error('temp-404'));
+        if(!(isTemp && r.status===404)) throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t);
+        else return Promise.reject(new Error('temp-404'));
       }
       const ct = r.headers.get('content-type')||'';
       return ct.includes('application/json') ? r.json() : r.text();
@@ -145,16 +156,30 @@
     $('#a-arch').addEventListener('click', async()=>{ await API.setArchived(it.id,!it.saved); toast(it.saved?'Unarchived':'Archived'); load(it.id); });
   }
 
+  // --- Mobile flow: list-first, then detail ---
   const isMobile = () => window.matchMedia('(max-width:1100px)').matches;
-  $('#btn-back')?.addEventListener('click', ()=> { document.body.classList.remove('mobile-detail'); });
+  els.back?.addEventListener('click', ()=> { document.body.classList.remove('mobile-detail'); });
+
+  // Always start in LIST on mobile (prevents landing in detail due to auto-select)
+  window.addEventListener('pageshow', () => {
+    if (isMobile()) document.body.classList.remove('mobile-detail');
+  });
 
   async function select(id){
     state.active = id;
     if(String(id).startsWith('ui-')){
       const temp = state.items.find(x=> String(x.id)===String(id));
-      if(temp){ renderDetail(temp); if(isMobile()) document.body.classList.add('mobile-detail'); return; }
+      if(temp){
+        renderDetail(temp);
+        if(isMobile()) document.body.classList.add('mobile-detail');
+        return;
+      }
     }
-    try{ const it = await API.get(id); renderDetail(it); if(isMobile()) document.body.classList.add('mobile-detail'); }catch{}
+    try{
+      const it = await API.get(id);
+      renderDetail(it);
+      if(isMobile()) document.body.classList.add('mobile-detail');
+    }catch{}
   }
 
   async function load(selectId=null){
@@ -162,8 +187,11 @@
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
     state.items = items;
     renderFeed(items);
-    if(selectId && items.find(i=>String(i.id)===String(selectId))) select(selectId);
-    else if(!state.active && items[0]) select(items[0].id);
+    // On desktop, auto-select first message; on mobile stay in list until user taps
+    if(!isMobile()){
+      if(selectId && items.find(i=>String(i.id)===String(selectId))) select(selectId);
+      else if(!state.active && items[0]) select(items[0].id);
+    }
   }
 
   function startLive(){
@@ -281,12 +309,26 @@
   document.addEventListener('keydown', (e)=>{
     if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
     if(e.key==='r'){ load(state.active); }
-    if(e.key==='Delete' && state.active){ if(confirm('Delete this message?')) API.del(state.active).then(()=>{ toast('Deleted'); load(); }); }
-    if(e.key==='a' && state.active){ API.setArchived(state.active, true).then(()=>{ toast('Archived'); load(state.active); }); }
+    if(e.key==='Delete' && state.active){
+      if(confirm('Delete this message?'))
+        API.del(state.active).then(()=>{ toast('Deleted'); load(); });
+    }
+    if(e.key==='a' && state.active){
+      API.setArchived(state.active, true).then(()=>{ toast('Archived'); load(state.active); });
+    }
   });
 
   // Boot
-  (async()=>{ try{ const s=await API.getSettings(); if(s && s.retention_days){ els.retention.value=String(s.retention_days); els.purgeDays.value=els.retention.value; } }catch{} })()
-  .then(()=> load()).catch(()=>{});
+  (async()=>{
+    try{
+      const s=await API.getSettings();
+      if(s && s.retention_days){
+        els.retention.value=String(s.retention_days);
+        els.purgeDays.value=els.retention.value;
+      }
+    }catch{}
+  })()
+  .then(()=> load())
+  .catch(()=>{});
   startLive();
 })();
