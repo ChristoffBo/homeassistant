@@ -21,7 +21,8 @@
     "2525/tcp": 2525,
     "2580/tcp": 2580,
     "2581/tcp": 2581,
-    "2590/tcp": 2590
+    "2590/tcp": 2590,
+    "2591/tcp": 2591
   },
   "options": {
     "bot_name": "Jarvis Prime",
@@ -80,6 +81,7 @@
     "intake_apprise_token": "change-me-very-long",
     "intake_apprise_accept_any_key": true,
     "intake_apprise_allowed_keys": "",
+    "intake_apprise_port": 2591,
 
     "ingest_apprise_enabled": true,
 
@@ -215,6 +217,7 @@
     "intake_apprise_token": "str",
     "intake_apprise_accept_any_key": "bool",
     "intake_apprise_allowed_keys": "str",
+    "intake_apprise_port": "int(1,)",
 
     "ingest_apprise_enabled": "bool",
 
