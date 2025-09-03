@@ -88,4 +88,34 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .fab{ position:fixed; right:20px; bottom:20px; width:56px; height:56px; border-radius:999px; background:linear-gradient(180deg,#1c87d6,#1564b1); color:#fff; font-size:28px; border:none; cursor:pointer; box-shadow:0 10px 30px rgba(0,0,0,.4); z-index:120 }
 .compose{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; background:rgba(0,0,0,.35); z-index:120 }
 .compose.open{ display:flex }
-.sheet{ width:min(640px, 92vw); background:var(--panel); border
+.sheet{ width:min(640px, 92vw); background:var(--panel); border:1px solid var(--edge); border-radius:16px 16px 0 0; box-shadow:var(--shadow); }
+.sheet-head{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--edge) }
+.sheet-title{ font-weight:700 }
+.sheet-body{ padding:12px 14px }
+.sheet-actions{ padding:12px 14px; display:flex; align-items:center; gap:10px; border-top:1px solid var(--edge) }
+
+/* Settings Drawer (opens from right when gear clicked) */
+.drawer{ position:fixed; inset:0; display:none; z-index:200; }
+.drawer.open{ display:block; }
+.drawer::before{ content:""; position:absolute; inset:0; background:rgba(0,0,0,.45); }
+.drawer-head{ position:absolute; top:0; right:0; left:auto; width:min(860px,96vw); background:var(--panel); border-left:1px solid var(--edge); border-bottom:1px solid var(--edge); padding:14px; display:flex; align-items:center; gap:12px; justify-content:space-between; }
+.drawer-title{ font-weight:700; }
+.drawer-tabs{ display:flex; gap:8px; flex-wrap:wrap }
+.dtab{ padding:8px 10px; border-radius:8px; border:1px solid var(--edge); background:var(--panel-2); color:var(--text); cursor:pointer }
+.dtab.active{ outline:2px solid var(--accent) }
+.drawer-body{ position:absolute; top:56px; right:0; bottom:0; width:min(860px,96vw); overflow:auto; background:var(--panel); border-left:1px solid var(--edge); padding:16px; }
+.pane{ display:none }
+.pane.show{ display:block }
+.grid2{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
+.drawer-actions{ margin-top:10px; display:flex; gap:8px }
+
+/* Toasts */
+#toast{ position:fixed; right:16px; bottom:90px; display:grid; gap:8px; z-index:250 }
+.toast{ background:var(--panel); border:1px solid var(--edge); padding:10px 12px; border-radius:10px; box-shadow:var(--shadow) }
+
+/* Responsive */
+@media (max-width:1100px){
+  .layout{ grid-template-columns: 1fr; grid-template-areas: "feed"; }
+  .rail{ display:none }
+  .detail{ display:none }
+}
