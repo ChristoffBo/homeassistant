@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 import json, time
-from typing import Callable, Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional, Tuple
 from flask import Blueprint, request, jsonify
 
 apprise_bp = Blueprint("apprise", __name__)
@@ -46,18 +46,88 @@ def _as_list(v: Any) -> List[str]:
         return [p for p in parts if p]
     return [str(v)]
 
-def _normalize(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _coerce_payload() -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Accept JSON, form-encoded, or raw text.
+    Returns (payload_dict, extras_pass_through)
+    """
+    ctype = (request.headers.get("Content-Type") or "").lower()
+    extras: Dict[str, Any] = {
+        "headers": {k: v for k, v in request.headers.items()},
+        "query": {k: v for k, v in request.args.items()},
+    }
+
+    # Try JSON (strict)
+    if "application/json" in ctype or "json" in ctype:
+        try:
+            obj = request.get_json(force=True, silent=False)
+            if isinstance(obj, dict):
+                return obj, extras
+        except Exception as _e:
+            # fall through to other modes
+            pass
+
+    # Try form
+    if "application/x-www-form-urlencoded" in ctype or "multipart/form-data" in ctype:
+        form = request.form or {}
+        # map common keys found in Apprise-style posts
+        obj = {
+            "title": form.get("title") or form.get("subject") or "",
+            "body": form.get("body") or form.get("message") or "",
+            "type": form.get("type") or form.get("priority") or "",
+            "tags": form.get("tags") or form.get("tag") or "",
+        }
+        # keep all form fields in extras
+        extras["form"] = {k: v for k, v in form.items()}
+        return obj, extras
+
+    # Raw text fallback
+    try:
+        raw = request.get_data(cache=False, as_text=True) or ""
+        raw = raw.strip()
+        if raw:
+            # Single-string payload: treat as body-only
+            obj = {"body": raw}
+            extras["raw"] = True
+            return obj, extras
+    except Exception:
+        pass
+
+    # Default empty
+    return {}, extras
+
+def _normalize(payload: Dict[str, Any], extras_in: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert Apprise-style JSON into Jarvis's internal message shape.
     Apprise API commonly uses fields like 'title', 'body', 'type', 'tag(s)'.
     """
     title = payload.get("title") or payload.get("subject") or ""
     body  = payload.get("body")  or payload.get("message") or ""
-    mtype = (payload.get("type") or payload.get("priority") or "info").lower()
+    mtype = (payload.get("type") or payload.get("priority") or "info")
+    try:
+        mtype = str(mtype).lower()
+    except Exception:
+        mtype = "info"
     tags  = _as_list(payload.get("tags") or payload.get("tag"))
 
-    # Attach any extras (safe copy)
-    extras = {k: v for k, v in payload.items() if k not in ("title", "subject", "body", "message", "type", "priority", "tags", "tag")}
+    # Pass-through unknown fields into extras (non-destructive)
+    passthrough = {k: v for k, v in payload.items() if k not in ("title", "subject", "body", "message", "type", "priority", "tags", "tag")}
+    extras = {"payload": passthrough}
+    extras.update(extras_in or {})
+
+    # Allow caller to hint riff behavior (?riff=1 or header X-Jarvis-Riff: 1)
+    riff_param = request.args.get("riff", "").strip()
+    riff_hdr = (request.headers.get("X-Jarvis-Riff", "") or "").strip()
+    riff_hint = None
+    if riff_param != "":
+        riff_hint = _norm_bool(riff_param)
+    elif riff_hdr != "":
+        riff_hint = _norm_bool(riff_hdr)
+    # Default to True (safe: emitter may ignore if LLM/Beautify disabled)
+    if riff_hint is None:
+        riff_hint = True
+    extras["riff_hint"] = bool(riff_hint)
+
     return {
         "source": "apprise",
         "title": str(title),
@@ -108,15 +178,12 @@ def _handle_post_common(path_key: Optional[str] = None):
     if not _authorized(token, cfg_key):
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-    # --- payload ---
-    try:
-        payload = request.get_json(force=True, silent=False)  # raise if invalid JSON
-        if not isinstance(payload, dict):
-            raise ValueError("JSON root must be an object")
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"bad json: {e}"}), 400
+    # --- payload (JSON / form / raw) ---
+    payload, extras_in = _coerce_payload()
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "bad json: root must be object or form/raw text"}), 400
 
-    msg = _normalize(payload)
+    msg = _normalize(payload, extras_in)
 
     # --- emit into Jarvis pipeline (Beautify + Personas + fanout) ---
     try:
