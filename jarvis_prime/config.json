@@ -11,7 +11,6 @@
   "stage": "stable",
   "panel_icon": "mdi:robot",
   "map": ["share:rw"],
-
   "ports": {
     "2525/tcp": 2525,
     "2580/tcp": 2580,
@@ -19,7 +18,6 @@
     "2590/tcp": 2590,
     "2591/tcp": 2591
   },
-
   "options": {
     "bot_name": "Jarvis Prime",
     "bot_icon": "🧠",
@@ -168,7 +166,153 @@
     "tinyllama_enabled": false,
     "llama32_3b_enabled": false
   },
+  "schema": {
+    "bot_name": "str",
+    "bot_icon": "str",
+    "jarvis_app_name": "str",
+    "beautify_enabled": "bool",
+    "silent_repost": "bool",
 
+    "smtp_enabled": "bool",
+    "smtp_bind": "str",
+    "smtp_port": "int(1,)",
+    "smtp_max_bytes": "int(1,)",
+    "smtp_dummy_rcpt": "str",
+    "smtp_accept_any_auth": "bool",
+    "smtp_rewrite_title_prefix": "str",
+    "smtp_allow_html": "bool",
+    "smtp_priority_default": "int",
+    "smtp_priority_map": "str",
+
+    "proxy_enabled": "bool",
+    "proxy_bind": "str",
+    "proxy_port": "int(1,)",
+    "proxy_gotify_url": "str",
+    "proxy_ntfy_url": "str",
+
+    "webhook_enabled": "bool",
+    "webhook_bind": "str",
+    "webhook_port": "int(1,)",
+    "webhook_token": "str",
+
+    "intake_apprise_enabled": "bool",
+    "intake_apprise_token": "str",
+    "intake_apprise_accept_any_key": "bool",
+    "intake_apprise_allowed_keys": "str",
+    "intake_apprise_port": "int(1,)",
+
+    "ingest_apprise_enabled": "bool",
+    "ingest_gotify_enabled": "bool",
+    "ingest_ntfy_enabled": "bool",
+    "ingest_smtp_enabled": "bool",
+
+    "gotify_url": "str",
+    "gotify_client_token": "str",
+    "gotify_app_token": "str",
+
+    "ntfy_url": "str",
+    "ntfy_topic": "str",
+    "ntfy_user": "str",
+    "ntfy_pass": "str",
+    "ntfy_token": "str",
+
+    "push_gotify_enabled": "bool",
+    "push_ntfy_enabled": "bool",
+    "push_smtp_enabled": "bool",
+    "push_smtp_host": "str",
+    "push_smtp_port": "int(1,)",
+    "push_smtp_user": "str",
+    "push_smtp_pass": "str",
+    "push_smtp_to": "str",
+
+    "radarr_enabled": "bool",
+    "radarr_url": "str",
+    "radarr_api_key": "str",
+    "sonarr_enabled": "bool",
+    "sonarr_url": "str",
+    "sonarr_api_key": "str",
+
+    "technitium_enabled": "bool",
+    "technitium_url": "str",
+    "technitium_api_key": "str",
+    "technitium_user": "str",
+    "technitium_pass": "str",
+
+    "uptimekuma_enabled": "bool",
+    "uptimekuma_url": "str",
+    "uptimekuma_api_key": "str",
+    "uptimekuma_status_slug": "str",
+
+    "weather_enabled": "bool",
+    "weather_lat": "float",
+    "weather_lon": "float",
+    "weather_city": "str",
+    "weather_time": "str",
+
+    "llm_enabled": "bool",
+    "llm_cleanup_on_disable": "bool",
+    "llm_models_dir": "str",
+    "llm_timeout_seconds": "int(1,)",
+    "llm_max_cpu_percent": "int(1,)",
+
+    "llm_phi3_enabled": "bool",
+    "llm_phi3_url": "str",
+    "llm_phi3_path": "str",
+
+    "llm_tinyllama_enabled": "bool",
+    "llm_tinyllama_url": "str",
+    "llm_tinyllama_path": "str",
+
+    "llm_qwen05_enabled": "bool",
+    "llm_qwen05_url": "str",
+    "llm_qwen05_path": "str",
+
+    "llm_model_url": "str",
+    "llm_model_path": "str",
+    "llm_model_sha256": "str",
+    "llm_ollama_base_url": "str",
+    "llm_model_preference": "str",
+    "llm_choice": "str",
+    "llm_models_priority": "str",
+    "llm_ctx_tokens": "int(1,)",
+    "llm_gen_tokens": "int(1,)",
+    "llm_max_lines": "int(1,)",
+    "llm_system_prompt": "str",
+
+    "personality_enabled": "bool",
+    "personality_persistent": "bool",
+    "personality_family_friendly": "bool",
+    "personality_min_interval_minutes": "int(1,)",
+    "personality_interval_jitter_pct": "int(0,100)",
+    "personality_daily_max": "int(1,)",
+    "personality_quiet_hours": "str",
+    "active_persona": "str",
+    "greeting_enabled": "bool",
+    "greeting_times": "str",
+    "chat_enabled": "bool",
+
+    "llm_rewrite_enabled": "bool",
+    "llm_persona_riffs_enabled": "bool",
+    "llm_persona_lines_max": "int(1,)",
+
+    "ai_checkins_enabled": "bool",
+    "cache_refresh_minutes": "int(1,)",
+    "heartbeat_enabled": "bool",
+    "heartbeat_interval_minutes": "int(1,)",
+    "heartbeat_start": "str",
+    "heartbeat_end": "str",
+
+    "digest_enabled": "bool",
+    "digest_time": "str",
+
+    "retention_days": "int(1,)",
+    "retention_hours": "int(1,)",
+    "auto_purge_policy": "str",
+
+    "custom_aliases": "str",
+    "tinyllama_enabled": "bool",
+    "llama32_3b_enabled": "bool"
+  },
   "ingress": true,
   "ingress_port": 2581,
   "host_network": true,
