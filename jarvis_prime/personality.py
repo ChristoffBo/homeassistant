@@ -1,11 +1,15 @@
 # /app/personality.py
 # Persona quip engine for Jarvis Prime
-# API: quip(persona_name: str, *, with_emoji: bool = True) -> str
-# - Accepts many aliases (e.g., "the dude", "sheldon", "pesci", etc.)
-# - Returns a one-liner in that persona’s voice (randomized)
-# - Rager is allowed explicit profanity (kept non-targeted)
+# API:
+#   - quip(persona_name: str, *, with_emoji: bool = True) -> str     # canned one-liner (TOP)
+#   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]  # LLM riffs (BOTTOM)
+#
+# Notes:
+# - Keeps your big, talky QUIPS sets intact.
+# - Adds optional LLM riffs that NEVER summarize/alter facts; they only add flavor.
 
-import random
+import random, os, importlib, textwrap
+from typing import List
 
 # ---- Canonical personas (8 total, locked) ----
 PERSONAS = [
@@ -421,7 +425,7 @@ QUIPS = {
     ],
 }
 
-# ---- Public API ----
+# ---- Public API: canned quip (TOP) ----
 def quip(persona_name: str, *, with_emoji: bool = True) -> str:
     """
     Return a short, randomized one-liner in the requested persona's voice.
@@ -437,3 +441,85 @@ def quip(persona_name: str, *, with_emoji: bool = True) -> str:
     bank = QUIPS.get(key, QUIPS["ops"])
     line = random.choice(bank) if bank else ""
     return f"{line}{_maybe_emoji(key, with_emoji)}"
+
+# ---- Helper: canonicalize name ----
+def _canon(name: str) -> str:
+    n = (name or "").strip().lower()
+    key = ALIASES.get(n, n)
+    return key if key in QUIPS else "ops"
+
+# ---- Public API: LLM riffs (BOTTOM) ----
+def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> List[str]:
+    """
+    Use local/ollama LLM to generate 1–3 SHORT persona-flavored lines.
+    - Never summarize/alter facts. Only commentary/attitude.
+    - No JSON, no lists, no numbered bullets. Plain lines.
+    - Profanity allowed only if PERSONALITY_ALLOW_PROFANITY=true and persona is 'rager'.
+    Returns [] if no LLM available.
+    """
+    try:
+        llm = importlib.import_module("llm_client")
+    except Exception:
+        return []
+
+    key = _canon(persona_name)
+    allow_prof = os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes") and key == "rager"
+
+    style_hint = {
+        "dude": "Laid-back surfer/dude speak; mellow, supportive, funny",
+        "chick": "Glam, flirty, confident, playful; sassy ops banter",
+        "nerd": "Precise, witty, technically savvy; smart quips",
+        "rager": "Intense, blunt, spicy (profanity only if allowed)",
+        "comedian": "Deadpan Leslie Nielsen style; one-liners",
+        "action": "Action-hero catchphrases; decisive",
+        "jarvis": "Polite, refined AI butler; supportive",
+        "ops": "Short, neutral ops acknowledgements",
+    }.get(key, "ops")
+
+    context = (context or "").strip()
+    if len(context) > 1200:
+        context = context[-1200:]
+
+    sys_prompt = (
+        "YOU ARE A PITHY ONE-LINER ENGINE.\n"
+        "Persona: {persona}. Style hint: {hint}.\n"
+        "Rules: Produce ONLY {n} short lines, each under 140 characters.\n"
+        "Do NOT summarize or restate the message facts. Do NOT invent details.\n"
+        "No lists, no numbering, no JSON, no labels, no quotes, no emojis unless natural.\n"
+        "Keep it playful but accurate to the persona."
+    ).format(persona=key, hint=style_hint, n=min(3, max(1, int(max_lines or 3))))
+
+    user_prompt = (
+        "Context (for vibes only, not for summarizing):\n" + context + "\n\n"
+        "Write the persona lines now:"
+    )
+
+    try:
+        raw = llm.rewrite(text=f"[SYSTEM]\n{sys_prompt}\n[INPUT]\n{user_prompt}\n[OUTPUT]\n",
+                          mood=key,
+                          allow_profanity=bool(allow_prof))
+    except Exception:
+        return []
+
+    # Post-process to 1–3 clean lines
+    lines = [ln.strip().strip('-•*').strip() for ln in (raw or "").splitlines()]
+    out: List[str] = []
+    for ln in lines:
+        if not ln:
+            continue
+        if ln.lower().startswith(("system:", "input:", "output:")):
+            continue
+        if ln.startswith(("[", "]")) and ln.endswith(("]", ")")):
+            continue
+        if len(ln) > 140:
+            ln = ln[:140].rstrip()
+        out.append(ln)
+        if len(out) >= max_lines:
+            break
+    # Dedup while preserving order
+    seen = set(); uniq = []
+    for ln in out:
+        k = ln.lower()
+        if k in seen: continue
+        seen.add(k); uniq.append(ln)
+    return uniq
