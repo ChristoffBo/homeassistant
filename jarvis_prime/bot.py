@@ -300,7 +300,7 @@ def _llm_then_beautify(title: str, message: str):
             final2 = _llm.rewrite(text=final, mood=CHAT_MOOD, timeout=int(merged.get("llm_timeout_seconds",12)),
                                   cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
                                   models_priority=merged.get("llm_models_priority", []),
-                                  base_url=merged.get("ollama_base_url",""),
+                                  base_url=merged.get("llm_ollama_base_url",""),
                                   model_url=merged.get("llm_model_url",""),
                                   model_path=merged.get("llm_model_path",""),
                                   model_sha256=merged.get("llm_model_sha256",""),
@@ -361,10 +361,10 @@ def post_startup_card():
         f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
         f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
         f"✉️ SMTP Intake — {'ACTIVE' if SMTP_ENABLED else 'OFF'}",
-        f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
+        f"🔀 Proxy Intake — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
-        f"🔗 Webhook — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",   # <-- NEW: shows webhook state
-        f"📮 Apprise Intake — {'ACTIVE' if INTAKE_APPRISE_ENABLED else 'OFF'}",  # <-- NEW: shows Apprise intake state
+        f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
+        f"📮 Apprise Intake — {'ACTIVE' if INTAKE_APPRISE_ENABLED else 'OFF'}",
         "",
         "Status: All systems nominal",
     ]
@@ -532,8 +532,12 @@ async def _digest_scheduler_loop():
                             title, msg, pr = _digest_mod.build_digest(merged)
                             send_message("Digest", msg, priority=pr)
                             _last_digest_date = now.date()
+                        else:
+                            # fallback: avoid tight loop if module missing
+                            _last_digest_date = now.date()
                     except Exception as e:
                         print(f"[Scheduler] digest error: {e}")
+                        _last_digest_date = now.date()
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
@@ -609,4 +613,3 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
-```0
