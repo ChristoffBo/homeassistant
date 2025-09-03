@@ -20,6 +20,9 @@ class ReuseReuseHTTPServer(ReuseHTTPServer):
 import requests
 import time
 
+# --- ADDITIVE: for query parsing (riff=...) ---
+from urllib.parse import urlparse, parse_qs
+
 # -----------------------------
 # Inbox storage
 # -----------------------------
@@ -107,7 +110,7 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     if not tags: tags.append("Relay Path")
     return "— " + " · ".join(tags)
 
-def _pipeline(title: str, body: str, mood: str):
+def _pipeline(title: str, body: str, mood: str, riff_hint: bool, headers_map: dict, query_map: dict):
     used_llm = False
     used_beautify = False
     out = body or ""
@@ -141,6 +144,17 @@ def _pipeline(title: str, body: str, mood: str):
         except Exception as e:
             print(f"[proxy] Beautify failed: {e}")
 
+    # --- ADDITIVE: attach observability + riff hint to extras ---
+    if extras is None:
+        extras = {}
+    try:
+        extras.setdefault("proxy", {})
+        extras["proxy"]["headers"] = headers_map or {}
+        extras["proxy"]["query"] = query_map or {}
+        extras["riff_hint"] = bool(riff_hint)
+    except Exception:
+        pass
+
     foot = _footer(used_llm, used_beautify)
     if not out.rstrip().endswith(foot):
         out = f"{out.rstrip()}\n\n{foot}"
@@ -173,11 +187,17 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            # --- ADDITIVE: parse query for riff= ---
+            parsed = urlparse(self.path or "")
+            qmap = {k: v[0] if isinstance(v, list) and v else v for k, v in parse_qs(parsed.query).items()}
+            riff_q = qmap.get("riff", "")
+
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length > 0 else b""
             title = self.headers.get("X-Title") or "Proxy"
             body = ""
             ctype = (self.headers.get("Content-Type") or "").lower()
+
             if "application/json" in ctype:
                 try:
                     data = json.loads(raw.decode("utf-8"))
@@ -189,7 +209,20 @@ class H(BaseHTTPRequestHandler):
             else:
                 body = raw.decode("utf-8", "ignore")
 
-            out, extras, used_llm, used_beautify = _pipeline(title, body, CHAT_MOOD)
+            # --- ADDITIVE: allow header to control riff as well ---
+            riff_hdr = (self.headers.get("X-Jarvis-Riff", "") or "").strip().lower()
+            def _norm_bool(x: str) -> bool:
+                return x.strip().lower() in ("1","true","yes","on","y") if isinstance(x, str) else bool(x)
+            riff_hint = True  # default ON for proxy so it behaves like other intakes
+            if riff_q != "":
+                riff_hint = _norm_bool(riff_q)
+            elif riff_hdr != "":
+                riff_hint = _norm_bool(riff_hdr)
+
+            # Snapshot headers for extras
+            headers_map = {k: v for k, v in self.headers.items()}
+
+            out, extras, used_llm, used_beautify = _pipeline(title, body, CHAT_MOOD, riff_hint, headers_map, qmap)
             status = _post_gotify(title, out, extras)
 
             # Mirror to Inbox DB (UI-first)
