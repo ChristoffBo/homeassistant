@@ -22,7 +22,7 @@
     "2580/tcp": 2580,
     "2581/tcp": 2581,
     "2590/tcp": 2590
-  },
+  ],
   "options": {
     "bot_name": "Jarvis Prime",
     "bot_icon": "🧠",
@@ -79,7 +79,7 @@
     "intake_apprise_enabled": true,
     "intake_apprise_token": "change-me-very-long",
     "intake_apprise_accept_any_key": true,
-    "intake_apprise_allowed_keys": [],
+    "intake_apprise_allowed_keys": "",
 
     "enable_dude": true,
     "enable_chick": false,
@@ -212,7 +212,7 @@
     "intake_apprise_enabled": "bool",
     "intake_apprise_token": "str",
     "intake_apprise_accept_any_key": "bool",
-    "intake_apprise_allowed_keys": "list(str)",
+    "intake_apprise_allowed_keys": "str",
 
     "enable_dude": "bool",
     "enable_chick": "bool",
@@ -300,3 +300,4 @@
   "auth_api": false,
   "hassio_api": false
 }
+```0
