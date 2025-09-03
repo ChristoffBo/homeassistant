@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime — Notify</title>
   <!-- Ingress-safe base: directory of current URL -->
   <script>
@@ -27,6 +27,7 @@
       </div>
     </div>
     <div class="hdr-right">
+      <button id="btn-back" class="btn icon mobile-only" title="Back" aria-label="Back">←</button>
       <div class="search-wrap">
         <input id="q" type="search" placeholder="Search…" />
         <button id="btn-search" class="btn icon" title="Search" aria-label="Search">🔎</button>
@@ -195,7 +196,7 @@
 
       <section class="pane" data-pane="about">
         <p>Jarvis Notify — Outlook/ntfy-style UI.</p>
-        <p>UI build v5.0. Uses /api/messages, /api/stream and related endpoints.</p>
+        <p>UI build v5.1 (mobile flow). Uses /api/messages, /api/stream and related endpoints.</p>
       </section>
     </div>
   </aside>
