@@ -42,7 +42,7 @@ MAX_LINES       = _int_env("LLM_MAX_LINES", 10)
 CHARS_PER_TOKEN = 4
 SAFETY_TOKENS   = 48
 
-# Conservative decoding for tiny models
+# Conservative decoding for tiny models = fewer rambles
 TEMP     = _float_env("LLM_TEMPERATURE", 0.15)
 TOP_P    = _float_env("LLM_TOP_P", 0.85)
 REPEAT_P = _float_env("LLM_REPEAT_PENALTY", 1.45)
@@ -54,6 +54,7 @@ MODEL_PREF = [s for s in os.getenv("LLM_MODEL_PREFERENCE", "phi,qwen,tinyllama,l
 
 _loaded_model = None
 _model_path: Optional[Path] = None
+_model_type: str = "llama"
 
 # ---------- FS helpers ----------
 def _list_local_models() -> List[Path]:
@@ -65,8 +66,7 @@ def _list_local_models() -> List[Path]:
     for p in sorted(out):
         s = str(p)
         if s not in seen:
-            seen.add(s)
-            uniq.append(p)
+            seen.add(s); uniq.append(p)
     return uniq
 
 def _choose_preferred(paths: List[Path]) -> Optional[Path]:
@@ -107,31 +107,30 @@ def _download_to(url: str, dest: Path) -> bool:
         tmp.replace(dest)
         return True
     except Exception as e:
-        print(f"[{BOT_NAME}] Download failed: {e}", flush=True)
+        print(f"[{BOT_NAME}] WARNING: Download failed: {e}", flush=True)
         return False
 
 def _resolve_model_path() -> Optional[Path]:
+    # 1) explicit env
     env_model_path = os.getenv("LLM_MODEL_PATH", "").strip()
     if env_model_path:
         p = Path(env_model_path)
         f = _first_gguf_under(p)
-        if f:
-            return f
+        if f: return f
+    # 2) local search
     best = _choose_preferred(_list_local_models())
     if best:
         return best
+    # 3) download (one or many URLs)
     urls_raw = os.getenv("LLM_MODEL_URLS", "").strip()
     url_one  = os.getenv("LLM_MODEL_URL", "").strip()
     urls = [u for u in (urls_raw.split(",") if urls_raw else []) + ([url_one] if url_one else []) if u]
     for u in urls:
         name = u.split("/")[-1] or "model.gguf"
-        if not name.endswith(".gguf"):
-            name += ".gguf"
+        if not name.endswith(".gguf"): name += ".gguf"
         dest = Path("/share/jarvis_prime/models") / name
-        if dest.exists():
-            return dest
-        if _download_to(u, dest):
-            return dest
+        if dest.exists(): return dest
+        if _download_to(u, dest): return dest
     return None
 
 def prefetch_model(model_path: Optional[str] = None, model_url: Optional[str] = None) -> None:
@@ -139,70 +138,64 @@ def prefetch_model(model_path: Optional[str] = None, model_url: Optional[str] = 
     if model_path:
         p = Path(model_path)
         f = _first_gguf_under(p)
-        if f:
-            _model_path = f
-            return
+        if f: _model_path = f; return
     _model_path = _resolve_model_path()
 
 def _resolve_any_path(model_path: Optional[str], model_url: Optional[str]) -> Optional[Path]:
     if model_path:
         p = Path(model_path)
         f = _first_gguf_under(p)
-        if f:
-            return f
+        if f: return f
     if _model_path and Path(_model_path).exists():
         return _first_gguf_under(Path(_model_path)) or Path(_model_path)
     return _resolve_model_path()
+
+# ---------- Model type detection ----------
+def _guess_model_type(path: Path) -> str:
+    """
+    Pick ctransformers model_type based on filename.
+    """
+    name = path.name.lower()
+    # Phi family
+    if "phi" in name:
+        return "phi"
+    # Qwen family
+    if "qwen" in name:
+        return "qwen"
+    # Mistral/Mixtral are compatible with llama backend in gguf
+    if "mistral" in name or "mixtral" in name:
+        return "llama"
+    # Llama/tinyllama
+    if "llama" in name or "tinyllama" in name or "llama3" in name:
+        return "llama"
+    # Falcon/Baichuan/Bloom/etc — default safe fallback = llama; adjust if you use those
+    return "llama"
 
 def _cpu_threads_for_limit(limit_pct: int) -> int:
     cores = max(1, os.cpu_count() or 1)
     limit = max(1, min(100, int(limit_pct or 100)))
     return max(1, int(round(cores * (limit / 100.0))))
 
-# ---------- Model-type detection ----------
-def _detect_model_type_from_path(path: Path) -> str:
-    """
-    Map filename hints to ctransformers model_type.
-    Defaults to 'llama' so TinyLlama/Llama work out of the box.
-    """
-    name = path.name.lower()
-    if "phi-3" in name or "phi3" in name or name.startswith("phi-") or name.startswith("phi3") or name.startswith("phi"):
-        return "phi"
-    if "qwen2.5" in name or "qwen2-5" in name or "qwen2" in name:
-        return "qwen2"
-    if "qwen" in name:
-        return "qwen"
-    if "mistral" in name:
-        return "mistral"
-    if "mixtral" in name:
-        return "mixtral"
-    if "starcoder" in name:
-        return "starcoder"
-    if "gpt-neox" in name or "gptneox" in name or "neox" in name:
-        return "gptneox"
-    return "llama"
-
 def _load_local_model(path: Path):
-    global _loaded_model
+    global _loaded_model, _model_type
     if _loaded_model is not None:
         return _loaded_model
     if AutoModelForCausalLM is None:
         return None
     if path.is_dir():
         gg = _first_gguf_under(path)
-        if gg:
-            path = gg
+        if gg: path = gg
     try:
-        model_type = _detect_model_type_from_path(path)
+        _model_type = _guess_model_type(path)
         _loaded_model = AutoModelForCausalLM.from_pretrained(
             str(path),
-            model_type=model_type,
+            model_type=_model_type,
             context_length=CTX,
             gpu_layers=int(os.getenv("LLM_GPU_LAYERS", "0")),
         )
         return _loaded_model
     except Exception as e:
-        print(f"[{BOT_NAME}] LLM load failed: {e}", flush=True)
+        print(f"[{BOT_NAME}] WARNING: LLM load failed: {e}", flush=True)
         return None
 
 # ---------- Cleaning helpers ----------
@@ -220,16 +213,14 @@ def _extract_images(src: str) -> str:
     out, seen = [], set()
     for i in imgs:
         if i not in seen:
-            seen.add(i)
-            out.append(i)
+            seen.add(i); out.append(i)
     return "\n".join(out)
 
 def _strip_reasoning(text: str) -> str:
     lines = []
     for ln in (text or "").splitlines():
         t = ln.strip()
-        if not t:
-            continue
+        if not t: continue
         tl = t.lower()
         if tl.startswith(("input:", "output:", "explanation:", "reasoning:", "analysis:", "system:")):
             continue
@@ -243,7 +234,7 @@ def _strip_reasoning(text: str) -> str:
     return "\n".join(lines)
 
 def _strip_meta_lines(text: str) -> str:
-    bad = (
+    BAD = (
         "persona", "rules", "rule:", "instruction", "instruct", "guideline",
         "you are jarvis", "jarvis prime", "system prompt",
         "style hint", "speak as", "lines:", "produce at most", "respond with at most",
@@ -252,11 +243,9 @@ def _strip_meta_lines(text: str) -> str:
     out = []
     for ln in (text or "").splitlines():
         t = ln.strip()
-        if not t:
-            continue
+        if not t: continue
         low = t.lower()
-        if any(b in low for b in bad):
-            continue
+        if any(b in low for b in BAD): continue
         out.append(t)
     return "\n".join(out)
 
@@ -269,10 +258,8 @@ def _remove_placeholders(text: str) -> str:
 def _drop_boilerplate(text: str) -> str:
     kept = []
     for ln in (text or "").splitlines():
-        if not ln.strip():
-            continue
-        if UPSELL_RE.search(ln):
-            continue
+        if not ln.strip(): continue
+        if UPSELL_RE.search(ln): continue
         kept.append(ln.strip())
     return "\n".join(kept)
 
@@ -283,8 +270,7 @@ def _squelch_repeats(text: str) -> str:
         wl = w.lower()
         if wl == prev:
             count += 1
-            if count <= 2:
-                out.append(w)
+            if count <= 2: out.append(w)
         else:
             prev, count = wl, 1
             out.append(w)
@@ -305,10 +291,8 @@ def _polish(text: str) -> str:
     seen, out = set(), []
     for ln in s.splitlines():
         key = ln.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(ln)
+        if key in seen: continue
+        seen.add(key); out.append(ln)
     return "\n".join(out)
 
 def _cap(text: str, max_lines: int = MAX_LINES, max_chars: int = 800) -> str:
@@ -327,8 +311,7 @@ def _sanitize_system_prompt(s: str) -> str:
 
 def _load_system_prompt() -> str:
     sp = os.getenv("LLM_SYSTEM_PROMPT")
-    if sp:
-        return _sanitize_system_prompt(sp)
+    if sp: return _sanitize_system_prompt(sp)
     for p in (Path("/share/jarvis_prime/memory/system_prompt.txt"),
               Path("/app/memory/system_prompt.txt")):
         if p.exists():
@@ -339,8 +322,7 @@ def _load_system_prompt() -> str:
     return "YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
 
 def _trim_to_ctx(src: str, system: str) -> str:
-    if not src:
-        return src
+    if not src: return src
     budget_tokens = max(256, CTX - GEN_TOKENS - SAFETY_TOKENS)
     budget_chars  = max(1000, budget_tokens * CHARS_PER_TOKEN)
     remaining     = max(500, budget_chars - len(system))
@@ -361,6 +343,9 @@ def rewrite(text: str, mood: str = "serious", timeout: int = 8, cpu_limit: int =
             models_priority: Optional[List[str]] = None, base_url: Optional[str] = None,
             model_url: Optional[str] = None, model_path: Optional[str] = None,
             model_sha256: Optional[str] = None, allow_profanity: bool = False) -> str:
+    """
+    Safe rewriter. If backends fail, returns cleaned input.
+    """
     src = (text or "").strip()
     if not src:
         return src
@@ -369,6 +354,7 @@ def rewrite(text: str, mood: str = "serious", timeout: int = 8, cpu_limit: int =
     system = _load_system_prompt().format(mood=mood)
     src    = _trim_to_ctx(src, system)
 
+    # ---- 1) Ollama (if configured) ----
     base = (base_url or OLLAMA_BASE_URL or "").strip()
     if base and requests:
         try:
@@ -390,8 +376,9 @@ def rewrite(text: str, mood: str = "serious", timeout: int = 8, cpu_limit: int =
                 out = str(r.json().get("response", ""))
                 return _finalize(out, imgs)
         except Exception as e:
-            print(f"[{BOT_NAME}] Ollama call failed: {e}", flush=True)
+            print(f"[{BOT_NAME}] WARNING: Ollama call failed: {e}", flush=True)
 
+    # ---- 2) Local ctransformers (.gguf) ----
     p = _resolve_any_path(model_path, model_url)
     if p and p.exists():
         m = _load_local_model(p)
@@ -417,10 +404,11 @@ def rewrite(text: str, mood: str = "serious", timeout: int = 8, cpu_limit: int =
                     result = fut.result(timeout=max(2, int(timeout or 8)))
                     return _finalize(result, imgs)
                 except TimeoutError:
-                    print(f"[{BOT_NAME}] LLM generation timed out after {timeout}s", flush=True)
+                    print(f"[{BOT_NAME}] WARNING: LLM generation timed out after {timeout}s", flush=True)
                 except Exception as e:
-                    print(f"[{BOT_NAME}] Generation failed: {e}", flush=True)
+                    print(f"[{BOT_NAME}] WARNING: Generation failed: {e}", flush=True)
 
+    # ---- 3) Fallback ----
     return _finalize(src, imgs)
 
 # ---------- Persona riff helpers ----------
@@ -429,26 +417,21 @@ def _cleanup_quip_block(text: str, max_lines: int) -> List[str]:
         return []
     s = _strip_reasoning(text)
     s = _strip_meta_lines(s)
-    s = re.sub(r'^\s*[-\u2022\d\)\.]+\s*', '', s, flags=re.M)
+    s = re.sub(r'^\s*[-•\d\)\.]+\s*', '', s, flags=re.M)  # strip bullets/numbers
     parts = []
     for ln in s.splitlines():
         for seg in re.split(r'(?<=[.!?])\s+', ln.strip()):
-            if seg:
-                parts.append(seg.strip())
+            if seg: parts.append(seg.strip())
     out, seen = [], set()
     for ln in parts:
-        if not ln:
-            continue
+        if not ln: continue
         words = ln.split()
         if len(words) > 22:
             ln = " ".join(words[:22])
         key = ln.lower()
-        if key in seen:
-            continue
-        seen.add(key)
+        if key in seen: continue
         ln = re.sub(r'\s+([.!?])$', r'\1', ln)
-        if ln in ("[]", "{}", "()"):
-            continue
+        if ln in ("[]", "{}", "()"): continue
         out.append(ln)
         if len(out) >= max_lines:
             break
@@ -459,6 +442,9 @@ def persona_riff(persona: str, context: str, max_lines: int = 3, timeout: int = 
                  cpu_limit: int = 70, models_priority: Optional[List[str]] = None,
                  base_url: Optional[str] = None, model_url: Optional[str] = None,
                  model_path: Optional[str] = None) -> List[str]:
+    """
+    Generate 1–N short persona-flavored lines about `context`.
+    """
     persona = (persona or "ops").strip().lower()
     ctx = (context or "").strip()
     if not ctx:
@@ -471,6 +457,7 @@ def persona_riff(persona: str, context: str, max_lines: int = 3, timeout: int = 
         "Style: tight, punchy, persona-realistic quips."
     )
 
+    # ---- 1) Ollama ----
     base = (base_url or OLLAMA_BASE_URL or "").strip()
     if base and requests:
         try:
@@ -492,8 +479,9 @@ def persona_riff(persona: str, context: str, max_lines: int = 3, timeout: int = 
                 raw = str(r.json().get("response", ""))
                 return _cleanup_quip_block(raw, max_lines)
         except Exception as e:
-            print(f"[{BOT_NAME}] Ollama quip failed: {e}", flush=True)
+            print(f"[{BOT_NAME}] WARNING: Ollama quip failed: {e}", flush=True)
 
+    # ---- 2) Local ----
     p = _resolve_any_path(model_path, model_url)
     if p and p.exists():
         m = _load_local_model(p)
@@ -519,12 +507,13 @@ def persona_riff(persona: str, context: str, max_lines: int = 3, timeout: int = 
                     result = fut.result(timeout=max(2, int(timeout or 8)))
                     return _cleanup_quip_block(result, max_lines)
                 except TimeoutError:
-                    print(f"[{BOT_NAME}] Quip generation timed out after {timeout}s", flush=True)
+                    print(f"[{BOT_NAME}] WARNING: Quip generation timed out after {timeout}s", flush=True)
                 except Exception as e:
-                    print(f"[{BOT_NAME}] Quip generation failed: {e}", flush=True)
+                    print(f"[{BOT_NAME}] WARNING: Quip generation failed: {e}", flush=True)
 
     return []
 
+# Alias some modules expect
 llm_quips = persona_riff
 
 # ---------- PUBLIC: engine status ----------
@@ -543,4 +532,5 @@ def engine_status() -> Dict[str, object]:
         "ready": bool(p and Path(p).exists()),
         "model_path": str(p or ""),
         "backend": "ctransformers" if p else "none",
+        "model_type": _model_type,
     }
