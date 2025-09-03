@@ -1,426 +1,412 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
-# Local LLM client for Jarvis Prime
-# - Multi-engine, no hard-coded "llama" model name
-# - Works with llama-cpp-python or ctransformers if present
-# - Optional Hugging Face download with llm_hf_token
-# - Obeys timeouts, CPU caps (best-effort), context/gen tokens, max lines
-# - Safe fallback: if load/generate fails, returns original text
+#
+# Engine-agnostic LLM client with:
+# - GGUF local loading via llama-cpp (if installed in image)
+# - Optional Ollama HTTP fallback (if base_url provided)
+# - Hugging Face token support for secure downloads (Authorization: Bearer ...)
+# - Autodownload-and-load path with optional SHA256 integrity check
+# - Hard timeouts; never blocks forever
+# - Safe no-op: returns original text if model/engine unavailable
+#
+# Public functions:
+#   ensure_loaded(...)
+#   rewrite(...)
+#
+# Usage pattern (from bot/proxy/smtp):
+#   ok = ensure_loaded(
+#       model_url=merged.get("llm_model_url",""),
+#       model_path=merged.get("llm_model_path",""),
+#       model_sha256=merged.get("llm_model_sha256",""),
+#       ctx_tokens=int(merged.get("llm_ctx_tokens", 4096)),
+#       cpu_limit=int(merged.get("llm_max_cpu_percent", 80)),
+#       hf_token=merged.get("llm_hf_token",""),
+#       base_url=merged.get("llm_ollama_base_url","").strip()
+#   )
+#   out = rewrite(
+#       text=final,
+#       mood=CHAT_MOOD,
+#       timeout=int(merged.get("llm_timeout_seconds", 12)),
+#       cpu_limit=int(merged.get("llm_max_cpu_percent", 80)),
+#       models_priority=merged.get("llm_models_priority", []),
+#       base_url=merged.get("llm_ollama_base_url",""),
+#       model_url=merged.get("llm_model_url",""),
+#       model_path=merged.get("llm_model_path",""),
+#       model_sha256=merged.get("llm_model_sha256",""),
+#       allow_profanity=bool(merged.get("personality_allow_profanity", False)),
+#       ctx_tokens=int(merged.get("llm_ctx_tokens", 4096)),
+#       hf_token=merged.get("llm_hf_token","")
+#   )
+#
+# Notes:
+# - If base_url is non-empty (e.g. "http://localhost:11434"), Ollama mode is used for generation.
+# - Otherwise we attempt local GGUF via llama-cpp. If llama-cpp not installed or load fails: no-op.
+# - For HF 401 errors, make sure "llm_hf_token" is set in options (we send the header).
+# - For 404 errors, verify the model URL is exact (case/filename).
 
-from __future__ import annotations
 import os
+import sys
 import json
 import time
+import math
 import hashlib
-import signal
-import threading
-import requests
-from typing import Optional, Dict, Any, List
+import socket
+import urllib.request
+import urllib.error
+from typing import Optional, Dict, Any
 
-# ========== Utilities ==========
+# ============================
+# Globals
+# ============================
+LLM_MODE = "none"        # "none" | "llama" | "ollama"
+LLM = None               # llama_cpp.Llama instance if LLM_MODE == "llama"
+LOADED_MODEL_PATH = None
+OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
+DEFAULT_CTX = 4096
 
-def _read_json(path: str) -> Dict[str, Any]:
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def _mask(s: str) -> str:
-    if not s:
-        return ""
-    if len(s) <= 6:
-        return "***"
-    return s[:3] + "***" + s[-3:]
+# ============================
+# Utils / Logging
+# ============================
+def _log(msg: str):
+    print(f"[llm] {msg}", flush=True)
 
 def _sha256_file(path: str) -> str:
-    sha = hashlib.sha256()
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            sha.update(chunk)
-    return sha.hexdigest()
+            h.update(chunk)
+    return h.hexdigest()
 
-def _ensure_dir(p: str):
-    d = os.path.dirname(p) if os.path.splitext(p)[1] else p
-    if d and not os.path.exists(d):
-        os.makedirs(d, exist_ok=True)
+def _http_get(url: str, headers: Dict[str, str], timeout: int = 120) -> bytes:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
 
-def _split_csv(s: str) -> List[str]:
-    if not s:
-        return []
-    return [x.strip() for x in str(s).split(",") if x.strip()]
+def _http_post(url: str, data: bytes, headers: Dict[str, str], timeout: int = 60) -> bytes:
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
 
-# ========== Load config ==========
-
-OPTIONS = {}
-try:
-    # Primary user options
-    OPTIONS = _read_json("/data/options.json")
-    # Fallback defaults if present
-    DEFAULTS = _read_json("/data/config.json")
-    # Merge (options win)
-    OPTIONS = {**DEFAULTS, **OPTIONS}
-except Exception:
-    pass
-
-# Keys we honor
-LLM_ENABLED            = bool(OPTIONS.get("llm_enabled", False))
-LLM_MODELS_DIR         = str(OPTIONS.get("llm_models_dir", "/share/jarvis_prime/models")).rstrip("/")
-LLM_TIMEOUT            = int(OPTIONS.get("llm_timeout_seconds", 20))
-LLM_CPU_MAX            = int(OPTIONS.get("llm_max_cpu_percent", 80))
-LLM_CTX_TOKENS         = int(OPTIONS.get("llm_ctx_tokens", 4096))
-LLM_GEN_TOKENS         = int(OPTIONS.get("llm_gen_tokens", 300))
-LLM_MAX_LINES          = int(OPTIONS.get("llm_max_lines", 30))
-LLM_AUTODOWNLOAD       = bool(OPTIONS.get("llm_autodownload", True))
-LLM_HF_TOKEN           = str(OPTIONS.get("llm_hf_token", "") or "")
-
-# Model selection knobs
-LLM_CHOICE             = str(OPTIONS.get("llm_choice", "off")).strip().lower()  # "off", "auto", "phi", "tinyllama", "qwen05", "llama32_1b", etc.
-LLM_MODELS_PRIORITY    = OPTIONS.get("llm_models_priority", "qwen15,phi2,llama32_1b,tinyllama,qwen05,phi3")
-
-# Per-model URLs/paths (these are hints; we’ll decide in _select_model)
-PHI3_URL               = str(OPTIONS.get("llm_phi3_url", ""))
-PHI3_PATH              = str(OPTIONS.get("llm_phi3_path", ""))
-TINYLLAMA_URL          = str(OPTIONS.get("llm_tinyllama_url", ""))
-TINYLLAMA_PATH         = str(OPTIONS.get("llm_tinyllama_path", ""))
-QWEN05_URL             = str(OPTIONS.get("llm_qwen05_url", ""))
-QWEN05_PATH            = str(OPTIONS.get("llm_qwen05_path", ""))
-
-# Global “single URL/path” (legacy); we still honor if provided
-LEGACY_MODEL_URL       = str(OPTIONS.get("llm_model_url", ""))
-LEGACY_MODEL_PATH      = str(OPTIONS.get("llm_model_path", LLM_MODELS_DIR))
-LEGACY_MODEL_SHA256    = str(OPTIONS.get("llm_model_sha256", ""))
-
-# ========== Backend detection ==========
-
-_backend_name = None
-_llama = None          # llama_cpp.Llama
-_ct = None             # ctransformers
-
-try:
-    import llama_cpp as _lc
-    _backend_name = "llama_cpp"
-except Exception:
-    _lc = None
-
-if _backend_name is None:
+def _download(url: str, dst_path: str, token: Optional[str]) -> bool:
+    """Download to dst_path, sending HF token if provided."""
     try:
-        import ctransformers as _ctmod
-        _backend_name = "ctransformers"
-        _ct = _ctmod
-    except Exception:
-        _ct = None
-
-# ========== Downloader ==========
-
-def _download(url: str, dest_path: str, hf_token: str = "") -> bool:
-    try:
-        _ensure_dir(dest_path)
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
         headers = {}
-        if hf_token:
-            headers["Authorization"] = f"Bearer {hf_token}"
-            print(f"[LLM] using HuggingFace token {_mask(hf_token)}")
-
-        with requests.get(url, headers=headers, stream=True, timeout=30) as r:
-            r.raise_for_status()
-            tmp = dest_path + ".part"
-            with open(tmp, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-            os.replace(tmp, dest_path)
-        print(f"[LLM] downloaded -> {dest_path}")
+        if token:
+            headers["Authorization"] = f"Bearer {token.strip()}"
+        _log(f"downloading: {url} -> {dst_path}")
+        buf = _http_get(url, headers=headers, timeout=180)
+        with open(dst_path, "wb") as f:
+            f.write(buf)
+        _log("downloaded ok")
         return True
+    except urllib.error.HTTPError as e:
+        _log(f"download failed: HTTP {e.code} {getattr(e, 'reason', '')}")
+        return False
     except Exception as e:
-        print(f"[LLM] download failed: {e}")
+        _log(f"download failed: {e}")
         return False
 
-# ========== Model selection ==========
+def _coerce_model_path(model_url: str, model_path: str) -> str:
+    """If model_path is a directory or empty, derive filename from URL."""
+    if not model_path or model_path.endswith("/"):
+        fname = model_url.split("/")[-1] if model_url else "model.gguf"
+        return os.path.join(model_path or "/share/jarvis_prime/models", fname)
+    return model_path
 
-def _select_model(preferred: List[str]) -> Dict[str, str]:
-    """
-    Return dict {engine, name, url, path, sha256?} for the first model that has
-    either a usable path or a URL we can download.
-    """
-    # Build a candidate table from known keys + legacy
-    candidates = []
+# ============================
+# Local GGUF (llama-cpp) path
+# ============================
+def _try_import_llama_cpp():
+    try:
+        import llama_cpp
+        return llama_cpp
+    except Exception as e:
+        _log(f"llama-cpp not available: {e}")
+        return None
 
-    # map canonical keys -> (url, path)
-    canon = {
-        "phi3": (PHI3_URL, PHI3_PATH),
-        "tinyllama": (TINYLLAMA_URL, TINYLLAMA_PATH),
-        "qwen05": (QWEN05_URL, QWEN05_PATH),
-        # Accept legacy llama tokens (llama32_1b, etc.) via LEGACY_MODEL_URL/PATH
-        "llama32_1b": (LEGACY_MODEL_URL, LEGACY_MODEL_PATH),
-        "phi2": (LEGACY_MODEL_URL, LEGACY_MODEL_PATH),   # allow mapping if user gives phi2 in priority but only legacy URL provided
-        "qwen15": (LEGACY_MODEL_URL, LEGACY_MODEL_PATH),
-        # Explicit catch-all
-        "custom": (LEGACY_MODEL_URL, LEGACY_MODEL_PATH),
-    }
+def _threads_from_cpu_limit(limit_pct: int) -> int:
+    try:
+        import multiprocessing
+        cores = max(1, multiprocessing.cpu_count())
+    except Exception:
+        cores = 2
+    # simple heuristic: 10% per thread, but cap to cpu count
+    t = max(1, min(cores, max(1, int(limit_pct / 10))))
+    return t
 
-    for key in preferred:
-        k = key.strip().lower()
-        if k in canon:
-            url, path = canon[k]
-        else:
-            # Unknown key → fall back to legacy
-            url, path = LEGACY_MODEL_URL, LEGACY_MODEL_PATH
+def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
+    global LLM_MODE, LLM, LOADED_MODEL_PATH
+    llama_cpp = _try_import_llama_cpp()
+    if not llama_cpp:
+        return False
 
-        # If a directory provided for path, try to append filename from URL if present
-        if path and os.path.isdir(path) and url:
-            fname = url.split("/")[-1]
-            path = os.path.join(path, fname)
+    try:
+        threads = _threads_from_cpu_limit(cpu_limit)
+        LLM = llama_cpp.Llama(
+            model_path=model_path,
+            n_ctx=ctx_tokens,
+            n_threads=threads,
+        )
+        LOADED_MODEL_PATH = model_path
+        LLM_MODE = "llama"
+        _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
+        return True
+    except Exception as e:
+        _log(f"llama load failed: {e}")
+        LLM = None
+        LOADED_MODEL_PATH = None
+        LLM_MODE = "none"
+        return False
 
-        candidates.append({
-            "engine": k,
-            "name": k,
-            "url": url or "",
-            "path": path or "",
-            "sha256": LEGACY_MODEL_SHA256 if k in ("custom", "llama32_1b", "phi2", "qwen15") else ""
-        })
+def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], want_sha256: str) -> Optional[str]:
+    """Ensure a local GGUF file exists; download if missing; verify optional sha256."""
+    path = _coerce_model_path(model_url, model_path)
+    if not os.path.exists(path):
+        if not model_url:
+            _log("no model file on disk and no model_url to download")
+            return None
+        if not _download(model_url, path, token):
+            return None
 
-    # If user explicitly set llm_choice (not off/auto), put it first
-    if LLM_CHOICE not in ("", "off", "auto", "none"):
-        forced = LLM_CHOICE
-        candidates.insert(0, {
-            "engine": forced,
-            "name": forced,
-            "url": canon.get(forced, (LEGACY_MODEL_URL, LEGACY_MODEL_PATH))[0],
-            "path": canon.get(forced, (LEGACY_MODEL_URL, LEGACY_MODEL_PATH))[1],
-            "sha256": ""
-        })
-
-    # Deduplicate by path/url preference order
-    seen = set()
-    uniq = []
-    for c in candidates:
-        key = (c["engine"], c["url"], c["path"])
-        if key not in seen:
-            uniq.append(c)
-            seen.add(key)
-
-    return _pick_first_viable(uniq)
-
-def _pick_first_viable(cands: List[Dict[str, str]]) -> Dict[str, str]:
-    # Prefer any existing local file
-    for c in cands:
-        p = c.get("path", "")
-        if p and os.path.isfile(p):
-            return c
-    # Else, return first one with a URL (we’ll download if allowed)
-    for c in cands:
-        if c.get("url"):
-            return c
-    # Else, last resort: first candidate (may fail cleanly)
-    return cands[0] if cands else {"engine": "none", "name": "none", "url": "", "path": ""}
-
-# ========== Loader ==========
-
-class _Timeout:
-    def __init__(self, seconds: int):
-        self.seconds = max(1, int(seconds))
-        self._hit = False
-    def __enter__(self):
-        self._hit = False
-        signal.signal(signal.SIGALRM, self._handle)
-        signal.alarm(self.seconds)
-    def _handle(self, signum, frame):
-        self._hit = True
-        raise TimeoutError("generation timeout")
-    def __exit__(self, exc_type, exc, tb):
-        signal.alarm(0)
-
-class LocalLLM:
-    def __init__(self):
-        self.backend = None      # "llama_cpp" | "ctransformers" | None
-        self.model = None
-        self.info  = {"engine": "none", "path": "", "name": "", "url": ""}
-
-    def _log(self, msg: str):
-        print(f"[LLM] {msg}")
-
-    def ensure_model(self):
-        if not LLM_ENABLED:
-            self._log("disabled via options")
-            return False
-
-        priority = _split_csv(LLM_MODELS_PRIORITY) or []
-        picked = _select_model(priority)
-        self.info = picked
-        url, path = picked.get("url", ""), picked.get("path", "")
-
-        if not path:
-            # If no path defined but we do have a URL and a models_dir, derive a filename
-            if url:
-                fname = url.split("/")[-1] or "model.gguf"
-                path = os.path.join(LLM_MODELS_DIR, fname)
-                self.info["path"] = path
-
-        # Download if needed
-        if not os.path.isfile(path):
-            if not url:
-                self._log("no local model file and no URL to download; continuing without a model")
-                return False
-            if not LLM_AUTODOWNLOAD:
-                self._log("autodownload disabled and model not present; continuing without a model")
-                return False
-            self._log(f"downloading model from {url}")
-            ok = _download(url, path, LLM_HF_TOKEN)
-            if not ok:
-                self._log("download failed; continuing without a model")
-                return False
-
-        # Verify sha256 if provided
-        sha_cfg = picked.get("sha256", "").strip().lower()
-        if sha_cfg:
-            try:
-                sha_actual = _sha256_file(path).lower()
-                if sha_actual != sha_cfg:
-                    self._log(f"sha256 mismatch: got={sha_actual} expected={sha_cfg}")
-                    # do not abort; warn and continue
-            except Exception as e:
-                self._log(f"sha256 check failed: {e}")
-
-        # Load
+    if want_sha256:
         try:
-            if _backend_name == "llama_cpp" and _lc is not None:
-                # Threads best-effort: bound by CPU percent is tricky; we just scale threads
-                n_threads = max(1, min(os.cpu_count() or 2, int((LLM_CPU_MAX/100.0) * (os.cpu_count() or 2)) or 1))
-                self.model = _lc.Llama(
-                    model_path=path,
-                    n_ctx=LLM_CTX_TOKENS,
-                    n_threads=n_threads,
-                    # Keep defaults for kv by llama-cpp
-                )
-                self.backend = "llama_cpp"
-                self._log(f"loaded (llama_cpp) path={path} ctx={LLM_CTX_TOKENS} threads={n_threads}")
-                return True
-
-            if _backend_name == "ctransformers" and _ct is not None:
-                # ctransformers auto-detects gguf; set threads
-                config = {"context_length": LLM_CTX_TOKENS}
-                n_threads = max(1, min(os.cpu_count() or 2, int((LLM_CPU_MAX/100.0) * (os.cpu_count() or 2)) or 1))
-                self.model = _ct.AutoModelForCausalLM.from_pretrained(
-                    path,
-                    model_type="llama",   # works for GGUF llama-family (qwen/phi in GGUF still use llama kernels)
-                    gpu_layers=0,
-                    threads=n_threads,
-                    **config
-                )
-                self.backend = "ctransformers"
-                self._log(f"loaded (ctransformers) path={path} ctx={LLM_CTX_TOKENS} threads={n_threads}")
-                return True
-
-            self._log("no supported backend found (install llama-cpp-python or ctransformers)")
-            return False
-
+            got = _sha256_file(path)
+            if got.lower() != want_sha256.lower():
+                _log(f"sha256 mismatch: got={got} want={want_sha256} (refusing to load)")
+                return None
         except Exception as e:
-            self._log(f"load failed: {e}")
-            self.model = None
-            self.backend = None
-            return False
+            _log(f"sha256 check failed (continuing without): {e}")
+    return path
 
-    # ========== Generation / Rewrite ==========
-
-    def _build_prompt(self, text: str, mood: str, allow_profanity: bool) -> str:
-        mood = (mood or "neutral").strip()
-        rules = [
-            "Rewrite the message to be clear and concise.",
-            f"Keep the tone aligned with '{mood}'.",
-            f"Maximum {LLM_MAX_LINES} lines.",
-            "Do not invent facts; preserve user content.",
-        ]
-        if not allow_profanity:
-            rules.append("Avoid profanity and slurs; keep it family-friendly.")
-        sys = "You are a notification beautifier. Format lightly; use short lines and bulleting only if it improves scannability."
-        instructions = "\n".join(f"- {r}" for r in rules)
-        return f"""[SYSTEM]
-{sys}
-
-[INSTRUCTIONS]
-{instructions}
-
-[INPUT]
-{text.strip()}
-
-[OUTPUT]
-"""
-
-    def rewrite(self, *, text: str, mood: str = "neutral", timeout: int = None,
-                cpu_limit: int = None, models_priority: Any = None,
-                base_url: str = "", model_url: str = "", model_path: str = "",
-                model_sha256: str = "", allow_profanity: bool = False) -> Optional[str]:
-
-        if not LLM_ENABLED:
-            return text  # LLM disabled → pass-through
-
-        # If we don’t have a model instance yet, try to load once
-        if self.model is None or self.backend is None:
-            if not self.ensure_model():
-                return text  # graceful pass-through
-
-        prompt = self._build_prompt(text, mood, allow_profanity)
-
-        # Enforce timeout
-        tmo = int(timeout or LLM_TIMEOUT)
-        try:
-            with _Timeout(tmo):
-                if self.backend == "llama_cpp":
-                    out = self.model(
-                        prompt,
-                        max_tokens=LLM_GEN_TOKENS,
-                        stop=["[END]", "[INPUT]", "[SYSTEM]"],
-                        echo=False,
-                    )
-                    raw = out["choices"][0]["text"]
-                elif self.backend == "ctransformers":
-                    raw = ""
-                    for token in self.model(prompt, max_new_tokens=LLM_GEN_TOKENS, stream=True):
-                        raw += token
-                else:
-                    return text
-        except TimeoutError:
-            self._log("generation timeout")
-            return text
-        except Exception as e:
-            self._log(f"generation failed: {e}")
-            return text
-
-        # Post-process: trim to max lines
-        lines = [ln.rstrip() for ln in raw.splitlines()]
-        if LLM_MAX_LINES > 0 and len(lines) > LLM_MAX_LINES:
-            lines = lines[:LLM_MAX_LINES]
-        cleaned = _tidy("\n".join(lines)).strip()
-        return cleaned or text
-
-def _tidy(s: str) -> str:
-    # collapse excess blank lines; trim trailing spaces
-    out = []
-    blank = 0
-    for ln in s.splitlines():
-        t = ln.rstrip()
-        if t == "":
-            blank += 1
-            if blank > 1:
-                continue
+# ============================
+# Ollama path (HTTP)
+# ============================
+def _ollama_ready(base_url: str, timeout: int = 2) -> bool:
+    try:
+        host, port = None, None
+        # crude health check via socket connect to speed_fail quickly
+        if base_url.startswith("http://"):
+            hp = base_url[7:]
+        elif base_url.startswith("https://"):
+            hp = base_url[8:]
         else:
-            blank = 0
-        out.append(t)
-    return "\n".join(out)
+            hp = base_url
+        hp = hp.strip("/").split("/")[0]
+        if ":" in hp:
+            host, port = hp.split(":", 1)
+            port = int(port)
+        else:
+            host, port = hp, 80
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
 
-# ========== Public API used by bot/proxy/smtp ==========
-
-_client = LocalLLM()
-
-def rewrite(**kwargs) -> Optional[str]:
+def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20) -> str:
     """
-    Compatible entry point:
-      rewrite(text=..., mood=..., timeout=..., cpu_limit=..., models_priority=...,
-              base_url=..., model_url=..., model_path=..., model_sha256=...,
-              allow_profanity=False)
+    Minimal Ollama /api/generate call. Non-streaming.
     """
     try:
-        return _client.rewrite(**kwargs)
+        url = base_url.rstrip("/") + "/api/generate"
+        payload = {
+            "model": model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1
+            }
+        }
+        data = json.dumps(payload).encode("utf-8")
+        out = _http_post(url, data, headers={"Content-Type": "application/json"}, timeout=timeout)
+        obj = json.loads(out.decode("utf-8"))
+        return obj.get("response", "") or ""
+    except urllib.error.HTTPError as e:
+        _log(f"ollama HTTP {e.code}: {getattr(e, 'reason', '')}")
+        return ""
     except Exception as e:
-        print(f"[LLM] rewrite() error: {e}")
-        return kwargs.get("text", "")
+        _log(f"ollama error: {e}")
+        return ""
+
+def _model_name_from_url(model_url: str) -> str:
+    """
+    Best effort to derive a model name (only used for Ollama if user passes a name in model_url).
+    If the URL isn't an Ollama name, caller should pass base_url and put the ACTUAL Ollama
+    model name into 'model_path' or 'model_url' (we'll try both).
+    """
+    if not model_url:
+        return "llama3"
+    tail = model_url.strip("/").split("/")[-1]
+    # Strip extension
+    if "." in tail:
+        tail = tail.split(".")[0]
+    return tail or "llama3"
+
+# ============================
+# Public: ensure_loaded
+# ============================
+def ensure_loaded(
+    *,
+    model_url: str,
+    model_path: str,
+    model_sha256: str,
+    ctx_tokens: int,
+    cpu_limit: int,
+    hf_token: Optional[str],
+    base_url: str = ""
+) -> bool:
+    """
+    Decide engine and load (or prepare) it.
+    - If base_url provided and reachable: use Ollama mode (no local download needed here).
+    - Else: local GGUF via llama-cpp, with optional HF download/check.
+    """
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+    DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
+
+    base_url = (base_url or "").strip()
+    if base_url:
+        OLLAMA_URL = base_url
+        if _ollama_ready(base_url):
+            LLM_MODE = "ollama"
+            LLM = None
+            LOADED_MODEL_PATH = None
+            _log(f"using Ollama at {base_url}")
+            return True
+        else:
+            _log(f"Ollama not reachable at {base_url}; falling back to local mode")
+
+    # Local mode
+    LLM_MODE = "none"
+    OLLAMA_URL = ""
+    LLM = None
+    LOADED_MODEL_PATH = None
+
+    path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
+    if not path:
+        _log("ensure_local_model failed")
+        return False
+
+    ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
+    return bool(ok)
+
+# ============================
+# Prompting
+# ============================
+def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
+    # Keep it tiny + deterministic; good for small models too.
+    sys_prompt = "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
+    if not allow_profanity:
+        sys_prompt += " Avoid profanity."
+    user = (
+        "Rewrite the text clearly. Keep short, readable sentences.\n"
+        f"Mood (light touch only): {mood or 'neutral'}\n\n"
+        f"Text:\n{text}"
+    )
+    # Generic chat template that works well with many instruct models
+    return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+
+# ============================
+# Public: rewrite
+# ============================
+def rewrite(
+    *,
+    text: str,
+    mood: str = "neutral",
+    timeout: int = 12,
+    cpu_limit: int = 80,
+    models_priority: Optional[str] = None,
+    base_url: str = "",
+    model_url: str = "",
+    model_path: str = "",
+    model_sha256: str = "",
+    allow_profanity: bool = False,
+    ctx_tokens: int = 4096,
+    hf_token: Optional[str] = None
+) -> str:
+    """
+    Best-effort rewrite. Never crashes the caller. If LLM unavailable, returns input text.
+    - If base_url is provided and reachable, use Ollama.
+    - Else try local llama-cpp with GGUF (downloading first if needed).
+    """
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+
+    # Ensure engine ready once
+    if LLM_MODE == "none":
+        ensure_loaded(
+            model_url=model_url,
+            model_path=model_path,
+            model_sha256=model_sha256,
+            ctx_tokens=ctx_tokens,
+            cpu_limit=cpu_limit,
+            hf_token=hf_token,
+            base_url=base_url
+        )
+
+    prompt = _prompt_for_rewrite(text, mood, allow_profanity)
+
+    # OLLAMA path
+    if LLM_MODE == "ollama" and OLLAMA_URL:
+        # Pick a model name: prefer model_path (if it looks like a name), else derive from URL
+        model_name = ""
+        cand = (model_path or "").strip()
+        if cand and "/" not in cand and not cand.endswith(".gguf"):
+            model_name = cand
+        else:
+            model_name = _model_name_from_url(model_url)
+        try:
+            out = _ollama_generate(OLLAMA_URL, model_name, prompt, timeout=max(4, int(timeout)))
+            out = (out or "").strip()
+            return out if out else text
+        except Exception as e:
+            _log(f"ollama generate failed: {e}")
+            return text
+
+    # LLAMA-CPP path
+    if LLM_MODE != "llama" or LLM is None:
+        # try once to prepare local again
+        ok = ensure_loaded(
+            model_url=model_url,
+            model_path=model_path,
+            model_sha256=model_sha256,
+            ctx_tokens=ctx_tokens,
+            cpu_limit=cpu_limit,
+            hf_token=hf_token,
+            base_url=""  # force local
+        )
+        if not ok or LLM is None:
+            _log("rewrite fallback: model not available")
+            return text
+
+    try:
+        import signal
+
+        def _alarm_handler(signum, frame):
+            raise TimeoutError("rewrite timeout")
+
+        if hasattr(signal, "SIGALRM"):
+            signal.signal(signal.SIGALRM, _alarm_handler)
+            signal.alarm(max(1, int(timeout)))
+
+        out = LLM(
+            prompt,
+            max_tokens=256,
+            temperature=0.3,
+            top_p=0.9,
+            repeat_penalty=1.1,
+            stop=["</s>"]
+        )
+
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
+
+        txt = (out.get("choices") or [{}])[0].get("text", "")
+        return txt.strip() if txt else text
+
+    except TimeoutError as e:
+        _log(f"rewrite timeout: {e}")
+        return text
+    except Exception as e:
+        _log(f"rewrite error: {e}")
+        return text
