@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # /app/bot.py
 import os
-import inspect
 import json
 import asyncio
 import requests
@@ -10,6 +9,7 @@ import re
 import subprocess
 import atexit
 import time
+import socket
 from typing import Optional, Tuple, List
 
 # ============================
@@ -46,16 +46,17 @@ KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","t
 SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
-# --- Webhook feature toggles
+# --- Webhook feature toggles (safe defaults; overridden by /data/options.json)
 WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true","yes")
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
 
-# --- Apprise intake toggles
+# --- Apprise intake toggles (safe defaults; overridden by /data/options.json)
 INTAKE_APPRISE_ENABLED = os.getenv("intake_apprise_enabled", "false").lower() in ("1","true","yes")
 INTAKE_APPRISE_TOKEN = os.getenv("intake_apprise_token", "")
 INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true").lower() in ("1","true","yes")
 INTAKE_APPRISE_ALLOWED_KEYS = [k for k in os.getenv("intake_apprise_allowed_keys", "").split(",") if k.strip()]
+INTAKE_APPRISE_PORT = int(os.getenv("intake_apprise_port", "2591"))
 
 # --- LLM behavior toggles ---
 LLM_REWRITE_ENABLED = os.getenv("LLM_REWRITE_ENABLED", "false").lower() in ("1","true","yes")
@@ -87,6 +88,7 @@ try:
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 
+    # webhook settings
     WEBHOOK_ENABLED = bool(merged.get("webhook_enabled", WEBHOOK_ENABLED))
     WEBHOOK_BIND    = str(merged.get("webhook_bind", WEBHOOK_BIND))
     try:
@@ -94,6 +96,7 @@ try:
     except Exception:
         pass
 
+    # Apprise intake settings
     INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
     INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
@@ -107,14 +110,15 @@ try:
             INTAKE_APPRISE_ALLOWED_KEYS = []
     except Exception:
         pass
-
-    LLM_REWRITE_ENABLED = bool(merged.get("llm_rewrite_enabled", LLM_REWRITE_ENABLED))
-    _beautify_llm_enabled_opt = merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV)
     try:
-        os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
+        INTAKE_APPRISE_PORT = int(merged.get("intake_apprise_port", INTAKE_APPRISE_PORT))
     except Exception:
         pass
 
+    # LLM behavior
+    LLM_REWRITE_ENABLED = bool(merged.get("llm_rewrite_enabled", LLM_REWRITE_ENABLED))
+    _beautify_llm_enabled_opt = merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV)
+    os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
 except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
@@ -153,24 +157,59 @@ if _pstate and hasattr(_pstate, "get_active_persona"):
 # ============================
 _sidecars: List[subprocess.Popen] = []
 
+def _is_port_in_use(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.25)
+            return s.connect_ex((host, port)) == 0
+    except Exception:
+        return False
+
 def _start_sidecar(cmd, label, env=None):
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env or os.environ.copy())
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
         _sidecars.append(p)
+        print(f"[bot] started {label}")
     except Exception as e:
         print(f"[bot] sidecar {label} start failed: {e}")
 
 def start_sidecars():
+    # proxy.py (2580) — skip if already bound (HA rebuilds can double-start)
     if PROXY_ENABLED:
-        _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
+        if not _is_port_in_use("0.0.0.0", 2580) and not _is_port_in_use("127.0.0.1", 2580):
+            _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
+        else:
+            print("[bot] proxy already listening; skip start")
+
+    # smtp_server.py (2525)
     if SMTP_ENABLED:
-        _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
+        if not _is_port_in_use("0.0.0.0", 2525) and not _is_port_in_use("127.0.0.1", 2525):
+            _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
+        else:
+            print("[bot] smtp already listening; skip start")
+
+    # webhook_server.py (WEBHOOK_PORT)
     if WEBHOOK_ENABLED:
-        env = os.environ.copy()
-        env["webhook_bind"] = WEBHOOK_BIND
-        env["webhook_port"] = str(WEBHOOK_PORT)
-        _start_sidecar(["python3","/app/webhook_server.py"], "webhook_server.py", env=env)
-    # Apprise intake handled by its own module if present; not spawned here.
+        if not _is_port_in_use("0.0.0.0", WEBHOOK_PORT) and not _is_port_in_use("127.0.0.1", WEBHOOK_PORT):
+            env = os.environ.copy()
+            env["webhook_bind"] = WEBHOOK_BIND
+            env["webhook_port"] = str(WEBHOOK_PORT)
+            _start_sidecar(["python3","/app/webhook_server.py"], "webhook_server.py", env=env)
+        else:
+            print("[bot] webhook already listening; skip start")
+
+    # Apprise intake (/app/intakes/apprise.py) on INTAKE_APPRISE_PORT
+    if INTAKE_APPRISE_ENABLED:
+        if not _is_port_in_use("0.0.0.0", INTAKE_APPRISE_PORT) and not _is_port_in_use("127.0.0.1", INTAKE_APPRISE_PORT):
+            env = os.environ.copy()
+            env["apprise_port"] = str(INTAKE_APPRISE_PORT)
+            env["apprise_token"] = INTAKE_APPRISE_TOKEN
+            env["apprise_accept_any_key"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
+            env["apprise_allowed_keys"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS or [])
+            _start_sidecar(["python3","/app/intakes/apprise.py"], "apprise.py", env=env)
+            print(f"[bot] apprise intake on :{INTAKE_APPRISE_PORT} (accept_any={INTAKE_APPRISE_ACCEPT_ANY_KEY})")
+        else:
+            print("[bot] apprise already listening; skip start")
 
 def stop_sidecars():
     for p in _sidecars:
@@ -191,7 +230,7 @@ def _persona_line(quip_text: str) -> str:
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
-    # Decorate body, but keep original title so banners stay clean
+    # Decorate body, but keep the original title
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
         title = orig_title
@@ -287,12 +326,12 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
-    # Only Beautify formats, rewrite is optional and off by default.
     used_llm = False
     used_beautify = False
     final = message or ""
     extras = None
 
+    # Optional rewrite (OFF by default). Uses active persona context only.
     if LLM_REWRITE_ENABLED and merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
             final2 = _llm.rewrite(
@@ -313,6 +352,7 @@ def _llm_then_beautify(title: str, message: str):
         except Exception as e:
             print(f"[bot] LLM rewrite failed (disabled by default): {e}")
 
+    # Always beautify; pass persona so overlay + bottom riffs work
     if _beautify and hasattr(_beautify, "beautify_message"):
         try:
             final, extras = _beautify.beautify_message(
@@ -522,11 +562,12 @@ async def listen():
                 print(f"[bot] listen loop err: {e}")
 
 # ============================
-# Digest scheduler (fixed)
+# Daily scheduler (digest)
 # ============================
 _last_digest_date = None
 
 async def _digest_scheduler_loop():
+    # Check once a minute; when local time == digest_time and enabled, post digest once per day.
     global _last_digest_date
     from datetime import datetime
     while True:
@@ -534,38 +575,21 @@ async def _digest_scheduler_loop():
             if merged.get("digest_enabled"):
                 target = str(merged.get("digest_time", "08:00")).strip()
                 now = datetime.now()
-                try:
-                    hh, mm = target.split(":")
-                    th, tm = int(hh), int(mm)
-                except Exception:
-                    th, tm = 8, 0
-                if now.hour == th and abs(now.minute - tm) <= 1 and _last_digest_date != now.date():
+                if now.strftime("%H:%M") == target and _last_digest_date != now.date():
                     try:
                         import digest as _digest_mod
                         if hasattr(_digest_mod, "build_digest"):
                             title, msg, pr = _digest_mod.build_digest(merged)
                             send_message("Digest", msg, priority=pr)
+                            _last_digest_date = now.date()
                         else:
-                            send_message("Digest", "Digest module missing build_digest().", priority=3)
-                        _last_digest_date = now.date()
+                            _last_digest_date = now.date()
                     except Exception as e:
-                        send_message("Digest Error", f"{e}", priority=8)
+                        print(f"[Scheduler] digest error: {e}")
                         _last_digest_date = now.date()
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
-
-# ============================
-# Main
-# ============================
-def main():
-    resolve_app_id()
-    try:
-        start_sidecars()
-        post_startup_card()
-    except Exception:
-        pass
-    asyncio.run(_run_forever())
 
 # ============================
 # Internal wake HTTP server
@@ -612,10 +636,23 @@ async def _start_internal_wake_server():
     except Exception as e:
         print(f"[bot] failed to start internal wake server: {e}")
 
+# ============================
+# Main
+# ============================
+def main():
+    resolve_app_id()
+    try:
+        start_sidecars()
+        post_startup_card()
+    except Exception:
+        pass
+    asyncio.run(_run_forever())
+
 async def _run_forever():
     try:
         asyncio.create_task(_start_internal_wake_server())
-    except Exception: pass
+    except Exception:
+        pass
     asyncio.create_task(_digest_scheduler_loop())
     while True:
         try:
