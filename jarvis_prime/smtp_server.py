@@ -3,6 +3,7 @@
 import os
 import asyncio
 from email.parser import BytesParser
+from email.utils import parsedate_to_datetime
 import json
 import requests
 import time
@@ -153,8 +154,33 @@ class Handler:
             else:
                 body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
 
+            # ---------- ADDITIVE: build riff facts + hint (safe even if beautify/LLM off) ----------
+            from_hdr = msg.get("From", "")
+            to_hdr   = msg.get("To", "")
+            date_hdr = msg.get("Date", "")
+            try:
+                dt_val = parsedate_to_datetime(date_hdr).isoformat() if date_hdr else ""
+            except Exception:
+                dt_val = ""
+            riff_facts = {
+                "time": dt_val or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "subject": subject,
+                "from": from_hdr,
+                "to": to_hdr,
+                "provider": "SMTP"
+            }
+            base_extras = {"riff_hint": True, "source": "smtp", "facts": riff_facts}
+
             out, extras, used_llm, used_beautify = _transform(title, body, CHAT_MOOD)
-            status = _post(title, out, extras)
+
+            # merge any beautify extras
+            final_extras = dict(base_extras)
+            if isinstance(extras, dict):
+                # keep our hint/facts; allow beautify to add visuals, etc.
+                final_extras.update(extras)
+            print("[smtp] riff hint attached")
+
+            status = _post(title, out, final_extras)
 
             # Mirror to Inbox DB (UI-first)
             if storage:
@@ -164,7 +190,13 @@ class Handler:
                         body=out or "",
                         source="smtp",
                         priority=5,
-                        extras={"extras": extras or {}, "mood": CHAT_MOOD, "used_llm": used_llm, "used_beautify": used_beautify, "status": int(status)},
+                        extras={
+                            "extras": final_extras or {},
+                            "mood": CHAT_MOOD,
+                            "used_llm": used_llm,
+                            "used_beautify": used_beautify,
+                            "status": int(status)
+                        },
                         created_at=int(time.time())
                     )
                 except Exception as e:
