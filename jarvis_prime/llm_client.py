@@ -440,6 +440,117 @@ def rewrite(text: str, mood: str = "serious", timeout: int = 8, cpu_limit: int =
     return _finalize(src, imgs)
 
 
+# =================== NEW: Persona riff helpers (no rewrite prompt) ===================
+def _cleanup_quip_block(text: str, max_lines: int) -> List[str]:
+    """Turn a raw model response into <= max_lines short, clean lines."""
+    if not text:
+        return []
+    # Remove obvious labels/bullets
+    s = re.sub(r'^\s*[-•\d\)\.]+\s*', '', text, flags=re.M)
+    s = _strip_reasoning(s)
+    # Split to lines, trim, drop empties and overlong rambles
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    out: List[str] = []
+    seen: set[str] = set()
+    for ln in lines:
+        # hard cap length for riffs
+        if len(ln) > 160:
+            ln = ln[:160].rstrip()
+        key = ln.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        # remove ending trailing punctuation duplication
+        ln = re.sub(r'\s+([.!?])$', r'\1', ln)
+        out.append(ln)
+        if len(out) >= max_lines:
+            break
+    return out
+
+def persona_riff(persona: str, context: str, max_lines: int = 3, timeout: int = 8,
+                 cpu_limit: int = 70, models_priority: Optional[List[str]] = None,
+                 base_url: Optional[str] = None, model_url: Optional[str] = None,
+                 model_path: Optional[str] = None) -> List[str]:
+    """
+    Generate 1–N short persona lines about `context`. No system rewrite prompt is used.
+    """
+    persona = (persona or "jarvis").strip()
+    ctx = (context or "").strip()
+    if not ctx:
+        return []
+
+    # Lightweight instruction for riffs only
+    system = (
+        f"You speak as '{persona}'. Produce 1–{max_lines} short, punchy lines reacting to the context. "
+        f"No meta, no brackets, no labels, no lists; just lines separated by newlines. "
+        f"Stay concise and in persona."
+    )
+
+    # 1) Ollama path if configured
+    base = (base_url or OLLAMA_BASE_URL or "").strip()
+    if base and requests:
+        try:
+            payload = {
+                "model": (models_priority[0] if models_priority else "llama3.1"),
+                "prompt": f"[SYSTEM]\n{system}\n[CONTEXT]\n{ctx}\n[LINES]\n",
+                "stream": False,
+                "options": {
+                    "temperature": max(0.2, TEMP),  # riffs can be a touch more creative
+                    "top_p": TOP_P,
+                    "repeat_penalty": REPEAT_P,
+                    "num_ctx": CTX,
+                    "num_predict": max(64, GEN_TOKENS // 2),
+                    "stop": ["[SYSTEM]", "[CONTEXT]", "[LINES]"]
+                }
+            }
+            r = requests.post(base.rstrip("/") + "/api/generate", json=payload, timeout=timeout)
+            if r.ok:
+                raw = str(r.json().get("response", ""))
+                return _cleanup_quip_block(raw, max_lines)
+        except Exception as e:
+            print(f"[{BOT_NAME}] ⚠️ Ollama riff call failed: {e}", flush=True)
+
+    # 2) Local GGUF via ctransformers
+    p = _resolve_any_path(model_path, model_url)
+    if p and p.exists():
+        m = _load_local_model(p)
+        if m is not None:
+            prompt = f"[SYSTEM]\n{system}\n[CONTEXT]\n{ctx}\n[LINES]\n"
+            threads = _cpu_threads_for_limit(cpu_limit)
+
+            def _gen() -> str:
+                out = m(
+                    prompt,
+                    max_new_tokens=max(64, GEN_TOKENS // 2),
+                    temperature=max(0.2, TEMP),
+                    top_p=TOP_P,
+                    repetition_penalty=REPEAT_P,
+                    stop=["[SYSTEM]", "[CONTEXT]", "[LINES]"],
+                    threads=threads,
+                )
+                return str(out or "")
+
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_gen)
+                try:
+                    raw = fut.result(timeout=max(2, int(timeout or 8)))
+                    return _cleanup_quip_block(raw, max_lines)
+                except TimeoutError:
+                    print(f"[{BOT_NAME}] ⚠️ LLM riff timed out after {timeout}s", flush=True)
+                except Exception as e:
+                    print(f"[{BOT_NAME}] ⚠️ Riff generation failed: {e}", flush=True)
+
+    # 3) Fallback: no model — return empty (beautify will just omit riff block)
+    return []
+
+# Friendly aliases (drop-in for personality modules)
+def quips(persona: str, context: str, max_lines: int = 3, **kw) -> List[str]:
+    return persona_riff(persona, context, max_lines=max_lines, **kw)
+
+def llm_quips(persona: str, context: str, max_lines: int = 3, **kw) -> List[str]:
+    return persona_riff(persona, context, max_lines=max_lines, **kw)
+
+
 def engine_status() -> Dict[str, object]:
     """Quick status for boot card."""
     base = (OLLAMA_BASE_URL or "").strip()
