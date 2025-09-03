@@ -24,6 +24,15 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 # We install flask (required by /app/intakes/apprise.py) and waitress (optional, used if present).
 RUN pip3 install --no-cache-dir --break-system-packages flask waitress
 
+# ---- NEW (additive): Minimal build deps + llama-cpp-python for local GGUF ----
+# Build deps are small and only for compiling wheels if prebuilt not available.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake libopenblas-dev \
+  && rm -rf /var/lib/apt/lists/* \
+  && pip3 install --no-cache-dir --break-system-packages \
+      numpy \
+      llama-cpp-python==0.2.90
+
 # ---- App content (keep your original layout) ----
 # Default system prompt (baked into image). Runtime falls back to /share/jarvis_prime/memory if present.
 RUN mkdir -p /app/memory
@@ -79,3 +88,4 @@ CMD [ "/run.sh" ]
 # Standalone mode defaults (can be overridden via options.json -> env)
 ENV BOT_INPUT_SSE=true BOT_INPUT_GOTIFY=true BOT_INPUT_NTFY=false \
     JARVIS_BASE=http://127.0.0.1:2581 DEDUPE_TTL_SECONDS=120 WORKERS=2
+```0
