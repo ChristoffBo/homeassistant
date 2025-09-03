@@ -51,6 +51,9 @@ COPY ntfy_client.py  /app/ntfy_client.py
 COPY smtp_client.py  /app/smtp_client.py
 COPY ui/ /app/ui/
 COPY webhook_server.py  /app/webhook_server.py
+COPY apprise.py  /app/apprise.py
+
+apprise.py
 
 # Permissions
 RUN chmod +x /run.sh
