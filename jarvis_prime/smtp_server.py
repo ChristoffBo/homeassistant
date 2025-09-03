@@ -154,7 +154,7 @@ class Handler:
             else:
                 body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
 
-            # ---------- ADDITIVE: build riff facts + hint (safe even if beautify/LLM off) ----------
+            # ---------- ADDITIVE: build riff facts + hint ----------
             from_hdr = msg.get("From", "")
             to_hdr   = msg.get("To", "")
             date_hdr = msg.get("Date", "")
@@ -176,7 +176,6 @@ class Handler:
             # merge any beautify extras
             final_extras = dict(base_extras)
             if isinstance(extras, dict):
-                # keep our hint/facts; allow beautify to add visuals, etc.
                 final_extras.update(extras)
             print("[smtp] riff hint attached")
 
