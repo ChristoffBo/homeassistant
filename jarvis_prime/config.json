@@ -76,6 +76,11 @@
     "webhook_port": 2590,
     "webhook_token": "",
 
+    "intake_apprise_enabled": true,
+    "intake_apprise_token": "change-me-very-long",
+    "intake_apprise_accept_any_key": true,
+    "intake_apprise_allowed_keys": [],
+
     "enable_dude": true,
     "enable_chick": false,
     "enable_nerd": false,
@@ -203,6 +208,11 @@
     "webhook_bind": "str",
     "webhook_port": "int(1,)",
     "webhook_token": "str",
+
+    "intake_apprise_enabled": "bool",
+    "intake_apprise_token": "str",
+    "intake_apprise_accept_any_key": "bool",
+    "intake_apprise_allowed_keys": "list(str)",
 
     "enable_dude": "bool",
     "enable_chick": "bool",
