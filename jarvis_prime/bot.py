@@ -12,6 +12,12 @@ import time
 import socket
 from typing import List
 
+# ADD: anti-dup + startup guard
+BOT_START_TS = int(time.time())
+PROCESSED_IDS = set()
+PROCESSED_HASHES = set()
+PROCESSED_STATE_PATH = "/data/.jarvis_processed.json"
+
 # ============================
 # Inbox storage
 # ============================
@@ -150,7 +156,7 @@ if _pstate and hasattr(_pstate, "get_active_persona"):
         pass
 
 # ============================
-# ADD: Shared riff/beautify choke point
+# Shared riff/beautify choke point (ADD)
 # ============================
 def process_and_send(title: str, message: str, priority: int = 5, extras=None):
     """
@@ -644,14 +650,10 @@ async def _ingest(request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 # ============================
-# ADD: Inbox Riff Poller (zero changes to sidecars)
+# ADD: Inbox Riff Poller (with duplicate protection)
 # ============================
-# We poll the storage DB for any NEW messages not from Gotify (i.e., from smtp/proxy/webhook/apprise/etc.)
-# and route them through process_and_send() so they riff just like Gotify stream.
 import hashlib
 import sqlite3
-
-_PROCESSED_KEYS = set()
 
 def _hash_key(title: str, body: str, created_at: int, source: str) -> str:
     h = hashlib.sha256()
@@ -665,7 +667,6 @@ def _hash_key(title: str, body: str, created_at: int, source: str) -> str:
     return h.hexdigest()
 
 def _candidate_db_paths():
-    # Try to ask storage first
     paths = []
     try:
         dbp = getattr(storage, "DB_PATH", None)
@@ -673,13 +674,11 @@ def _candidate_db_paths():
             paths.append(dbp)
     except Exception:
         pass
-    # Common fallbacks
     paths.extend([
         "/share/jarvis_prime/inbox.db",
         "/data/inbox.db",
         "/share/inbox.db",
     ])
-    # De-dup while preserving order
     seen = set(); out = []
     for p in paths:
         if p and p not in seen:
@@ -695,27 +694,29 @@ def _fetch_recent_rows(db_path: str, limit: int = 200):
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        # Try common table names and common columns
         for table in _candidate_tables():
             try:
-                # prefer explicit columns if present; fall back to *
                 cur.execute(f"PRAGMA table_info({table})")
                 cols = [r["name"] for r in cur.fetchall()]
                 if not cols:
                     continue
+                col_id     = "id"          if "id" in cols else None
                 col_title  = "title"       if "title" in cols else None
                 col_body   = "body"        if "body" in cols else None
                 col_source = "source"      if "source" in cols else None
                 col_prio   = "priority"    if "priority" in cols else None
                 col_created= "created_at"  if "created_at" in cols else ("ts" if "ts" in cols else None)
-                # Require minimum fields
                 if not (col_title and col_body and col_source and col_created):
                     continue
                 order_col = col_created
                 cur.execute(f"SELECT * FROM {table} ORDER BY {order_col} DESC LIMIT ?", (limit,))
-                rows = [dict(r) for r in cur.fetchall()]
+                fetched = [dict(r) for r in cur.fetchall()]
+                for r in fetched:
+                    r["_table"] = table
+                    r["_id_col"] = col_id
+                    r["_created_col"] = col_created
                 conn.close()
-                return rows
+                return fetched
             except Exception:
                 continue
         conn.close()
@@ -723,44 +724,89 @@ def _fetch_recent_rows(db_path: str, limit: int = 200):
         print(f"[bot] inbox poller DB open failed for {db_path}: {e}")
     return rows
 
+# ADD: initialize processed caches from disk
+def _load_processed_state():
+    try:
+        if os.path.exists(PROCESSED_STATE_PATH):
+            with open(PROCESSED_STATE_PATH, "r") as f:
+                data = json.load(f)
+            ids = set(data.get("ids", []))
+            hashes = set(data.get("hashes", []))
+            return ids, hashes
+    except Exception as e:
+        print(f"[bot] processed state load failed: {e}")
+    return set(), set()
+
+def _save_processed_state():
+    try:
+        data = {
+            "ids": list(PROCESSED_IDS)[-5000:],
+            "hashes": list(PROCESSED_HASHES)[-5000:]
+        }
+        with open(PROCESSED_STATE_PATH, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"[bot] processed state save failed: {e}")
+
+try:
+    _ids, _hashes = _load_processed_state()
+    PROCESSED_IDS |= _ids
+    PROCESSED_HASHES |= _hashes
+    if _ids or _hashes:
+        print(f"[bot] restored processed state: ids={len(_ids)} hashes={len(_hashes)}")
+except Exception as e:
+    print(f"[bot] processed state init failed: {e}")
+
 async def _inbox_riff_poller_loop():
-    # Poll every 2 seconds; riff anything not from gotify that we haven't processed yet.
+    # Poll every 5 seconds; riff anything new (not from gotify) once.
+    SLEEP_SECONDS = 5
+    MAX_PER_TICK = 10
     while True:
+        processed_this_tick = 0
         try:
             paths = _candidate_db_paths()
             for dbp in paths:
                 rows = _fetch_recent_rows(dbp, limit=250)
                 if not rows:
                     continue
-                for r in rows[::-1]:  # oldest first
+                for r in rows[::-1]:
+                    if processed_this_tick >= MAX_PER_TICK:
+                        break
                     title  = str(r.get("title") or "Notification")
                     body   = str(r.get("body") or "")
                     source = str(r.get("source") or "")
                     prio   = int(r.get("priority") or 5)
-                    created= int(r.get("created_at") or r.get("ts") or 0)
+                    created= int(r.get(r.get("_created_col") or "created_at") or 0)
+                    rid    = r.get(r.get("_id_col") or "id", None)
 
-                    # Skip items already processed, and skip our own mirror posts (source == gotify)
-                    key = _hash_key(title, body, created, source)
-                    if key in _PROCESSED_KEYS:
+                    if created and created < BOT_START_TS - 2:
                         continue
                     if source.lower() == "gotify":
-                        _PROCESSED_KEYS.add(key)
                         continue
-
-                    # Skip if looks like we already decorated (avoid loops)
                     if (title or "").startswith(f"{BOT_ICON} {BOT_NAME}:"):
-                        _PROCESSED_KEYS.add(key)
                         continue
 
-                    # Route through riffs
+                    if rid is not None:
+                        key_id = f"{r.get('_table','')}:{rid}"
+                        if key_id in PROCESSED_IDS:
+                            continue
+                    key_hash = _hash_key(title, body, created, source)
+                    if key_hash in PROCESSED_HASHES:
+                        continue
+
                     try:
                         process_and_send(title, body, priority=prio, extras=r.get("extras"))
-                        _PROCESSED_KEYS.add(key)
+                        if rid is not None:
+                            PROCESSED_IDS.add(key_id)
+                        PROCESSED_HASHES.add(key_hash)
+                        processed_this_tick += 1
                     except Exception as e:
                         print(f"[bot] poller relay failed: {e}")
+            if processed_this_tick:
+                _save_processed_state()
         except Exception as e:
             print(f"[bot] poller loop err: {e}")
-        await asyncio.sleep(2)
+        await asyncio.sleep(SLEEP_SECONDS)
 
 async def _start_internal_wake_server():
     if web is None:
@@ -769,7 +815,6 @@ async def _start_internal_wake_server():
     try:
         app = web.Application()
         app.router.add_post("/internal/wake", _internal_wake)
-        # ADD route:
         app.router.add_post("/internal/ingest", _ingest)
         runner = web.AppRunner(app)
         await runner.setup()
@@ -869,7 +914,7 @@ async def _run_forever():
         _start_apprise_flask_if_enabled()
     except Exception as _e:
         print(f"[bot] could not start Apprise intake: {_e}")
-    # ADD: start inbox riff poller
+    # Start inbox riff poller
     try:
         asyncio.create_task(_inbox_riff_poller_loop())
         print("[bot] inbox riff poller started")
