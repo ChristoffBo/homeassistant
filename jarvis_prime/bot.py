@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # /app/bot.py
 import os
+import inspect
 import json
 import asyncio
 import requests
@@ -9,7 +10,6 @@ import re
 import subprocess
 import atexit
 import time
-import socket
 from typing import Optional, Tuple, List
 
 # ============================
@@ -46,21 +46,22 @@ KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","t
 SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
-# --- Webhook feature toggles (safe defaults; overridden by /data/options.json)
+# --- NEW: webhook feature toggles (safe defaults; overridden by /data/options.json if present)
 WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true","yes")
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
 
-# --- Apprise intake toggles (safe defaults; overridden by /data/options.json)
+# --- NEW: Apprise intake toggles (safe defaults; overridden by /data/options.json if present)
 INTAKE_APPRISE_ENABLED = os.getenv("intake_apprise_enabled", "false").lower() in ("1","true","yes")
 INTAKE_APPRISE_TOKEN = os.getenv("intake_apprise_token", "")
 INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true").lower() in ("1","true","yes")
+# Stored as CSV in env if ever used via env; options.json will override with a list
 INTAKE_APPRISE_ALLOWED_KEYS = [k for k in os.getenv("intake_apprise_allowed_keys", "").split(",") if k.strip()]
+
+# --- NEW: default port for Flask-based Apprise intake (overridden by options.json)
 INTAKE_APPRISE_PORT = int(os.getenv("intake_apprise_port", "2591"))
 
-# --- LLM behavior toggles ---
-LLM_REWRITE_ENABLED = os.getenv("LLM_REWRITE_ENABLED", "false").lower() in ("1","true","yes")
-BEAUTIFY_LLM_ENABLED_ENV = os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() in ("1","true","yes")
+CHAT_MOOD = "neutral"  # compatibility token; real persona comes from personality_state
 
 # ============================
 # Load /data/options.json
@@ -88,7 +89,7 @@ try:
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 
-    # webhook settings
+    # --- NEW: read webhook settings from merged options (non-breaking)
     WEBHOOK_ENABLED = bool(merged.get("webhook_enabled", WEBHOOK_ENABLED))
     WEBHOOK_BIND    = str(merged.get("webhook_bind", WEBHOOK_BIND))
     try:
@@ -96,7 +97,7 @@ try:
     except Exception:
         pass
 
-    # Apprise intake settings
+    # --- NEW: read Apprise intake settings from merged options (non-breaking)
     INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
     INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
@@ -109,20 +110,21 @@ try:
         else:
             INTAKE_APPRISE_ALLOWED_KEYS = []
     except Exception:
+        # keep defaults
         pass
+
+    # --- NEW: read Apprise intake port
     try:
         INTAKE_APPRISE_PORT = int(merged.get("intake_apprise_port", INTAKE_APPRISE_PORT))
     except Exception:
         pass
 
-    # LLM behavior
-    LLM_REWRITE_ENABLED = bool(merged.get("llm_rewrite_enabled", LLM_REWRITE_ENABLED))
-    _beautify_llm_enabled_opt = merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV)
-    os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
 except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
+    # webhook fall back to env defaults (already set)
+    # apprise intake fall back to env defaults (already set)
 
 # ============================
 # Load optional modules
@@ -149,6 +151,7 @@ ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
     try:
         ACTIVE_PERSONA, PERSONA_TOD = _pstate.get_active_persona()
+        CHAT_MOOD = ACTIVE_PERSONA
     except Exception:
         pass
 
@@ -157,59 +160,51 @@ if _pstate and hasattr(_pstate, "get_active_persona"):
 # ============================
 _sidecars: List[subprocess.Popen] = []
 
-def _is_port_in_use(host: str, port: int) -> bool:
+def _start_sidecar(cmd, label):
     try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        _sidecars.append(p)
+    except Exception as e:
+        print(f"[bot] sidecar {label} start failed: {e}")
+
+# --- NEW (additive): skip starting a sidecar if port already has a listener
+def _port_in_use(host: str, port: int) -> bool:
+    try:
+        import socket
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(0.25)
             return s.connect_ex((host, port)) == 0
     except Exception:
         return False
 
-def _start_sidecar(cmd, label, env=None):
-    try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
-        _sidecars.append(p)
-        print(f"[bot] started {label}")
-    except Exception as e:
-        print(f"[bot] sidecar {label} start failed: {e}")
-
 def start_sidecars():
-    # proxy.py (2580) — skip if already bound (HA rebuilds can double-start)
     if PROXY_ENABLED:
-        if not _is_port_in_use("0.0.0.0", 2580) and not _is_port_in_use("127.0.0.1", 2580):
+        # Only start if :2580 not already bound (launcher also starts proxy.py)
+        if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
+            print("[bot] proxy.py already running on :2580 — skipping sidecar")
+        else:
             _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
-        else:
-            print("[bot] proxy already listening; skip start")
-
-    # smtp_server.py (2525)
     if SMTP_ENABLED:
-        if not _is_port_in_use("0.0.0.0", 2525) and not _is_port_in_use("127.0.0.1", 2525):
-            _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
+        # Only start if :2525 not already bound (launcher also starts smtp_server.py)
+        if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
+            print("[bot] smtp_server.py already running on :2525 — skipping sidecar")
         else:
-            print("[bot] smtp already listening; skip start")
-
-    # webhook_server.py (WEBHOOK_PORT)
+            _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
+    # --- NEW: optional webhook sidecar
     if WEBHOOK_ENABLED:
-        if not _is_port_in_use("0.0.0.0", WEBHOOK_PORT) and not _is_port_in_use("127.0.0.1", WEBHOOK_PORT):
+        if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
+            print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar")
+        else:
             env = os.environ.copy()
             env["webhook_bind"] = WEBHOOK_BIND
             env["webhook_port"] = str(WEBHOOK_PORT)
-            _start_sidecar(["python3","/app/webhook_server.py"], "webhook_server.py", env=env)
-        else:
-            print("[bot] webhook already listening; skip start")
-
-    # Apprise intake (/app/intakes/apprise.py) on INTAKE_APPRISE_PORT
-    if INTAKE_APPRISE_ENABLED:
-        if not _is_port_in_use("0.0.0.0", INTAKE_APPRISE_PORT) and not _is_port_in_use("127.0.0.1", INTAKE_APPRISE_PORT):
-            env = os.environ.copy()
-            env["apprise_port"] = str(INTAKE_APPRISE_PORT)
-            env["apprise_token"] = INTAKE_APPRISE_TOKEN
-            env["apprise_accept_any_key"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
-            env["apprise_allowed_keys"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS or [])
-            _start_sidecar(["python3","/app/intakes/apprise.py"], "apprise.py", env=env)
-            print(f"[bot] apprise intake on :{INTAKE_APPRISE_PORT} (accept_any={INTAKE_APPRISE_ACCEPT_ANY_KEY})")
-        else:
-            print("[bot] apprise already listening; skip start")
+            try:
+                p = subprocess.Popen(["python3","/app/webhook_server.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+                _sidecars.append(p)
+            except Exception as e:
+                print(f"[bot] sidecar webhook_server.py start failed: {e}")
+    # --- NEW: Apprise intake is handled by its own module/server if present; this bot only surfaces status.
+    # (No process is started here to avoid assumptions about your /app/intakes/apprise.py runtime model.)
 
 def stop_sidecars():
     for p in _sidecars:
@@ -221,21 +216,23 @@ atexit.register(stop_sidecars)
 # Gotify helpers
 # ============================
 def _persona_line(quip_text: str) -> str:
-    who = ACTIVE_PERSONA or "neutral"
+    # Single-line persona 'speaks' header placed at TOP of message body.
+    who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
     quip_text = (quip_text or "").strip().replace("\n", " ")
     if len(quip_text) > 140:
         quip_text = quip_text[:137] + "..."
+    # Keep it minimal so it aligns nicely with Gotify cards
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
-    # Decorate body, but keep the original title
+    # Decorate body, but keep the original title so it doesn't become a banner
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
         title = orig_title
     elif decorate and _personality and hasattr(_personality, "decorate"):
-        title, message = _personality.decorate(title, message, ACTIVE_PERSONA, chance=1.0)
+        title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
         title = orig_title
 
     # Persona speaking line at the top
@@ -248,7 +245,7 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 
     # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
-        try: priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
+        try: priority = _personality.apply_priority(priority, CHAT_MOOD)
         except Exception: pass
 
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -326,41 +323,24 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
-    used_llm = False
-    used_beautify = False
-    final = message or ""
-    extras = None
-
-    # Optional rewrite (OFF by default). Uses active persona context only.
-    if LLM_REWRITE_ENABLED and merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
+    used_llm = False; used_beautify = False; final = message or ""; extras = None
+    if merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
-            final2 = _llm.rewrite(
-                text=final,
-                mood=ACTIVE_PERSONA,
-                timeout=int(merged.get("llm_timeout_seconds",12)),
-                cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
-                models_priority=merged.get("llm_models_priority", []),
-                base_url=merged.get("llm_ollama_base_url",""),
-                model_url=merged.get("llm_model_url",""),
-                model_path=merged.get("llm_model_path",""),
-                model_sha256=merged.get("llm_model_sha256",""),
-                allow_profanity=bool(merged.get("personality_allow_profanity", False))
-            )
-            if final2:
-                final = final2
-                used_llm = True
+            final2 = _llm.rewrite(text=final, mood=CHAT_MOOD, timeout=int(merged.get("llm_timeout_seconds",12)),
+                                  cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
+                                  models_priority=merged.get("llm_models_priority", []),
+                                  base_url=merged.get("llm_ollama_base_url",""),
+                                  model_url=merged.get("llm_model_url",""),
+                                  model_path=merged.get("llm_model_path",""),
+                                  model_sha256=merged.get("llm_model_sha256",""),
+                                  allow_profanity=bool(merged.get("personality_allow_profanity", False)))
+            if final2: final = final2; used_llm = True
         except Exception as e:
-            print(f"[bot] LLM rewrite failed (disabled by default): {e}")
+            print(f"[bot] LLM rewrite failed: {e}")
 
-    # Always beautify; pass persona so overlay + bottom riffs work
-    if _beautify and hasattr(_beautify, "beautify_message"):
+    if BEAUTIFY_ENABLED and _beautify and hasattr(_beautify, "beautify_message"):
         try:
-            final, extras = _beautify.beautify_message(
-                title, final,
-                mood=ACTIVE_PERSONA,
-                persona=ACTIVE_PERSONA,
-                persona_quip=True
-            )
+            final, extras = _beautify.beautify_message(title, final, mood=CHAT_MOOD)
             used_beautify = True
         except Exception as e:
             print(f"[bot] Beautify failed: {e}")
@@ -415,8 +395,6 @@ def post_startup_card():
         f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
         f"📮 Apprise Intake — {'ACTIVE' if INTAKE_APPRISE_ENABLED else 'OFF'}",
         "",
-        f"LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
-        f"Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'}",
         "Status: All systems nominal",
     ]
     send_message("Startup", "\n".join(lines), priority=4, decorate=False)
@@ -561,6 +539,7 @@ async def listen():
             except Exception as e:
                 print(f"[bot] listen loop err: {e}")
 
+
 # ============================
 # Daily scheduler (digest)
 # ============================
@@ -590,6 +569,19 @@ async def _digest_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
+# ============================
+# Main
+# ============================
+def main():
+    resolve_app_id()
+    try:
+        start_sidecars()
+        post_startup_card()
+    except Exception:
+        pass
+    asyncio.run(_run_forever())
+
+
 
 # ============================
 # Internal wake HTTP server
@@ -637,22 +629,85 @@ async def _start_internal_wake_server():
         print(f"[bot] failed to start internal wake server: {e}")
 
 # ============================
-# Main
+# NEW: Apprise Flask intake server (separate port from Ingress/Webhook)
 # ============================
-def main():
-    resolve_app_id()
+# Run Flask server in a background thread so it won't block the asyncio loop.
+try:
+    import threading
+except Exception:
+    threading = None
+
+def _emit_from_apprise_intake(msg: dict):
+    """
+    Normalize and fan out using the same beautify/persona pipeline.
+    """
     try:
-        start_sidecars()
-        post_startup_card()
-    except Exception:
-        pass
-    asyncio.run(_run_forever())
+        title = str(msg.get("title") or "Notification")
+        body  = str(msg.get("body") or "")
+        final, extras, _, _ = _llm_then_beautify(title, body)
+        send_message(title, final, priority=5, extras=extras)
+    except Exception as e:
+        print(f"[bot] apprise emit failed: {e}")
+
+def _start_apprise_flask_if_enabled():
+    if not INTAKE_APPRISE_ENABLED:
+        print("[bot] Apprise intake disabled via options")
+        return
+    if threading is None:
+        print("[bot] threading unavailable; Apprise intake disabled")
+        return
+    try:
+        # Try regular package import first
+        try:
+            import intakes.apprise as apprise_intake  # requires /app/intakes/__init__.py
+            print("[bot] loaded apprise intake via package import (intakes.apprise)")
+        except Exception as _e_pkg:
+            print(f"[bot] package import failed ({_e_pkg}); trying file loader for /app/intakes/apprise.py")
+            apprise_intake = _load_module("intake_apprise", "/app/intakes/apprise.py")
+            if apprise_intake is None:
+                print("[bot] failed to load /app/intakes/apprise.py")
+                return
+
+        from flask import Flask
+        app = Flask("jarvis_apprise_intake")
+
+        # Register blueprint with your configured gates
+        allowed = INTAKE_APPRISE_ALLOWED_KEYS[:] if INTAKE_APPRISE_ALLOWED_KEYS else None
+        apprise_intake.register(
+            app,
+            emit=_emit_from_apprise_intake,
+            token=INTAKE_APPRISE_TOKEN,
+            accept_any_key=INTAKE_APPRISE_ACCEPT_ANY_KEY,
+            allowed_keys=allowed
+        )
+
+        def _serve():
+            try:
+                from waitress import serve
+                serve(app, host="0.0.0.0", port=int(INTAKE_APPRISE_PORT))
+            except Exception as e:
+                # Fallback to Flask dev server if waitress not present
+                print(f"[bot] waitress unavailable or failed ({e}); falling back to Flask.run on port {INTAKE_APPRISE_PORT}")
+                try:
+                    app.run(host="0.0.0.0", port=int(INTAKE_APPRISE_PORT))
+                except Exception as ee:
+                    print(f"[bot] Flask.run failed: {ee}")
+
+        t = threading.Thread(target=_serve, name="apprise-intake", daemon=True)
+        t.start()
+        print(f"[bot] Apprise intake Flask server listening on 0.0.0.0:{INTAKE_APPRISE_PORT} (token required)")
+    except Exception as e:
+        print(f"[bot] failed to start Apprise intake Flask server: {e}")
 
 async def _run_forever():
     try:
         asyncio.create_task(_start_internal_wake_server())
-    except Exception:
-        pass
+    except Exception: pass
+    # --- NEW: start Apprise Flask intake in the background (non-blocking)
+    try:
+        _start_apprise_flask_if_enabled()
+    except Exception as _e:
+        print(f"[bot] could not start Apprise intake: {_e}")
     asyncio.create_task(_digest_scheduler_loop())
     while True:
         try:
