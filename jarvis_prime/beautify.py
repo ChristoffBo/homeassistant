@@ -1,11 +1,11 @@
+#!/usr/bin/env python3
 # /app/beautify.py
 from __future__ import annotations
-import re, json, importlib, random, html
+import re, json, importlib, html, os
 from typing import List, Tuple, Optional, Dict, Any
 
 # -------- Regex library --------
 IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
-# tolerate spaces/newlines between ] and (, and angle-bracketed URLs
 MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
 KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$')
 
@@ -14,23 +14,14 @@ TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[
 DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
 TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
 
-# Strict IPv4: each octet 0-255
+# Strict IPv4
 IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b')
 HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
 
-EMOJI_RE = re.compile("["
-    "\U0001F300-\U0001F6FF"
-    "\U0001F900-\U0001F9FF"
-    "\U00002600-\U000026FF"
-    "\U00002700-\U000027BF"
-    "\U0001FA70-\U0001FAFF"
-    "\U0001F1E6-\U0001F1FF"
-    "]", flags=re.UNICODE)
+EMOJI_RE = re.compile("[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]", flags=re.UNICODE)
 
-LIKELY_POSTER_HOSTS = (
-    "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
-)
+LIKELY_POSTER_HOSTS = ("githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com")
 
 # -------- Helpers --------
 def _prefer_host_key(url: str) -> int:
@@ -55,7 +46,6 @@ def _normalize(text: str) -> str:
     return s.strip()
 
 def _linewise_dedup_markdown(text: str) -> str:
-    """Safe de-dup that never splits on '.' so IPs like 10.0.0.249 remain intact."""
     lines = text.splitlines()
     out: List[str] = []
     seen: set = set()
@@ -67,8 +57,7 @@ def _linewise_dedup_markdown(text: str) -> str:
             out.append(t)
             continue
         if in_code:
-            out.append(t)
-            continue
+            out.append(t); continue
         key = re.sub(r'\s+', ' ', t.strip()).lower()
         if key and key not in seen:
             seen.add(key); out.append(t)
@@ -82,9 +71,8 @@ def _harvest_images(text: str) -> Tuple[str, List[str]]:
     urls: List[str] = []
     def _md(m):  urls.append(m.group(1)); return ""
     def _bare(m):
-        u = m.group(1).rstrip('.,;:)]}>"\'')  # trim common trailing punctuation
-        urls.append(u)
-        return ""
+        u = m.group(1).rstrip('.,;:)]}>"\'')
+        urls.append(u); return ""
     text = MD_IMG_RE.sub(_md, text)
     text = IMG_URL_RE.sub(_bare, text)
     uniq=[]; seen=set()
@@ -122,11 +110,11 @@ def _first_nonempty_line(s: str) -> str:
 
 def _fmt_kv(label: str, value: str) -> str:
     v = value.strip()
-    if re.search(r'\d', v):  # emphasize numeric values
+    if re.search(r'\d', v):
         v = f"`{v}`"
     return f"- **{label.strip()}:** {v}"
 
-# -------- Persona overlay --------
+# -------- Persona overlay (top canned) --------
 def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
     if not persona: return None
     try:
@@ -140,7 +128,7 @@ def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
     except Exception:
         return f"💬 {persona} says:"
 
-# -------- Minimal header (no dash bars) --------
+# -------- Minimal header --------
 def _header(kind: str, badge: str = "") -> List[str]:
     return [f"📟 Jarvis Prime — {kind} {badge}".rstrip()]
 
@@ -202,10 +190,9 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
         else:
             details.append(_fmt_kv(k, v))
 
-    # also infer IPs/hosts/versions
     ip_list = _find_ips(title, body)
     for ip in ip_list:
-        if f"`{ip}`" not in " ".join(details):  # avoid dup
+        if f"`{ip}`" not in " ".join(details):
             details.append(_fmt_kv("IP", ip))
     for host in HOST_RE.findall(body or ""):
         if not IP_RE.match(host):
@@ -213,7 +200,7 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
 
     for m in VER_RE.finditer(body or ""):
         ver = m.group(0)
-        if any(ver in ip for ip in ip_list):  # skip if part of IP
+        if any(ver in ip for ip in ip_list):
             continue
         details.append(_fmt_kv("version", ver))
 
@@ -221,7 +208,6 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
         first = _first_nonempty_line(body)
         if first: facts.append(_fmt_kv("Info", first))
 
-    # De-dup linewise (safe)
     def _uniq(lines: List[str]) -> List[str]:
         seen=set(); out=[]
         for ln in lines:
@@ -242,48 +228,28 @@ def _format_align_check(text: str) -> str:
         out.append(ln)
     return "\n".join(out).strip()
 
-# =========================
-# LLM pre-pass (additive)
-# =========================
-import os
-try:
-    _llm = importlib.import_module("llm_client")
-except Exception:
-    _llm = None
-
-# env knobs (works even if bot.py isn't the caller)
-_LLM_PREPASS_ENABLED = os.getenv("BEAUTIFY_LLM_ENABLED", os.getenv("llm_enabled","true")).lower() in ("1","true","yes")
-_LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "8"))
-_LLM_CPU_MAX = int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))
-_LLM_MODELS_PRIORITY = [s for s in os.getenv("LLM_MODELS_PRIORITY","").split(",") if s.strip()]
-_LLM_BASE_URL = os.getenv("OLLAMA_BASE_URL","")  # ignored if empty
-_LLM_MODEL_URL = os.getenv("LLM_MODEL_URL","")
-_LLM_MODEL_PATH = os.getenv("LLM_MODEL_PATH","")
-_LLM_MODEL_SHA = os.getenv("LLM_MODEL_SHA256","")
-_LLM_ALLOW_PROF = os.getenv("PERSONALITY_ALLOW_PROFANITY","false").lower() in ("1","true","yes")
-
-def _maybe_llm_rewrite(text: str, mood: str) -> Tuple[str, bool]:
-    """Try LLM rewrite; on any failure return original and False."""
-    if not _LLM_PREPASS_ENABLED or _llm is None or not hasattr(_llm, "rewrite"):
-        return text, False
+# ---- LLM persona (bottom) ----
+def _persona_llm_lines(persona: Optional[str], title: str, body_wo_imgs: str) -> List[str]:
+    enabled = os.getenv("BEAUTIFY_LLM_ENABLED", os.getenv("llm_enabled","true")).lower() in ("1","true","yes")
+    if not enabled or not persona:
+        return []
     try:
-        out = _llm.rewrite(
-            text=text,
-            mood=mood,
-            timeout=_LLM_TIMEOUT,
-            cpu_limit=_LLM_CPU_MAX,
-            models_priority=_LLM_MODELS_PRIORITY,
-            base_url=_LLM_BASE_URL,
-            model_url=_LLM_MODEL_URL,
-            model_path=_LLM_MODEL_PATH,
-            model_sha256=_LLM_MODEL_SHA,
-            allow_profanity=_LLM_ALLOW_PROF,
-        )
-        if isinstance(out, str) and out.strip():
-            return out, True
+        mod = importlib.import_module("personality")
+        mod = importlib.reload(mod)
+        if hasattr(mod, "llm_quips"):
+            lines = mod.llm_quips(persona, title, body_wo_imgs,
+                                  max_lines=int(os.getenv("LLM_PERSONA_LINES_MAX","3")),
+                                  allow_profanity=os.getenv("PERSONALITY_ALLOW_PROFANITY","false").lower() in ("1","true","yes"))
+            # Post-sanitize to avoid breaking markdown
+            clean = []
+            for ln in lines or []:
+                t = ln.replace("`", "'").replace("*", "").strip()
+                if t:
+                    clean.append(t)
+            return clean[:3]
     except Exception:
-        pass
-    return text, False
+        return []
+    return []
 
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
@@ -292,28 +258,10 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
-    normalized = html.unescape(normalized)  # unescape HTML entities for poster URLs
+    normalized = html.unescape(normalized)
 
-    # images (pre-LLM harvest, in case rewrite drops raw URLs)
-    pre_body_wo_imgs, pre_images = _harvest_images(normalized)
-
-    # ---- LLM rewrite (best effort) ----
-    llm_input = normalized  # keep posters for LLM context
-    llm_text, llm_used = _maybe_llm_rewrite(llm_input, mood)
-    if llm_used:
-        normalized = llm_text
-
-    # images after LLM (merge & de-dup, prefer poster hosts)
-    post_body_wo_imgs, post_images = _harvest_images(normalized)
-    # merge with stable preference
-    images = []
-    seen = set()
-    for u in sorted(pre_images + post_images, key=_prefer_host_key):
-        if u not in seen:
-            seen.add(u); images.append(u)
-
-    # choose body to analyze (prefer post-LLM, already without image URLs)
-    body_wo_imgs = post_body_wo_imgs if llm_used else pre_body_wo_imgs
+    # harvest images (no LLM rewrite of facts)
+    body_wo_imgs, images = _harvest_images(normalized)
 
     kind = _detect_type(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs)
@@ -321,9 +269,10 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     lines: List[str] = []
     lines += _header(kind, badge)
 
-    # persona overlay line inside the card
-    pol = _persona_overlay_line(persona)
-    if pol: lines += [pol]
+    # Persona canned one-liner at the top (unchanged facts below)
+    if persona_quip:
+        pol = _persona_overlay_line(persona)
+        if pol: lines += [pol]
 
     facts, details = _categorize_bullets(title, body_wo_imgs)
     if facts:
@@ -331,9 +280,14 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if details:
         lines += ["", "📄 Details", *details]
 
-    # Inline the first image so the app view shows a poster (while push uses bigImageUrl)
+    # Poster image (inline first image)
     if images:
         lines += ["", f"![poster]({images[0]})"]
+
+    # LLM persona riffs at the very bottom (1–3 lines), never touching facts
+    llm_lines = _persona_llm_lines(persona, title or "", body_wo_imgs or "")
+    if llm_lines:
+        lines += ["", f"🧠 {persona} riff", *[f"> {ln}" for ln in llm_lines]]
 
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
@@ -343,7 +297,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         "client::display": {"contentType": "text/markdown"},
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images,
-        "jarvis::llm_used": bool(llm_used),
+        "jarvis::llm_used": bool(bool(llm_lines)),
     }
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
