@@ -13,7 +13,9 @@
       if (!p.endsWith('/')) p += '/';
       url.pathname = p;
       return url.toString();
-    } catch { return b; }
+    } catch {
+      return b;
+    }
   }
   const ROOT = apiRoot();
   const u = (path) => new URL(path.replace(/^\/+/, ''), ROOT).toString();
@@ -39,7 +41,10 @@
     toast: $('#toast')
   };
 
-  function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; els.toast.appendChild(d); setTimeout(()=> d.remove(), 3200); }
+  function toast(msg){
+    const d=document.createElement('div'); d.className='toast'; d.textContent=msg;
+    els.toast.appendChild(d); setTimeout(()=> d.remove(), 3200);
+  }
   const esc = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const fmt = (ts) => { try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); } catch { return '' } };
 
@@ -49,7 +54,8 @@
       const r = await fetch(url, opts);
       if(!r.ok){
         const t = await r.text().catch(()=> '');
-        if(!(isTemp && r.status===404)) throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t); else return Promise.reject(new Error('temp-404'));
+        if(!(isTemp && r.status===404)) throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t);
+        else return Promise.reject(new Error('temp-404'));
       }
       const ct = r.headers.get('content-type')||'';
       return ct.includes('application/json') ? r.json() : r.text();
@@ -246,14 +252,12 @@
   $('#test-email')?.addEventListener('click', ()=> API.test('email').then(()=>toast('Email test sent')).catch(()=>toast('Email test failed')));
   $('#test-gotify')?.addEventListener('click', ()=> API.test('gotify').then(()=>toast('Gotify test sent')).catch(()=>toast('Gotify test failed')));
   $('#test-ntfy')?.addEventListener('click', ()=> API.test('ntfy').then(()=>toast('ntfy test sent')).catch(()=>toast('ntfy test failed')));
-  $('#test-wa')?.addEventListener('click', ()=> API.test('whatsapp').then(()=>toast('WhatsApp test sent')).catch(()=>toast('WhatsApp test failed')));
 
   $('#save-channels')?.addEventListener('click', async()=>{
     const payload = {
       smtp:{ host:$('#smtp-host').value, port:$('#smtp-port').value, tls:$('#smtp-tls').checked, user:$('#smtp-user').value, pass:$('#smtp-pass').value, from:$('#smtp-from').value },
       gotify:{ url:$('#gotify-url').value, token:$('#gotify-token').value, priority:$('#gotify-priority').value, click:$('#gotify-click').value },
-      ntfy:{ url:$('#ntfy-url').value, topic:$('#ntfy-topic').value, tags:$('#ntfy-tags').value, priority:$('#ntfy-priority').value },
-      whatsapp:{ token:$('#wa-token').value, phone_id:$('#wa-phone').value, template:$('#wa-template').value, lang:$('#wa-lang').value }
+      ntfy:{ url:$('#ntfy-url').value, topic:$('#ntfy-topic').value, tags:$('#ntfy-tags').value, priority:$('#ntfy-priority').value }
     };
     try{ await API.saveChannels(payload); toast('Channels saved'); }catch{ toast('Save failed'); }
   });
@@ -280,8 +284,13 @@
   document.addEventListener('keydown', (e)=>{
     if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
     if(e.key==='r'){ load(state.active); }
-    if(e.key==='Delete' && state.active){ if(confirm('Delete this message?')) API.del(state.active).then(()=>{ toast('Deleted'); load(); }); }
-    if(e.key==='a' && state.active){ API.setArchived(state.active, true).then(()=>{ toast('Archived'); load(state.active); }); }
+    if(e.key==='Delete' && state.active){
+      if(confirm('Delete this message?'))
+        API.del(state.active).then(()=>{ toast('Deleted'); load(); });
+    }
+    if(e.key==='a' && state.active){
+      API.setArchived(state.active, true).then(()=>{ toast('Archived'); load(state.active); });
+    }
   });
 
   // Boot
