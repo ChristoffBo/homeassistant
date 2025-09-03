@@ -266,8 +266,11 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
-                     persona: Optional[str] = None, persona_quip: bool = True) -> Tuple[str, Optional[Dict[str, Any]]]:
-
+                     persona: Optional[str] = None, persona_quip: bool = True,
+                     extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """
+    extras_in: may carry riff_hint and other intake-provided metadata
+    """
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
     normalized = html.unescape(normalized)  # unescape HTML entities for poster URLs
@@ -298,7 +301,11 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     # --- LLM persona riffs at the bottom (1–3 lines) ---
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
-    riffs = _persona_llm_riffs(ctx, persona)
+    riffs: List[str] = []
+    riff_hint = bool(extras_in.get("riff_hint")) if isinstance(extras_in, dict) else False
+    if riff_hint and persona:
+        riffs = _persona_llm_riffs(ctx, persona)
+
     if riffs:
         lines += ["", f"🧠 {persona} riff"]
         for r in riffs:
@@ -318,5 +325,9 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     }
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
+
+    # carry over input extras safely
+    if isinstance(extras_in, dict):
+        extras.update(extras_in)
 
     return text, extras
