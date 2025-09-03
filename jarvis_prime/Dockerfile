@@ -20,6 +20,10 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 
+# ---- NEW (additive): Apprise intake server deps ----
+# We install flask (required by /app/intakes/apprise.py) and waitress (optional, used if present).
+RUN pip3 install --no-cache-dir --break-system-packages flask waitress
+
 # ---- App content (keep your original layout) ----
 # Default system prompt (baked into image). Runtime falls back to /share/jarvis_prime/memory if present.
 RUN mkdir -p /app/memory
@@ -53,13 +57,17 @@ COPY ui/ /app/ui/
 COPY webhook_server.py  /app/webhook_server.py
 COPY apprise.py  /app/apprise.py
 
+# ---- NEW (additive): place intake blueprint at the path bot.py expects ----
+RUN mkdir -p /app/intakes
+COPY apprise.py /app/intakes/apprise.py
+
 # Permissions
 RUN chmod +x /run.sh
 
 # ---- Networking ----
 # 2525 = SMTP intake, 2580 = HTTP proxy (if used), 2581 = Inbox API/UI (LAN access)
-EXPOSE 2525/tcp 2580/tcp 2581/tcp
-
+# NEW (additive): 2591 = Apprise intake Flask server
+EXPOSE 2525/tcp 2580/tcp 2581/tcp 2591/tcp
 
 # Simple healthcheck: Inbox API responds
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
@@ -67,7 +75,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
 
 # Entrypoint
 CMD [ "/run.sh" ]
-
 
 # Standalone mode defaults (can be overridden via options.json -> env)
 ENV BOT_INPUT_SSE=true BOT_INPUT_GOTIFY=true BOT_INPUT_NTFY=false \
