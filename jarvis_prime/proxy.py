@@ -152,6 +152,11 @@ def _pipeline(title: str, body: str, mood: str, riff_hint: bool, headers_map: di
         extras["proxy"]["headers"] = headers_map or {}
         extras["proxy"]["query"] = query_map or {}
         extras["riff_hint"] = bool(riff_hint)
+        extras["source"] = "proxy"
+        extras.setdefault("facts", {
+            "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "provider": "Proxy Intake"
+        })
     except Exception:
         pass
 
