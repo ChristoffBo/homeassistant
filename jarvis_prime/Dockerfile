@@ -88,4 +88,3 @@ CMD [ "/run.sh" ]
 # Standalone mode defaults (can be overridden via options.json -> env)
 ENV BOT_INPUT_SSE=true BOT_INPUT_GOTIFY=true BOT_INPUT_NTFY=false \
     JARVIS_BASE=http://127.0.0.1:2581 DEDUPE_TTL_SECONDS=120 WORKERS=2
-```0
