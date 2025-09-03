@@ -263,6 +263,70 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
         pass
     return []
 
+# --------- ADDITIVE: global helpers for riffs & persona ----------
+def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
+    """
+    If persona wasn't provided by intake, try resolve a default without changing existing behavior.
+    Priority:
+      1) passed_persona
+      2) /data/personality_state.json -> {"current_persona": "..."}
+      3) /data/options.json -> {"default_persona": "..."}
+      4) env DEFAULT_PERSONA
+      5) None (no change)
+    """
+    if passed_persona:
+        return passed_persona
+    try:
+        with open("/data/personality_state.json", "r", encoding="utf-8") as f:
+            st = json.load(f)
+            p = (st.get("current_persona") or "").strip()
+            if p:
+                return p
+    except Exception:
+        pass
+    try:
+        with open("/data/options.json", "r", encoding="utf-8") as f:
+            opt = json.load(f)
+            p = (opt.get("default_persona") or "").strip()
+            if p:
+                return p
+    except Exception:
+        pass
+    p = (os.getenv("DEFAULT_PERSONA") or "").strip()
+    return p or None
+
+def _global_riff_hint(extras_in: Optional[Dict[str, Any]], source_hint: Optional[str]) -> bool:
+    """
+    Make riffs effectively 'on' for all known intakes unless explicitly disabled.
+    Preserves explicit riff_hint=False from the caller.
+    """
+    # Respect explicit False if provided
+    if isinstance(extras_in, dict) and "riff_hint" in extras_in:
+        try:
+            return bool(extras_in.get("riff_hint"))
+        except Exception:
+            return True
+
+    # Auto-on for common sources (covers SMTP, Proxy, Webhook, Apprise, ntfy, etc.)
+    src = (source_hint or "").strip().lower()
+    auto_sources = {
+        "smtp","proxy","webhook","webhooks","apprise","gotify","ntfy",
+        "sonarr","radarr","watchtower","speedtest","apt","syslog"
+    }
+    if src in auto_sources:
+        return True
+
+    # Default-on globally; can be tuned via env BEAUTIFY_RIFFS_DEFAULT (defaults True)
+    default_on = os.getenv("BEAUTIFY_RIFFS_DEFAULT", "true").lower() in ("1","true","yes")
+    return default_on
+
+def _debug(msg: str) -> None:
+    if os.getenv("BEAUTIFY_DEBUG", "").lower() in ("1","true","yes"):
+        try:
+            print(f"[beautify] {msg}")
+        except Exception:
+            pass
+
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
@@ -284,9 +348,12 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     lines: List[str] = []
     lines += _header(kind, badge)
 
+    # persona resolution (additive; does not change caller's explicit persona)
+    eff_persona = _effective_persona(persona)
+
     # persona overlay line inside the card (top)
     if persona_quip:
-        pol = _persona_overlay_line(persona)
+        pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
     facts, details = _categorize_bullets(title, body_wo_imgs)
@@ -302,12 +369,17 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     # --- LLM persona riffs at the bottom (1–3 lines) ---
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
     riffs: List[str] = []
-    riff_hint = True if not isinstance(extras_in, dict) else bool(extras_in.get("riff_hint", True))
-    if persona and riff_hint:
-        riffs = _persona_llm_riffs(ctx, persona)
+
+    # ADDITIVE global riff switch: default-on across all intakes unless explicitly disabled
+    riff_hint = _global_riff_hint(extras_in, source_hint)
+
+    _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
+
+    if eff_persona and riff_hint:
+        riffs = _persona_llm_riffs(ctx, eff_persona)
 
     if riffs:
-        lines += ["", f"🧠 {persona} riff"]
+        lines += ["", f"🧠 {eff_persona} riff"]
         for r in riffs:
             sr = r.replace("\r", "").strip()
             if sr:
