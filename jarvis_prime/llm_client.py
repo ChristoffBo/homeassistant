@@ -38,7 +38,7 @@ SAFETY_TOKENS   = 48
 
 TEMP     = _float_env("LLM_TEMPERATURE", 0.15)
 TOP_P    = _float_env("LLM_TOP_P", 0.85)
-REPEAT_P = _float_env("LLM_REPEAT_PENALTY", 1.45)
+REPEAT_P = _float_env("LLM_REPEAT_PENALTY", 1.35)
 
 # ---------- Model discovery ----------
 SEARCH_ROOTS = [Path("/share/jarvis_prime/models"), Path("/share/jarvis_prime"), Path("/share")]
@@ -52,8 +52,7 @@ _model_path: Optional[Path] = None
 def _list_local_models() -> List[Path]:
     out: List[Path] = []
     for root in SEARCH_ROOTS:
-        if root.exists():
-            out.extend(root.rglob("*.gguf"))
+        if root.exists(): out.extend(root.rglob("*.gguf"))
     uniq, seen = [], set()
     for p in sorted(out):
         s = str(p)
@@ -89,7 +88,8 @@ def _download_to(url: str, dest: Path) -> bool:
             with open(tmp, "wb") as f:
                 for chunk in r.iter_content(1 << 20):
                     if chunk: f.write(chunk)
-        tmp.replace(dest); return True
+        tmp.replace(dest)
+        return True
     except Exception as e:
         print(f"[{BOT_NAME}] ⚠️ Download failed: {e}", flush=True)
         return False
@@ -152,153 +152,20 @@ def _load_local_model(path: Path):
         return None
 
 # ---------- Cleaning helpers ----------
-IMG_MD_RE       = re.compile(r'![^]*\][^)]+')
-IMG_URL_RE      = re.compile(r'(https?://\S+\.(?:png|jpg|jpeg|gif|webp))', re.I)
-PLACEHOLDER_RE  = re.compile(r'([A-Z][A-Z0-9 _:/\-\.,]{2,})')
-
-UPSELL_RE = re.compile(r'(?i)\b(please review|confirm|support team|contact .*@|let us know|thank you|stay in touch|new feature|check out)\b')
-
-def _extract_images(src: str) -> str:
-    imgs = IMG_MD_RE.findall(src or "") + IMG_URL_RE.findall(src or "")
-    out, seen = [], set()
-    for i in imgs:
-        if i not in seen: seen.add(i); out.append(i)
-    return "\n".join(out)
-
 def _strip_reasoning(text: str) -> str:
-    lines = []
-    for ln in (text or "").splitlines():
-        t = ln.strip(); 
-        if not t: continue
-        tl = t.lower()
-        if tl.startswith(("input:", "output:", "explanation:", "reasoning:", "analysis:", "system:")): continue
-        if t in ("[SYSTEM]", "[INPUT]", "[OUTPUT]") or t.startswith(("[SYSTEM]", "[INPUT]", "[OUTPUT]")): continue
-        if t.startswith("[") and t.endswith("]") and len(t) < 40: continue
-        if tl.startswith("note:"): continue
-        lines.append(t)
-    return "\n".join(lines)
-
-def _strip_meta_lines(text: str) -> str:
-    BAD = ("persona","rules","rule:","instruction","instruct","guideline",
-           "you are jarvis","jarvis prime","system prompt","style hint",
-           "speak as","lines:","produce at most","respond with at most",
-           "do not","no labels","no meta")
     out = []
     for ln in (text or "").splitlines():
-        t = ln.strip(); 
+        t = ln.strip()
         if not t: continue
-        if any(b in t.lower() for b in BAD): continue
+        if t.lower().startswith(("input:", "output:", "system:", "analysis:", "reasoning:")): continue
+        if t in ("[SYSTEM]", "[INPUT]", "[OUTPUT]"): continue
         out.append(t)
     return "\n".join(out)
 
-def _remove_placeholders(text: str) -> str:
-    s = PLACEHOLDER_RE.sub("", text or "")
-    return re.sub(r"\s{2,}", " ", s).strip()
-
-def _drop_boilerplate(text: str) -> str:
-    kept = []
-    for ln in (text or "").splitlines():
-        if not ln.strip(): continue
-        if UPSELL_RE.search(ln): continue
-        kept.append(ln.strip())
-    return "\n".join(kept)
-
-def _squelch_repeats(text: str) -> str:
-    parts = (text or "").split()
-    out, prev, count = [], None, 0
-    for w in parts:
-        wl = w.lower()
-        if wl == prev:
-            count += 1
-            if count <= 2: out.append(w)
-        else:
-            prev, count = wl, 1; out.append(w)
-    s2 = " ".join(out)
-    return re.sub(r"(\b\w+\s+\w+)(?:\s+\1){2,}", r"\1 \1", s2, flags=re.I)
-
-def _polish(text: str) -> str:
-    s = (text or "").strip()
-    s = re.sub(r"[ \t]+"," ",s)
-    s = re.sub(r"[ \t]*\n[ \t]*","\n",s)
-    s = re.sub(r"([,:;.!?])(?=\S)",r"\1 ",s)
-    s = re.sub(r"\s*…+\s*", ". ", s)
-    s = re.sub(r"\s+([,:;.!?])", r"\1", s)
-    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
-    fixed = [(ln if re.search(r"[.!?]$", ln) else ln+".") for ln in lines]
-    s = "\n".join(fixed)
-    seen, out = set(), []
-    for ln in s.splitlines():
-        if ln.lower() in seen: continue
-        seen.add(ln.lower()); out.append(ln)
-    return "\n".join(out)
-
-def _cap(text: str, max_lines: int = MAX_LINES, max_chars: int = 800) -> str:
-    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
-    if len(lines) > max_lines: lines = lines[:max_lines]
-    out = "\n".join(lines)
-    return out if len(out) <= max_chars else out[:max_chars].rstrip()
-
-def _finalize(text: str, imgs: str) -> str:
-    out = _strip_reasoning(text)
-    out = _strip_meta_lines(out)
-    out = _remove_placeholders(out)
-    out = _drop_boilerplate(out)
-    out = _squelch_repeats(out)
-    out = _polish(out)
-    out = _cap(out, MAX_LINES)
-    return out + ("\n"+imgs if imgs else "")
-
-# ---------- PUBLIC: rewrite ----------
-def rewrite(text: str, mood: str="serious", timeout: int=8, cpu_limit: int=70,
-            models_priority: Optional[List[str]]=None, base_url: Optional[str]=None,
-            model_url: Optional[str]=None, model_path: Optional[str]=None,
-            allow_profanity: bool=False) -> str:
-    src = (text or "").strip()
-    if not src: return src
-    imgs   = _extract_images(src)
-    system = f"YOU ARE JARVIS PRIME. Keep facts exact; rewrite clearly; obey mood={mood}."
-    src    = _trim_to_ctx(src, system)
-
-    # 1) Ollama
-    base = (base_url or OLLAMA_BASE_URL or "").strip()
-    if base and requests:
-        try:
-            payload = {"model": (models_priority[0] if models_priority else "llama3.1"),
-                       "prompt": system+"\n\nINPUT:\n"+src+"\n\nOUTPUT:\n",
-                       "stream": False,
-                       "options": {"temperature": TEMP,"top_p": TOP_P,"repeat_penalty": REPEAT_P,
-                                   "num_ctx": CTX,"num_predict": GEN_TOKENS,
-                                   "stop": ["[SYSTEM]","[INPUT]","[OUTPUT]","Persona:","Rules:"]}}
-            r = requests.post(base.rstrip("/")+"/api/generate", json=payload, timeout=timeout)
-            if r.ok: return _finalize(str(r.json().get("response","")), imgs)
-        except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ Ollama call failed: {e}", flush=True)
-
-    # 2) Local
-    p = _resolve_any_path(model_path, model_url)
-    if p and p.exists():
-        m = _load_local_model(p)
-        if m:
-            prompt = f"[SYSTEM]\n{system}\n[INPUT]\n{src}\n[OUTPUT]\n"
-            threads = _cpu_threads_for_limit(cpu_limit)
-            def _gen() -> str:
-                return str(m(prompt, max_new_tokens=GEN_TOKENS, temperature=TEMP,
-                             top_p=TOP_P, repetition_penalty=REPEAT_P,
-                             stop=["[SYSTEM]","[INPUT]","[OUTPUT]","Persona:","Rules:"],
-                             threads=threads) or "")
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_gen)
-                try: return _finalize(fut.result(timeout=timeout), imgs)
-                except TimeoutError: print(f"[{BOT_NAME}] ⚠️ Timeout after {timeout}s", flush=True)
-                except Exception as e: print(f"[{BOT_NAME}] ⚠️ Gen failed: {e}", flush=True)
-
-    return _finalize(src, imgs)
-
-# ---------- Persona riff ----------
 def _cleanup_quip_block(text: str, max_lines: int) -> List[str]:
     if not text: return []
-    s = _strip_reasoning(text); s = _strip_meta_lines(s)
-    s = re.sub(r'^\s*[-•\d\)\.]+\s*','',s,flags=re.M)
+    s = _strip_reasoning(text)
+    s = re.sub(r'^\s*[-•\d\)\.]+\s*', '', s, flags=re.M)  # remove bullets/numbers
     parts = []
     for ln in s.splitlines():
         for seg in re.split(r'(?<=[.!?])\s+', ln.strip()):
@@ -306,48 +173,104 @@ def _cleanup_quip_block(text: str, max_lines: int) -> List[str]:
     out, seen = [], set()
     for ln in parts:
         if not ln: continue
-        words = ln.split()
-        if len(words)>22: ln = " ".join(words[:22])
+        if len(ln) > 140: ln = ln[:140]
         if ln.lower() in seen: continue
-        seen.add(ln.lower()); out.append(ln)
-        if len(out)>=max_lines: break
+        seen.add(ln.lower())
+        out.append(ln)
+        if len(out) >= max_lines: break
     return out
 
-def persona_riff(persona: str, context: str, max_lines: int=3, timeout: int=8,
-                 cpu_limit: int=70, models_priority: Optional[List[str]]=None,
-                 base_url: Optional[str]=None, model_url: Optional[str]=None,
-                 model_path: Optional[str]=None) -> List[str]:
+# ---------- PUBLIC: persona riff ----------
+def persona_riff(persona: str, context: str, max_lines: int = 3, timeout: int = 8,
+                 cpu_limit: int = 70, models_priority: Optional[List[str]] = None,
+                 base_url: Optional[str] = None, model_url: Optional[str] = None,
+                 model_path: Optional[str] = None) -> List[str]:
+    """
+    Generate short persona-flavored lines about `context`.
+    Always returns at least 1 quip (falls back to canned).
+    """
+    from personality import quip  # fallback
+
     persona = (persona or "ops").strip().lower()
     ctx = (context or "").strip()
-    if not ctx: return []
+    if not ctx: return [quip(persona, with_emoji=False)]
 
-    instruction = (f"You speak as '{persona}'. Produce ONLY {max(1,min(3,int(max_lines or 3)))} short lines. "
-                   "Each line < 140 chars. No labels, bullets, numbering, JSON or meta. "
-                   "Do NOT summarize facts. Only persona-flavored quips.")
+    n = max(1, min(3, int(max_lines or 3)))
+    instruction = (
+        f"You are speaking as persona '{persona}'. "
+        f"Produce {n} short, punchy lines (<140 chars each). "
+        "Do NOT summarize message facts. No labels, no lists, no bullets."
+    )
 
-    # 1) Ollama
+    # ---- 1) Ollama ----
     base = (base_url or OLLAMA_BASE_URL or "").strip()
     if base and requests:
         try:
-            payload = {"model": (models_priority[0] if models_priority else "llama3.1"),
-                       "prompt": instruction+"\n\nContext (vibe only):\n"+ctx+"\n\nQuips:\n",
-                       "stream": False,
-                       "options": {"temperature": TEMP,"top_p": TOP_P,"repeat_penalty": REPEAT_P,
-                                   "num_ctx": CTX,"num_predict": max(64,min(220,GEN_TOKENS//2+64)),
-                                   "stop": ["Quips:","Rules:","Persona:","Context:","[SYSTEM]","[INPUT]","[OUTPUT]"]}}
-            r = requests.post(base.rstrip("/")+"/api/generate", json=payload, timeout=timeout)
-            if r.ok: return _cleanup_quip_block(str(r.json().get("response","")), max_lines)
+            payload = {
+                "model": (models_priority[0] if models_priority else "llama3.1"),
+                "prompt": instruction + "\n\nContext:\n" + ctx + "\n\nQuips:\nExample: yeah, looks stable.\nNow you:\n",
+                "stream": False,
+                "options": {
+                    "temperature": TEMP, "top_p": TOP_P,
+                    "repeat_penalty": REPEAT_P,
+                    "num_ctx": CTX, "num_predict": 128,
+                    "stop": ["Quips:", "Rules:", "Persona:"]
+                }
+            }
+            r = requests.post(base.rstrip("/") + "/api/generate", json=payload, timeout=timeout)
+            if r.ok:
+                raw = str(r.json().get("response", ""))
+                lines = _cleanup_quip_block(raw, n)
+                if lines: return lines
         except Exception as e:
-            print(f"[{BOT_NAME}] ⚠️ Ollama riff failed: {e}", flush=True)
+            print(f"[{BOT_NAME}] ⚠️ Ollama quip failed: {e}", flush=True)
 
-    # 2) Local
+    # ---- 2) Local ----
     p = _resolve_any_path(model_path, model_url)
     if p and p.exists():
         m = _load_local_model(p)
         if m:
-            prompt = f"{instruction}\n\nContext (vibe only):\n{ctx}\n\nQuips:\n"
+            prompt = f"{instruction}\n\nContext:\n{ctx}\n\nQuips:\nExample: sure, done.\nNow you:\n"
             threads = _cpu_threads_for_limit(cpu_limit)
             def _gen() -> str:
-                return str(m(prompt,max_new_tokens=max(64,min(220,GEN_TOKENS//2+64)),
-                             temperature=TEMP,top_p=TOP_P,repetition_penalty=REPEAT_P,
-                             stop=["Quips:","Rules:","Persona:
+                return str(m(
+                    prompt,
+                    max_new_tokens=128,
+                    temperature=TEMP,
+                    top_p=TOP_P,
+                    repetition_penalty=REPEAT_P,
+                    stop=["Quips:", "Rules:", "Persona:"],
+                    threads=threads,
+                ) or "")
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_gen)
+                try:
+                    raw = fut.result(timeout=max(2, int(timeout or 8)))
+                    lines = _cleanup_quip_block(raw, n)
+                    if lines: return lines
+                except TimeoutError:
+                    print(f"[{BOT_NAME}] ⚠️ Local riff timed out", flush=True)
+                except Exception as e:
+                    print(f"[{BOT_NAME}] ⚠️ Local riff failed: {e}", flush=True)
+
+    # ---- 3) Fallback ----
+    return [quip(persona, with_emoji=False)]
+
+# Alias
+llm_quips = persona_riff
+
+# ---------- Status ----------
+def engine_status() -> Dict[str, object]:
+    base = (OLLAMA_BASE_URL or "").strip()
+    if base and requests:
+        try:
+            r = requests.get(base.rstrip("/") + "/api/version", timeout=3)
+            ok = r.ok
+        except Exception: ok = False
+        return {"ready": bool(ok), "model_path": "", "backend": "ollama"}
+    p = _resolve_any_path(os.getenv("LLM_MODEL_PATH", ""), os.getenv("LLM_MODEL_URL", ""))
+    return {
+        "ready": bool(p and Path(p).exists()),
+        "model_path": str(p or ""),
+        "backend": "ctransformers" if p else "none",
+    }
