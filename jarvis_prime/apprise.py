@@ -15,6 +15,19 @@ import json, time
 from typing import Callable, Dict, Any, List, Optional, Tuple
 from flask import Blueprint, request, jsonify
 
+# NEW: bring in riff trigger
+try:
+    import importlib.util as _imp
+    _rspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
+    _beautify = _imp.module_from_spec(_rspec); _rspec.loader.exec_module(_beautify) if _rspec and _rspec.loader else None
+    if hasattr(_beautify, "riff_message"):
+        riff_message = _beautify.riff_message
+    else:
+        riff_message = None
+except Exception as e:
+    riff_message = None
+    print(f"[apprise] ⚠️ riff unavailable: {e}")
+
 apprise_bp = Blueprint("apprise", __name__)
 
 # This will be set by register()
@@ -184,6 +197,16 @@ def _handle_post_common(path_key: Optional[str] = None):
         return jsonify({"ok": False, "error": "bad json: root must be object or form/raw text"}), 400
 
     msg = _normalize(payload, extras_in)
+
+    # --- NEW: Fire riff immediately if available ---
+    try:
+        if riff_message and msg.get("body") and msg["extras"].get("riff_hint", True):
+            riffed = riff_message(msg["title"], msg["body"])
+            if riffed:
+                msg["body"] = riffed
+                msg["extras"]["used_riff"] = True
+    except Exception as e:
+        print(f"[apprise] riff failed: {e}")
 
     # --- emit into Jarvis pipeline (Beautify + Personas + fanout) ---
     try:
