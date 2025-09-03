@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 # /app/intakes/apprise.py
 # Apprise/Apprise-API compatible intake for Jarvis
-# Exposes:   POST /intake/apprise/notify?token=<secret>&key=<config_key>
-# Accepts:   JSON with {title, body, type, tags[]} as used by Apprise API /notify
+# Exposes (now accepts multiple common patterns):
+#   POST /intake/apprise/notify?token=<secret>&key=<config_key>
+#   POST /intake/apprise/notify/<config_key>
+#   POST /intake/apprise
+#   POST /notify
+#   POST /notify/<config_key>
+# Accepts: JSON with {title, body, type, tags[]} as used by Apprise API /notify
 # Normalizes and emits into Jarvis via the provided emit() callback.
 
 from __future__ import annotations
@@ -63,17 +68,45 @@ def _normalize(payload: Dict[str, Any]) -> Dict[str, Any]:
         "extras": extras,
     }
 
-@apprise_bp.route("/intake/apprise/notify", methods=["POST"])
-def intake_apprise_notify():
-    # --- auth: token in query (like your existing proxy intakes) ---
-    token = request.args.get("token", "") or request.headers.get("X-Jarvis-Token", "")
-    if _expected_token and token != _expected_token:
-        return jsonify({"ok": False, "error": "unauthorized"}), 401
+def _extract_auth(path_key: Optional[str] = None) -> tuple[str, str]:
+    """
+    Returns tuple(token, cfg_key) gathered from query, headers, or path.
+    token may be empty string if not provided.
+    """
+    token = request.args.get("token", "") or request.headers.get("X-Jarvis-Token", "") or request.headers.get("X-Apprise-Token", "")
+    cfg_key = path_key or request.args.get("key", "") or request.headers.get("X-Apprise-Key", "")
+    return token, cfg_key
 
-    # --- optional apprise config key pass-through (ignored unless restricted) ---
-    cfg_key = request.args.get("key", "") or request.headers.get("X-Apprise-Key", "")
-    if (not _accept_any_key) and _allowed_keys is not None and cfg_key not in _allowed_keys:
-        return jsonify({"ok": False, "error": "invalid apprise key"}), 403
+def _authorized(token: str, cfg_key: str) -> bool:
+    """
+    Authorization rules:
+      - If _expected_token is set (non-empty) and token matches → allow.
+      - Else if token missing:
+          * allow if cfg_key provided AND (_accept_any_key == True OR cfg_key in _allowed_keys)
+      - Else if _expected_token empty (no token required) → allow.
+    """
+    # If a token is configured, prefer it
+    if _expected_token:
+        if token and token == _expected_token:
+            return True
+        # allow via key fallback when token not supplied
+        if cfg_key:
+            if _accept_any_key:
+                return True
+            if _allowed_keys is not None and cfg_key in _allowed_keys:
+                return True
+        return False
+
+    # No token configured → accept, optionally checking key list if provided
+    if cfg_key and _allowed_keys is not None and len(_allowed_keys) > 0:
+        return (cfg_key in _allowed_keys)
+    return True
+
+def _handle_post_common(path_key: Optional[str] = None):
+    token, cfg_key = _extract_auth(path_key)
+
+    if not _authorized(token, cfg_key):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
 
     # --- payload ---
     try:
@@ -92,7 +125,37 @@ def intake_apprise_notify():
     except Exception as e:
         return jsonify({"ok": False, "error": f"emit failed: {e}"}), 500
 
-    return jsonify({"ok": True, "received": {"title": msg["title"], "type": msg["type"], "tags": msg["tags"]}}), 200
+    return jsonify({
+        "ok": True,
+        "received": {"title": msg["title"], "type": msg["type"], "tags": msg["tags"]},
+        "auth": {
+            "via": "token" if (token and token == _expected_token) else ("key" if cfg_key else "open"),
+        }
+    }), 200
+
+# ===== Primary route you originally had =====
+@apprise_bp.route("/intake/apprise/notify", methods=["POST"])
+def intake_apprise_notify():
+    return _handle_post_common()
+
+# ===== ADD: accept path-style key (…/notify/<key>) =====
+@apprise_bp.route("/intake/apprise/notify/<path:path_key>", methods=["POST"])
+def intake_apprise_notify_with_key(path_key: str):
+    return _handle_post_common(path_key)
+
+# ===== ADD: accept base /intake/apprise (some clients post here without /notify) =====
+@apprise_bp.route("/intake/apprise", methods=["POST"])
+def intake_apprise_base():
+    return _handle_post_common()
+
+# ===== ADD: generic Apprise endpoints at root (clients that only know /notify[/<key>]) =====
+@apprise_bp.route("/notify", methods=["POST"])
+def notify_root():
+    return _handle_post_common()
+
+@apprise_bp.route("/notify/<path:path_key>", methods=["POST"])
+def notify_root_with_key(path_key: str):
+    return _handle_post_common(path_key)
 
 def register(app, emit: Callable[[Dict[str, Any]], None], *,
             token: Optional[str],
