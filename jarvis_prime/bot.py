@@ -2,25 +2,28 @@
 # /app/bot.py
 #
 # Jarvis Prime — Standalone Orchestrator
-# CLEAN, FULL REWRITE FROM SCRATCH (no Gotify listener; no DB pollers; no hidden embeds)
+# FULL REWRITE FROM SCRATCH (Apprise is a real sidecar; no Gotify intake; single choke-point; wake-words everywhere)
 #
-# Design:
-#   • INTakes  = anything that POSTs JSON to /internal/ingest (title/body/priority/extras),
-#                plus /internal/wake for direct wake-commands, and sidecars (SMTP/Webhook/Proxy/Apprise)
-#                which must forward into /internal/ingest.
-#   • CORE     = ONE choke-point (process_and_send) → persona quip → LLM riffs (if enabled) → beautify
-#   • WAKEWORD = handled on ingestion (“jarvis …” in title/body or /internal/wake text)
-#   • OUTputs  = modular fan-out (Gotify, ntfy, SMTP). Optional. Nothing hardwired for ingest.
-#   • CONFIG   = /data/options.json overrides /data/config.json; sane env fallbacks kept.
-#   • SIDECARS = launched as subprocesses with port guards (proxy, smtp_server, webhook_server, apprise_server)
-#   • STABILITY= minimal loops, no output listener, dedup guard on /internal/ingest, back-pressure safe.
+# Architecture
+# ───────────
+# INTakes  : Any producer (Apprise sidecar, SMTP sidecar, Webhook sidecar, Proxy sidecar, future intakes)
+#            must POST JSON to 127.0.0.1:2599/internal/ingest  →  { title, body/message, priority, extras }
+# WAKEWORD : Works from ANY intake (title/body beginning with “jarvis …”), or direct POST to /internal/wake {"text":"jarvis ..."}
+# CORE     : ONE choke-point `process_and_send()` → persona quip → (optional) LLM rewrite → (conditional) persona riffs via beautify
+# RIFFS    : Fire ONLY when BOTH are true:
+#              - "llm_enabled": true
+#              - "llm_persona_riffs_enabled": true   (exported to env as BEAUTIFY_LLM_ENABLED="true")
+# OUTPUTS  : Fan-out to Gotify, ntfy, SMTP (optional; no loops because there’s no output listener)
+# STARTUP  : Clear boot screen/status card
+# STABILITY: In-memory dedup ring to prevent storms; no websocket listeners; port-guarded sidecars
 #
-# Riffs run IFF BOTH are true (in options or config):
-#   "llm_enabled": true
-#   "llm_persona_riffs_enabled": true
+# Sidecars launched (if enabled & port free):
+#   /app/proxy.py
+#   /app/smtp_server.py
+#   /app/webhook_server.py
+#   /app/apprise_server.py   ← Apprise is a REAL SIDECAR (not embedded)
 #
-# NOTE: Radarr/Sonarr/UptimeKuma/Technitium are command helpers (not “intakes”).
-# They are invoked via wake-words (e.g., "jarvis dns", "jarvis kuma", "jarvis weather", etc).
+# Config precedence: /data/options.json overrides /data/config.json; env provides defaults.
 
 import os
 import sys
@@ -46,18 +49,18 @@ except Exception as _e:
     print(f"[bot] ⚠️ storage init failed: {_e}", flush=True)
 
 # ============================
-# Basic env + defaults
+# Defaults / env
 # ============================
 BOT_NAME  = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON  = os.getenv("BOT_ICON", "🧠")
 
-# Optional outputs (fan-out only; NONE required)
+# Optional OUTPUTS (fan-out) – no intake is hardwired to these
 GOTIFY_URL       = (os.getenv("GOTIFY_URL", "") or "").rstrip("/")
 GOTIFY_APP_TOKEN = os.getenv("GOTIFY_APP_TOKEN", "")
 NTFY_URL         = (os.getenv("NTFY_URL", "") or "").rstrip("/")
 NTFY_TOPIC       = os.getenv("NTFY_TOPIC", "")
 
-# Feature toggles (env defaults; override by /data/options.json)
+# Feature toggles (env defaults; overridable by options/config)
 RADARR_ENABLED     = os.getenv("radarr_enabled", "false").lower() in ("1","true","yes")
 SONARR_ENABLED     = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
 WEATHER_ENABLED    = os.getenv("weather_enabled", "false").lower() in ("1","true","yes")
@@ -66,9 +69,10 @@ DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1","true"
 TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
 KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","true","yes")
 
-# Sidecar toggles (external processes)
+# Sidecars (external servers that must forward into /internal/ingest)
 SMTP_ENABLED_ENV   = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
+
 WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true","yes")
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
@@ -81,16 +85,15 @@ INTAKE_APPRISE_ALLOWED_KEYS = [k for k in os.getenv("intake_apprise_allowed_keys
 INTAKE_APPRISE_PORT = int(os.getenv("intake_apprise_port", "2591"))
 INTAKE_APPRISE_BIND = os.getenv("intake_apprise_bind", "0.0.0.0")
 
-# LLM behavior toggles
+# LLM / Riffs toggles
 LLM_REWRITE_ENABLED = os.getenv("LLM_REWRITE_ENABLED", "false").lower() in ("1","true","yes")
-BEAUTIFY_LLM_ENABLED_ENV = os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() in ("1","true","yes")
+BEAUTIFY_LLM_ENABLED_ENV = os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() in ("1","true","yes")  # will be finalised by options
 
-# Misc defaults
-SILENT_REPOST = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")  # preserved for compatibility (not used to delete anything now)
-HEALTH_PORT   = int(os.getenv("HEALTH_PORT", "2598"))
+# Health/TCP
+HEALTH_PORT = int(os.getenv("HEALTH_PORT", "2598"))
 
 # ============================
-# Load /data/options.json + /data/config.json
+# Load options/config
 # ============================
 def _load_json(path: str) -> Dict[str, Any]:
     try:
@@ -105,18 +108,16 @@ try:
     fallback = _load_json("/data/config.json")
     merged = {**fallback, **options}
 
-    # Outputs toggles
+    # Outputs toggles/creds
     PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", False))
     PUSH_NTFY_ENABLED   = bool(merged.get("push_ntfy_enabled", False))
     PUSH_SMTP_ENABLED   = bool(merged.get("push_smtp_enabled", False))
 
-    # Output URLs/creds
     GOTIFY_URL       = str(merged.get("gotify_url", GOTIFY_URL or "")).rstrip("/")
     GOTIFY_APP_TOKEN = str(merged.get("gotify_app_token", GOTIFY_APP_TOKEN or ""))
     NTFY_URL         = str(merged.get("ntfy_url", NTFY_URL or "")).rstrip("/")
     NTFY_TOPIC       = str(merged.get("ntfy_topic", NTFY_TOPIC or ""))
 
-    # SMTP output creds (fan-out)
     SMTP_HOST = str(merged.get("push_smtp_host", ""))
     SMTP_PORT = int(merged.get("push_smtp_port", 587))
     SMTP_USER = str(merged.get("push_smtp_user", ""))
@@ -144,7 +145,7 @@ try:
     except Exception:
         pass
 
-    # Apprise sidecar
+    # Apprise sidecar controls
     INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
     INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
@@ -158,10 +159,10 @@ try:
     else:
         INTAKE_APPRISE_ALLOWED_KEYS = []
 
-    # LLM + persona riffs
+    # LLM riffs control (export as env for beautify)
     LLM_REWRITE_ENABLED = bool(merged.get("llm_rewrite_enabled", LLM_REWRITE_ENABLED))
-    _beautify_llm_enabled_opt = merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV)
-    os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
+    _persona_riffs_enabled = merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV)
+    os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _persona_riffs_enabled else "false"
 
 except Exception as _opt_e:
     SMTP_ENABLED = SMTP_ENABLED_ENV
@@ -173,7 +174,7 @@ except Exception as _opt_e:
     SMTP_PORT = 587
 
 # ============================
-# Load optional modules (local files)
+# Optional modules
 # ============================
 def _load_module(name, path):
     try:
@@ -224,21 +225,21 @@ def _start_sidecar(cmd, label, env=None):
         print(f"[bot] sidecar {label} start failed: {e}", flush=True)
 
 def start_sidecars():
-    # proxy (optional)
+    # proxy
     if PROXY_ENABLED:
         if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
             print("[bot] proxy.py already running on :2580 — skipping sidecar", flush=True)
         else:
             _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
 
-    # smtp intake sidecar (optional)
+    # smtp intake
     if SMTP_ENABLED:
         if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
             print("[bot] smtp_server.py already running on :2525 — skipping sidecar", flush=True)
         else:
             _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
 
-    # webhook intake sidecar (optional)
+    # webhook intake
     if WEBHOOK_ENABLED:
         if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
             print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar", flush=True)
@@ -248,7 +249,7 @@ def start_sidecars():
             env["webhook_port"] = str(WEBHOOK_PORT)
             _start_sidecar(["python3","/app/webhook_server.py"], "webhook_server.py", env=env)
 
-    # apprise intake as REAL sidecar (optional)
+    # apprise intake (REAL sidecar)
     if INTAKE_APPRISE_ENABLED:
         env = os.environ.copy()
         env["APPRISE_BIND"] = INTAKE_APPRISE_BIND or "0.0.0.0"
@@ -270,7 +271,7 @@ def stop_sidecars():
 atexit.register(stop_sidecars)
 
 # ============================
-# Output fan-out helpers
+# Outputs (fan-out) + mirror
 # ============================
 def _mirror_to_storage(title: str, message: str, source: str, priority: int, extras: Optional[dict] = None):
     if not storage:
@@ -362,12 +363,13 @@ def send_outputs(title: str, message: str, priority: int = 5, extras: Optional[d
         _mirror_to_storage(title, message, "mirror-only", priority, extras or {})
 
 # ============================
-# Persona + LLM/Beautify
+# Persona + LLM / Riffs pipeline
 # ============================
 def _persona_line(quip_text: str) -> str:
     who = ACTIVE_PERSONA or "neutral"
     quip_text = (quip_text or "").strip().replace("\n", " ")
-    if len(quip_text) > 140: quip_text = quip_text[:137] + "..."
+    if len(quip_text) > 140:
+        quip_text = quip_text[:137] + "..."
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def _footer(used_llm: bool, used_beautify: bool) -> str:
@@ -378,24 +380,25 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
+    """Optional LLM rewrite + conditional persona riffs via beautify."""
     used_llm = False
     used_beautify = False
     final = message or ""
     extras = None
 
-    # Optional LLM rewrite (kept OFF unless enabled)
+    # Optional LLM rewrite path (independent switch)
     if LLM_REWRITE_ENABLED and merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
             final2 = _llm.rewrite(
                 text=final,
                 mood=ACTIVE_PERSONA,
-                timeout=int(merged.get("llm_timeout_seconds",12)),
-                cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
+                timeout=int(merged.get("llm_timeout_seconds", 12)),
+                cpu_limit=int(merged.get("llm_max_cpu_percent", 70)),
                 models_priority=merged.get("llm_models_priority", []),
-                base_url=merged.get("llm_ollama_base_url",""),
-                model_url=merged.get("llm_model_url",""),
-                model_path=merged.get("llm_model_path",""),
-                model_sha256=merged.get("llm_model_sha256",""),
+                base_url=merged.get("llm_ollama_base_url", ""),
+                model_url=merged.get("llm_model_url", ""),
+                model_path=merged.get("llm_model_path", ""),
+                model_sha256=merged.get("llm_model_sha256", ""),
                 allow_profanity=bool(merged.get("personality_allow_profanity", False))
             )
             if final2:
@@ -404,26 +407,30 @@ def _llm_then_beautify(title: str, message: str):
         except Exception as e:
             print(f"[bot] LLM rewrite failed (optional): {e}", flush=True)
 
-    # Always beautify; persona quip support
-    if _beautify and hasattr(_beautify, "beautify_message"):
+    # Persona riffs via beautify — ONLY if llm_enabled && llm_persona_riffs_enabled
+    persona_riffs_on = bool(merged.get("llm_enabled")) and str(os.getenv("BEAUTIFY_LLM_ENABLED","true")).lower() in ("1","true","yes")
+    if _beautify and hasattr(_beautify, "beautify_message") and persona_riffs_on:
         try:
             final, extras = _beautify.beautify_message(
                 title, final,
                 mood=ACTIVE_PERSONA,
                 persona=ACTIVE_PERSONA,
-                persona_quip=True
+                persona_quip=True  # give beautify room to place overlays / riffs
             )
             used_beautify = True
         except Exception as e:
             print(f"[bot] Beautify failed: {e}", flush=True)
 
+    # Footer tag
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
         final = f"{final.rstrip()}\n\n{foot}"
+
     return final, extras, used_llm, used_beautify
 
 def process_and_send(title: str, message: str, priority: int = 5, extras: Optional[dict] = None):
-    # Persona quip header
+    """Single choke-point for ALL messages."""
+    # Persona quip header (always)
     try:
         quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
     except Exception:
@@ -436,7 +443,7 @@ def process_and_send(title: str, message: str, priority: int = 5, extras: Option
     send_outputs(title or "Notification", final, priority=int(priority or 5), extras=merged_extras)
 
 # ============================
-# Commands (wake-word features)
+# Commands + Wake-words
 # ============================
 def _clean(s: str) -> str:
     s = s.lower().strip()
@@ -543,6 +550,7 @@ def _handle_command(ncmd: str) -> bool:
             process_and_send("Joke", "Chat engine unavailable.")
         return True
 
+    # ARR helpers
     if ncmd in ("upcoming movies", "upcoming films", "movies upcoming", "films upcoming"):
         msg, _ = _try_call(m_arr, "upcoming_movies", 7)
         process_and_send("Upcoming Movies", msg or "No data.")
@@ -585,37 +593,42 @@ def _maybe_handle_wakewords(title: str, body: str) -> bool:
     return False
 
 # ============================
-# Startup card / health
+# Boot screen / status card
 # ============================
 def post_startup_card():
     lines = [
-        "🧬 Prime Neural Boot (Standalone, sidecar intakes)",
-        f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
-        f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
-        "",
-        "Outputs:",
-        f"📨 Gotify — {'ON' if merged.get('push_gotify_enabled') else 'OFF'}",
-        f"📨 ntfy — {'ON' if merged.get('push_ntfy_enabled') else 'OFF'}",
-        f"📨 SMTP — {'ON' if merged.get('push_smtp_enabled') else 'OFF'}",
+        "🧬 Prime Neural Boot v2 — Standalone Mode",
+        f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'} "
+        f"• Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'} "
+        f"• LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
+        f"🗣️ Active Persona: {ACTIVE_PERSONA} ({PERSONA_TOD})",
         "",
         "Intakes (sidecars):",
-        f"✉️ SMTP Intake — {'ACTIVE' if merged.get('smtp_enabled') else 'OFF'}",
-        f"🔗 Webhook Intake — {'ACTIVE' if merged.get('webhook_enabled') else 'OFF'}",
-        f"🔀 Proxy Intake — {'ACTIVE' if merged.get('proxy_enabled') else 'OFF'}",
-        f"📮 Apprise Intake — {'ACTIVE' if merged.get('intake_apprise_enabled') else 'OFF'}",
+        f"  ▸ SMTP:    {'ACTIVE' if merged.get('smtp_enabled') else 'OFF'} (2525)",
+        f"  ▸ Webhook: {'ACTIVE' if merged.get('webhook_enabled') else 'OFF'} ({WEBHOOK_BIND}:{WEBHOOK_PORT})",
+        f"  ▸ Proxy:   {'ACTIVE' if merged.get('proxy_enabled') else 'OFF'} (2580)",
+        f"  ▸ Apprise: {'ACTIVE' if merged.get('intake_apprise_enabled') else 'OFF'} ({INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT})",
+        "",
+        "Outputs:",
+        f"  ▸ Gotify: {'ON' if merged.get('push_gotify_enabled') else 'OFF'}",
+        f"  ▸ ntfy:   {'ON' if merged.get('push_ntfy_enabled') else 'OFF'}",
+        f"  ▸ SMTP:   {'ON' if merged.get('push_smtp_enabled') else 'OFF'}",
         "",
         "Modules:",
-        f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
-        f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
-        f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
-        f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
-        f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
-        f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
+        f"  ▸ Radarr:       {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
+        f"  ▸ Sonarr:       {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
+        f"  ▸ Weather:      {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
+        f"  ▸ Digest:       {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
+        f"  ▸ Chat:         {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
+        f"  ▸ Uptime Kuma:  {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
+        f"  ▸ Technitium:   {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         "",
-        f"LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
-        f"Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'}",
-        "Status: All systems nominal",
+        "Health:",
+        "  ▸ Internal API: 127.0.0.1:2599 (/internal/ingest, /internal/wake, /health)",
+        f"  ▸ TCP Health:    127.0.0.1:{HEALTH_PORT}",
+        "",
+        "Wake-words: ENABLED everywhere (title/body starting with 'jarvis ...')",
+        "Status: All systems nominal ✅",
     ]
     process_and_send("Startup", "\n".join(lines), priority=4, extras=None)
 
@@ -627,7 +640,6 @@ try:
 except Exception:
     web = None
 
-# very light anti-dup (hash last 32 ingests in memory)
 _recent_hashes: List[str] = []
 
 def _dedup_key(title: str, body: str, prio: int) -> str:
@@ -662,9 +674,8 @@ async def _internal_wake(request):
 
 async def _ingest(request):
     """
-    Generic internal ingest endpoint for ANY intake to push:
-    POST /internal/ingest  {title, body/message, priority, extras}
-    Wake-words are supported in title/body ("jarvis ...").
+    POST /internal/ingest
+    JSON: { "title": "...", "body" or "message": "...", "priority": 5, "extras": {...} }
     """
     try:
         data = await request.json()
@@ -675,11 +686,13 @@ async def _ingest(request):
     prio   = int(data.get("priority") or 5)
     extras = data.get("extras") or {}
 
+    # Dedup to stop storms
     k = _dedup_key(title, body, prio)
     if _seen_recent(k):
         return web.json_response({"ok": True, "skipped": "duplicate"})
     _remember(k)
 
+    # Wake-words
     try:
         if _maybe_handle_wakewords(title, body):
             return web.json_response({"ok": True, "handled": "wake"})
@@ -712,7 +725,7 @@ async def _start_internal_http_server():
     except Exception as e:
         print(f"[bot] failed to start internal HTTP server: {e}", flush=True)
 
-# lightweight TCP health (optional; for external checkers)
+# Optional TCP “OK” health
 async def _start_tcp_health():
     async def handle(reader, writer):
         try:
@@ -758,19 +771,13 @@ async def _digest_scheduler_loop():
         await asyncio.sleep(60)
 
 # ============================
-# Signals (graceful stop / reload)
+# Signals & main loop
 # ============================
 _stop_event = asyncio.Event()
 
 def _handle_sigterm(*_):
     try:
-        print("[bot] SIGTERM received — shutting down.", flush=True)
-        _stop_event_loop()
-    except Exception:
-        pass
-
-def _stop_event_loop():
-    try:
+        print("[bot] SIGTERM/SIGINT received — shutting down.", flush=True)
         loop = asyncio.get_event_loop()
         loop.call_soon_threadsafe(_stop_event.set)
     except Exception:
@@ -780,9 +787,6 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 if hasattr(signal, "SIGINT"):
     signal.signal(signal.SIGINT, _handle_sigterm)
 
-# ============================
-# Main / loop
-# ============================
 def main():
     try:
         start_sidecars()
@@ -799,11 +803,9 @@ async def _run_forever():
         pass
     asyncio.create_task(_digest_scheduler_loop())
 
-    # Standalone loop (no external listeners that cause storms)
     while not _stop_event.is_set():
         await asyncio.sleep(60)
 
-    # Cleanup
     stop_sidecars()
     await asyncio.sleep(0.1)
 
