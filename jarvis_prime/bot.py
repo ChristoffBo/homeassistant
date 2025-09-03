@@ -624,6 +624,38 @@ def _handle_command(ncmd: str) -> bool:
     return False
 
 # ============================
+# Gotify self-post guard
+# ============================
+jarvis_app_id = None
+
+def resolve_app_id():
+    global jarvis_app_id
+    jarvis_app_id = None
+    try:
+        if not GOTIFY_URL or not CLIENT_TOKEN:
+            return
+        url = f"{GOTIFY_URL}/application"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.get(url, headers=headers, timeout=8)
+        r.raise_for_status()
+        for app in r.json():
+            if app.get("name") == APP_NAME:
+                jarvis_app_id = app.get("id")
+                break
+        print(f"[bot] resolved Gotify app id: {jarvis_app_id}")
+    except Exception as e:
+        print(f"[bot] resolve_app_id failed: {e}")
+
+def _is_our_post(data: dict) -> bool:
+    try:
+        if jarvis_app_id and data.get("appid") == jarvis_app_id:
+            return True
+        t = data.get("title") or ""
+        return t.startswith(f"{BOT_ICON} {BOT_NAME}:")
+    except Exception:
+        return False
+
+# ============================
 # Gotify intake (optional)
 # ============================
 _processed_sigs = set()
@@ -650,6 +682,9 @@ async def listen_gotify():
                 async for raw in ws:
                     try:
                         data = json.loads(raw); msg_id = data.get("id")
+                        if _is_our_post(data):
+                            # ignore our own reposts to avoid loops
+                            continue
                         title = data.get("title") or ""
                         message = data.get("message") or ""
 
@@ -838,6 +873,7 @@ def _start_apprise_flask_fallback():
 # ============================
 def main():
     try:
+        resolve_app_id()
         start_sidecars()
         post_startup_card()
     except Exception as e:
