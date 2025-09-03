@@ -1,26 +1,15 @@
 # /app/personality.py
 # Persona quip engine for Jarvis Prime
 # API:
-#   - quip(persona_name: str, *, with_emoji: bool = True) -> str     # canned one-liner (TOP)
-#   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]  # LLM riffs (BOTTOM)
-#
-# Notes:
-# - Keeps your big, talky QUIPS sets intact.
-# - Adds optional LLM riffs that NEVER summarize/alter facts; they only add flavor.
+#   - quip(persona_name: str, *, with_emoji: bool = True) -> str
+#   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]
 
-import random, os, importlib, textwrap
+import random, os, importlib, textwrap, re
 from typing import List
 
 # ---- Canonical personas (8 total, locked) ----
 PERSONAS = [
-    "dude",       # The Dude + Bill & Ted
-    "chick",      # Paris-style glam/flirty
-    "nerd",       # Moss + Sheldon
-    "rager",      # Samuel L. Jackson + Joe Pesci energy
-    "comedian",   # Leslie Nielsen deadpan
-    "action",     # Sly/Arnie/Mel/Bruce vibes
-    "jarvis",     # Iron Man AI-esque
-    "ops",        # Neutral ops mode
+    "dude", "chick", "nerd", "rager", "comedian", "action", "jarvis", "ops",
 ]
 
 # ---- Aliases ----
@@ -29,14 +18,14 @@ ALIASES = {
     "the dude": "dude", "lebowski": "dude", "bill": "dude", "ted": "dude", "dude": "dude",
     # Chick
     "paris": "chick", "paris hilton": "chick", "chick": "chick", "glam": "chick",
-    # Nerd (Moss + Sheldon)
+    # Nerd
     "nerd": "nerd", "sheldon": "nerd", "sheldon cooper": "nerd", "cooper": "nerd",
     "moss": "nerd", "the it crowd": "nerd", "it crowd": "nerd",
-    # Rager (Sam L + Pesci)
+    # Rager
     "rager": "rager", "angry": "rager", "rage": "rager",
     "sam": "rager", "sam l": "rager", "samuel": "rager", "samuel l jackson": "rager", "jackson": "rager",
     "joe": "rager", "pesci": "rager", "joe pesci": "rager",
-    # Comedian (Leslie Nielsen)
+    # Comedian
     "comedian": "comedian", "leslie": "comedian", "leslie nielsen": "comedian", "nielsen": "comedian", "deadpan": "comedian",
     # Action
     "action": "action", "sly": "action", "stallone": "action",
@@ -66,7 +55,7 @@ def _maybe_emoji(key: str, with_emoji: bool) -> str:
     bank = EMOJIS.get(key) or []
     return f" {random.choice(bank)}" if bank else ""
 
-# ---- Quip banks (big, talky) ----
+# ---- Quip banks (canned top-of-card line) ----
 QUIPS = {
     "dude": [
         "The Dude abides; the logs can, like, chill.",
@@ -382,55 +371,17 @@ QUIPS = {
         "Your wish, efficiently granted.",
     ],
     "ops": [
-        "ack.",
-        "done.",
-        "noted.",
-        "executed.",
-        "received.",
-        "stable.",
-        "running.",
-        "applied.",
-        "synced.",
-        "completed.",
-        "success.",
-        "confirmed.",
-        "ready.",
-        "scheduled.",
-        "queued.",
-        "accepted.",
-        "active.",
-        "closed.",
-        "green.",
-        "healthy.",
-        "on it.",
-        "rolled back.",
-        "rolled forward.",
-        "muted.",
-        "paged.",
-        "silenced.",
-        "deferred.",
-        "escalated.",
-        "contained.",
-        "optimized.",
-        "ratelimited.",
-        "rotated.",
-        "restarted.",
-        "reloaded.",
-        "validated.",
-        "archived.",
-        "reconciled.",
-        "cleared.",
-        "holding.",
-        "watching.",
+        "ack.","done.","noted.","executed.","received.","stable.","running.","applied.","synced.","completed.",
+        "success.","confirmed.","ready.","scheduled.","queued.","accepted.","active.","closed.","green.","healthy.",
+        "on it.","rolled back.","rolled forward.","muted.","paged.","silenced.","deferred.","escalated.","contained.",
+        "optimized.","ratelimited.","rotated.","restarted.","reloaded.","validated.","archived.","reconciled.",
+        "cleared.","holding.","watching.",
     ],
 }
 
 # ---- Public API: canned quip (TOP) ----
 def quip(persona_name: str, *, with_emoji: bool = True) -> str:
-    """
-    Return a short, randomized one-liner in the requested persona's voice.
-    Unknown names map to 'ops'. Emojis can be toggled via with_emoji.
-    """
+    """Return a short, randomized one-liner in the requested persona's voice."""
     if persona_name is None:
         key = "ops"
     else:
@@ -451,75 +402,113 @@ def _canon(name: str) -> str:
 # ---- Public API: LLM riffs (BOTTOM) ----
 def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> List[str]:
     """
-    Use local/ollama LLM to generate 1–3 SHORT persona-flavored lines.
-    - Never summarize/alter facts. Only commentary/attitude.
-    - No JSON, no lists, no numbered bullets. Plain lines.
-    - Profanity allowed only if PERSONALITY_ALLOW_PROFANITY=true and persona is 'rager'.
-    Returns [] if no LLM available.
+    Generate 1–N SHORT persona-flavored lines based on context.
+    Prefers llm_client.persona_riff(); falls back to llm_client.rewrite() if needed.
     """
+    # Disabled globally?
+    if os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() not in ("1","true","yes"):
+        return []
+
+    key = _canon(persona_name)
+    context = (context or "").strip()
+    if not context:
+        return []
+
+    # Profanity gate for 'rager'
+    allow_prof = (
+        os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes")
+        and key == "rager"
+    )
+
+    # Try persona_riff first (purpose-built)
     try:
         llm = importlib.import_module("llm_client")
     except Exception:
         return []
 
-    key = _canon(persona_name)
-    allow_prof = os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes") and key == "rager"
+    # 1) persona_riff path
+    if hasattr(llm, "persona_riff"):
+        try:
+            lines = llm.persona_riff(
+                persona=key,
+                context=context,
+                max_lines=int(max_lines or int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3)),
+                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
+                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
+                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
+                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
+                model_url=os.getenv("LLM_MODEL_URL", ""),
+                model_path=os.getenv("LLM_MODEL_PATH", "")
+            )
+            lines = _post_clean(lines, key, allow_prof)
+            if lines:
+                return lines
+        except Exception:
+            pass
 
-    style_hint = {
-        "dude": "Laid-back surfer/dude speak; mellow, supportive, funny",
-        "chick": "Glam, flirty, confident, playful; sassy ops banter",
-        "nerd": "Precise, witty, technically savvy; smart quips",
-        "rager": "Intense, blunt, spicy (profanity only if allowed)",
-        "comedian": "Deadpan Leslie Nielsen style; one-liners",
-        "action": "Action-hero catchphrases; decisive",
-        "jarvis": "Polite, refined AI butler; supportive",
-        "ops": "Short, neutral ops acknowledgements",
-    }.get(key, "ops")
+    # 2) Fallback to rewrite() (older path)
+    if hasattr(llm, "rewrite"):
+        try:
+            sys_prompt = (
+                "YOU ARE A PITHY ONE-LINER ENGINE.\n"
+                f"Persona: {key}. Style hint: short, clean, attitude.\n"
+                f"Rules: Produce ONLY {min(3, max(1, int(max_lines or 3)))} lines; each under 140 chars.\n"
+                "No lists, no numbers, no JSON, no labels."
+            )
+            user_prompt = "Context (for vibes only):\n" + context + "\n\nWrite the lines now:"
+            raw = llm.rewrite(
+                text=f"[SYSTEM]\n{sys_prompt}\n[INPUT]\n{user_prompt}\n[OUTPUT]\n",
+                mood=key,
+                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
+                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
+                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
+                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
+                model_url=os.getenv("LLM_MODEL_URL", ""),
+                model_path=os.getenv("LLM_MODEL_PATH", ""),
+                allow_profanity=bool(allow_prof),
+            )
+            # Split & clean
+            lines = [ln.strip(" -*\t") for ln in (raw or "").splitlines() if ln.strip()]
+            lines = _post_clean(lines, key, allow_prof)
+            return lines
+        except Exception:
+            pass
 
-    context = (context or "").strip()
-    if len(context) > 1200:
-        context = context[-1200:]
+    return []
 
-    sys_prompt = (
-        "YOU ARE A PITHY ONE-LINER ENGINE.\n"
-        "Persona: {persona}. Style hint: {hint}.\n"
-        "Rules: Produce ONLY {n} short lines, each under 140 characters.\n"
-        "Do NOT summarize or restate the message facts. Do NOT invent details.\n"
-        "No lists, no numbering, no JSON, no labels, no quotes, no emojis unless natural.\n"
-        "Keep it playful but accurate to the persona."
-    ).format(persona=key, hint=style_hint, n=min(3, max(1, int(max_lines or 3))))
-
-    user_prompt = (
-        "Context (for vibes only, not for summarizing):\n" + context + "\n\n"
-        "Write the persona lines now:"
-    )
-
-    try:
-        raw = llm.rewrite(text=f"[SYSTEM]\n{sys_prompt}\n[INPUT]\n{user_prompt}\n[OUTPUT]\n",
-                          mood=key,
-                          allow_profanity=bool(allow_prof))
-    except Exception:
+def _post_clean(lines: List[str], persona_key: str, allow_prof: bool) -> List[str]:
+    """Ensure no meta/labels, <=140 chars, dedup, and profanity gating for non-rager."""
+    if not lines:
         return []
-
-    # Post-process to 1–3 clean lines
-    lines = [ln.strip().strip('-•*').strip() for ln in (raw or "").splitlines()]
     out: List[str] = []
+    BAD = (
+        "persona", "rules", "rule:", "instruction", "instruct", "guideline",
+        "system prompt", "style hint", "lines:", "respond with", "produce only",
+        "you are", "jarvis prime", "[system]", "[input]", "[output]"
+    )
+    seen = set()
     for ln in lines:
-        if not ln:
+        t = ln.strip()
+        if not t:
             continue
-        if ln.lower().startswith(("system:", "input:", "output:")):
+        low = t.lower()
+        if any(b in low for b in BAD):
             continue
-        if ln.startswith(("[", "]")) and ln.endswith(("]", ")")):
+        # enforce 140 chars
+        if len(t) > 140:
+            t = t[:140].rstrip()
+        # profanity filter if not rager
+        if persona_key != "rager" and not allow_prof:
+            t = _soft_censor(t)
+        k = t.lower()
+        if k in seen:
             continue
-        if len(ln) > 140:
-            ln = ln[:140].rstrip()
-        out.append(ln)
-        if len(out) >= max_lines:
+        seen.add(k)
+        out.append(t)
+        if len(out) >= int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3):
             break
-    # Dedup while preserving order
-    seen = set(); uniq = []
-    for ln in out:
-        k = ln.lower()
-        if k in seen: continue
-        seen.add(k); uniq.append(ln)
-    return uniq
+    return out
+
+_PROF_RE = re.compile(r"(?i)\b(fuck|shit|damn|asshole|bitch|bastard|dick|pussy|cunt)\b")
+def _soft_censor(s: str) -> str:
+    return _PROF_RE.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), s)
