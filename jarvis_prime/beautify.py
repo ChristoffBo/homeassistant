@@ -302,8 +302,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     # --- LLM persona riffs at the bottom (1–3 lines) ---
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
     riffs: List[str] = []
-    riff_hint = bool(extras_in.get("riff_hint")) if isinstance(extras_in, dict) else False
-    if riff_hint and persona:
+    riff_hint = True if not isinstance(extras_in, dict) else bool(extras_in.get("riff_hint", True))
+    if persona and riff_hint:
         riffs = _persona_llm_riffs(ctx, persona)
 
     if riffs:
