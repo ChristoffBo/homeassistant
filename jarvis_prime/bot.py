@@ -58,6 +58,9 @@ INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true
 # Stored as CSV in env if ever used via env; options.json will override with a list
 INTAKE_APPRISE_ALLOWED_KEYS = [k for k in os.getenv("intake_apprise_allowed_keys", "").split(",") if k.strip()]
 
+# --- NEW: default port for Flask-based Apprise intake (overridden by options.json)
+INTAKE_APPRISE_PORT = int(os.getenv("intake_apprise_port", "2591"))
+
 CHAT_MOOD = "neutral"  # compatibility token; real persona comes from personality_state
 
 # ============================
@@ -108,6 +111,12 @@ try:
             INTAKE_APPRISE_ALLOWED_KEYS = []
     except Exception:
         # keep defaults
+        pass
+
+    # --- NEW: read Apprise intake port
+    try:
+        INTAKE_APPRISE_PORT = int(merged.get("intake_apprise_port", INTAKE_APPRISE_PORT))
+    except Exception:
         pass
 
 except Exception:
@@ -599,10 +608,77 @@ async def _start_internal_wake_server():
     except Exception as e:
         print(f"[bot] failed to start internal wake server: {e}")
 
+# ============================
+# NEW: Apprise Flask intake server (separate port from Ingress/Webhook)
+# ============================
+# Run Flask server in a background thread so it won't block the asyncio loop.
+try:
+    import threading
+except Exception:
+    threading = None
+
+def _emit_from_apprise_intake(msg: dict):
+    """
+    Normalize and fan out using the same beautify/persona pipeline.
+    """
+    try:
+        title = str(msg.get("title") or "Notification")
+        body  = str(msg.get("body") or "")
+        final, extras, _, _ = _llm_then_beautify(title, body)
+        send_message(title, final, priority=5, extras=extras)
+    except Exception as e:
+        print(f"[bot] apprise emit failed: {e}")
+
+def _start_apprise_flask_if_enabled():
+    if not INTAKE_APPRISE_ENABLED:
+        return
+    if threading is None:
+        print("[bot] threading unavailable; Apprise intake disabled")
+        return
+    try:
+        from flask import Flask
+        # Import your Apprise blueprint module
+        import intakes.apprise as apprise_intake
+
+        app = Flask("jarvis_apprise_intake")
+
+        # Register blueprint with your configured gates
+        allowed = INTAKE_APPRISE_ALLOWED_KEYS[:] if INTAKE_APPRISE_ALLOWED_KEYS else None
+        apprise_intake.register(
+            app,
+            emit=_emit_from_apprise_intake,
+            token=INTAKE_APPRISE_TOKEN,
+            accept_any_key=INTAKE_APPRISE_ACCEPT_ANY_KEY,
+            allowed_keys=allowed
+        )
+
+        def _serve():
+            try:
+                from waitress import serve
+                serve(app, host="0.0.0.0", port=int(INTAKE_APPRISE_PORT))
+            except Exception as e:
+                # Fallback to Flask dev server if waitress not present
+                print(f"[bot] waitress unavailable or failed ({e}); falling back to Flask.run on port {INTAKE_APPRISE_PORT}")
+                try:
+                    app.run(host="0.0.0.0", port=int(INTAKE_APPRISE_PORT))
+                except Exception as ee:
+                    print(f"[bot] Flask.run failed: {ee}")
+
+        t = threading.Thread(target=_serve, name="apprise-intake", daemon=True)
+        t.start()
+        print(f"[bot] Apprise intake Flask server listening on 0.0.0.0:{INTAKE_APPRISE_PORT} (token required)")
+    except Exception as e:
+        print(f"[bot] failed to start Apprise intake Flask server: {e}")
+
 async def _run_forever():
     try:
         asyncio.create_task(_start_internal_wake_server())
     except Exception: pass
+    # --- NEW: start Apprise Flask intake in the background (non-blocking)
+    try:
+        _start_apprise_flask_if_enabled()
+    except Exception as _e:
+        print(f"[bot] could not start Apprise intake: {_e}")
     asyncio.create_task(_digest_scheduler_loop())
     while True:
         try:
