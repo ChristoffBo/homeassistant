@@ -139,6 +139,7 @@
     "uptimekuma_status_slug": "",
 
     "llm_enabled": false,
+    "llm_persona_riffs_enabled": true,
     "llm_cleanup_on_disable": true,
     "llm_models_dir": "/share/jarvis_prime/models",
     "llm_timeout_seconds": 20,
@@ -295,6 +296,7 @@
     "uptimekuma_status_slug": "str",
 
     "llm_enabled": "bool",
+    "llm_persona_riffs_enabled": "bool",
     "llm_cleanup_on_disable": "bool",
     "llm_models_dir": "str",
     "llm_timeout_seconds": "int(1,)",
