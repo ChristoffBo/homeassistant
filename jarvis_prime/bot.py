@@ -51,6 +51,13 @@ WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
 
+# --- NEW: Apprise intake toggles (safe defaults; overridden by /data/options.json if present)
+INTAKE_APPRISE_ENABLED = os.getenv("intake_apprise_enabled", "false").lower() in ("1","true","yes")
+INTAKE_APPRISE_TOKEN = os.getenv("intake_apprise_token", "")
+INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true").lower() in ("1","true","yes")
+# Stored as CSV in env if ever used via env; options.json will override with a list
+INTAKE_APPRISE_ALLOWED_KEYS = [k for k in os.getenv("intake_apprise_allowed_keys", "").split(",") if k.strip()]
+
 CHAT_MOOD = "neutral"  # compatibility token; real persona comes from personality_state
 
 # ============================
@@ -86,11 +93,29 @@ try:
         WEBHOOK_PORT = int(merged.get("webhook_port", WEBHOOK_PORT))
     except Exception:
         pass
+
+    # --- NEW: read Apprise intake settings from merged options (non-breaking)
+    INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
+    INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
+    INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
+    try:
+        _allowed = merged.get("intake_apprise_allowed_keys", INTAKE_APPRISE_ALLOWED_KEYS)
+        if isinstance(_allowed, list):
+            INTAKE_APPRISE_ALLOWED_KEYS = [str(x) for x in _allowed]
+        elif isinstance(_allowed, str) and _allowed.strip():
+            INTAKE_APPRISE_ALLOWED_KEYS = [s.strip() for s in _allowed.split(",")]
+        else:
+            INTAKE_APPRISE_ALLOWED_KEYS = []
+    except Exception:
+        # keep defaults
+        pass
+
 except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
     # webhook fall back to env defaults (already set)
+    # apprise intake fall back to env defaults (already set)
 
 # ============================
 # Load optional modules
@@ -149,6 +174,8 @@ def start_sidecars():
             _sidecars.append(p)
         except Exception as e:
             print(f"[bot] sidecar webhook_server.py start failed: {e}")
+    # --- NEW: Apprise intake is handled by its own module/server if present; this bot only surfaces status.
+    # (No process is started here to avoid assumptions about your /app/intakes/apprise.py runtime model.)
 
 def stop_sidecars():
     for p in _sidecars:
@@ -337,6 +364,7 @@ def post_startup_card():
         f"🔀 Proxy (Gotify/ntfy) — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         f"🔗 Webhook — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",   # <-- NEW: shows webhook state
+        f"📮 Apprise Intake — {'ACTIVE' if INTAKE_APPRISE_ENABLED else 'OFF'}",  # <-- NEW: shows Apprise intake state
         "",
         "Status: All systems nominal",
     ]
@@ -581,3 +609,4 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
+```0
