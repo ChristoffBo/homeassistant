@@ -10,6 +10,9 @@ import subprocess
 import atexit
 import time
 import socket
+import hashlib
+import smtplib
+from email.mime.text import MIMEText
 from typing import List
 
 # ============================
@@ -27,6 +30,8 @@ except Exception as _e:
 # ============================
 BOT_NAME  = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON  = os.getenv("BOT_ICON", "🧠")
+
+# Optional Gotify config (intake/output only if enabled)
 GOTIFY_URL   = os.getenv("GOTIFY_URL", "").rstrip("/")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
 APP_TOKEN    = os.getenv("GOTIFY_APP_TOKEN", "")
@@ -51,7 +56,7 @@ WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
 
-# Apprise intake toggles
+# Apprise intake toggles (we'll try sidecar first; fallback to in-process)
 INTAKE_APPRISE_ENABLED = os.getenv("intake_apprise_enabled", "false").lower() in ("1","true","yes")
 INTAKE_APPRISE_TOKEN = os.getenv("intake_apprise_token", "")
 INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true").lower() in ("1","true","yes")
@@ -89,6 +94,29 @@ try:
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 
+    # Outputs / Inputs from options.json
+    PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", True))
+    PUSH_NTFY_ENABLED   = bool(merged.get("push_ntfy_enabled", False))
+    PUSH_SMTP_ENABLED   = bool(merged.get("push_smtp_enabled", False))
+    INGEST_GOTIFY_ENABLED = bool(merged.get("ingest_gotify_enabled", True))
+    INGEST_SMTP_ENABLED   = bool(merged.get("ingest_smtp_enabled", True))
+    INGEST_APPRISE_ENABLED= bool(merged.get("ingest_apprise_enabled", True))
+    INGEST_NTFY_ENABLED   = bool(merged.get("ingest_ntfy_enabled", False))
+
+    # NTFY
+    NTFY_URL   = str(merged.get("ntfy_url", options.get("ntfy_url","") if isinstance(options,dict) else ""))
+    NTFY_TOPIC = str(merged.get("ntfy_topic", ""))
+    NTFY_USER  = str(merged.get("ntfy_user", ""))
+    NTFY_PASS  = str(merged.get("ntfy_pass", ""))
+    NTFY_TOKEN = str(merged.get("ntfy_token", ""))
+
+    # SMTP Push
+    PUSH_SMTP_HOST = str(merged.get("push_smtp_host", ""))
+    PUSH_SMTP_PORT = int(merged.get("push_smtp_port", 587))
+    PUSH_SMTP_USER = str(merged.get("push_smtp_user", ""))
+    PUSH_SMTP_PASS = str(merged.get("push_smtp_pass", ""))
+    PUSH_SMTP_TO   = str(merged.get("push_smtp_to", ""))
+
     # Webhook
     WEBHOOK_ENABLED = bool(merged.get("webhook_enabled", WEBHOOK_ENABLED))
     WEBHOOK_BIND    = str(merged.get("webhook_bind", WEBHOOK_BIND))
@@ -97,7 +125,7 @@ try:
     except Exception:
         pass
 
-    # Apprise intake
+    # Apprise intake (we support sidecar or fallback)
     INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
     INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
@@ -116,10 +144,24 @@ try:
     _beautify_llm_enabled_opt = merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV)
     os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
 
+    # Gotify details from options if present
+    GOTIFY_URL   = str(merged.get("gotify_url", GOTIFY_URL)).rstrip("/")
+    CLIENT_TOKEN = str(merged.get("gotify_client_token", CLIENT_TOKEN))
+    APP_TOKEN    = str(merged.get("gotify_app_token", APP_TOKEN))
 except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
+    PUSH_GOTIFY_ENABLED = True
+    PUSH_NTFY_ENABLED = False
+    PUSH_SMTP_ENABLED = False
+    INGEST_GOTIFY_ENABLED = True
+    INGEST_SMTP_ENABLED = True
+    INGEST_APPRISE_ENABLED = True
+    INGEST_NTFY_ENABLED = False
+    NTFY_URL = NTFY_TOPIC = NTFY_USER = NTFY_PASS = NTFY_TOKEN = ""
+    PUSH_SMTP_HOST = PUSH_SMTP_USER = PUSH_SMTP_PASS = PUSH_SMTP_TO = ""
+    PUSH_SMTP_PORT = 587
 
 # ============================
 # Load optional modules
@@ -168,7 +210,7 @@ def _start_sidecar(cmd, label, env=None):
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env or os.environ.copy())
         _sidecars.append(p)
-        print(f"[bot] started {label}")
+        print(f"[bot] started sidecar: {label} -> {cmd}")
     except Exception as e:
         print(f"[bot] sidecar {label} start failed: {e}")
 
@@ -197,11 +239,20 @@ def start_sidecars():
             env["webhook_port"] = str(WEBHOOK_PORT)
             _start_sidecar(["python3","/app/webhook_server.py"], "webhook_server.py", env=env)
 
-    # apprise (bind 0.0.0.0 so remote clients can reach it)
-    # This bot *starts* Apprise intake via Flask/waitress inside this process (below),
-    # so we don't spawn a separate process here—just print status.
+    # apprise sidecar preferred
     if INTAKE_APPRISE_ENABLED:
-        print(f"[bot] apprise intake configured on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
+        env = os.environ.copy()
+        env["INTAKE_APPRISE_BIND"] = INTAKE_APPRISE_BIND
+        env["INTAKE_APPRISE_PORT"] = str(INTAKE_APPRISE_PORT)
+        env["INTAKE_APPRISE_TOKEN"] = INTAKE_APPRISE_TOKEN
+        env["INTAKE_APPRISE_ACCEPT_ANY_KEY"] = "1" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "0"
+        env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS) if INTAKE_APPRISE_ALLOWED_KEYS else ""
+        sidecar_path = "/app/intakes/apprise_server.py" if os.path.exists("/app/intakes/apprise_server.py") else "/app/intakes/apprise.py"
+        if _port_in_use(INTAKE_APPRISE_BIND, int(INTAKE_APPRISE_PORT)):
+            print(f"[bot] apprise intake already listening on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT} — skipping spawn")
+        else:
+            _start_sidecar(["python3", sidecar_path], "apprise_intake", env=env)
+            print(f"[bot] apprise intake configured on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
 
 def stop_sidecars():
     for p in _sidecars:
@@ -210,7 +261,7 @@ def stop_sidecars():
 atexit.register(stop_sidecars)
 
 # ============================
-# Gotify helpers
+# Persona helpers
 # ============================
 def _persona_line(quip_text: str) -> str:
     who = ACTIVE_PERSONA or "neutral"
@@ -219,50 +270,121 @@ def _persona_line(quip_text: str) -> str:
         quip_text = quip_text[:137] + "..."
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
-def send_message(title, message, priority=5, extras=None, decorate=True):
-    orig_title = title
-
-    # Decorate body via personality/beautify; keep the original title
-    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
-        title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
-        title = orig_title
-    elif decorate and _personality and hasattr(_personality, "decorate"):
-        title, message = _personality.decorate(title, message, ACTIVE_PERSONA, chance=1.0)
-        title = orig_title
-
-    # Persona speaking line at the top
+def _quip() -> str:
     try:
-        quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
+        return _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
     except Exception:
-        quip_text = ""
-    header = _persona_line(quip_text)
-    message = (header + ("\n" + (message or ""))) if header else (message or "")
+        return ""
 
-    # Priority tweak via personality if present
-    if _personality and hasattr(_personality, "apply_priority"):
-        try: priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
-        except Exception: pass
-
+# ============================
+# OUTPUTS (fan-out)
+# ============================
+def _send_gotify(title, message, priority=5, extras=None):
+    if not PUSH_GOTIFY_ENABLED: 
+        return False
+    if not GOTIFY_URL or not APP_TOKEN:
+        return False
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
+    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": int(priority)}
     if extras: payload["extras"] = extras
     try:
         r = requests.post(url, json=payload, timeout=8)
         r.raise_for_status()
-        status = r.status_code
+        return True
     except Exception as e:
-        status = 0
-        print(f"[bot] send_message error: {e}")
+        print(f"[bot] gotify send error: {e}")
+        return False
 
-    # Mirror to Inbox DB
+def _send_ntfy(title, message, priority=5):
+    if not PUSH_NTFY_ENABLED: 
+        return False
+    if not NTFY_URL or not NTFY_TOPIC:
+        return False
+    url = f"{NTFY_URL.rstrip('/')}/{NTFY_TOPIC}"
+    headers = {"Title": f"{BOT_ICON} {BOT_NAME}: {title}", "Priority": str(priority)}
+    if NTFY_TOKEN:
+        headers["Authorization"] = f"Bearer {NTFY_TOKEN}"
+    try:
+        auth = (NTFY_USER, NTFY_PASS) if (NTFY_USER and NTFY_PASS) else None
+        r = requests.post(url, data=message or "", headers=headers, timeout=8, auth=auth)
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[bot] ntfy send error: {e}")
+        return False
+
+def _send_smtp(title, message, priority=5):
+    if not PUSH_SMTP_ENABLED:
+        return False
+    if not PUSH_SMTP_HOST or not PUSH_SMTP_TO:
+        return False
+    msg = MIMEText(message or "", "plain", "utf-8")
+    msg["Subject"] = f"{BOT_ICON} {BOT_NAME}: {title}"
+    msg["From"] = PUSH_SMTP_USER or "jarvis@localhost"
+    msg["To"] = PUSH_SMTP_TO
+    try:
+        s = smtplib.SMTP(PUSH_SMTP_HOST, PUSH_SMTP_PORT, timeout=10)
+        s.starttls()
+        if PUSH_SMTP_USER and PUSH_SMTP_PASS:
+            s.login(PUSH_SMTP_USER, PUSH_SMTP_PASS)
+        s.sendmail(msg["From"], [PUSH_SMTP_TO], msg.as_string())
+        s.quit()
+        return True
+    except Exception as e:
+        print(f"[bot] smtp send error: {e}")
+        return False
+
+def send_message(title, message, priority=5, extras=None, decorate=True, source_hint="core"):
+    """
+    Stand-alone fan-out sender:
+    - Persona header always added.
+    - Optional personality.decorate on body (when decorate=True).
+    - Sends to all enabled outputs (Gotify/Ntfy/SMTP).
+    - Mirrors once to storage (source='fanout' or source_hint).
+    """
+    orig_title = title
+    body = message or ""
+
+    # optional decoration
+    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
+        try:
+            _t, body = _personality.decorate_by_persona(title, body, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
+        except Exception:
+            pass
+    elif decorate and _personality and hasattr(_personality, "decorate"):
+        try:
+            _t, body = _personality.decorate(title, body, ACTIVE_PERSONA, chance=1.0)
+        except Exception:
+            pass
+
+    # persona speaking header
+    try:
+        quip_text = _quip()
+    except Exception:
+        quip_text = ""
+    header = _persona_line(quip_text)
+    body = (header + ("\n" + (body or ""))) if header else (body or "")
+
+    # priority adjustment if persona supports it
+    if _personality and hasattr(_personality, "apply_priority"):
+        try:
+            priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
+        except Exception:
+            pass
+
+    ok1 = _send_gotify(orig_title, body, priority=priority, extras=extras)
+    ok2 = _send_ntfy(orig_title, body, priority=priority)
+    ok3 = _send_smtp(orig_title, body, priority=priority)
+
+    # Mirror to Inbox DB (single row)
     if storage:
         try:
             storage.save_message(
                 title=orig_title or "Notification",
-                body=message or "",
-                source="gotify",
+                body=body or "",
+                source=source_hint or "fanout",
                 priority=int(priority),
-                extras={"extras": extras or {}, "status": status},
+                extras={"extras": extras or {}, "sent": {"gotify": ok1, "ntfy": ok2, "smtp": ok3}},
                 created_at=int(time.time())
             )
         except Exception as e:
@@ -270,35 +392,18 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 
     return True
 
+# ============================
+# Purge helpers (only used if Gotify intake is active)
+# ============================
 def delete_original_message(msg_id: int):
     try:
         if not msg_id: return
+        if not GOTIFY_URL or not CLIENT_TOKEN: return
         url = f"{GOTIFY_URL}/message/{msg_id}"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
         requests.delete(url, headers=headers, timeout=6)
     except Exception:
         pass
-
-def resolve_app_id():
-    global jarvis_app_id
-    jarvis_app_id = None
-    try:
-        url = f"{GOTIFY_URL}/application"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        r = requests.get(url, headers=headers, timeout=8); r.raise_for_status()
-        for app in r.json():
-            if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id"); break
-    except Exception:
-        pass
-
-def _is_our_post(data: dict) -> bool:
-    try:
-        if data.get("appid") == jarvis_app_id: return True
-        t = data.get("title") or ""
-        return t.startswith(f"{BOT_ICON} {BOT_NAME}:")
-    except Exception:
-        return False
 
 def _should_purge() -> bool:
     try: return bool(merged.get("silent_repost", SILENT_REPOST))
@@ -308,7 +413,7 @@ def _purge_after(msg_id: int):
     if _should_purge(): delete_original_message(msg_id)
 
 # ============================
-# LLM + Beautify
+# LLM + Beautify (RIFF CORE)
 # ============================
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []
@@ -345,11 +450,11 @@ def _llm_then_beautify(title: str, message: str):
             print(f"[bot] LLM rewrite failed (disabled by default): {e}")
 
     # Always beautify; pass persona so overlay + bottom riffs work
-    if _beautify and hasattr(_beautify, "beautify_message"):
+    if _beautify and hasattr(_beautify, "beautify_message") and os.getenv("BEAUTIFY_LLM_ENABLED","true").lower() in ("1","true","yes") and merged.get("llm_enabled"):
         try:
             final, extras = _beautify.beautify_message(
                 title, final,
-                mood=ACTIVE_PERSONA,          # keep param name for existing API
+                mood=ACTIVE_PERSONA,
                 persona=ACTIVE_PERSONA,
                 persona_quip=True
             )
@@ -411,7 +516,7 @@ def post_startup_card():
         f"Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'}",
         "Status: All systems nominal",
     ]
-    send_message("Startup", "\n".join(lines), priority=4, decorate=False)
+    send_message("Startup", "\n".join(lines), priority=4, decorate=False, source_hint="startup")
 
 def _try_call(module, fn_name, *args, **kwargs):
     try:
@@ -437,7 +542,7 @@ def _handle_command(ncmd: str) -> bool:
     except Exception: pass
 
     if ncmd in ("help", "commands"):
-        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...")
+        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...", source_hint="help")
         return True
 
     if ncmd in ("digest", "daily digest", "summary"):
@@ -448,19 +553,19 @@ def _handle_command(ncmd: str) -> bool:
                     msg2 += f"\n\n{_personality.quip(ACTIVE_PERSONA)}"
             except Exception:
                 pass
-            send_message("Digest", msg2, priority=pr)
+            send_message("Digest", msg2, priority=pr, source_hint="digest")
         else:
-            send_message("Digest", "Digest module unavailable.")
+            send_message("Digest", "Digest module unavailable.", source_hint="digest")
         return True
 
     if ncmd in ("dns",):
         text, _ = _try_call(m_tech, "handle_dns_command", "dns")
-        send_message("DNS Status", text or "No data.")
+        send_message("DNS Status", text or "No data.", source_hint="dns")
         return True
 
     if ncmd in ("kuma", "uptime", "monitor"):
         text, _ = _try_call(m_kuma, "handle_kuma_command", "kuma")
-        send_message("Uptime Kuma", text or "No data.")
+        send_message("Uptime Kuma", text or "No data.", source_hint="kuma")
         return True
 
     if ncmd in ("weather", "now", "today", "temp", "temps"):
@@ -471,7 +576,7 @@ def _handle_command(ncmd: str) -> bool:
                 if isinstance(text, tuple): text = text[0]
             except Exception as e:
                 text = f"⚠️ Weather failed: {e}"
-        send_message("Weather", text or "No data.")
+        send_message("Weather", text or "No data.", source_hint="weather")
         return True
 
     if ncmd in ("forecast", "weekly", "7day", "7-day", "7 day"):
@@ -482,7 +587,7 @@ def _handle_command(ncmd: str) -> bool:
                 if isinstance(text, tuple): text = text[0]
             except Exception as e:
                 text = f"⚠️ Forecast failed: {e}"
-        send_message("Forecast", text or "No data.")
+        send_message("Forecast", text or "No data.", source_hint="forecast")
         return True
 
     # Jokes / chat
@@ -492,44 +597,58 @@ def _handle_command(ncmd: str) -> bool:
                 msg, _ = m_chat.handle_chat_command("joke")
             except Exception as e:
                 msg = f"⚠️ Chat error: {e}"
-            send_message("Joke", msg or "No joke available right now.")
+            send_message("Joke", msg or "No joke available right now.", source_hint="chat")
         else:
-            send_message("Joke", "Chat engine unavailable.")
+            send_message("Joke", "Chat engine unavailable.", source_hint="chat")
         return True
 
     # ARR
     if ncmd in ("upcoming movies", "upcoming films", "movies upcoming", "films upcoming"):
         msg, _ = _try_call(m_arr, "upcoming_movies", 7)
-        send_message("Upcoming Movies", msg or "No data.")
+        send_message("Upcoming Movies", msg or "No data.", source_hint="arr")
         return True
     if ncmd in ("upcoming series", "upcoming shows", "series upcoming", "shows upcoming"):
         msg, _ = _try_call(m_arr, "upcoming_series", 7)
-        send_message("Upcoming Episodes", msg or "No data.")
+        send_message("Upcoming Episodes", msg or "No data.", source_hint="arr")
         return True
     if ncmd in ("movie count", "film count"):
         msg, _ = _try_call(m_arr, "movie_count")
-        send_message("Movie Count", msg or "No data.")
+        send_message("Movie Count", msg or "No data.", source_hint="arr")
         return True
     if ncmd in ("series count", "show count"):
         msg, _ = _try_call(m_arr, "series_count")
-        send_message("Series Count", msg or "No data.")
+        send_message("Series Count", msg or "No data.", source_hint="arr")
         return True
     if ncmd in ("longest movie", "longest film"):
         msg, _ = _try_call(m_arr, "longest_movie")
-        send_message("Longest Movie", msg or "No data.")
+        send_message("Longest Movie", msg or "No data.", source_hint="arr")
         return True
     if ncmd in ("longest series", "longest show"):
         msg, _ = _try_call(m_arr, "longest_series")
-        send_message("Longest Series", msg or "No data.")
+        send_message("Longest Series", msg or "No data.", source_hint="arr")
         return True
 
     return False
 
 # ============================
-# WebSocket listener
+# Gotify intake (optional, stand-alone friendly)
 # ============================
-async def listen():
+_processed_sigs = set()
+
+def _sig(source: str, title: str, message: str, ext_id: str = "") -> str:
+    h = hashlib.sha256()
+    h.update((source or "").encode("utf-8"))
+    h.update((ext_id or "").encode("utf-8"))
+    h.update((title or "").encode("utf-8"))
+    h.update((message or "").encode("utf-8"))
+    return h.hexdigest()
+
+async def listen_gotify():
+    if not INGEST_GOTIFY_ENABLED or not GOTIFY_URL or not CLIENT_TOKEN:
+        print("[bot] Gotify intake disabled or not configured")
+        return
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
+    print(f"[bot] Gotify intake connecting to {ws_url}")
     async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
         async for raw in ws:
             try:
@@ -543,15 +662,18 @@ async def listen():
                     _purge_after(msg_id)
                     continue
 
-                # skip our own non-command posts
-                if _is_our_post(data):
+                sig = _sig("gotify", title, message, str(msg_id))
+                if sig in _processed_sigs:
                     continue
+                _processed_sigs.add(sig)
+                if len(_processed_sigs) > 1000:
+                    _processed_sigs.clear()
 
-                final, extras, used_llm, used_beautify = _llm_then_beautify(title, message)
-                send_message(title or "Notification", final, priority=5, extras=extras)
+                final, extras, _, _ = _llm_then_beautify(title, message)
+                send_message(title or "Notification", final, priority=5, extras=extras, source_hint="gotify")
                 _purge_after(msg_id)
             except Exception as e:
-                print(f"[bot] listen loop err: {e}")
+                print(f"[bot] gotify listen loop err: {e}")
 
 # ============================
 # Daily scheduler (digest)
@@ -572,7 +694,7 @@ async def _digest_scheduler_loop():
                         import digest as _digest_mod
                         if hasattr(_digest_mod, "build_digest"):
                             title, msg, pr = _digest_mod.build_digest(merged)
-                            send_message("Digest", msg, priority=pr)
+                            send_message("Digest", msg, priority=pr, source_hint="digest")
                             _last_digest_date = now.date()
                         else:
                             _last_digest_date = now.date()
@@ -584,7 +706,7 @@ async def _digest_scheduler_loop():
         await asyncio.sleep(60)
 
 # ============================
-# Internal wake HTTP server
+# Internal HTTP server (wake + generic intake)
 # ============================
 try:
     from aiohttp import web
@@ -608,28 +730,55 @@ async def _internal_wake(request):
         ok = bool(_handle_command(cmd))
     except Exception as e:
         try:
-            send_message("Wake Error", f"{e}", priority=5)
+            send_message("Wake Error", f"{e}", priority=5, source_hint="wake")
         except Exception:
             pass
     return web.json_response({"ok": bool(ok)})
 
-async def _start_internal_wake_server():
+async def _internal_emit(request):
+    """
+    Generic local intake for any sidecar:
+    POST /internal/emit  JSON { "title": "...", "body": "...", "priority": 5, "source": "smtp" }
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    title = str(data.get("title") or "Notification")
+    body  = str(data.get("body") or "")
+    prio  = int(data.get("priority", 5))
+    source = str(data.get("source") or "intake")
+    try:
+        # wake-word pass-through first
+        ncmd = normalize_cmd(extract_command_from(title, body))
+        if ncmd and _handle_command(ncmd):
+            return web.json_response({"ok": True, "handled":"command"})
+        # riff + beautify
+        final, extras, _, _ = _llm_then_beautify(title, body)
+        send_message(title, final, priority=prio, extras=extras, source_hint=source)
+        return web.json_response({"ok": True})
+    except Exception as e:
+        print(f"[intake] emit error: {e}")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+async def _start_internal_server():
     if web is None:
-        print("[bot] aiohttp not available; internal wake disabled")
+        print("[bot] aiohttp not available; internal HTTP disabled")
         return
     try:
         app = web.Application()
         app.router.add_post("/internal/wake", _internal_wake)
+        app.router.add_post("/internal/emit", _internal_emit)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "127.0.0.1", 2599)
         await site.start()
-        print("[bot] internal wake server listening on 127.0.0.1:2599")
+        print("[bot] internal server listening on 127.0.0.1:2599 (/internal/wake, /internal/emit)")
     except Exception as e:
-        print(f"[bot] failed to start internal wake server: {e}")
+        print(f"[bot] failed to start internal server: {e}")
 
 # ============================
-# Apprise Flask intake (in-process)
+# Apprise (fallback in-process if sidecar not available)
 # ============================
 try:
     import threading
@@ -644,16 +793,16 @@ def _emit_from_apprise_intake(msg: dict):
         title = str(msg.get("title") or "Notification")
         body  = str(msg.get("body") or "")
         final, extras, _, _ = _llm_then_beautify(title, body)
-        send_message(title, final, priority=5, extras=extras)
+        send_message(title, final, priority=5, extras=extras, source_hint="apprise")
     except Exception as e:
         print(f"[bot] apprise emit failed: {e}")
 
-def _start_apprise_flask_if_enabled():
+def _start_apprise_flask_fallback():
     if not INTAKE_APPRISE_ENABLED:
         print("[bot] Apprise intake disabled via options")
         return
     if threading is None:
-        print("[bot] threading unavailable; Apprise intake disabled")
+        print("[bot] threading unavailable; Apprise fallback disabled")
         return
     try:
         # Try package import first, then file loader
@@ -693,35 +842,44 @@ def _start_apprise_flask_if_enabled():
 
         t = threading.Thread(target=_serve, name="apprise-intake", daemon=True)
         t.start()
-        print(f"[bot] Apprise intake Flask server listening on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT} (token required)")
+        print(f"[bot] Apprise fallback Flask server listening on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT} (token required)")
     except Exception as e:
-        print(f"[bot] failed to start Apprise intake Flask server: {e}")
+        print(f"[bot] failed to start Apprise fallback server: {e}")
 
 # ============================
 # Main / loop
 # ============================
 def main():
-    resolve_app_id()
     try:
         start_sidecars()
         post_startup_card()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[bot] startup error: {e}")
     asyncio.run(_run_forever())
 
 async def _run_forever():
+    # internal API
     try:
-        asyncio.create_task(_start_internal_wake_server())
-    except Exception: pass
-    # Start Apprise intake in the background (non-blocking)
-    try:
-        _start_apprise_flask_if_enabled()
-    except Exception as _e:
-        print(f"[bot] could not start Apprise intake: {_e}")
+        asyncio.create_task(_start_internal_server())
+    except Exception: 
+        pass
+
+    # If apprise sidecar couldn’t be started externally, fallback in-process
+    if INTAKE_APPRISE_ENABLED and not _port_in_use(INTAKE_APPRISE_BIND, int(INTAKE_APPRISE_PORT)):
+        _start_apprise_flask_fallback()
+
+    # schedulers
     asyncio.create_task(_digest_scheduler_loop())
+
+    # optional gotify intake
+    if INGEST_GOTIFY_ENABLED and GOTIFY_URL and CLIENT_TOKEN:
+        asyncio.create_task(listen_gotify())
+    else:
+        print("[bot] Gotify intake not active")
+
     while True:
         try:
-            await listen()
+            await asyncio.sleep(3600)
         except Exception:
             await asyncio.sleep(3)
 
