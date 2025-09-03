@@ -46,25 +46,20 @@ KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","t
 SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
-# --- NEW: webhook feature toggles (safe defaults; overridden by /data/options.json if present)
+# --- Webhook feature toggles
 WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true","yes")
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
 
-# --- NEW: Apprise intake toggles (safe defaults; overridden by /data/options.json if present)
+# --- Apprise intake toggles
 INTAKE_APPRISE_ENABLED = os.getenv("intake_apprise_enabled", "false").lower() in ("1","true","yes")
 INTAKE_APPRISE_TOKEN = os.getenv("intake_apprise_token", "")
 INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true").lower() in ("1","true","yes")
-# Stored as CSV in env if ever used via env; options.json will override with a list
 INTAKE_APPRISE_ALLOWED_KEYS = [k for k in os.getenv("intake_apprise_allowed_keys", "").split(",") if k.strip()]
 
-# --- NEW: LLM behavior toggles ---
-# DO NOT rewrite message — persona riffs only (bottom of card)
+# --- LLM behavior toggles ---
 LLM_REWRITE_ENABLED = os.getenv("LLM_REWRITE_ENABLED", "false").lower() in ("1","true","yes")
-# Allow beautify to do persona LLM riffs (1–3 lines at bottom)
 BEAUTIFY_LLM_ENABLED_ENV = os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() in ("1","true","yes")
-
-CHAT_MOOD = "neutral"  # compatibility token; real persona comes from personality_state
 
 # ============================
 # Load /data/options.json
@@ -92,7 +87,6 @@ try:
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 
-    # --- NEW: read webhook settings from merged options (non-breaking)
     WEBHOOK_ENABLED = bool(merged.get("webhook_enabled", WEBHOOK_ENABLED))
     WEBHOOK_BIND    = str(merged.get("webhook_bind", WEBHOOK_BIND))
     try:
@@ -100,7 +94,6 @@ try:
     except Exception:
         pass
 
-    # --- NEW: read Apprise intake settings from merged options (non-breaking)
     INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
     INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
@@ -113,10 +106,8 @@ try:
         else:
             INTAKE_APPRISE_ALLOWED_KEYS = []
     except Exception:
-        # keep defaults
         pass
 
-    # --- NEW: LLM behavior via options.json (optional) ---
     LLM_REWRITE_ENABLED = bool(merged.get("llm_rewrite_enabled", LLM_REWRITE_ENABLED))
     _beautify_llm_enabled_opt = merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV)
     try:
@@ -128,8 +119,6 @@ except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
-    # webhook fall back to env defaults (already set)
-    # apprise intake fall back to env defaults (already set)
 
 # ============================
 # Load optional modules
@@ -156,7 +145,6 @@ ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
     try:
         ACTIVE_PERSONA, PERSONA_TOD = _pstate.get_active_persona()
-        CHAT_MOOD = ACTIVE_PERSONA
     except Exception:
         pass
 
@@ -165,9 +153,9 @@ if _pstate and hasattr(_pstate, "get_active_persona"):
 # ============================
 _sidecars: List[subprocess.Popen] = []
 
-def _start_sidecar(cmd, label):
+def _start_sidecar(cmd, label, env=None):
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env or os.environ.copy())
         _sidecars.append(p)
     except Exception as e:
         print(f"[bot] sidecar {label} start failed: {e}")
@@ -177,19 +165,12 @@ def start_sidecars():
         _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
     if SMTP_ENABLED:
         _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
-    # --- NEW: optional webhook sidecar
     if WEBHOOK_ENABLED:
-        # Pass bind/port via environment for webhook_server.py (if it uses them)
         env = os.environ.copy()
         env["webhook_bind"] = WEBHOOK_BIND
         env["webhook_port"] = str(WEBHOOK_PORT)
-        try:
-            p = subprocess.Popen(["python3","/app/webhook_server.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
-            _sidecars.append(p)
-        except Exception as e:
-            print(f"[bot] sidecar webhook_server.py start failed: {e}")
-    # --- NEW: Apprise intake is handled by its own module/server if present; this bot only surfaces status.
-    # (No process is started here to avoid assumptions about your /app/intakes/apprise.py runtime model.)
+        _start_sidecar(["python3","/app/webhook_server.py"], "webhook_server.py", env=env)
+    # Apprise intake handled by its own module if present; not spawned here.
 
 def stop_sidecars():
     for p in _sidecars:
@@ -201,23 +182,21 @@ atexit.register(stop_sidecars)
 # Gotify helpers
 # ============================
 def _persona_line(quip_text: str) -> str:
-    # Single-line persona 'speaks' header placed at TOP of message body.
-    who = ACTIVE_PERSONA or CHAT_MOOD or "neutral"
+    who = ACTIVE_PERSONA or "neutral"
     quip_text = (quip_text or "").strip().replace("\n", " ")
     if len(quip_text) > 140:
         quip_text = quip_text[:137] + "..."
-    # Keep it minimal so it aligns nicely with Gotify cards
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
-    # Decorate body, but keep the original title so it doesn't become a banner
+    # Decorate body, but keep original title so banners stay clean
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
         title = orig_title
     elif decorate and _personality and hasattr(_personality, "decorate"):
-        title, message = _personality.decorate(title, message, CHAT_MOOD, chance=1.0)
+        title, message = _personality.decorate(title, message, ACTIVE_PERSONA, chance=1.0)
         title = orig_title
 
     # Persona speaking line at the top
@@ -230,7 +209,7 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 
     # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
-        try: priority = _personality.apply_priority(priority, CHAT_MOOD)
+        try: priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
         except Exception: pass
 
     url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
@@ -308,19 +287,17 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
-    # We DO NOT rewrite message body anymore.
-    # Only Beautify formats it, and persona riffs (1–3 lines) are appended at the bottom.
+    # Only Beautify formats, rewrite is optional and off by default.
     used_llm = False
     used_beautify = False
     final = message or ""
     extras = None
 
-    # (rewrite removed) — respect LLM_REWRITE_ENABLED if you ever want to re-enable:
     if LLM_REWRITE_ENABLED and merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
             final2 = _llm.rewrite(
                 text=final,
-                mood=CHAT_MOOD,
+                mood=ACTIVE_PERSONA,
                 timeout=int(merged.get("llm_timeout_seconds",12)),
                 cpu_limit=int(merged.get("llm_max_cpu_percent",70)),
                 models_priority=merged.get("llm_models_priority", []),
@@ -336,12 +313,11 @@ def _llm_then_beautify(title: str, message: str):
         except Exception as e:
             print(f"[bot] LLM rewrite failed (disabled by default): {e}")
 
-    # Always beautify; pass persona so overlay + bottom riffs work
     if _beautify and hasattr(_beautify, "beautify_message"):
         try:
             final, extras = _beautify.beautify_message(
                 title, final,
-                mood=CHAT_MOOD,
+                mood=ACTIVE_PERSONA,
                 persona=ACTIVE_PERSONA,
                 persona_quip=True
             )
@@ -545,14 +521,12 @@ async def listen():
             except Exception as e:
                 print(f"[bot] listen loop err: {e}")
 
-
 # ============================
-# Daily scheduler (digest)
+# Digest scheduler (fixed)
 # ============================
 _last_digest_date = None
 
 async def _digest_scheduler_loop():
-    # Check once a minute; when local time == digest_time and enabled, post digest once per day.
     global _last_digest_date
     from datetime import datetime
     while True:
@@ -560,21 +534,27 @@ async def _digest_scheduler_loop():
             if merged.get("digest_enabled"):
                 target = str(merged.get("digest_time", "08:00")).strip()
                 now = datetime.now()
-                if now.strftime("%H:%M") == target and _last_digest_date != now.date():
+                try:
+                    hh, mm = target.split(":")
+                    th, tm = int(hh), int(mm)
+                except Exception:
+                    th, tm = 8, 0
+                if now.hour == th and abs(now.minute - tm) <= 1 and _last_digest_date != now.date():
                     try:
                         import digest as _digest_mod
                         if hasattr(_digest_mod, "build_digest"):
                             title, msg, pr = _digest_mod.build_digest(merged)
                             send_message("Digest", msg, priority=pr)
-                            _last_digest_date = now.date()
                         else:
-                            _last_digest_date = now.date()
+                            send_message("Digest", "Digest module missing build_digest().", priority=3)
+                        _last_digest_date = now.date()
                     except Exception as e:
-                        print(f"[Scheduler] digest error: {e}")
+                        send_message("Digest Error", f"{e}", priority=8)
                         _last_digest_date = now.date()
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
+
 # ============================
 # Main
 # ============================
@@ -586,8 +566,6 @@ def main():
     except Exception:
         pass
     asyncio.run(_run_forever())
-
-
 
 # ============================
 # Internal wake HTTP server
