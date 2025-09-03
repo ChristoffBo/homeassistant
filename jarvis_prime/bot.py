@@ -631,15 +631,24 @@ def _emit_from_apprise_intake(msg: dict):
 
 def _start_apprise_flask_if_enabled():
     if not INTAKE_APPRISE_ENABLED:
+        print("[bot] Apprise intake disabled via options")
         return
     if threading is None:
         print("[bot] threading unavailable; Apprise intake disabled")
         return
     try:
-        from flask import Flask
-        # Import your Apprise blueprint module
-        import intakes.apprise as apprise_intake
+        # Try regular package import first
+        try:
+            import intakes.apprise as apprise_intake  # requires /app/intakes/__init__.py
+            print("[bot] loaded apprise intake via package import (intakes.apprise)")
+        except Exception as _e_pkg:
+            print(f"[bot] package import failed ({_e_pkg}); trying file loader for /app/intakes/apprise.py")
+            apprise_intake = _load_module("intake_apprise", "/app/intakes/apprise.py")
+            if apprise_intake is None:
+                print("[bot] failed to load /app/intakes/apprise.py")
+                return
 
+        from flask import Flask
         app = Flask("jarvis_apprise_intake")
 
         # Register blueprint with your configured gates
