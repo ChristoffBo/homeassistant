@@ -167,22 +167,42 @@ def _start_sidecar(cmd, label):
     except Exception as e:
         print(f"[bot] sidecar {label} start failed: {e}")
 
+# --- NEW (additive): skip starting a sidecar if port already has a listener
+def _port_in_use(host: str, port: int) -> bool:
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.25)
+            return s.connect_ex((host, port)) == 0
+    except Exception:
+        return False
+
 def start_sidecars():
     if PROXY_ENABLED:
-        _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
+        # Only start if :2580 not already bound (launcher also starts proxy.py)
+        if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
+            print("[bot] proxy.py already running on :2580 — skipping sidecar")
+        else:
+            _start_sidecar(["python3","/app/proxy.py"], "proxy.py")
     if SMTP_ENABLED:
-        _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
+        # Only start if :2525 not already bound (launcher also starts smtp_server.py)
+        if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
+            print("[bot] smtp_server.py already running on :2525 — skipping sidecar")
+        else:
+            _start_sidecar(["python3","/app/smtp_server.py"], "smtp_server.py")
     # --- NEW: optional webhook sidecar
     if WEBHOOK_ENABLED:
-        # Pass bind/port via environment for webhook_server.py (if it uses them)
-        env = os.environ.copy()
-        env["webhook_bind"] = WEBHOOK_BIND
-        env["webhook_port"] = str(WEBHOOK_PORT)
-        try:
-            p = subprocess.Popen(["python3","/app/webhook_server.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
-            _sidecars.append(p)
-        except Exception as e:
-            print(f"[bot] sidecar webhook_server.py start failed: {e}")
+        if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
+            print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar")
+        else:
+            env = os.environ.copy()
+            env["webhook_bind"] = WEBHOOK_BIND
+            env["webhook_port"] = str(WEBHOOK_PORT)
+            try:
+                p = subprocess.Popen(["python3","/app/webhook_server.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+                _sidecars.append(p)
+            except Exception as e:
+                print(f"[bot] sidecar webhook_server.py start failed: {e}")
     # --- NEW: Apprise intake is handled by its own module/server if present; this bot only surfaces status.
     # (No process is started here to avoid assumptions about your /app/intakes/apprise.py runtime model.)
 
