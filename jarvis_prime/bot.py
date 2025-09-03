@@ -312,7 +312,8 @@ def start_sidecars():
             env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
             # internal emit endpoint for the sidecar to call:
             env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
-            _start_sidecar(["python3", "/app/intakes/apprise.py"], "apprise_intake", env=env)
+            # Root sidecar path (as you stated): /app/apprise.py
+            _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
             print(f"[bot] apprise intake configured on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
 
 def stop_sidecars():
