@@ -533,7 +533,6 @@ async def _digest_scheduler_loop():
                             send_message("Digest", msg, priority=pr)
                             _last_digest_date = now.date()
                         else:
-                            # fallback: avoid tight loop if module missing
                             _last_digest_date = now.date()
                     except Exception as e:
                         print(f"[Scheduler] digest error: {e}")
