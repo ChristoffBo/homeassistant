@@ -56,7 +56,7 @@ WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
 
-# Apprise intake toggles (we'll try sidecar first; fallback to in-process)
+# Apprise intake toggles (sidecar preferred; fallback in-process)
 INTAKE_APPRISE_ENABLED = os.getenv("intake_apprise_enabled", "false").lower() in ("1","true","yes")
 INTAKE_APPRISE_TOKEN = os.getenv("intake_apprise_token", "")
 INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true").lower() in ("1","true","yes")
@@ -94,17 +94,17 @@ try:
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 
-    # Outputs / Inputs from options.json
-    PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", True))
-    PUSH_NTFY_ENABLED   = bool(merged.get("push_ntfy_enabled", False))
-    PUSH_SMTP_ENABLED   = bool(merged.get("push_smtp_enabled", False))
+    # Outputs / Inputs
+    PUSH_GOTIFY_ENABLED   = bool(merged.get("push_gotify_enabled", True))
+    PUSH_NTFY_ENABLED     = bool(merged.get("push_ntfy_enabled", False))
+    PUSH_SMTP_ENABLED     = bool(merged.get("push_smtp_enabled", False))
     INGEST_GOTIFY_ENABLED = bool(merged.get("ingest_gotify_enabled", True))
     INGEST_SMTP_ENABLED   = bool(merged.get("ingest_smtp_enabled", True))
     INGEST_APPRISE_ENABLED= bool(merged.get("ingest_apprise_enabled", True))
     INGEST_NTFY_ENABLED   = bool(merged.get("ingest_ntfy_enabled", False))
 
     # NTFY
-    NTFY_URL   = str(merged.get("ntfy_url", options.get("ntfy_url","") if isinstance(options,dict) else ""))
+    NTFY_URL   = str(merged.get("ntfy_url", ""))
     NTFY_TOPIC = str(merged.get("ntfy_topic", ""))
     NTFY_USER  = str(merged.get("ntfy_user", ""))
     NTFY_PASS  = str(merged.get("ntfy_pass", ""))
@@ -125,7 +125,7 @@ try:
     except Exception:
         pass
 
-    # Apprise intake (we support sidecar or fallback)
+    # Apprise intake
     INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
     INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
@@ -336,16 +336,11 @@ def _send_smtp(title, message, priority=5):
 
 def send_message(title, message, priority=5, extras=None, decorate=True, source_hint="core"):
     """
-    Stand-alone fan-out sender:
-    - Persona header always added.
-    - Optional personality.decorate on body (when decorate=True).
-    - Sends to all enabled outputs (Gotify/Ntfy/SMTP).
-    - Mirrors once to storage (source='fanout' or source_hint).
+    Stand-alone fan-out sender.
     """
     orig_title = title
     body = message or ""
 
-    # optional decoration
     if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
         try:
             _t, body = _personality.decorate_by_persona(title, body, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
@@ -357,7 +352,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True, source_
         except Exception:
             pass
 
-    # persona speaking header
     try:
         quip_text = _quip()
     except Exception:
@@ -365,7 +359,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True, source_
     header = _persona_line(quip_text)
     body = (header + ("\n" + (body or ""))) if header else (body or "")
 
-    # priority adjustment if persona supports it
     if _personality and hasattr(_personality, "apply_priority"):
         try:
             priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
@@ -376,7 +369,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True, source_
     ok2 = _send_ntfy(orig_title, body, priority=priority)
     ok3 = _send_smtp(orig_title, body, priority=priority)
 
-    # Mirror to Inbox DB (single row)
     if storage:
         try:
             storage.save_message(
@@ -392,9 +384,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True, source_
 
     return True
 
-# ============================
-# Purge helpers (only used if Gotify intake is active)
-# ============================
 def delete_original_message(msg_id: int):
     try:
         if not msg_id: return
@@ -423,12 +412,12 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
+    start = time.monotonic()
     used_llm = False
     used_beautify = False
     final = message or ""
     extras = None
 
-    # Optional rewrite (OFF by default)
     if LLM_REWRITE_ENABLED and merged.get("llm_enabled") and _llm and hasattr(_llm, "rewrite"):
         try:
             final2 = _llm.rewrite(
@@ -447,9 +436,11 @@ def _llm_then_beautify(title: str, message: str):
                 final = final2
                 used_llm = True
         except Exception as e:
-            print(f"[bot] LLM rewrite failed (disabled by default): {e}")
+            print(f"[bot] LLM rewrite failed: {e}")
 
-    # Always beautify; pass persona so overlay + bottom riffs work
+    if time.monotonic() - start > 10:
+        return final, None, used_llm, False
+
     if _beautify and hasattr(_beautify, "beautify_message") and os.getenv("BEAUTIFY_LLM_ENABLED","true").lower() in ("1","true","yes") and merged.get("llm_enabled"):
         try:
             final, extras = _beautify.beautify_message(
@@ -485,11 +476,13 @@ def normalize_cmd(cmd: str) -> str:
     return _clean(cmd)
 
 def extract_command_from(title: str, message: str) -> str:
-    tlow, mlow = (title or "").lower(), (message or "").lower()
-    if tlow.startswith("jarvis"):
-        rest = tlow.replace("jarvis","",1).strip()
-        return rest or (mlow.replace("jarvis","",1).strip() if mlow.startswith("jarvis") else mlow.strip())
-    if mlow.startswith("jarvis"): return mlow.replace("jarvis","",1).strip()
+    candidates = [str(title or ""), str(message or "")]
+    prefixes = ("jarvis prime", "jarvis", "hey jarvis", "ok jarvis", "prime")
+    for txt in candidates:
+        low = txt.lower().strip()
+        for p in prefixes:
+            if low.startswith(p):
+                return low[len(p):].strip()
     return ""
 
 def post_startup_card():
@@ -631,7 +624,7 @@ def _handle_command(ncmd: str) -> bool:
     return False
 
 # ============================
-# Gotify intake (optional, stand-alone friendly)
+# Gotify intake (optional)
 # ============================
 _processed_sigs = set()
 
@@ -648,32 +641,39 @@ async def listen_gotify():
         print("[bot] Gotify intake disabled or not configured")
         return
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
-    print(f"[bot] Gotify intake connecting to {ws_url}")
-    async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
-        async for raw in ws:
-            try:
-                data = json.loads(raw); msg_id = data.get("id")
-                title = data.get("title") or ""
-                message = data.get("message") or ""
+    backoff = 1
+    while True:
+        try:
+            print(f"[bot] Gotify intake connecting to {ws_url}")
+            async with websockets.connect(ws_url, ping_interval=None, ping_timeout=None) as ws:
+                backoff = 1
+                async for raw in ws:
+                    try:
+                        data = json.loads(raw); msg_id = data.get("id")
+                        title = data.get("title") or ""
+                        message = data.get("message") or ""
 
-                # wake-word first so commands work even if posted via same app
-                ncmd = normalize_cmd(extract_command_from(title, message))
-                if ncmd and _handle_command(ncmd):
-                    _purge_after(msg_id)
-                    continue
+                        ncmd = normalize_cmd(extract_command_from(title, message))
+                        if ncmd and _handle_command(ncmd):
+                            _purge_after(msg_id)
+                            continue
 
-                sig = _sig("gotify", title, message, str(msg_id))
-                if sig in _processed_sigs:
-                    continue
-                _processed_sigs.add(sig)
-                if len(_processed_sigs) > 1000:
-                    _processed_sigs.clear()
+                        sig = _sig("gotify", title, message, str(msg_id))
+                        if sig in _processed_sigs:
+                            continue
+                        _processed_sigs.add(sig)
+                        if len(_processed_sigs) > 1000:
+                            _processed_sigs.clear()
 
-                final, extras, _, _ = _llm_then_beautify(title, message)
-                send_message(title or "Notification", final, priority=5, extras=extras, source_hint="gotify")
-                _purge_after(msg_id)
-            except Exception as e:
-                print(f"[bot] gotify listen loop err: {e}")
+                        final, extras, _, _ = _llm_then_beautify(title, message)
+                        send_message(title or "Notification", final, priority=5, extras=extras, source_hint="gotify")
+                        _purge_after(msg_id)
+                    except Exception as ie:
+                        print(f"[bot] gotify message error: {ie}")
+        except Exception as e:
+            print(f"[bot] gotify intake error: {e} — reconnecting in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
 
 # ============================
 # Daily scheduler (digest)
@@ -681,7 +681,6 @@ async def listen_gotify():
 _last_digest_date = None
 
 async def _digest_scheduler_loop():
-    # Check once a minute; when local time == digest_time and enabled, post digest once per day.
     global _last_digest_date
     from datetime import datetime
     while True:
@@ -719,9 +718,8 @@ async def _internal_wake(request):
     except Exception:
         data = {}
     text = str(data.get("text") or "").strip()
-    # Normalize typical prefixes like "jarvis ..."
     cmd = text
-    for kw in ("jarvis", "hey jarvis", "ok jarvis"):
+    for kw in ("jarvis prime", "jarvis", "hey jarvis", "ok jarvis", "prime"):
         if cmd.lower().startswith(kw):
             cmd = cmd[len(kw):].strip()
             break
@@ -736,10 +734,6 @@ async def _internal_wake(request):
     return web.json_response({"ok": bool(ok)})
 
 async def _internal_emit(request):
-    """
-    Generic local intake for any sidecar:
-    POST /internal/emit  JSON { "title": "...", "body": "...", "priority": 5, "source": "smtp" }
-    """
     try:
         data = await request.json()
     except Exception:
@@ -749,11 +743,9 @@ async def _internal_emit(request):
     prio  = int(data.get("priority", 5))
     source = str(data.get("source") or "intake")
     try:
-        # wake-word pass-through first
         ncmd = normalize_cmd(extract_command_from(title, body))
         if ncmd and _handle_command(ncmd):
             return web.json_response({"ok": True, "handled":"command"})
-        # riff + beautify
         final, extras, _, _ = _llm_then_beautify(title, body)
         send_message(title, final, priority=prio, extras=extras, source_hint=source)
         return web.json_response({"ok": True})
@@ -786,9 +778,6 @@ except Exception:
     threading = None
 
 def _emit_from_apprise_intake(msg: dict):
-    """
-    Normalize and fan out using the same beautify/persona pipeline.
-    """
     try:
         title = str(msg.get("title") or "Notification")
         body  = str(msg.get("body") or "")
@@ -805,9 +794,8 @@ def _start_apprise_flask_fallback():
         print("[bot] threading unavailable; Apprise fallback disabled")
         return
     try:
-        # Try package import first, then file loader
         try:
-            import intakes.apprise as apprise_intake  # requires /app/intakes/__init__.py
+            import intakes.apprise as apprise_intake
             print("[bot] loaded apprise intake via package import (intakes.apprise)")
         except Exception as _e_pkg:
             print(f"[bot] package import failed ({_e_pkg}); trying file loader for /app/intakes/apprise.py")
@@ -819,7 +807,6 @@ def _start_apprise_flask_fallback():
         from flask import Flask
         app = Flask("jarvis_apprise_intake")
 
-        # Register blueprint with your configured gates
         allowed = INTAKE_APPRISE_ALLOWED_KEYS[:] if INTAKE_APPRISE_ALLOWED_KEYS else None
         apprise_intake.register(
             app,
@@ -858,20 +845,22 @@ def main():
     asyncio.run(_run_forever())
 
 async def _run_forever():
-    # internal API
     try:
         asyncio.create_task(_start_internal_server())
     except Exception: 
         pass
 
-    # If apprise sidecar couldn’t be started externally, fallback in-process
-    if INTAKE_APPRISE_ENABLED and not _port_in_use(INTAKE_APPRISE_BIND, int(INTAKE_APPRISE_PORT)):
-        _start_apprise_flask_fallback()
+    # Wait a moment for apprise sidecar to bind; then fallback only if still absent
+    if INTAKE_APPRISE_ENABLED:
+        for _ in range(20):
+            if _port_in_use(INTAKE_APPRISE_BIND, int(INTAKE_APPRISE_PORT)):
+                break
+            await asyncio.sleep(0.5)
+        if not _port_in_use(INTAKE_APPRISE_BIND, int(INTAKE_APPRISE_PORT)):
+            _start_apprise_flask_fallback()
 
-    # schedulers
     asyncio.create_task(_digest_scheduler_loop())
 
-    # optional gotify intake
     if INGEST_GOTIFY_ENABLED and GOTIFY_URL and CLIENT_TOKEN:
         asyncio.create_task(listen_gotify())
     else:
