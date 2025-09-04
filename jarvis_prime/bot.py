@@ -106,7 +106,7 @@ try:
 
     # Ingest toggles from config file if present
     INGEST_GOTIFY_ENABLED  = bool(merged.get("ingest_gotify_enabled", INGEST_GOTIFY_ENABLED))
-    INGEST_APPRISE_ENABLED = bool(merged.get("ingest_apprise_enabled", INGEST_APPRISE_ENABLED))
+    INGEST_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED)) and bool(merged.get("ingest_apprise_enabled", INGEST_APPRISE_ENABLED))
     INGEST_SMTP_ENABLED    = bool(merged.get("ingest_smtp_enabled", INGEST_SMTP_ENABLED))
     INGEST_NTFY_ENABLED    = bool(merged.get("ingest_ntfy_enabled", INGEST_NTFY_ENABLED))
 
@@ -443,7 +443,8 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
-    used_llm = False
+    # Reflect LLM state in footer tag
+    used_llm = bool(merged.get("llm_enabled")) or bool(merged.get("llm_rewrite_enabled")) or LLM_REWRITE_ENABLED
     used_beautify = True if _beautify else False
     final = message or ""
     extras = None
@@ -455,7 +456,7 @@ def _llm_then_beautify(title: str, message: str):
                 final,
                 mood=ACTIVE_PERSONA,
                 persona=ACTIVE_PERSONA,
-                persona_quip=False
+                persona_quip=True  # <— enable persona riffs for all intakes
             )
     except Exception as e:
         print(f"[bot] Beautify failed: {e}")
