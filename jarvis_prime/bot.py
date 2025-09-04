@@ -163,6 +163,9 @@ _personality = _load_module("personality", "/app/personality.py")
 _pstate = _load_module("personality_state", "/app/personality_state.py")
 _beautify = _load_module("beautify", "/app/beautify.py")
 _llm = _load_module("llm_client", "/app/llm_client.py")
+# --- ADD: EnviroGuard (optional) ---
+_enviroguard = _load_module("enviroguard", "/app/enviroguard.py")
+ENVGUARD_STATUS = {}
 
 ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
@@ -519,6 +522,8 @@ def post_startup_card():
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
         f"📮 Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
+        (f"🌡️ EnviroGuard — {'ACTIVE' if ENVGUARD_STATUS.get('enabled') else 'OFF'}"
+         + (f" (profile={ENVGUARD_STATUS.get('profile')}, {ENVGUARD_STATUS.get('temp_c')} °C)" if ENVGUARD_STATUS else "")),
         "",
         f"LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
         f"Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'}",
@@ -836,11 +841,27 @@ async def _apprise_watchdog():
         await asyncio.sleep(5)
 
 # ============================
+# EnviroGuard hooks (optional)
+# ============================
+def _start_enviroguard():
+    global ENVGUARD_STATUS
+    try:
+        if _enviroguard and hasattr(_enviroguard, "start"):
+            # Start with config path and emitter URL; module handles polling + hysteresis
+            _enviroguard.start(options_path="/data/options.json",
+                               emit_url="http://127.0.0.1:2599/internal/emit")
+        if _enviroguard and hasattr(_enviroguard, "current_status"):
+            ENVGUARD_STATUS = _enviroguard.current_status() or {}
+    except Exception as e:
+        print(f"[enviroguard] start failed: {e}")
+
+# ============================
 # Main / loop
 # ============================
 def main():
     resolve_app_id()
     try:
+        _start_enviroguard()  # additive: safe-noop if module missing
         start_sidecars()
         post_startup_card()
     except Exception as e:
