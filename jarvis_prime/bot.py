@@ -268,29 +268,38 @@ def _apprise_env() -> dict:
     env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
     return env
 
+# NEW: ensure smtp_server.py and proxy.py also forward into the core beautifier/LLM
+def _forward_env(extra: Optional[dict] = None) -> dict:
+    env = os.environ.copy()
+    # route all intakes through the core so riffs/LLM apply uniformly
+    env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
+    # propagate persona/LLM flags
+    env["BEAUTIFY_LLM_ENABLED"] = os.getenv("BEAUTIFY_LLM_ENABLED", "true")
+    if extra:
+        env.update({k: str(v) for k, v in extra.items()})
+    return env
+
 def start_sidecars():
     # proxy
     if PROXY_ENABLED:
         if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
             print("[bot] proxy.py already running on :2580 — skipping sidecar")
         else:
-            _start_sidecar(["python3", "/app/proxy.py"], "proxy.py")
+            _start_sidecar(["python3", "/app/proxy.py"], "proxy.py", env=_forward_env())
 
     # smtp
     if SMTP_ENABLED and INGEST_SMTP_ENABLED:
         if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
             print("[bot] smtp_server.py already running on :2525 — skipping sidecar")
         else:
-            _start_sidecar(["python3", "/app/smtp_server.py"], "smtp_server.py")
+            _start_sidecar(["python3", "/app/smtp_server.py"], "smtp_server.py", env=_forward_env())
 
     # webhook
     if WEBHOOK_ENABLED:
         if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
             print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar")
         else:
-            env = os.environ.copy()
-            env["webhook_bind"] = WEBHOOK_BIND
-            env["webhook_port"] = str(WEBHOOK_PORT)
+            env = _forward_env({"webhook_bind": WEBHOOK_BIND, "webhook_port": str(WEBHOOK_PORT)})
             _start_sidecar(["python3", "/app/webhook_server.py"], "webhook_server.py", env=env)
 
     # apprise
