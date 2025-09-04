@@ -278,7 +278,8 @@ def _internal_ready() -> bool:
 
 def _start_sidecar(cmd, label, env=None):
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env or os.environ.copy())
+        # Inherit stdout/stderr so we can see sidecar logs and avoid PIPE buffer stalls
+        p = subprocess.Popen(cmd, stdout=None, stderr=None, env=env or os.environ.copy())
         _sidecars.append(p)
         print(f"[bot] started sidecar: {label} -> {cmd}")
     except Exception as e:
