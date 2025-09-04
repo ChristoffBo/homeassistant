@@ -1,5 +1,6 @@
 import os
 import json
+import requests
 from datetime import datetime
 from typing import Dict, Tuple, Any, List
 
@@ -11,6 +12,27 @@ def _try_import(name: str):
 
 _arr = _try_import("arr")
 _weather = _try_import("weather")
+
+BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
+BOT_ICON = os.getenv("BOT_ICON", "🧠")
+JARVIS_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
+
+def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str] | None = None) -> bool:
+    try:
+        payload = {
+            "source": "digest",
+            "title": f"{BOT_ICON} {BOT_NAME}: {title}",
+            "message": message,
+            "priority": priority,
+            "tags": tags or ["digest", "daily"],
+            "icon": BOT_ICON,
+            "app": BOT_NAME,
+        }
+        r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6)
+        r.raise_for_status()
+        return True
+    except Exception:
+        return False
 
 def _section(title: str, body: str) -> str:
     return f"**{title}**\n{body.strip()}\n" if body else ""
@@ -75,4 +97,7 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
         _section("⛅ Weather Today", weather),
     ]
     msg = "\n".join([p for p in parts if p]).strip() or "_No data for today._"
+
+    # Auto-post to Jarvis internal emitter, and still return the tuple
+    _emit_to_jarvis(title, msg, 5, ["digest", "daily"])
     return title, msg, 5
