@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime — Notify</title>
+
   <!-- Ingress-safe base: directory of current URL -->
   <script>
     (function(){
@@ -13,9 +14,9 @@
       document.write('<base href="' + dir + '">');
     })();
   </script>
+
   <link rel="icon" href="icon.png" />
-  <!-- Cache busting query strings to defeat HA Ingress caching -->
-  <link rel="stylesheet" href="style.css?v=5.1.3" />
+  <link rel="stylesheet" href="style.css?v=6.0.0" />
 </head>
 <body class="app">
   <!-- Header -->
@@ -28,10 +29,9 @@
       </div>
     </div>
     <div class="hdr-right">
-      <!-- Visible on mobile to exit detail view -->
       <button id="btn-back" class="btn icon mobile-only" title="Back" aria-label="Back">←</button>
       <div class="search-wrap">
-        <input id="q" type="search" placeholder="Search…" />
+        <input id="q" type="search" placeholder="Search…" aria-label="Search messages" />
         <button id="btn-search" class="btn icon" title="Search" aria-label="Search">🔎</button>
       </div>
       <button id="btn-refresh" class="btn icon" title="Refresh" aria-label="Refresh">↻</button>
@@ -39,23 +39,23 @@
     </div>
   </header>
 
-  <!-- Two-pane layout -->
-  <main class="layout page" role="main">
-    <!-- Left: list + filters + Delete All bottom -->
-    <aside class="rail" id="rail" role="complementary">
+  <!-- Main layout -->
+  <main class="layout" role="main">
+    <!-- Left rail -->
+    <aside class="rail" id="rail" role="complementary" aria-label="Filters">
       <div class="rail-head">
         <div class="when">Today</div>
         <div class="count"><span id="c-all">0</span> messages</div>
       </div>
 
-      <nav class="tabs">
+      <nav class="tabs" aria-label="Status tabs">
         <button class="tab active" data-tab="all">All</button>
         <button class="tab" data-tab="unread">Unread</button>
         <button class="tab" data-tab="archived">Archived</button>
         <button class="tab" data-tab="errors">Errors</button>
       </nav>
 
-      <div class="sources">
+      <div class="sources" aria-label="Sources">
         <button class="chip src active" data-src="">Any</button>
         <button class="chip src" data-src="smtp">SMTP</button>
         <button class="chip src" data-src="gotify">Gotify</button>
@@ -71,10 +71,10 @@
       </div>
     </aside>
 
-    <!-- Middle: compact inbox list -->
+    <!-- Feed -->
     <section class="feed" id="feed" role="region" aria-label="Messages"></section>
 
-    <!-- Right: detail -->
+    <!-- Detail -->
     <section class="detail" id="detail" role="region" aria-label="Detail">
       <div class="empty">
         <h2>Inbox</h2>
@@ -84,12 +84,12 @@
   </main>
 
   <!-- Floating compose -->
-  <button id="fab" class="fab" title="Ask Jarvis">＋</button>
-  <div id="compose" class="compose">
-    <div class="sheet">
+  <button id="fab" class="fab" title="Ask Jarvis" aria-label="Ask Jarvis">＋</button>
+  <div id="compose" class="compose" aria-hidden="true">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="compose-title">
       <div class="sheet-head">
-        <div class="sheet-title">Ask Jarvis</div>
-        <button id="compose-close" class="btn icon">✕</button>
+        <div class="sheet-title" id="compose-title">Ask Jarvis</div>
+        <button id="compose-close" class="btn icon" aria-label="Close">✕</button>
       </div>
       <div class="sheet-body">
         <input id="wake-text" type="text" placeholder="e.g., weather, status, help" />
@@ -101,8 +101,8 @@
     </div>
   </div>
 
-  <!-- Gear Settings drawer (opens from right) -->
-  <aside id="drawer" class="drawer">
+  <!-- Settings drawer -->
+  <aside id="drawer" class="drawer" aria-hidden="true">
     <div class="drawer-head">
       <div class="drawer-title">Settings</div>
       <div class="drawer-tabs">
@@ -113,8 +113,9 @@
         <button class="dtab" data-pane="retention">Retention</button>
         <button class="dtab" data-pane="about">About</button>
       </div>
-      <button id="drawer-close" class="btn icon">✕</button>
+      <button id="drawer-close" class="btn icon" aria-label="Close">✕</button>
     </div>
+
     <div class="drawer-body">
       <section class="pane show" data-pane="channels">
         <h3>Email (Gmail/SMTP)</h3>
@@ -198,26 +199,16 @@
 
       <section class="pane" data-pane="about">
         <p>Jarvis Notify — Outlook/ntfy-style UI.</p>
-        <p>UI build v5.1.3 (Ingress + Android fixes). Uses /api/messages, /api/stream and related endpoints.</p>
+        <p>UI build v6.0.0 (fluid mobile-first). Uses /api/messages, /api/stream and related endpoints.</p>
       </section>
     </div>
   </aside>
 
+  <!-- Toast and audio -->
   <div id="toast"></div>
   <audio id="ding"><source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3"></audio>
 
-  <!-- Optional mobile anti scroll-trap (safe if classes aren’t present) -->
-  <script>
-    (function(){
-      var bad = document.querySelectorAll('.scroll, .pane-scroll, .list-scroll');
-      bad.forEach(function(el){
-        el.classList.remove('scroll','pane-scroll','list-scroll');
-        el.style.overflow = 'visible';
-        el.style.maxHeight = 'unset';
-      });
-    })();
-  </script>
-
-  <script src="app.js?v=5.1.3"></script>
+  <!-- No inner scroll panes; stream fix is in app.js -->
+  <script src="app.js?v=6.0.0"></script>
 </body>
 </html>
