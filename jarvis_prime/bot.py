@@ -163,9 +163,26 @@ _personality = _load_module("personality", "/app/personality.py")
 _pstate = _load_module("personality_state", "/app/personality_state.py")
 _beautify = _load_module("beautify", "/app/beautify.py")
 _llm = _load_module("llm_client", "/app/llm_client.py")
-# --- ADD: EnviroGuard (optional) ---
-_enviroguard = _load_module("enviroguard", "/app/enviroguard.py")
-ENVGUARD_STATUS = {}
+
+# === EnviroGuard (INLINE — no extra file) ===
+ENVGUARD = {
+    "enabled": bool(merged.get("llm_enviroguard_enabled", False)),
+    "poll_minutes": int(merged.get("llm_enviroguard_poll_minutes", 30)),
+    "max_stale_minutes": int(merged.get("llm_enviroguard_max_stale_minutes", 120)),
+    "hot_c": int(merged.get("llm_enviroguard_hot_c", 30)),
+    "cold_c": int(merged.get("llm_enviroguard_cold_c", 10)),
+    "hyst_c": int(merged.get("llm_enviroguard_hysteresis_c", 2)),
+    "profiles": merged.get("llm_enviroguard_profiles", {
+        "manual": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
+        "hot":    { "cpu_percent": 50, "ctx_tokens": 2048, "timeout_seconds": 15 },
+        "normal": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
+        "boost":  { "cpu_percent": 95, "ctx_tokens": 8192, "timeout_seconds": 25 }
+    }),
+    "profile": "normal",
+    "temp_c": None,
+    "last_ts": 0,
+    "source": "open-meteo"
+}
 
 ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
@@ -522,8 +539,8 @@ def post_startup_card():
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
         f"📮 Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
-        (f"🌡️ EnviroGuard — {'ACTIVE' if ENVGUARD_STATUS.get('enabled') else 'OFF'}"
-         + (f" (profile={ENVGUARD_STATUS.get('profile')}, {ENVGUARD_STATUS.get('temp_c')} °C)" if ENVGUARD_STATUS else "")),
+        (f"🌡️ EnviroGuard — {'ACTIVE' if ENVGUARD.get('enabled') else 'OFF'}"
+         + (f" (profile={ENVGUARD.get('profile')}, {ENVGUARD.get('temp_c')} °C)" if ENVGUARD.get('temp_c') is not None else "")),
         "",
         f"LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
         f"Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'}",
@@ -841,19 +858,94 @@ async def _apprise_watchdog():
         await asyncio.sleep(5)
 
 # ============================
-# EnviroGuard hooks (optional)
+# EnviroGuard (inline): poll ambient temp (Open-Meteo) and adjust LLM profile
 # ============================
-def _start_enviroguard():
-    global ENVGUARD_STATUS
+def _enviroguard_profile_for(temp_c: float, last_profile: str) -> str:
+    hot = int(ENVGUARD["hot_c"]); cold = int(ENVGUARD["cold_c"]); hyst = int(ENVGUARD["hyst_c"])
+    lp = (last_profile or "normal").lower()
+    # Hysteresis bands
+    if lp == "hot":
+        if temp_c <= hot - hyst: return "normal"
+        return "hot"
+    if lp == "cold":
+        if temp_c >= cold + hyst: return "normal"
+        return "cold"
+    # normal baseline
+    if temp_c >= hot: return "hot"
+    if temp_c <= cold: return "cold"
+    # allow manual override via options at any time
+    if "manual" in (ENVGUARD.get("profiles") or {}):
+        pass
+    return "normal"
+
+def _enviroguard_apply(profile: str) -> None:
+    """Apply profile to merged LLM knobs so the rest of the app sees them immediately."""
+    p = (ENVGUARD.get("profiles") or {}).get(profile) or {}
+    cpu = int(p.get("cpu_percent", merged.get("llm_max_cpu_percent", 80)))
+    ctx = int(p.get("ctx_tokens",  merged.get("llm_ctx_tokens", 4096)))
+    tout= int(p.get("timeout_seconds", merged.get("llm_timeout_seconds", 20)))
+    merged["llm_max_cpu_percent"] = cpu
+    merged["llm_ctx_tokens"] = ctx
+    merged["llm_timeout_seconds"] = tout
+    # also reflect env for sidecars that consult it
+    os.environ["LLM_MAX_CPU_PERCENT"] = str(cpu)
+    os.environ["LLM_CTX_TOKENS"] = str(ctx)
+    os.environ["LLM_TIMEOUT_SECONDS"] = str(tout)
+
+def _enviroguard_get_temp() -> Optional[float]:
+    """Use Open-Meteo like weather.py (no new deps)."""
+    if not bool(merged.get("weather_enabled", True)):
+        return None
+    lat = merged.get("weather_lat", -26.2041)
+    lon = merged.get("weather_lon", 28.0473)
     try:
-        if _enviroguard and hasattr(_enviroguard, "start"):
-            # Start with config path and emitter URL; module handles polling + hysteresis
-            _enviroguard.start(options_path="/data/options.json",
-                               emit_url="http://127.0.0.1:2599/internal/emit")
-        if _enviroguard and hasattr(_enviroguard, "current_status"):
-            ENVGUARD_STATUS = _enviroguard.current_status() or {}
-    except Exception as e:
-        print(f"[enviroguard] start failed: {e}")
+        url = (
+            "https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            "&current_weather=true&temperature_unit=celsius"
+        )
+        r = requests.get(url, timeout=8)
+        if not r.ok:
+            return None
+        j = r.json() or {}
+        cw = j.get("current_weather") or {}
+        t = cw.get("temperature")
+        if isinstance(t, (int, float)):
+            return float(t)
+    except Exception:
+        return None
+    return None
+
+async def _enviroguard_loop():
+    """Periodic poll → compute profile → apply (with change notifications)."""
+    if not ENVGUARD.get("enabled"):
+        return
+    # initial apply from whatever profile is set
+    _enviroguard_apply(ENVGUARD.get("profile","normal"))
+    poll = max(1, int(ENVGUARD.get("poll_minutes", 30)))
+    while True:
+        try:
+            t = _enviroguard_get_temp()
+            if t is not None:
+                last = ENVGUARD.get("profile","normal")
+                prof = _enviroguard_profile_for(t, last)
+                changed = (prof != last)
+                ENVGUARD.update({"temp_c": round(float(t), 1), "profile": prof, "last_ts": int(time.time())})
+                if changed:
+                    _enviroguard_apply(prof)
+                    try:
+                        send_message(
+                            "EnviroGuard",
+                            f"Ambient {t:.1f}°C → profile **{prof.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
+                            priority=4,
+                            decorate=False
+                        )
+                    except Exception:
+                        pass
+            # else: keep last profile
+        except Exception as e:
+            print(f"[EnviroGuard] loop error: {e}")
+        await asyncio.sleep(poll * 60)
 
 # ============================
 # Main / loop
@@ -861,7 +953,6 @@ def _start_enviroguard():
 def main():
     resolve_app_id()
     try:
-        _start_enviroguard()  # additive: safe-noop if module missing
         start_sidecars()
         post_startup_card()
     except Exception as e:
@@ -876,6 +967,8 @@ async def _run_forever():
     asyncio.create_task(_digest_scheduler_loop())
     asyncio.create_task(listen_gotify())
     asyncio.create_task(_apprise_watchdog())
+    # NEW: EnviroGuard background loop (only runs if enabled)
+    asyncio.create_task(_enviroguard_loop())
     while True:
         await asyncio.sleep(60)
 
