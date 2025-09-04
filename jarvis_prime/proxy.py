@@ -4,24 +4,15 @@ import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import socket
+import requests
+import time
+from urllib.parse import urlparse, parse_qs
 
 class ReuseHTTPServer(HTTPServer):
     allow_reuse_address = True
     def server_bind(self):
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         super().server_bind()
-import socket
-
-class ReuseReuseHTTPServer(ReuseHTTPServer):
-    allow_reuse_address = True
-    def server_bind(self):
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        super().server_bind()
-import requests
-import time
-
-# --- ADDITIVE: for query parsing (riff=...) ---
-from urllib.parse import urlparse, parse_qs
 
 # -----------------------------
 # Inbox storage
@@ -74,10 +65,12 @@ ALLOW_PROFANITY     = bool(merged.get("personality_allow_profanity",
 PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", _bool_env("PUSH_GOTIFY_ENABLED", False)))
 PUSH_NTFY_ENABLED = bool(merged.get("push_ntfy_enabled", _bool_env("PUSH_NTFY_ENABLED", False)))
 
+# Forwarding to core beautifier/LLM in bot.py
+INTERNAL_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
+
 # -----------------------------
-# Module imports
+# Optional modules (used only on fallback)
 # -----------------------------
-# Beautify
 try:
     import importlib.util as _imp
     _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
@@ -87,7 +80,6 @@ except Exception as e:
     beautify = None
     print(f"[proxy] beautify load failed: {e}")
 
-# LLM client (prefetch if enabled)
 llm = None
 try:
     import importlib.util as _imp
@@ -110,13 +102,12 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     if not tags: tags.append("Relay Path")
     return "— " + " · ".join(tags)
 
-def _pipeline(title: str, body: str, mood: str, riff_hint: bool, headers_map: dict, query_map: dict):
+def _pipeline(title: str, body: str, mood: str):
     used_llm = False
     used_beautify = False
     out = body or ""
     extras = None
 
-    # LLM FIRST (if enabled)
     if LLM_ENABLED and llm and hasattr(llm, "rewrite"):
         try:
             out = llm.rewrite(
@@ -132,33 +123,16 @@ def _pipeline(title: str, body: str, mood: str, riff_hint: bool, headers_map: di
                 allow_profanity=ALLOW_PROFANITY,
             )
             used_llm = True
-            print("[proxy] LLM rewrite applied")
+            print("[proxy] LLM rewrite applied (fallback)")
         except Exception as e:
             print(f"[proxy] LLM skipped: {e}")
 
-    # BEAUTIFY SECOND
     if beautify and hasattr(beautify, "beautify_message"):
         try:
             out, extras = beautify.beautify_message(title, out, mood=mood)
             used_beautify = True
         except Exception as e:
             print(f"[proxy] Beautify failed: {e}")
-
-    # --- ADDITIVE: attach observability + riff hint to extras ---
-    if extras is None:
-        extras = {}
-    try:
-        extras.setdefault("proxy", {})
-        extras["proxy"]["headers"] = headers_map or {}
-        extras["proxy"]["query"] = query_map or {}
-        extras["riff_hint"] = bool(riff_hint)
-        extras["source"] = "proxy"
-        extras.setdefault("facts", {
-            "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "provider": "Proxy Intake"
-        })
-    except Exception:
-        pass
 
     foot = _footer(used_llm, used_beautify)
     if not out.rstrip().endswith(foot):
@@ -174,6 +148,12 @@ def _post_gotify(title: str, message: str, extras=None):
         r.raise_for_status()
         return r.status_code
     return 0
+
+def _emit_internal(title: str, body: str, priority: int = 5, source: str = "proxy", oid: str = ""):
+    payload = {"title": title or "Proxy", "body": body or "", "priority": int(priority), "source": source, "id": oid}
+    r = requests.post(INTERNAL_EMIT_URL, json=payload, timeout=5)
+    r.raise_for_status()
+    return r.status_code
 
 # -----------------------------
 # HTTP Server
@@ -192,10 +172,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            # --- ADDITIVE: parse query for riff= ---
             parsed = urlparse(self.path or "")
             qmap = {k: v[0] if isinstance(v, list) and v else v for k, v in parse_qs(parsed.query).items()}
-            riff_q = qmap.get("riff", "")
 
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length > 0 else b""
@@ -214,29 +192,35 @@ class H(BaseHTTPRequestHandler):
             else:
                 body = raw.decode("utf-8", "ignore")
 
-            # --- ADDITIVE: allow header to control riff as well ---
-            riff_hdr = (self.headers.get("X-Jarvis-Riff", "") or "").strip().lower()
-            def _norm_bool(x: str) -> bool:
-                return x.strip().lower() in ("1","true","yes","on","y") if isinstance(x, str) else bool(x)
-            riff_hint = True  # default ON for proxy so it behaves like other intakes
-            if riff_q != "":
-                riff_hint = _norm_bool(riff_q)
-            elif riff_hdr != "":
-                riff_hint = _norm_bool(riff_hdr)
+            # Primary path: forward to core internal emit (bot.py) so persona riffs apply uniformly
+            try:
+                _emit_internal(title, body, priority=5, source="proxy", oid="")
+                if storage:
+                    try:
+                        storage.save_message(
+                            title=title or "Proxy",
+                            body=body or "",
+                            source="proxy_intake",
+                            priority=5,
+                            extras={"forwarded_to_internal": True},
+                            created_at=int(time.time())
+                        )
+                    except Exception as e:
+                        print(f"[proxy] storage save failed: {e}")
+                return self._send(200, "ok")
+            except Exception as e:
+                print(f"[proxy] internal emit failed ({e}); falling back to local pipeline → gotify")
 
-            # Snapshot headers for extras
-            headers_map = {k: v for k, v in self.headers.items()}
-
-            out, extras, used_llm, used_beautify = _pipeline(title, body, CHAT_MOOD, riff_hint, headers_map, qmap)
+            # Fallback path: do local beautify/LLM and push to Gotify
+            out, extras, used_llm, used_beautify = _pipeline(title, body, CHAT_MOOD)
             status = _post_gotify(title, out, extras)
 
-            # Mirror to Inbox DB (UI-first)
             if storage:
                 try:
                     storage.save_message(
                         title=title or "Proxy",
                         body=out or "",
-                        source="proxy",
+                        source="proxy_fallback",
                         priority=5,
                         extras={"extras": extras or {}, "mood": CHAT_MOOD, "used_llm": used_llm, "used_beautify": used_beautify, "status": int(status)},
                         created_at=int(time.time())
@@ -253,7 +237,7 @@ def main():
     host = os.getenv("proxy_bind", "0.0.0.0")
     port = int(os.getenv("proxy_port", "2580"))
     srv = ReuseHTTPServer((host, port), H)
-    print(f"[proxy] listening on {host}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD})")
+    print(f"[proxy] listening on {host}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD}) — forwarding to {INTERNAL_EMIT_URL}")
     srv.serve_forever()
 
 if __name__ == "__main__":
