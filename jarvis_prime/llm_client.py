@@ -46,6 +46,52 @@ def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
 
 # ============================
+# ADDITIVE: EnviroGuard env overrides
+# These allow external controller (EnviroGuard) to tune live limits without code changes.
+# Recognized envs:
+#   ENVGUARD_CPU_PERCENT      -> maps to CPU/thread budget (1..100)
+#   ENVGUARD_CTX_TOKENS       -> llama context window override (>=256)
+#   ENVGUARD_TIMEOUT_SECONDS  -> request timeout override (>=2)
+# If unset or invalid, defaults are kept.
+# ============================
+def _int_env(name: str, default: Optional[int]) -> Optional[int]:
+    try:
+        v = os.getenv(name, "").strip()
+        if not v:
+            return default
+        # allow plain integers
+        return int(v)
+    except Exception:
+        return default
+
+def _enviroguard_limits(default_ctx: Optional[int],
+                        default_cpu: Optional[int],
+                        default_timeout: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    ctx = _int_env("ENVGUARD_CTX_TOKENS", default_ctx)
+    cpu = _int_env("ENVGUARD_CPU_PERCENT", default_cpu)
+    to  = _int_env("ENVGUARD_TIMEOUT_SECONDS", default_timeout)
+    # clamp / sanitize
+    if ctx is not None:
+        try:
+            ctx = max(256, int(ctx))
+        except Exception:
+            ctx = default_ctx
+    if cpu is not None:
+        try:
+            cpu = min(100, max(1, int(cpu)))
+        except Exception:
+            cpu = default_cpu
+    if to is not None:
+        try:
+            to = max(2, int(to))
+        except Exception:
+            to = default_timeout
+    # only log when overrides actually differ from defaults
+    if (ctx != default_ctx) or (cpu != default_cpu) or (to != default_timeout):
+        _log(f"EnviroGuard override -> ctx={ctx} cpu={cpu} timeout={to}")
+    return ctx, cpu, to
+
+# ============================
 # Small utils
 # ============================
 def _sha256_file(path: str) -> str:
@@ -377,6 +423,12 @@ def ensure_loaded(
     - Else: local GGUF via llama-cpp, with optional HF download/check.
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+
+    # ADDITIVE: apply EnviroGuard overrides (ctx/cpu)
+    g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
+    ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
+    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
+
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
     base_url = (base_url or "").strip()
@@ -556,6 +608,12 @@ def rewrite(
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
+    # ADDITIVE: apply EnviroGuard overrides (ctx/cpu/timeout)
+    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
+    ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
+    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
+    timeout    = g_to  if g_to  is not None else timeout
+
     if LLM_MODE == "none":
         ensure_loaded(
             model_url=model_url,
@@ -598,6 +656,10 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
+    # ADDITIVE: apply EnviroGuard override (timeout only; ctx/cpu are applied at load time)
+    _, _, g_to = _enviroguard_limits(None, None, timeout)
+    timeout = g_to if g_to is not None else timeout
+
     if LLM_MODE not in ("llama", "ollama"):
         # no engine loaded → empty riff (non-fatal)
         return ""
