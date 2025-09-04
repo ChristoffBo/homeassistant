@@ -1,4 +1,4 @@
-// Jarvis Prime — Notify (Outlook/ntfy layout), SSE, ingress-safe
+// Jarvis Prime — Notify (v6) — fluid mobile-first, hardened SSE, ingress-safe
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
@@ -32,7 +32,7 @@
     // Settings drawer
     settingsBtn: $('#btn-settings'), drawer: $('#drawer'), drawerClose: $('#drawer-close'),
     dtabs: $$('.dtab'),
-    // Retention/Purge in drawer
+    // Retention/Purge
     retention: $('#retention'), saveRetention: $('#btn-save-retention'),
     purgeDays: $('#purge-days'), purge: $('#btn-purge'),
     // Toast
@@ -99,6 +99,7 @@
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
 
+  // Render feed
   function renderFeed(items){
     const list = items
       .filter(i => state.tab==='archived' ? i.saved :
@@ -123,17 +124,20 @@
       const title = esc(it.title || '(no title)');
       const time = fmt(it.created_at);
       const src  = esc(it.source || '?');
-      const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,90));
+      const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,240));
 
       row.innerHTML = `
-        <div class="dot"></div>
-        <div class="title">${title}<span class="src"> • ${src}</span><span class="snippet"> — ${snippet}</span></div>
+        <div class="title">
+          ${title}<span class="src"> • ${src}</span>
+          <span class="snippet">${snippet}</span>
+        </div>
         <div class="meta">${time}</div>`;
       row.addEventListener('click', ()=> select(it.id));
       root.appendChild(row);
     }
   }
 
+  // Render detail
   async function renderDetail(it){
     els.detail.innerHTML='';
     const w = document.createElement('div'); w.className='wrap';
@@ -156,11 +160,10 @@
     $('#a-arch').addEventListener('click', async()=>{ await API.setArchived(it.id,!it.saved); toast(it.saved?'Unarchived':'Archived'); load(it.id); });
   }
 
-  // --- Mobile flow: list-first, then detail ---
+  // Mobile flow
   const isMobile = () => window.matchMedia('(max-width:1100px)').matches;
   els.back?.addEventListener('click', ()=> { document.body.classList.remove('mobile-detail'); });
 
-  // Always start in LIST on mobile (prevents landing in detail due to auto-select)
   window.addEventListener('pageshow', () => {
     if (isMobile()) document.body.classList.remove('mobile-detail');
   });
@@ -182,128 +185,56 @@
     }catch{}
   }
 
+  // Load list
   async function load(selectId=null){
     const items = await API.list($('#q')?.value?.trim()||'', 100, 0);
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
     state.items = items;
     renderFeed(items);
-    // On desktop, auto-select first message; on mobile stay in list until user taps
     if(!isMobile()){
       if(selectId && items.find(i=>String(i.id)===String(selectId))) select(selectId);
       else if(!state.active && items[0]) select(items[0].id);
     }
   }
 
-  // ---- Hardened SSE with heartbeat/backoff/visibility-online hooks ----
-  let sseCtl = {
-    es: null,
-    timerHeartbeat: null,
-    timerBackoff: null,
-    lastBeat: 0,
-    backoffMs: 1000,
-    maxBackoff: 15000,
-    running: false
-  };
-
-  function clearTimers(){
-    if (sseCtl.timerHeartbeat) { clearTimeout(sseCtl.timerHeartbeat); sseCtl.timerHeartbeat = null; }
-    if (sseCtl.timerBackoff)   { clearTimeout(sseCtl.timerBackoff);   sseCtl.timerBackoff = null; }
-  }
-
-  function scheduleHeartbeatCheck(){
-    clearTimeout(sseCtl.timerHeartbeat);
-    sseCtl.timerHeartbeat = setTimeout(()=>{
-      // If no message/ping within 35s, restart the stream
+  // Hardened SSE (heartbeat/backoff/visibility/network)
+  let sseCtl = { es:null, timerBeat:null, timerRetry:null, lastBeat:0, backoff:1000, maxBackoff:15000, running:false };
+  function clearTimers(){ if(sseCtl.timerBeat){clearTimeout(sseCtl.timerBeat);sseCtl.timerBeat=null;} if(sseCtl.timerRetry){clearTimeout(sseCtl.timerRetry);sseCtl.timerRetry=null;} }
+  function scheduleBeat(){
+    clearTimeout(sseCtl.timerBeat);
+    sseCtl.timerBeat = setTimeout(()=>{
       const age = Date.now() - sseCtl.lastBeat;
-      if (age > 35000) {
-        try { sseCtl.es && sseCtl.es.close(); } catch {}
-        reconnect('Heartbeat timeout');
-      } else {
-        scheduleHeartbeatCheck();
-      }
+      if(age>35000){ try{sseCtl.es&&sseCtl.es.close();}catch{}; reconnect('heartbeat timeout'); }
+      else scheduleBeat();
     }, 35000);
   }
-
   function reconnect(reason){
     clearTimers();
-    if (!sseCtl.running) return;
-    const wait = Math.min(sseCtl.backoffMs, sseCtl.maxBackoff);
-    console.warn('[SSE] reconnect in', wait, 'ms —', reason || '');
-    sseCtl.timerBackoff = setTimeout(()=> {
-      sseCtl.backoffMs = Math.min(sseCtl.backoffMs * 2, sseCtl.maxBackoff);
-      openStream();
-    }, wait);
+    if(!sseCtl.running) return;
+    const wait = Math.min(sseCtl.backoff, sseCtl.maxBackoff);
+    sseCtl.timerRetry = setTimeout(()=>{ sseCtl.backoff = Math.min(sseCtl.backoff*2, sseCtl.maxBackoff); openStream(); }, wait);
   }
-
   function openStream(){
-    try { sseCtl.es && sseCtl.es.close(); } catch {}
-    clearTimers();
-
-    const url = u('api/stream');
-    const es = new EventSource(url, { withCredentials: false });
-    sseCtl.es = es;
-    sseCtl.lastBeat = Date.now();
-    scheduleHeartbeatCheck();
-
-    let announcedLoss = false;
-
-    es.onopen = () => {
-      sseCtl.backoffMs = 1000;
-      sseCtl.lastBeat = Date.now();
-      scheduleHeartbeatCheck();
-      if (announcedLoss) toast('Reconnected');
-      announcedLoss = false;
-    };
-
-    // Treat ANY message (including keepalive/comments if proxied) as a heartbeat
-    es.onmessage = (e) => {
-      sseCtl.lastBeat = Date.now();
-      scheduleHeartbeatCheck();
-      try{
-        if (!e.data) return; // allow empty keepalives
+    try{sseCtl.es&&sseCtl.es.close();}catch{}; clearTimers();
+    const es = new EventSource(u('api/stream'));
+    sseCtl.es = es; sseCtl.lastBeat = Date.now(); scheduleBeat();
+    let announced=false;
+    es.onopen = ()=>{ sseCtl.backoff=1000; sseCtl.lastBeat=Date.now(); scheduleBeat(); if(announced) toast('Reconnected'); announced=false; };
+    es.onmessage = (e)=>{ sseCtl.lastBeat=Date.now(); scheduleBeat(); try{
+        if(!e.data) return;
         const data = JSON.parse(e.data||'{}');
         if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
           if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
           load(state.active);
         }
-      }catch{}
-    };
-
-    es.onerror = () => {
-      // Some proxies fire a spurious onerror immediately; debounce via heartbeat/backoff
-      if (!announcedLoss) { toast('Live stream lost. Reconnecting…'); announcedLoss = true; }
-      try { es.close(); } catch {}
-      reconnect('onerror');
-    };
+      }catch{} };
+    es.onerror = ()=>{ if(!announced){ toast('Live stream lost. Reconnecting…'); announced=true; } try{es.close();}catch{}; reconnect('onerror'); };
   }
-
   function startLive(){
-    if (sseCtl.running) return;
-    sseCtl.running = true;
-    openStream();
-
-    // Reconnect when tab becomes visible again (Ingress/mobile suspends timers)
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        sseCtl.backoffMs = 1000;
-        reconnect('tab visible');
-      }
-    });
-
-    // Reconnect when network returns
-    window.addEventListener('online', () => {
-      sseCtl.backoffMs = 1000;
-      reconnect('browser online');
-    });
-
-    // Clean up on unload
-    window.addEventListener('beforeunload', () => {
-      sseCtl.running = false;
-      try { sseCtl.es && sseCtl.es.close(); } catch {}
-      clearTimers();
-    });
-
-    // Periodic soft refresh as a safety net (every 5 min)
+    if(sseCtl.running) return; sseCtl.running=true; openStream();
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ sseCtl.backoff=1000; reconnect('tab visible'); } });
+    window.addEventListener('online', ()=>{ sseCtl.backoff=1000; reconnect('online'); });
+    window.addEventListener('beforeunload', ()=>{ sseCtl.running=false; try{sseCtl.es&&sseCtl.es.close();}catch{}; clearTimers(); });
     setInterval(()=> load(state.active), 300000);
   }
 
@@ -344,7 +275,7 @@
     }catch{}
   });
 
-  // Settings drawer
+  // Drawer
   els.settingsBtn?.addEventListener('click', ()=> els.drawer.classList.add('open'));
   els.drawerClose?.addEventListener('click', ()=> els.drawer.classList.remove('open'));
   els.dtabs.forEach(b=> b.addEventListener('click', ()=>{
@@ -365,39 +296,12 @@
     await API.purge(d); toast('Purge started'); load();
   });
 
-  // Channel tests (optional)
+  // Channel tests
   $('#test-email')?.addEventListener('click', ()=> API.test('email').then(()=>toast('Email test sent')).catch(()=>toast('Email test failed')));
   $('#test-gotify')?.addEventListener('click', ()=> API.test('gotify').then(()=>toast('Gotify test sent')).catch(()=>toast('Gotify test failed')));
   $('#test-ntfy')?.addEventListener('click', ()=> API.test('ntfy').then(()=>toast('ntfy test sent')).catch(()=>toast('ntfy test failed')));
 
-  $('#save-channels')?.addEventListener('click', async()=>{
-    const payload = {
-      smtp:{ host:$('#smtp-host').value, port:$('#smtp-port').value, tls:$('#smtp-tls').checked, user:$('#smtp-user').value, pass:$('#smtp-pass').value, from:$('#smtp-from').value },
-      gotify:{ url:$('#gotify-url').value, token:$('#gotify-token').value, priority:$('#gotify-priority').value, click:$('#gotify-click').value },
-      ntfy:{ url:$('#ntfy-url').value, topic:$('#ntfy-topic').value, tags:$('#ntfy-tags').value, priority:$('#ntfy-priority').value }
-    };
-    try{ await API.saveChannels(payload); toast('Channels saved'); }catch{ toast('Save failed'); }
-  });
-
-  $('#save-routing')?.addEventListener('click', async()=>{
-    try{ await API.saveRouting({}); toast('Routing saved'); }catch{ toast('Save failed'); }
-  });
-
-  $('#save-quiet')?.addEventListener('click', async()=>{
-    try{
-      await API.saveQuiet({ tz: $('#qh-tz').value, start: $('#qh-start').value, end: $('#qh-end').value, allow_critical: $('#qh-allow-critical').checked });
-      toast('Quiet hours saved');
-    }catch{ toast('Save failed'); }
-  });
-
-  $('#save-personas')?.addEventListener('click', async()=>{
-    try{
-      await API.savePersonas({ dude: $('#p-dude').checked, chick: $('#p-chick').checked, nerd: $('#p-nerd').checked, rager: $('#p-rager').checked });
-      toast('Personas saved');
-    }catch{ toast('Save failed'); }
-  });
-
-  // Keyboard niceties
+  // Keyboard helpers (desktop)
   document.addEventListener('keydown', (e)=>{
     if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
     if(e.key==='r'){ load(state.active); }
