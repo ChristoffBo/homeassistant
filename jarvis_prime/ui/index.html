@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime — Notify</title>
-
   <!-- Ingress-safe base: directory of current URL -->
   <script>
     (function(){
@@ -14,13 +13,12 @@
       document.write('<base href="' + dir + '">');
     })();
   </script>
-
   <link rel="icon" href="icon.png" />
-  <link rel="stylesheet" href="style.css?v=6.0.0" />
+  <link rel="stylesheet" href="style.css?v=7.0.0" />
 </head>
-<body class="app">
+<body>
   <!-- Header -->
-  <header class="hdr" role="banner">
+  <header class="hdr">
     <div class="hdr-left">
       <img src="icon.png" alt="Jarvis" class="logo" />
       <div class="brand">
@@ -31,7 +29,7 @@
     <div class="hdr-right">
       <button id="btn-back" class="btn icon mobile-only" title="Back" aria-label="Back">←</button>
       <div class="search-wrap">
-        <input id="q" type="search" placeholder="Search…" aria-label="Search messages" />
+        <input id="q" type="search" placeholder="Search…" />
         <button id="btn-search" class="btn icon" title="Search" aria-label="Search">🔎</button>
       </div>
       <button id="btn-refresh" class="btn icon" title="Refresh" aria-label="Refresh">↻</button>
@@ -39,43 +37,39 @@
     </div>
   </header>
 
-  <!-- Main layout -->
-  <main class="layout" role="main">
-    <!-- Left rail -->
-    <aside class="rail" id="rail" role="complementary" aria-label="Filters">
+  <!-- Main -->
+  <main class="layout">
+    <!-- Filter rail (hidden on mobile) -->
+    <aside class="rail" id="rail">
       <div class="rail-head">
         <div class="when">Today</div>
         <div class="count"><span id="c-all">0</span> messages</div>
       </div>
-
-      <nav class="tabs" aria-label="Status tabs">
+      <nav class="tabs">
         <button class="tab active" data-tab="all">All</button>
         <button class="tab" data-tab="unread">Unread</button>
         <button class="tab" data-tab="archived">Archived</button>
         <button class="tab" data-tab="errors">Errors</button>
       </nav>
-
-      <div class="sources" aria-label="Sources">
+      <div class="sources">
         <button class="chip src active" data-src="">Any</button>
         <button class="chip src" data-src="smtp">SMTP</button>
         <button class="chip src" data-src="gotify">Gotify</button>
         <button class="chip src" data-src="ntfy">ntfy</button>
         <button class="chip src" data-src="ui">UI</button>
       </div>
-
       <div class="rail-spacer"></div>
-
       <div class="rail-bottom">
         <label class="lbl inline"><input id="keep-arch" type="checkbox" checked /> Keep archived</label>
         <button id="rail-delall" class="btn danger full">🗑 Delete All</button>
       </div>
     </aside>
 
-    <!-- Feed -->
-    <section class="feed" id="feed" role="region" aria-label="Messages"></section>
+    <!-- Feed (primary on mobile) -->
+    <section class="feed" id="feed" aria-label="Messages"></section>
 
-    <!-- Detail -->
-    <section class="detail" id="detail" role="region" aria-label="Detail">
+    <!-- Detail (becomes “page” on mobile) -->
+    <section class="detail" id="detail" aria-label="Detail">
       <div class="empty">
         <h2>Inbox</h2>
         <p>No message selected.</p>
@@ -83,13 +77,13 @@
     </section>
   </main>
 
-  <!-- Floating compose -->
-  <button id="fab" class="fab" title="Ask Jarvis" aria-label="Ask Jarvis">＋</button>
-  <div id="compose" class="compose" aria-hidden="true">
-    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="compose-title">
+  <!-- Compose -->
+  <button id="fab" class="fab" title="Ask Jarvis">＋</button>
+  <div id="compose" class="compose">
+    <div class="sheet">
       <div class="sheet-head">
-        <div class="sheet-title" id="compose-title">Ask Jarvis</div>
-        <button id="compose-close" class="btn icon" aria-label="Close">✕</button>
+        <div class="sheet-title">Ask Jarvis</div>
+        <button id="compose-close" class="btn icon">✕</button>
       </div>
       <div class="sheet-body">
         <input id="wake-text" type="text" placeholder="e.g., weather, status, help" />
@@ -101,8 +95,8 @@
     </div>
   </div>
 
-  <!-- Settings drawer -->
-  <aside id="drawer" class="drawer" aria-hidden="true">
+  <!-- Drawer -->
+  <aside id="drawer" class="drawer">
     <div class="drawer-head">
       <div class="drawer-title">Settings</div>
       <div class="drawer-tabs">
@@ -113,9 +107,8 @@
         <button class="dtab" data-pane="retention">Retention</button>
         <button class="dtab" data-pane="about">About</button>
       </div>
-      <button id="drawer-close" class="btn icon" aria-label="Close">✕</button>
+      <button id="drawer-close" class="btn icon">✕</button>
     </div>
-
     <div class="drawer-body">
       <section class="pane show" data-pane="channels">
         <h3>Email (Gmail/SMTP)</h3>
@@ -198,17 +191,13 @@
       </section>
 
       <section class="pane" data-pane="about">
-        <p>Jarvis Notify — Outlook/ntfy-style UI.</p>
-        <p>UI build v6.0.0 (fluid mobile-first). Uses /api/messages, /api/stream and related endpoints.</p>
+        <p>Jarvis Notify — mobile-first UI (v7.0.0). Uses /api/messages and /api/stream.</p>
       </section>
     </div>
   </aside>
 
-  <!-- Toast and audio -->
   <div id="toast"></div>
   <audio id="ding"><source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3"></audio>
-
-  <!-- No inner scroll panes; stream fix is in app.js -->
-  <script src="app.js?v=6.0.0"></script>
+  <script src="app.js?v=7.0.0"></script>
 </body>
 </html>
