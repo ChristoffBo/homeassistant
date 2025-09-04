@@ -1,54 +1,56 @@
-// Jarvis Notify v8 — clean mobile-first UI with resilient SSE
+// Jarvis Prime — Notify (Outlook/ntfy layout), SSE, ingress-safe
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
 
-  // Ingress-safe API root builder
-  function apiRoot(){
-    try{
-      const url = new URL(document.baseURI);
+  // Ingress-safe API root
+  function apiRoot() {
+    let b = document.baseURI;
+    try {
+      const url = new URL(b);
       let p = url.pathname;
-      if(p.endsWith('/ui/')) p = p.slice(0, -4);
-      if(!p.endsWith('/')) p += '/';
+      if (p.endsWith('/ui/')) p = p.slice(0, -4); // strip 'ui/'
+      if (!p.endsWith('/')) p += '/';
       url.pathname = p;
       return url.toString();
-    }catch{ return document.baseURI; }
+    } catch { return b; }
   }
   const ROOT = apiRoot();
-  const u = (path) => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
+  const u = (path) => new URL(path.replace(/^\/+/, ''), ROOT).toString();
 
   // Elements
   const els = {
     feed: $('#feed'), detail: $('#detail'),
-    q: $('#q'), btnSearch: $('#btn-search'), btnRefresh: $('#btn-refresh'),
+    q: $('#q'), search: $('#btn-search'), refresh: $('#btn-refresh'),
+    keepArch: $('#keep-arch'), railDelAll: $('#rail-delall'),
     railTabs: $$('.tab[data-tab]'), srcChips: $$('.chip.src'),
-    keepArch: $('#keep-arch'), delAll: $('#del-all'), count: $('#count'),
-    // compose
+    listCount: $('#c-all'),
+    // Compose
     fab: $('#fab'), compose: $('#compose'), composeClose: $('#compose-close'),
     wakeText: $('#wake-text'), wakeSend: $('#wake-send'),
     chime: $('#chime'), ding: $('#ding'),
-    // settings
-    btnSettings: $('#btn-settings'), drawer: $('#drawer'), drawerClose: $('#drawer-close'),
+    // Settings drawer
+    settingsBtn: $('#btn-settings'), drawer: $('#drawer'), drawerClose: $('#drawer-close'),
     dtabs: $$('.dtab'),
+    // Retention/Purge in drawer
     retention: $('#retention'), saveRetention: $('#btn-save-retention'),
     purgeDays: $('#purge-days'), purge: $('#btn-purge'),
-    // toast
+    // Toast
     toast: $('#toast'),
-    // mobile back
-    back: $('#btn-back'),
+    // Mobile back
+    back: $('#btn-back')
   };
 
-  // Utilities
   function toast(msg){
     const d=document.createElement('div');
     d.className='toast'; d.textContent=msg;
     els.toast.appendChild(d);
-    setTimeout(()=> d.remove(), 2800);
+    setTimeout(()=> d.remove(), 3200);
   }
   const esc = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const fmt = (ts) => {
-    try{ const v=Number(ts||0); const ms=v>1e12?v:v*1000; return new Date(ms).toLocaleString(); }
-    catch{ return ''; }
+    try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); }
+    catch { return '' }
   };
 
   async function jfetch(url, opts){
@@ -62,15 +64,19 @@
       }
       const ct = r.headers.get('content-type')||'';
       return ct.includes('application/json') ? r.json() : r.text();
-    }catch(e){ console.error(e); toast('HTTP error: '+e.message); throw e; }
+    }catch(e){
+      console.error('Request failed:', e);
+      toast('HTTP error: ' + e.message);
+      throw e;
+    }
   }
 
   const API = {
     async list(q, limit=50, offset=0){
       const url = new URL(u('api/messages'));
       if(q) url.searchParams.set('q', q);
-      url.searchParams.set('limit', String(limit));
-      url.searchParams.set('offset', String(offset));
+      url.searchParams.set('limit', limit);
+      url.searchParams.set('offset', offset);
       const data = await jfetch(url.toString());
       return (data && data.items) ? data.items : (Array.isArray(data)?data:[]);
     },
@@ -81,61 +87,59 @@
     async setRetention(days){ return jfetch(u('api/inbox/settings'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}); },
     async purge(days){ return jfetch(u('api/inbox/purge'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}); },
     async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
-    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'Jarvis '+text})}); },
+    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text: 'Jarvis ' + text})}); },
 
-    // optional notify endpoints (safe to 404)
-    async saveChannels(payload){ return jfetch(u('api/notify/channels'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
-    async test(kind){ return jfetch(u(`api/notify/test/${kind}`),{method:'POST'}); },
-    async saveRouting(payload){ return jfetch(u('api/notify/routing'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
-    async saveQuiet(payload){ return jfetch(u('api/notify/quiet'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
-    async savePersonas(payload){ return jfetch(u('api/notify/personas'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
+    // Optional notify/settings endpoints (safe if 404)
+    async saveChannels(payload){ return jfetch(u('api/notify/channels'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
+    async test(kind){ return jfetch(u(`api/notify/test/${kind}`), { method:'POST' }); },
+    async saveRouting(payload){ return jfetch(u('api/notify/routing'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
+    async saveQuiet(payload){ return jfetch(u('api/notify/quiet'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
+    async savePersonas(payload){ return jfetch(u('api/notify/personas'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); }
   };
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
 
-  // Render feed
   function renderFeed(items){
-    const filtered = items
+    const list = items
       .filter(i => state.tab==='archived' ? i.saved :
-                   state.tab==='errors' ? /error|fail|exception/i.test((i.title||'')+' '+(i.body||i.message||'')) :
+                   state.tab==='errors' ? /error|fail|exception/i.test((i.title||'') + ' ' + (i.body||i.message||'')) :
                    state.tab==='unread' ? (state.newestSeen && i.created_at>state.newestSeen) : true)
       .filter(i => state.source ? (String(i.source||'').toLowerCase()===state.source) : true);
 
     const root = els.feed; root.innerHTML='';
-    if(els.count) els.count.textContent = String(items.length||0);
-
-    if(!filtered.length){
+    if(!list.length){
       root.innerHTML = '<div class="toast">No messages</div>';
+      if(els.listCount) els.listCount.textContent = String(items.length||0);
       return;
     }
+    if(els.listCount) els.listCount.textContent = String(items.length);
 
-    for(const it of filtered){
+    for(const it of list){
       const row = document.createElement('div');
-      row.className = 'row';
+      const isNew = state.newestSeen && it.created_at>state.newestSeen;
+      row.className = 'row' + (isNew ? ' unread' : '');
       row.dataset.id = it.id;
 
-      const title = esc(it.title||'(no title)');
-      const time  = fmt(it.created_at);
-      const src   = esc(it.source||'?');
-      const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,240));
+      const title = esc(it.title || '(no title)');
+      const time = fmt(it.created_at);
+      const src  = esc(it.source || '?');
+      const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,90));
 
       row.innerHTML = `
-        <div class="title">${title}<span class="src"> • ${src}</span><span class="snippet">${snippet}</span></div>
-        <div class="meta">${time}</div>
-      `;
+        <div class="dot"></div>
+        <div class="title">${title}<span class="src"> • ${src}</span><span class="snippet"> — ${snippet}</span></div>
+        <div class="meta">${time}</div>`;
       row.addEventListener('click', ()=> select(it.id));
       root.appendChild(row);
     }
   }
 
-  // Render detail
   async function renderDetail(it){
-    els.detail.innerHTML = '';
+    els.detail.innerHTML='';
     const w = document.createElement('div'); w.className='wrap';
     const badges = [];
     if(it.source) badges.push(`<span class="badge">Source: ${esc(it.source)}</span>`);
     if(it.created_at) badges.push(`<span class="badge">${fmt(it.created_at)}</span>`);
-
     w.innerHTML = `
       <h2>${esc(it.title||'(no title)')}</h2>
       <div class="badges">${badges.join(' ')}</div>
@@ -144,8 +148,7 @@
         <button id="a-arch" class="btn">${it.saved?'Unarchive':'Archive'}</button>
         <button id="a-copy" class="btn">Copy</button>
         <button id="a-del" class="btn danger">Delete</button>
-      </div>
-    `;
+      </div>`;
     els.detail.appendChild(w);
 
     $('#a-copy').addEventListener('click', ()=> navigator.clipboard.writeText(`${it.title||''}\n\n${it.body||it.message||''}`));
@@ -153,101 +156,88 @@
     $('#a-arch').addEventListener('click', async()=>{ await API.setArchived(it.id,!it.saved); toast(it.saved?'Unarchived':'Archived'); load(it.id); });
   }
 
-  // Mobile navigation
+  // --- Mobile flow: list-first, then detail ---
   const isMobile = () => window.matchMedia('(max-width:1100px)').matches;
-  els.back?.addEventListener('click', ()=> document.body.classList.remove('mobile-detail'));
-  window.addEventListener('pageshow', ()=>{ if(isMobile()) document.body.classList.remove('mobile-detail'); });
+  els.back?.addEventListener('click', ()=> { document.body.classList.remove('mobile-detail'); });
+
+  // Always start in LIST on mobile (prevents landing in detail due to auto-select)
+  window.addEventListener('pageshow', () => {
+    if (isMobile()) document.body.classList.remove('mobile-detail');
+  });
 
   async function select(id){
     state.active = id;
-    // if it's a temporary UI message
     if(String(id).startsWith('ui-')){
-      const temp = state.items.find(x => String(x.id)===String(id));
+      const temp = state.items.find(x=> String(x.id)===String(id));
       if(temp){
-        await renderDetail(temp);
+        renderDetail(temp);
         if(isMobile()) document.body.classList.add('mobile-detail');
         return;
       }
     }
     try{
       const it = await API.get(id);
-      await renderDetail(it);
+      renderDetail(it);
       if(isMobile()) document.body.classList.add('mobile-detail');
     }catch{}
   }
 
   async function load(selectId=null){
-    const q = els.q?.value?.trim() || '';
-    const items = await API.list(q, 100, 0);
+    const items = await API.list($('#q')?.value?.trim()||'', 100, 0);
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
     state.items = items;
     renderFeed(items);
+    // On desktop, auto-select first message; on mobile stay in list until user taps
     if(!isMobile()){
       if(selectId && items.find(i=>String(i.id)===String(selectId))) select(selectId);
       else if(!state.active && items[0]) select(items[0].id);
     }
   }
 
-  // Resilient SSE
-  let sse = { es:null, beat:0, tBeat:null, tRetry:null, backoff:1000, max:15000, on:false };
-  function clearTimers(){ if(sse.tBeat){clearTimeout(sse.tBeat);sse.tBeat=null;} if(sse.tRetry){clearTimeout(sse.tRetry);sse.tRetry=null;} }
-  function scheduleBeat(){
-    clearTimeout(sse.tBeat);
-    sse.tBeat = setTimeout(()=>{
-      if(Date.now()-sse.beat>35000){ try{sse.es&&sse.es.close();}catch{}; reconnect(); }
-      else scheduleBeat();
-    }, 35000);
-  }
-  function reconnect(){
-    clearTimers(); if(!sse.on) return;
-    const wait = Math.min(sse.backoff, sse.max);
-    sse.tRetry = setTimeout(()=>{ sse.backoff = Math.min(sse.backoff*2, sse.max); openStream(); }, wait);
-  }
-  function openStream(){
-    try{sse.es&&sse.es.close();}catch{}; clearTimers();
-    const es = new EventSource(u('api/stream'));
-    sse.es = es; sse.beat = Date.now(); scheduleBeat();
-    let warned=false;
-    es.onopen = ()=>{ sse.backoff=1000; sse.beat=Date.now(); scheduleBeat(); if(warned){ toast('Reconnected'); warned=false; } };
-    es.onmessage = (e)=>{ sse.beat=Date.now(); scheduleBeat(); try{
-      if(!e.data) return;
-      const data = JSON.parse(e.data||'{}');
-      if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
-        if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
-        load(state.active);
-      }
-    }catch{} };
-    es.onerror = ()=>{ if(!warned){ toast('Live stream lost. Reconnecting…'); warned=true; } try{es.close();}catch{}; reconnect(); };
-  }
   function startLive(){
-    if(sse.on) return; sse.on=true; openStream();
-    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ sse.backoff=1000; reconnect(); } });
-    window.addEventListener('online', ()=>{ sse.backoff=1000; reconnect(); });
-    window.addEventListener('beforeunload', ()=>{ sse.on=false; try{sse.es&&sse.es.close();}catch{}; clearTimers(); });
+    let backoff = 1000;
+    function connect(){
+      const es = new EventSource(u('api/stream'));
+      let opened=false;
+      es.onopen = ()=>{ opened=true; backoff=1000; };
+      es.onerror = ()=>{ try{es.close();}catch{}; if(opened) toast('Connection lost. Reconnecting…'); setTimeout(connect, Math.min(backoff,10000)); backoff=Math.min(backoff*2,10000); };
+      es.onmessage = (e)=>{
+        try{
+          const data = JSON.parse(e.data||'{}');
+          if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
+            if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
+            load(state.active);
+          }
+        }catch{}
+      };
+    }
+    connect();
     setInterval(()=> load(state.active), 300000);
   }
 
-  // Events
-  els.btnSearch?.addEventListener('click', ()=> load());
-  els.btnRefresh?.addEventListener('click', ()=> load(state.active));
-  els.q?.addEventListener('keydown', e=>{ if(e.key==='Enter') load(); });
-
-  els.railTabs.forEach(t => t.addEventListener('click', ()=>{
+  // Filters
+  els.railTabs.forEach(t=> t.addEventListener('click', ()=>{
     els.railTabs.forEach(x=>x.classList.remove('active')); t.classList.add('active');
     state.tab = t.dataset.tab; renderFeed(state.items);
   }));
-  els.srcChips.forEach(c => c.addEventListener('click', ()=>{
+  els.srcChips.forEach(c=> c.addEventListener('click', ()=>{
     els.srcChips.forEach(x=>x.classList.remove('active'));
     c.classList.add('active'); state.source = (c.dataset.src||'').toLowerCase(); renderFeed(state.items);
   }));
 
-  els.delAll?.addEventListener('click', async()=>{
+  // Actions & search
+  els.search?.addEventListener('click', ()=> load());
+  els.refresh?.addEventListener('click', ()=> load(state.active));
+  $('#q')?.addEventListener('keydown', e=>{ if(e.key==='Enter') load(); });
+
+  // Delete all
+  els.railDelAll?.addEventListener('click', async()=>{
     if(!confirm('Delete ALL messages?')) return;
-    await API.deleteAll(els.keepArch?.checked);
+    await API.deleteAll(els.keepArch.checked);
     toast('All deleted'); load();
   });
 
-  // Compose / wake
+  // Compose
   els.fab?.addEventListener('click', ()=> els.compose.classList.add('open'));
   els.composeClose?.addEventListener('click', ()=> els.compose.classList.remove('open'));
   els.wakeSend?.addEventListener('click', async()=>{
@@ -262,23 +252,22 @@
     }catch{}
   });
 
-  // Drawer
-  els.btnSettings?.addEventListener('click', ()=> els.drawer.classList.add('open'));
+  // Settings drawer
+  els.settingsBtn?.addEventListener('click', ()=> els.drawer.classList.add('open'));
   els.drawerClose?.addEventListener('click', ()=> els.drawer.classList.remove('open'));
-  els.dtabs.forEach(b => b.addEventListener('click', ()=>{
+  els.dtabs.forEach(b=> b.addEventListener('click', ()=>{
     els.dtabs.forEach(x=>x.classList.remove('active')); b.classList.add('active');
     $$('.pane').forEach(p=> p.classList.remove('show'));
     $(`.pane[data-pane="${b.dataset.pane}"]`)?.classList.add('show');
   }));
 
-  // Retention & Purge
+  // Retention/Purge
   els.saveRetention?.addEventListener('click', async()=>{
     const d = parseInt(els.retention.value,10)||30;
     await API.setRetention(d); toast('Retention saved');
   });
   els.purge?.addEventListener('click', async()=>{
-    let v = els.purgeDays.value;
-    if(v==='custom'){ const s = prompt('Days to purge older than?', '30'); if(!s) return; v = s; }
+    let v = els.purgeDays.value; if(v==='custom'){ const s=prompt('Days to purge older than?', '30'); if(!s) return; v=s; }
     const d = parseInt(v,10)||30;
     if(!confirm(`Purge messages older than ${d} days?`)) return;
     await API.purge(d); toast('Purge started'); load();
@@ -289,27 +278,57 @@
   $('#test-gotify')?.addEventListener('click', ()=> API.test('gotify').then(()=>toast('Gotify test sent')).catch(()=>toast('Gotify test failed')));
   $('#test-ntfy')?.addEventListener('click', ()=> API.test('ntfy').then(()=>toast('ntfy test sent')).catch(()=>toast('ntfy test failed')));
 
-  // Keyboard niceties (desktop)
+  $('#save-channels')?.addEventListener('click', async()=>{
+    const payload = {
+      smtp:{ host:$('#smtp-host').value, port:$('#smtp-port').value, tls:$('#smtp-tls').checked, user:$('#smtp-user').value, pass:$('#smtp-pass').value, from:$('#smtp-from').value },
+      gotify:{ url:$('#gotify-url').value, token:$('#gotify-token').value, priority:$('#gotify-priority').value, click:$('#gotify-click').value },
+      ntfy:{ url:$('#ntfy-url').value, topic:$('#ntfy-topic').value, tags:$('#ntfy-tags').value, priority:$('#ntfy-priority').value }
+    };
+    try{ await API.saveChannels(payload); toast('Channels saved'); }catch{ toast('Save failed'); }
+  });
+
+  $('#save-routing')?.addEventListener('click', async()=>{
+    try{ await API.saveRouting({}); toast('Routing saved'); }catch{ toast('Save failed'); }
+  });
+
+  $('#save-quiet')?.addEventListener('click', async()=>{
+    try{
+      await API.saveQuiet({ tz: $('#qh-tz').value, start: $('#qh-start').value, end: $('#qh-end').value, allow_critical: $('#qh-allow-critical').checked });
+      toast('Quiet hours saved');
+    }catch{ toast('Save failed'); }
+  });
+
+  $('#save-personas')?.addEventListener('click', async()=>{
+    try{
+      await API.savePersonas({ dude: $('#p-dude').checked, chick: $('#p-chick').checked, nerd: $('#p-nerd').checked, rager: $('#p-rager').checked });
+      toast('Personas saved');
+    }catch{ toast('Save failed'); }
+  });
+
+  // Keyboard niceties
   document.addEventListener('keydown', (e)=>{
-    if(e.key==='/' && document.activeElement!==els.q){ e.preventDefault(); els.q?.focus(); }
+    if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
     if(e.key==='r'){ load(state.active); }
     if(e.key==='Delete' && state.active){
-      if(confirm('Delete this message?')) API.del(state.active).then(()=>{ toast('Deleted'); load(); });
+      if(confirm('Delete this message?'))
+        API.del(state.active).then(()=>{ toast('Deleted'); load(); });
     }
     if(e.key==='a' && state.active){
-      API.setArchived(state.active,true).then(()=>{ toast('Archived'); load(state.active); });
+      API.setArchived(state.active, true).then(()=>{ toast('Archived'); load(state.active); });
     }
   });
 
   // Boot
   (async()=>{
     try{
-      const s = await API.getSettings();
+      const s=await API.getSettings();
       if(s && s.retention_days){
-        els.retention.value = String(s.retention_days);
-        els.purgeDays.value = els.retention.value;
+        els.retention.value=String(s.retention_days);
+        els.purgeDays.value=els.retention.value;
       }
     }catch{}
-  })().then(()=> load()).catch(()=>{});
+  })()
+  .then(()=> load())
+  .catch(()=>{});
   startLive();
 })();
