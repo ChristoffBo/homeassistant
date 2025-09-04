@@ -378,10 +378,6 @@ def ensure_loaded(
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
-    # ADDITIVE: apply EnviroGuard overrides
-    _ctx, _cpu, _ = _apply_env_overrides(DEFAULT_CTX, cpu_limit, None)
-    DEFAULT_CTX = max(1024, int(_ctx))
-    cpu_limit = int(_cpu)
 
     base_url = (base_url or "").strip()
     if base_url:
@@ -523,9 +519,6 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         name = ""
         cand = (model_name_hint or "").strip()
         if cand and "/" not in cand and not cand.endswith(".gguf"):
-    # ADDITIVE: apply EnviroGuard timeout override
-    _, _, timeout = _apply_env_overrides(0, 0, timeout)
-    OVERRIDE_TIMEOUT_APPLIED = True
             name = cand
         else:
             name = _model_name_from_url(model_url)
@@ -668,19 +661,3 @@ if __name__ == "__main__":
     except Exception as e:
         print("self-check error:", e)
     print("llm_client self-check end")
-
-# ============================
-# EnviroGuard env overrides
-# ============================
-def _apply_env_overrides(ctx_tokens: int, cpu_limit: int, timeout: int | None = None):
-    try:
-        import os
-        ev_cpu = os.getenv("LLM_DYNAMIC_CPU")
-        ev_ctx = os.getenv("LLM_DYNAMIC_CTX")
-        ev_to  = os.getenv("LLM_DYNAMIC_TIMEOUT")
-        cpu = int(ev_cpu) if ev_cpu and ev_cpu.isdigit() else cpu_limit
-        ctx = int(ev_ctx) if ev_ctx and ev_ctx.isdigit() else ctx_tokens
-        to  = int(ev_to) if (timeout is not None and ev_to and ev_to.isdigit()) else timeout
-        return ctx, cpu, to
-    except Exception:
-        return ctx_tokens, cpu_limit, timeout

@@ -13,11 +13,6 @@ import time
 import socket
 import hashlib
 from typing import List, Optional, Tuple
-# ADDITIVE: EnviroGuard
-try:
-    import weather as _weather
-except Exception:
-    _weather = None
 
 # ============================
 # Inbox storage
@@ -850,104 +845,8 @@ async def _run_forever():
     asyncio.create_task(_digest_scheduler_loop())
     asyncio.create_task(listen_gotify())
     asyncio.create_task(_apprise_watchdog())
-    asyncio.create_task(_envg_loop())
     while True:
         await asyncio.sleep(60)
 
 if __name__ == "__main__":
     main()
-
-# ============================
-# EnviroGuard (additive)
-# ============================
-_envg_state = {"profile": "manual", "temp": None, "ts": None}
-
-def _envg_apply(profile: str):
-    try:
-        prof = EG_PROFILES.get(profile) or EG_PROFILES["manual"]
-        import os
-        os.environ["LLM_DYNAMIC_CPU"] = str(prof["cpu_percent"])
-        os.environ["LLM_DYNAMIC_CTX"] = str(prof["ctx_tokens"])
-        os.environ["LLM_DYNAMIC_TIMEOUT"] = str(prof["timeout_seconds"])
-        _envg_state["profile"] = profile
-    except Exception as e:
-        print(f"[enviroguard] apply failed: {e}")
-
-async def _envg_loop():
-    while True:
-        await asyncio.sleep(60)
-
-# ============================
-# EnviroGuard (additive)
-# ============================
-_envg_state = {"profile": "manual", "temp": None, "ts": None}
-
-def _envg_apply(profile: str):
-    try:
-        prof = EG_PROFILES.get(profile) or EG_PROFILES["manual"]
-        os.environ["LLM_DYNAMIC_CPU"] = str(prof["cpu_percent"])
-        os.environ["LLM_DYNAMIC_CTX"] = str(prof["ctx_tokens"])
-        os.environ["LLM_DYNAMIC_TIMEOUT"] = str(prof["timeout_seconds"])
-        _envg_state["profile"] = profile
-        _log(f"[enviroguard] applied profile={profile} cpu={prof['cpu_percent']} ctx={prof['ctx_tokens']} timeout={prof['timeout_seconds']}")
-    except Exception as e:
-        print(f"[enviroguard] apply failed: {e}")
-
-def _envg_choose(temp_c: float | None, prev: str) -> str:
-    if temp_c is None:
-        return "manual"
-    hot_on, hot_off = EG_HOT, EG_HOT - EG_HYST
-    boost_on, boost_off = EG_COLD, EG_COLD + EG_HYST
-    if prev == "hot" and temp_c >= hot_off:
-        return "hot"
-    if prev == "boost" and temp_c <= boost_off:
-        return "boost"
-    if temp_c >= hot_on:
-        return "hot"
-    if temp_c <= boost_on:
-        return "boost"
-    return "normal"
-
-def _envg_boot_line() -> str:
-    if not ENVGUARD_ENABLED:
-        return "→ EnviroGuard: OFF (manual limits active)"
-    temp = None
-    try:
-        if _weather and hasattr(_weather, "current_temp"):
-            temp, _ts = _weather.current_temp(ENVGUARD_LAT, ENVGUARD_LON, ENVGUARD_MAX_STALE)
-    except Exception:
-        pass
-    prof = _envg_choose(temp, _envg_state["profile"])
-    if temp is None:
-        return "→ EnviroGuard: ON (profile=manual, weather unavailable)"
-    return f"→ EnviroGuard: ON (profile={prof}, {int(round(temp))} °C)"
-
-async def _envg_loop():
-    if not ENVGUARD_ENABLED:
-        return
-    prev = _envg_state["profile"]
-    while True:
-        temp, ts, err = None, None, None
-        try:
-            if _weather and hasattr(_weather, "current_temp"):
-                temp, ts_or_err = _weather.current_temp(ENVGUARD_LAT, ENVGUARD_LON, ENVGUARD_MAX_STALE)
-                if temp is None:
-                    err = ts_or_err
-                else:
-                    ts = ts_or_err
-        except Exception as e:
-            err = f"{e}"
-        new_prof = _envg_choose(temp, prev)
-        if temp is None:
-            new_prof = "manual"
-        if new_prof != prev:
-            _envg_apply(new_prof)
-            if ENVGUARD_NOTIFY:
-                msg = f"EnviroGuard → {new_prof.upper()}"
-                msg += " (weather unavailable; reverted to manual limits)" if temp is None else f" ({int(round(temp))} °C)"
-                try:
-                    send_message("EnviroGuard", msg, priority=4, decorate=False)
-                except Exception as e:
-                    print(f"[enviroguard] notify failed: {e}")
-            prev = new_prof
-        await asyncio.sleep(max(1, ENVGUARD_POLL_MIN) * 60)
