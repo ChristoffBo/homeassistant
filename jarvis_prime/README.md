@@ -19,6 +19,7 @@ Features
 • Uptime Kuma: on-demand status (no duplicate alerts)  
 • Multiple selectable personalities (The Dude, Chick, Nerd, Rager, Comedian, Action, Ops)  
 • Purge & Retention: configurable lifecycle for messages  
+• **EnviroGuard**: adaptive LLM throttle system that auto-adjusts Jarvis’s performance profile based on ambient temperature  
 
 Supported Sources
 • Radarr / Sonarr → Posters, runtime, SxxEyy, quality, size  
@@ -62,3 +63,23 @@ ntfy (direct):
 curl -X POST "http://10.0.0.100:2580/jarvis" \
   -H "Content-Type: text/plain" \
   -d 'Hello from ntfy direct push'
+
+EnviroGuard
+EnviroGuard monitors the outside temperature (via Open-Meteo) and dynamically adjusts Jarvis’s LLM performance profile to keep it efficient and safe.  
+Enable it by adding to /data/options.json:  
+{
+  "llm_enviroguard_enabled": true,
+  "llm_enviroguard_poll_minutes": 30,
+  "llm_enviroguard_hot_c": 30,
+  "llm_enviroguard_cold_c": 10,
+  "llm_enviroguard_hysteresis_c": 2,
+  "llm_enviroguard_profiles": {
+    "manual": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
+    "hot":    { "cpu_percent": 50, "ctx_tokens": 2048, "timeout_seconds": 15 },
+    "normal": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
+    "boost":  { "cpu_percent": 95, "ctx_tokens": 8192, "timeout_seconds": 25 }
+  }
+}
+When active, the boot card shows EnviroGuard’s state, profile, and current temperature.  
+Whenever EnviroGuard shifts profile (e.g. from normal → hot), Jarvis notifies you:  
+“Ambient 31.2 °C → profile HOT (CPU=50%, ctx=2048, to=15s)”
