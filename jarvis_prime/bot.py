@@ -1,7 +1,17 @@
-
 #!/usr/bin/env python3
-# /app/bot.py (fixed, additive)
-import os, json, asyncio, requests, websockets, re, subprocess, atexit, time, socket, hashlib
+# /app/bot.py
+
+import os
+import json
+import asyncio
+import requests
+import websockets
+import re
+import subprocess
+import atexit
+import time
+import socket
+import hashlib
 from typing import List, Optional, Tuple
 
 # ============================
@@ -20,9 +30,10 @@ except Exception as _e:
 BOT_NAME  = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON  = os.getenv("BOT_ICON", "🧠")
 
+# Output (Gotify used as one of many outputs; not hardwired as the only intake)
 GOTIFY_URL   = os.getenv("GOTIFY_URL", "").rstrip("/")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
-APP_TOKEN    = os.getenv("JARVIS_APP_TOKEN", "")
+APP_TOKEN    = os.getenv("GOTIFY_APP_TOKEN", "")
 APP_NAME     = os.getenv("JARVIS_APP_NAME", "Jarvis")
 
 SILENT_REPOST    = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
@@ -39,18 +50,18 @@ KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","t
 SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
-# Ingest toggles
+# Ingest toggles (which intakes to listen to)
 INGEST_GOTIFY_ENABLED  = os.getenv("ingest_gotify_enabled", "true").lower() in ("1","true","yes")
 INGEST_APPRISE_ENABLED = os.getenv("ingest_apprise_enabled", "true").lower() in ("1","true","yes")
 INGEST_SMTP_ENABLED    = os.getenv("ingest_smtp_enabled", "true").lower() in ("1","true","yes")
-INGEST_NTFY_ENABLED    = os.getenv("ingest_ntfy_enabled", "false").lower() in ("1","true","yes")
+INGEST_NTFY_ENABLED    = os.getenv("ingest_ntfy_enabled", "false").lower() in ("1","true","yes")  # handled by proxy sidecar
 
-# Webhook
+# Webhook feature toggles
 WEBHOOK_ENABLED    = os.getenv("webhook_enabled", "false").lower() in ("1","true","yes")
 WEBHOOK_BIND       = os.getenv("webhook_bind", "0.0.0.0")
 WEBHOOK_PORT       = int(os.getenv("webhook_port", "2590"))
 
-# Apprise intake sidecar
+# Apprise intake sidecar (separate process)
 INTAKE_APPRISE_ENABLED = os.getenv("intake_apprise_enabled", "false").lower() in ("1","true","yes")
 INTAKE_APPRISE_TOKEN = os.getenv("intake_apprise_token", "")
 INTAKE_APPRISE_ACCEPT_ANY_KEY = os.getenv("intake_apprise_accept_any_key", "true").lower() in ("1","true","yes")
@@ -62,6 +73,7 @@ INTAKE_APPRISE_BIND = os.getenv("intake_apprise_bind", "0.0.0.0")
 LLM_REWRITE_ENABLED = os.getenv("LLM_REWRITE_ENABLED", "false").lower() in ("1","true","yes")
 BEAUTIFY_LLM_ENABLED_ENV = os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() in ("1","true","yes")
 
+# Defaults that get finalized after config load
 PROXY_ENABLED = PROXY_ENABLED_ENV
 CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
 DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
@@ -92,11 +104,13 @@ try:
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
 
+    # Ingest toggles from config file if present
     INGEST_GOTIFY_ENABLED  = bool(merged.get("ingest_gotify_enabled", INGEST_GOTIFY_ENABLED))
     INGEST_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED)) and bool(merged.get("ingest_apprise_enabled", INGEST_APPRISE_ENABLED))
     INGEST_SMTP_ENABLED    = bool(merged.get("ingest_smtp_enabled", INGEST_SMTP_ENABLED))
     INGEST_NTFY_ENABLED    = bool(merged.get("ingest_ntfy_enabled", INGEST_NTFY_ENABLED))
 
+    # Webhook
     WEBHOOK_ENABLED = bool(merged.get("webhook_enabled", WEBHOOK_ENABLED))
     WEBHOOK_BIND    = str(merged.get("webhook_bind", WEBHOOK_BIND))
     try:
@@ -104,6 +118,7 @@ try:
     except Exception:
         pass
 
+    # Apprise sidecar
     INTAKE_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INTAKE_APPRISE_TOKEN = str(merged.get("intake_apprise_token", INTAKE_APPRISE_TOKEN or ""))
     INTAKE_APPRISE_ACCEPT_ANY_KEY = bool(merged.get("intake_apprise_accept_any_key", INTAKE_APPRISE_ACCEPT_ANY_KEY))
@@ -117,7 +132,8 @@ try:
     else:
         INTAKE_APPRISE_ALLOWED_KEYS = []
 
-    # LLM + riffs linkup
+    # LLM + riffs linkup:
+    # Riffs fire only when BOTH llm_enabled==True AND llm_persona_riffs_enabled==True
     LLM_REWRITE_ENABLED = bool(merged.get("llm_rewrite_enabled", LLM_REWRITE_ENABLED))
     _beautify_llm_enabled_opt = bool(merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV))
     os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
@@ -178,13 +194,16 @@ def _choose_existing_model_on_disk() -> Optional[str]:
                 if n.lower().endswith(".gguf"):
                     return os.path.join(p, n)
 
-        # Prefer Phi-3 path when enabled
-        if bool(merged.get('llm_phi3_enabled', False)):
-            phi3_path = str(merged.get('llm_phi3_path', '')).strip()
-            if phi3_path and _fs_safe(phi3_path) and os.path.isfile(phi3_path):
-                return phi3_path
+        phi3_path = str(merged.get("llm_phi3_path", "")).strip()
+        if phi3_path and _fs_safe(phi3_path) and os.path.isfile(phi3_path):
+            return phi3_path
+        tiny_path = str(merged.get("llm_tinyllama_path", "")).strip()
+        if tiny_path and _fs_safe(tiny_path) and os.path.isfile(tiny_path):
+            return tiny_path
+        qwen_path = str(merged.get("llm_qwen05_path", "")).strip()
+        if qwen_path and _fs_safe(qwen_path) and os.path.isfile(qwen_path):
+            return qwen_path
 
-        # scan dir fallback
         for n in os.listdir(models_dir):
             if n.lower().endswith(".gguf"):
                 return os.path.join(models_dir, n)
@@ -208,29 +227,15 @@ def _llm_inputs_for_client() -> dict:
         "gen_tokens": int(merged.get("llm_gen_tokens", 300)),
         "max_lines": int(merged.get("llm_max_lines", 30)),
     }
-    # Force phi3 to the front if requested
-    if bool(merged.get('llm_phi3_enabled', False)):
-        mp = kwargs.get('models_priority') or []
-        if 'phi3' not in mp:
-            kwargs['models_priority'] = ['phi3'] + list(mp)
-        # If no local model was set, prefer phi3 URL/path
-        if not kwargs['model_path']:
-            phi3_path = str(merged.get('llm_phi3_path', '')).strip()
-            if phi3_path:
-                kwargs['model_path'] = phi3_path
-        if not kwargs['model_url']:
-            phi3_url = str(merged.get('llm_phi3_url', '')).strip()
-            if phi3_url:
-                kwargs['model_url'] = phi3_url
 
     local_file = _choose_existing_model_on_disk()
     if local_file:
         kwargs["model_path"] = local_file
-        kwargs["model_url"] = ""  # don't download if present
+        kwargs["model_url"] = ""
     return kwargs
 
 # ============================
-# Sidecars
+# Sidecars (with port guards)
 # ============================
 _sidecars: List[subprocess.Popen] = []
 
@@ -246,6 +251,7 @@ def _port_in_use(host: str, port: int) -> bool:
 
 def _start_sidecar(cmd, label, env=None):
     try:
+        # Inherit stdout/stderr so logs show if it crashes immediately
         p = subprocess.Popen(cmd, stdout=None, stderr=None, env=env or os.environ.copy())
         _sidecars.append(p)
         print(f"[bot] started sidecar: {label} -> {cmd}")
@@ -263,16 +269,21 @@ def _apprise_env() -> dict:
     return env
 
 def start_sidecars():
+    # proxy
     if PROXY_ENABLED:
         if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
             print("[bot] proxy.py already running on :2580 — skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/proxy.py"], "proxy.py")
+
+    # smtp
     if SMTP_ENABLED and INGEST_SMTP_ENABLED:
         if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
             print("[bot] smtp_server.py already running on :2525 — skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/smtp_server.py"], "smtp_server.py")
+
+    # webhook
     if WEBHOOK_ENABLED:
         if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
             print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar")
@@ -281,26 +292,38 @@ def start_sidecars():
             env["webhook_bind"] = WEBHOOK_BIND
             env["webhook_port"] = str(WEBHOOK_PORT)
             _start_sidecar(["python3", "/app/webhook_server.py"], "webhook_server.py", env=env)
+
+    # apprise
     if INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED:
         if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
             print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skipping sidecar")
         else:
+            # ensure internal is up before starting
             if not _port_in_use("127.0.0.1", 2599):
                 print("[bot] deferring apprise sidecar until internal server is up on :2599")
             else:
                 env = _apprise_env()
-                print(f"[bot] starting apprise sidecar with env: {{'INTAKE_APPRISE_BIND': env.get('INTAKE_APPRISE_BIND'), 'INTAKE_APPRISE_PORT': env.get('INTAKE_APPRISE_PORT')}}")
+                safe_env_print = {
+                    "INTAKE_APPRISE_BIND": env.get("INTAKE_APPRISE_BIND"),
+                    "INTAKE_APPRISE_PORT": env.get("INTAKE_APPRISE_PORT"),
+                    "INTAKE_APPRISE_ACCEPT_ANY_KEY": env.get("INTAKE_APPRISE_ACCEPT_ANY_KEY"),
+                    "INTAKE_APPRISE_ALLOWED_KEYS": env.get("INTAKE_APPRISE_ALLOWED_KEYS"),
+                    "JARVIS_INTERNAL_EMIT_URL": env.get("JARVIS_INTERNAL_EMIT_URL")
+                }
+                print(f"[bot] starting apprise sidecar with env: {safe_env_print}")
                 _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
                 print(f"[bot] apprise intake configured on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
 
 def stop_sidecars():
     for p in _sidecars:
-        try: p.terminate()
-        except Exception: pass
+        try:
+            p.terminate()
+        except Exception:
+            pass
 atexit.register(stop_sidecars)
 
 # ============================
-# Gotify helpers
+# Gotify helpers (output)
 # ============================
 jarvis_app_id = None
 
@@ -331,13 +354,16 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     message = (header + ("\n" + (message or ""))) if header else (message or "")
 
     if _personality and hasattr(_personality, "apply_priority"):
-        try: priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
-        except Exception: pass
+        try:
+            priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
+        except Exception:
+            pass
 
     if GOTIFY_URL and APP_TOKEN:
         url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
         payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
-        if extras: payload["extras"] = extras
+        if extras:
+            payload["extras"] = extras
         try:
             r = requests.post(url, json=payload, timeout=8)
             r.raise_for_status()
@@ -365,7 +391,8 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 
 def delete_original_message(msg_id: int):
     try:
-        if not (msg_id and GOTIFY_URL and CLIENT_TOKEN): return
+        if not (msg_id and GOTIFY_URL and CLIENT_TOKEN):
+            return
         url = f"{GOTIFY_URL}/message/{msg_id}"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
         requests.delete(url, headers=headers, timeout=6)
@@ -375,7 +402,8 @@ def delete_original_message(msg_id: int):
 def resolve_app_id():
     global jarvis_app_id
     jarvis_app_id = None
-    if not (GOTIFY_URL and CLIENT_TOKEN): return
+    if not (GOTIFY_URL and CLIENT_TOKEN):
+        return
     try:
         url = f"{GOTIFY_URL}/application"
         headers = {"X-Gotify-Key": CLIENT_TOKEN}
@@ -383,7 +411,8 @@ def resolve_app_id():
         r.raise_for_status()
         for app in r.json():
             if app.get("name") == APP_NAME:
-                jarvis_app_id = app.get("id"); break
+                jarvis_app_id = app.get("id")
+                break
     except Exception:
         pass
 
@@ -397,11 +426,14 @@ def _is_our_post(data: dict) -> bool:
         return False
 
 def _should_purge() -> bool:
-    try: return bool(merged.get("silent_repost", SILENT_REPOST))
-    except Exception: return SILENT_REPOST
+    try:
+        return bool(merged.get("silent_repost", SILENT_REPOST))
+    except Exception:
+        return SILENT_REPOST
 
 def _purge_after(msg_id: int):
-    if _should_purge(): delete_original_message(msg_id)
+    if _should_purge():
+        delete_original_message(msg_id)
 
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []
@@ -411,7 +443,8 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
-    used_llm = bool(merged.get("llm_enabled"))
+    # Reflect LLM state in footer tag
+    used_llm = bool(merged.get("llm_enabled")) or bool(merged.get("llm_rewrite_enabled")) or LLM_REWRITE_ENABLED
     used_beautify = True if _beautify else False
     final = message or ""
     extras = None
@@ -419,46 +452,14 @@ def _llm_then_beautify(title: str, message: str):
     try:
         if _beautify and hasattr(_beautify, "beautify_message"):
             final, extras = _beautify.beautify_message(
-                title, final,
-                mood=ACTIVE_PERSONA, persona=ACTIVE_PERSONA,
-                persona_quip=(bool(merged.get('llm_enabled')) and bool(merged.get('llm_persona_riffs_enabled', True)))
+                title,
+                final,
+                mood=ACTIVE_PERSONA,
+                persona=ACTIVE_PERSONA,
+                persona_quip=True  # <— enable persona riffs for all intakes
             )
     except Exception as e:
         print(f"[bot] Beautify failed: {e}")
-
-    # ADDITIVE riff block — only when BOTH toggles are ON
-    try:
-        riffs_enabled = bool(merged.get('llm_enabled')) and bool(merged.get('llm_persona_riffs_enabled', True))
-        if riffs_enabled and _llm and hasattr(_llm, 'riff'):
-            body_lc = (final or '').lower()
-            has_riff_hint = (' says:' in body_lc) or ('💬 ' in body_lc)
-            if not has_riff_hint:
-                _inputs = _llm_inputs_for_client()
-                if hasattr(_llm, 'ensure_loaded'):
-                    try:
-                        _llm.ensure_loaded(
-                            model_url=_inputs.get('model_url',''),
-                            model_path=_inputs.get('model_path',''),
-                            model_sha256=_inputs.get('model_sha256',''),
-                            ctx_tokens=_inputs.get('ctx_tokens',4096),
-                            cpu_limit=_inputs.get('cpu_limit',80),
-                            hf_token=str(merged.get('llm_hf_token','')),
-                            base_url=_inputs.get('base_url','')
-                        )
-                    except Exception: pass
-                try:
-                    riff_txt = _llm.riff(
-                        subject=title, persona=ACTIVE_PERSONA,
-                        timeout=int(merged.get('llm_timeout_seconds', 8)),
-                        base_url=_inputs.get('base_url',''),
-                        model_url=_inputs.get('model_url',''),
-                        model_path=_inputs.get('model_path',''),
-                        allow_profanity=bool(merged.get('personality_allow_profanity', False))
-                    ) or ''
-                except Exception: riff_txt = ''
-                if riff_txt:
-                    final = (final or '').rstrip() + "\n" + riff_txt
-    except Exception: pass
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
@@ -496,7 +497,8 @@ def post_startup_card():
         f"🛰️ Engine: Neural Core — {'ONLINE' if merged.get('llm_enabled') else 'OFFLINE'}",
         f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
         f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
-        "", "Modules:",
+        "",
+        "Modules:",
         f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
         f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
         f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
@@ -548,18 +550,22 @@ def _handle_command(ncmd: str) -> bool:
             try:
                 if _personality and hasattr(_personality, "quip"):
                     msg2 += f"\n\n{_personality.quip(ACTIVE_PERSONA)}"
-            except Exception: pass
-            send_message("Digest", msg2, priority=pr); return True
+            except Exception:
+                pass
+            send_message("Digest", msg2, priority=pr)
         else:
-            send_message("Digest", "Digest module unavailable."); return True
+            send_message("Digest", "Digest module unavailable.")
+        return True
 
     if ncmd in ("dns",):
         text, _ = _try_call(m_tech, "handle_dns_command", "dns")
-        send_message("DNS Status", text or "No data."); return True
+        send_message("DNS Status", text or "No data.")
+        return True
 
     if ncmd in ("kuma", "uptime", "monitor"):
         text, _ = _try_call(m_kuma, "handle_kuma_command", "kuma")
-        send_message("Uptime Kuma", text or "No data."); return True
+        send_message("Uptime Kuma", text or "No data.")
+        return True
 
     if ncmd in ("weather", "now", "today", "temp", "temps"):
         text = ""
@@ -567,8 +573,10 @@ def _handle_command(ncmd: str) -> bool:
             try:
                 text = m_weather.handle_weather_command("weather")
                 if isinstance(text, tuple): text = text[0]
-            except Exception as e: text = f"⚠️ Weather failed: {e}"
-        send_message("Weather", text or "No data."); return True
+            except Exception as e:
+                text = f"⚠️ Weather failed: {e}"
+        send_message("Weather", text or "No data.")
+        return True
 
     if ncmd in ("forecast", "weekly", "7day", "7-day", "7 day"):
         text = ""
@@ -576,13 +584,17 @@ def _handle_command(ncmd: str) -> bool:
             try:
                 text = m_weather.handle_weather_command("forecast")
                 if isinstance(text, tuple): text = text[0]
-            except Exception as e: text = f"⚠️ Forecast failed: {e}"
-        send_message("Forecast", text or "No data."); return True
+            except Exception as e:
+                text = f"⚠️ Forecast failed: {e}"
+        send_message("Forecast", text or "No data.")
+        return True
 
     if ncmd in ("joke", "pun", "tell me a joke", "make me laugh", "chat"):
         if m_chat and hasattr(m_chat, "handle_chat_command"):
-            try: msg, _ = m_chat.handle_chat_command("joke")
-            except Exception as e: msg = f"⚠️ Chat error: {e}"
+            try:
+                msg, _ = m_chat.handle_chat_command("joke")
+            except Exception as e:
+                msg = f"⚠️ Chat error: {e}"
             send_message("Joke", msg or "No joke available right now.")
         else:
             send_message("Joke", "Chat engine unavailable.")
@@ -590,22 +602,29 @@ def _handle_command(ncmd: str) -> bool:
 
     if ncmd in ("upcoming movies", "upcoming films", "movies upcoming", "films upcoming"):
         msg, _ = _try_call(m_arr, "upcoming_movies", 7)
-        send_message("Upcoming Movies", msg or "No data."); return True
+        send_message("Upcoming Movies", msg or "No data.")
+        return True
     if ncmd in ("upcoming series", "upcoming shows", "series upcoming", "shows upcoming"):
         msg, _ = _try_call(m_arr, "upcoming_series", 7)
-        send_message("Upcoming Episodes", msg or "No data."); return True
+        send_message("Upcoming Episodes", msg or "No data.")
+        return True
     if ncmd in ("movie count", "film count"):
         msg, _ = _try_call(m_arr, "movie_count")
-        send_message("Movie Count", msg or "No data."); return True
+        send_message("Movie Count", msg or "No data.")
+        return True
     if ncmd in ("series count", "show count"):
         msg, _ = _try_call(m_arr, "series_count")
-        send_message("Series Count", msg or "No data."); return True
+        send_message("Series Count", msg or "No data.")
+        return True
     if ncmd in ("longest movie", "longest film"):
         msg, _ = _try_call(m_arr, "longest_movie")
-        send_message("Longest Movie", msg or "No data."); return True
+        send_message("Longest Movie", msg or "No data.")
+        return True
     if ncmd in ("longest series", "longest show"):
         msg, _ = _try_call(m_arr, "longest_series")
-        send_message("Longest Series", msg or "No data."); return True
+        send_message("Longest Series", msg or "No data.")
+        return True
+
     return False
 
 # ============================
@@ -617,35 +636,46 @@ _RECENT_TTL = 90
 def _gc_recent():
     now = time.time()
     for k, exp in list(_recent_hashes.items()):
-        if exp <= now: _recent_hashes.pop(k, None)
+        if exp <= now:
+            _recent_hashes.pop(k, None)
 
 def _seen_recent(title: str, body: str, source: str, orig_id: Optional[str]) -> bool:
     _gc_recent()
     h = hashlib.sha256(f"{source}|{orig_id}|{title}|{body}".encode("utf-8")).hexdigest()
-    if h in _recent_hashes: return True
+    if h in _recent_hashes:
+        return True
     _recent_hashes[h] = time.time() + _RECENT_TTL
     return False
 
 def _process_incoming(title: str, body: str, source: str = "intake", original_id: Optional[str] = None, priority: int = 5):
-    if _seen_recent(title or "", body or "", source, original_id or ""): return
+    if _seen_recent(title or "", body or "", source, original_id or ""):
+        return
+
     ncmd = normalize_cmd(extract_command_from(title, body))
     if ncmd and _handle_command(ncmd):
         try:
-            if source == "gotify" and original_id: _purge_after(int(original_id))
-        except Exception: pass
+            if source == "gotify" and original_id:
+                _purge_after(int(original_id))
+        except Exception:
+            pass
         return
+
     final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
     send_message(title or "Notification", final, priority=priority, extras=extras)
+
     try:
-        if source == "gotify" and original_id: _purge_after(int(original_id))
-    except Exception: pass
+        if source == "gotify" and original_id:
+            _purge_after(int(original_id))
+    except Exception:
+        pass
 
 # ============================
 # Gotify WebSocket intake
 # ============================
 async def listen_gotify():
     if not (INGEST_GOTIFY_ENABLED and GOTIFY_URL and CLIENT_TOKEN):
-        print("[bot] Gotify intake disabled or not configured"); return
+        print("[bot] Gotify intake disabled or not configured")
+        return
     ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
     print(f"[bot] Gotify intake connecting to {ws_url}")
     while True:
@@ -654,7 +684,8 @@ async def listen_gotify():
                 async for raw in ws:
                     try:
                         data = json.loads(raw)
-                        if _is_our_post(data): continue
+                        if _is_our_post(data):
+                            continue
                         msg_id = data.get("id")
                         title = data.get("title") or ""
                         message = data.get("message") or ""
@@ -669,6 +700,7 @@ async def listen_gotify():
 # Daily scheduler (digest)
 # ============================
 _last_digest_date = None
+
 async def _digest_scheduler_loop():
     global _last_digest_date
     from datetime import datetime
@@ -682,11 +714,13 @@ async def _digest_scheduler_loop():
                         import digest as _digest_mod
                         if hasattr(_digest_mod, "build_digest"):
                             title, msg, pr = _digest_mod.build_digest(merged)
-                            send_message("Digest", msg, priority=pr); _last_digest_date = now.date()
+                            send_message("Digest", msg, priority=pr)
+                            _last_digest_date = now.date()
                         else:
                             _last_digest_date = now.date()
                     except Exception as e:
-                        print(f"[Scheduler] digest error: {e}"); _last_digest_date = now.date()
+                        print(f"[Scheduler] digest error: {e}")
+                        _last_digest_date = now.date()
         except Exception as e:
             print(f"[Scheduler] loop error: {e}")
         await asyncio.sleep(60)
@@ -700,23 +734,31 @@ except Exception:
     web = None
 
 async def _internal_wake(request):
-    try: data = await request.json()
-    except Exception: data = {}
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     text = str(data.get("text") or "").strip()
     cmd = text
     for kw in ("jarvis", "hey jarvis", "ok jarvis"):
         if cmd.lower().startswith(kw):
-            cmd = cmd[len(kw):].strip(); break
+            cmd = cmd[len(kw):].strip()
+            break
     ok = False
-    try: ok = bool(_handle_command(cmd))
+    try:
+        ok = bool(_handle_command(cmd))
     except Exception as e:
-        try: send_message("Wake Error", f"{e}", priority=5)
-        except Exception: pass
+        try:
+            send_message("Wake Error", f"{e}", priority=5)
+        except Exception:
+            pass
     return web.json_response({"ok": bool(ok)})
 
 async def _internal_emit(request):
-    try: data = await request.json()
-    except Exception: data = {}
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     title = str(data.get("title") or "Notification")
     body  = str(data.get("body") or "")
     prio  = int(data.get("priority", 5))
@@ -731,37 +773,54 @@ async def _internal_emit(request):
 
 async def _start_internal_server():
     if web is None:
-        print("[bot] aiohttp not available; internal server disabled"); return
+        print("[bot] aiohttp not available; internal server disabled")
+        return
     try:
         app = web.Application()
         app.router.add_post("/internal/wake", _internal_wake)
         app.router.add_post("/internal/emit", _internal_emit)
-        runner = web.AppRunner(app); await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", 2599); await site.start()
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 2599)
+        await site.start()
         print("[bot] internal server listening on 127.0.0.1:2599 (/internal/wake, /internal/emit)")
     except Exception as e:
         print(f"[bot] failed to start internal server: {e}")
 
 # ============================
-# Apprise watchdog
+# Apprise watchdog (sidecar must bind :2591)
 # ============================
 async def _apprise_watchdog():
-    if not (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED): return
+    if not (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED):
+        return
+    # wait for internal server to be ready first
     for _ in range(100):
-        if _port_in_use("127.0.0.1", 2599): break
+        if _port_in_use("127.0.0.1", 2599):
+            break
         await asyncio.sleep(0.1)
     attempt = 0
     while True:
         try:
             if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-                await asyncio.sleep(5); continue
+                # healthy
+                await asyncio.sleep(5)
+                continue
             attempt += 1
             env = _apprise_env()
-            print(f"[bot] apprise watchdog: port {INTAKE_APPRISE_PORT} not listening, restart #{attempt}")
+            safe_env_print = {
+                "INTAKE_APPRISE_BIND": env.get("INTAKE_APPRISE_BIND"),
+                "INTAKE_APPRISE_PORT": env.get("INTAKE_APPRISE_PORT"),
+                "INTAKE_APPRISE_ACCEPT_ANY_KEY": env.get("INTAKE_APPRISE_ACCEPT_ANY_KEY"),
+                "INTAKE_APPRISE_ALLOWED_KEYS": env.get("INTAKE_APPRISE_ALLOWED_KEYS"),
+                "JARVIS_INTERNAL_EMIT_URL": env.get("JARVIS_INTERNAL_EMIT_URL")
+            }
+            print(f"[bot] apprise watchdog: port {INTAKE_APPRISE_PORT} not listening, restart #{attempt} with env {safe_env_print}")
             _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
+            # Give it a short grace to bind
             for _ in range(30):
                 if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-                    print(f"[bot] apprise watchdog: sidecar is now listening on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}"); break
+                    print(f"[bot] apprise watchdog: sidecar is now listening on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
+                    break
                 await asyncio.sleep(0.2)
         except Exception as e:
             print(f"[bot] apprise watchdog error: {e}")
@@ -780,12 +839,15 @@ def main():
     asyncio.run(_run_forever())
 
 async def _run_forever():
-    try: asyncio.create_task(_start_internal_server())
-    except Exception: pass
+    try:
+        asyncio.create_task(_start_internal_server())
+    except Exception:
+        pass
     asyncio.create_task(_digest_scheduler_loop())
     asyncio.create_task(listen_gotify())
     asyncio.create_task(_apprise_watchdog())
-    while True: await asyncio.sleep(60)
+    while True:
+        await asyncio.sleep(60)
 
 if __name__ == "__main__":
     main()
