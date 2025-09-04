@@ -106,7 +106,7 @@ try:
 
     # Ingest toggles from config file if present
     INGEST_GOTIFY_ENABLED  = bool(merged.get("ingest_gotify_enabled", INGEST_GOTIFY_ENABLED))
-    INGEST_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED)) and bool(merged.get("ingest_apprise_enabled", INGEST_APPRISE_ENABLED))
+    INGEST_APPRISE_ENABLED = bool(merged.get("ingest_apprise_enabled", INGEST_APPRISE_ENABLED))
     INGEST_SMTP_ENABLED    = bool(merged.get("ingest_smtp_enabled", INGEST_SMTP_ENABLED))
     INGEST_NTFY_ENABLED    = bool(merged.get("ingest_ntfy_enabled", INGEST_NTFY_ENABLED))
 
@@ -194,13 +194,16 @@ def _choose_existing_model_on_disk() -> Optional[str]:
                 if n.lower().endswith(".gguf"):
                     return os.path.join(p, n)
 
-        phi3_path = str(merged.get("llm_phi3_path", "")).strip()
-        if phi3_path and _fs_safe(phi3_path) and os.path.isfile(phi3_path):
-            return phi3_path
-        tiny_path = str(merged.get("llm_tinyllama_path", "")).strip()
+        # Prefer Phi-3 path when enabled
+        if bool(merged.get('llm_phi3_enabled', False)):
+            phi3_path = str(merged.get('llm_phi3_path', '')).strip()
+            if phi3_path and _fs_safe(phi3_path) and os.path.isfile(phi3_path):
+                return phi3_path
+        # Other explicit paths (kept for compatibility)
+        tiny_path = str(merged.get('llm_tinyllama_path', '')).strip()
         if tiny_path and _fs_safe(tiny_path) and os.path.isfile(tiny_path):
             return tiny_path
-        qwen_path = str(merged.get("llm_qwen05_path", "")).strip()
+        qwen_path = str(merged.get('llm_qwen05_path', '')).strip()
         if qwen_path and _fs_safe(qwen_path) and os.path.isfile(qwen_path):
             return qwen_path
 
@@ -228,10 +231,26 @@ def _llm_inputs_for_client() -> dict:
         "max_lines": int(merged.get("llm_max_lines", 30)),
     }
 
+    # ADDITIVE: If Phi-3 is enabled, force it to the front of models_priority
+    if bool(merged.get('llm_phi3_enabled', False)):
+        mp = kwargs.get('models_priority') or []
+        if 'phi3' not in mp:
+            kwargs['models_priority'] = ['phi3'] + list(mp)
+
+
     local_file = _choose_existing_model_on_disk()
     if local_file:
         kwargs["model_path"] = local_file
         kwargs["model_url"] = ""
+        return kwargs
+    # If no local file, prefer explicit Phi-3 URL/path when enabled
+    if bool(merged.get('llm_phi3_enabled', False)):
+        p3u = str(merged.get('llm_phi3_url', '')).strip()
+        p3p = str(merged.get('llm_phi3_path', '')).strip()
+        if p3u:
+            kwargs['model_url'] = p3u
+        if p3p:
+            kwargs['model_path'] = p3p
     return kwargs
 
 # ============================
@@ -443,8 +462,7 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
-    # Reflect LLM state in footer tag
-    used_llm = bool(merged.get("llm_enabled")) or bool(merged.get("llm_rewrite_enabled")) or LLM_REWRITE_ENABLED
+    used_llm = False
     used_beautify = True if _beautify else False
     final = message or ""
     extras = None
@@ -456,10 +474,49 @@ def _llm_then_beautify(title: str, message: str):
                 final,
                 mood=ACTIVE_PERSONA,
                 persona=ACTIVE_PERSONA,
-                persona_quip=True  # <— enable persona riffs for all intakes
+                persona_quip=(bool(merged.get('llm_enabled')) and bool(merged.get('llm_persona_riffs_enabled', True)))
             )
     except Exception as e:
         print(f"[bot] Beautify failed: {e}")
+
+    # ADDITIVE: Ensure SMTP/Proxy can still attach a riff when LLM and riff toggles are both ON.
+    try:
+        riffs_enabled = bool(merged.get('llm_enabled')) and bool(merged.get('llm_persona_riffs_enabled', True))
+        if riffs_enabled and _llm and hasattr(_llm, 'riff'):
+            body_lc = (final or '').lower()
+            has_riff_hint = (' says:' in body_lc) or ('💬 ' in body_lc)
+            if not has_riff_hint:
+                _inputs = _llm_inputs_for_client()
+                # best-effort load
+                if hasattr(_llm, 'ensure_loaded'):
+                    try:
+                        _llm.ensure_loaded(
+                            model_url=_inputs.get('model_url',''),
+                            model_path=_inputs.get('model_path',''),
+                            model_sha256=_inputs.get('model_sha256',''),
+                            ctx_tokens=_inputs.get('ctx_tokens',4096),
+                            cpu_limit=_inputs.get('cpu_limit',80),
+                            hf_token=str(merged.get('llm_hf_token','')),
+                            base_url=_inputs.get('base_url','')
+                        )
+                    except Exception as _e:
+                        pass
+                try:
+                    riff_txt = _llm.riff(
+                        subject=title,
+                        persona=ACTIVE_PERSONA,
+                        timeout=int(merged.get('llm_timeout_seconds', 8)),
+                        base_url=_inputs.get('base_url',''),
+                        model_url=_inputs.get('model_url',''),
+                        model_path=_inputs.get('model_path',''),
+                        allow_profanity=bool(merged.get('personality_allow_profanity', False))
+                    ) or ''
+                except Exception:
+                    riff_txt = ''
+                if riff_txt:
+                    final = (final or '').rstrip() + "\n" + riff_txt
+    except Exception:
+        pass
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
