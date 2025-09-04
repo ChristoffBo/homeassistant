@@ -156,6 +156,96 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
     return path
 
 # ============================
+# CPU / Threads (throttling)
+# ============================
+def _parse_cpuset_list(s: str) -> int:
+    total = 0
+    for part in (s or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            try:
+                total += int(b) - int(a) + 1
+            except Exception:
+                pass
+        else:
+            try:
+                total += 1
+            except Exception:
+                pass
+    return total or 0
+
+def _available_cpus() -> int:
+    """Best-effort count of CPUs available to this process (cgroups/affinity-aware)."""
+    # 1) sched_getaffinity (most accurate in containers)
+    try:
+        if hasattr(os, "sched_getaffinity"):
+            return max(1, len(os.sched_getaffinity(0)))
+    except Exception:
+        pass
+    # 2) cgroup v2: /sys/fs/cgroup/cpu.max
+    try:
+        with open("/sys/fs/cgroup/cpu.max", "r", encoding="utf-8") as f:
+            raw = f.read().strip().split()
+            if len(raw) == 2:
+                quota, period = raw
+                if quota != "max":
+                    q = int(quota)
+                    p = int(period)
+                    if q > 0 and p > 0:
+                        return max(1, q // p)
+    except Exception:
+        pass
+    # 3) cgroup v1: cpu.cfs_* files
+    try:
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", "r", encoding="utf-8") as f:
+            q = int(f.read().strip())
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us", "r", encoding="utf-8") as f:
+            p = int(f.read().strip())
+        if q > 0 and p > 0:
+            return max(1, q // p)
+    except Exception:
+        pass
+    # 4) cpuset masks
+    for p in ("/sys/fs/cgroup/cpuset.cpus", "/sys/fs/cgroup/cpuset/cpuset.cpus"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                n = _parse_cpuset_list(f.read().strip())
+                if n > 0:
+                    return n
+        except Exception:
+            pass
+    # 5) fallback: all logical CPUs
+    return max(1, os.cpu_count() or 1)
+
+def _threads_from_cpu_limit(limit_pct: int) -> int:
+    """Map a CPU percentage to an integer thread count, respecting cgroup limits.
+    Order of precedence:
+      - Explicit env override: LLAMA_THREADS or OMP_NUM_THREADS
+      - Percentage of available CPUs (ceil)
+      - Fallback to at least 1
+    """
+    # explicit env override
+    for env_var in ("LLAMA_THREADS", "OMP_NUM_THREADS"):
+        v = os.getenv(env_var, "").strip()
+        if v.isdigit():
+            t = max(1, int(v))
+            _log(f"env override {env_var} -> threads={t}")
+            return t
+    cores = _available_cpus()
+    try:
+        pct = max(1, min(100, int(limit_pct or 100)))
+    except Exception:
+        pct = 100
+    # ceil so 1..100% maps to at least 1 thread
+    t = max(1, int(math.ceil(cores * (pct / 100.0))))
+    t = min(cores, t)
+    _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
+    return t
+
+# ============================
 # llama-cpp path (local GGUF)
 # ============================
 def _try_import_llama_cpp():
@@ -166,16 +256,6 @@ def _try_import_llama_cpp():
         _log(f"llama-cpp not available: {e}")
         return None
 
-def _threads_from_cpu_limit(limit_pct: int) -> int:
-    try:
-        import multiprocessing
-        cores = max(1, multiprocessing.cpu_count())
-    except Exception:
-        cores = 2
-    # simple heuristic: 10% per thread; cap to cpu count
-    t = max(1, min(cores, max(1, int(limit_pct / 10))))
-    return t
-
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH
     llama_cpp = _try_import_llama_cpp()
@@ -183,7 +263,10 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         return False
     try:
         threads = _threads_from_cpu_limit(cpu_limit)
-        # use chat template inference defaults that are widely compatible
+        # also set common envs so any inner libs respect the same limit
+        os.environ.setdefault("OMP_NUM_THREADS", str(threads))
+        os.environ.setdefault("LLAMA_THREADS", str(threads))
+        # Initialize llama
         LLM = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=ctx_tokens,
