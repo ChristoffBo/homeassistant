@@ -10,7 +10,7 @@ import time
 from aiosmtpd.controller import Controller
 
 # -----------------------------
-# Inbox storage
+# Inbox storage (optional)
 # -----------------------------
 try:
     import storage
@@ -20,7 +20,7 @@ except Exception as _e:
     print(f"[smtp] ⚠️ storage init failed: {_e}")
 
 # -----------------------------
-# Config load (match bot/proxy behavior)
+# Config
 # -----------------------------
 def _load_json(path):
     try:
@@ -29,112 +29,15 @@ def _load_json(path):
     except Exception:
         return {}
 
-def _bool_env(name, default=False):
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
 _config_fallback = _load_json("/data/config.json")
 _options         = _load_json("/data/options.json")
 merged           = {**_config_fallback, **_options}
 
-BOT_NAME   = os.getenv("BOT_NAME", "Jarvis Prime")
-BOT_ICON   = os.getenv("BOT_ICON", "🧠")
-GOTIFY_URL = os.getenv("GOTIFY_URL", "").rstrip("/")
-APP_TOKEN  = os.getenv("GOTIFY_APP_TOKEN", "")
+BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
+BOT_ICON = os.getenv("BOT_ICON", "🧠")
 
-CHAT_MOOD = str(merged.get("personality_mood",
-               merged.get("chat_mood", os.getenv("CHAT_MOOD", "serious"))))
-LLM_ENABLED         = bool(merged.get("llm_enabled", _bool_env("LLM_ENABLED", False)))
-LLM_TIMEOUT_SECONDS = int(merged.get("llm_timeout_seconds", int(os.getenv("LLM_TIMEOUT_SECONDS", "12"))))
-LLM_MAX_CPU_PERCENT = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))))
-LLM_MODEL_URL       = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
-LLM_MODEL_PATH      = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
-LLM_MODEL_SHA256    = os.getenv("LLM_MODEL_SHA256", merged.get("llm_model_sha256", ""))
-ALLOW_PROFANITY     = bool(merged.get("personality_allow_profanity",
-                         _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
-
-PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", _bool_env("PUSH_GOTIFY_ENABLED", False)))
-PUSH_NTFY_ENABLED   = bool(merged.get("push_ntfy_enabled", _bool_env("PUSH_NTFY_ENABLED", False)))
-
-# Forward target: core internal emit (bot.py)
+# Forward target: Jarvis internal emit (bot.py)
 INTERNAL_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
-
-# Optional beautify/LLM for fallback
-try:
-    import importlib.util as _imp
-    _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
-    beautify = _imp.module_from_spec(_bspec); _bspec.loader.exec_module(beautify) if _bspec and _bspec.loader else None
-    print("[smtp] beautify loaded")
-except Exception as e:
-    beautify = None
-    print(f"[smtp] beautify load failed: {e}")
-
-llm = None
-try:
-    import importlib.util as _imp
-    _lspec = _imp.spec_from_file_location("llm_client", "/app/llm_client.py")
-    llm = _imp.module_from_spec(_lspec); _lspec.loader.exec_module(llm) if _lspec and _lspec.loader else None
-    print(f"[smtp] llm_client loaded (enabled={LLM_ENABLED})")
-    if LLM_ENABLED and llm and hasattr(llm, "prefetch_model"):
-        llm.prefetch_model()
-except Exception as e:
-    llm = None
-    print(f"[smtp] llm_client load failed: {e}")
-
-def _footer(used_llm: bool, used_beautify: bool) -> str:
-    tags = []
-    if used_llm: tags.append("Neural Core ✓")
-    if used_beautify: tags.append("Aesthetic Engine ✓")
-    if not tags: tags.append("Relay Path")
-    return "— " + " · ".join(tags)
-
-def _transform(title: str, body: str, mood: str):
-    used_llm = False
-    used_beautify = False
-    out = body or ""
-    extras = None
-
-    # Fallback-only local pipeline
-    if LLM_ENABLED and llm and hasattr(llm, "rewrite"):
-        try:
-            out = llm.rewrite(
-                text=out,
-                mood=mood,
-                timeout=LLM_TIMEOUT_SECONDS,
-                cpu_limit=LLM_MAX_CPU_PERCENT,
-                models_priority=None,
-                base_url="",
-                model_url=LLM_MODEL_URL,
-                model_path=LLM_MODEL_PATH,
-                model_sha256=LLM_MODEL_SHA256,
-                allow_profanity=ALLOW_PROFANITY,
-            )
-            used_llm = True
-            print("[smtp] LLM rewrite applied (fallback)")
-        except Exception as e:
-            print(f"[smtp] LLM skipped: {e}")
-
-    if beautify and hasattr(beautify, "beautify_message"):
-        try:
-            out, extras = beautify.beautify_message(title, out, mood=mood)
-            used_beautify = True
-        except Exception as e:
-            print(f"[smtp] Beautify failed: {e}")
-
-    footer = _footer(used_llm, used_beautify)
-    if not out.rstrip().endswith(footer):
-        out = f"{out.rstrip()}\n\n{footer}"
-    return out, extras, used_llm, used_beautify
-
-def _post(title: str, message: str, extras=None):
-    url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-    payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": 5}
-    if extras: payload["extras"] = extras
-    if PUSH_GOTIFY_ENABLED and GOTIFY_URL and APP_TOKEN:
-        r = requests.post(url, json=payload, timeout=8); r.raise_for_status(); return r.status_code
-    return 0
 
 def _emit_internal(title: str, body: str, priority: int = 5, source: str = "smtp", oid: str = ""):
     payload = {"title": title or "SMTP", "body": body or "", "priority": int(priority), "source": source, "id": oid}
@@ -163,60 +66,37 @@ class Handler:
             else:
                 body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
 
-            # Primary path: forward to internal core so persona riffs apply
-            try:
-                _emit_internal(title, body, priority=5, source="smtp", oid="")
-                print(f"[smtp] forwarded to internal emit: {INTERNAL_EMIT_URL}")
-                if storage:
-                    try:
-                        storage.save_message(
-                            title=title,
-                            body=body or "",
-                            source="smtp_intake",
-                            priority=5,
-                            extras={"forwarded_to_internal": True},
-                            created_at=int(time.time())
-                        )
-                    except Exception as e:
-                        print(f"[smtp] storage save failed: {e}")
-                return "250 OK"
-            except Exception as e:
-                print(f"[smtp] internal emit failed ({e}); falling back to local pipeline → gotify")
+            # Forward to Jarvis core
+            _emit_internal(title, body, priority=5, source="smtp", oid="")
+            print(f"[smtp] forwarded to internal emit: {INTERNAL_EMIT_URL}")
 
-            # Fallback: local beautify/LLM + gotify
-            out, extras, used_llm, used_beautify = _transform(title, body, CHAT_MOOD)
-            status = _post(title, out, extras)
-
+            # Save to inbox (for observability)
             if storage:
                 try:
                     storage.save_message(
                         title=title,
-                        body=out or "",
-                        source="smtp_fallback",
+                        body=body or "",
+                        source="smtp_intake",
                         priority=5,
-                        extras={
-                            "extras": extras or {},
-                            "mood": CHAT_MOOD,
-                            "used_llm": used_llm,
-                            "used_beautify": used_beautify,
-                            "status": int(status)
-                        },
+                        extras={"forwarded_to_internal": True},
                         created_at=int(time.time())
                     )
                 except Exception as e:
                     print(f"[smtp] storage save failed: {e}")
 
+            # Always return "250 OK" so senders don't retry; Jarvis handles output.
             return "250 OK"
         except Exception as e:
-            print(f"[smtp] error: {e}")
-            return "451 Internal error"
+            print(f"[smtp] forward error: {e}")
+            # Still acknowledge OK to avoid mailer retries/duplicates
+            return "250 OK"
 
 def main():
     bind = os.getenv("smtp_bind","0.0.0.0")
     port = int(os.getenv("smtp_port","2525"))
     ctrl = Controller(Handler(), hostname=bind, port=port)
     ctrl.start()
-    print(f"[smtp] listening on {bind}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD}) — forwarding to {INTERNAL_EMIT_URL}")
+    print(f"[smtp] listening on {bind}:{port} — forwarding to {INTERNAL_EMIT_URL}")
     try:
         asyncio.get_event_loop().run_forever()
     finally:
