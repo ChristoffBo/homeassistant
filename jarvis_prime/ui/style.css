@@ -1,4 +1,4 @@
-/* Jarvis Prime — Notify (Outlook/ntfy Dark, Android/Ingress safe) */
+/* Jarvis Prime — Notify (Outlook/ntfy Dark, Android/Ingress safe, fluid/mobile-first) */
 :root{
   --bg:#0b0f14; --g1:#0f1a2c; --g2:#0c1424;
   --panel:#121826; --panel-2:#0f1623; --edge:#1f2a44;
@@ -6,30 +6,32 @@
   --danger:#ff6b6b; --ok:#39d98a; --warn:#f5a524;
   --r:12px; --shadow:0 10px 30px rgba(0,0,0,.45);
 
-  /* Mobile scaling vars */
+  /* Fluid spacing/typography */
   --pad:12px;
   --gap:12px;
-  --font-base: clamp(14px, 1.6vw, 16px);
+  --font-base: clamp(15px, 1.6vw, 16px);
 }
+
 *{ box-sizing:border-box }
 html,body{
-  margin:0; height:100%;
+  margin:0; min-height:100%;
   background:radial-gradient(1200px 800px at 20% -10%, #0e2743, transparent), var(--bg);
   color:var(--text);
   font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,"Noto Sans",sans-serif;
   font-size: var(--font-base);
+  line-height: 1.4;
   overflow-x: hidden;
 }
 
-/* Header */
+/* Header (lightweight, sticky) */
 .hdr{ position:sticky; top:0; z-index:40; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 16px; background:linear-gradient(180deg,var(--g1),var(--g2)); border-bottom:1px solid var(--edge); box-shadow:var(--shadow); min-height:56px }
 .hdr-left{ display:flex; align-items:center; gap:10px }
 .logo{ width:36px; height:36px; border-radius:10px; box-shadow:0 0 22px rgba(46,168,255,.25) }
 .brand .title{ font-weight:700; letter-spacing:.2px }
 .brand .subtitle{ color:var(--muted); font-size:12px }
-.hdr-right{ display:flex; align-items:center; gap:8px }
-.search-wrap{ display:flex; align-items:center; gap:6px; background:var(--panel-2); border:1px solid var(--edge); border-radius:999px; padding:6px 10px }
-.search-wrap input{ background:transparent; border:0; outline:0; color:var(--text) }
+.hdr-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+.search-wrap{ display:flex; align-items:center; gap:6px; background:var(--panel-2); border:1px solid var(--edge); border-radius:999px; padding:6px 10px; min-width: 200px; }
+.search-wrap input{ background:transparent; border:0; outline:0; color:var(--text); min-width:0; width: 12ch; }
 .btn{ background:var(--panel-2); border:1px solid var(--edge); color:var(--text); padding:8px 12px; border-radius:10px; cursor:pointer; min-height:40px }
 .btn:hover{ border-color:var(--accent) }
 .btn.primary{ background:linear-gradient(180deg,#1c87d6,#1564b1); border:none; color:#fff }
@@ -45,23 +47,26 @@ input[type="number"], select, textarea {
   border-radius: 10px;
   padding: 8px 10px;
   outline: none;
+  min-height: 40px;
 }
 input::placeholder, textarea::placeholder { color: var(--muted); }
 
-/* Layout: two panes + filter rail (Android-safe height) */
+/* Layout: rail | feed | detail  — FLUID (no hard height locks) */
 .layout{
   display:grid;
   grid-template-columns: 260px 1fr 42%;
   grid-template-areas: "rail feed detail";
   gap:14px;
   padding:14px 16px 16px 16px;
-  height: calc(100vh - 56px);
+  /* use min-height so page can grow, but still fill screen */
+  min-height: calc(100vh - 56px);
 }
-@supports (height: 100dvh){
-  .layout{ height: calc(100dvh - 56px); }
+@supports (min-height: 100dvh){
+  .layout{ min-height: calc(100dvh - 56px); }
 }
 
-.rail{ grid-area: rail; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; height:100% }
+/* Left rail */
+.rail{ grid-area: rail; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
 .rail-head{ display:flex; justify-content:space-between; align-items:center; padding:12px; color:var(--muted); font-size:12px }
 .tabs{ display:grid; gap:6px; padding:0 12px }
 .tab{ text-align:left; padding:8px 10px; border-radius:8px; border:1px solid var(--edge); background:var(--panel-2); color:var(--text); cursor:pointer }
@@ -75,21 +80,44 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .lbl.inline{ justify-content:flex-start }
 .btn.full{ width:100%; text-align:center }
 
-.feed{ grid-area: feed; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow-y:auto; height:100%; padding:8px; -webkit-overflow-scrolling: touch; display:grid; gap:var(--gap); }
+/* Feed: let page scroll naturally; only desktop gets internal scroll */
+.feed{
+  grid-area: feed;
+  background:var(--panel);
+  border:1px solid var(--edge);
+  border-radius:var(--r);
+  box-shadow:var(--shadow);
+  padding:8px;
+  display:grid;
+  gap:var(--gap);
+}
+
+/* Message rows — wrap by default (no forced ellipses) */
 .row{
-  display:grid; grid-template-columns: 6px 1fr auto; align-items:center;
-  gap:10px; padding:10px 12px; border-radius:10px; cursor:pointer;
+  display:grid;
+  grid-template-columns: 6px 1fr auto;
+  align-items:center;
+  gap:10px;
+  padding:10px 12px;
+  border-radius:10px;
+  cursor:pointer;
 }
 .row:hover{ background:var(--panel-2); border:1px solid var(--edge) }
 .row .dot{ width:6px; height:6px; border-radius:999px; background:transparent; border:1px solid var(--edge) }
 .row.unread .dot{ background:var(--accent) }
-.row .title{ font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.row .title{ font-weight:700; white-space:normal; overflow:visible; text-overflow:clip }
 .row .meta{ color:var(--muted); font-size:12px; white-space:nowrap }
-.row .src{ color:#7bc2ff; margin-left:8px; font-weight:600 }
-.row .snippet{ color:var(--muted); margin-left:6px }
-.row + .row{ margin-top:6px }
+.row .src{ color:#7bc2ff; margin-left:8px; font-weight:600; white-space:nowrap }
+.row .snippet{ color:var(--muted); margin-left:6px; display:inline }
 
-.detail{ grid-area: detail; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow-y:auto; height:100%; -webkit-overflow-scrolling: touch; }
+/* Detail */
+.detail{
+  grid-area: detail;
+  background:var(--panel);
+  border:1px solid var(--edge);
+  border-radius:var(--r);
+  box-shadow:var(--shadow);
+}
 .detail .wrap{ padding:20px; display:grid; gap:14px }
 .detail h2{ margin:0; font-size:28px; line-height:1.2 }
 .badges{ display:flex; gap:8px; flex-wrap:wrap }
@@ -129,22 +157,58 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 /* mobile helpers + single-pane behavior */
 .mobile-only{ display:none; }
 
+/* === Mobile/tablet: natural flow, one scroll, no inner scroll traps === */
 @media (max-width:1100px){
   .mobile-only{ display:inline-block; }
-  .layout{ grid-template-columns: 1fr; grid-template-areas: "feed"; padding: var(--pad); }
+
+  /* Single column: show feed; detail appears as page when opened */
+  .layout{
+    grid-template-columns: 1fr;
+    grid-template-areas: "feed";
+    padding: var(--pad);
+    min-height: auto; /* let document height grow naturally */
+  }
+
   .rail{ display:none }
+
+  /* Feed becomes primary scroll (page scrolls; no nested overflow) */
+  .feed{ padding: var(--pad); gap: var(--gap); }
+
+  /* Rows: two-line natural wrap, time on the right */
+  .row{
+    grid-template-columns: 1fr auto;
+    align-items: start;
+    border:1px solid var(--edge);
+    background:var(--panel-2);
+    min-height:48px;
+  }
+  .row .dot{ display:none }
+  .row .title{ margin-right:10px; }
+  .row .snippet{ display:block; margin:6px 0 0 0; }
+  .row .meta{ white-space:nowrap; opacity:.9; font-size:.92rem; margin-left:8px; }
+
+  /* Detail shown as its own page */
   .detail{ display:none }
   body.mobile-detail .feed{ display:none }
   body.mobile-detail .detail{ display:block; grid-area:feed; }
+  body.mobile-detail .detail .wrap{ padding:16px; }
 
-  /* Mobile card style for rows */
-  .row{ grid-template-columns: 1fr; gap:6px; padding:12px; border:1px solid var(--edge); background:var(--panel-2); }
-  .row .title{ white-space:normal; overflow:visible; text-overflow:unset; }
-  .row .meta{ white-space:normal; }
-
-  /* Adjust feed spacing */
-  .feed{ padding: var(--pad); gap: var(--gap); }
+  .hdr-right{ gap:6px; }
+  .search-wrap input{ height:40px; }
+  .btn, .btn.icon{ min-height:44px; }
 }
 
-/* Ensure no sideways scroll */
-* { max-width: 100%; }
+/* Desktop-only: allow internal scroll (keeps your desktop feel) */
+@media (min-width:1101px){
+  .feed{ max-height: 100%; overflow:auto; -webkit-overflow-scrolling: touch; }
+  .detail{ max-height: 100%; overflow:auto; -webkit-overflow-scrolling: touch; }
+}
+
+/* Safe-area so content doesn’t sit under system bars */
+@supports (padding: max(0px)) {
+  .feed { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .compose.open, .drawer.open { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* Ensure no sideways scroll from rogue elements */
+*{ max-width:100%; }
