@@ -1,36 +1,31 @@
-/* Jarvis Prime — Notify (Outlook/ntfy Dark, Android/Ingress safe, fluid/mobile-first) */
+/* Jarvis Prime — Notify (v6) — fluid, mobile-first, no scroll traps on phones */
 :root{
   --bg:#0b0f14; --g1:#0f1a2c; --g2:#0c1424;
   --panel:#121826; --panel-2:#0f1623; --edge:#1f2a44;
   --text:#d7e3ff; --muted:#9aa4c7; --accent:#2ea8ff; --accent2:#7fd8ff;
   --danger:#ff6b6b; --ok:#39d98a; --warn:#f5a524;
   --r:12px; --shadow:0 10px 30px rgba(0,0,0,.45);
-
-  /* Fluid spacing/typography */
-  --pad:12px;
-  --gap:12px;
-  --font-base: clamp(15px, 1.6vw, 16px);
+  --pad:12px; --gap:12px; --font: clamp(15px, 1.6vw, 16px);
 }
-
 *{ box-sizing:border-box }
 html,body{
   margin:0; min-height:100%;
   background:radial-gradient(1200px 800px at 20% -10%, #0e2743, transparent), var(--bg);
   color:var(--text);
   font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,"Noto Sans",sans-serif;
-  font-size: var(--font-base);
+  font-size: var(--font);
   line-height: 1.4;
   overflow-x: hidden;
 }
 
-/* Header (lightweight, sticky) */
+/* Header */
 .hdr{ position:sticky; top:0; z-index:40; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 16px; background:linear-gradient(180deg,var(--g1),var(--g2)); border-bottom:1px solid var(--edge); box-shadow:var(--shadow); min-height:56px }
 .hdr-left{ display:flex; align-items:center; gap:10px }
 .logo{ width:36px; height:36px; border-radius:10px; box-shadow:0 0 22px rgba(46,168,255,.25) }
 .brand .title{ font-weight:700; letter-spacing:.2px }
 .brand .subtitle{ color:var(--muted); font-size:12px }
 .hdr-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap }
-.search-wrap{ display:flex; align-items:center; gap:6px; background:var(--panel-2); border:1px solid var(--edge); border-radius:999px; padding:6px 10px; min-width: 200px; }
+.search-wrap{ display:flex; align-items:center; gap:6px; background:var(--panel-2); border:1px solid var(--edge); border-radius:999px; padding:6px 10px; min-width: 180px; }
 .search-wrap input{ background:transparent; border:0; outline:0; color:var(--text); min-width:0; width: 12ch; }
 .btn{ background:var(--panel-2); border:1px solid var(--edge); color:var(--text); padding:8px 12px; border-radius:10px; cursor:pointer; min-height:40px }
 .btn:hover{ border-color:var(--accent) }
@@ -38,7 +33,7 @@ html,body{
 .btn.danger{ background:linear-gradient(180deg,#c54a4a,#a53838); border:none; color:#fff }
 .btn.icon{ padding:8px 10px }
 
-/* Global dark form controls */
+/* Controls */
 input[type="text"], input[type="search"], input[type="password"],
 input[type="number"], select, textarea {
   background: var(--panel-2);
@@ -51,36 +46,19 @@ input[type="number"], select, textarea {
 }
 input::placeholder, textarea::placeholder { color: var(--muted); }
 
-/* Layout: rail | feed | detail  — FLUID (no hard height locks) */
+/* Layout – mobile-first (one column, natural scroll) */
 .layout{
-  display:grid;
-  grid-template-columns: 260px 1fr 42%;
-  grid-template-areas: "rail feed detail";
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-areas: "feed";
   gap:14px;
   padding:14px 16px 16px 16px;
-  /* use min-height so page can grow, but still fill screen */
-  min-height: calc(100vh - 56px);
-}
-@supports (min-height: 100dvh){
-  .layout{ min-height: calc(100dvh - 56px); }
 }
 
-/* Left rail */
-.rail{ grid-area: rail; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
-.rail-head{ display:flex; justify-content:space-between; align-items:center; padding:12px; color:var(--muted); font-size:12px }
-.tabs{ display:grid; gap:6px; padding:0 12px }
-.tab{ text-align:left; padding:8px 10px; border-radius:8px; border:1px solid var(--edge); background:var(--panel-2); color:var(--text); cursor:pointer }
-.tab.active{ outline:2px solid var(--accent) }
-.sources{ display:flex; gap:8px; flex-wrap:wrap; padding:12px }
-.chip.src{ background:var(--panel-2); border:1px solid var(--edge); padding:6px 10px; border-radius:999px; cursor:pointer; color:var(--text) }
-.chip.src.active, .chip.src:hover{ border-color:var(--accent) }
-.rail-spacer{ flex:1 1 auto }
-.rail-bottom{ padding:12px; border-top:1px solid var(--edge); display:grid; gap:8px }
-.lbl{ color:var(--muted); font-size:12px; display:flex; align-items:center; gap:6px }
-.lbl.inline{ justify-content:flex-start }
-.btn.full{ width:100%; text-align:center }
+/* Rail (hidden on mobile) */
+.rail{ display:none; }
 
-/* Feed: let page scroll naturally; only desktop gets internal scroll */
+/* Feed */
 .feed{
   grid-area: feed;
   background:var(--panel);
@@ -92,27 +70,28 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   gap:var(--gap);
 }
 
-/* Message rows — wrap by default (no forced ellipses) */
+/* Message rows (card style) */
 .row{
   display:grid;
-  grid-template-columns: 6px 1fr auto;
-  align-items:center;
+  grid-template-columns: 1fr auto;
+  align-items:start;
   gap:10px;
-  padding:10px 12px;
+  padding:12px 14px;
   border-radius:10px;
+  border:1px solid var(--edge);
+  background:var(--panel-2);
   cursor:pointer;
 }
-.row:hover{ background:var(--panel-2); border:1px solid var(--edge) }
-.row .dot{ width:6px; height:6px; border-radius:999px; background:transparent; border:1px solid var(--edge) }
-.row.unread .dot{ background:var(--accent) }
-.row .title{ font-weight:700; white-space:normal; overflow:visible; text-overflow:clip }
-.row .meta{ color:var(--muted); font-size:12px; white-space:nowrap }
+.row:hover{ border-color:var(--accent); }
+.row .dot{ display:none }
+.row.unread .dot{ display:none } /* dot not needed in compact card */
+.row .title{ font-weight:700; white-space:normal; overflow:visible; text-overflow:clip; margin-right:10px; }
 .row .src{ color:#7bc2ff; margin-left:8px; font-weight:600; white-space:nowrap }
-.row .snippet{ color:var(--muted); margin-left:6px; display:inline }
+.row .snippet{ color:var(--muted); display:block; margin-top:6px; }
+.row .meta{ color:var(--muted); font-size:.92rem; white-space:nowrap; margin-left:8px; }
 
-/* Detail */
+/* Detail (appears as page on mobile) */
 .detail{
-  grid-area: detail;
   background:var(--panel);
   border:1px solid var(--edge);
   border-radius:var(--r);
@@ -125,7 +104,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .body{ background:var(--panel-2); border:1px solid var(--edge); border-radius:10px; padding:14px; white-space:pre-wrap; word-break:break-word; line-height:1.5 }
 .actions{ display:flex; gap:10px; align-items:center; margin-top:6px }
 
-/* Floating compose */
+/* Compose */
 .fab{ position:fixed; right:20px; bottom:20px; width:56px; height:56px; border-radius:999px; background:linear-gradient(180deg,#1c87d6,#1564b1); color:#fff; font-size:28px; border:none; cursor:pointer; box-shadow:0 10px 30px rgba(0,0,0,.4); z-index:120 }
 .compose{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; background:rgba(0,0,0,.35); z-index:120 }
 .compose.open{ display:flex }
@@ -135,7 +114,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .sheet-body{ padding:12px 14px }
 .sheet-actions{ padding:12px 14px; display:flex; align-items:center; gap:10px; border-top:1px solid var(--edge) }
 
-/* Settings Drawer (opens from right when gear clicked) */
+/* Drawer */
 .drawer{ position:fixed; inset:0; display:none; z-index:200; }
 .drawer.open{ display:block; }
 .drawer::before{ content:""; position:absolute; inset:0; background:rgba(0,0,0,.45); }
@@ -154,61 +133,42 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 #toast{ position:fixed; right:16px; bottom:90px; display:grid; gap:8px; z-index:250 }
 .toast{ background:var(--panel); border:1px solid var(--edge); padding:10px 12px; border-radius:10px; box-shadow:var(--shadow) }
 
-/* mobile helpers + single-pane behavior */
+/* Mobile detail mode switch */
 .mobile-only{ display:none; }
+.detail{ display:none; }
+body.mobile-detail .feed{ display:none; }
+body.mobile-detail .detail{ display:block; }
 
-/* === Mobile/tablet: natural flow, one scroll, no inner scroll traps === */
-@media (max-width:1100px){
-  .mobile-only{ display:inline-block; }
-
-  /* Single column: show feed; detail appears as page when opened */
+/* Desktop breakpoint: restore 3-pane grid + internal scroll */
+@media (min-width:1100px){
+  .mobile-only{ display:none; }
   .layout{
-    grid-template-columns: 1fr;
-    grid-template-areas: "feed";
-    padding: var(--pad);
-    min-height: auto; /* let document height grow naturally */
+    grid-template-columns: 260px 1fr 42%;
+    grid-template-areas: "rail feed detail";
   }
+  .rail{ display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--edge); border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
+  .rail-head{ display:flex; justify-content:space-between; align-items:center; padding:12px; color:var(--muted); font-size:12px }
+  .tabs{ display:grid; gap:6px; padding:0 12px }
+  .tab{ text-align:left; padding:8px 10px; border-radius:8px; border:1px solid var(--edge); background:var(--panel-2); color:var(--text); cursor:pointer }
+  .tab.active{ outline:2px solid var(--accent) }
+  .sources{ display:flex; gap:8px; flex-wrap:wrap; padding:12px }
+  .chip.src{ background:var(--panel-2); border:1px solid var(--edge); padding:6px 10px; border-radius:999px; cursor:pointer; color:var(--text) }
+  .chip.src.active, .chip.src:hover{ border-color:var(--accent) }
+  .rail-spacer{ flex:1 1 auto }
+  .rail-bottom{ padding:12px; border-top:1px solid var(--edge); display:grid; gap:8px }
+  .lbl{ color:var(--muted); font-size:12px; display:flex; align-items:center; gap:6px }
+  .lbl.inline{ justify-content:flex-start }
+  .btn.full{ width:100%; text-align:center }
 
-  .rail{ display:none }
-
-  /* Feed becomes primary scroll (page scrolls; no nested overflow) */
-  .feed{ padding: var(--pad); gap: var(--gap); }
-
-  /* Rows: two-line natural wrap, time on the right */
-  .row{
-    grid-template-columns: 1fr auto;
-    align-items: start;
-    border:1px solid var(--edge);
-    background:var(--panel-2);
-    min-height:48px;
-  }
-  .row .dot{ display:none }
-  .row .title{ margin-right:10px; }
-  .row .snippet{ display:block; margin:6px 0 0 0; }
-  .row .meta{ white-space:nowrap; opacity:.9; font-size:.92rem; margin-left:8px; }
-
-  /* Detail shown as its own page */
-  .detail{ display:none }
-  body.mobile-detail .feed{ display:none }
-  body.mobile-detail .detail{ display:block; grid-area:feed; }
-  body.mobile-detail .detail .wrap{ padding:16px; }
-
-  .hdr-right{ gap:6px; }
-  .search-wrap input{ height:40px; }
-  .btn, .btn.icon{ min-height:44px; }
+  .detail{ display:block; max-height: calc(100vh - 96px); overflow:auto; -webkit-overflow-scrolling: touch; }
+  .feed{ max-height: calc(100vh - 96px); overflow:auto; -webkit-overflow-scrolling: touch; }
 }
 
-/* Desktop-only: allow internal scroll (keeps your desktop feel) */
-@media (min-width:1101px){
-  .feed{ max-height: 100%; overflow:auto; -webkit-overflow-scrolling: touch; }
-  .detail{ max-height: 100%; overflow:auto; -webkit-overflow-scrolling: touch; }
-}
-
-/* Safe-area so content doesn’t sit under system bars */
+/* Safe-area */
 @supports (padding: max(0px)) {
   .feed { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .compose.open, .drawer.open { padding-bottom: env(safe-area-inset-bottom); }
 }
 
-/* Ensure no sideways scroll from rogue elements */
+/* Guard against sideways scroll from rogue elements */
 *{ max-width:100%; }
