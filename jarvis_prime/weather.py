@@ -228,3 +228,29 @@ def handle_weather_command(command: str):
     if any(word in cmd for word in ["weather", "temperature", "temp", "now", "today"]):
         return current_weather()
     return "⚠️ Unknown weather command", None
+
+# -----------------------------
+# EnviroGuard helper
+# -----------------------------
+_LAST_TEMP = {"ts": None, "temp": None, "lat": None, "lon": None}
+
+def current_temp(lat: float, lon: float, max_stale_minutes: int = 360):
+    """Return (temp_c, ts_iso) or (None, error)."""
+    try:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        if _LAST_TEMP["ts"] and _LAST_TEMP["lat"] == lat and _LAST_TEMP["lon"] == lon:
+            age_min = (now - _LAST_TEMP["ts"]).total_seconds() / 60.0
+            if age_min <= max_stale_minutes and _LAST_TEMP["temp"] is not None:
+                return float(_LAST_TEMP["temp"]), _LAST_TEMP["ts"].isoformat(timespec="minutes")
+        import requests
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&temperature_unit=celsius"
+        data = requests.get(url, timeout=10).json()
+        cw = data.get("current_weather", {})
+        if "temperature" not in cw:
+            return None, "No temperature"
+        temp = float(cw["temperature"])
+        _LAST_TEMP.update({"ts": now, "temp": temp, "lat": lat, "lon": lon})
+        return temp, now.isoformat(timespec="minutes")
+    except Exception as e:
+        return None, f"weather.current_temp failed: {e}"
