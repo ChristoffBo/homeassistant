@@ -1,3 +1,14 @@
+## 1.1.4 (2025-09-04 19:00:00)
+- Jarvis is now fully self-contained: all intakes (SMTP, Proxy, Webhook, Apprise) forward into /internal/emit
+- Removed all hardcoded Gotify posting from sidecars — Jarvis is no longer dependent on Gotify as a server
+- Centralized pipeline ensures all messages are beautified and riffed before any outputs
+- Riffs now applied consistently across SMTP, Proxy, and Webhook modules
+- Duplicate message issue resolved (no more double-post from sidecars)
+- Boot screen updated to show Jarvis as standalone Notification Server
+- Options.json simplified: output toggles (Gotify, ntfy, SMTP out, etc.) now only apply at Jarvis core
+- **New:** Riffs explained — a "riff" is a short persona-driven remark or embellishment added to each message by Jarvis’s LLM + Beautify engine.  
+  Example: a plain "Backup complete" message becomes "📦 Backup complete — mission accomplished, Captain!" depending on the active persona.
+
 ## 1.1.3 (2025-09-02 21:30:00)
 - Added Webhook intake server with token support (POST /webhook)
 - Webhook pushes now beautified via LLM → Beautify pipeline
