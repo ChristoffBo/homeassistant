@@ -194,24 +194,116 @@
     }
   }
 
+  // ---- Hardened SSE with heartbeat/backoff/visibility-online hooks ----
+  let sseCtl = {
+    es: null,
+    timerHeartbeat: null,
+    timerBackoff: null,
+    lastBeat: 0,
+    backoffMs: 1000,
+    maxBackoff: 15000,
+    running: false
+  };
+
+  function clearTimers(){
+    if (sseCtl.timerHeartbeat) { clearTimeout(sseCtl.timerHeartbeat); sseCtl.timerHeartbeat = null; }
+    if (sseCtl.timerBackoff)   { clearTimeout(sseCtl.timerBackoff);   sseCtl.timerBackoff = null; }
+  }
+
+  function scheduleHeartbeatCheck(){
+    clearTimeout(sseCtl.timerHeartbeat);
+    sseCtl.timerHeartbeat = setTimeout(()=>{
+      // If no message/ping within 35s, restart the stream
+      const age = Date.now() - sseCtl.lastBeat;
+      if (age > 35000) {
+        try { sseCtl.es && sseCtl.es.close(); } catch {}
+        reconnect('Heartbeat timeout');
+      } else {
+        scheduleHeartbeatCheck();
+      }
+    }, 35000);
+  }
+
+  function reconnect(reason){
+    clearTimers();
+    if (!sseCtl.running) return;
+    const wait = Math.min(sseCtl.backoffMs, sseCtl.maxBackoff);
+    console.warn('[SSE] reconnect in', wait, 'ms —', reason || '');
+    sseCtl.timerBackoff = setTimeout(()=> {
+      sseCtl.backoffMs = Math.min(sseCtl.backoffMs * 2, sseCtl.maxBackoff);
+      openStream();
+    }, wait);
+  }
+
+  function openStream(){
+    try { sseCtl.es && sseCtl.es.close(); } catch {}
+    clearTimers();
+
+    const url = u('api/stream');
+    const es = new EventSource(url, { withCredentials: false });
+    sseCtl.es = es;
+    sseCtl.lastBeat = Date.now();
+    scheduleHeartbeatCheck();
+
+    let announcedLoss = false;
+
+    es.onopen = () => {
+      sseCtl.backoffMs = 1000;
+      sseCtl.lastBeat = Date.now();
+      scheduleHeartbeatCheck();
+      if (announcedLoss) toast('Reconnected');
+      announcedLoss = false;
+    };
+
+    // Treat ANY message (including keepalive/comments if proxied) as a heartbeat
+    es.onmessage = (e) => {
+      sseCtl.lastBeat = Date.now();
+      scheduleHeartbeatCheck();
+      try{
+        if (!e.data) return; // allow empty keepalives
+        const data = JSON.parse(e.data||'{}');
+        if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
+          if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
+          load(state.active);
+        }
+      }catch{}
+    };
+
+    es.onerror = () => {
+      // Some proxies fire a spurious onerror immediately; debounce via heartbeat/backoff
+      if (!announcedLoss) { toast('Live stream lost. Reconnecting…'); announcedLoss = true; }
+      try { es.close(); } catch {}
+      reconnect('onerror');
+    };
+  }
+
   function startLive(){
-    let backoff = 1000;
-    function connect(){
-      const es = new EventSource(u('api/stream'));
-      let opened=false;
-      es.onopen = ()=>{ opened=true; backoff=1000; };
-      es.onerror = ()=>{ try{es.close();}catch{}; if(opened) toast('Connection lost. Reconnecting…'); setTimeout(connect, Math.min(backoff,10000)); backoff=Math.min(backoff*2,10000); };
-      es.onmessage = (e)=>{
-        try{
-          const data = JSON.parse(e.data||'{}');
-          if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
-            if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
-            load(state.active);
-          }
-        }catch{}
-      };
-    }
-    connect();
+    if (sseCtl.running) return;
+    sseCtl.running = true;
+    openStream();
+
+    // Reconnect when tab becomes visible again (Ingress/mobile suspends timers)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        sseCtl.backoffMs = 1000;
+        reconnect('tab visible');
+      }
+    });
+
+    // Reconnect when network returns
+    window.addEventListener('online', () => {
+      sseCtl.backoffMs = 1000;
+      reconnect('browser online');
+    });
+
+    // Clean up on unload
+    window.addEventListener('beforeunload', () => {
+      sseCtl.running = false;
+      try { sseCtl.es && sseCtl.es.close(); } catch {}
+      clearTimers();
+    });
+
+    // Periodic soft refresh as a safety net (every 5 min)
     setInterval(()=> load(state.active), 300000);
   }
 
