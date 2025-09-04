@@ -1,6 +1,7 @@
 import json, yaml, requests, random
 from datetime import datetime, timezone
 # No tabulate: sleek AI-style aligned output (no tables)
+from typing import Optional, Tuple, Dict, Any  # ADDITIVE
 
 # -----------------------------
 # Load config from /data/options.json
@@ -132,6 +133,70 @@ def _commentary(temp_max, code):
 
 def _kv(label, value):
     return f"    {label}: {value}"
+
+# -----------------------------
+# ADDITIVE: lightweight probe for controllers (EnviroGuard, etc.)
+# -----------------------------
+def get_current_snapshot() -> Dict[str, Any]:
+    """
+    Lightweight current-weather probe for controllers.
+    Returns: {
+        "enabled": bool,
+        "city": str,
+        "temp_c": Optional[float],
+        "code": Optional[int],
+        "time": Optional[str],
+        "lat": float,
+        "lon": float,
+        "source": "open-meteo"
+    }
+    """
+    if not ENABLED:
+        return {
+            "enabled": False, "city": CITY, "temp_c": None, "code": None,
+            "time": None, "lat": LAT, "lon": LON, "source": "open-meteo"
+        }
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&current_weather=true"
+        f"&temperature_unit=celsius&windspeed_unit=kmh"
+    )
+    data = _get_json(url)
+    cw = (data or {}).get("current_weather", {}) if isinstance(data, dict) else {}
+    temp = cw.get("temperature", None)
+    code = cw.get("weathercode", None)
+    ts   = cw.get("time", None)
+    try:
+        temp = float(temp) if temp is not None else None
+    except Exception:
+        temp = None
+    return {
+        "enabled": True, "city": CITY, "temp_c": temp, "code": code,
+        "time": ts, "lat": LAT, "lon": LON, "source": "open-meteo"
+    }
+
+def get_today_peak_c() -> Optional[float]:
+    """
+    Returns today's forecasted max temperature in °C (if available), else None.
+    """
+    if not ENABLED:
+        return None
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&daily=temperature_2m_max"
+        f"&timezone=auto&temperature_unit=celsius"
+    )
+    data = _get_json(url)
+    daily = (data or {}).get("daily", {}) if isinstance(data, dict) else {}
+    arr = daily.get("temperature_2m_max") or []
+    if not arr:
+        return None
+    try:
+        return float(arr[0])
+    except Exception:
+        return None
 
 # -----------------------------
 # Current Weather
