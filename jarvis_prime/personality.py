@@ -1,10 +1,11 @@
+#!/usr/bin/env python3
 # /app/personality.py
 # Persona quip engine for Jarvis Prime
 # API:
 #   - quip(persona_name: str, *, with_emoji: bool = True) -> str
 #   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]
 
-import random, os, importlib, textwrap, re
+import random, os, importlib, re
 from typing import List
 
 # ---- Canonical personas (8 total, locked) ----
@@ -37,7 +38,7 @@ ALIASES = {
     "ops": "ops", "neutral": "ops", "no persona": "ops",
 }
 
-# ---- Emoji palettes (sprinkled randomly) ----
+# ---- Emoji palettes ----
 EMOJIS = {
     "dude":      ["🌴", "🕶️", "🍹", "🎳", "🧘", "🤙"],
     "chick":     ["💅", "✨", "💖", "👛", "🛍️", "💋"],
@@ -57,7 +58,7 @@ def _maybe_emoji(key: str, with_emoji: bool) -> str:
 
 # ---- Quip banks (canned top-of-card line) ----
 QUIPS = {
-    "dude": [
+"dude": [
         "The Dude abides; the logs can, like, chill.",
         "Most excellent, sys-bro—uptime’s riding a wave.",
         "This deploy really tied the room together.",
@@ -100,7 +101,7 @@ QUIPS = {
         "I tuned jitter with a lullaby.",
         "Abide, retry, succeed.",
     ],
-"chick": [
+    "chick": [
         "That’s hot. Ship it and make it sparkle.",
         "Obsessed with this uptime—like, can I keep it?",
         "Darling, the graphs are giving main character.",
@@ -245,7 +246,7 @@ QUIPS = {
         "The incident is over when I say it’s over.",
         "Get in, loser—we’re hunting heisenbugs.",
     ],
-    "comedian": [
+"comedian": [
         "I am serious. And don’t call me Shirley.",
         "Remarkably unremarkable—my favorite kind of uptime.",
         "Doing nothing is hard; you never know when you’re finished.",
@@ -398,24 +399,13 @@ def _canon(name: str) -> str:
     key = ALIASES.get(n, n)
     return key if key in QUIPS else "ops"
 
-# ---- Persona prompt styles ----
-PROMPT_STYLE = {
-    "dude": "Chill, laid-back, surfer/slacker wisdom. Short, spaced-out but kind.",
-    "chick": "Sassy, glamorous, flirty influencer tone. Attitude and sparkle.",
-    "nerd": "Precise, sarcastic, highly technical. Geek humor and references.",
-    "rager": "Profane, explosive, angry rants. Aggressive and confrontational.",
-    "comedian": "Deadpan, absurd, ironic. Dry humor and witty remarks.",
-    "action": "Action hero bravado. Short, punchy, dramatic one-liners.",
-    "jarvis": "Polite, formal but witty majordomo. Elegant and deferential.",
-    "ops": "Neutral, terse, operational. Acknowledgements and status updates.",
-}
-
 # ---- Public API: LLM riffs (BOTTOM) ----
 def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> List[str]:
     """
     Generate 1–N SHORT persona-flavored lines based on context.
     Prefers llm_client.persona_riff(); falls back to llm_client.rewrite() if needed.
     """
+    # Disabled globally?
     if os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() not in ("1","true","yes"):
         return []
 
@@ -424,17 +414,19 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
     if not context:
         return []
 
+    # Profanity gate for 'rager'
     allow_prof = (
         os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes")
         and key == "rager"
     )
 
+    # Try persona_riff first (purpose-built)
     try:
         llm = importlib.import_module("llm_client")
     except Exception:
         return []
 
-    # Try persona_riff first
+    # 1) persona_riff path
     if hasattr(llm, "persona_riff"):
         try:
             lines = llm.persona_riff(
@@ -446,8 +438,7 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
                 models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
                 base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
                 model_url=os.getenv("LLM_MODEL_URL", ""),
-                model_path=os.getenv("LLM_MODEL_PATH", ""),
-                style_hint=PROMPT_STYLE.get(key, "")
+                model_path=os.getenv("LLM_MODEL_PATH", "")
             )
             lines = _post_clean(lines, key, allow_prof)
             if lines:
@@ -455,12 +446,12 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
         except Exception:
             pass
 
-    # Fallback to rewrite()
+    # 2) Fallback to rewrite() (older path)
     if hasattr(llm, "rewrite"):
         try:
             sys_prompt = (
                 "YOU ARE A PITHY ONE-LINER ENGINE.\n"
-                f"Persona: {key}. Style hint: {PROMPT_STYLE.get(key,'short and witty')}.\n"
+                f"Persona: {key}. Style hint: short, clean, attitude.\n"
                 f"Rules: Produce ONLY {min(3, max(1, int(max_lines or 3)))} lines; each under 140 chars.\n"
                 "No lists, no numbers, no JSON, no labels."
             )
@@ -476,6 +467,7 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
                 model_path=os.getenv("LLM_MODEL_PATH", ""),
                 allow_profanity=bool(allow_prof),
             )
+            # Split & clean
             lines = [ln.strip(" -*\t") for ln in (raw or "").splitlines() if ln.strip()]
             lines = _post_clean(lines, key, allow_prof)
             return lines
@@ -502,8 +494,10 @@ def _post_clean(lines: List[str], persona_key: str, allow_prof: bool) -> List[st
         low = t.lower()
         if any(b in low for b in BAD):
             continue
+        # enforce 140 chars
         if len(t) > 140:
             t = t[:140].rstrip()
+        # profanity filter if not rager
         if persona_key != "rager" and not allow_prof:
             t = _soft_censor(t)
         k = t.lower()
