@@ -2,9 +2,30 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime</title>
-  <link rel="stylesheet" href="style.css?v=1.2" />
+
+  <!-- Optional: override API base if UI is hosted elsewhere
+       Example: window.JARVIS_API_BASE='http://10.0.0.100:2581/';
+  -->
+  <script>
+    window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;
+  </script>
+
+  <!-- Make relative URLs work for both Ingress and direct host -->
+  <script>
+    (function () {
+      var p = location.pathname;
+      if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
+      var dir = p.endsWith('/') ? p : p.replace(/[^\/]*$/, '');
+      if (!dir.endsWith('/')) dir += '/';
+      document.write('<base href="' + dir + '">');
+    })();
+  </script>
+
+  <link rel="stylesheet" href="style.css?v=1.4" />
 </head>
 <body>
   <header class="topnav">
@@ -18,6 +39,7 @@
       <button class="tablink" data-tab="llm">LLM</button>
       <button class="tablink" data-tab="enviro">EnviroGuard</button>
       <button class="tablink" data-tab="ops">Ops Engine</button>
+      <button class="tablink" data-tab="options">Options (All)</button>
       <button class="tablink" data-tab="about">About</button>
     </nav>
   </header>
@@ -32,10 +54,19 @@
         <div class="stat red">Errors: <span id="msg-err">-</span></div>
       </div>
       <table class="msg-table">
-        <thead><tr><th>Time</th><th>Source</th><th>Title</th><th>Actions</th></tr></thead>
+        <thead>
+          <tr>
+            <th>Time</th><th>Source</th><th>Title</th><th>Actions</th>
+          </tr>
+        </thead>
         <tbody id="msg-body"><tr><td colspan="4">Loading…</td></tr></tbody>
       </table>
-      <button id="del-all" class="btn danger">🗑 Delete All</button>
+      <div class="inbox-actions">
+        <label class="lbl">
+          <input type="checkbox" id="keep-arch" /> Keep archived
+        </label>
+        <button id="del-all" class="btn danger">🗑 Delete All</button>
+      </div>
     </section>
 
     <!-- Personas -->
@@ -53,21 +84,22 @@
       <h2>Intakes (Email / Gotify / ntfy)</h2>
       <div>
         <h3>Email</h3>
-        <input id="smtp-host" placeholder="smtp.example.com" />
+        <input id="smtp-host" placeholder="smtp.gmail.com" />
         <input id="smtp-port" placeholder="587" />
         <input id="smtp-user" placeholder="user" />
         <input id="smtp-pass" type="password" placeholder="password" />
+        <input id="smtp-from" placeholder="From name" />
         <button id="test-email" class="btn">Test Email</button>
       </div>
       <div>
         <h3>Gotify</h3>
-        <input id="gotify-url" placeholder="https://gotify.example" />
+        <input id="gotify-url" placeholder="http://10.0.0.99:8091" />
         <input id="gotify-token" placeholder="token" />
         <button id="test-gotify" class="btn">Test Gotify</button>
       </div>
       <div>
         <h3>ntfy</h3>
-        <input id="ntfy-url" placeholder="https://ntfy.example" />
+        <input id="ntfy-url" placeholder="http://10.0.0.99:8080" />
         <input id="ntfy-topic" placeholder="topic" />
         <button id="test-ntfy" class="btn">Test ntfy</button>
       </div>
@@ -80,20 +112,26 @@
       <p>Configure outbound channels here.</p>
     </section>
 
-    <!-- Settings -->
+    <!-- Settings (curated subset) -->
     <section id="settings" class="tab">
       <h2>Settings</h2>
       <label>Retention days <input id="retention" type="number" /></label>
       <button id="save-retention" class="btn">Save</button>
+      <label>Purge older than <input id="purge-days" type="number" /></label>
+      <button id="purge" class="btn danger">Run Purge</button>
+
+      <h3>Quiet Hours</h3>
+      <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
       <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
       <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
+      <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
       <button id="save-quiet" class="btn">Save Quiet Hours</button>
     </section>
 
     <!-- LLM -->
     <section id="llm" class="tab">
       <h2>LLM Settings</h2>
-      <label>Model <input id="llm-model" placeholder="tinyllama" /></label>
+      <label>Model <input id="llm-model" placeholder="model name" /></label>
       <label>Context Tokens <input id="llm-ctx" type="number" /></label>
       <label>Timeout (s) <input id="llm-timeout" type="number" /></label>
       <button id="save-llm" class="btn">Save LLM</button>
@@ -102,9 +140,10 @@
     <!-- EnviroGuard -->
     <section id="enviro" class="tab">
       <h2>EnviroGuard</h2>
-      <label><input type="checkbox" id="env-enabled" /> Enabled</label>
+      <p>Status: <span id="env-status">-</span></p>
       <label>Hot °C <input id="env-hot" type="number" /></label>
       <label>Cold °C <input id="env-cold" type="number" /></label>
+      <label>Hysteresis °C <input id="env-hyst" type="number" /></label>
       <button id="save-env" class="btn">Save EnviroGuard</button>
     </section>
 
@@ -114,14 +153,24 @@
       <p>Coming soon — orchestration / playbooks will run here.</p>
     </section>
 
+    <!-- Options (All) -->
+    <section id="options" class="tab">
+      <h2>Options (All)</h2>
+      <p>This renders every field from <code>/api/options</code> + <code>/api/schema</code>.</p>
+      <div id="opts-wrap"></div>
+      <div class="opts-actions">
+        <button id="save-options" class="btn primary">Save All Options</button>
+      </div>
+    </section>
+
     <!-- About -->
     <section id="about" class="tab">
       <h2>About Jarvis Prime</h2>
-      <p>Jarvis Prime Notification Orchestrator</p>
+      <p>Jarvis Prime — Technitium-style one-page UI. Ingress + direct host safe.</p>
     </section>
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=1.2"></script>
+  <script src="app.js?v=1.4"></script>
 </body>
 </html>
