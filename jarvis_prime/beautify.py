@@ -327,6 +327,65 @@ def _debug(msg: str) -> None:
         except Exception:
             pass
 
+# ============================
+# ADDITIVE: Watchtower-aware summarizer
+# ============================
+_WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
+_WT_UPDATED_RXES = [
+    # - /radarr (lscr.io/linuxserver/radarr:nightly): 30052c06bbef updated to 2091a873a55d
+    re.compile(
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*\((?P<img>[^)]+)\)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        re.I),
+    # - radarr: abcdef updated to 123456
+    re.compile(
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        re.I),
+]
+_WT_FRESH_RX = re.compile(r':\s*Fresh\s*$', re.I)
+
+def _watchtower_host_from_title(title: str) -> Optional[str]:
+    m = _WT_HOST_RX.search(title or "")
+    if m:
+        return m.group(1).strip()
+    return None
+
+def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, Dict[str, Any]]:
+    """
+    Parse Watchtower email body and return a concise markdown list of updated items only.
+    Skips 'Fresh' lines. Works across registries (ghcr.io/lscr.io/docker.io/etc).
+    """
+    lines = (body or "").splitlines()
+    updated: List[Tuple[str, str, str]] = []  # (name, image, newdigest)
+    for ln in lines:
+        if _WT_FRESH_RX.search(ln):
+            continue
+        for rx in _WT_UPDATED_RXES:
+            m = rx.match(ln)
+            if m:
+                name = (m.groupdict().get("name") or "").strip()
+                img  = (m.groupdict().get("img") or "").strip()
+                new  = (m.groupdict().get("new") or "").strip()
+                if not img:
+                    # if no explicit (img) captured, keep name as image hint
+                    img = name
+                updated.append((name, img, new))
+                break
+
+    host = _watchtower_host_from_title(title) or "unknown"
+    meta: Dict[str, Any] = {"watchtower::host": host, "watchtower::updated_count": len(updated)}
+
+    if not updated:
+        md = f"**Host:** `{host}`\n\n_No updates (all images fresh)._"
+        return md, meta
+
+    if len(updated) > max(1, limit):
+        updated = updated[:limit]
+        meta["watchtower::truncated"] = True
+
+    bullets = "\n".join([f"• `{name}` → `{img}` @ `{new}`" for name, img, new in updated])
+    md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
+    return md, meta
+
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
@@ -344,6 +403,54 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     kind = _detect_type(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs)
+
+    # ===== ADDITIVE EARLY PATH: Watchtower-aware summary =====
+    if kind == "Watchtower":
+        lines: List[str] = []
+        lines += _header("Watchtower", badge)
+
+        eff_persona = _effective_persona(persona)
+        if persona_quip:
+            pol = _persona_overlay_line(eff_persona)
+            if pol: lines += [pol]
+
+        wt_md, wt_meta = _summarize_watchtower(title, body_wo_imgs)
+        lines += ["", wt_md]
+
+        # persona riffs allowed for this type (we keep lists/numbers)
+        ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
+        riff_hint = _global_riff_hint(extras_in, source_hint)
+        riffs: List[str] = []
+        if eff_persona and riff_hint:
+            riffs = _persona_llm_riffs(ctx, eff_persona)
+        if riffs:
+            lines += ["", f"🧠 {eff_persona} riff"]
+            for r in riffs:
+                sr = r.replace("\r", "").strip()
+                if sr:
+                    lines.append("> " + sr)
+
+        text = "\n".join(lines).strip()
+        text = _format_align_check(text)
+        text = _linewise_dedup_markdown(text)
+
+        extras: Dict[str, Any] = {
+            "client::display": {"contentType": "text/markdown"},
+            "jarvis::beautified": True,
+            "jarvis::llm_riff_lines": len(riffs or []),
+            "watchtower::host": wt_meta.get("watchtower::host"),
+            "watchtower::updated_count": wt_meta.get("watchtower::updated_count"),
+        }
+        if wt_meta.get("watchtower::truncated"):
+            extras["watchtower::truncated"] = True
+        if isinstance(extras_in, dict):
+            extras.update(extras_in)
+        # keep images in extras in case upstream wants them (none expected for Watchtower)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+
+        return text, extras
+    # ===== END Watchtower special-case =====
 
     lines: List[str] = []
     lines += _header(kind, badge)
