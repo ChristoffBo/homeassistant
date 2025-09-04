@@ -1,4 +1,4 @@
-// Jarvis Prime — Notify (v6) — fluid mobile-first, hardened SSE, ingress-safe
+// Jarvis Prime — Notify v7: mobile-first, hardened SSE, ingress-safe
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
@@ -9,7 +9,7 @@
     try {
       const url = new URL(b);
       let p = url.pathname;
-      if (p.endsWith('/ui/')) p = p.slice(0, -4); // strip 'ui/'
+      if (p.endsWith('/ui/')) p = p.slice(0, -4);
       if (!p.endsWith('/')) p += '/';
       url.pathname = p;
       return url.toString();
@@ -18,26 +18,20 @@
   const ROOT = apiRoot();
   const u = (path) => new URL(path.replace(/^\/+/, ''), ROOT).toString();
 
-  // Elements
   const els = {
     feed: $('#feed'), detail: $('#detail'),
     q: $('#q'), search: $('#btn-search'), refresh: $('#btn-refresh'),
     keepArch: $('#keep-arch'), railDelAll: $('#rail-delall'),
     railTabs: $$('.tab[data-tab]'), srcChips: $$('.chip.src'),
     listCount: $('#c-all'),
-    // Compose
     fab: $('#fab'), compose: $('#compose'), composeClose: $('#compose-close'),
     wakeText: $('#wake-text'), wakeSend: $('#wake-send'),
     chime: $('#chime'), ding: $('#ding'),
-    // Settings drawer
     settingsBtn: $('#btn-settings'), drawer: $('#drawer'), drawerClose: $('#drawer-close'),
     dtabs: $$('.dtab'),
-    // Retention/Purge
     retention: $('#retention'), saveRetention: $('#btn-save-retention'),
     purgeDays: $('#purge-days'), purge: $('#btn-purge'),
-    // Toast
     toast: $('#toast'),
-    // Mobile back
     back: $('#btn-back')
   };
 
@@ -89,7 +83,6 @@
     async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
     async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text: 'Jarvis ' + text})}); },
 
-    // Optional notify/settings endpoints (safe if 404)
     async saveChannels(payload){ return jfetch(u('api/notify/channels'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
     async test(kind){ return jfetch(u(`api/notify/test/${kind}`), { method:'POST' }); },
     async saveRouting(payload){ return jfetch(u('api/notify/routing'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
@@ -99,7 +92,6 @@
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
 
-  // Render feed
   function renderFeed(items){
     const list = items
       .filter(i => state.tab==='archived' ? i.saved :
@@ -127,17 +119,13 @@
       const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,240));
 
       row.innerHTML = `
-        <div class="title">
-          ${title}<span class="src"> • ${src}</span>
-          <span class="snippet">${snippet}</span>
-        </div>
+        <div class="title">${title}<span class="src"> • ${src}</span><span class="snippet">${snippet}</span></div>
         <div class="meta">${time}</div>`;
       row.addEventListener('click', ()=> select(it.id));
       root.appendChild(row);
     }
   }
 
-  // Render detail
   async function renderDetail(it){
     els.detail.innerHTML='';
     const w = document.createElement('div'); w.className='wrap';
@@ -162,11 +150,8 @@
 
   // Mobile flow
   const isMobile = () => window.matchMedia('(max-width:1100px)').matches;
-  els.back?.addEventListener('click', ()=> { document.body.classList.remove('mobile-detail'); });
-
-  window.addEventListener('pageshow', () => {
-    if (isMobile()) document.body.classList.remove('mobile-detail');
-  });
+  els.back?.addEventListener('click', ()=> document.body.classList.remove('mobile-detail'));
+  window.addEventListener('pageshow', ()=>{ if(isMobile()) document.body.classList.remove('mobile-detail'); });
 
   async function select(id){
     state.active = id;
@@ -185,7 +170,6 @@
     }catch{}
   }
 
-  // Load list
   async function load(selectId=null){
     const items = await API.list($('#q')?.value?.trim()||'', 100, 0);
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
@@ -197,7 +181,7 @@
     }
   }
 
-  // Hardened SSE (heartbeat/backoff/visibility/network)
+  // Hardened SSE
   let sseCtl = { es:null, timerBeat:null, timerRetry:null, lastBeat:0, backoff:1000, maxBackoff:15000, running:false };
   function clearTimers(){ if(sseCtl.timerBeat){clearTimeout(sseCtl.timerBeat);sseCtl.timerBeat=null;} if(sseCtl.timerRetry){clearTimeout(sseCtl.timerRetry);sseCtl.timerRetry=null;} }
   function scheduleBeat(){
@@ -208,7 +192,7 @@
       else scheduleBeat();
     }, 35000);
   }
-  function reconnect(reason){
+  function reconnect(){
     clearTimers();
     if(!sseCtl.running) return;
     const wait = Math.min(sseCtl.backoff, sseCtl.maxBackoff);
@@ -228,12 +212,12 @@
           load(state.active);
         }
       }catch{} };
-    es.onerror = ()=>{ if(!announced){ toast('Live stream lost. Reconnecting…'); announced=true; } try{es.close();}catch{}; reconnect('onerror'); };
+    es.onerror = ()=>{ if(!announced){ toast('Live stream lost. Reconnecting…'); announced=true; } try{es.close();}catch{}; reconnect(); };
   }
   function startLive(){
     if(sseCtl.running) return; sseCtl.running=true; openStream();
-    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ sseCtl.backoff=1000; reconnect('tab visible'); } });
-    window.addEventListener('online', ()=>{ sseCtl.backoff=1000; reconnect('online'); });
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ sseCtl.backoff=1000; reconnect(); } });
+    window.addEventListener('online', ()=>{ sseCtl.backoff=1000; reconnect(); });
     window.addEventListener('beforeunload', ()=>{ sseCtl.running=false; try{sseCtl.es&&sseCtl.es.close();}catch{}; clearTimers(); });
     setInterval(()=> load(state.active), 300000);
   }
@@ -301,7 +285,7 @@
   $('#test-gotify')?.addEventListener('click', ()=> API.test('gotify').then(()=>toast('Gotify test sent')).catch(()=>toast('Gotify test failed')));
   $('#test-ntfy')?.addEventListener('click', ()=> API.test('ntfy').then(()=>toast('ntfy test sent')).catch(()=>toast('ntfy test failed')));
 
-  // Keyboard helpers (desktop)
+  // Keyboard (desktop niceties)
   document.addEventListener('keydown', (e)=>{
     if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
     if(e.key==='r'){ load(state.active); }
