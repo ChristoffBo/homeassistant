@@ -599,8 +599,21 @@ def riff(
     Returns empty string if engine unavailable.
     """
     if LLM_MODE not in ("llama", "ollama"):
-        # no engine loaded → empty riff (non-fatal)
-        return ""
+        # ADDITIVE: allow riff-only mode to auto-load engine using provided hints
+        try:
+            ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256="",
+                ctx_tokens=DEFAULT_CTX,
+                cpu_limit=80,
+                hf_token=os.getenv("HF_TOKEN","") or None,
+                base_url=base_url
+            )
+        except Exception:
+            pass
+        if LLM_MODE not in ("llama", "ollama"):
+            return 
 
     prompt = _prompt_for_riff(persona, subject, allow_profanity)
     out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
