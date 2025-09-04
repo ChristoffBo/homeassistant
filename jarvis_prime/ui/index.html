@@ -17,9 +17,9 @@
   <!-- Cache busting query strings to defeat HA Ingress caching -->
   <link rel="stylesheet" href="style.css?v=5.1.3" />
 </head>
-<body>
+<body class="app">
   <!-- Header -->
-  <header class="hdr">
+  <header class="hdr" role="banner">
     <div class="hdr-left">
       <img src="icon.png" alt="Jarvis" class="logo" />
       <div class="brand">
@@ -40,9 +40,9 @@
   </header>
 
   <!-- Two-pane layout -->
-  <main class="layout">
+  <main class="layout page" role="main">
     <!-- Left: list + filters + Delete All bottom -->
-    <aside class="rail" id="rail">
+    <aside class="rail" id="rail" role="complementary">
       <div class="rail-head">
         <div class="when">Today</div>
         <div class="count"><span id="c-all">0</span> messages</div>
@@ -72,10 +72,10 @@
     </aside>
 
     <!-- Middle: compact inbox list -->
-    <section class="feed" id="feed"></section>
+    <section class="feed" id="feed" role="region" aria-label="Messages"></section>
 
     <!-- Right: detail -->
-    <section class="detail" id="detail">
+    <section class="detail" id="detail" role="region" aria-label="Detail">
       <div class="empty">
         <h2>Inbox</h2>
         <p>No message selected.</p>
@@ -205,6 +205,19 @@
 
   <div id="toast"></div>
   <audio id="ding"><source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3"></audio>
+
+  <!-- Optional mobile anti scroll-trap (safe if classes aren’t present) -->
+  <script>
+    (function(){
+      var bad = document.querySelectorAll('.scroll, .pane-scroll, .list-scroll');
+      bad.forEach(function(el){
+        el.classList.remove('scroll','pane-scroll','list-scroll');
+        el.style.overflow = 'visible';
+        el.style.maxHeight = 'unset';
+      });
+    })();
+  </script>
+
   <script src="app.js?v=5.1.3"></script>
 </body>
 </html>
