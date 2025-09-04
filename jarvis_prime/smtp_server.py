@@ -56,7 +56,7 @@ ALLOW_PROFANITY     = bool(merged.get("personality_allow_profanity",
                          _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
 PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", _bool_env("PUSH_GOTIFY_ENABLED", False)))
-PUSH_NTFY_ENABLED = bool(merged.get("push_ntfy_enabled", _bool_env("PUSH_NTFY_ENABLED", False)))
+PUSH_NTFY_ENABLED   = bool(merged.get("push_ntfy_enabled", _bool_env("PUSH_NTFY_ENABLED", False)))
 
 # Forward target: core internal emit (bot.py)
 INTERNAL_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
@@ -96,6 +96,7 @@ def _transform(title: str, body: str, mood: str):
     out = body or ""
     extras = None
 
+    # Fallback-only local pipeline
     if LLM_ENABLED and llm and hasattr(llm, "rewrite"):
         try:
             out = llm.rewrite(
@@ -144,11 +145,12 @@ def _emit_internal(title: str, body: str, priority: int = 5, source: str = "smtp
 class Handler:
     async def handle_DATA(self, server, session, envelope):
         try:
+            # Parse the email
             msg = BytesParser().parsebytes(envelope.original_content or envelope.content)
             subject = msg.get("Subject", "SMTP")
             title = f"[SMTP] {subject}"
 
-            # prefer plain text part
+            # Extract a best-effort plain body
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
@@ -162,3 +164,63 @@ class Handler:
                 body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
 
             # Primary path: forward to internal core so persona riffs apply
+            try:
+                _emit_internal(title, body, priority=5, source="smtp", oid="")
+                print(f"[smtp] forwarded to internal emit: {INTERNAL_EMIT_URL}")
+                if storage:
+                    try:
+                        storage.save_message(
+                            title=title,
+                            body=body or "",
+                            source="smtp_intake",
+                            priority=5,
+                            extras={"forwarded_to_internal": True},
+                            created_at=int(time.time())
+                        )
+                    except Exception as e:
+                        print(f"[smtp] storage save failed: {e}")
+                return "250 OK"
+            except Exception as e:
+                print(f"[smtp] internal emit failed ({e}); falling back to local pipeline → gotify")
+
+            # Fallback: local beautify/LLM + gotify
+            out, extras, used_llm, used_beautify = _transform(title, body, CHAT_MOOD)
+            status = _post(title, out, extras)
+
+            if storage:
+                try:
+                    storage.save_message(
+                        title=title,
+                        body=out or "",
+                        source="smtp_fallback",
+                        priority=5,
+                        extras={
+                            "extras": extras or {},
+                            "mood": CHAT_MOOD,
+                            "used_llm": used_llm,
+                            "used_beautify": used_beautify,
+                            "status": int(status)
+                        },
+                        created_at=int(time.time())
+                    )
+                except Exception as e:
+                    print(f"[smtp] storage save failed: {e}")
+
+            return "250 OK"
+        except Exception as e:
+            print(f"[smtp] error: {e}")
+            return "451 Internal error"
+
+def main():
+    bind = os.getenv("smtp_bind","0.0.0.0")
+    port = int(os.getenv("smtp_port","2525"))
+    ctrl = Controller(Handler(), hostname=bind, port=port)
+    ctrl.start()
+    print(f"[smtp] listening on {bind}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD}) — forwarding to {INTERNAL_EMIT_URL}")
+    try:
+        asyncio.get_event_loop().run_forever()
+    finally:
+        ctrl.stop()
+
+if __name__ == "__main__":
+    main()
