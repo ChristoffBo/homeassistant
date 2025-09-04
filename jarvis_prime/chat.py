@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 # - Free APIs first; if offline, falls back to ~100 local lines
 # - Enforces quiet hours, min interval, daily max
 # - State in /data/personality_state.json
+# - OUTPUT: Jarvis internal emitter (/internal/emit), NOT Gotify
 # ============================================================
 
 TZ_OFFSET = +2  # Africa/Johannesburg UTC+2
@@ -48,16 +49,24 @@ DEFAULTS = {
 
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Jnr")
 BOT_ICON = os.getenv("BOT_ICON", "🤖")
-GOTIFY_URL = os.getenv("GOTIFY_URL", "")
-APP_TOKEN = os.getenv("APP_TOKEN") or os.getenv("GOTIFY_APP_TOKEN", "")
 
-def _send_via_gotify(title: str, message: str, priority: int = 5) -> bool:
-    if not GOTIFY_URL or not APP_TOKEN:
+# Jarvis internal emitter (used by bot.py: /internal/emit)
+JARVIS_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
+
+def _emit_to_jarvis(title: str, message: str, priority: int = 5) -> bool:
+    if not JARVIS_EMIT_URL:
         return False
     try:
-        url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
-        payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message, "priority": priority}
-        r = requests.post(url, json=payload, timeout=6)
+        payload = {
+            "source": "personality",
+            "title": f"{BOT_ICON} {BOT_NAME}: {title}",
+            "message": message,
+            "priority": priority,
+            "tags": ["personality", "quips"],
+            "icon": BOT_ICON,
+            "app": BOT_NAME,
+        }
+        r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6)
         r.raise_for_status()
         return True
     except Exception:
@@ -364,7 +373,7 @@ def _post_one():
     if not text:
         text = _pick_local_line(cat)
     title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird Fact"}.get(cat,"Note")
-    if _send_via_gotify(title, text, priority=5):
+    if _emit_to_jarvis(title, text, priority=5):
         now = _now_local()
         _state["last_post_at"] = now.isoformat()
         _state["posts_today"] = _state.get("posts_today",0)+1
