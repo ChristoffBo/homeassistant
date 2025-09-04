@@ -51,14 +51,17 @@ LLM_TIMEOUT_SECONDS = int(merged.get("llm_timeout_seconds", int(os.getenv("LLM_T
 LLM_MAX_CPU_PERCENT = int(merged.get("llm_max_cpu_percent", int(os.getenv("LLM_MAX_CPU_PERCENT", "70"))))
 LLM_MODEL_URL       = merged.get("llm_model_url",    os.getenv("LLM_MODEL_URL", ""))
 LLM_MODEL_PATH      = merged.get("llm_model_path",   os.getenv("LLM_MODEL_PATH", ""))
-LLM_MODEL_SHA256    = merged.get("llm_model_sha256", os.getenv("LLM_MODEL_SHA256", ""))
+LLM_MODEL_SHA256    = os.getenv("LLM_MODEL_SHA256", merged.get("llm_model_sha256", ""))
 ALLOW_PROFANITY     = bool(merged.get("personality_allow_profanity",
                          _bool_env("PERSONALITY_ALLOW_PROFANITY", False)))
 
 PUSH_GOTIFY_ENABLED = bool(merged.get("push_gotify_enabled", _bool_env("PUSH_GOTIFY_ENABLED", False)))
 PUSH_NTFY_ENABLED = bool(merged.get("push_ntfy_enabled", _bool_env("PUSH_NTFY_ENABLED", False)))
 
-# Beautify
+# Forward target: core internal emit (bot.py)
+INTERNAL_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
+
+# Optional beautify/LLM for fallback
 try:
     import importlib.util as _imp
     _bspec = _imp.spec_from_file_location("beautify", "/app/beautify.py")
@@ -68,7 +71,6 @@ except Exception as e:
     beautify = None
     print(f"[smtp] beautify load failed: {e}")
 
-# LLM client (prefetch if enabled)
 llm = None
 try:
     import importlib.util as _imp
@@ -94,7 +96,6 @@ def _transform(title: str, body: str, mood: str):
     out = body or ""
     extras = None
 
-    # LLM FIRST
     if LLM_ENABLED and llm and hasattr(llm, "rewrite"):
         try:
             out = llm.rewrite(
@@ -110,11 +111,10 @@ def _transform(title: str, body: str, mood: str):
                 allow_profanity=ALLOW_PROFANITY,
             )
             used_llm = True
-            print("[smtp] LLM rewrite applied")
+            print("[smtp] LLM rewrite applied (fallback)")
         except Exception as e:
             print(f"[smtp] LLM skipped: {e}")
 
-    # BEAUTIFY SECOND
     if beautify and hasattr(beautify, "beautify_message"):
         try:
             out, extras = beautify.beautify_message(title, out, mood=mood)
@@ -135,12 +135,19 @@ def _post(title: str, message: str, extras=None):
         r = requests.post(url, json=payload, timeout=8); r.raise_for_status(); return r.status_code
     return 0
 
+def _emit_internal(title: str, body: str, priority: int = 5, source: str = "smtp", oid: str = ""):
+    payload = {"title": title or "SMTP", "body": body or "", "priority": int(priority), "source": source, "id": oid}
+    r = requests.post(INTERNAL_EMIT_URL, json=payload, timeout=5)
+    r.raise_for_status()
+    return r.status_code
+
 class Handler:
     async def handle_DATA(self, server, session, envelope):
         try:
             msg = BytesParser().parsebytes(envelope.original_content or envelope.content)
             subject = msg.get("Subject", "SMTP")
             title = f"[SMTP] {subject}"
+
             # prefer plain text part
             body = ""
             if msg.is_multipart():
@@ -154,68 +161,4 @@ class Handler:
             else:
                 body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
 
-            # ---------- ADDITIVE: build riff facts + hint ----------
-            from_hdr = msg.get("From", "")
-            to_hdr   = msg.get("To", "")
-            date_hdr = msg.get("Date", "")
-            try:
-                dt_val = parsedate_to_datetime(date_hdr).isoformat() if date_hdr else ""
-            except Exception:
-                dt_val = ""
-            riff_facts = {
-                "time": dt_val or time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "subject": subject,
-                "from": from_hdr,
-                "to": to_hdr,
-                "provider": "SMTP"
-            }
-            base_extras = {"riff_hint": True, "source": "smtp", "facts": riff_facts}
-
-            out, extras, used_llm, used_beautify = _transform(title, body, CHAT_MOOD)
-
-            # merge any beautify extras
-            final_extras = dict(base_extras)
-            if isinstance(extras, dict):
-                final_extras.update(extras)
-            print("[smtp] riff hint attached")
-
-            status = _post(title, out, final_extras)
-
-            # Mirror to Inbox DB (UI-first)
-            if storage:
-                try:
-                    storage.save_message(
-                        title=title,
-                        body=out or "",
-                        source="smtp",
-                        priority=5,
-                        extras={
-                            "extras": final_extras or {},
-                            "mood": CHAT_MOOD,
-                            "used_llm": used_llm,
-                            "used_beautify": used_beautify,
-                            "status": int(status)
-                        },
-                        created_at=int(time.time())
-                    )
-                except Exception as e:
-                    print(f"[smtp] storage save failed: {e}")
-
-            return "250 OK"
-        except Exception as e:
-            print(f"[smtp] error: {e}")
-            return "451 Internal error"
-
-def main():
-    bind = os.getenv("smtp_bind","0.0.0.0")
-    port = int(os.getenv("smtp_port","2525"))
-    ctrl = Controller(Handler(), hostname=bind, port=port)
-    ctrl.start()
-    print(f"[smtp] listening on {bind}:{port} (LLM_ENABLED={LLM_ENABLED}, mood={CHAT_MOOD})")
-    try:
-        asyncio.get_event_loop().run_forever()
-    finally:
-        ctrl.stop()
-
-if __name__ == "__main__":
-    main()
+            # Primary path: forward to internal core so persona riffs apply
