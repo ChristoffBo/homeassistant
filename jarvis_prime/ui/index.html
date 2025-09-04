@@ -2,101 +2,109 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Jarvis Prime — Notify</title>
+
   <!-- Ingress-safe base: directory of current URL -->
   <script>
     (function(){
-      var path = location.pathname;
-      var dir  = path.endsWith('/') ? path : path.replace(/[^\/]*$/, '');
-      if (!dir.endsWith('/')) dir += '/';
-      document.write('<base href="' + dir + '">');
+      var p = location.pathname;
+      var dir = p.endsWith('/') ? p : p.replace(/[^\/]*$/, '');
+      if(!dir.endsWith('/')) dir += '/';
+      document.write('<base href="'+dir+'">');
     })();
   </script>
+
   <link rel="icon" href="icon.png" />
-  <link rel="stylesheet" href="style.css?v=7.0.0" />
+  <link rel="stylesheet" href="style.css?v=8.0.0" />
 </head>
 <body>
   <!-- Header -->
   <header class="hdr">
     <div class="hdr-left">
-      <img src="icon.png" alt="Jarvis" class="logo" />
+      <img class="logo" src="icon.png" alt="Jarvis" />
       <div class="brand">
         <div class="title">Jarvis Prime</div>
         <div class="subtitle">Notify</div>
       </div>
     </div>
     <div class="hdr-right">
-      <button id="btn-back" class="btn icon mobile-only" title="Back" aria-label="Back">←</button>
-      <div class="search-wrap">
-        <input id="q" type="search" placeholder="Search…" />
-        <button id="btn-search" class="btn icon" title="Search" aria-label="Search">🔎</button>
+      <button id="btn-back" class="btn icon mobile-only" aria-label="Back">←</button>
+      <div class="search">
+        <input id="q" type="search" placeholder="Search…" aria-label="Search messages" />
+        <button id="btn-search" class="btn icon" aria-label="Search">🔎</button>
       </div>
-      <button id="btn-refresh" class="btn icon" title="Refresh" aria-label="Refresh">↻</button>
-      <button id="btn-settings" class="btn icon" title="Settings" aria-label="Settings">⚙</button>
+      <button id="btn-refresh" class="btn icon" aria-label="Refresh">↻</button>
+      <button id="btn-settings" class="btn icon" aria-label="Settings">⚙</button>
     </div>
   </header>
 
-  <!-- Main -->
-  <main class="layout">
-    <!-- Filter rail (hidden on mobile) -->
-    <aside class="rail" id="rail">
+  <!-- Main (mobile: single column; desktop: 3 panes) -->
+  <main class="layout" role="main">
+    <!-- Filters rail (desktop only) -->
+    <aside id="rail" class="rail" aria-label="Filters">
       <div class="rail-head">
         <div class="when">Today</div>
-        <div class="count"><span id="c-all">0</span> messages</div>
+        <div class="count"><span id="count">0</span> messages</div>
       </div>
-      <nav class="tabs">
+
+      <nav class="tabs" aria-label="Status">
         <button class="tab active" data-tab="all">All</button>
         <button class="tab" data-tab="unread">Unread</button>
         <button class="tab" data-tab="archived">Archived</button>
         <button class="tab" data-tab="errors">Errors</button>
       </nav>
-      <div class="sources">
+
+      <div class="sources" aria-label="Source">
         <button class="chip src active" data-src="">Any</button>
         <button class="chip src" data-src="smtp">SMTP</button>
         <button class="chip src" data-src="gotify">Gotify</button>
         <button class="chip src" data-src="ntfy">ntfy</button>
         <button class="chip src" data-src="ui">UI</button>
       </div>
-      <div class="rail-spacer"></div>
+
+      <div class="flex1"></div>
+
       <div class="rail-bottom">
-        <label class="lbl inline"><input id="keep-arch" type="checkbox" checked /> Keep archived</label>
-        <button id="rail-delall" class="btn danger full">🗑 Delete All</button>
+        <label class="lbl"><input id="keep-arch" type="checkbox" checked /> Keep archived</label>
+        <button id="del-all" class="btn danger full">🗑 Delete All</button>
       </div>
     </aside>
 
-    <!-- Feed (primary on mobile) -->
-    <section class="feed" id="feed" aria-label="Messages"></section>
+    <!-- Feed list -->
+    <section id="feed" class="feed" aria-label="Messages">
+      <!-- rows injected -->
+    </section>
 
-    <!-- Detail (becomes “page” on mobile) -->
-    <section class="detail" id="detail" aria-label="Detail">
+    <!-- Detail (mobile becomes a separate page) -->
+    <section id="detail" class="detail" aria-label="Detail">
       <div class="empty">
         <h2>Inbox</h2>
-        <p>No message selected.</p>
+        <p>Select a message.</p>
       </div>
     </section>
   </main>
 
-  <!-- Compose -->
-  <button id="fab" class="fab" title="Ask Jarvis">＋</button>
-  <div id="compose" class="compose">
-    <div class="sheet">
+  <!-- Compose / Wake -->
+  <button id="fab" class="fab" aria-label="Ask Jarvis">＋</button>
+  <div id="compose" class="compose" aria-hidden="true">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="compose-title">
       <div class="sheet-head">
-        <div class="sheet-title">Ask Jarvis</div>
-        <button id="compose-close" class="btn icon">✕</button>
+        <div class="sheet-title" id="compose-title">Ask Jarvis</div>
+        <button id="compose-close" class="btn icon" aria-label="Close">✕</button>
       </div>
       <div class="sheet-body">
         <input id="wake-text" type="text" placeholder="e.g., weather, status, help" />
       </div>
       <div class="sheet-actions">
         <button id="wake-send" class="btn primary">Send</button>
-        <label class="chip toggle"><input id="chime" type="checkbox" /> Sound</label>
+        <label class="lbl"><input id="chime" type="checkbox" /> Sound</label>
       </div>
     </div>
   </div>
 
-  <!-- Drawer -->
-  <aside id="drawer" class="drawer">
+  <!-- Settings drawer -->
+  <aside id="drawer" class="drawer" aria-hidden="true">
     <div class="drawer-head">
       <div class="drawer-title">Settings</div>
       <div class="drawer-tabs">
@@ -107,8 +115,9 @@
         <button class="dtab" data-pane="retention">Retention</button>
         <button class="dtab" data-pane="about">About</button>
       </div>
-      <button id="drawer-close" class="btn icon">✕</button>
+      <button id="drawer-close" class="btn icon" aria-label="Close">✕</button>
     </div>
+
     <div class="drawer-body">
       <section class="pane show" data-pane="channels">
         <h3>Email (Gmail/SMTP)</h3>
@@ -191,13 +200,13 @@
       </section>
 
       <section class="pane" data-pane="about">
-        <p>Jarvis Notify — mobile-first UI (v7.0.0). Uses /api/messages and /api/stream.</p>
+        <p>Jarvis Notify UI — v8.0.0. Mobile-first, desktop enhanced.</p>
       </section>
     </div>
   </aside>
 
   <div id="toast"></div>
   <audio id="ding"><source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3"></audio>
-  <script src="app.js?v=7.0.0"></script>
+  <script src="app.js?v=8.0.0"></script>
 </body>
 </html>
