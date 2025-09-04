@@ -266,6 +266,16 @@ def _port_in_use(host: str, port: int) -> bool:
     except Exception:
         return False
 
+# NEW: track if apprise start was deferred until the internal server is up
+_DEFER_APPRISE_START = False
+
+def _internal_ready() -> bool:
+    # internal server binds 127.0.0.1:2599 in this file
+    try:
+        return _port_in_use("127.0.0.1", 2599) or _port_in_use("0.0.0.0", 2599)
+    except Exception:
+        return False
+
 def _start_sidecar(cmd, label, env=None):
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env or os.environ.copy())
@@ -275,6 +285,7 @@ def _start_sidecar(cmd, label, env=None):
         print(f"[bot] sidecar {label} start failed: {e}")
 
 def start_sidecars():
+    global _DEFER_APPRISE_START
     # proxy (handles ntfy etc.; pushes to internal emit)
     if PROXY_ENABLED:
         if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
@@ -301,20 +312,25 @@ def start_sidecars():
 
     # Apprise intake as a SIDEcar (NOT in-process). It must fan-in to /internal/emit.
     if INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED:
-        if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-            print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skipping sidecar")
+        # Ensure internal server is up before starting apprise; otherwise apprise may fail to POST to /internal/emit
+        if not _internal_ready():
+            _DEFER_APPRISE_START = True
+            print("[bot] deferring apprise sidecar until internal server is up on :2599")
         else:
-            env = os.environ.copy()
-            env["INTAKE_APPRISE_BIND"] = INTAKE_APPRISE_BIND
-            env["INTAKE_APPRISE_PORT"] = str(INTAKE_APPRISE_PORT)
-            env["INTAKE_APPRISE_TOKEN"] = INTAKE_APPRISE_TOKEN
-            env["INTAKE_APPRISE_ACCEPT_ANY_KEY"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
-            env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
-            # internal emit endpoint for the sidecar to call:
-            env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
-            # Root sidecar path (as you stated): /app/apprise.py
-            _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
-            print(f"[bot] apprise intake configured on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
+            if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
+                print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skipping sidecar")
+            else:
+                env = os.environ.copy()
+                env["INTAKE_APPRISE_BIND"] = INTAKE_APPRISE_BIND
+                env["INTAKE_APPRISE_PORT"] = str(INTAKE_APPRISE_PORT)
+                env["INTAKE_APPRISE_TOKEN"] = INTAKE_APPRISE_TOKEN
+                env["INTAKE_APPRISE_ACCEPT_ANY_KEY"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
+                env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
+                # internal emit endpoint for the sidecar to call:
+                env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
+                # Root sidecar path (as you stated): /app/apprise.py
+                _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
+                print(f"[bot] apprise intake configured on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
 
 def stop_sidecars():
     for p in _sidecars:
@@ -830,6 +846,35 @@ async def _start_internal_server():
     except Exception as e:
         print(f"[bot] failed to start internal server: {e}")
 
+# NEW: async helper to start deferred apprise once internal server is up
+async def _maybe_start_deferred_apprise():
+    global _DEFER_APPRISE_START
+    if not (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED):
+        return
+    if not _DEFER_APPRISE_START:
+        return
+    # Wait up to ~10 seconds for internal server to bind
+    for _ in range(100):
+        if _internal_ready():
+            break
+        await asyncio.sleep(0.1)
+    if not _internal_ready():
+        print("[bot] internal server not ready; apprise deferred start skipped")
+        return
+    if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
+        print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skip deferred start")
+    else:
+        env = os.environ.copy()
+        env["INTAKE_APPRISE_BIND"] = INTAKE_APPRISE_BIND
+        env["INTAKE_APPRISE_PORT"] = str(INTAKE_APPRISE_PORT)
+        env["INTAKE_APPRISE_TOKEN"] = INTAKE_APPRISE_TOKEN
+        env["INTAKE_APPRISE_ACCEPT_ANY_KEY"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
+        env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
+        env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
+        _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
+        print(f"[bot] apprise intake configured (deferred) on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
+    _DEFER_APPRISE_START = False
+
 # ============================
 # Main / loop
 # ============================
@@ -849,6 +894,8 @@ async def _run_forever():
         pass
     # digest scheduler
     asyncio.create_task(_digest_scheduler_loop())
+    # ensure deferred apprise starts once internal server is online
+    asyncio.create_task(_maybe_start_deferred_apprise())
     # Gotify intake
     asyncio.create_task(listen_gotify())
     # keep alive
