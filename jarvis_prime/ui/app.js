@@ -1,50 +1,54 @@
-// Jarvis Prime — Notify v7: mobile-first, hardened SSE, ingress-safe
+// Jarvis Notify v8 — clean mobile-first UI with resilient SSE
 (function(){
   const $ = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
 
-  // Ingress-safe API root
-  function apiRoot() {
-    let b = document.baseURI;
-    try {
-      const url = new URL(b);
+  // Ingress-safe API root builder
+  function apiRoot(){
+    try{
+      const url = new URL(document.baseURI);
       let p = url.pathname;
-      if (p.endsWith('/ui/')) p = p.slice(0, -4);
-      if (!p.endsWith('/')) p += '/';
+      if(p.endsWith('/ui/')) p = p.slice(0, -4);
+      if(!p.endsWith('/')) p += '/';
       url.pathname = p;
       return url.toString();
-    } catch { return b; }
+    }catch{ return document.baseURI; }
   }
   const ROOT = apiRoot();
-  const u = (path) => new URL(path.replace(/^\/+/, ''), ROOT).toString();
+  const u = (path) => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
 
+  // Elements
   const els = {
     feed: $('#feed'), detail: $('#detail'),
-    q: $('#q'), search: $('#btn-search'), refresh: $('#btn-refresh'),
-    keepArch: $('#keep-arch'), railDelAll: $('#rail-delall'),
+    q: $('#q'), btnSearch: $('#btn-search'), btnRefresh: $('#btn-refresh'),
     railTabs: $$('.tab[data-tab]'), srcChips: $$('.chip.src'),
-    listCount: $('#c-all'),
+    keepArch: $('#keep-arch'), delAll: $('#del-all'), count: $('#count'),
+    // compose
     fab: $('#fab'), compose: $('#compose'), composeClose: $('#compose-close'),
     wakeText: $('#wake-text'), wakeSend: $('#wake-send'),
     chime: $('#chime'), ding: $('#ding'),
-    settingsBtn: $('#btn-settings'), drawer: $('#drawer'), drawerClose: $('#drawer-close'),
+    // settings
+    btnSettings: $('#btn-settings'), drawer: $('#drawer'), drawerClose: $('#drawer-close'),
     dtabs: $$('.dtab'),
     retention: $('#retention'), saveRetention: $('#btn-save-retention'),
     purgeDays: $('#purge-days'), purge: $('#btn-purge'),
+    // toast
     toast: $('#toast'),
-    back: $('#btn-back')
+    // mobile back
+    back: $('#btn-back'),
   };
 
+  // Utilities
   function toast(msg){
     const d=document.createElement('div');
     d.className='toast'; d.textContent=msg;
     els.toast.appendChild(d);
-    setTimeout(()=> d.remove(), 3200);
+    setTimeout(()=> d.remove(), 2800);
   }
   const esc = s => String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const fmt = (ts) => {
-    try { const v=Number(ts||0); const ms = v>1e12 ? v : v*1000; return new Date(ms).toLocaleString(); }
-    catch { return '' }
+    try{ const v=Number(ts||0); const ms=v>1e12?v:v*1000; return new Date(ms).toLocaleString(); }
+    catch{ return ''; }
   };
 
   async function jfetch(url, opts){
@@ -58,19 +62,15 @@
       }
       const ct = r.headers.get('content-type')||'';
       return ct.includes('application/json') ? r.json() : r.text();
-    }catch(e){
-      console.error('Request failed:', e);
-      toast('HTTP error: ' + e.message);
-      throw e;
-    }
+    }catch(e){ console.error(e); toast('HTTP error: '+e.message); throw e; }
   }
 
   const API = {
     async list(q, limit=50, offset=0){
       const url = new URL(u('api/messages'));
       if(q) url.searchParams.set('q', q);
-      url.searchParams.set('limit', limit);
-      url.searchParams.set('offset', offset);
+      url.searchParams.set('limit', String(limit));
+      url.searchParams.set('offset', String(offset));
       const data = await jfetch(url.toString());
       return (data && data.items) ? data.items : (Array.isArray(data)?data:[]);
     },
@@ -81,57 +81,61 @@
     async setRetention(days){ return jfetch(u('api/inbox/settings'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}); },
     async purge(days){ return jfetch(u('api/inbox/purge'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}); },
     async deleteAll(keep){ return jfetch(u(`api/messages?keep_saved=${keep?1:0}`),{method:'DELETE'}); },
-    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text: 'Jarvis ' + text})}); },
+    async wake(text){ return jfetch(u('api/wake'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'Jarvis '+text})}); },
 
-    async saveChannels(payload){ return jfetch(u('api/notify/channels'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
-    async test(kind){ return jfetch(u(`api/notify/test/${kind}`), { method:'POST' }); },
-    async saveRouting(payload){ return jfetch(u('api/notify/routing'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
-    async saveQuiet(payload){ return jfetch(u('api/notify/quiet'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); },
-    async savePersonas(payload){ return jfetch(u('api/notify/personas'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); }
+    // optional notify endpoints (safe to 404)
+    async saveChannels(payload){ return jfetch(u('api/notify/channels'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
+    async test(kind){ return jfetch(u(`api/notify/test/${kind}`),{method:'POST'}); },
+    async saveRouting(payload){ return jfetch(u('api/notify/routing'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
+    async saveQuiet(payload){ return jfetch(u('api/notify/quiet'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
+    async savePersonas(payload){ return jfetch(u('api/notify/personas'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); },
   };
 
   const state = { items: [], active: null, tab: 'all', source: '', newestSeen: 0 };
 
+  // Render feed
   function renderFeed(items){
-    const list = items
+    const filtered = items
       .filter(i => state.tab==='archived' ? i.saved :
-                   state.tab==='errors' ? /error|fail|exception/i.test((i.title||'') + ' ' + (i.body||i.message||'')) :
+                   state.tab==='errors' ? /error|fail|exception/i.test((i.title||'')+' '+(i.body||i.message||'')) :
                    state.tab==='unread' ? (state.newestSeen && i.created_at>state.newestSeen) : true)
       .filter(i => state.source ? (String(i.source||'').toLowerCase()===state.source) : true);
 
     const root = els.feed; root.innerHTML='';
-    if(!list.length){
+    if(els.count) els.count.textContent = String(items.length||0);
+
+    if(!filtered.length){
       root.innerHTML = '<div class="toast">No messages</div>';
-      if(els.listCount) els.listCount.textContent = String(items.length||0);
       return;
     }
-    if(els.listCount) els.listCount.textContent = String(items.length);
 
-    for(const it of list){
+    for(const it of filtered){
       const row = document.createElement('div');
-      const isNew = state.newestSeen && it.created_at>state.newestSeen;
-      row.className = 'row' + (isNew ? ' unread' : '');
+      row.className = 'row';
       row.dataset.id = it.id;
 
-      const title = esc(it.title || '(no title)');
-      const time = fmt(it.created_at);
-      const src  = esc(it.source || '?');
+      const title = esc(it.title||'(no title)');
+      const time  = fmt(it.created_at);
+      const src   = esc(it.source||'?');
       const snippet = esc((it.body||it.message||'').replace(/\s+/g,' ').slice(0,240));
 
       row.innerHTML = `
         <div class="title">${title}<span class="src"> • ${src}</span><span class="snippet">${snippet}</span></div>
-        <div class="meta">${time}</div>`;
+        <div class="meta">${time}</div>
+      `;
       row.addEventListener('click', ()=> select(it.id));
       root.appendChild(row);
     }
   }
 
+  // Render detail
   async function renderDetail(it){
-    els.detail.innerHTML='';
+    els.detail.innerHTML = '';
     const w = document.createElement('div'); w.className='wrap';
     const badges = [];
     if(it.source) badges.push(`<span class="badge">Source: ${esc(it.source)}</span>`);
     if(it.created_at) badges.push(`<span class="badge">${fmt(it.created_at)}</span>`);
+
     w.innerHTML = `
       <h2>${esc(it.title||'(no title)')}</h2>
       <div class="badges">${badges.join(' ')}</div>
@@ -140,7 +144,8 @@
         <button id="a-arch" class="btn">${it.saved?'Unarchive':'Archive'}</button>
         <button id="a-copy" class="btn">Copy</button>
         <button id="a-del" class="btn danger">Delete</button>
-      </div>`;
+      </div>
+    `;
     els.detail.appendChild(w);
 
     $('#a-copy').addEventListener('click', ()=> navigator.clipboard.writeText(`${it.title||''}\n\n${it.body||it.message||''}`));
@@ -148,30 +153,32 @@
     $('#a-arch').addEventListener('click', async()=>{ await API.setArchived(it.id,!it.saved); toast(it.saved?'Unarchived':'Archived'); load(it.id); });
   }
 
-  // Mobile flow
+  // Mobile navigation
   const isMobile = () => window.matchMedia('(max-width:1100px)').matches;
   els.back?.addEventListener('click', ()=> document.body.classList.remove('mobile-detail'));
   window.addEventListener('pageshow', ()=>{ if(isMobile()) document.body.classList.remove('mobile-detail'); });
 
   async function select(id){
     state.active = id;
+    // if it's a temporary UI message
     if(String(id).startsWith('ui-')){
-      const temp = state.items.find(x=> String(x.id)===String(id));
+      const temp = state.items.find(x => String(x.id)===String(id));
       if(temp){
-        renderDetail(temp);
+        await renderDetail(temp);
         if(isMobile()) document.body.classList.add('mobile-detail');
         return;
       }
     }
     try{
       const it = await API.get(id);
-      renderDetail(it);
+      await renderDetail(it);
       if(isMobile()) document.body.classList.add('mobile-detail');
     }catch{}
   }
 
   async function load(selectId=null){
-    const items = await API.list($('#q')?.value?.trim()||'', 100, 0);
+    const q = els.q?.value?.trim() || '';
+    const items = await API.list(q, 100, 0);
     if(!state.newestSeen && items[0]) state.newestSeen = items[0].created_at || 0;
     state.items = items;
     renderFeed(items);
@@ -181,70 +188,66 @@
     }
   }
 
-  // Hardened SSE
-  let sseCtl = { es:null, timerBeat:null, timerRetry:null, lastBeat:0, backoff:1000, maxBackoff:15000, running:false };
-  function clearTimers(){ if(sseCtl.timerBeat){clearTimeout(sseCtl.timerBeat);sseCtl.timerBeat=null;} if(sseCtl.timerRetry){clearTimeout(sseCtl.timerRetry);sseCtl.timerRetry=null;} }
+  // Resilient SSE
+  let sse = { es:null, beat:0, tBeat:null, tRetry:null, backoff:1000, max:15000, on:false };
+  function clearTimers(){ if(sse.tBeat){clearTimeout(sse.tBeat);sse.tBeat=null;} if(sse.tRetry){clearTimeout(sse.tRetry);sse.tRetry=null;} }
   function scheduleBeat(){
-    clearTimeout(sseCtl.timerBeat);
-    sseCtl.timerBeat = setTimeout(()=>{
-      const age = Date.now() - sseCtl.lastBeat;
-      if(age>35000){ try{sseCtl.es&&sseCtl.es.close();}catch{}; reconnect('heartbeat timeout'); }
+    clearTimeout(sse.tBeat);
+    sse.tBeat = setTimeout(()=>{
+      if(Date.now()-sse.beat>35000){ try{sse.es&&sse.es.close();}catch{}; reconnect(); }
       else scheduleBeat();
     }, 35000);
   }
   function reconnect(){
-    clearTimers();
-    if(!sseCtl.running) return;
-    const wait = Math.min(sseCtl.backoff, sseCtl.maxBackoff);
-    sseCtl.timerRetry = setTimeout(()=>{ sseCtl.backoff = Math.min(sseCtl.backoff*2, sseCtl.maxBackoff); openStream(); }, wait);
+    clearTimers(); if(!sse.on) return;
+    const wait = Math.min(sse.backoff, sse.max);
+    sse.tRetry = setTimeout(()=>{ sse.backoff = Math.min(sse.backoff*2, sse.max); openStream(); }, wait);
   }
   function openStream(){
-    try{sseCtl.es&&sseCtl.es.close();}catch{}; clearTimers();
+    try{sse.es&&sse.es.close();}catch{}; clearTimers();
     const es = new EventSource(u('api/stream'));
-    sseCtl.es = es; sseCtl.lastBeat = Date.now(); scheduleBeat();
-    let announced=false;
-    es.onopen = ()=>{ sseCtl.backoff=1000; sseCtl.lastBeat=Date.now(); scheduleBeat(); if(announced) toast('Reconnected'); announced=false; };
-    es.onmessage = (e)=>{ sseCtl.lastBeat=Date.now(); scheduleBeat(); try{
-        if(!e.data) return;
-        const data = JSON.parse(e.data||'{}');
-        if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
-          if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
-          load(state.active);
-        }
-      }catch{} };
-    es.onerror = ()=>{ if(!announced){ toast('Live stream lost. Reconnecting…'); announced=true; } try{es.close();}catch{}; reconnect(); };
+    sse.es = es; sse.beat = Date.now(); scheduleBeat();
+    let warned=false;
+    es.onopen = ()=>{ sse.backoff=1000; sse.beat=Date.now(); scheduleBeat(); if(warned){ toast('Reconnected'); warned=false; } };
+    es.onmessage = (e)=>{ sse.beat=Date.now(); scheduleBeat(); try{
+      if(!e.data) return;
+      const data = JSON.parse(e.data||'{}');
+      if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
+        if(els.chime?.checked) try{ els.ding.currentTime=0; els.ding.play(); }catch{}
+        load(state.active);
+      }
+    }catch{} };
+    es.onerror = ()=>{ if(!warned){ toast('Live stream lost. Reconnecting…'); warned=true; } try{es.close();}catch{}; reconnect(); };
   }
   function startLive(){
-    if(sseCtl.running) return; sseCtl.running=true; openStream();
-    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ sseCtl.backoff=1000; reconnect(); } });
-    window.addEventListener('online', ()=>{ sseCtl.backoff=1000; reconnect(); });
-    window.addEventListener('beforeunload', ()=>{ sseCtl.running=false; try{sseCtl.es&&sseCtl.es.close();}catch{}; clearTimers(); });
+    if(sse.on) return; sse.on=true; openStream();
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ sse.backoff=1000; reconnect(); } });
+    window.addEventListener('online', ()=>{ sse.backoff=1000; reconnect(); });
+    window.addEventListener('beforeunload', ()=>{ sse.on=false; try{sse.es&&sse.es.close();}catch{}; clearTimers(); });
     setInterval(()=> load(state.active), 300000);
   }
 
-  // Filters
-  els.railTabs.forEach(t=> t.addEventListener('click', ()=>{
+  // Events
+  els.btnSearch?.addEventListener('click', ()=> load());
+  els.btnRefresh?.addEventListener('click', ()=> load(state.active));
+  els.q?.addEventListener('keydown', e=>{ if(e.key==='Enter') load(); });
+
+  els.railTabs.forEach(t => t.addEventListener('click', ()=>{
     els.railTabs.forEach(x=>x.classList.remove('active')); t.classList.add('active');
     state.tab = t.dataset.tab; renderFeed(state.items);
   }));
-  els.srcChips.forEach(c=> c.addEventListener('click', ()=>{
+  els.srcChips.forEach(c => c.addEventListener('click', ()=>{
     els.srcChips.forEach(x=>x.classList.remove('active'));
     c.classList.add('active'); state.source = (c.dataset.src||'').toLowerCase(); renderFeed(state.items);
   }));
 
-  // Actions & search
-  els.search?.addEventListener('click', ()=> load());
-  els.refresh?.addEventListener('click', ()=> load(state.active));
-  $('#q')?.addEventListener('keydown', e=>{ if(e.key==='Enter') load(); });
-
-  // Delete all
-  els.railDelAll?.addEventListener('click', async()=>{
+  els.delAll?.addEventListener('click', async()=>{
     if(!confirm('Delete ALL messages?')) return;
-    await API.deleteAll(els.keepArch.checked);
+    await API.deleteAll(els.keepArch?.checked);
     toast('All deleted'); load();
   });
 
-  // Compose
+  // Compose / wake
   els.fab?.addEventListener('click', ()=> els.compose.classList.add('open'));
   els.composeClose?.addEventListener('click', ()=> els.compose.classList.remove('open'));
   els.wakeSend?.addEventListener('click', async()=>{
@@ -260,55 +263,53 @@
   });
 
   // Drawer
-  els.settingsBtn?.addEventListener('click', ()=> els.drawer.classList.add('open'));
+  els.btnSettings?.addEventListener('click', ()=> els.drawer.classList.add('open'));
   els.drawerClose?.addEventListener('click', ()=> els.drawer.classList.remove('open'));
-  els.dtabs.forEach(b=> b.addEventListener('click', ()=>{
+  els.dtabs.forEach(b => b.addEventListener('click', ()=>{
     els.dtabs.forEach(x=>x.classList.remove('active')); b.classList.add('active');
     $$('.pane').forEach(p=> p.classList.remove('show'));
     $(`.pane[data-pane="${b.dataset.pane}"]`)?.classList.add('show');
   }));
 
-  // Retention/Purge
+  // Retention & Purge
   els.saveRetention?.addEventListener('click', async()=>{
     const d = parseInt(els.retention.value,10)||30;
     await API.setRetention(d); toast('Retention saved');
   });
   els.purge?.addEventListener('click', async()=>{
-    let v = els.purgeDays.value; if(v==='custom'){ const s=prompt('Days to purge older than?', '30'); if(!s) return; v=s; }
+    let v = els.purgeDays.value;
+    if(v==='custom'){ const s = prompt('Days to purge older than?', '30'); if(!s) return; v = s; }
     const d = parseInt(v,10)||30;
     if(!confirm(`Purge messages older than ${d} days?`)) return;
     await API.purge(d); toast('Purge started'); load();
   });
 
-  // Channel tests
+  // Channel tests (optional)
   $('#test-email')?.addEventListener('click', ()=> API.test('email').then(()=>toast('Email test sent')).catch(()=>toast('Email test failed')));
   $('#test-gotify')?.addEventListener('click', ()=> API.test('gotify').then(()=>toast('Gotify test sent')).catch(()=>toast('Gotify test failed')));
   $('#test-ntfy')?.addEventListener('click', ()=> API.test('ntfy').then(()=>toast('ntfy test sent')).catch(()=>toast('ntfy test failed')));
 
-  // Keyboard (desktop niceties)
+  // Keyboard niceties (desktop)
   document.addEventListener('keydown', (e)=>{
-    if(e.key==='/' && document.activeElement!==$('#q')){ e.preventDefault(); $('#q')?.focus(); }
+    if(e.key==='/' && document.activeElement!==els.q){ e.preventDefault(); els.q?.focus(); }
     if(e.key==='r'){ load(state.active); }
     if(e.key==='Delete' && state.active){
-      if(confirm('Delete this message?'))
-        API.del(state.active).then(()=>{ toast('Deleted'); load(); });
+      if(confirm('Delete this message?')) API.del(state.active).then(()=>{ toast('Deleted'); load(); });
     }
     if(e.key==='a' && state.active){
-      API.setArchived(state.active, true).then(()=>{ toast('Archived'); load(state.active); });
+      API.setArchived(state.active,true).then(()=>{ toast('Archived'); load(state.active); });
     }
   });
 
   // Boot
   (async()=>{
     try{
-      const s=await API.getSettings();
+      const s = await API.getSettings();
       if(s && s.retention_days){
-        els.retention.value=String(s.retention_days);
-        els.purgeDays.value=els.retention.value;
+        els.retention.value = String(s.retention_days);
+        els.purgeDays.value = els.retention.value;
       }
     }catch{}
-  })()
-  .then(()=> load())
-  .catch(()=>{});
+  })().then(()=> load()).catch(()=>{});
   startLive();
 })();
