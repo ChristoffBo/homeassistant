@@ -181,30 +181,19 @@ def _fs_safe(path: str) -> bool:
         return False
 
 def _choose_existing_model_on_disk() -> Optional[str]:
-    """
-    If a GGUF already exists on disk, return its absolute path to prevent re-downloads.
-    Priority:
-      1) explicit llm_model_path if it points to a file
-      2) model file inside llm_model_path if it's a dir
-      3) known specific model paths from config (phi3/tinyllama/qwen05, etc)
-      4) any *.gguf inside models_dir
-    """
     try:
         models_dir = str(merged.get("llm_models_dir", "/share/jarvis_prime/models")).rstrip("/")
         os.makedirs(models_dir, exist_ok=True)
 
-        # 1) explicit file path
         p = str(merged.get("llm_model_path", "")).strip()
         if p and _fs_safe(p) and os.path.isfile(p):
             return p
 
-        # if it's a dir, look for gguf inside
         if p and os.path.isdir(p):
             for n in os.listdir(p):
                 if n.lower().endswith(".gguf"):
                     return os.path.join(p, n)
 
-        # 3) specific model toggles from config
         phi3_path = str(merged.get("llm_phi3_path", "")).strip()
         if phi3_path and _fs_safe(phi3_path) and os.path.isfile(phi3_path):
             return phi3_path
@@ -215,7 +204,6 @@ def _choose_existing_model_on_disk() -> Optional[str]:
         if qwen_path and _fs_safe(qwen_path) and os.path.isfile(qwen_path):
             return qwen_path
 
-        # 4) any gguf in models_dir
         for n in os.listdir(models_dir):
             if n.lower().endswith(".gguf"):
                 return os.path.join(models_dir, n)
@@ -224,12 +212,8 @@ def _choose_existing_model_on_disk() -> Optional[str]:
     return None
 
 def _llm_inputs_for_client() -> dict:
-    """
-    Build kwargs for llm_client to avoid re-downloading when a local file exists.
-    If a file is found, we blank out model_url so llm_client won't attempt network fetch.
-    """
     kwargs = {
-        "text": None,  # will be filled per call
+        "text": None,
         "mood": ACTIVE_PERSONA,
         "timeout": int(merged.get("llm_timeout_seconds", 20)),
         "cpu_limit": int(merged.get("llm_max_cpu_percent", 80)),
@@ -247,7 +231,6 @@ def _llm_inputs_for_client() -> dict:
     local_file = _choose_existing_model_on_disk()
     if local_file:
         kwargs["model_path"] = local_file
-        # Crucial: blank URL so the client will NOT try to download again
         kwargs["model_url"] = ""
     return kwargs
 
@@ -266,42 +249,41 @@ def _port_in_use(host: str, port: int) -> bool:
     except Exception:
         return False
 
-# NEW: track if apprise start was deferred until the internal server is up
-_DEFER_APPRISE_START = False
-
-def _internal_ready() -> bool:
-    # internal server binds 127.0.0.1:2599 in this file
-    try:
-        return _port_in_use("127.0.0.1", 2599) or _port_in_use("0.0.0.0", 2599)
-    except Exception:
-        return False
-
 def _start_sidecar(cmd, label, env=None):
     try:
-        # Inherit stdout/stderr so we can see sidecar logs and avoid PIPE buffer stalls
+        # Inherit stdout/stderr so logs show if it crashes immediately
         p = subprocess.Popen(cmd, stdout=None, stderr=None, env=env or os.environ.copy())
         _sidecars.append(p)
         print(f"[bot] started sidecar: {label} -> {cmd}")
     except Exception as e:
         print(f"[bot] sidecar {label} start failed: {e}")
 
+def _apprise_env() -> dict:
+    env = os.environ.copy()
+    env["INTAKE_APPRISE_BIND"] = INTAKE_APPRISE_BIND
+    env["INTAKE_APPRISE_PORT"] = str(INTAKE_APPRISE_PORT)
+    env["INTAKE_APPRISE_TOKEN"] = INTAKE_APPRISE_TOKEN
+    env["INTAKE_APPRISE_ACCEPT_ANY_KEY"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
+    env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
+    env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
+    return env
+
 def start_sidecars():
-    global _DEFER_APPRISE_START
-    # proxy (handles ntfy etc.; pushes to internal emit)
+    # proxy
     if PROXY_ENABLED:
         if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
             print("[bot] proxy.py already running on :2580 — skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/proxy.py"], "proxy.py")
 
-    # smtp (SMTP intake; pushes to internal emit)
+    # smtp
     if SMTP_ENABLED and INGEST_SMTP_ENABLED:
         if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
             print("[bot] smtp_server.py already running on :2525 — skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/smtp_server.py"], "smtp_server.py")
 
-    # webhook intake server (pushes to internal emit)
+    # webhook
     if WEBHOOK_ENABLED:
         if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
             print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar")
@@ -311,25 +293,24 @@ def start_sidecars():
             env["webhook_port"] = str(WEBHOOK_PORT)
             _start_sidecar(["python3", "/app/webhook_server.py"], "webhook_server.py", env=env)
 
-    # Apprise intake as a SIDEcar (NOT in-process). It must fan-in to /internal/emit.
+    # apprise
     if INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED:
-        # Ensure internal server is up before starting apprise; otherwise apprise may fail to POST to /internal/emit
-        if not _internal_ready():
-            _DEFER_APPRISE_START = True
-            print("[bot] deferring apprise sidecar until internal server is up on :2599")
+        if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
+            print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skipping sidecar")
         else:
-            if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-                print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skipping sidecar")
+            # ensure internal is up before starting
+            if not _port_in_use("127.0.0.1", 2599):
+                print("[bot] deferring apprise sidecar until internal server is up on :2599")
             else:
-                env = os.environ.copy()
-                env["INTAKE_APPRISE_BIND"] = INTAKE_APPRISE_BIND
-                env["INTAKE_APPRISE_PORT"] = str(INTAKE_APPRISE_PORT)
-                env["INTAKE_APPRISE_TOKEN"] = INTAKE_APPRISE_TOKEN
-                env["INTAKE_APPRISE_ACCEPT_ANY_KEY"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
-                env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
-                # internal emit endpoint for the sidecar to call:
-                env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
-                # Root sidecar path (as you stated): /app/apprise.py
+                env = _apprise_env()
+                safe_env_print = {
+                    "INTAKE_APPRISE_BIND": env.get("INTAKE_APPRISE_BIND"),
+                    "INTAKE_APPRISE_PORT": env.get("INTAKE_APPRISE_PORT"),
+                    "INTAKE_APPRISE_ACCEPT_ANY_KEY": env.get("INTAKE_APPRISE_ACCEPT_ANY_KEY"),
+                    "INTAKE_APPRISE_ALLOWED_KEYS": env.get("INTAKE_APPRISE_ALLOWED_KEYS"),
+                    "JARVIS_INTERNAL_EMIT_URL": env.get("JARVIS_INTERNAL_EMIT_URL")
+                }
+                print(f"[bot] starting apprise sidecar with env: {safe_env_print}")
                 _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
                 print(f"[bot] apprise intake configured on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
 
@@ -355,22 +336,16 @@ def _persona_line(quip_text: str) -> str:
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
-
-    # Decorate body via personality/beautify; keep the original title
-    if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
-        try:
+    try:
+        if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
             title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
             title = orig_title
-        except Exception:
-            title, message = orig_title, message
-    elif decorate and _personality and hasattr(_personality, "decorate"):
-        try:
+        elif decorate and _personality and hasattr(_personality, "decorate"):
             title, message = _personality.decorate(title, message, ACTIVE_PERSONA, chance=1.0)
             title = orig_title
-        except Exception:
-            title, message = orig_title, message
+    except Exception:
+        title, message = orig_title, message
 
-    # Persona speaking line at the top
     try:
         quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
     except Exception:
@@ -378,14 +353,12 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     header = _persona_line(quip_text)
     message = (header + ("\n" + (message or ""))) if header else (message or "")
 
-    # Priority tweak via personality if present
     if _personality and hasattr(_personality, "apply_priority"):
         try:
             priority = _personality.apply_priority(priority, ACTIVE_PERSONA)
         except Exception:
             pass
 
-    # Push to Gotify if configured (output path)
     if GOTIFY_URL and APP_TOKEN:
         url = f"{GOTIFY_URL}/message?token={APP_TOKEN}"
         payload = {"title": f"{BOT_ICON} {BOT_NAME}: {title}", "message": message or "", "priority": priority}
@@ -399,9 +372,8 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
             status = 0
             print(f"[bot] send_message error: {e}")
     else:
-        status = -1  # not configured
+        status = -1
 
-    # Mirror to Inbox DB
     if storage:
         try:
             storage.save_message(
@@ -463,9 +435,6 @@ def _purge_after(msg_id: int):
     if _should_purge():
         delete_original_message(msg_id)
 
-# ============================
-# LLM + Beautify (riff pipeline)
-# ============================
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []
     if used_llm: tags.append("Neural Core ✓")
@@ -474,43 +443,22 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     return "— " + " · ".join(tags)
 
 def _llm_then_beautify(title: str, message: str):
-    """
-    Riffs fire only if BOTH:
-      merged['llm_enabled'] == True AND merged['llm_persona_riffs_enabled'] == True
-    """
     used_llm = False
-    used_beautify = False
+    used_beautify = True if _beautify else False
     final = message or ""
     extras = None
 
-    llm_enabled = bool(merged.get("llm_enabled", False))
-    riffs_enabled = str(os.getenv("BEAUTIFY_LLM_ENABLED", "true")).lower() in ("1","true","yes")
-
-    # Optional rewrite via LLM (kept OFF unless explicitly enabled)
-    if LLM_REWRITE_ENABLED and llm_enabled and _llm and hasattr(_llm, "rewrite"):
-        try:
-            kwargs = _llm_inputs_for_client()
-            kwargs["text"] = final
-            final2 = _llm.rewrite(**kwargs)
-            if final2:
-                final = final2
-                used_llm = True
-        except Exception as e:
-            print(f"[bot] LLM rewrite failed (disabled by default): {e}")
-
-    # Beautify always runs, but persona riffs will only fully engage if llm+riffs are on
-    if _beautify and hasattr(_beautify, "beautify_message"):
-        try:
+    try:
+        if _beautify and hasattr(_beautify, "beautify_message"):
             final, extras = _beautify.beautify_message(
                 title,
                 final,
                 mood=ACTIVE_PERSONA,
                 persona=ACTIVE_PERSONA,
-                persona_quip=True if (llm_enabled and riffs_enabled) else False
+                persona_quip=False
             )
-            used_beautify = True
-        except Exception as e:
-            print(f"[bot] Beautify failed: {e}")
+    except Exception as e:
+        print(f"[bot] Beautify failed: {e}")
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
@@ -522,7 +470,7 @@ def _llm_then_beautify(title: str, message: str):
 # ============================
 def _clean(s: str) -> str:
     s = s.lower().strip()
-    s = re.sub(r"[^\w\s]", " ", s)  # strip punctuation
+    s = re.sub(r"[^\w\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -640,7 +588,6 @@ def _handle_command(ncmd: str) -> bool:
         send_message("Forecast", text or "No data.")
         return True
 
-    # Jokes / chat
     if ncmd in ("joke", "pun", "tell me a joke", "make me laugh", "chat"):
         if m_chat and hasattr(m_chat, "handle_chat_command"):
             try:
@@ -652,7 +599,6 @@ def _handle_command(ncmd: str) -> bool:
             send_message("Joke", "Chat engine unavailable.")
         return True
 
-    # ARR
     if ncmd in ("upcoming movies", "upcoming films", "movies upcoming", "films upcoming"):
         msg, _ = _try_call(m_arr, "upcoming_movies", 7)
         send_message("Upcoming Movies", msg or "No data.")
@@ -683,9 +629,8 @@ def _handle_command(ncmd: str) -> bool:
 # ============================
 # Dedup + intake fan-in
 # ============================
-# Keep a short-lived set of content hashes to avoid echo loops & dupes from any intake
-_recent_hashes: dict = {}  # key -> expire_ts
-_RECENT_TTL = 90  # seconds
+_recent_hashes: dict = {}
+_RECENT_TTL = 90
 
 def _gc_recent():
     now = time.time()
@@ -705,10 +650,8 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
     if _seen_recent(title or "", body or "", source, original_id or ""):
         return
 
-    # Wakeword extraction (works from ALL intakes)
     ncmd = normalize_cmd(extract_command_from(title, body))
     if ncmd and _handle_command(ncmd):
-        # If this came from Gotify stream, optionally purge original
         try:
             if source == "gotify" and original_id:
                 _purge_after(int(original_id))
@@ -716,11 +659,9 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             pass
         return
 
-    # Riff/beautify pipeline (ALL intakes)
     final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
     send_message(title or "Notification", final, priority=priority, extras=extras)
 
-    # Purge original if it was a Gotify message
     try:
         if source == "gotify" and original_id:
             _purge_after(int(original_id))
@@ -760,7 +701,6 @@ async def listen_gotify():
 _last_digest_date = None
 
 async def _digest_scheduler_loop():
-    # Check once a minute; when local time == digest_time and enabled, post digest once per day.
     global _last_digest_date
     from datetime import datetime
     while True:
@@ -798,7 +738,6 @@ async def _internal_wake(request):
     except Exception:
         data = {}
     text = str(data.get("text") or "").strip()
-    # Normalize typical prefixes like "jarvis ..."
     cmd = text
     for kw in ("jarvis", "hey jarvis", "ok jarvis"):
         if cmd.lower().startswith(kw):
@@ -847,34 +786,44 @@ async def _start_internal_server():
     except Exception as e:
         print(f"[bot] failed to start internal server: {e}")
 
-# NEW: async helper to start deferred apprise once internal server is up
-async def _maybe_start_deferred_apprise():
-    global _DEFER_APPRISE_START
+# ============================
+# Apprise watchdog (sidecar must bind :2591)
+# ============================
+async def _apprise_watchdog():
     if not (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED):
         return
-    if not _DEFER_APPRISE_START:
-        return
-    # Wait up to ~10 seconds for internal server to bind
+    # wait for internal server to be ready first
     for _ in range(100):
-        if _internal_ready():
+        if _port_in_use("127.0.0.1", 2599):
             break
         await asyncio.sleep(0.1)
-    if not _internal_ready():
-        print("[bot] internal server not ready; apprise deferred start skipped")
-        return
-    if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-        print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skip deferred start")
-    else:
-        env = os.environ.copy()
-        env["INTAKE_APPRISE_BIND"] = INTAKE_APPRISE_BIND
-        env["INTAKE_APPRISE_PORT"] = str(INTAKE_APPRISE_PORT)
-        env["INTAKE_APPRISE_TOKEN"] = INTAKE_APPRISE_TOKEN
-        env["INTAKE_APPRISE_ACCEPT_ANY_KEY"] = "true" if INTAKE_APPRISE_ACCEPT_ANY_KEY else "false"
-        env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
-        env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
-        _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
-        print(f"[bot] apprise intake configured (deferred) on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
-    _DEFER_APPRISE_START = False
+    attempt = 0
+    while True:
+        try:
+            if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
+                # healthy
+                await asyncio.sleep(5)
+                continue
+            attempt += 1
+            env = _apprise_env()
+            safe_env_print = {
+                "INTAKE_APPRISE_BIND": env.get("INTAKE_APPRISE_BIND"),
+                "INTAKE_APPRISE_PORT": env.get("INTAKE_APPRISE_PORT"),
+                "INTAKE_APPRISE_ACCEPT_ANY_KEY": env.get("INTAKE_APPRISE_ACCEPT_ANY_KEY"),
+                "INTAKE_APPRISE_ALLOWED_KEYS": env.get("INTAKE_APPRISE_ALLOWED_KEYS"),
+                "JARVIS_INTERNAL_EMIT_URL": env.get("JARVIS_INTERNAL_EMIT_URL")
+            }
+            print(f"[bot] apprise watchdog: port {INTAKE_APPRISE_PORT} not listening, restart #{attempt} with env {safe_env_print}")
+            _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
+            # Give it a short grace to bind
+            for _ in range(30):
+                if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
+                    print(f"[bot] apprise watchdog: sidecar is now listening on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
+                    break
+                await asyncio.sleep(0.2)
+        except Exception as e:
+            print(f"[bot] apprise watchdog error: {e}")
+        await asyncio.sleep(5)
 
 # ============================
 # Main / loop
@@ -893,13 +842,9 @@ async def _run_forever():
         asyncio.create_task(_start_internal_server())
     except Exception:
         pass
-    # digest scheduler
     asyncio.create_task(_digest_scheduler_loop())
-    # ensure deferred apprise starts once internal server is online
-    asyncio.create_task(_maybe_start_deferred_apprise())
-    # Gotify intake
     asyncio.create_task(listen_gotify())
-    # keep alive
+    asyncio.create_task(_apprise_watchdog())
     while True:
         await asyncio.sleep(60)
 
