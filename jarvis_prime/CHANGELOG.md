@@ -6,6 +6,20 @@
 - Duplicate message issue resolved (no more double-post from sidecars)
 - Boot screen updated to show Jarvis as standalone Notification Server
 - Options.json simplified: output toggles (Gotify, ntfy, SMTP out, etc.) now only apply at Jarvis core
+- **New:** EnviroGuard — adaptive LLM throttle system  
+  EnviroGuard monitors ambient temperature (via Open-Meteo) and dynamically adjusts Jarvis’s LLM performance profile.  
+  • Toggle with `llm_enviroguard_enabled: true` in options.json  
+  • Poll interval controlled by `llm_enviroguard_poll_minutes` (default 30 minutes)  
+  • Profiles:  
+    – hot → reduced CPU (50%), smaller context (2048), faster timeouts (15s)  
+    – normal → balanced (80%, 4096 ctx, 20s)  
+    – cold (optional) → higher performance when cooler  
+    – boost → maximum power (95%, 8192 ctx, 25s)  
+  • Thresholds: `llm_enviroguard_hot_c`, `llm_enviroguard_cold_c`, and `llm_enviroguard_hysteresis_c`  
+  • Profile changes send a Jarvis notification with details:  
+    “Ambient 31.2 °C → profile HOT (CPU=50%, ctx=2048, to=15s)”  
+  • Boot card now shows EnviroGuard ON/OFF, current profile, and detected temperature  
+  → In short: EnviroGuard keeps Jarvis’s brain cool in the heat, boosts it when safe, and tells you whenever it shifts modes.
 - **New:** Riffs explained — a "riff" is a short persona-driven remark or embellishment added to each message by Jarvis’s LLM + Beautify engine.  
   Example: a plain "Backup complete" message becomes "📦 Backup complete — mission accomplished, Captain!" depending on the active persona.
 
