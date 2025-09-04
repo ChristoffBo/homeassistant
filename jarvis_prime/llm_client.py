@@ -27,6 +27,7 @@ import random
 import urllib.request
 import urllib.error
 import http.client
+import re  # ADDITIVE: for riff post-cleaning
 from typing import Optional, Dict, Any, Tuple, List
 
 # ============================
@@ -433,6 +434,45 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
+# ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
+# ============================
+_INSTRUX_PATTERNS = [
+    r'^\s*no\s+lists.*$',                        # "No lists, no numbers..."
+    r'.*context\s*\(for vibes only\).*',         # "(for vibes only)"
+    r'^\s*subject\s*:.*$',                       # "Subject: ..."
+    r'^\s*style\s*:.*$',                         # "Style: ..."
+    r'^\s*you\s+write\s+a\s+single.*$',          # "You write a single..."
+    r'^\s*write\s+1.*lines?.*$',                 # "Write 1 to 3 short lines"
+    r'^\s*avoid\s+profanity.*$',                 # "Avoid profanity"
+    r'^\s*<<\s*sys\s*>>.*$',                     # "<<SYS>>"
+    r'^\s*\[/?\s*inst\s*\]\s*$',                 # [INST] [/INST]
+    r'^\s*<\s*/?\s*s\s*>\s*$',                   # <s> or </s>
+]
+
+_INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
+
+def _clean_riff_lines(lines: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    for ln in lines:
+        t = ln.strip()
+        if not t:
+            continue
+        skip = False
+        for rx in _INSTRUX_RX:
+            if rx.search(t):
+                skip = True
+                break
+        if skip:
+            continue
+        # strip any trailing "Context:" echo fragments
+        t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
+        # drop leftover angle-bracket tokens
+        t = t.replace("</s>", "").replace("<s>", "").strip()
+        if t:
+            cleaned.append(t)
+    return cleaned
+
+# ============================
 # Core generation (shared)
 # ============================
 def _llama_generate(prompt: str, timeout: int = 12) -> str:
@@ -569,6 +609,10 @@ def riff(
 
     # Keep 1–3 short lines
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+    # ADDITIVE: strip instruction/boilerplate echoes from the model
+    lines = _clean_riff_lines(lines)
+
     cleaned: List[str] = []
     for ln in lines:
         # kill markdown bullets if the model added them
