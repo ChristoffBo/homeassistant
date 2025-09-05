@@ -10,7 +10,7 @@ MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)'
 KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$', re.M)
 
 # timestamps and types
-TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\2)?)', re.I)
+TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
 DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
 TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
 
@@ -91,20 +91,6 @@ def _harvest_images(text: str) -> Tuple[str, List[str]]:
     for u in sorted(urls, key=_prefer_host_key):
         if u not in seen: seen.add(u); uniq.append(u)
     return text.strip(), uniq
-
-def _peek_images(text: str) -> List[str]:
-    """Extract image URLs without removing them (used by lossless mode)."""
-    if not text: return []
-    urls: List[str] = []
-    for m in MD_IMG_RE.finditer(text or ""):
-        urls.append(m.group(1))
-    for m in IMG_URL_RE.finditer(text or ""):
-        u = m.group(1).rstrip('.,;:)]}>"\'')
-        urls.append(u)
-    uniq=[]; seen=set()
-    for u in sorted(urls, key=_prefer_host_key):
-        if u not in seen: seen.add(u); uniq.append(u)
-    return uniq
 
 def _find_ips(*texts: str) -> List[str]:
     ips=[]; seen=set()
@@ -348,7 +334,7 @@ _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
     # - /radarr (lscr.io/linuxserver/radarr:nightly): 30052c06bbef updated to 2091a873a55d
     re.compile(
-        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*\((?P<img>[^)]+)\)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
         re.I),
     # - radarr: abcdef updated to 123456
     re.compile(
@@ -400,72 +386,6 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
     md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
     return md, meta
 
-# ============================
-# Options + mode resolution (flat + legacy)
-# ============================
-_OPTS_CACHE: Optional[Dict[str, Any]] = None
-def _load_options() -> Dict[str, Any]:
-    """Load /data/options.json once; return {} on any error."""
-    global _OPTS_CACHE
-    if _OPTS_CACHE is not None:
-        return _OPTS_CACHE
-    try:
-        with open("/data/options.json", "r", encoding="utf-8") as f:
-            _OPTS_CACHE = json.load(f) or {}
-    except Exception:
-        _OPTS_CACHE = {}
-    return _OPTS_CACHE
-
-def _resolve_mode(source_hint: Optional[str], passed_mode: Optional[str]) -> str:
-    """
-    Decide beautify mode:
-      - Flat toggles in options.json:
-          beautify_full_enabled, beautify_lossless_enabled
-        If both true → 'full' (your rule).
-      - Else fallback to legacy nested:
-          beautify.{full_enabled, lossless_enabled, sources, default_mode}
-      - Else fallback chain:
-          passed_mode → env BEAUTIFY_DEFAULT_MODE → 'standard'
-    """
-    opts = _load_options()
-    # flat toggles (new)
-    flat_full = bool(opts.get("beautify_full_enabled"))
-    flat_lossless = bool(opts.get("beautify_lossless_enabled"))
-
-    # legacy nested (back-compat)
-    b = opts.get("beautify", {}) if isinstance(opts, dict) else {}
-    nested_full = bool(b.get("full_enabled"))
-    nested_lossless = bool(b.get("lossless_enabled"))
-
-    full = flat_full or nested_full
-    lossless = flat_lossless or nested_lossless
-
-    if full and lossless:
-        return "full"
-    if full:
-        return "full"
-    if lossless:
-        return "lossless"
-
-    if isinstance(passed_mode, str) and passed_mode.strip():
-        return passed_mode.strip().lower()
-
-    try:
-        src = (source_hint or "").strip().lower()
-        srcs = b.get("sources") or {}
-        if src and isinstance(srcs, dict) and isinstance(srcs.get(src), dict):
-            m = (srcs[src].get("mode") or "").strip().lower()
-            if m:
-                return m
-        m = (b.get("default_mode") or "").strip().lower()
-        if m:
-            return m
-    except Exception:
-        pass
-
-    envm = (os.getenv("BEAUTIFY_DEFAULT_MODE") or "").strip().lower()
-    return envm if envm else "standard"
-
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
@@ -474,23 +394,17 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     """
     extras_in: may carry riff_hint and other intake-provided metadata
     """
-    eff_mode = _resolve_mode(source_hint, mode)
-
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
     normalized = html.unescape(normalized)  # unescape HTML entities for poster URLs
 
-    # images + body used for parsing
-    if eff_mode == "lossless":
-        images = _peek_images(normalized)           # keep images
-        body_for_parse = normalized                 # keep full content
-    else:
-        body_for_parse, images = _harvest_images(normalized)  # strip images for formatting
+    # images (pre-harvest; we never let LLM touch the message content)
+    body_wo_imgs, images = _harvest_images(normalized)
 
-    kind = _detect_type(title, body_for_parse)
-    badge = _severity_badge(title + " " + body_for_parse)
+    kind = _detect_type(title, body_wo_imgs)
+    badge = _severity_badge(title + " " + body_wo_imgs)
 
-    # ===== EARLY PATH: Watchtower-aware summary =====
+    # ===== ADDITIVE EARLY PATH: Watchtower-aware summary =====
     if kind == "Watchtower":
         lines: List[str] = []
         lines += _header("Watchtower", badge)
@@ -500,10 +414,11 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             pol = _persona_overlay_line(eff_persona)
             if pol: lines += [pol]
 
-        wt_md, wt_meta = _summarize_watchtower(title, body_for_parse)
+        wt_md, wt_meta = _summarize_watchtower(title, body_wo_imgs)
         lines += ["", wt_md]
 
-        ctx = (title or "").strip() + "\n" + (body_for_parse or "").strip()
+        # persona riffs allowed for this type (we keep lists/numbers)
+        ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
         riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
         if eff_persona and riff_hint:
@@ -525,18 +440,14 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             "jarvis::llm_riff_lines": len(riffs or []),
             "watchtower::host": wt_meta.get("watchtower::host"),
             "watchtower::updated_count": wt_meta.get("watchtower::updated_count"),
-            "jarvis::mode": eff_mode,
         }
         if wt_meta.get("watchtower::truncated"):
             extras["watchtower::truncated"] = True
         if isinstance(extras_in, dict):
             extras.update(extras_in)
+        # keep images in extras in case upstream wants them (none expected for Watchtower)
         if images:
             extras["jarvis::allImageUrls"] = images
-
-        # Lossless? Include raw body for completeness.
-        if eff_mode == "lossless":
-            text = f"{text}\n\n🗂 Raw\n```\n{body}\n```"
 
         return text, extras
     # ===== END Watchtower special-case =====
@@ -544,32 +455,36 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     lines: List[str] = []
     lines += _header(kind, badge)
 
+    # persona resolution (additive; does not change caller's explicit persona)
     eff_persona = _effective_persona(persona)
 
+    # persona overlay line inside the card (top)
     if persona_quip:
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
-    facts, details = _categorize_bullets(title, body_for_parse)
+    facts, details = _categorize_bullets(title, body_wo_imgs)
     if facts:
         lines += ["", "📄 Facts", *facts]
     if details:
         lines += ["", "📄 Details", *details]
 
+    # Inline the first image so the app view shows a poster (while push uses bigImageUrl)
     if images:
         lines += ["", f"![poster]({images[0]})"]
 
-    # Lossless keeps everything — append raw
-    if eff_mode == "lossless":
-        lines += ["", "🗂 Raw", "```", body, "```"]
-
-    # LLM persona riffs (optional)
-    ctx = (title or "").strip() + "\n" + (body_for_parse or "").strip()
+    # --- LLM persona riffs at the bottom (1–3 lines) ---
+    ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
     riffs: List[str] = []
+
+    # ADDITIVE global riff switch: default-on across all intakes unless explicitly disabled
     riff_hint = _global_riff_hint(extras_in, source_hint)
-    _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}, mode={eff_mode}")
+
+    _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
+
     if eff_persona and riff_hint:
         riffs = _persona_llm_riffs(ctx, eff_persona)
+
     if riffs:
         lines += ["", f"🧠 {eff_persona} riff"]
         for r in riffs:
@@ -586,10 +501,11 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images,
         "jarvis::llm_riff_lines": len(riffs or []),
-        "jarvis::mode": eff_mode,
     }
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
+
+    # carry over input extras safely
     if isinstance(extras_in, dict):
         extras.update(extras_in)
 
