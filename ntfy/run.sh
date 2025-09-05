@@ -11,7 +11,17 @@ resolve_ntfy() {
       echo "$p"; return 0
     fi
   done
-  echo "ERROR: ntfy binary not found in PATH or common locations (/usr/bin/ntfy, /bin/ntfy, /usr/local/bin/ntfy, /app/ntfy)" >&2
+  # fallback: find it
+  if command -v find >/dev/null 2>&1; then
+    found="$(find / -maxdepth 3 -type f -name ntfy -perm -111 2>/dev/null | head -n 1 || true)"
+    if [ -n "$found" ]; then
+      echo "$found"; return 0
+    fi
+  fi
+  echo "ERROR: ntfy binary not found in PATH or common locations (/usr/bin/ntfy, /bin/ntfy, /usr/local/bin/ntfy, /app/ntfy), and search failed." >&2
+  echo "INFO: Contents of /usr/local/bin:" >&2; ls -lah /usr/local/bin || true
+  echo "INFO: Contents of /usr/bin:" >&2; ls -lah /usr/bin || true
+  echo "INFO: PATH is: $PATH" >&2
   exit 127
 }
 
