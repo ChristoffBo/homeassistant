@@ -60,6 +60,45 @@ legend{ color:#9fd2ff; padding:0 6px }
 #toast { position:fixed; bottom:10px; right:10px; display:grid; gap:6px }
 .toast { background:#222; padding:6px 10px; border-radius:6px }
 
+/* ---- Inbox preview layout ---- */
+.inbox-wrap{
+  display:grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap:12px;
+}
+.inbox-preview{
+  background:var(--panel);
+  border:1px solid #2a3a56;
+  border-radius:10px;
+  padding:10px;
+  min-height:240px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.preview-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.ph-title{ font-weight:700; font-size:16px }
+.ph-meta{ color:var(--muted); font-size:12px }
+.preview-body{
+  background:var(--panel2);
+  border:1px solid #2a3a56;
+  border-radius:8px;
+  padding:10px;
+  min-height:160px;
+  white-space:pre-wrap;
+  overflow:auto;
+}
+.muted{ color:var(--muted) }
+.msg-row{ cursor:pointer }
+.msg-row:hover{ background:#172035 }
+.msg-row.selected{ background:#182844 }
+
 @media (max-width:900px){
   .grid2,.grid3{ grid-template-columns:1fr }
+  .inbox-wrap{ grid-template-columns: 1fr }
 }

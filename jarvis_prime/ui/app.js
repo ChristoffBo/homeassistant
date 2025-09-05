@@ -61,20 +61,47 @@
     $('#msg-arch').textContent  = archived;
     $('#msg-err').textContent   = errors;
   }
+
+  // Preview helpers
+  let INBOX_ITEMS = [];
+  let SELECTED_ID = null;
+
+  function renderPreview(m){
+    if(!m){ $('#pv-title').textContent='No message selected'; $('#pv-meta').textContent='–'; $('#pv-body').innerHTML='<p class="muted">Click a message to see its contents here.</p>'; return; }
+    $('#pv-title').textContent = m.title || '(no title)';
+    const metaBits = [];
+    if (m.source) metaBits.push(m.source);
+    if (m.created_at) metaBits.push(fmt(m.created_at));
+    $('#pv-meta').textContent = metaBits.join(' • ') || '–';
+    const body = (m.body || m.message || '').trim();
+    $('#pv-body').textContent = body || '(empty)';
+  }
+
+  function selectRowById(id){
+    SELECTED_ID = id;
+    $$('#msg-body tr').forEach(tr=> tr.classList.toggle('selected', tr.dataset.id===String(id)));
+    const m = INBOX_ITEMS.find(x=> String(x.id)===String(id));
+    renderPreview(m);
+  }
+
   async function loadInbox(){
     const tb = $('#msg-body');
     try{
       const data = await jfetch(API('api/messages'));
       const items = data && data.items ? data.items : (Array.isArray(data) ? data : []);
+      INBOX_ITEMS = items;
       tb.innerHTML = '';
       if(!items.length){
         tb.innerHTML = '<tr><td colspan="4">No messages</td></tr>';
         updateCounters([]);
+        renderPreview(null);
         return;
       }
       updateCounters(items);
       for(const m of items){
         const tr=document.createElement('tr');
+        tr.className='msg-row';
+        tr.dataset.id = m.id;
         tr.innerHTML = `
           <td>${fmt(m.created_at)}</td>
           <td>${m.source||''}</td>
@@ -85,28 +112,49 @@
           </td>`;
         tb.appendChild(tr);
       }
+
+      // Auto-select: keep current selection if it still exists; else follow newest if enabled
+      const follow = $('#pv-follow')?.checked;
+      const stillExists = SELECTED_ID && items.some(x=> String(x.id)===String(SELECTED_ID));
+      if (stillExists) {
+        selectRowById(SELECTED_ID);
+      } else if (follow) {
+        const last = items[items.length-1];
+        if (last) selectRowById(last.id);
+      } else {
+        renderPreview(null);
+      }
     }catch(e){
       console.error(e);
       tb.innerHTML = '<tr><td colspan="4">Failed to load</td></tr>';
       toast('Inbox load error');
     }
   }
-  $('#msg-body').addEventListener('click', async (e)=>{
+
+  // Row click = select + preview
+  $('#msg-body').addEventListener('click', (e)=>{
+    const tr = e.target.closest('tr.msg-row');
+    if(tr && tr.dataset.id){
+      selectRowById(tr.dataset.id);
+      return;
+    }
     const btn = e.target.closest('button[data-act]');
     if(!btn) return;
     const id = btn.dataset.id;
     const act = btn.dataset.act;
-    try{
-      if(act==='del'){
-        if(!confirm('Delete this message?')) return;
-        await jfetch(API('api/messages/'+id), {method:'DELETE'});
-        toast('Deleted');
-      }else if(act==='arch'){
-        await jfetch(API(`api/messages/${id}/save`), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
-        toast('Toggled archive');
-      }
-      await loadInbox();
-    }catch{ toast('Action failed'); }
+    (async()=>{
+      try{
+        if(act==='del'){
+          if(!confirm('Delete this message?')) return;
+          await jfetch(API('api/messages/'+id), {method:'DELETE'});
+          toast('Deleted');
+        }else if(act==='arch'){
+          await jfetch(API(`api/messages/${id}/save`), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+          toast('Toggled archive');
+        }
+        await loadInbox();
+      }catch{ toast('Action failed'); }
+    })();
   });
   $('#del-all').addEventListener('click', async()=>{
     if(!confirm('Delete ALL messages?')) return;
@@ -130,7 +178,12 @@
         try{
           const data = JSON.parse(ev.data||'{}');
           if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
-            loadInbox();
+            loadInbox().then(()=>{
+              if (data.event==='created' && $('#pv-follow')?.checked) {
+                // If server sends an id, prefer it; else rely on loadInbox auto-follow
+                if (data.id) selectRowById(data.id);
+              }
+            });
           }
         }catch{}
       };
@@ -188,7 +241,7 @@
             host:$('#smtp-host').value, port:$('#smtp-port').value,
             user:$('#smtp-user').value, pass:$('#smtp-pass').value, from:$('#smtp-from').value
           },
-          gotify:{ url:$('#gotify-url').value, token:$('#gotify-token').value },
+          gotify:{ url:$('#gotify-url').value, token:$('#gotify-token') .value },
           ntfy:{ url:$('#ntfy-url').value, topic:$('#ntfy-topic').value }
         })
       });

@@ -25,7 +25,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=1.4" />
+  <link rel="stylesheet" href="style.css?v=1.5" />
 </head>
 <body>
   <header class="topnav">
@@ -53,19 +53,39 @@
         <div class="stat green">Archived: <span id="msg-arch">-</span></div>
         <div class="stat red">Errors: <span id="msg-err">-</span></div>
       </div>
-      <table class="msg-table">
-        <thead>
-          <tr>
-            <th>Time</th><th>Source</th><th>Title</th><th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="msg-body"><tr><td colspan="4">Loading…</td></tr></tbody>
-      </table>
-      <div class="inbox-actions">
-        <label class="lbl">
-          <input type="checkbox" id="keep-arch" /> Keep archived
-        </label>
-        <button id="del-all" class="btn danger">🗑 Delete All</button>
+
+      <div class="inbox-wrap">
+        <div class="inbox-left">
+          <table class="msg-table">
+            <thead>
+              <tr>
+                <th>Time</th><th>Source</th><th>Title</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="msg-body"><tr><td colspan="4">Loading…</td></tr></tbody>
+          </table>
+          <div class="inbox-actions">
+            <label class="lbl">
+              <input type="checkbox" id="keep-arch" /> Keep archived
+            </label>
+            <button id="del-all" class="btn danger">🗑 Delete All</button>
+          </div>
+        </div>
+
+        <aside class="inbox-preview">
+          <div class="preview-head">
+            <div class="ph-left">
+              <div class="ph-title" id="pv-title">No message selected</div>
+              <div class="ph-meta" id="pv-meta">–</div>
+            </div>
+            <label class="lbl ph-follow">
+              <input type="checkbox" id="pv-follow" checked /> Auto‑preview new
+            </label>
+          </div>
+          <div class="preview-body" id="pv-body">
+            <p class="muted">Click a message to see its contents here. When Auto‑preview is on, the newest message will show as it arrives.</p>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -171,6 +191,6 @@
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=1.4"></script>
+  <script src="app.js?v=1.5"></script>
 </body>
 </html>
