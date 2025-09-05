@@ -65,6 +65,7 @@ COPY smtp_client.py  /app/smtp_client.py
 COPY ui/ /app/ui/
 COPY webhook_server.py  /app/webhook_server.py
 COPY apprise.py  /app/apprise.py
+COPY heartbeat.py  /app/heartbeat.py
 
 # ---- NEW (additive): place intake blueprint at the path bot.py expects ----
 RUN mkdir -p /app/intakes
