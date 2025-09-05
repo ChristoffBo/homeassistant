@@ -155,163 +155,6 @@ def _severity_badge(text: str) -> str:
 def _looks_json(body: str) -> bool:
     try: json.loads(body); return True
     except Exception: return False
-
-def _detect_type(title: str, body: str) -> str:
-    tb = (title + " " + body).lower()
-    if "speedtest" in tb: return "SpeedTest"
-    if "apt" in tb or "dpkg" in tb: return "APT Update"
-    if "watchtower" in tb: return "Watchtower"
-    if "sonarr" in tb: return "Sonarr"
-    if "radarr" in tb: return "Radarr"
-    if "lidarr" in tb: return "Lidarr"
-    if "prowlarr" in tb: return "Prowlarr"
-    if _looks_json(body): return "JSON"
-    if "error" in tb or "warning" in tb or "failed" in tb: return "Log Event"
-    return "Message"
-
-def _harvest_timestamp(title: str, body: str) -> Optional[str]:
-    for src in (title or "", body or ""):
-        for rx in (TS_RE, DATE_ONLY_RE, TIME_ONLY_RE):
-            m = rx.search(src)
-            if m: return m.group(0).strip()
-    return None
-
-def _extract_keyvals(text: str) -> List[Tuple[str,str]]:
-    out: List[Tuple[str,str]] = []
-    for ln in (text or "").splitlines():
-        m = KV_RE.match(ln)
-        if m:
-            out.append((m.group(1).strip(), m.group(2).strip()))
-    return out
-
-def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
-    facts: List[str] = []
-    details: List[str] = []
-
-    ts = _harvest_timestamp(title, body)
-    if ts: facts.append(_fmt_kv("Time", ts))
-    if title.strip(): facts.append(_fmt_kv("Subject", title.strip()))
-
-    for k,v in _extract_keyvals(body):
-        key = k.strip().lower()
-        val = v
-        if key in ("ip","ip address","address"):
-            val = _repair_ipv4(v, title, body)
-            details.append(_fmt_kv("IP", val))
-        elif key in ("ping","download","upload","latency","jitter","loss","speed"):
-            facts.append(_fmt_kv(k, v))
-        elif key in ("status","result","state","ok","success","warning","error"):
-            facts.append(_fmt_kv(k, v))
-        else:
-            details.append(_fmt_kv(k, v))
-
-    # also infer IPs/hosts/versions
-    ip_list = _find_ips(title, body)
-    for ip in ip_list:
-        if f"`{ip}`" not in " ".join(details):
-            details.append(_fmt_kv("IP", ip))
-    for host in HOST_RE.findall(body or ""):
-        if not IP_RE.match(host):
-            details.append(_fmt_kv("host", host))
-
-    # semantic-like versions only (avoid plain floats like 0.86)
-    for m in VER_RE.finditer(body or ""):
-        ver = m.group(0)
-        if any(ver in ip for ip in ip_list):
-            continue
-        details.append(_fmt_kv("version", ver))
-
-    if not facts:
-        first = _first_nonempty_line(body)
-        if first: facts.append(_fmt_kv("Info", first))
-
-    def _uniq(lines: List[str]) -> List[str]:
-        seen=set(); out=[]
-        for ln in lines:
-            key = re.sub(r'\s+',' ', ln.strip()).lower()
-            if key and key not in seen: seen.add(key); out.append(ln)
-        return out
-
-    return _uniq(facts), _uniq(details)
-
-def _format_align_check(text: str) -> str:
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    while lines and lines[0].strip() == "": lines.pop(0)
-    out=[]
-    for ln in lines:
-        if ln.strip() == "":
-            if out and out[-1].strip() == "":
-                continue
-        out.append(ln)
-    return "\n".join(out).strip()
-
-# --------------------
-# LLM persona riffs ONLY
-# --------------------
-def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
-    if not persona:
-        return []
-    enabled = os.getenv("BEAUTIFY_LLM_ENABLED", os.getenv("llm_enabled","true")).lower() in ("1","true","yes")
-    if not enabled:
-        return []
-    try:
-        mod = importlib.import_module("personality")
-        mod = importlib.reload(mod)
-        if hasattr(mod, "llm_quips"):
-            max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
-            out = mod.llm_quips(persona, context=context, max_lines=max_lines)
-            if isinstance(out, list):
-                return [str(x).strip() for x in out if str(x).strip()]
-    except Exception:
-        pass
-    return []
-
-# --------- Persona helpers ----------
-def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
-    if passed_persona:
-        return passed_persona
-    try:
-        with open("/data/personality_state.json", "r", encoding="utf-8") as f:
-            st = json.load(f)
-            p = (st.get("current_persona") or "").strip()
-            if p:
-                return p
-    except Exception:
-        pass
-    try:
-        with open("/data/options.json", "r", encoding="utf-8") as f:
-            opt = json.load(f)
-            p = (opt.get("default_persona") or "").strip()
-            if p:
-                return p
-    except Exception:
-        pass
-    p = (os.getenv("DEFAULT_PERSONA") or "").strip()
-    return p or None
-
-def _global_riff_hint(extras_in: Optional[Dict[str, Any]], source_hint: Optional[str]) -> bool:
-    if isinstance(extras_in, dict) and "riff_hint" in extras_in:
-        try:
-            return bool(extras_in.get("riff_hint"))
-        except Exception:
-            return True
-    src = (source_hint or "").strip().lower()
-    auto_sources = {
-        "smtp","proxy","webhook","webhooks","apprise","gotify","ntfy",
-        "sonarr","radarr","watchtower","speedtest","apt","syslog","proxmox","qnap","duplicati","ansible","kuma"
-    }
-    if src in auto_sources:
-        return True
-    default_on = os.getenv("BEAUTIFY_RIFFS_DEFAULT", "true").lower() in ("1","true","yes")
-    return default_on
-
-def _debug(msg: str) -> None:
-    if os.getenv("BEAUTIFY_DEBUG", "").lower() in ("1","true","yes"):
-        try:
-            print(f"[beautify] {msg}")
-        except Exception:
-            pass
-
 # ============================
 # Watchtower-aware summarizer (existing)
 # ============================
@@ -365,7 +208,7 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
     return md, meta
 
 # ============================
-# NEW Parsers — helpers & detectors
+# EXISTING Parsers — ARR, Kuma, Proxmox, QNAP, Duplicati, Ansible
 # ============================
 
 # -------- ARR (Radarr/Sonarr/Lidarr/Prowlarr) --------
@@ -409,7 +252,6 @@ def _parse_arr(title: str, body: str) -> Tuple[str, Dict[str, Any], List[str]]:
         indexer = str(release.get("indexer","") or release.get("releaseGroup","") or "").strip() or indexer
     if isinstance(movie, dict):
         poster = (movie.get("images",{}) or {}).get("poster","") if isinstance(movie.get("images",{}), dict) else ""
-        # some payloads: movie['images'] is a list of dicts with 'coverType':'poster','url':...
         if not poster and isinstance(movie.get("images"), list):
             for it in movie["images"]:
                 if isinstance(it, dict) and str(it.get("coverType","")).lower()=="poster" and it.get("url"):
@@ -420,7 +262,6 @@ def _parse_arr(title: str, body: str) -> Tuple[str, Dict[str, Any], List[str]]:
                 if isinstance(it, dict) and str(it.get("coverType","")).lower() in ("poster","banner","fanart") and it.get("url"):
                     poster = it["url"]; break
 
-    # Compose
     facts: List[str] = []
     details: List[str] = []
 
@@ -435,16 +276,15 @@ def _parse_arr(title: str, body: str) -> Tuple[str, Dict[str, Any], List[str]]:
     else:
         badge = _severity_badge(title + " " + body)
 
-    # Title line
     lines: List[str] = []
     kind = "Radarr/Sonarr/Lidarr/Prowlarr"
     lines += _header(kind, badge)
 
+    # persona overlay (optional)
     eff_persona = _effective_persona(None)
     pol = _persona_overlay_line(eff_persona)
     if pol: lines.append(pol)
 
-    # Entity-specific
     if isinstance(movie, dict):
         name = str(movie.get("title","") or "").strip()
         year = str(movie.get("year","") or "").strip()
@@ -452,7 +292,6 @@ def _parse_arr(title: str, body: str) -> Tuple[str, Dict[str, Any], List[str]]:
     if isinstance(series, dict):
         sname = str(series.get("title","") or "").strip()
         if sname: facts.append(_fmt_kv("Series", sname))
-        # Episodes array → SxxEyy summary
         if isinstance(episodes, list) and episodes:
             try:
                 first = episodes[0]
@@ -467,7 +306,6 @@ def _parse_arr(title: str, body: str) -> Tuple[str, Dict[str, Any], List[str]]:
     if size: details.append(_fmt_kv("Size", size))
     if indexer: details.append(_fmt_kv("Indexer", indexer))
 
-    # Build final
     if facts: lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
 
@@ -476,8 +314,7 @@ def _parse_arr(title: str, body: str) -> Tuple[str, Dict[str, Any], List[str]]:
         images.append(poster)
 
     text = "\n".join(lines).strip()
-    text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    text = _linewise_dedup_markdown(_format_align_check(text))
 
     extras: Dict[str, Any] = {"client::display": {"contentType": "text/markdown"}, "jarvis::beautified": True}
     if images:
@@ -493,7 +330,6 @@ def _looks_kuma(body: str, title: str) -> bool:
     try:
         obj = json.loads(body)
         if isinstance(obj, dict) and ("title" in obj or "msg" in obj or "message" in obj):
-            # Kuma often sends simple title/body JSON via custom/webhook notifications
             return True
     except Exception:
         pass
@@ -506,16 +342,13 @@ def _parse_kuma(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
         obj = json.loads(body)
         name = str(obj.get("title") or obj.get("monitor") or "").strip()
         msg  = str(obj.get("msg") or obj.get("message") or "").strip()
-        # heuristics
         low = (title + " " + msg).lower()
         if "down" in low: status = "DOWN"
         elif "up" in low: status = "UP"
-        # optional fields
         latency = str(obj.get("ping") or obj.get("latency") or "").strip()
         cert_days = str(obj.get("certDaysRemaining") or obj.get("tls_days_left") or "").strip()
         reason = msg
     except Exception:
-        # text path
         low = (title + " " + body).lower()
         if "down" in low: status = "DOWN"
         elif "up" in low: status = "UP"
@@ -541,9 +374,7 @@ def _parse_kuma(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
     if facts: lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
 
-    text = "\n".join(lines).strip()
-    text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
     extras = {"client::display": {"contentType": "text/markdown"}, "jarvis::beautified": True}
     return text, extras
 
@@ -602,9 +433,7 @@ def _parse_proxmox(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
     if facts: lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
 
-    text = "\n".join(lines).strip()
-    text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
     extras = {"client::display": {"contentType": "text/markdown"}, "jarvis::beautified": True}
     return text, extras
 
@@ -616,12 +445,10 @@ def _looks_qnap(body: str, title: str) -> bool:
     return False
 
 def _parse_qnap(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
-    # QNAP typically forwards Syslog-like lines; we’ll pull device/bay/disk/severity if present
     host = ""; model = ""; disk = ""; bay = ""; pool = ""; smart = ""; temp = ""; status = ""; msg = ""
     low = (title + "\n" + body).lower()
     msg = _first_nonempty_line(body)
 
-    # Heuristics
     m = re.search(r'(model|device)\s*[:=]\s*([A-Za-z0-9\-]+)', body, re.I)
     if m: model = m.group(2).strip()
     m = re.search(r'(host|hostname)\s*[:=]\s*([A-Za-z0-9\.\-]+)', body, re.I)
@@ -665,9 +492,7 @@ def _parse_qnap(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
     if facts: lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
 
-    text = "\n".join(lines).strip()
-    text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
     extras = {"client::display": {"contentType": "text/markdown"}, "jarvis::beautified": True}
     return text, extras
 
@@ -759,9 +584,7 @@ def _parse_duplicati(title: str, body: str) -> Tuple[List[str], Dict[str, Any]]:
     if facts:  lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
 
-    text = "\n".join(lines).strip()
-    text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
 
     meta: Dict[str, Any] = {}
     meta["client::display"] = {"contentType": "text/markdown"}
@@ -790,24 +613,20 @@ def _parse_ansible(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
         obj = json.loads(body)
         if "stats" in obj and isinstance(obj["stats"], dict):
             st = obj["stats"]
-            # Aggregate totals
             ok = str(sum(v.get("ok",0) for v in st.values()))
             changed = str(sum(v.get("changed",0) for v in st.values()))
             failed = str(sum(v.get("failures",0) + v.get("failed",0) for v in st.values()))
             skipped = str(sum(v.get("skipped",0) for v in st.values()))
             unreachable = str(sum(v.get("unreachable",0) for v in st.values()))
-        # Optional metadata
         play = str(obj.get("play","") or obj.get("playbook","") or "").strip()
         task = str(obj.get("task","") or "").strip()
         duration = str(obj.get("duration","") or "").strip()
     except Exception:
-        # Parse recap-like strings: "PLAY RECAP ... ok=10 changed=2 failed=0 skipped=1 unreachable=0"
         m = re.search(r'ok=(\d+)', body); ok = m.group(1) if m else ok
         m = re.search(r'changed=(\d+)', body); changed = m.group(1) if m else changed
         m = re.search(r'failed=(\d+)', body); failed = m.group(1) if m else failed
         m = re.search(r'skipped=(\d+)', body); skipped = m.group(1) if m else skipped
         m = re.search(r'unreachable=(\d+)', body); unreachable = m.group(1) if m else unreachable
-        # pick first error line if present
         em = re.search(r'ERROR!\s*(.+)', body)
         if em: message = em.group(1).strip()
 
@@ -833,12 +652,219 @@ def _parse_ansible(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
     if facts: lines += ["", "📄 Facts", *facts]
     if details: lines += ["", "📄 Details", *details]
 
-    text = "\n".join(lines).strip()
-    text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
     extras = {"client::display": {"contentType": "text/markdown"}, "jarvis::beautified": True}
     return text, extras
+# ============================
+# NEW Parsers — Unraid, Plex, Emby, Watchtower (enhanced), qBittorrent, Deluge, SABnzbd, OPNsense
+# ============================
 
+# --- Unraid ---
+UNRAID_SUBJ_RE = re.compile(r'^(Notice|Warning|Alert)\s*(?P<host>[^]+)\]\s*-\s*(?P<what>.+)$', re.I)
+def _looks_unraid(title: str) -> bool:
+    return bool(UNRAID_SUBJ_RE.match(title or ""))
+
+def _parse_unraid(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
+    m = UNRAID_SUBJ_RE.match(title or "")
+    sev, host, what = m.group(1), m.group(2), m.group(3)
+    badge = "❌" if sev in ("Alert","Warning") and "error" in what.lower() else ("⚠️" if sev in ("Alert","Warning") else "✅")
+    lines = _header("Unraid", badge)
+    eff_persona = _effective_persona(None)
+    pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts = []
+    details = []
+    facts.append(_fmt_kv("Server", host))
+    facts.append(_fmt_kv("Event", what))
+    # simple heuristics
+    r = re.search(r'Array has\s+(\d+)\s+disk', body, re.I)
+    if r:
+        details.append(_fmt_kv("Array read errors", r.group(1)))
+    if facts: lines += ["", "📄 Facts", *facts]
+    if details: lines += ["", "📄 Details", *details]
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display": {"contentType": "text/markdown"}, "jarvis::beautified": True}
+
+# --- Plex ---
+def _looks_plex(body: str) -> bool:
+    try:
+        j=json.loads(body); return isinstance(j, dict) and "event" in j and "Metadata" in j
+    except: return False
+
+def _parse_plex(body: str) -> Tuple[str, Dict[str, Any]]:
+    j=json.loads(body)
+    event=(j.get("event") or "").replace("_"," ").title()
+    meta=j.get("Metadata") or {}
+    server=(j.get("Server") or {}).get("title")
+    player=(j.get("Player") or {}).get("title") or (j.get("Player") or {}).get("platform")
+    title=meta.get("title") or meta.get("grandparentTitle") or meta.get("originalTitle") or "Plex Event"
+    lines=_header("Plex","")
+    eff_persona = _effective_persona(None); pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts=[]; details=[]
+    if event: facts.append(_fmt_kv("Event", event))
+    if server: details.append(_fmt_kv("Server", server))
+    if player: details.append(_fmt_kv("Player", str(player)))
+    if meta.get("type"): details.append(_fmt_kv("Type", meta.get("type")))
+    if meta.get("year"): details.append(_fmt_kv("Year", str(meta.get("year"))))
+    if facts: lines += ["", "📄 Facts", *facts]
+    if details: lines += ["", "📄 Details", *details]
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display":{"contentType":"text/markdown"}, "jarvis::beautified": True}
+
+# --- Emby ---
+def _looks_emby(body: str) -> bool:
+    try:
+        j=json.loads(body); return isinstance(j, dict) and ("Event" in j or "event" in j) and ("Item" in j or "item" in j)
+    except: return False
+
+def _parse_emby(body: str) -> Tuple[str, Dict[str, Any]]:
+    j=json.loads(body)
+    ev=(j.get("Event") or j.get("event") or "")
+    item=j.get("Item") or j.get("item") or {}
+    lines=_header("Emby","")
+    eff_persona = _effective_persona(None); pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts=[]; details=[]
+    if ev: facts.append(_fmt_kv("Event", ev))
+    if item.get("Name"): facts.append(_fmt_kv("Title", item.get("Name")))
+    if item.get("Type"): details.append(_fmt_kv("Type", item.get("Type")))
+    if item.get("ProductionYear"): details.append(_fmt_kv("Year", str(item.get("ProductionYear"))))
+    if facts: lines += ["", "📄 Facts", *facts]
+    if details: lines += ["", "📄 Details", *details]
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display":{"contentType":"text/markdown"}, "jarvis::beautified": True}
+
+# --- Watchtower (enhanced text catch) ---
+def _looks_watchtower_enh(body: str, title: str) -> bool:
+    tb=(title+" "+body).lower()
+    return "watchtower" in tb or "found new " in tb or "updating container" in tb or "restarting container" in tb
+
+def _parse_watchtower_enh(body: str) -> Tuple[str, Dict[str, Any]]:
+    lines=_header("Watchtower","")
+    eff_persona = _effective_persona(None); pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts=[]; details=[]
+    # crude extraction of lines mentioning actions
+    updates=[]
+    for ln in (body or "").splitlines():
+        l=ln.strip()
+        if re.search(r'\b(Found new|Stopping|Updating|Restarting)\b', l, re.I):
+            updates.append(l)
+    if updates:
+        details += [f"- {html.escape(u)}" for u in updates]
+    if facts: lines += ["", "📄 Facts", *facts]
+    if details: lines += ["", "📄 Details", *details]
+    text=_linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display":{"contentType":"text/markdown"}, "jarvis::beautified": True}
+
+# --- qBittorrent ---
+def _looks_qbittorrent(body: str) -> bool:
+    try:
+        j=json.loads(body)
+        if isinstance(j, dict) and "name" in j and "state" in j:
+            return True
+        if isinstance(j, dict) and "torrent" in j and isinstance(j["torrent"], dict):
+            return True
+    except: return False
+    return False
+
+def _parse_qbittorrent(body: str) -> Tuple[str, Dict[str, Any]]:
+    j=json.loads(body)
+    tor = j["torrent"] if isinstance(j, dict) and "torrent" in j and isinstance(j["torrent"], dict) else j
+    name = tor.get("name") or "Torrent"
+    state = str(tor.get("state","")).title()
+    progress = tor.get("progress")
+    lines=_header("qBittorrent","")
+    eff_persona = _effective_persona(None); pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts=[_fmt_kv("Torrent", name)]
+    if state: facts.append(_fmt_kv("State", state))
+    details=[]
+    if isinstance(progress, (int,float)):
+        details.append(_fmt_kv("Progress", f"{round(float(progress)*100,1)}%"))
+    if tor.get("dlspeed"): details.append(_fmt_kv("DL", str(tor.get("dlspeed"))))
+    if tor.get("upspeed"): details.append(_fmt_kv("UL", str(tor.get("upspeed"))))
+    if tor.get("eta"): details.append(_fmt_kv("ETA", str(tor.get("eta"))))
+    if tor.get("category"): details.append(_fmt_kv("Category", str(tor.get("category"))))
+    if tor.get("ratio"): details.append(_fmt_kv("Ratio", str(tor.get("ratio"))))
+    if facts: lines+=["", "📄 Facts", *facts]
+    if details: lines+=["", "📄 Details", *details]
+    text=_linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display":{"contentType":"text/markdown"}, "jarvis::beautified": True}
+
+# --- Deluge ---
+def _looks_deluge(body: str) -> bool:
+    try:
+        j=json.loads(body)
+        if isinstance(j, dict) and (("name" in j and ("hash" in j or "info_hash" in j)) or ("torrent" in j and isinstance(j["torrent"], dict))):
+            return True
+    except: return False
+    return False
+
+def _parse_deluge(body: str) -> Tuple[str, Dict[str, Any]]:
+    j=json.loads(body)
+    tor = j["torrent"] if "torrent" in j and isinstance(j["torrent"], dict) else j
+    name = tor.get("name") or "Torrent"
+    state = tor.get("state")
+    lines=_header("Deluge","")
+    eff_persona = _effective_persona(None); pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts=[_fmt_kv("Torrent", name)]
+    if state: facts.append(_fmt_kv("State", str(state).title()))
+    details=[]
+    for k in ("progress","eta","ratio","download_payload_rate","upload_payload_rate"):
+        if tor.get(k) is not None:
+            details.append(_fmt_kv(k.replace("_"," ").title(), str(tor.get(k))))
+    if facts: lines+=["", "📄 Facts", *facts]
+    if details: lines+=["", "📄 Details", *details]
+    text=_linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display":{"contentType":"text/markdown"}, "jarvis::beautified": True}
+
+# --- SABnzbd ---
+SAB_SUBJ_RE = re.compile(r'^(?P<status>Complete|Failed|Warning)\s*:\s*(?P<job>.+)$', re.I)
+def _looks_sabnzbd(title: str, body: str) -> bool:
+    return bool(SAB_SUBJ_RE.match(title or "")) or "sabnzbd" in (title + " " + body).lower()
+
+def _parse_sabnzbd(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
+    m = SAB_SUBJ_RE.match(title or "")
+    status = (m.group("status") if m else "SABnzbd").title()
+    job = (m.group("job") if m else "Job")
+    badge = "❌" if status=="Failed" else ("⚠️" if status=="Warning" else "✅")
+    lines=_header("SABnzbd", badge)
+    eff_persona = _effective_persona(None); pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts=[_fmt_kv("Job", job), _fmt_kv("Status", status)]
+    details=[]
+    m_size = re.search(r'(Size|Bytes):\s*([\d\.,]+\s*(?:MB|GB|KB|B))', body, re.I)
+    if m_size: details.append(_fmt_kv("Size", m_size.group(2)))
+    if facts: lines+=["", "📄 Facts", *facts]
+    if details: lines+=["", "📄 Details", *details]
+    text=_linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display":{"contentType":"text/markdown"}, "jarvis::beautified": True}
+
+# --- OPNsense ---
+OPN_SUBJ_RE = re.compile(r'(there were errors loading the rules|interface .+ down|gateway .+ down|carp state .*|power failure)', re.I)
+def _looks_opnsense(title: str, body: str) -> bool:
+    return bool(OPN_SUBJ_RE.search((title or "") + "\n" + (body or "")))
+
+def _parse_opnsense(title: str, body: str) -> Tuple[str, Dict[str, Any]]:
+    blob = (title or "") + "\n" + (body or "")
+    badge = "❌" if re.search(r'(down|error|failed)', blob, re.I) else "⚠️"
+    lines=_header("OPNsense", badge)
+    eff_persona = _effective_persona(None); pol = _persona_overlay_line(eff_persona)
+    if pol: lines.append(pol)
+    facts=[]; details=[]
+    # iface/gw sniffs
+    m_if = re.search(r'(wan|lan|ixl\d+|em\d+|vmx\d+)', blob, re.I)
+    m_gw = re.search(r'gateway\s+([^\s]+)', blob, re.I)
+    if m_if: facts.append(_fmt_kv("Interface", m_if.group(1)))
+    if m_gw: facts.append(_fmt_kv("Gateway", m_gw.group(1)))
+    details.append(_fmt_kv("Message", _first_nonempty_line(body)))
+    if facts: lines+=["", "📄 Facts", *facts]
+    if details: lines+=["", "📄 Details", *details]
+    text=_linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
+    return text, {"client::display":{"contentType":"text/markdown"}, "jarvis::beautified": True}
 # ============================
 # Public API
 # ============================
@@ -856,13 +882,12 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     # images from raw text (keep FIRST — we won't override existing posters)
     body_wo_imgs, images = _harvest_images(normalized)
 
-    kind = _detect_type(title, body_wo_imgs)
-    badge = _severity_badge(title + " " + body_wo_imgs)
+    kind_badge_seed = title + " " + body_wo_imgs
 
-    # ===== Watchtower special-case =====
-    if kind == "Watchtower":
+    # ===== Watchtower (existing summarizer) =====
+    if "watchtower" in (title + " " + body_wo_imgs).lower():
         lines: List[str] = []
-        lines += _header("Watchtower", badge)
+        lines += _header("Watchtower", _severity_badge(kind_badge_seed))
 
         eff_persona = _effective_persona(persona)
         if persona_quip:
@@ -873,21 +898,24 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         lines += ["", wt_md]
 
         ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
-        riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
-        if eff_persona and riff_hint:
-            riffs = _persona_llm_riffs(ctx, eff_persona)
+        # riff gate
+        if eff_persona and (isinstance(extras_in, dict) and extras_in.get("riff_hint", True)):
+            try:
+                mod = importlib.import_module("personality")
+                mod = importlib.reload(mod)
+                if hasattr(mod, "llm_quips"):
+                    riffs = mod.llm_quips(eff_persona, context=ctx, max_lines=int(os.getenv("LLM_PERSONA_LINES_MAX","3")))
+            except Exception:
+                riffs = []
         if riffs:
             lines += ["", f"🧠 {eff_persona} riff"]
             for r in riffs:
-                sr = r.replace("\r", "").strip()
+                sr = str(r).replace("\r","").strip()
                 if sr:
                     lines.append("> " + sr)
 
-        text = "\n".join(lines).strip()
-        text = _format_align_check(text)
-        text = _linewise_dedup_markdown(text)
-
+        text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
             "jarvis::beautified": True,
@@ -903,23 +931,28 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["jarvis::allImageUrls"] = images
         return text, extras
 
-    # ===== Duplicati special-case =====
+    # ===== Duplicati =====
     if _looks_duplicati(title, body_wo_imgs):
         md_lines, dupe_meta = _parse_duplicati(title, body_wo_imgs)
         ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
         eff_persona = _effective_persona(persona)
-        riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
-        if eff_persona and riff_hint:
-            riffs = _persona_llm_riffs(ctx, eff_persona)
+        if eff_persona and (isinstance(extras_in, dict) and extras_in.get("riff_hint", True)):
+            try:
+                mod = importlib.import_module("personality")
+                mod = importlib.reload(mod)
+                if hasattr(mod, "llm_quips"):
+                    riffs = mod.llm_quips(eff_persona, context=ctx, max_lines=int(os.getenv("LLM_PERSONA_LINES_MAX","3")))
+            except Exception:
+                pass
         if riffs:
             md_lines += ["", f"🧠 {eff_persona} riff"]
             for r in riffs:
-                sr = r.replace("\r", "").strip()
+                sr = str(r).replace("\r", "").strip()
                 if sr:
                     md_lines.append("> " + sr)
 
-        text = "\n".join(md_lines).strip()
+        text = _linewise_dedup_markdown(_format_align_check("\n".join(md_lines).strip()))
         extras: Dict[str, Any] = {"jarvis::llm_riff_lines": len(riffs or [])}
         extras.update(dupe_meta)
         if isinstance(extras_in, dict):
@@ -929,7 +962,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["client::notification"] = {"bigImageUrl": images[0]}
         return text, extras
 
-    # ===== ARR special-case =====
+    # ===== ARR =====
     if _looks_arr(body_wo_imgs):
         arr_text, arr_extras, arr_imgs = _parse_arr(title, body_wo_imgs)
         # Respect existing posters first; only add ARR poster if none harvested
@@ -938,7 +971,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             arr_extras.setdefault("client::notification", {"bigImageUrl": images[0]})
         return arr_text, arr_extras
 
-    # ===== Kuma special-case =====
+    # ===== Kuma =====
     if _looks_kuma(body_wo_imgs, title):
         text, extras = _parse_kuma(title, body_wo_imgs)
         if images:
@@ -946,7 +979,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["client::notification"] = {"bigImageUrl": images[0]}
         return text, extras
 
-    # ===== Proxmox special-case =====
+    # ===== Proxmox =====
     if _looks_proxmox(body_wo_imgs, title):
         text, extras = _parse_proxmox(title, body_wo_imgs)
         if images:
@@ -954,7 +987,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["client::notification"] = {"bigImageUrl": images[0]}
         return text, extras
 
-    # ===== QNAP special-case =====
+    # ===== QNAP =====
     if _looks_qnap(body_wo_imgs, title):
         text, extras = _parse_qnap(title, body_wo_imgs)
         if images:
@@ -962,7 +995,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["client::notification"] = {"bigImageUrl": images[0]}
         return text, extras
 
-    # ===== Ansible special-case =====
+    # ===== Ansible =====
     if _looks_ansible(body_wo_imgs, title):
         text, extras = _parse_ansible(title, body_wo_imgs)
         if images:
@@ -970,52 +1003,151 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["client::notification"] = {"bigImageUrl": images[0]}
         return text, extras
 
+    # ===== NEW Parsers chain =====
+    if _looks_unraid(title):
+        text, extras = _parse_unraid(title, body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+            extras["client::notification"] = {"bigImageUrl": images[0]}
+        return text, extras
+
+    if _looks_plex(body_wo_imgs):
+        text, extras = _parse_plex(body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+            extras["client::notification"] = {"bigImageUrl": images[0]}
+        return text, extras
+
+    if _looks_emby(body_wo_imgs):
+        text, extras = _parse_emby(body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+            extras["client::notification"] = {"bigImageUrl": images[0]}
+        return text, extras
+
+    if _looks_watchtower_enh(body_wo_imgs, title):
+        text, extras = _parse_watchtower_enh(body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+        return text, extras
+
+    if _looks_qbittorrent(body_wo_imgs):
+        text, extras = _parse_qbittorrent(body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+        return text, extras
+
+    if _looks_deluge(body_wo_imgs):
+        text, extras = _parse_deluge(body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+        return text, extras
+
+    if _looks_sabnzbd(title, body_wo_imgs):
+        text, extras = _parse_sabnzbd(title, body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+        return text, extras
+
+    if _looks_opnsense(title, body_wo_imgs):
+        text, extras = _parse_opnsense(title, body_wo_imgs)
+        if images:
+            extras["jarvis::allImageUrls"] = images
+        return text, extras
+
     # ===== Generic path (existing behavior) =====
+    # fallback categorizer
+    kind = "Message"
+    badge = _severity_badge(kind_badge_seed)
+
     lines: List[str] = []
     lines += _header(kind, badge)
 
     eff_persona = _effective_persona(persona)
-
     if persona_quip:
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
+    # lightweight categorization
+    def _harvest_timestamp(title: str, body: str) -> Optional[str]:
+        for src in (title or "", body or ""):
+            for rx in (TS_RE, DATE_ONLY_RE, TIME_ONLY_RE):
+                m = rx.search(src)
+                if m: return m.group(0).strip()
+        return None
+
+    def _extract_keyvals(text: str) -> List[Tuple[str,str]]:
+        out: List[Tuple[str,str]] = []
+        for ln in (text or "").splitlines():
+            m = KV_RE.match(ln)
+            if m:
+                out.append((m.group(1).strip(), m.group(2).strip()))
+        return out
+
+    def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
+        facts: List[str] = []
+        details: List[str] = []
+
+        ts = _harvest_timestamp(title, body)
+        if ts: facts.append(_fmt_kv("Time", ts))
+        if title.strip(): facts.append(_fmt_kv("Subject", title.strip()))
+
+        for k,v in _extract_keyvals(body):
+            key = k.strip().lower()
+            val = v
+            if key in ("ip","ip address","address"):
+                val = _repair_ipv4(v, title, body)
+                details.append(_fmt_kv("IP", val))
+            elif key in ("ping","download","upload","latency","jitter","loss","speed"):
+                facts.append(_fmt_kv(k, v))
+            elif key in ("status","result","state","ok","success","warning","error"):
+                facts.append(_fmt_kv(k, v))
+            else:
+                details.append(_fmt_kv(k, v))
+
+        ip_list = _find_ips(title, body)
+        for ip in ip_list:
+            if f"`{ip}`" not in " ".join(details):
+                details.append(_fmt_kv("IP", ip))
+        for host in HOST_RE.findall(body or ""):
+            if not IP_RE.match(host):
+                details.append(_fmt_kv("host", host))
+
+        for m in VER_RE.finditer(body or ""):
+            ver = m.group(0)
+            if any(ver in ip for ip in ip_list):
+                continue
+            details.append(_fmt_kv("version", ver))
+
+        if not facts:
+            first = _first_nonempty_line(body)
+            if first: facts.append(_fmt_kv("Info", first))
+
+        def _uniq(lines: List[str]) -> List[str]:
+            seen=set(); out=[]
+            for ln in lines:
+                key = re.sub(r'\s+',' ', ln.strip()).lower()
+                if key and key not in seen: seen.add(key); out.append(ln)
+            return out
+
+        return _uniq(facts), _uniq(details)
+
     facts, details = _categorize_bullets(title, body_wo_imgs)
-    if facts:
-        lines += ["", "📄 Facts", *facts]
-    if details:
-        lines += ["", "📄 Details", *details]
+    if facts:   lines += ["", "📄 Facts", *facts]
+    if details: lines += ["", "📄 Details", *details]
 
     if images:
         lines += ["", f"![poster]({images[0]})"]
 
-    ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
-    riffs: List[str] = []
-    riff_hint = _global_riff_hint(extras_in, source_hint)
-    _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
-    if eff_persona and riff_hint:
-        riffs = _persona_llm_riffs(ctx, eff_persona)
-
-    if riffs:
-        lines += ["", f"🧠 {eff_persona} riff"]
-        for r in riffs:
-            sr = r.replace("\r", "").strip()
-            if sr:
-                lines.append("> " + sr)
-
-    text = "\n".join(lines).strip()
-    text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
-
+    text = _linewise_dedup_markdown(_format_align_check("\n".join(lines).strip()))
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images,
-        "jarvis::llm_riff_lines": len(riffs or []),
+        "jarvis::llm_riff_lines": 0,
     }
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
-
     if isinstance(extras_in, dict):
         extras.update(extras_in)
 
