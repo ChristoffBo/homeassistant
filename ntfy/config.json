@@ -1,1 +1,69 @@
-1
+{
+  "name": "ntfy Server (Official)",
+  "version": "0.1.0",
+  "slug": "ntfy",
+  "description": "Self-hosted ntfy server using the official Docker image, with Ingress and persistent storage (/data).",
+  "url": "https://ntfy.sh",
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7",
+    "armhf"
+  ],
+  "startup": "services",
+  "ingress": true,
+  "ingress_port": 8008,
+  "ingress_stream": true,
+  "panel_icon": "mdi:bell",
+  "panel_title": "ntfy",
+  "webui": "http://[HOST]:[PORT:8008]",
+  "watchdog": "tcp://[HOST]:[PORT:8008]",
+  "ports": {
+    "8008/tcp": null
+  },
+  "ports_description": {
+    "8008/tcp": "Optional direct access to ntfy web/API (set a Host port or leave empty for Ingress-only)"
+  },
+  "options": {
+    "listen_port": 8008,
+    "base_url": "",
+    "behind_proxy": true,
+    "attachments": {
+      "enabled": true,
+      "dir": "/data/attachments",
+      "file_size_limit": "15M",
+      "total_size_limit": "5G",
+      "expiry": "3h"
+    },
+    "cache": {
+      "file": "/data/cache.db"
+    },
+    "auth": {
+      "enabled": false,
+      "default_access": "read-write",
+      "admin_user": "",
+      "admin_password": ""
+    }
+  },
+  "schema": {
+    "listen_port": "int",
+    "base_url": "str?",
+    "behind_proxy": "bool",
+    "attachments": {
+      "enabled": "bool",
+      "dir": "str",
+      "file_size_limit": "str",
+      "total_size_limit": "str",
+      "expiry": "str"
+    },
+    "cache": {
+      "file": "str"
+    },
+    "auth": {
+      "enabled": "bool",
+      "default_access": "list(read-write|read-only|write-only|deny-all)",
+      "admin_user": "str?",
+      "admin_password": "str?"
+    }
+  }
+}
