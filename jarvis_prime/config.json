@@ -25,6 +25,8 @@
 
     "beautify_enabled": true,
     "beautify_inline_images": true,
+    "beautify_full_enabled": false,
+    "beautify_lossless_enabled": true,
     "silent_repost": true,
 
     "greeting_enabled": true,
@@ -190,6 +192,8 @@
 
     "beautify_enabled": "bool",
     "beautify_inline_images": "bool",
+    "beautify_full_enabled": "bool",
+    "beautify_lossless_enabled": "bool",
     "silent_repost": "bool",
 
     "greeting_enabled": "bool",
