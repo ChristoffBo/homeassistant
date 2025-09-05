@@ -2,7 +2,7 @@
   const $  = s => document.querySelector(s);
   const $$ = s => document.querySelectorAll(s);
 
-  // Robust API base
+  /* ---------- API helpers ---------- */
   function apiRoot(){
     if (window.JARVIS_API_BASE) return String(window.JARVIS_API_BASE).replace(/\/?$/, '/');
     try{
@@ -24,7 +24,6 @@
     $('#toast').appendChild(d);
     setTimeout(()=>d.remove(),3500);
   }
-
   async function jfetch(url, opts){
     const r = await fetch(url, opts);
     if(!r.ok){
@@ -35,7 +34,7 @@
     return ct.includes('application/json') ? r.json() : r.text();
   }
 
-  // Tabs
+  /* ---------- Tabs ---------- */
   $$('.tablink').forEach(b=>b.addEventListener('click',()=>{
     $$('.tablink').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
@@ -43,7 +42,9 @@
     $('#'+b.dataset.tab).classList.add('active');
   }));
 
-  /* ---------------- Inbox ---------------- */
+  /* =====================================================
+   * Inbox with Message Preview
+   * ===================================================*/
   function fmt(ts){
     try{
       const v = Number(ts||0);
@@ -75,6 +76,8 @@
       updateCounters(items);
       for(const m of items){
         const tr=document.createElement('tr');
+        tr.className='clickable';
+        tr.dataset.id = m.id;
         tr.innerHTML = `
           <td>${fmt(m.created_at)}</td>
           <td>${m.source||''}</td>
@@ -91,34 +94,64 @@
       toast('Inbox load error');
     }
   }
+  // Row click → preview
   $('#msg-body').addEventListener('click', async (e)=>{
     const btn = e.target.closest('button[data-act]');
-    if(!btn) return;
-    const id = btn.dataset.id;
-    const act = btn.dataset.act;
+    if(btn){
+      const id = btn.dataset.id, act = btn.dataset.act;
+      try{
+        if(act==='del'){
+          if(!confirm('Delete this message?')) return;
+          await jfetch(API('api/messages/'+id), {method:'DELETE'});
+          toast('Deleted'); hidePreview();
+        }else if(act==='arch'){
+          await jfetch(API(`api/messages/${id}/save`), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+          toast('Toggled archive');
+        }
+        await loadInbox();
+      }catch{ toast('Action failed'); }
+      return;
+    }
+    const row = e.target.closest('tr.clickable');
+    if(!row) return;
+    const id = row.dataset.id;
     try{
-      if(act==='del'){
-        if(!confirm('Delete this message?')) return;
-        await jfetch(API('api/messages/'+id), {method:'DELETE'});
-        toast('Deleted');
-      }else if(act==='arch'){
-        await jfetch(API(`api/messages/${id}/save`), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
-        toast('Toggled archive');
-      }
-      await loadInbox();
-    }catch{ toast('Action failed'); }
+      const m = await jfetch(API('api/messages/'+id));
+      showPreview(m);
+    }catch{
+      toast('Preview failed');
+    }
   });
+  function showPreview(m){
+    $('#pv-title').textContent  = m?.title || '(no title)';
+    $('#pv-source').textContent = m?.source || '';
+    $('#pv-time').textContent   = fmt(m?.created_at);
+    const body = String(m?.html || m?.body || m?.message || '');
+    const el = $('#pv-body');
+    // Safe-ish render: if looks like HTML, render; else text
+    if(/<\/?[a-z][\s\S]*>/i.test(body)){
+      el.innerHTML = body;
+    }else{
+      el.textContent = body;
+    }
+    $('#preview').classList.remove('hidden');
+  }
+  function hidePreview(){ $('#preview').classList.add('hidden'); $('#pv-body').innerHTML=''; }
+  $('#pv-close').addEventListener('click', hidePreview);
+
+  // Delete all
   $('#del-all').addEventListener('click', async()=>{
     if(!confirm('Delete ALL messages?')) return;
     const keep = $('#keep-arch')?.checked ? 1 : 0;
     try{
       await jfetch(API(`api/messages?keep_saved=${keep}`), {method:'DELETE'});
       toast('All deleted');
+      hidePreview();
       await loadInbox();
     }catch{ toast('Delete all failed'); }
   });
 
-  // Live updates via SSE with exponential backoff
+  // SSE stream
   (function startStream(){
     let es=null, backoff=1000;
     function connect(){
@@ -139,97 +172,81 @@
     setInterval(loadInbox, 300000);
   })();
 
-  /* -------------- Personas -------------- */
-  async function loadPersonas(){
+  /* =====================================================
+   * Unified Options wiring
+   * ===================================================*/
+  let OPTS = null, SCHEMA = null;
+  async function refreshOptions(){
     try{
-      const p = await jfetch(API('api/notify/personas'));
-      $('#p-dude').checked  = !!p?.dude;
-      $('#p-chick').checked = !!p?.chick;
-      $('#p-nerd').checked  = !!p?.nerd;
-      $('#p-rager').checked = !!p?.rager;
-    }catch{}
+      [OPTS, SCHEMA] = await Promise.all([
+        jfetch(API('api/options')),
+        jfetch(API('api/schema'))
+      ]);
+      if (!OPTS) OPTS = {};
+      if (!SCHEMA) SCHEMA = {};
+      hydrateAllTabs();
+    }catch(e){
+      console.error(e);
+      $('#opts-wrap').innerHTML = '<div class="toast">Failed to load options/schema</div>';
+    }
   }
-  $('#save-personas').addEventListener('click', async()=>{
-    try{
-      await jfetch(API('api/notify/personas'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          dude: $('#p-dude').checked,
-          chick: $('#p-chick').checked,
-          nerd: $('#p-nerd').checked,
-          rager: $('#p-rager').checked
-        })
-      });
-      toast('Personas saved');
-    }catch{ toast('Save failed'); }
-  });
+  function setField(el, key){
+    const v = OPTS?.[key];
+    if(el.type === 'checkbox') el.checked = !!v;
+    else if(el.tagName === 'TEXTAREA') el.value = v ?? '';
+    else el.value = (v ?? '');
+  }
+  function collectAndSave(selector, keys){
+    return async function(){
+      try{
+        const payload = {};
+        (keys || Array.from(document.querySelectorAll(selector))).forEach(el => {
+          const key = el.dataset.opt || el;
+          const node = typeof el === 'string' ? document.querySelector(`[data-opt="${el}"]`) : el;
+          if (!node) return;
+          if (node.type === 'checkbox') payload[key] = !!node.checked;
+          else if (node.tagName === 'TEXTAREA') payload[key] = node.value;
+          else if (node.type === 'number') payload[key] = node.value==='' ? '' : (String(node.value).includes('.') ? parseFloat(node.value) : parseInt(node.value,10));
+          else payload[key] = node.value;
+        });
+        await jfetch(API('api/options'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        toast('Saved');
+      }catch(e){ toast('Save failed'); }
+    }
+  }
 
-  /* --------------- Intakes --------------- */
-  async function loadChannels(){
-    try{
-      const c = await jfetch(API('api/notify/channels'));
-      $('#smtp-host').value = c?.smtp?.host || '';
-      $('#smtp-port').value = c?.smtp?.port || '';
-      $('#smtp-user').value = c?.smtp?.user || '';
-      $('#smtp-pass').value = c?.smtp?.pass || '';
-      $('#smtp-from').value = c?.smtp?.from || '';
-      $('#gotify-url').value = c?.gotify?.url || '';
-      $('#gotify-token').value = c?.gotify?.token || '';
-      $('#ntfy-url').value = c?.ntfy?.url || '';
-      $('#ntfy-topic').value = c?.ntfy?.topic || '';
-    }catch{}
+  /* Personas tab */
+  function hydratePersonas(){
+    $$('#personas [data-opt]').forEach(el => setField(el, el.dataset.opt));
   }
-  $('#save-channels').addEventListener('click', async()=>{
-    try{
-      await jfetch(API('api/notify/channels'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          smtp:{
-            host:$('#smtp-host').value, port:$('#smtp-port').value,
-            user:$('#smtp-user').value, pass:$('#smtp-pass').value, from:$('#smtp-from').value
-          },
-          gotify:{ url:$('#gotify-url').value, token:$('#gotify-token').value },
-          ntfy:{ url:$('#ntfy-url').value, topic:$('#ntfy-topic').value }
-        })
-      });
-      toast('Intakes saved');
-    }catch{ toast('Save failed'); }
-  });
-  $('#test-email').addEventListener('click', ()=> jfetch(API('api/notify/test/email'),{method:'POST'}).then(()=>toast('Email test sent')).catch(()=>toast('Email test failed')));
-  $('#test-gotify').addEventListener('click',()=> jfetch(API('api/notify/test/gotify'),{method:'POST'}).then(()=>toast('Gotify test sent')).catch(()=>toast('Gotify test failed')));
-  $('#test-ntfy').addEventListener('click',  ()=> jfetch(API('api/notify/test/ntfy'),  {method:'POST'}).then(()=>toast('ntfy test sent')).catch(()=>toast('ntfy test failed')));
+  $('#save-persona-opts').addEventListener('click', collectAndSave('#personas [data-opt]'));
 
-  /* --------------- Settings -------------- */
-  async function loadInboxSettings(){
-    try{
-      const s = await jfetch(API('api/inbox/settings'));
-      if(s && typeof s==='object'){
-        if(s.retention_days!=null)    $('#retention').value = s.retention_days;
-        if(s.default_purge_days!=null)$('#purge-days').value = s.default_purge_days;
-        if(s.qh){
-          $('#qh-tz').value = s.qh.tz || '';
-          $('#qh-start').value = s.qh.start || '';
-          $('#qh-end').value = s.qh.end || '';
-          $('#qh-allow-critical').checked = !!s.qh.allow_critical;
-        }
-      }
-    }catch{}
+  /* Intakes tab */
+  function hydrateIntakes(){
+    $$('#intakes [data-opt]').forEach(el => setField(el, el.dataset.opt));
   }
-  $('#save-retention').addEventListener('click', async()=>{
-    try{
-      const d = parseInt($('#retention').value||'0',10) || 0;
-      await jfetch(API('api/inbox/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ retention_days:d })});
-      toast('Retention saved');
-    }catch{ toast('Save failed'); }
-  });
+  $('#save-intakes').addEventListener('click', collectAndSave('#intakes [data-opt]'));
+
+  /* Outputs tab */
+  function hydrateOutputs(){
+    $$('#outputs [data-opt]').forEach(el => setField(el, el.dataset.opt));
+  }
+  $('#save-outputs').addEventListener('click', collectAndSave('#outputs [data-opt]'));
+
+  /* Settings tab */
+  function hydrateSettings(){
+    $$('#settings [data-opt]').forEach(el => setField(el, el.dataset.opt));
+  }
+  $('#save-settings').addEventListener('click', collectAndSave('#settings [data-opt]'));
   $('#purge').addEventListener('click', async()=>{
     if(!confirm('Run purge now?')) return;
     try{
-      const days = parseInt($('#purge-days').value||'0',10) || 0;
+      const days = parseInt(OPTS?.retention_days||'0',10) || 0;
       await jfetch(API('api/inbox/purge'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ days })});
       toast('Purge started');
     }catch{ toast('Purge failed'); }
   });
+  // Quiet Hours separate endpoints if available (kept from previous build)
   $('#save-quiet').addEventListener('click', async()=>{
     try{
       await jfetch(API('api/notify/quiet'), {
@@ -245,59 +262,21 @@
     }catch{ toast('Save failed'); }
   });
 
-  /* ----------------- LLM ----------------- */
-  async function loadLLM(){
-    try{
-      const s = await jfetch(API('api/llm/settings'));
-      $('#llm-model').value   = s?.model   || '';
-      $('#llm-ctx').value     = s?.ctx     ?? '';
-      $('#llm-timeout').value = s?.timeout ?? '';
-    }catch{}
+  /* LLM tab */
+  function hydrateLLM(){
+    $$('#llm [data-opt]').forEach(el => setField(el, el.dataset.opt));
   }
-  $('#save-llm').addEventListener('click', async()=>{
-    try{
-      await jfetch(API('api/llm/settings'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          model: $('#llm-model').value,
-          ctx: parseInt($('#llm-ctx').value||'0',10) || 0,
-          timeout: parseInt($('#llm-timeout').value||'0',10) || 0
-        })
-      });
-      toast('LLM saved');
-    }catch{ toast('Save failed'); }
-  });
+  $('#save-llm').addEventListener('click', collectAndSave('#llm [data-opt]'));
 
-  /* -------------- EnviroGuard ------------- */
-  async function loadEnviro(){
-    try{
-      const e = await jfetch(API('api/llm/enviroguard'));
-      $('#env-status').textContent = e?.enabled ? 'Enabled' : 'Disabled';
-      $('#env-hot').value  = e?.hot  ?? '';
-      $('#env-cold').value = e?.cold ?? '';
-      $('#env-hyst').value = e?.hyst ?? '';
-    }catch{}
-  }
-  $('#save-env').addEventListener('click', async()=>{
-    try{
-      await jfetch(API('api/llm/enviroguard'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          hot:  parseFloat($('#env-hot').value||''),
-          cold: parseFloat($('#env-cold').value||''),
-          hyst: parseFloat($('#env-hyst').value||'')
-        })
-      });
-      toast('EnviroGuard saved');
-    }catch{ toast('Save failed'); }
-  });
+  /* EnviroGuard tab */
+  function hydrateEnv(){ $$('#enviro [data-opt]').forEach(el => setField(el, el.dataset.opt)); }
+  $('#save-env').addEventListener('click', collectAndSave('#enviro [data-opt]'));
 
-  /* -------- Options (All) dynamic editor -------- */
+  /* Options (All) dynamic */
   function guessWidget(key, type, val){
     const lower = key.toLowerCase();
-    if (type.startsWith('int') || type==='float') return `<input type="number" data-key="${key}" value="${val ?? ''}">`;
+    if (type && (type.startsWith('int') || type==='float')) return `<input type="number" data-key="${key}" value="${val ?? ''}">`;
     if (type==='bool') return `<label class="lbl"><input type="checkbox" data-key="${key}" ${val ? 'checked':''}/> ${key}</label>`;
-    // long-ish strings → textarea
     if ((typeof val==='string' && val.length>80) || /_map$|_profiles$|_times$/.test(lower)) {
       return `<textarea data-key="${key}">${val ?? ''}</textarea>`;
     }
@@ -306,14 +285,11 @@
   function renderOptions(options, schema){
     const wrap = $('#opts-wrap');
     wrap.innerHTML = '';
-    const groups = {
-      core: [], io: [], llm: [], services: [], env: [], misc: []
-    };
+    const groups = { core:[], io:[], llm:[], services:[], env:[], misc:[] };
     Object.keys(options||{}).forEach(k=>{
       const t = (schema && schema[k]) ? String(schema[k]) : 'str';
       const v = options[k];
       const row = `<div class="opt-row">${guessWidget(k, t, v)}</div>`;
-
       if (/^(bot_|jarvis_|beautify_|greeting_|chat_|personality_|active_persona|cache_refresh|heartbeat_)/.test(k)) groups.core.push(row);
       else if (/^(gotify_|ntfy_|push_|ingest_|smtp_|proxy_|webhook_|intake_)/.test(k)) groups.io.push(row);
       else if (/^llm_/.test(k) || /^(tinyllama|llama32_)/.test(k)) groups.llm.push(row);
@@ -321,33 +297,11 @@
       else if (/^weather_/.test(k)) groups.env.push(row);
       else groups.misc.push(row);
     });
-
-    function section(title, rows){
-      return `<fieldset><legend>${title}</legend><div class="grid-auto">${rows.join('')}</div></fieldset>`;
-    }
-    wrap.innerHTML =
-      section('Core', groups.core) +
-      section('I/O & Channels', groups.io) +
-      section('LLM', groups.llm) +
-      section('Services', groups.services) +
-      section('Environment / Weather', groups.env) +
-      section('Misc', groups.misc);
-  }
-  async function loadOptionsAll(){
-    try{
-      const [opts, sch] = await Promise.all([
-        jfetch(API('api/options')),
-        jfetch(API('api/schema'))
-      ]);
-      renderOptions(opts, sch);
-    }catch(e){
-      console.error(e);
-      $('#opts-wrap').innerHTML = '<div class="toast">Failed to load options/schema</div>';
-    }
+    function section(title, rows){ return `<fieldset><legend>${title}</legend><div class="grid-auto">${rows.join('')}</div></fieldset>`; }
+    wrap.innerHTML = section('Core', groups.core)+section('I/O & Channels', groups.io)+section('LLM', groups.llm)+section('Services', groups.services)+section('Environment / Weather', groups.env)+section('Misc', groups.misc);
   }
   $('#save-options').addEventListener('click', async()=>{
     try{
-      // Rebuild object by reading every [data-key]
       const fields = Array.from($('#opts-wrap').querySelectorAll('[data-key]'));
       const payload = {};
       for(const el of fields){
@@ -357,24 +311,33 @@
         else if (el.type === 'number') payload[key] = el.value==='' ? '' : (String(el.value).includes('.') ? parseFloat(el.value) : parseInt(el.value,10));
         else payload[key] = el.value;
       }
-      await jfetch(API('api/options'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(payload)
-      });
+      await jfetch(API('api/options'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       toast('Options saved');
+      await refreshOptions();
     }catch(e){ toast('Save failed'); }
   });
 
-  /* ----------------- Boot ---------------- */
+  function hydrateAllTabs(){
+    hydratePersonas();
+    hydrateIntakes();
+    hydrateOutputs();
+    hydrateSettings();
+    hydrateLLM();
+    hydrateEnv();
+    renderOptions(OPTS, SCHEMA);
+    // About version (best-effort)
+    $('#about-ver').textContent = OPTS?.version || '1.x';
+  }
+
+  /* Boot */
   (async function boot(){
     await loadInbox();
-    await Promise.all([
-      loadPersonas(),
-      loadChannels(),
-      loadInboxSettings(),
-      loadLLM(),
-      loadEnviro(),
-      loadOptionsAll()
-    ]);
+    await refreshOptions();
+    // About (try /api/version for exact string)
+    try{
+      const ver = await jfetch(API('api/version'));
+      if (typeof ver === 'string') $('#about-ver').textContent = ver;
+      else if (ver?.version) $('#about-ver').textContent = ver.version;
+    }catch{}
   })();
 })();

@@ -2,19 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime</title>
-
-  <!-- Optional: override API base if UI is hosted elsewhere
-       Example: window.JARVIS_API_BASE='http://10.0.0.100:2581/';
-  -->
-  <script>
-    window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;
-  </script>
-
-  <!-- Make relative URLs work for both Ingress and direct host -->
+  <script>window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;</script>
   <script>
     (function () {
       var p = location.pathname;
@@ -24,12 +14,11 @@
       document.write('<base href="' + dir + '">');
     })();
   </script>
-
-  <link rel="stylesheet" href="style.css?v=1.4" />
+  <link rel="stylesheet" href="style.css?v=1.6" />
 </head>
 <body>
   <header class="topnav">
-    <div class="brand">Jarvis Prime</div>
+    <div class="brand"><img src="icon.png" alt="" class="logo"> Jarvis Prime</div>
     <nav>
       <button class="tablink active" data-tab="inbox">Inbox</button>
       <button class="tablink" data-tab="personas">Personas</button>
@@ -53,6 +42,19 @@
         <div class="stat green">Archived: <span id="msg-arch">-</span></div>
         <div class="stat red">Errors: <span id="msg-err">-</span></div>
       </div>
+
+      <!-- Message Preview -->
+      <div id="preview" class="preview hidden">
+        <div class="pv-head">
+          <div>
+            <div class="pv-title" id="pv-title">—</div>
+            <div class="pv-meta"><span id="pv-source">—</span> • <span id="pv-time">—</span></div>
+          </div>
+          <button id="pv-close" class="btn">Close</button>
+        </div>
+        <div id="pv-body" class="pv-body"></div>
+      </div>
+
       <table class="msg-table">
         <thead>
           <tr>
@@ -62,9 +64,7 @@
         <tbody id="msg-body"><tr><td colspan="4">Loading…</td></tr></tbody>
       </table>
       <div class="inbox-actions">
-        <label class="lbl">
-          <input type="checkbox" id="keep-arch" /> Keep archived
-        </label>
+        <label class="lbl"><input type="checkbox" id="keep-arch" /> Keep archived</label>
         <button id="del-all" class="btn danger">🗑 Delete All</button>
       </div>
     </section>
@@ -72,79 +72,203 @@
     <!-- Personas -->
     <section id="personas" class="tab">
       <h2>Personas</h2>
-      <label><input type="checkbox" id="p-dude"> Dude</label>
-      <label><input type="checkbox" id="p-chick"> Chick</label>
-      <label><input type="checkbox" id="p-nerd"> Nerd</label>
-      <label><input type="checkbox" id="p-rager"> Rager</label>
-      <button id="save-personas" class="btn">Save Personas</button>
+      <div class="grid3">
+        <label class="lbl"><input type="checkbox" data-opt="enable_dude"> Dude</label>
+        <label class="lbl"><input type="checkbox" data-opt="enable_chick"> Chick</label>
+        <label class="lbl"><input type="checkbox" data-opt="enable_nerd"> Nerd</label>
+        <label class="lbl"><input type="checkbox" data-opt="enable_rager"> Rager</label>
+        <label class="lbl"><input type="checkbox" data-opt="enable_comedian"> Comedian</label>
+        <label class="lbl"><input type="checkbox" data-opt="enable_action"> Action</label>
+        <label class="lbl"><input type="checkbox" data-opt="enable_jarvis"> Jarvis</label>
+        <label class="lbl"><input type="checkbox" data-opt="enable_ops"> Ops</label>
+      </div>
+      <fieldset>
+        <legend>Persona Settings</legend>
+        <div class="grid3">
+          <label>Active persona <input data-opt="active_persona" placeholder="auto|dude|ops" /></label>
+          <label>Persistent <input type="checkbox" data-opt="personality_persistent" /></label>
+          <label>Family friendly <input type="checkbox" data-opt="personality_family_friendly" /></label>
+          <label>Min interval (min) <input type="number" data-opt="personality_min_interval_minutes" /></label>
+          <label>Jitter % <input type="number" data-opt="personality_interval_jitter_pct" /></label>
+          <label>Daily max <input type="number" data-opt="personality_daily_max" /></label>
+          <label>Quiet hours <input data-opt="personality_quiet_hours" placeholder="23:00-06:00"/></label>
+        </div>
+      </fieldset>
+      <div class="actions"><button class="btn primary" id="save-persona-opts">Save Personas</button></div>
     </section>
 
     <!-- Intakes -->
     <section id="intakes" class="tab">
-      <h2>Intakes (Email / Gotify / ntfy)</h2>
-      <div>
-        <h3>Email</h3>
-        <input id="smtp-host" placeholder="smtp.gmail.com" />
-        <input id="smtp-port" placeholder="587" />
-        <input id="smtp-user" placeholder="user" />
-        <input id="smtp-pass" type="password" placeholder="password" />
-        <input id="smtp-from" placeholder="From name" />
-        <button id="test-email" class="btn">Test Email</button>
-      </div>
-      <div>
-        <h3>Gotify</h3>
-        <input id="gotify-url" placeholder="http://10.0.0.99:8091" />
-        <input id="gotify-token" placeholder="token" />
-        <button id="test-gotify" class="btn">Test Gotify</button>
-      </div>
-      <div>
-        <h3>ntfy</h3>
-        <input id="ntfy-url" placeholder="http://10.0.0.99:8080" />
-        <input id="ntfy-topic" placeholder="topic" />
-        <button id="test-ntfy" class="btn">Test ntfy</button>
-      </div>
-      <button id="save-channels" class="btn primary">Save Intakes</button>
+      <h2>Intakes</h2>
+      <fieldset>
+        <legend>Enable/Disable</legend>
+        <div class="grid3">
+          <label class="lbl"><input type="checkbox" data-opt="ingest_gotify_enabled"> Gotify intake</label>
+          <label class="lbl"><input type="checkbox" data-opt="ingest_ntfy_enabled"> ntfy intake</label>
+          <label class="lbl"><input type="checkbox" data-opt="ingest_smtp_enabled"> SMTP intake</label>
+          <label class="lbl"><input type="checkbox" data-opt="ingest_apprise_enabled"> Apprise intake</label>
+          <label class="lbl"><input type="checkbox" data-opt="smtp_allow_html"> Allow HTML (SMTP)</label>
+          <label class="lbl"><input type="checkbox" data-opt="smtp_accept_any_auth"> Accept any SMTP auth</label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>SMTP (Intake)</legend>
+        <div class="grid3">
+          <label>Bind <input data-opt="smtp_bind" /></label>
+          <label>Port <input type="number" data-opt="smtp_port" /></label>
+          <label>Max bytes <input type="number" data-opt="smtp_max_bytes" /></label>
+          <label>Dummy RCPT <input data-opt="smtp_dummy_rcpt" /></label>
+          <label>Title prefix <input data-opt="smtp_rewrite_title_prefix" /></label>
+          <label>Priority default <input type="number" data-opt="smtp_priority_default" /></label>
+          <label>Priority map <textarea data-opt="smtp_priority_map"></textarea></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Apprise (Intake)</legend>
+        <div class="grid3">
+          <label>Enabled <input type="checkbox" data-opt="intake_apprise_enabled" /></label>
+          <label>Port <input type="number" data-opt="intake_apprise_port" /></label>
+          <label>Token <input data-opt="intake_apprise_token" /></label>
+          <label>Accept any key <input type="checkbox" data-opt="intake_apprise_accept_any_key" /></label>
+          <label>Allowed keys (csv) <input data-opt="intake_apprise_allowed_keys" /></label>
+        </div>
+      </fieldset>
+      <div class="actions"><button class="btn primary" id="save-intakes">Save Intakes</button></div>
     </section>
 
     <!-- Notify Outputs -->
     <section id="outputs" class="tab">
       <h2>Notify Outputs</h2>
-      <p>Configure outbound channels here.</p>
+      <fieldset>
+        <legend>Enable/Disable</legend>
+        <div class="grid3">
+          <label class="lbl"><input type="checkbox" data-opt="push_gotify_enabled"> Push to Gotify</label>
+          <label class="lbl"><input type="checkbox" data-opt="push_ntfy_enabled"> Push to ntfy</label>
+          <label class="lbl"><input type="checkbox" data-opt="push_smtp_enabled"> Push to SMTP</label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Gotify</legend>
+        <div class="grid3">
+          <label>URL <input data-opt="gotify_url" /></label>
+          <label>Client token <input data-opt="gotify_client_token" /></label>
+          <label>App token <input data-opt="gotify_app_token" /></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>ntfy</legend>
+        <div class="grid3">
+          <label>URL <input data-opt="ntfy_url" /></label>
+          <label>Topic <input data-opt="ntfy_topic" /></label>
+          <label>User <input data-opt="ntfy_user" /></label>
+          <label>Pass <input data-opt="ntfy_pass" /></label>
+          <label>Token <input data-opt="ntfy_token" /></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>SMTP (Push)</legend>
+        <div class="grid3">
+          <label>Host <input data-opt="push_smtp_host" /></label>
+          <label>Port <input type="number" data-opt="push_smtp_port" /></label>
+          <label>User <input data-opt="push_smtp_user" /></label>
+          <label>Password <input type="password" data-opt="push_smtp_pass" /></label>
+          <label>To <input data-opt="push_smtp_to" /></label>
+        </div>
+      </fieldset>
+      <div class="actions"><button class="btn primary" id="save-outputs">Save Outputs</button></div>
     </section>
 
     <!-- Settings (curated subset) -->
     <section id="settings" class="tab">
       <h2>Settings</h2>
-      <label>Retention days <input id="retention" type="number" /></label>
-      <button id="save-retention" class="btn">Save</button>
-      <label>Purge older than <input id="purge-days" type="number" /></label>
-      <button id="purge" class="btn danger">Run Purge</button>
-
-      <h3>Quiet Hours</h3>
-      <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
-      <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
-      <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
-      <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
-      <button id="save-quiet" class="btn">Save Quiet Hours</button>
+      <label>Retention days <input type="number" data-opt="retention_days" /></label>
+      <label>Retention hours <input type="number" data-opt="retention_hours" /></label>
+      <label>Auto purge policy <input data-opt="auto_purge_policy" /></label>
+      <fieldset>
+        <legend>Quiet Hours</legend>
+        <div class="grid3">
+          <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
+          <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
+          <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
+          <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
+        </div>
+        <button id="save-quiet" class="btn">Save Quiet Hours</button>
+      </fieldset>
+      <div class="actions"><button class="btn primary" id="save-settings">Save Settings</button><button id="purge" class="btn danger">Run Purge</button></div>
     </section>
 
     <!-- LLM -->
     <section id="llm" class="tab">
       <h2>LLM Settings</h2>
-      <label>Model <input id="llm-model" placeholder="model name" /></label>
-      <label>Context Tokens <input id="llm-ctx" type="number" /></label>
-      <label>Timeout (s) <input id="llm-timeout" type="number" /></label>
-      <button id="save-llm" class="btn">Save LLM</button>
+      <fieldset>
+        <legend>Core</legend>
+        <div class="grid3">
+          <label class="lbl"><input type="checkbox" data-opt="llm_enabled"> LLM enabled</label>
+          <label class="lbl"><input type="checkbox" data-opt="llm_persona_riffs_enabled"> Persona riffs enabled</label>
+          <label class="lbl"><input type="checkbox" data-opt="llm_cleanup_on_disable"> Cleanup on disable</label>
+          <label>Choice <input data-opt="llm_choice" placeholder="off|phi|qwen|tinyllama|ollama"/></label>
+          <label>Models dir <input data-opt="llm_models_dir" /></label>
+          <label>Timeout (s) <input type="number" data-opt="llm_timeout_seconds" /></label>
+          <label>Max CPU % <input type="number" data-opt="llm_max_cpu_percent" /></label>
+          <label>Context tokens <input type="number" data-opt="llm_ctx_tokens" /></label>
+          <label>Gen tokens <input type="number" data-opt="llm_gen_tokens" /></label>
+          <label>Max lines <input type="number" data-opt="llm_max_lines" /></label>
+          <label>System prompt <textarea data-opt="llm_system_prompt"></textarea></label>
+          <label>Model preference <input data-opt="llm_model_preference" /></label>
+          <label>Models priority <input data-opt="llm_models_priority" /></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Model Sources</legend>
+        <div class="grid3">
+          <label>Model URL <input data-opt="llm_model_url" /></label>
+          <label>Model path <input data-opt="llm_model_path" /></label>
+          <label>SHA256 <input data-opt="llm_model_sha256" /></label>
+          <label>Ollama base URL <input data-opt="llm_ollama_base_url" /></label>
+          <label>HF token <input data-opt="llm_hf_token" /></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Per‑model toggles</legend>
+        <div class="grid3">
+          <label class="lbl"><input type="checkbox" data-opt="llm_phi3_enabled"> phi-3</label>
+          <label>phi3 URL <input data-opt="llm_phi3_url" /></label>
+          <label>phi3 Path <input data-opt="llm_phi3_path" /></label>
+          <label class="lbl"><input type="checkbox" data-opt="llm_tinyllama_enabled"> tinyllama</label>
+          <label>tinyllama URL <input data-opt="llm_tinyllama_url" /></label>
+          <label>tinyllama Path <input data-opt="llm_tinyllama_path" /></label>
+          <label class="lbl"><input type="checkbox" data-opt="llm_qwen05_enabled"> qwen0.5b</label>
+          <label>qwen0.5b URL <input data-opt="llm_qwen05_url" /></label>
+          <label>qwen0.5b Path <input data-opt="llm_qwen05_path" /></label>
+        </div>
+      </fieldset>
+      <div class="actions"><button class="btn primary" id="save-llm">Save LLM</button></div>
     </section>
 
     <!-- EnviroGuard -->
     <section id="enviro" class="tab">
       <h2>EnviroGuard</h2>
-      <p>Status: <span id="env-status">-</span></p>
-      <label>Hot °C <input id="env-hot" type="number" /></label>
-      <label>Cold °C <input id="env-cold" type="number" /></label>
-      <label>Hysteresis °C <input id="env-hyst" type="number" /></label>
-      <button id="save-env" class="btn">Save EnviroGuard</button>
+      <fieldset>
+        <legend>Status</legend>
+        <div class="grid3">
+          <label class="lbl"><input type="checkbox" data-opt="llm_enviroguard_enabled"> Enabled</label>
+          <label>Poll minutes <input type="number" data-opt="llm_enviroguard_poll_minutes" /></label>
+          <label>Max stale minutes <input type="number" data-opt="llm_enviroguard_max_stale_minutes" /></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Thresholds</legend>
+        <div class="grid3">
+          <label>Hot °C <input type="number" data-opt="llm_enviroguard_hot_c" /></label>
+          <label>Cold °C <input type="number" data-opt="llm_enviroguard_cold_c" /></label>
+          <label>Hysteresis °C <input type="number" data-opt="llm_enviroguard_hysteresis_c" /></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Profiles (JSON)</legend>
+        <textarea data-opt="llm_enviroguard_profiles" class="mono"></textarea>
+      </fieldset>
+      <div class="actions"><button class="btn primary" id="save-env">Save EnviroGuard</button></div>
     </section>
 
     <!-- Ops Engine -->
@@ -166,11 +290,13 @@
     <!-- About -->
     <section id="about" class="tab">
       <h2>About Jarvis Prime</h2>
-      <p>Jarvis Prime — Technitium-style one-page UI. Ingress + direct host safe.</p>
+      <div id="about-text">
+        <p><b>Jarvis Prime</b> is your homelab notification orchestrator. It ingests messages (SMTP, Webhook/Proxy, Gotify, ntfy, Apprise), beautifies them with optional personas/LLM, and pushes them back out to your preferred outputs. Dark‑mode UI, ingress‑safe, mobile‑friendly.</p>
+        <p>Version: <span id="about-ver">…</span></p>
+      </div>
     </section>
   </main>
-
   <div id="toast"></div>
-  <script src="app.js?v=1.4"></script>
+  <script src="app.js?v=1.6"></script>
 </body>
 </html>

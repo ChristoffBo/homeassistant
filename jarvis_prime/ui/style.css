@@ -8,11 +8,10 @@
   --green:#39d98a;
   --red:#ff6b6b;
 }
-
 body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif; background:var(--bg); color:var(--text) }
-
 .topnav { display:flex; justify-content:space-between; align-items:center; background:#0e2743; padding:8px 12px }
-.brand  { font-weight:800; font-size:20px }
+.brand  { font-weight:800; font-size:20px; display:flex; align-items:center; gap:8px }
+.logo{ width:20px; height:20px; filter:drop-shadow(0 0 2px rgba(46,168,255,.5)); }
 
 nav { display:flex; flex-wrap:wrap; gap:6px }
 .tablink { padding:6px 10px; border:0; border-radius:6px; background:#223; color:var(--text); cursor:pointer }
@@ -28,9 +27,19 @@ main { padding:12px }
 .stat.green{ border-color:var(--green) }
 .stat.red  { border-color:var(--red) }
 
+/* Message preview */
+.preview{ background:var(--panel); border:1px solid #2a3a56; border-radius:10px; padding:10px; margin:12px 0 }
+.preview.hidden{ display:none }
+.pv-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px }
+.pv-title{ font-size:18px; font-weight:700 }
+.pv-meta{ color:var(--muted); font-size:12px }
+.pv-body{ background:var(--panel2); border:1px solid #2a3a56; border-radius:8px; padding:10px; overflow:auto; max-height:260px; white-space:pre-wrap; }
+
 table { width:100%; border-collapse:collapse; background:var(--panel) }
 th,td { padding:6px 8px; border-bottom:1px solid #223 }
 th { background:#182033; text-align:left }
+tr.clickable{ cursor:pointer }
+tr.clickable:hover{ background:#10192a }
 
 .inbox-actions { display:flex; gap:10px; align-items:center; margin-top:8px }
 .lbl{ color:var(--muted); font-size:13px; display:flex; align-items:center; gap:6px }
@@ -45,10 +54,12 @@ input,select,textarea{
   width:100%;
 }
 textarea{ min-height:80px; }
+textarea.mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 
+.actions{ margin-top:8px }
 .btn { margin-top:8px; padding:6px 12px; border:0; border-radius:6px; background:#223; color:var(--text); cursor:pointer }
-.btn.primary { background:var(--blue); color:#001 }
-.btn.danger  { background:var(--red); color:#001 }
+.btn.primary { background:#2a5cff; color:#eef }
+.btn.danger  { background:#ff3b3b; color:#001 }
 
 .grid2{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
 .grid3{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px }
