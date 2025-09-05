@@ -8,6 +8,7 @@ IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s
 # tolerate spaces/newlines between ] and (, and angle-bracketed URLs
 MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
 KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$', re.M)
+HASHTAG_RE = re.compile(r'(?<!\w)#([A-Za-z0-9_]+)')
 
 # timestamps and types
 TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
@@ -43,9 +44,9 @@ def _prefer_host_key(url: str) -> int:
 
 def _strip_noise(text: str) -> str:
     if not text: return ""
-    s = EMOJI_RE.sub("", text)
+    # IMPORTANT: keep emojis (do not strip them) to preserve tone/punchlines
     NOISE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
-    kept = [ln for ln in s.splitlines() if not NOISE.match(ln)]
+    kept = [ln for ln in text.splitlines() if not NOISE.match(ln)]
     return "\n".join(kept)
 
 def _normalize(text: str) -> str:
@@ -54,8 +55,9 @@ def _normalize(text: str) -> str:
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s.strip()
 
-def _linewise_dedup_markdown(text: str) -> str:
-    """Safe de-dup that never splits on '.' so IPs like 10.0.0.249 remain intact."""
+def _linewise_dedup_markdown(text: str, allow_free: bool = False) -> str:
+    """Safe de-dup that never splits on '.' so IPs like 10.0.0.249 remain intact.
+       If allow_free=True, do not de-dup (preserve stylized/punchline lines)."""
     lines = text.splitlines()
     out: List[str] = []
     seen: set = set()
@@ -67,6 +69,9 @@ def _linewise_dedup_markdown(text: str) -> str:
             out.append(t)
             continue
         if in_code:
+            out.append(t)
+            continue
+        if allow_free:
             out.append(t)
             continue
         key = re.sub(r'\s+', ' ', t.strip()).lower()
@@ -125,6 +130,9 @@ def _fmt_kv(label: str, value: str) -> str:
     if re.search(r'\d', v):  # emphasize numeric values
         v = f"`{v}`"
     return f"- **{label.strip()}:** {v}"
+
+def _find_hashtags(text: str) -> List[str]:
+    return HASHTAG_RE.findall(text or "")
 
 # -------- Persona overlay --------
 def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
@@ -334,7 +342,7 @@ _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
     # - /radarr (lscr.io/linuxserver/radarr:nightly): 30052c06bbef updated to 2091a873a55d
     re.compile(
-        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*\((?P<img>[^)]+)\)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
         re.I),
     # - radarr: abcdef updated to 123456
     re.compile(
@@ -417,6 +425,20 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         wt_md, wt_meta = _summarize_watchtower(title, body_wo_imgs)
         lines += ["", wt_md]
 
+        # Also preserve any free-text body that isn't part of the summary (never lose content)
+        clean_body = (body_wo_imgs or "").strip()
+        if clean_body:
+            # If JSON, pretty-print
+            if _looks_json(clean_body):
+                try:
+                    j = json.loads(clean_body)
+                    pretty = json.dumps(j, indent=2, ensure_ascii=False)
+                    lines += ["", "💬 Message", "```json", pretty, "```"]
+                except Exception:
+                    lines += ["", "💬 Message", clean_body]
+            else:
+                lines += ["", "💬 Message", clean_body]
+
         # persona riffs allowed for this type (we keep lists/numbers)
         ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
         riff_hint = _global_riff_hint(extras_in, source_hint)
@@ -430,9 +452,21 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                 if sr:
                     lines.append("> " + sr)
 
+        # Inline the first image; keep count of more
+        if images:
+            lines += ["", f"![poster]({images[0]})"]
+            if len(images) > 1:
+                lines += [f"_(+{len(images)-1} more images)_"]
+
+        # Hashtags (from title/body)
+        tags = _find_hashtags((title or "") + " " + (body or ""))
+        if tags:
+            lines += ["", "🏷️ Tags: " + ", ".join(tags)]
+
         text = "\n".join(lines).strip()
         text = _format_align_check(text)
-        text = _linewise_dedup_markdown(text)
+        # free-text may be present → avoid collapsing repeated lines
+        text = _linewise_dedup_markdown(text, allow_free=True)
 
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
@@ -441,13 +475,16 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             "watchtower::host": wt_meta.get("watchtower::host"),
             "watchtower::updated_count": wt_meta.get("watchtower::updated_count"),
         }
+        if tags:
+            extras["jarvis::tags"] = tags
         if wt_meta.get("watchtower::truncated"):
             extras["watchtower::truncated"] = True
         if isinstance(extras_in, dict):
             extras.update(extras_in)
-        # keep images in extras in case upstream wants them (none expected for Watchtower)
+        # keep images in extras for UI
         if images:
             extras["jarvis::allImageUrls"] = images
+            extras["client::notification"] = {"bigImageUrl": images[0]}
 
         return text, extras
     # ===== END Watchtower special-case =====
@@ -463,6 +500,20 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
+    # --- Always show the raw message block first (never drop free-text) ---
+    clean_body = (body_wo_imgs or "").strip()
+    if clean_body:
+        if _looks_json(clean_body):
+            try:
+                j = json.loads(clean_body)
+                pretty = json.dumps(j, indent=2, ensure_ascii=False)
+                lines += ["", "💬 Message", "```json", pretty, "```"]
+            except Exception:
+                lines += ["", "💬 Message", clean_body]
+        else:
+            lines += ["", "💬 Message", clean_body]
+
+    # Facts/Details (existing behavior)
     facts, details = _categorize_bullets(title, body_wo_imgs)
     if facts:
         lines += ["", "📄 Facts", *facts]
@@ -472,6 +523,13 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     # Inline the first image so the app view shows a poster (while push uses bigImageUrl)
     if images:
         lines += ["", f"![poster]({images[0]})"]
+        if len(images) > 1:
+            lines += [f"_(+{len(images)-1} more images)_"]
+
+    # Hashtags line
+    tags = _find_hashtags((title or "") + " " + (body or ""))
+    if tags:
+        lines += ["", "🏷️ Tags: " + ", ".join(tags)]
 
     # --- LLM persona riffs at the bottom (1–3 lines) ---
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
@@ -483,6 +541,9 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
 
     if eff_persona and riff_hint:
+        # Optional: dampen riffs for short free-text to avoid clutter
+        if len(clean_body) < 300:
+            pass  # keep current hint; caller can disable if desired
         riffs = _persona_llm_riffs(ctx, eff_persona)
 
     if riffs:
@@ -494,7 +555,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    # free-text message likely present → avoid collapsing repeated short lines
+    text = _linewise_dedup_markdown(text, allow_free=True)
 
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
@@ -502,6 +564,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         "jarvis::allImageUrls": images,
         "jarvis::llm_riff_lines": len(riffs or []),
     }
+    if tags:
+        extras["jarvis::tags"] = tags
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
 
