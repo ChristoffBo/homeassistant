@@ -428,16 +428,15 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         # Also preserve any free-text body that isn't part of the summary (never lose content)
         clean_body = (body_wo_imgs or "").strip()
         if clean_body:
-            # If JSON, pretty-print
             if _looks_json(clean_body):
                 try:
                     j = json.loads(clean_body)
                     pretty = json.dumps(j, indent=2, ensure_ascii=False)
-                    lines += ["", "💬 Message", "```json", pretty, "```"]
+                    lines += ["", "💬 Message", "", "```json", pretty, "```", ""]
                 except Exception:
-                    lines += ["", "💬 Message", clean_body]
+                    lines += ["", "💬 Message", "", clean_body, ""]
             else:
-                lines += ["", "💬 Message", clean_body]
+                lines += ["", "💬 Message", "", clean_body, ""]
 
         # persona riffs allowed for this type (we keep lists/numbers)
         ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
@@ -507,16 +506,31 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             try:
                 j = json.loads(clean_body)
                 pretty = json.dumps(j, indent=2, ensure_ascii=False)
-                lines += ["", "💬 Message", "```json", pretty, "```"]
+                lines += ["", "💬 Message", "", "```json", pretty, "```", ""]
             except Exception:
-                lines += ["", "💬 Message", clean_body]
+                lines += ["", "💬 Message", "", clean_body, ""]
         else:
-            lines += ["", "💬 Message", clean_body]
+            lines += ["", "💬 Message", "", clean_body, ""]
 
     # Facts/Details (existing behavior)
     facts, details = _categorize_bullets(title, body_wo_imgs)
-    if facts:
-        lines += ["", "📄 Facts", *facts]
+
+    # Omit the Facts block if it would only repeat the Subject (no added info)
+    def _is_subject_fact(s: str) -> bool:
+        return s.strip().lower().startswith("- **subject:**")
+
+    facts_to_show = [f for f in facts if not _is_subject_fact(f)] if facts else []
+    only_subject = (len(facts) == 1 and facts and _is_subject_fact(facts[0]))
+
+    if facts_to_show:
+        lines += ["", "📄 Facts", *facts_to_show]
+    elif not facts_to_show and details:
+        # If we have details but facts would be only subject, just skip facts header
+        pass
+    else:
+        # neither extra facts nor details adds more, so we keep the message as-is
+        pass
+
     if details:
         lines += ["", "📄 Details", *details]
 
@@ -543,7 +557,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if eff_persona and riff_hint:
         # Optional: dampen riffs for short free-text to avoid clutter
         if len(clean_body) < 300:
-            pass  # keep current hint; caller can disable if desired
+            pass
         riffs = _persona_llm_riffs(ctx, eff_persona)
 
     if riffs:
