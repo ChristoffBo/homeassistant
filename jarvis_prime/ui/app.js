@@ -1,343 +1,421 @@
-(function(){
-  const $  = s => document.querySelector(s);
-  const $$ = s => document.querySelectorAll(s);
+// Jarvis Prime UI – alignment + ingress-safe API + clearer Options(All)
 
-  /* ---------- API helpers ---------- */
-  function apiRoot(){
-    if (window.JARVIS_API_BASE) return String(window.JARVIS_API_BASE).replace(/\/?$/, '/');
-    try{
-      const u = new URL(document.baseURI);
-      let p = u.pathname;
-      if (p.endsWith('/index.html')) p = p.slice(0, -'/index.html'.length);
-      if (p.endsWith('/ui/'))      p = p.slice(0, -4);
-      if (!p.endsWith('/'))        p += '/';
-      u.pathname = p;
-      return u.toString();
-    }catch{ return document.baseURI; }
-  }
-  const ROOT = apiRoot();
-  const API  = path => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
+// --- API root (works with HA Ingress) ------------------------------------
+function apiRoot(){
+  // document.baseURI contains '/api/hassio_ingress/<token>/' in HA Ingress.
+  // We always append relative 'api/...'
+  let root = document.baseURI || '/';
+  if(!root.endsWith('/')) root += '/';
+  return root;
+}
+const ROOT = apiRoot();
+const api = (p, opts={}) => fetch(`${ROOT}api/${p}`, {headers:{'Content-Type':'application/json'}, ...opts}).then(r=>r.json());
 
-  function toast(msg){
-    const d=document.createElement('div');
-    d.className='toast'; d.textContent=msg;
-    $('#toast').appendChild(d);
-    setTimeout(()=>d.remove(),3500);
-  }
-  async function jfetch(url, opts){
-    const r = await fetch(url, opts);
-    if(!r.ok){
-      let t=''; try{ t = await r.text(); }catch{}
-      throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t);
-    }
-    const ct = r.headers.get('content-type')||'';
-    return ct.includes('application/json') ? r.json() : r.text();
-  }
+// --- small DOM helpers ---------------------------------------------------
+const el = (tag, attrs={}, ...children) => {
+  const n = document.createElement(tag);
+  Object.entries(attrs).forEach(([k,v]) => {
+    if(k==='class') n.className = v;
+    else if(k==='html') n.innerHTML = v;
+    else if(k==='text') n.textContent = v;
+    else n.setAttribute(k,v);
+  });
+  for(const c of children){ if(c!==null && c!==undefined) n.append(c.nodeType? c : document.createTextNode(String(c))); }
+  return n;
+};
 
-  /* ---------- Tabs ---------- */
-  $$('.tablink').forEach(b=>b.addEventListener('click',()=>{
-    $$('.tablink').forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
-    $$('.tab').forEach(t=>t.classList.remove('active'));
-    $('#'+b.dataset.tab).classList.add('active');
-  }));
+// --- NAV -----------------------------------------------------------------
+function activateTab(id){
+  document.querySelectorAll('section.view').forEach(s=>s.style.display='none');
+  document.getElementById(id).style.display='block';
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('active', a.dataset.tab===id));
+}
 
-  /* =====================================================
-   * Inbox with Message Preview
-   * ===================================================*/
-  function fmt(ts){
-    try{
-      const v = Number(ts||0);
-      const ms = v > 1e12 ? v : v * 1000;
-      return new Date(ms).toLocaleString();
-    }catch{ return ''; }
-  }
-  function updateCounters(items){
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()/1000;
-    const today    = items.filter(i => (i.created_at||0) >= start).length;
-    const archived = items.filter(i => i.saved).length;
-    const errors   = items.filter(i => /error|fail|exception/i.test(`${i.title||''} ${i.body||i.message||''}`)).length;
-    $('#msg-today').textContent = today;
-    $('#msg-arch').textContent  = archived;
-    $('#msg-err').textContent   = errors;
-  }
-  async function loadInbox(){
-    const tb = $('#msg-body');
-    try{
-      const data = await jfetch(API('api/messages'));
-      const items = data && data.items ? data.items : (Array.isArray(data) ? data : []);
-      tb.innerHTML = '';
-      if(!items.length){
-        tb.innerHTML = '<tr><td colspan="4">No messages</td></tr>';
-        updateCounters([]);
-        return;
-      }
-      updateCounters(items);
-      for(const m of items){
-        const tr=document.createElement('tr');
-        tr.className='clickable';
-        tr.dataset.id = m.id;
-        tr.innerHTML = `
-          <td>${fmt(m.created_at)}</td>
-          <td>${m.source||''}</td>
-          <td>${m.title||''}</td>
-          <td>
-            <button class="btn" data-id="${m.id}" data-act="arch">${m.saved?'Unarchive':'Archive'}</button>
-            <button class="btn danger" data-id="${m.id}" data-act="del">Delete</button>
-          </td>`;
-        tb.appendChild(tr);
-      }
-    }catch(e){
-      console.error(e);
-      tb.innerHTML = '<tr><td colspan="4">Failed to load</td></tr>';
-      toast('Inbox load error');
-    }
-  }
-  // Row click → preview
-  $('#msg-body').addEventListener('click', async (e)=>{
-    const btn = e.target.closest('button[data-act]');
-    if(btn){
-      const id = btn.dataset.id, act = btn.dataset.act;
-      try{
-        if(act==='del'){
-          if(!confirm('Delete this message?')) return;
-          await jfetch(API('api/messages/'+id), {method:'DELETE'});
-          toast('Deleted'); hidePreview();
-        }else if(act==='arch'){
-          await jfetch(API(`api/messages/${id}/save`), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
-          toast('Toggled archive');
-        }
-        await loadInbox();
-      }catch{ toast('Action failed'); }
+// --- INBOX ---------------------------------------------------------------
+let previewBox;
+async function drawInbox(){
+  const wrap = document.getElementById('inbox-wrap');
+  wrap.innerHTML = '';
+  previewBox = el('div', {class:'preview', id:'preview'});
+  wrap.append(previewBox);
+
+  const head = el('div',{style:'display:flex; align-items:center; gap:10px; margin-bottom:10px'},
+    el('span',{class:'badge'}, el('span',{class:'dot good'}),'Messages Today: ',el('b',{id:'msgToday'},'0')),
+    el('span',{class:'badge'}, el('span',{class:'dot'}),'Archived: ',el('b',{id:'msgArch'},'0')),
+    el('span',{class:'badge'}, el('span',{class:'dot'}),'Errors: ',el('b',{id:'msgErr'},'0')),
+    el('span',{class:'spacer'}),
+    el('button',{class:'btn',id:'btnRefresh'},'Refresh')
+  );
+  wrap.append(head);
+
+  const tbl = el('table',{class:'table',id:'inboxTable'});
+  tbl.append(el('thead',{}, el('tr',{},
+      el('th',{},'Time'), el('th',{},'Source'), el('th',{},'Title'), el('th',{},'Actions')
+  )));
+  tbl.append(el('tbody',{}));
+  wrap.append(tbl);
+
+  await reloadInbox();
+  document.getElementById('btnRefresh').onclick = reloadInbox;
+}
+
+async function reloadInbox(){
+  try{
+    const data = await api('messages?limit=200');
+    const tbody = document.querySelector('#inboxTable tbody');
+    tbody.innerHTML='';
+    document.getElementById('msgToday').textContent = data.stats?.today ?? data.messages?.length ?? 0;
+    document.getElementById('msgArch').textContent = data.stats?.archived ?? 0;
+    document.getElementById('msgErr').textContent  = data.stats?.errors ?? 0;
+
+    if(!data.messages || data.messages.length===0){
+      tbody.append(el('tr',{}, el('td',{colspan:'4',class:'muted'},'No messages')));
+      previewBox.style.display='none';
       return;
     }
-    const row = e.target.closest('tr.clickable');
-    if(!row) return;
-    const id = row.dataset.id;
-    try{
-      const m = await jfetch(API('api/messages/'+id));
-      showPreview(m);
-    }catch{
-      toast('Preview failed');
+
+    for(const m of data.messages){
+      const tr = el('tr',{},
+        el('td',{}, new Date(m.ts*1000).toLocaleString() ),
+        el('td',{}, m.source || '—'),
+        el('td',{}, m.title || '—'),
+        el('td',{},
+          el('button',{class:'btn',onclick:()=>showMsg(m.id)},'Open'),
+          ' ',
+          el('button',{class:'btn',onclick:()=>delMsg(m.id)},'Delete')
+        ),
+      );
+      tr.onclick = ()=> showMsg(m.id);
+      tbody.append(tr);
+    }
+  }catch(e){
+    console.error(e);
+  }
+}
+
+async function showMsg(id){
+  try{
+    const m = await api(`message/${id}`);
+    let body = m.body || m.text || JSON.stringify(m,null,2);
+    previewBox.innerHTML = '';
+    previewBox.append(
+      el('div',{style:'margin-bottom:6px; color:#94a3b8'}, `${m.source||'source'} • ${new Date(m.ts*1000).toLocaleString()} • p${m.priority??'-'}`),
+      el('pre',{}, body)
+    );
+    previewBox.style.display='block';
+    scrollTo(0,0);
+  }catch(e){ console.error(e); }
+}
+async function delMsg(id){
+  if(!confirm('Delete this message?')) return;
+  await api(`message/${id}`, {method:'DELETE'});
+  await reloadInbox();
+}
+
+// --- PERSONAS ------------------------------------------------------------
+async function drawPersonas(){
+  const root = document.getElementById('personas-wrap');
+  root.innerHTML='';
+  const box = el('div',{class:'panel'}, el('h2',{},'Personas'), el('div',{class:'form-grid',id:'pg'}));
+  root.append(box);
+
+  const o = await api('options');
+  const pg = document.getElementById('pg');
+
+  // toggles on top as 2-column matrix (label under each column)
+  const toggles = [
+    ['enable_dude','Dude'],['enable_chick','Chick'],['enable_nerd','Nerd'],
+    ['enable_rager','Rager'],['enable_comedian','Comedian'],['enable_action','Action'],
+    ['enable_jarvis','Jarvis'],['enable_ops','Ops'],
+  ];
+  pg.append(el('div',{class:'row pad-top'},
+    el('label',{class:'k'},'Active persona'),
+    inputBox('active_persona', o.active_persona || 'auto')
+  ));
+  pg.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Persistent'), checkbox('personality_persistent', o.personality_persistent)
+  ));
+  pg.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Family friendly'), checkbox('personality_family_friendly', o.personality_family_friendly)
+  ));
+  pg.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Min interval (min)'), number('personality_min_interval_minutes', o.personality_min_interval_minutes||90)
+  ));
+  pg.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Jitter %'), number('personality_interval_jitter_pct', o.personality_interval_jitter_pct||0)
+  ));
+  pg.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Daily max'), number('personality_daily_max', o.personality_daily_max||6)
+  ));
+  pg.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Quiet hours'), inputBox('personality_quiet_hours', o.personality_quiet_hours||'23:00-06:00'),
+    el('div',{class:'help'},'Format: HH:MM‑HH:MM (local time)')
+  ));
+
+  // persona toggles grid
+  const matrix = el('div',{style:'display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:10px; margin-top:8px'});
+  toggles.forEach(([k,lab])=>{
+    const row = el('label',{class:'btn',style:'justify-content:space-between'},
+      el('span',{}, lab),
+      checkbox(k, o[k]===true)
+    );
+    matrix.append(row);
+  });
+  pg.append(el('div',{class:'row pad-top'}, el('label',{class:'k'},'Enable'), matrix));
+
+  const save = el('div',{style:'margin-top:12px'}, el('button',{class:'btn primary',onclick:savePersonas},'Save Personas'));
+  pg.append(el('div',{class:'row'}, el('label',{class:'k'},''), save));
+}
+
+async function savePersonas(){
+  const keys = [
+    'active_persona','personality_persistent','personality_family_friendly',
+    'personality_min_interval_minutes','personality_interval_jitter_pct','personality_daily_max',
+    'personality_quiet_hours',
+    'enable_dude','enable_chick','enable_nerd','enable_rager','enable_comedian','enable_action','enable_jarvis','enable_ops'
+  ];
+  const body = {};
+  keys.forEach(k=>{
+    const n = document.querySelector(`[name='${k}']`);
+    if(!n) return;
+    body[k] = (n.type==='checkbox') ? n.checked : n.value;
+  });
+  await api('options', {method:'PATCH', body:JSON.stringify(body)});
+  alert('Saved.');
+}
+
+// --- INTAKES -------------------------------------------------------------
+async function drawIntakes(){
+  const root = document.getElementById('intakes-wrap'); root.innerHTML='';
+  const box = el('div',{class:'panel'}, el('h2',{},'Intakes'), el('div',{class:'form-grid',id:'ig'}));
+  root.append(box);
+  const o = await api('options'); const ig = document.getElementById('ig');
+
+  ig.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Gotify intake'), checkbox('ingest_gotify_enabled', o.ingest_gotify_enabled)
+  ));
+  ig.append(el('div',{class:'row'},
+    el('label',{class:'k'},'ntfy intake'), checkbox('ingest_ntfy_enabled', o.ingest_ntfy_enabled)
+  ));
+  ig.append(el('div',{class:'row'},
+    el('label',{class:'k'},'SMTP intake'), checkbox('ingest_smtp_enabled', o.ingest_smtp_enabled)
+  ));
+  ig.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Apprise intake'), checkbox('ingest_apprise_enabled', o.ingest_apprise_enabled)
+  ));
+  ig.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Allow HTML (SMTP)'), checkbox('smtp_allow_html', o.smtp_allow_html)
+  ));
+  ig.append(el('div',{class:'row'},
+    el('label',{class:'k'},'Accept any SMTP auth'), checkbox('smtp_accept_any_auth', o.smtp_accept_any_auth)
+  ));
+
+  ig.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'SMTP (Intake)')));
+  addKV(ig,'Bind','smtp_bind', o.smtp_bind||'0.0.0.0');
+  addKV(ig,'Port','smtp_port', o.smtp_port||2525, 'number');
+  addKV(ig,'Max bytes','smtp_max_bytes', o.smtp_max_bytes||262144, 'number');
+  addKV(ig,'Dummy RCPT','smtp_dummy_rcpt', o.smtp_dummy_rcpt||'alerts@jarvis.local');
+  addKV(ig,'Title prefix','smtp_rewrite_title_prefix', o.smtp_rewrite_title_prefix||'[SMTP]');
+  addKV(ig,'Priority default','smtp_priority_default', o.smtp_priority_default||5, 'number');
+  addKV(ig,'Priority map','smtp_priority_map', o.smtp_priority_map||'{}', 'textarea');
+
+  ig.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'Apprise (Intake)')));
+  addKV(ig,'Enabled','intake_apprise_enabled', o.intake_apprise_enabled, 'checkbox');
+  addKV(ig,'Port','intake_apprise_port', o.intake_apprise_port||2591, 'number');
+  addKV(ig,'Token','intake_apprise_token', o.intake_apprise_token||'');
+  addKV(ig,'Accept any key','intake_apprise_accept_any_key', o.intake_apprise_accept_any_key, 'checkbox');
+  addKV(ig,'Allowed keys (csv)','intake_apprise_allowed_keys', o.intake_apprise_allowed_keys||'');
+  ig.append(el('div',{class:'row'}, el('label',{class:'k'},''), el('button',{class:'btn primary',onclick:saveIntakes},'Save Intakes')));
+}
+function addKV(root, label, key, val, mode='text'){
+  let node;
+  if(mode==='checkbox') node = checkbox(key, !!val);
+  else if(mode==='textarea') node = textarea(key, String(val));
+  else if(mode==='number') node = number(key, Number(val));
+  else node = inputBox(key, String(val));
+
+  root.append(el('div',{class:'row'}, el('label',{class:'k'},label), node));
+}
+async function saveIntakes(){
+  const keys = ['ingest_gotify_enabled','ingest_ntfy_enabled','ingest_smtp_enabled','ingest_apprise_enabled','smtp_allow_html','smtp_accept_any_auth',
+    'smtp_bind','smtp_port','smtp_max_bytes','smtp_dummy_rcpt','smtp_rewrite_title_prefix','smtp_priority_default','smtp_priority_map',
+    'intake_apprise_enabled','intake_apprise_port','intake_apprise_token','intake_apprise_accept_any_key','intake_apprise_allowed_keys'];
+  const body={};
+  for(const k of keys){
+    const n = document.querySelector(`[name='${k}']`);
+    if(!n) continue;
+    body[k] = (n.type==='checkbox') ? n.checked : (n.type==='number'? Number(n.value): n.value);
+  }
+  await api('options',{method:'PATCH', body:JSON.stringify(body)});
+  alert('Saved.');
+}
+
+// --- NOTIFY OUTPUTS ------------------------------------------------------
+async function drawOutputs(){
+  const root = document.getElementById('outputs-wrap'); root.innerHTML='';
+  const box = el('div',{class:'panel'}, el('h2',{},'Notify Outputs'), el('div',{class:'form-grid',id:'og'}));
+  root.append(box);
+  const o = await api('options'); const g = document.getElementById('og');
+
+  addKV(g,'Push to Gotify','push_gotify_enabled', o.push_gotify_enabled,'checkbox');
+  addKV(g,'Push to ntfy','push_ntfy_enabled', o.push_ntfy_enabled,'checkbox');
+  addKV(g,'Push to SMTP','push_smtp_enabled', o.push_smtp_enabled,'checkbox');
+
+  g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'Gotify')));
+  addKV(g,'URL','gotify_url', o.gotify_url||'');
+  addKV(g,'Client token','gotify_client_token', o.gotify_client_token||'');
+  addKV(g,'App token','gotify_app_token', o.gotify_app_token||'');
+
+  g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'ntfy')));
+  addKV(g,'URL','ntfy_url', o.ntfy_url||'');
+  addKV(g,'Topic','ntfy_topic', o.ntfy_topic||'');
+  addKV(g,'User','ntfy_user', o.ntfy_user||'');
+  addKV(g,'Pass','ntfy_pass', o.ntfy_pass||'');
+  addKV(g,'Token','ntfy_token', o.ntfy_token||'');
+
+  g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'SMTP (Push)')));
+  addKV(g,'Host','push_smtp_host', o.push_smtp_host||'');
+  addKV(g,'Port','push_smtp_port', o.push_smtp_port||587, 'number');
+  addKV(g,'User','push_smtp_user', o.push_smtp_user||'');
+  addKV(g,'Password','push_smtp_pass', o.push_smtp_pass||'');
+  addKV(g,'To','push_smtp_to', o.push_smtp_to||'');
+
+  g.append(el('div',{class:'row'}, el('label',{class:'k'},''), el('button',{class:'btn primary',onclick:saveOutputs},'Save Outputs')));
+}
+async function saveOutputs(){
+  const ks=['push_gotify_enabled','push_ntfy_enabled','push_smtp_enabled','gotify_url','gotify_client_token','gotify_app_token','ntfy_url','ntfy_topic','ntfy_user','ntfy_pass','ntfy_token','push_smtp_host','push_smtp_port','push_smtp_user','push_smtp_pass','push_smtp_to'];
+  const body={};
+  ks.forEach(k=>{
+    const n=document.querySelector(`[name='${k}']`); if(!n) return;
+    body[k] = (n.type==='checkbox')? n.checked : n.type==='number'? Number(n.value): n.value;
+  });
+  await api('options',{method:'PATCH', body:JSON.stringify(body)});
+  alert('Saved.');
+}
+
+// --- SETTINGS (Quiet Hours etc.) ----------------------------------------
+async function drawSettings(){
+  const root=document.getElementById('settings-wrap'); root.innerHTML='';
+  const box = el('div',{class:'panel'}, el('h2',{},'Settings'), el('div',{class:'form-grid',id:'sg'}));
+  root.append(box);
+
+  const o=await api('options'); const g=document.getElementById('sg');
+  addKV(g,'Retention days','retention_days', o.retention_days||30,'number');
+  addKV(g,'Retention hours','retention_hours', o.retention_hours||24,'number');
+  addKV(g,'Auto purge policy','auto_purge_policy', o.auto_purge_policy||'off');
+
+  g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'Quiet Hours')));
+  addKV(g,'Timezone','quiet_timezone', o.quiet_timezone||'Africa/Johannesburg');
+  addKV(g,'Quiet start','quiet_start', o.quiet_start||'22:00');
+  addKV(g,'Quiet end','quiet_end', o.quiet_end||'06:00');
+  // button
+  g.append(el('div',{class:'row'}, el('label',{class:'k'},''), el('button',{class:'btn primary',onclick:saveSettings},'Save Settings')));
+}
+async function saveSettings(){
+  const ks=['retention_days','retention_hours','auto_purge_policy','quiet_timezone','quiet_start','quiet_end'];
+  const body={};
+  for(const k of ks){ const n=document.querySelector(`[name='${k}']`); if(!n) continue; body[k]=(n.type==='number'? Number(n.value): n.value); }
+  await api('options',{method:'PATCH', body:JSON.stringify(body)}); alert('Saved.');
+}
+
+// --- LLM -----------------------------------------------------------------
+async function drawLLM(){
+  const root=document.getElementById('llm-wrap'); root.innerHTML='';
+  const box = el('div',{class:'panel'}, el('h2',{},'LLM Settings'), el('div',{class:'form-grid',id:'lg'}));
+  root.append(box);
+  const o=await api('options'); const g=document.getElementById('lg');
+
+  addKV(g,'LLM enabled','llm_enabled', o.llm_enabled,'checkbox');
+  addKV(g,'Persona riffs enabled','llm_persona_riffs_enabled', o.llm_persona_riffs_enabled,'checkbox');
+  addKV(g,'Cleanup on disable','llm_cleanup_on_disable', o.llm_cleanup_on_disable,'checkbox');
+  addKV(g,'Models dir','llm_models_dir', o.llm_models_dir||'/share/jarvis_prime/models');
+  addKV(g,'Timeout (s)','llm_timeout_seconds', o.llm_timeout_seconds||20,'number');
+
+  addKV(g,'Max CPU %','llm_max_cpu_percent', o.llm_max_cpu_percent||80,'number');
+  addKV(g,'Context tokens','llm_ctx_tokens', o.llm_ctx_tokens||4096,'number');
+  addKV(g,'Gen tokens','llm_gen_tokens', o.llm_gen_tokens||300,'number');
+  addKV(g,'Max lines','llm_max_lines', o.llm_max_lines||30,'number');
+
+  addKV(g,'System prompt','llm_system_prompt', o.llm_system_prompt||'','textarea');
+  addKV(g,'Model preference','llm_model_preference', o.llm_model_preference||'phi,qwen,tinyllama');
+
+  g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'Model Sources')));
+  addKV(g,'Model URL','llm_model_url', o.llm_model_url||'');
+  addKV(g,'Model path','llm_model_path', o.llm_model_path||'');
+  addKV(g,'SHA256','llm_model_sha256', o.llm_model_sha256||'');
+  addKV(g,'Ollama base URL','llm_ollama_base_url', o.llm_ollama_base_url||'');
+  addKV(g,'HF token','llm_hf_token', o.llm_hf_token||'');
+
+  g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'Per‑model toggles')));
+  addKV(g,'phi3 enabled','llm_phi3_enabled', o.llm_phi3_enabled,'checkbox');
+  addKV(g,'phi3 URL','llm_phi3_url', o.llm_phi3_url||'');
+  addKV(g,'phi3 Path','llm_phi3_path', o.llm_phi3_path||'');
+  addKV(g,'tinyllama enabled','llm_tinyllama_enabled', o.llm_tinyllama_enabled,'checkbox');
+  addKV(g,'tinyllama URL','llm_tinyllama_url', o.llm_tinyllama_url||'');
+  addKV(g,'tinyllama Path','llm_tinyllama_path', o.llm_tinyllama_path||'');
+  addKV(g,'qwen0.5b enabled','llm_qwen05_enabled', o.llm_qwen05_enabled,'checkbox');
+  addKV(g,'qwen0.5b URL','llm_qwen05_url', o.llm_qwen05_url||'');
+  addKV(g,'qwen0.5b Path','llm_qwen05_path', o.llm_qwen05_path||'');
+
+  g.append(el('div',{class:'row'}, el('label',{class:'k'},''), el('button',{class:'btn primary',onclick:saveLLM},'Save LLM')));
+}
+async function saveLLM(){
+  const ks=['llm_enabled','llm_persona_riffs_enabled','llm_cleanup_on_disable','llm_models_dir','llm_timeout_seconds','llm_max_cpu_percent','llm_ctx_tokens','llm_gen_tokens','llm_max_lines','llm_system_prompt','llm_model_preference','llm_model_url','llm_model_path','llm_model_sha256','llm_ollama_base_url','llm_hf_token','llm_phi3_enabled','llm_phi3_url','llm_phi3_path','llm_tinyllama_enabled','llm_tinyllama_url','llm_tinyllama_path','llm_qwen05_enabled','llm_qwen05_url','llm_qwen05_path'];
+  const body={};
+  ks.forEach(k=>{ const n=document.querySelector(`[name='${k}']`); if(!n) return; body[k]=(n.type==='checkbox')?n.checked:(n.type==='number'?Number(n.value):n.value); });
+  await api('options',{method:'PATCH', body:JSON.stringify(body)}); alert('Saved.');
+}
+
+// --- OPTIONS (ALL) -------------------------------------------------------
+async function drawOptionsAll(){
+  const root=document.getElementById('options-wrap'); root.innerHTML='';
+  const box = el('div',{class:'panel'}, el('h2',{},'Options (All)'), el('div',{class:'form-grid',id:'og'}));
+  root.append(box);
+  const o=await api('options'); const s=await api('schema');
+  const g=document.getElementById('og');
+
+  const groups = {
+    'Core': ['active_persona','personality_persistent','personality_family_friendly','personality_daily_max','greeting_enabled','greeting_times','heartbeat_interval_minutes','bot_name','jarvis_app_name'],
+    'I/O & Channels': ['gotify_app_token','gotify_client_token','gotify_url','push_gotify_enabled','ntfy_topic','ntfy_url','intake_apprise_port','intake_apprise_enabled',
+      'proxy_port','proxy_enabled','smtp_port','smtp_dummy_rcpt','smtp_accept_any_auth'],
+    'SMTP (limits)': ['smtp_max_bytes','smtp_priority_default','smtp_rewrite_title_prefix','smtp_bind'],
+    'Webhook': ['webhook_port'],
+  };
+
+  function labelize(k){ return k.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()) }
+
+  Object.entries(groups).forEach(([title, keys])=>{
+    g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'}, title)));
+    for(const k of keys){
+      const val = o[k]; const typ = (s[k]||'str').startsWith('int')? 'number' : (s[k]==='bool'?'checkbox':'text');
+      addKV(g, labelize(k), k, val, typ);
     }
   });
-  function showPreview(m){
-    $('#pv-title').textContent  = m?.title || '(no title)';
-    $('#pv-source').textContent = m?.source || '';
-    $('#pv-time').textContent   = fmt(m?.created_at);
-    const body = String(m?.html || m?.body || m?.message || '');
-    const el = $('#pv-body');
-    // Safe-ish render: if looks like HTML, render; else text
-    if(/<\/?[a-z][\s\S]*>/i.test(body)){
-      el.innerHTML = body;
-    }else{
-      el.textContent = body;
-    }
-    $('#preview').classList.remove('hidden');
-  }
-  function hidePreview(){ $('#preview').classList.add('hidden'); $('#pv-body').innerHTML=''; }
-  $('#pv-close').addEventListener('click', hidePreview);
 
-  // Delete all
-  $('#del-all').addEventListener('click', async()=>{
-    if(!confirm('Delete ALL messages?')) return;
-    const keep = $('#keep-arch')?.checked ? 1 : 0;
-    try{
-      await jfetch(API(`api/messages?keep_saved=${keep}`), {method:'DELETE'});
-      toast('All deleted');
-      hidePreview();
-      await loadInbox();
-    }catch{ toast('Delete all failed'); }
-  });
+  // read-only dump at the end
+  g.append(el('div',{class:'row pad-top'}, el('label',{class:'k subtle'},'Raw')));
+  const dump = el('textarea',{class:'v', readonly:'', style:'height:180px'}, JSON.stringify(o,null,2));
+  g.append(el('div',{class:'row'}, el('label',{class:'k'},'options.json'), dump));
+}
 
-  // SSE stream
-  (function startStream(){
-    let es=null, backoff=1000;
-    function connect(){
-      try{ es && es.close(); }catch{}
-      es = new EventSource(API('api/stream'));
-      es.onopen = ()=> backoff = 1000;
-      es.onerror = ()=>{ try{es.close();}catch{}; setTimeout(connect, Math.min(backoff, 15000)); backoff = Math.min(backoff*2, 15000); };
-      es.onmessage = (ev)=>{
-        try{
-          const data = JSON.parse(ev.data||'{}');
-          if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
-            loadInbox();
-          }
-        }catch{}
-      };
-    }
-    connect();
-    setInterval(loadInbox, 300000);
-  })();
+// --- tiny input helpers --------------------------------------------------
+function inputBox(name, value){ return el('input',{class:'v', name, value}); }
+function number(name, value){ return el('input',{class:'v', type:'number', name, value}); }
+function checkbox(name, checked){ const n=el('input',{type:'checkbox', name}); n.checked=!!checked; return n; }
+function textarea(name, value){ return el('textarea',{class:'v', name}, value); }
 
-  /* =====================================================
-   * Unified Options wiring
-   * ===================================================*/
-  let OPTS = null, SCHEMA = null;
-  async function refreshOptions(){
-    try{
-      [OPTS, SCHEMA] = await Promise.all([
-        jfetch(API('api/options')),
-        jfetch(API('api/schema'))
-      ]);
-      if (!OPTS) OPTS = {};
-      if (!SCHEMA) SCHEMA = {};
-      hydrateAllTabs();
-    }catch(e){
-      console.error(e);
-      $('#opts-wrap').innerHTML = '<div class="toast">Failed to load options/schema</div>';
-    }
-  }
-  function setField(el, key){
-    const v = OPTS?.[key];
-    if(el.type === 'checkbox') el.checked = !!v;
-    else if(el.tagName === 'TEXTAREA') el.value = v ?? '';
-    else el.value = (v ?? '');
-  }
-  function collectAndSave(selector, keys){
-    return async function(){
-      try{
-        const payload = {};
-        (keys || Array.from(document.querySelectorAll(selector))).forEach(el => {
-          const key = el.dataset.opt || el;
-          const node = typeof el === 'string' ? document.querySelector(`[data-opt="${el}"]`) : el;
-          if (!node) return;
-          if (node.type === 'checkbox') payload[key] = !!node.checked;
-          else if (node.tagName === 'TEXTAREA') payload[key] = node.value;
-          else if (node.type === 'number') payload[key] = node.value==='' ? '' : (String(node.value).includes('.') ? parseFloat(node.value) : parseInt(node.value,10));
-          else payload[key] = node.value;
-        });
-        await jfetch(API('api/options'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-        toast('Saved');
-      }catch(e){ toast('Save failed'); }
-    }
-  }
+// --- boot ---------------------------------------------------------------
+window.addEventListener('DOMContentLoaded', async ()=>{
+  // wire nav
+  document.querySelectorAll('nav a[data-tab]').forEach(a=> a.onclick=(e)=>{e.preventDefault(); activateTab(a.dataset.tab)});
+  // initial draw
+  await drawInbox(); activateTab('inbox');
 
-  /* Personas tab */
-  function hydratePersonas(){
-    $$('#personas [data-opt]').forEach(el => setField(el, el.dataset.opt));
-  }
-  $('#save-persona-opts').addEventListener('click', collectAndSave('#personas [data-opt]'));
-
-  /* Intakes tab */
-  function hydrateIntakes(){
-    $$('#intakes [data-opt]').forEach(el => setField(el, el.dataset.opt));
-  }
-  $('#save-intakes').addEventListener('click', collectAndSave('#intakes [data-opt]'));
-
-  /* Outputs tab */
-  function hydrateOutputs(){
-    $$('#outputs [data-opt]').forEach(el => setField(el, el.dataset.opt));
-  }
-  $('#save-outputs').addEventListener('click', collectAndSave('#outputs [data-opt]'));
-
-  /* Settings tab */
-  function hydrateSettings(){
-    $$('#settings [data-opt]').forEach(el => setField(el, el.dataset.opt));
-  }
-  $('#save-settings').addEventListener('click', collectAndSave('#settings [data-opt]'));
-  $('#purge').addEventListener('click', async()=>{
-    if(!confirm('Run purge now?')) return;
-    try{
-      const days = parseInt(OPTS?.retention_days||'0',10) || 0;
-      await jfetch(API('api/inbox/purge'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ days })});
-      toast('Purge started');
-    }catch{ toast('Purge failed'); }
-  });
-  // Quiet Hours separate endpoints if available (kept from previous build)
-  $('#save-quiet').addEventListener('click', async()=>{
-    try{
-      await jfetch(API('api/notify/quiet'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          tz: $('#qh-tz').value,
-          start: $('#qh-start').value,
-          end: $('#qh-end').value,
-          allow_critical: $('#qh-allow-critical').checked
-        })
-      });
-      toast('Quiet hours saved');
-    }catch{ toast('Save failed'); }
-  });
-
-  /* LLM tab */
-  function hydrateLLM(){
-    $$('#llm [data-opt]').forEach(el => setField(el, el.dataset.opt));
-  }
-  $('#save-llm').addEventListener('click', collectAndSave('#llm [data-opt]'));
-
-  /* EnviroGuard tab */
-  function hydrateEnv(){ $$('#enviro [data-opt]').forEach(el => setField(el, el.dataset.opt)); }
-  $('#save-env').addEventListener('click', collectAndSave('#enviro [data-opt]'));
-
-  /* Options (All) dynamic */
-  function guessWidget(key, type, val){
-    const lower = key.toLowerCase();
-    if (type && (type.startsWith('int') || type==='float')) return `<input type="number" data-key="${key}" value="${val ?? ''}">`;
-    if (type==='bool') return `<label class="lbl"><input type="checkbox" data-key="${key}" ${val ? 'checked':''}/> ${key}</label>`;
-    if ((typeof val==='string' && val.length>80) || /_map$|_profiles$|_times$/.test(lower)) {
-      return `<textarea data-key="${key}">${val ?? ''}</textarea>`;
-    }
-    return `<input type="text" data-key="${key}" value="${val ?? ''}">`;
-  }
-  function renderOptions(options, schema){
-    const wrap = $('#opts-wrap');
-    wrap.innerHTML = '';
-    const groups = { core:[], io:[], llm:[], services:[], env:[], misc:[] };
-    Object.keys(options||{}).forEach(k=>{
-      const t = (schema && schema[k]) ? String(schema[k]) : 'str';
-      const v = options[k];
-      const row = `<div class="opt-row">${guessWidget(k, t, v)}</div>`;
-      if (/^(bot_|jarvis_|beautify_|greeting_|chat_|personality_|active_persona|cache_refresh|heartbeat_)/.test(k)) groups.core.push(row);
-      else if (/^(gotify_|ntfy_|push_|ingest_|smtp_|proxy_|webhook_|intake_)/.test(k)) groups.io.push(row);
-      else if (/^llm_/.test(k) || /^(tinyllama|llama32_)/.test(k)) groups.llm.push(row);
-      else if (/^(radarr_|sonarr_|technitium_|uptimekuma_)/.test(k)) groups.services.push(row);
-      else if (/^weather_/.test(k)) groups.env.push(row);
-      else groups.misc.push(row);
-    });
-    function section(title, rows){ return `<fieldset><legend>${title}</legend><div class="grid-auto">${rows.join('')}</div></fieldset>`; }
-    wrap.innerHTML = section('Core', groups.core)+section('I/O & Channels', groups.io)+section('LLM', groups.llm)+section('Services', groups.services)+section('Environment / Weather', groups.env)+section('Misc', groups.misc);
-  }
-  $('#save-options').addEventListener('click', async()=>{
-    try{
-      const fields = Array.from($('#opts-wrap').querySelectorAll('[data-key]'));
-      const payload = {};
-      for(const el of fields){
-        const key = el.dataset.key;
-        if (el.type === 'checkbox') payload[key] = !!el.checked;
-        else if (el.tagName === 'TEXTAREA') payload[key] = el.value;
-        else if (el.type === 'number') payload[key] = el.value==='' ? '' : (String(el.value).includes('.') ? parseFloat(el.value) : parseInt(el.value,10));
-        else payload[key] = el.value;
-      }
-      await jfetch(API('api/options'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-      toast('Options saved');
-      await refreshOptions();
-    }catch(e){ toast('Save failed'); }
-  });
-
-  function hydrateAllTabs(){
-    hydratePersonas();
-    hydrateIntakes();
-    hydrateOutputs();
-    hydrateSettings();
-    hydrateLLM();
-    hydrateEnv();
-    renderOptions(OPTS, SCHEMA);
-    // About version (best-effort)
-    $('#about-ver').textContent = OPTS?.version || '1.x';
-  }
-
-  /* Boot */
-  (async function boot(){
-    await loadInbox();
-    await refreshOptions();
-    // About (try /api/version for exact string)
-    try{
-      const ver = await jfetch(API('api/version'));
-      if (typeof ver === 'string') $('#about-ver').textContent = ver;
-      else if (ver?.version) $('#about-ver').textContent = ver.version;
-    }catch{}
-  })();
-})();
+  // wire tabs
+  document.querySelector('a[data-tab="personas"]').onclick = async (e)=>{e.preventDefault(); await drawPersonas(); activateTab('personas');}
+  document.querySelector('a[data-tab="intakes"]').onclick  = async (e)=>{e.preventDefault(); await drawIntakes();  activateTab('intakes');}
+  document.querySelector('a[data-tab="outputs"]').onclick  = async (e)=>{e.preventDefault(); await drawOutputs();  activateTab('outputs');}
+  document.querySelector('a[data-tab="settings"]').onclick = async (e)=>{e.preventDefault(); await drawSettings(); activateTab('settings');}
+  document.querySelector('a[data-tab="llm"]').onclick      = async (e)=>{e.preventDefault(); await drawLLM();      activateTab('llm');}
+  document.querySelector('a[data-tab="options"]').onclick  = async (e)=>{e.preventDefault(); await drawOptionsAll();activateTab('options');}
+});
