@@ -92,6 +92,20 @@ def _harvest_images(text: str) -> Tuple[str, List[str]]:
         if u not in seen: seen.add(u); uniq.append(u)
     return text.strip(), uniq
 
+def _peek_images(text: str) -> List[str]:
+    """Extract image URLs without removing them from the text (lossless mode)."""
+    if not text: return []
+    urls: List[str] = []
+    for m in MD_IMG_RE.finditer(text or ""):
+        urls.append(m.group(1))
+    for m in IMG_URL_RE.finditer(text or ""):
+        u = m.group(1).rstrip('.,;:)]}>"\'')
+        urls.append(u)
+    uniq=[]; seen=set()
+    for u in sorted(urls, key=_prefer_host_key):
+        if u not in seen: seen.add(u); uniq.append(u)
+    return uniq
+
 def _find_ips(*texts: str) -> List[str]:
     ips=[]; seen=set()
     for t in texts:
@@ -328,13 +342,61 @@ def _debug(msg: str) -> None:
             pass
 
 # ============================
+# Options + mode resolution (full vs lossless)
+# ============================
+_OPTS_CACHE: Optional[Dict[str, Any]] = None
+def _load_options() -> Dict[str, Any]:
+    """Load /data/options.json once; return {} on any error."""
+    global _OPTS_CACHE
+    if _OPTS_CACHE is not None:
+        return _OPTS_CACHE
+    try:
+        with open("/data/options.json", "r", encoding="utf-8") as f:
+            _OPTS_CACHE = json.load(f) or {}
+    except Exception:
+        _OPTS_CACHE = {}
+    return _OPTS_CACHE
+
+def _resolve_mode(source_hint: Optional[str], passed_mode: Optional[str]) -> str:
+    """
+    Global toggles (full wins if both enabled):
+      - beautify.full_enabled
+      - beautify.lossless_enabled
+    Fallback order if neither is set: passed_mode → per-source → default_mode → env → 'standard'
+    """
+    opts = _load_options()
+    b = opts.get("beautify", {}) if isinstance(opts, dict) else {}
+    full = bool(b.get("full_enabled"))
+    lossless = bool(b.get("lossless_enabled"))
+    if full and lossless:
+        return "full"
+    if full:
+        return "full"
+    if lossless:
+        return "lossless"
+    if isinstance(passed_mode, str) and passed_mode.strip():
+        return passed_mode.strip().lower()
+    try:
+        src = (source_hint or "").strip().lower()
+        srcs = b.get("sources") or {}
+        if src and isinstance(srcs, dict) and isinstance(srcs.get(src), dict):
+            m = (srcs[src].get("mode") or "").strip().lower()
+            if m: return m
+        m = (b.get("default_mode") or "").strip().lower()
+        if m: return m
+    except Exception:
+        pass
+    envm = (os.getenv("BEAUTIFY_DEFAULT_MODE") or "").strip().lower()
+    return envm if envm else "standard"
+
+# ============================
 # ADDITIVE: Watchtower-aware summarizer
 # ============================
 _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
     # - /radarr (lscr.io/linuxserver/radarr:nightly): 30052c06bbef updated to 2091a873a55d
     re.compile(
-        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*\((?P<img>[^)]+)\)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
         re.I),
     # - radarr: abcdef updated to 123456
     re.compile(
@@ -394,17 +456,25 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     """
     extras_in: may carry riff_hint and other intake-provided metadata
     """
-    stripped = _strip_noise(body)
-    normalized = _normalize(stripped)
-    normalized = html.unescape(normalized)  # unescape HTML entities for poster URLs
+    # Resolve operating mode from toggles / overrides
+    eff_mode = _resolve_mode(source_hint, mode)
 
-    # images (pre-harvest; we never let LLM touch the message content)
-    body_wo_imgs, images = _harvest_images(normalized)
+    if eff_mode == "lossless":
+        # Keep original body intact; only normalize whitespace and HTML entities
+        base = html.unescape(_normalize(body))
+        images = _peek_images(base)   # DO NOT remove images from text
+        body_wo_imgs = base          # unchanged
+    else:
+        stripped = _strip_noise(body)
+        normalized = _normalize(stripped)
+        base = html.unescape(normalized)
+        # images (harvest: remove from text so the summary reads clean)
+        body_wo_imgs, images = _harvest_images(base)
 
     kind = _detect_type(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs)
 
-    # ===== ADDITIVE EARLY PATH: Watchtower-aware summary =====
+    # ===== Watchtower special-case =====
     if kind == "Watchtower":
         lines: List[str] = []
         lines += _header("Watchtower", badge)
@@ -432,7 +502,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
         text = "\n".join(lines).strip()
         text = _format_align_check(text)
-        text = _linewise_dedup_markdown(text)
+        if eff_mode != "lossless":
+            text = _linewise_dedup_markdown(text)
 
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
@@ -448,6 +519,11 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         # keep images in extras in case upstream wants them (none expected for Watchtower)
         if images:
             extras["jarvis::allImageUrls"] = images
+
+        if eff_mode == "lossless":
+            raw = (base or "").strip()
+            if raw:
+                text = f"{text}\n\n🗂 Raw\n\n```\n{raw}\n```"
 
         return text, extras
     # ===== END Watchtower special-case =====
@@ -494,13 +570,15 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    if eff_mode != "lossless":
+        text = _linewise_dedup_markdown(text)
 
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images,
         "jarvis::llm_riff_lines": len(riffs or []),
+        "jarvis::mode": eff_mode,
     }
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
@@ -508,5 +586,11 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     # carry over input extras safely
     if isinstance(extras_in, dict):
         extras.update(extras_in)
+
+    # In lossless mode append the full raw body so NOTHING is lost
+    if eff_mode == "lossless":
+        raw = (base or "").strip()
+        if raw:
+            text = f"{text}\n\n🗂 Raw\n\n```\n{raw}\n```"
 
     return text, extras
