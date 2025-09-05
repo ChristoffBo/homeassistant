@@ -165,9 +165,9 @@ if [ "$CLEANUP" = "true" ]; then
 fi
 ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
 if [ "$LLM_ENABLED" = "true" ]; then
-  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi‑3";
+  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi-3";
   elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL"; LLM_STATUS="TinyLlama";
-  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen‑0.5b";
+  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen-0.5b";
   else ENGINE="none-selected"; LLM_STATUS="Disabled"; fi
   if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
     if [ ! -s "$ACTIVE_PATH" ]; then echo "[Jarvis Prime] 🔮 Downloading model ($ENGINE)…"; py_download "$ACTIVE_URL" "$ACTIVE_PATH"; fi
@@ -196,9 +196,25 @@ BANNER_LLM="$( [ "$LLM_ENABLED" = "true" ] && echo "$LLM_STATUS" || echo "Disabl
 banner "$BANNER_LLM" "$ENGINE" "${LLM_MODEL_PATH:-}"
 
 echo "[launcher] URLs: gotify=$GOTIFY_URL ntfy=${NTFY_URL:-}"
-echo "[launcher] starting inbox server (api_messages.py) on :$JARVIS_API_PORT"
-python3 /app/api_messages.py &
-API_PID=$!
+
+# ---------- ADDED: start UI backend that serves UI + /api/options + /api/schema (+ inbox endpoints) ----------
+# Set USE_LEGACY_API=true to go back to api_messages.py instead (kept below, unchanged).
+USE_LEGACY_API="${USE_LEGACY_API:-false}"
+if [[ "$USE_LEGACY_API" == "true" ]]; then
+  echo "[launcher] starting inbox server (api_messages.py) on :$JARVIS_API_PORT"
+  python3 /app/api_messages.py &
+  API_PID=$!
+else
+  echo "[launcher] starting UI backend (ui_backened.py) on :$JARVIS_API_PORT"
+  python3 /app/ui_backened.py &
+  API_PID=$!
+fi
+# ---------- END ADDED ----------
+
+# (Original start kept below for reference; execution now controlled by USE_LEGACY_API)
+# echo "[launcher] starting inbox server (api_messages.py) on :$JARVIS_API_PORT"
+# python3 /app/api_messages.py &
+# API_PID=$!
 
 # ===== SMTP intake =====
 if [[ "${SMTP_ENABLED}" == "true" ]]; then
