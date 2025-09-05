@@ -1,6 +1,6 @@
 {
   "name": "ntfy Server (Official)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "slug": "ntfy",
   "description": "Self-hosted ntfy server using the official Docker image, with Ingress and persistent storage (/data).",
   "url": "https://ntfy.sh",
@@ -11,6 +11,7 @@
     "armhf"
   ],
   "startup": "services",
+  "init": false,
   "ingress": true,
   "ingress_port": 8008,
   "ingress_stream": true,

@@ -4,8 +4,6 @@ set -euo pipefail
 OPTS_FILE="/data/options.json"
 mkdir -p /data /data/ntfy || true
 
-# jq is available from our Dockerfile
-# Read options with defaults
 listen_port=$(jq -r '.listen_port // 8008' "$OPTS_FILE")
 base_url=$(jq -r '.base_url // ""' "$OPTS_FILE")
 behind_proxy=$(jq -r '.behind_proxy // true' "$OPTS_FILE")
@@ -25,32 +23,29 @@ admin_pass=$(jq -r '.auth.admin_password // ""' "$OPTS_FILE")
 
 mkdir -p "$(dirname "$cache_file")" "$att_dir"
 
-# Build server.yml
 cfg="/data/server.yml"
 {
-  echo "listen-http: "0.0.0.0:${listen_port}""
+  echo "listen-http: \"0.0.0.0:${listen_port}\""
   if [ "$behind_proxy" = "true" ]; then
     echo "behind-proxy: true"
   fi
   if [ -n "$base_url" ] && [ "$base_url" != "null" ]; then
-    echo "base-url: "$base_url""
+    echo "base-url: \"$base_url\""
   fi
-  echo "cache-file: "$cache_file""
+  echo "cache-file: \"$cache_file\""
   if [ "$att_enabled" = "true" ]; then
-    echo "attachment-cache-dir: "$att_dir""
-    echo "attachment-file-size-limit: "$att_file_size""
-    echo "attachment-total-size-limit: "$att_total_size""
-    echo "attachment-expiry-duration: "$att_expiry""
+    echo "attachment-cache-dir: \"$att_dir\""
+    echo "attachment-file-size-limit: \"$att_file_size\""
+    echo "attachment-total-size-limit: \"$att_total_size\""
+    echo "attachment-expiry-duration: \"$att_expiry\""
   fi
   if [ "$auth_enabled" = "true" ]; then
-    echo "auth-file: "/data/user.db""
-    echo "auth-default-access: "$auth_default""
-    # Provision an admin if specified
+    echo "auth-file: \"/data/user.db\""
+    echo "auth-default-access: \"$auth_default\""
     if [ -n "$admin_user" ] && [ "$admin_user" != "null" ] && [ -n "$admin_pass" ] && [ "$admin_pass" != "null" ]; then
-      # Hash password with ntfy CLI
       hashed="$(ntfy user hash "$admin_pass" | tr -d '\r')"
       echo "auth-users:"
-      echo "  - "${admin_user}:${hashed}:admin""
+      echo "  - \"${admin_user}:${hashed}:admin\""
     fi
   fi
 } > "$cfg"
