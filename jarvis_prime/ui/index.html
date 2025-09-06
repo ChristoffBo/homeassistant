@@ -5,8 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime</title>
 
+  <!-- Optional: override API base if UI is hosted elsewhere
+       Example: window.JARVIS_API_BASE='http://10.0.0.99:2581/';
+  -->
   <script>window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;</script>
 
+  <!-- Make relative URLs work for both Ingress and direct host -->
   <script>
     (function () {
       var p = location.pathname;
@@ -17,7 +21,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=1.7" />
+  <link rel="stylesheet" href="style.css?v=2.1" />
 </head>
 <body>
   <header class="topnav">
@@ -30,49 +34,54 @@
   <main>
     <!-- Inbox -->
     <section id="inbox" class="tab active">
-      <h2>Inbox</h2>
-      <div class="stats">
-        <div class="stat blue">Messages Today: <span id="msg-today">-</span></div>
-        <div class="stat green">Archived: <span id="msg-arch">-</span></div>
-        <div class="stat red">Errors: <span id="msg-err">-</span></div>
-        <div class="stat purple">
-          Chat:
-          <input id="chat-input" placeholder="Type…" />
-          <button id="chat-send" class="btn primary">Send</button>
-        </div>
-        <div class="stat orange">
-          Purge:
-          <select id="purge-select">
-            <option value="1">1 day</option>
-            <option value="7" selected>7 days</option>
-            <option value="30">30 days</option>
-          </select>
-          <button id="purge-now" class="btn danger">Run</button>
+      <div class="page-head">
+        <h2>Inbox</h2>
+        <div class="stats">
+          <div class="stat blue">Today <span id="msg-today">0</span></div>
+          <div class="stat green">Archived <span id="msg-arch">0</span></div>
+          <div class="stat red">Errors <span id="msg-err">0</span></div>
+
+          <!-- NEW: Chat (pastel purple) -->
+          <div class="stat purple" id="chat-box">
+            <label for="chat-input" class="sr-only">Chat</label>
+            <span class="stat-label">Chat:</span>
+            <input id="chat-input" placeholder="Type…" />
+            <button id="chat-send" class="btn primary">Send</button>
+          </div>
+
+          <!-- NEW: Purge (pastel orange) -->
+          <div class="stat orange" id="purge-box">
+            <span class="stat-label">Purge:</span>
+            <select id="purge-select">
+              <option value="1">1 day</option>
+              <option value="7" selected>7 day</option>
+              <option value="30">30 day</option>
+            </select>
+            <button id="purge-now" class="btn danger">Run</button>
+          </div>
         </div>
       </div>
 
       <div class="inbox-wrap">
-        <div class="inbox-left">
+        <div class="inbox-left panel">
+          <div class="panel-head">
+            <div class="row-actions">
+              <label class="lbl"><input type="checkbox" id="pv-follow" checked /> Auto-preview new</label>
+              <button id="del-all" class="btn danger">Delete All</button>
+              <label class="lbl"><input type="checkbox" id="keep-arch" /> Keep archived</label>
+            </div>
+          </div>
           <table class="msg-table">
             <thead>
               <tr>
                 <th>Time</th><th>Source</th><th>Title</th><th>Actions</th>
               </tr>
             </thead>
-            <tbody id="msg-body"><tr><td colspan="4">Loading…</td></tr></tbody>
+            <tbody id="msg-body"><tr><td colspan="4">Loading...</td></tr></tbody>
           </table>
-          <div class="inbox-actions">
-            <label class="lbl">
-              <input type="checkbox" id="keep-arch" /> Keep archived
-            </label>
-            <button id="del-all" class="btn danger">🗑 Delete All</button>
-            <label class="lbl ph-follow">
-              <input type="checkbox" id="pv-follow" checked /> Auto-preview new
-            </label>
-          </div>
         </div>
 
-        <aside class="inbox-preview">
+        <aside class="inbox-preview panel">
           <div class="preview-head">
             <div class="ph-left">
               <div class="ph-title" id="pv-title">No message selected</div>
@@ -88,6 +97,6 @@
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=1.7"></script>
+  <script src="app.js?v=2.1"></script>
 </body>
 </html>
