@@ -25,22 +25,17 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=1.5" />
+  <link rel="stylesheet" href="style.css?v=1.6" />
 </head>
 <body>
   <header class="topnav">
     <div class="brand">Jarvis Prime</div>
     <nav>
       <button class="tablink active" data-tab="inbox">Inbox</button>
-      <button class="tablink" data-tab="personas">Personas</button>
-      <button class="tablink" data-tab="intakes">Intakes</button>
-      <button class="tablink" data-tab="outputs">Notify Outputs</button>
-      <button class="tablink" data-tab="settings">Settings</button>
-      <button class="tablink" data-tab="llm">LLM</button>
-      <button class="tablink" data-tab="enviro">EnviroGuard</button>
-      <button class="tablink" data-tab="ops">Ops Engine</button>
-      <button class="tablink" data-tab="options">Options (All)</button>
-      <button class="tablink" data-tab="about">About</button>
+      <button class="tablink" data-tab="jarvis-settings">Jarvis Settings</button>
+      <button class="tablink" data-tab="aegis-settings">AegisOps – Settings</button>
+      <button class="tablink" data-tab="aegis-schedules">AegisOps – Schedules</button>
+      <button class="tablink" data-tab="aegis-runs">AegisOps – Runs & Logs</button>
     </nav>
   </header>
 
@@ -79,118 +74,173 @@
               <div class="ph-meta" id="pv-meta">–</div>
             </div>
             <label class="lbl ph-follow">
-              <input type="checkbox" id="pv-follow" checked /> Auto‑preview new
+              <input type="checkbox" id="pv-follow" checked /> Auto-preview new
             </label>
           </div>
           <div class="preview-body" id="pv-body">
-            <p class="muted">Click a message to see its contents here. When Auto‑preview is on, the newest message will show as it arrives.</p>
+            <p class="muted">Click a message to see its contents here. When Auto-preview is on, the newest message will show as it arrives.</p>
           </div>
         </aside>
       </div>
     </section>
 
-    <!-- Personas -->
-    <section id="personas" class="tab">
-      <h2>Personas</h2>
-      <label><input type="checkbox" id="p-dude"> Dude</label>
-      <label><input type="checkbox" id="p-chick"> Chick</label>
-      <label><input type="checkbox" id="p-nerd"> Nerd</label>
-      <label><input type="checkbox" id="p-rager"> Rager</label>
-      <button id="save-personas" class="btn">Save Personas</button>
+    <!-- Jarvis Settings (curated: personas, intakes, retention/quiet, LLM, Enviro) -->
+    <section id="jarvis-settings" class="tab">
+      <h2>Jarvis Settings</h2>
+
+      <fieldset>
+        <legend>Personas</legend>
+        <label class="lbl"><input type="checkbox" id="p-dude"> Dude</label>
+        <label class="lbl"><input type="checkbox" id="p-chick"> Chick</label>
+        <label class="lbl"><input type="checkbox" id="p-nerd"> Nerd</label>
+        <label class="lbl"><input type="checkbox" id="p-rager"> Rager</label>
+        <div><button id="save-personas" class="btn">Save Personas</button></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Intakes (Email / Gotify / ntfy)</legend>
+        <div class="grid3">
+          <div>
+            <h3>Email</h3>
+            <input id="smtp-host" placeholder="smtp.gmail.com" />
+            <input id="smtp-port" placeholder="587" />
+            <input id="smtp-user" placeholder="user" />
+            <input id="smtp-pass" type="password" placeholder="password" />
+            <input id="smtp-from" placeholder="From name" />
+            <div class="grid2">
+              <button id="test-email" class="btn">Test Email</button>
+            </div>
+          </div>
+          <div>
+            <h3>Gotify</h3>
+            <input id="gotify-url" placeholder="http://10.0.0.99:8091" />
+            <input id="gotify-token" placeholder="token" />
+            <button id="test-gotify" class="btn">Test Gotify</button>
+          </div>
+          <div>
+            <h3>ntfy</h3>
+            <input id="ntfy-url" placeholder="http://10.0.0.99:8080" />
+            <input id="ntfy-topic" placeholder="topic" />
+            <button id="test-ntfy" class="btn">Test ntfy</button>
+          </div>
+        </div>
+        <button id="save-channels" class="btn primary">Save Intakes</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Inbox Retention & Purge</legend>
+        <div class="grid3">
+          <label>Retention days <input id="retention" type="number" /></label>
+          <div>
+            <label>Purge older than <input id="purge-days" type="number" /></label>
+            <button id="purge" class="btn danger">Run Purge</button>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Quiet Hours</legend>
+        <div class="grid3">
+          <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
+          <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
+          <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
+        </div>
+        <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
+        <button id="save-quiet" class="btn">Save Quiet Hours</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>LLM</legend>
+        <div class="grid3">
+          <label>Model <input id="llm-model" placeholder="model name" /></label>
+          <label>Context Tokens <input id="llm-ctx" type="number" /></label>
+          <label>Timeout (s) <input id="llm-timeout" type="number" /></label>
+        </div>
+        <button id="save-llm" class="btn">Save LLM</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>EnviroGuard</legend>
+        <p>Status: <span id="env-status">-</span></p>
+        <div class="grid3">
+          <label>Hot °C <input id="env-hot" type="number" /></label>
+          <label>Cold °C <input id="env-cold" type="number" /></label>
+          <label>Hysteresis °C <input id="env-hyst" type="number" /></label>
+        </div>
+        <button id="save-env" class="btn">Save EnviroGuard</button>
+      </fieldset>
     </section>
 
-    <!-- Intakes -->
-    <section id="intakes" class="tab">
-      <h2>Intakes (Email / Gotify / ntfy)</h2>
-      <div>
-        <h3>Email</h3>
-        <input id="smtp-host" placeholder="smtp.gmail.com" />
-        <input id="smtp-port" placeholder="587" />
-        <input id="smtp-user" placeholder="user" />
-        <input id="smtp-pass" type="password" placeholder="password" />
-        <input id="smtp-from" placeholder="From name" />
-        <button id="test-email" class="btn">Test Email</button>
-      </div>
-      <div>
-        <h3>Gotify</h3>
-        <input id="gotify-url" placeholder="http://10.0.0.99:8091" />
-        <input id="gotify-token" placeholder="token" />
-        <button id="test-gotify" class="btn">Test Gotify</button>
-      </div>
-      <div>
-        <h3>ntfy</h3>
-        <input id="ntfy-url" placeholder="http://10.0.0.99:8080" />
-        <input id="ntfy-topic" placeholder="topic" />
-        <button id="test-ntfy" class="btn">Test ntfy</button>
-      </div>
-      <button id="save-channels" class="btn primary">Save Intakes</button>
+    <!-- AegisOps – Settings -->
+    <section id="aegis-settings" class="tab">
+      <h2>AegisOps — Settings</h2>
+      <p class="muted">Manage inventory and playbooks. (Backed by files in <code>/share/jarvis_prime/aegisops/</code>.)</p>
+
+      <fieldset>
+        <legend>Inventory</legend>
+        <p class="muted">Hosts / groups from <code>inventory.ini</code>. (UI editing to be wired.)</p>
+        <textarea id="aegis-inventory-view" placeholder="[all]
+localhost ansible_host=127.0.0.1 ansible_user=root"></textarea>
+        <button id="aegis-inventory-save" class="btn">Save Inventory</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Playbooks</legend>
+        <p class="muted">Available playbooks under <code>playbooks/</code>. (Listing/runner to be wired.)</p>
+        <input id="aegis-playbook-path" placeholder="playbooks/check_services.yml" />
+        <button id="aegis-playbook-run" class="btn">Run Once (Manual)</button>
+      </fieldset>
     </section>
 
-    <!-- Notify Outputs -->
-    <section id="outputs" class="tab">
-      <h2>Notify Outputs</h2>
-      <p>Configure outbound channels here.</p>
+    <!-- AegisOps – Schedules -->
+    <section id="aegis-schedules" class="tab">
+      <h2>AegisOps — Schedules</h2>
+      <p class="muted">Create/edit scheduled jobs (backed by <code>schedules.json</code>).</p>
+
+      <fieldset>
+        <legend>New Schedule</legend>
+        <div class="grid3">
+          <label>Id <input id="ag-sch-id" placeholder="uptime-5m" /></label>
+          <label>Playbook <input id="ag-sch-playbook" placeholder="check_services.yml" /></label>
+          <label>Servers <input id="ag-sch-servers" placeholder="all or host1,host2" /></label>
+          <label>Every <select id="ag-sch-every">
+            <option>5m</option><option>15m</option><option>1h</option><option>6h</option><option>24h</option>
+          </select></label>
+          <label>Forks <input id="ag-sch-forks" type="number" value="1"/></label>
+        </div>
+        <div class="grid3">
+          <label class="lbl"><input id="ag-notify-success" type="checkbox" /> Notify on success</label>
+          <label class="lbl"><input id="ag-notify-fail" type="checkbox" checked/> Notify on fail</label>
+          <label class="lbl"><input id="ag-notify-change" type="checkbox" checked/> Only on state change</label>
+          <label>Cooldown (min) <input id="ag-notify-cooldown" type="number" value="30"/></label>
+          <label>Quiet Hours <input id="ag-notify-quiet" placeholder="22:00-06:00"/></label>
+          <label>Target Key <input id="ag-notify-key" placeholder="uptime"/></label>
+        </div>
+        <button id="ag-add" class="btn primary">Add / Update</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Existing Schedules</legend>
+        <table class="msg-table">
+          <thead><tr><th>ID</th><th>Playbook</th><th>Servers</th><th>Every</th><th>Actions</th></tr></thead>
+          <tbody id="ag-table"><tr><td colspan="5">No data (wire API)</td></tr></tbody>
+        </table>
+      </fieldset>
     </section>
 
-    <!-- Settings (curated subset) -->
-    <section id="settings" class="tab">
-      <h2>Settings</h2>
-      <label>Retention days <input id="retention" type="number" /></label>
-      <button id="save-retention" class="btn">Save</button>
-      <label>Purge older than <input id="purge-days" type="number" /></label>
-      <button id="purge" class="btn danger">Run Purge</button>
-
-      <h3>Quiet Hours</h3>
-      <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
-      <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
-      <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
-      <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
-      <button id="save-quiet" class="btn">Save Quiet Hours</button>
-    </section>
-
-    <!-- LLM -->
-    <section id="llm" class="tab">
-      <h2>LLM Settings</h2>
-      <label>Model <input id="llm-model" placeholder="model name" /></label>
-      <label>Context Tokens <input id="llm-ctx" type="number" /></label>
-      <label>Timeout (s) <input id="llm-timeout" type="number" /></label>
-      <button id="save-llm" class="btn">Save LLM</button>
-    </section>
-
-    <!-- EnviroGuard -->
-    <section id="enviro" class="tab">
-      <h2>EnviroGuard</h2>
-      <p>Status: <span id="env-status">-</span></p>
-      <label>Hot °C <input id="env-hot" type="number" /></label>
-      <label>Cold °C <input id="env-cold" type="number" /></label>
-      <label>Hysteresis °C <input id="env-hyst" type="number" /></label>
-      <button id="save-env" class="btn">Save EnviroGuard</button>
-    </section>
-
-    <!-- Ops Engine -->
-    <section id="ops" class="tab">
-      <h2>Ops Engine</h2>
-      <p>Coming soon — orchestration / playbooks will run here.</p>
-    </section>
-
-    <!-- Options (All) -->
-    <section id="options" class="tab">
-      <h2>Options (All)</h2>
-      <p>This renders every field from <code>/api/options</code> + <code>/api/schema</code>.</p>
-      <div id="opts-wrap"></div>
-      <div class="opts-actions">
-        <button id="save-options" class="btn primary">Save All Options</button>
-      </div>
-    </section>
-
-    <!-- About -->
-    <section id="about" class="tab">
-      <h2>About Jarvis Prime</h2>
-      <p>Jarvis Prime — Technitium-style one-page UI. Ingress + direct host safe.</p>
+    <!-- AegisOps – Runs & Logs -->
+    <section id="aegis-runs" class="tab">
+      <h2>AegisOps — Runs & Logs</h2>
+      <p class="muted">Recent executions from the AegisOps SQLite DB.</p>
+      <table class="msg-table">
+        <thead><tr><th>Time</th><th>Playbook</th><th>Status</th><th>OK</th><th>Changed</th><th>Failed</th><th>Unreach</th></tr></thead>
+        <tbody id="ag-runs"><tr><td colspan="7">No data (wire API)</td></tr></tbody>
+      </table>
+      <button id="ag-refresh" class="btn">Refresh</button>
     </section>
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=1.5"></script>
+  <script src="app.js?v=1.6"></script>
 </body>
 </html>
