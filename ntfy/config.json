@@ -12,7 +12,7 @@
   ],
   "startup": "services",
   "init": false,
-  "ingress": true,
+  "ingress": false,
   "ingress_port": 8008,
   "ingress_stream": true,
   "panel_icon": "mdi:bell",
