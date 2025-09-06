@@ -360,6 +360,72 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
         pass
     return []
 
+# --- config helpers ---
+def _read_options() -> Dict[str, Any]:
+    try:
+        with open("/data/options.json", "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+def _bool_from_env(*names: str, default: bool = False) -> bool:
+    for n in names:
+        v = (os.getenv(n) or "").strip().lower()
+        if v in ("1","true","yes","on"):  return True
+        if v in ("0","false","no","off"): return False
+    return default
+
+def _bool_from_options(opt: Dict[str, Any], key: str, default: bool = False) -> bool:
+    try:
+        v = str(opt.get(key, default)).strip().lower()
+        return v in ("1","true","yes","on")
+    except Exception:
+        return default
+
+def _llm_riffs_enabled() -> bool:
+    # existing behavior (env-based); also honor options.json if present
+    opt = _read_options()
+    env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
+    opt_enabled = _bool_from_options(opt, "llm_enabled", default=env_enabled)
+    return opt_enabled
+
+def _llm_message_rewrite_enabled() -> bool:
+    # NEW: env overrides then options.json -> llm_rewrite_enabled
+    opt = _read_options()
+    env_enabled = _bool_from_env("BEAUTIFY_LLM_REWRITE_ENABLED", "LLM_MESSAGE_REWRITE_ENABLED", default=False)
+    return _bool_from_options(opt, "llm_rewrite_enabled", default=env_enabled)
+
+def _llm_message_rewrite_max_chars() -> int:
+    opt = _read_options()
+    try:
+        return int(os.getenv("LLM_MESSAGE_REWRITE_MAX_CHARS") or opt.get("llm_message_rewrite_max_chars", 800))
+    except Exception:
+        return 800
+
+# --------------------
+# LLM persona REWRITE (optional)
+# --------------------
+def _persona_llm_rewrite(context: str, persona: Optional[str], max_chars: int = 800) -> Optional[str]:
+    """
+    Optional: rewrite/summarize the body with persona style via personality.llm_rewrite.
+    Returns None to keep original.
+    """
+    if not persona or not _llm_riffs_enabled():  # piggyback on global LLM allow
+        return None
+    enabled = _llm_message_rewrite_enabled()
+    if not enabled:
+        return None
+    try:
+        mod = importlib.import_module("personality")
+        mod = importlib.reload(mod)
+        if hasattr(mod, "llm_rewrite"):
+            out = mod.llm_rewrite(persona, context=context, max_chars=int(max_chars))
+            if isinstance(out, str) and out.strip():
+                return out.strip()
+    except Exception:
+        pass
+    return None
+
 # --------- ADDITIVE: global helpers for riffs & persona ----------
 def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
     if passed_persona:
@@ -467,6 +533,7 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
 
     if len(updated) > max(1, limit):
         updated = updated[:limit]
+    # ensure we mark truncation if needed
         meta["watchtower::truncated"] = True
 
     bullets = "\n".join([f"• `{name}` → `{img}` @ `{new}`" for name, img, new in updated])
@@ -649,6 +716,18 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     # strip KV-style lines so we don't echo what already appeared in 📄 Details
     message_snip = _remove_kv_lines(raw_message)
 
+    # ---- OPTIONAL LLM MESSAGE REWRITE (toggleable) ----
+    # We pass the cleaned message to the persona rewriter; if it returns text, we use it.
+    try:
+        eff_persona_for_rewrite = _effective_persona(persona)
+        max_chars = _llm_message_rewrite_max_chars()
+        rewritten = _persona_llm_rewrite(message_snip, eff_persona_for_rewrite, max_chars=max_chars)
+        if isinstance(rewritten, str) and rewritten.strip():
+            message_snip = rewritten.strip()
+    except Exception:
+        # fail-safe: show original content if anything goes wrong
+        pass
+
     if message_snip:
         lines += ["", "📝 Message", message_snip]
 
@@ -661,7 +740,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     riffs: List[str] = []
     riff_hint = _global_riff_hint(extras_in, source_hint)
     _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
-    if eff_persona and riff_hint:
+    if eff_persona and riff_hint and _llm_riffs_enabled():
         riffs = _persona_llm_riffs(ctx, eff_persona)
 
     real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
