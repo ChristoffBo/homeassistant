@@ -3,5 +3,6 @@
     "amd64": "rundeck/rundeck:latest",
     "aarch64": "rundeck/rundeck:latest",
     "armv7": "rundeck/rundeck:latest"
-  }
+  },
+  "version": "5.15.0-20250902"
 }

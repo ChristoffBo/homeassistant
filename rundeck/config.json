@@ -3,7 +3,11 @@
   "version": "5.15.0-20250902",
   "slug": "rundeck",
   "description": "Rundeck Automation with Web UI",
-  "arch": ["amd64", "aarch64", "armv7"],
+  "arch": [
+    "amd64",
+    "aarch64",
+    "armv7"
+  ],
   "startup": "services",
   "boot": "auto",
   "init": false,
@@ -14,7 +18,9 @@
   "ports_description": {
     "4440/tcp": "Rundeck Web UI"
   },
-  "map": ["config:rw"],
+  "map": [
+    "config:rw"
+  ],
   "options": {
     "ui_port": 4440
   },
