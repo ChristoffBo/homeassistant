@@ -467,7 +467,7 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
     md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
     return md, meta
 
-# -------- ADD: querystring detection helpers --------
+# -------- ADD: querystring detection & body cleanup helpers --------
 _QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
 
 def _maybe_parse_query_payload(s: Optional[str]) -> Optional[Dict[str, str]]:
@@ -485,6 +485,28 @@ def _maybe_parse_query_payload(s: Optional[str]) -> Optional[Dict[str, str]]:
         return {k: (v[0] if isinstance(v, list) and v else "") for k, v in parsed.items()}
     except Exception:
         return None
+
+_ACTION_SAYS_RX = re.compile(r'^\s*action\s+says:\s*.*$', re.I | re.M)
+
+def _strip_action_says(text: str) -> str:
+    """Remove any 'action says:' lines from visible body (riffs/personas untouched elsewhere)."""
+    if not text:
+        return ""
+    out = _ACTION_SAYS_RX.sub("", text)
+    return re.sub(r'\n{3,}', '\n\n', out).strip()
+
+def _remove_kv_lines(text: str) -> str:
+    """Drop lines that look like 'Key: Value' to avoid duplicating Details inside 📝 Message."""
+    if not text:
+        return ""
+    kept = []
+    for ln in text.splitlines():
+        if KV_RE.match(ln.strip()):
+            continue
+        kept.append(ln)
+    s = "\n".join(kept)
+    s = re.sub(r'\n{3,}', '\n\n', s).strip()
+    return s
 
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
@@ -526,6 +548,9 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         normalized = unquote_plus(qs_title.get("message") or "") or normalized
     if qs_body and "message" in qs_body and not (normalized or "").strip():
         normalized = unquote_plus(qs_body.get("message") or "") or normalized
+
+    # remove 'action says:' lines from the visible body (riffs unaffected elsewhere)
+    normalized = _strip_action_says(normalized)
 
     # images (keep meaning via ALT placeholders)
     body_wo_imgs, images, image_alts = _harvest_images(normalized)
@@ -602,7 +627,9 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         lines += ["", "📄 Details", *details]
 
     # --- Always keep human content visible (entire body, not just first paragraph)
-    message_snip = (body_wo_imgs or "").strip() or (normalized or "").strip()
+    raw_message = (body_wo_imgs or "").strip() or (normalized or "").strip()
+    # strip KV-style lines so we don't echo what already appeared in 📄 Details
+    message_snip = _remove_kv_lines(raw_message)
 
     if message_snip:
         lines += ["", "📝 Message", message_snip]
