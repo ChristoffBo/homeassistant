@@ -1,6 +1,7 @@
 from __future__ import annotations
 import re, json, importlib, random, html, os
 from typing import List, Tuple, Optional, Dict, Any
+from urllib.parse import unquote_plus, parse_qs  # ADD
 
 # -------- Regex library --------
 IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
@@ -466,6 +467,25 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
     md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
     return md, meta
 
+# -------- ADD: querystring detection helpers --------
+_QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
+
+def _maybe_parse_query_payload(s: Optional[str]) -> Optional[Dict[str, str]]:
+    """If the string looks like a URL-encoded querystring, parse and return {k:v} (first values)."""
+    if not s:
+        return None
+    txt = s.strip().strip(' \t\r\n?')
+    if "=" not in txt or "&" not in txt:
+        return None
+    dec = unquote_plus(txt)
+    if not any((k + "=") in dec for k in _QS_TRIGGER_KEYS):
+        return None
+    try:
+        parsed = parse_qs(dec, keep_blank_values=True, strict_parsing=False)
+        return {k: (v[0] if isinstance(v, list) and v else "") for k, v in parsed.items()}
+    except Exception:
+        return None
+
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
@@ -491,6 +511,21 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
     normalized = html.unescape(normalized)
+
+    # --- Querystring normalization (decode & extract clean title/message) ---
+    qs_title = _maybe_parse_query_payload(title)
+    qs_body  = _maybe_parse_query_payload(normalized)
+
+    # prefer explicit fields; do NOT touch persona/riffs
+    if qs_title and "title" in qs_title:
+        title = unquote_plus(qs_title.get("title") or "") or title
+    if qs_body and "title" in qs_body and not (title or "").strip():
+        title = unquote_plus(qs_body.get("title") or "") or title
+
+    if qs_title and "message" in qs_title:
+        normalized = unquote_plus(qs_title.get("message") or "") or normalized
+    if qs_body and "message" in qs_body and not (normalized or "").strip():
+        normalized = unquote_plus(qs_body.get("message") or "") or normalized
 
     # images (keep meaning via ALT placeholders)
     body_wo_imgs, images, image_alts = _harvest_images(normalized)
@@ -556,7 +591,11 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
-    facts, details = _categorize_bullets(title, body_wo_imgs)
+    # if payload was querystring, don't feed raw k=v pairs into key/val extractor
+    raw_was_query = bool(qs_title or qs_body)
+    kv_source = body_wo_imgs if not raw_was_query else (normalized or "")
+    facts, details = _categorize_bullets(title, kv_source)
+
     if facts:
         lines += ["", "📄 Facts", *facts]
     if details:
