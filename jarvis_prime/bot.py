@@ -181,6 +181,7 @@ ENVGUARD = {
         "cold":   { "cpu_percent": 85, "ctx_tokens": 6144, "timeout_seconds": 25 }
     }),
     "profile": "normal",
+    "mode": "auto",  # NEW: auto|manual; manual sticks until 'jarvis env auto'
     "temp_c": None,
     "last_ts": 0,
     "source": "open-meteo"
@@ -571,12 +572,25 @@ def _try_call(module, fn_name, *args, **kwargs):
     return None, None
 
 def _handle_command(ncmd: str) -> bool:
-    # --- Manual EnviroGuard override: "jarvis env hot|normal|cold|boost" or "jarvis profile X"
+    # --- Manual EnviroGuard override: "jarvis env hot|normal|cold|boost|auto" or "jarvis profile X"
     toks = ncmd.split()
     if toks and toks[0] in ("env", "profile"):
         if len(toks) >= 2:
             want = toks[1].lower()
+            if want == "auto":
+                ENVGUARD["mode"] = "auto"
+                try:
+                    send_message(
+                        "EnviroGuard",
+                        "Auto mode resumed — ambient temperature will control the profile.",
+                        priority=4,
+                        decorate=False
+                    )
+                except Exception:
+                    pass
+                return True
             if want in (ENVGUARD.get("profiles") or {}):
+                ENVGUARD["mode"] = "manual"
                 ENVGUARD["profile"] = want
                 _enviroguard_apply(want)
                 try:
@@ -590,7 +604,7 @@ def _handle_command(ncmd: str) -> bool:
                     pass
                 return True
             else:
-                send_message("EnviroGuard", f"Unknown profile '{want}'. Valid: {', '.join((ENVGUARD.get('profiles') or {}).keys())}", priority=3, decorate=False)
+                send_message("EnviroGuard", f"Unknown profile '{want}'. Valid: auto, {', '.join((ENVGUARD.get('profiles') or {}).keys())}", priority=3, decorate=False)
                 return True
 
     m_arr = m_weather = m_kuma = m_tech = m_digest = m_chat = None
@@ -608,7 +622,7 @@ def _handle_command(ncmd: str) -> bool:
     except Exception: pass
 
     if ncmd in ("help", "commands"):
-        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...\nEnv: env <hot|normal|cold|boost>",)
+        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...\nEnv: env <hot|normal|cold|boost|auto>",)
         return True
 
     if ncmd in ("digest", "daily digest", "summary"):
@@ -1065,11 +1079,19 @@ async def _enviroguard_loop():
     while True:
         try:
             t = _enviroguard_get_temp()
+            # Always record latest temp/time
+            if t is not None:
+                ENVGUARD.update({"temp_c": round(float(t), 1), "last_ts": int(time.time())})
+            # If manual mode, do not auto-switch profiles
+            if ENVGUARD.get("mode", "auto") != "auto":
+                await asyncio.sleep(poll * 60)
+                continue
+
             if t is not None:
                 last = ENVGUARD.get("profile","normal")
                 prof = _enviroguard_profile_for(t, last)
                 changed = (prof != last)
-                ENVGUARD.update({"temp_c": round(float(t), 1), "profile": prof, "last_ts": int(time.time())})
+                ENVGUARD["profile"] = prof
                 if changed:
                     _enviroguard_apply(prof)
                     try:
