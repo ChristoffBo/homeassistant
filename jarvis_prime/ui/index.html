@@ -1,275 +1,196 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="style.css">
+
+  <!-- Optional: override API base if UI is hosted elsewhere
+       Example: window.JARVIS_API_BASE='http://10.0.0.100:2581/';
+  -->
+  <script>
+    window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;
+  </script>
+
+  <!-- Make relative URLs work for both Ingress and direct host -->
+  <script>
+    (function () {
+      var p = location.pathname;
+      if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
+      var dir = p.endsWith('/') ? p : p.replace(/[^\/]*$/, '');
+      if (!dir.endsWith('/')) dir += '/';
+      document.write('<base href="' + dir + '">');
+    })();
+  </script>
+
+  <link rel="stylesheet" href="style.css?v=1.5" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="dot"></span>
-      <span class="name">Jarvis Prime</span>
-    </div>
-
-    <nav class="tabs">
-      <button class="tablink active" data-tab="tab-inbox">Inbox</button>
-      <button class="tablink" data-tab="tab-hosts">Aegis • Hosts</button>
-      <button class="tablink" data-tab="tab-playbooks">Aegis • Playbooks</button>
-      <button class="tablink" data-tab="tab-schedules">Aegis • Schedules</button>
-      <button class="tablink" data-tab="tab-runs">Aegis • Runs</button>
-      <button class="tablink" data-tab="tab-editor">Playbook Editor</button>
+  <header class="topnav">
+    <div class="brand">Jarvis Prime</div>
+    <nav>
+      <button class="tablink active" data-tab="inbox">Inbox</button>
+      <button class="tablink" data-tab="personas">Personas</button>
+      <button class="tablink" data-tab="intakes">Intakes</button>
+      <button class="tablink" data-tab="outputs">Notify Outputs</button>
+      <button class="tablink" data-tab="settings">Settings</button>
+      <button class="tablink" data-tab="llm">LLM</button>
+      <button class="tablink" data-tab="enviro">EnviroGuard</button>
+      <button class="tablink" data-tab="ops">Ops Engine</button>
+      <button class="tablink" data-tab="options">Options (All)</button>
+      <button class="tablink" data-tab="about">About</button>
     </nav>
   </header>
 
-  <!-- ================ INBOX ================ -->
-  <section id="tab-inbox" class="tab active">
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-head">
-          <h3>Messages</h3>
-          <div class="row gap">
-            <label class="row gap-sm vcenter">
-              <input id="pv-follow" type="checkbox" checked>
-              <span>Follow newest</span>
-            </label>
-            <button id="msg-del-all" class="btn danger">Delete All</button>
-            <label class="row gap-sm vcenter">
-              <input id="keep-arch" type="checkbox">
-              <span>Keep archived</span>
-            </label>
-          </div>
-        </div>
+  <main>
+    <!-- Inbox -->
+    <section id="inbox" class="tab active">
+      <h2>Inbox</h2>
+      <div class="stats">
+        <div class="stat blue">Messages Today: <span id="msg-today">-</span></div>
+        <div class="stat green">Archived: <span id="msg-arch">-</span></div>
+        <div class="stat red">Errors: <span id="msg-err">-</span></div>
+      </div>
 
-        <div class="table-wrap">
-          <table class="table">
+      <div class="inbox-wrap">
+        <div class="inbox-left">
+          <table class="msg-table">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Source</th>
-                <th>Title</th>
-                <th>Actions</th>
+                <th>Time</th><th>Source</th><th>Title</th><th>Actions</th>
               </tr>
             </thead>
-            <tbody id="msg-body">
-              <tr><td colspan="4">Loading…</td></tr>
-            </tbody>
+            <tbody id="msg-body"><tr><td colspan="4">Loading…</td></tr></tbody>
           </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <h3 id="pv-title">No message selected</h3>
-          <div class="stats">
-            <div class="stat"><div id="msg-today">0</div><span>Today</span></div>
-            <div class="stat"><div id="msg-arch">0</div><span>Archived</span></div>
-            <div class="stat"><div id="msg-err">0</div><span>Errors</span></div>
+          <div class="inbox-actions">
+            <label class="lbl">
+              <input type="checkbox" id="keep-arch" /> Keep archived
+            </label>
+            <button id="del-all" class="btn danger">🗑 Delete All</button>
           </div>
         </div>
-        <div class="muted tiny" id="pv-meta">–</div>
-        <pre class="preview" id="pv-body">Click a message to see its contents here.</pre>
-      </div>
-    </div>
-  </section>
 
-  <!-- ================ HOSTS (inventory.ini) ================ -->
-  <section id="tab-hosts" class="tab">
-    <div class="card">
-      <div class="card-head">
-        <h3>Inventory (inventory.ini)</h3>
-        <div class="row gap">
-          <button id="ag-host-refresh" class="btn">Refresh</button>
-          <button id="ag-host-add" class="btn">Add Host</button>
-          <button id="ag-host-save" class="btn primary">Save</button>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr><th>Name</th><th>Host/IP</th><th>User</th><th>Actions</th></tr>
-          </thead>
-          <tbody id="ag-hosts">
-            <tr><td colspan="4">No hosts (use Add Host or Refresh)</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="muted tiny">Hosts are written to <code>/share/jarvis_prime/aegisops/inventory.ini</code>.</div>
-    </div>
-  </section>
-
-  <!-- ================ PLAYBOOKS quick run ================ -->
-  <section id="tab-playbooks" class="tab">
-    <div class="card">
-      <div class="card-head">
-        <h3>Playbooks</h3>
-        <div class="row gap">
-          <button id="ag-pb-refresh" class="btn">Refresh</button>
-          <button id="ag-pb-run" class="btn primary">Run Once (all hosts)</button>
-        </div>
-      </div>
-
-      <div class="form-row">
-        <label>Playbook</label>
-        <select id="ag-pb-select">
-          <option value="">No playbooks found</option>
-        </select>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================ SCHEDULES ================ -->
-  <section id="tab-schedules" class="tab">
-    <div class="grid-sched">
-      <div class="card">
-        <div class="card-head">
-          <h3>New / Edit Schedule</h3>
-          <button id="ag-meta-refresh" class="btn">Re-scan Hosts & Playbooks</button>
-        </div>
-
-        <div class="form-grid">
-          <div class="form-row">
-            <label>Schedule ID</label>
-            <input id="ag-sch-id" type="text" placeholder="uptime-5m" value="uptime-5m">
-          </div>
-
-          <div class="form-row">
-            <label>Playbook</label>
-            <select id="ag-sch-playbook-select">
-              <option value="">No playbooks found</option>
-            </select>
-          </div>
-
-          <div class="form-row col-span-2">
-            <label>Servers (multi)</label>
-            <select id="ag-sch-servers-select" multiple class="multi">
-              <option value="">No hosts</option>
-            </select>
-          </div>
-
-          <div class="form-row">
-            <label>Interval</label>
-            <select id="ag-sch-every">
-              <option>5m</option>
-              <option>15m</option>
-              <option>1h</option>
-              <option>6h</option>
-              <option>24h</option>
-            </select>
-          </div>
-
-          <div class="form-row">
-            <label>Forks</label>
-            <input id="ag-sch-forks" type="number" min="1" step="1" value="1">
-          </div>
-
-          <div class="form-row switches">
-            <label>&nbsp;</label>
-            <div class="row gap wrap">
-              <label class="row gap-sm vcenter"><input id="ag-notify-success" type="checkbox"><span>Notify on success</span></label>
-              <label class="row gap-sm vcenter"><input id="ag-notify-fail" type="checkbox" checked><span>Notify on fail</span></label>
-              <label class="row gap-sm vcenter"><input id="ag-notify-change" type="checkbox" checked><span>Only on state change</span></label>
+        <aside class="inbox-preview">
+          <div class="preview-head">
+            <div class="ph-left">
+              <div class="ph-title" id="pv-title">No message selected</div>
+              <div class="ph-meta" id="pv-meta">–</div>
             </div>
+            <label class="lbl ph-follow">
+              <input type="checkbox" id="pv-follow" checked /> Auto-preview new
+            </label>
           </div>
-
-          <div class="form-row">
-            <label>Cooldown (min)</label>
-            <input id="ag-notify-cooldown" type="number" min="0" step="1" value="30">
+          <div class="preview-body" id="pv-body">
+            <p class="muted">Click a message to see its contents here. When Auto-preview is on, the newest message will show as it arrives.</p>
           </div>
-
-          <div class="form-row">
-            <label>Quiet Hours</label>
-            <input id="ag-notify-quiet" type="text" placeholder="22:00-06:00" value="22:00-06:00">
-          </div>
-
-          <div class="form-row col-span-2">
-            <label>Target Key</label>
-            <input id="ag-notify-key" type="text" placeholder="uptime" value="uptime">
-          </div>
-
-          <div class="form-row col-span-2 right">
-            <button id="ag-add" class="btn primary">Save Schedule</button>
-          </div>
-        </div>
+        </aside>
       </div>
+    </section>
 
-      <div class="card">
-        <div class="card-head"><h3>Schedules</h3></div>
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr><th>ID</th><th>Playbook</th><th>Servers</th><th>Every</th><th>Actions</th></tr>
-            </thead>
-            <tbody id="ag-table">
-              <tr><td colspan="5">No schedules</td></tr>
-            </tbody>
-          </table>
-        </div>
+    <!-- Personas -->
+    <section id="personas" class="tab">
+      <h2>Personas</h2>
+      <label><input type="checkbox" id="p-dude"> Dude</label>
+      <label><input type="checkbox" id="p-chick"> Chick</label>
+      <label><input type="checkbox" id="p-nerd"> Nerd</label>
+      <label><input type="checkbox" id="p-rager"> Rager</label>
+      <button id="save-personas" class="btn">Save Personas</button>
+    </section>
+
+    <!-- Intakes -->
+    <section id="intakes" class="tab">
+      <h2>Intakes (Email / Gotify / ntfy)</h2>
+      <div>
+        <h3>Email</h3>
+        <input id="smtp-host" placeholder="smtp.gmail.com" />
+        <input id="smtp-port" placeholder="587" />
+        <input id="smtp-user" placeholder="user" />
+        <input id="smtp-pass" type="password" placeholder="password" />
+        <input id="smtp-from" placeholder="From name" />
+        <button id="test-email" class="btn">Test Email</button>
       </div>
-    </div>
-  </section>
-
-  <!-- ================ RUNS LOG ================ -->
-  <section id="tab-runs" class="tab">
-    <div class="card">
-      <div class="card-head">
-        <h3>Runs & Logs</h3>
-        <button id="ag-refresh" class="btn">Refresh</button>
+      <div>
+        <h3>Gotify</h3>
+        <input id="gotify-url" placeholder="http://10.0.0.99:8091" />
+        <input id="gotify-token" placeholder="token" />
+        <button id="test-gotify" class="btn">Test Gotify</button>
       </div>
-
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr><th>Time</th><th>Playbook</th><th>Status</th><th>OK</th><th>Changed</th><th>Failed</th><th>Unreachable</th></tr>
-          </thead>
-        </table>
-        <div class="table-wrap">
-          <table class="table">
-            <tbody id="ag-runs">
-              <tr><td colspan="7">No runs</td></tr>
-            </tbody>
-          </table>
-        </div>
+      <div>
+        <h3>ntfy</h3>
+        <input id="ntfy-url" placeholder="http://10.0.0.99:8080" />
+        <input id="ntfy-topic" placeholder="topic" />
+        <button id="test-ntfy" class="btn">Test ntfy</button>
       </div>
-    </div>
-  </section>
+      <button id="save-channels" class="btn primary">Save Intakes</button>
+    </section>
 
-  <!-- ================ PLAYBOOK EDITOR ================ -->
-  <section id="tab-editor" class="tab">
-    <div class="card">
-      <div class="card-head">
-        <h3>Playbook Editor</h3>
-        <div class="row gap">
-          <button id="pb-load" class="btn">Load</button>
-          <button id="pb-save" class="btn primary">Save</button>
-          <button id="pb-delete" class="btn danger">Delete</button>
-        </div>
+    <!-- Notify Outputs -->
+    <section id="outputs" class="tab">
+      <h2>Notify Outputs</h2>
+      <p>Configure outbound channels here.</p>
+    </section>
+
+    <!-- Settings (curated subset) -->
+    <section id="settings" class="tab">
+      <h2>Settings</h2>
+      <label>Retention days <input id="retention" type="number" /></label>
+      <button id="save-retention" class="btn">Save</button>
+      <label>Purge older than <input id="purge-days" type="number" /></label>
+      <button id="purge" class="btn danger">Run Purge</button>
+
+      <h3>Quiet Hours</h3>
+      <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
+      <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
+      <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
+      <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
+      <button id="save-quiet" class="btn">Save Quiet Hours</button>
+    </section>
+
+    <!-- LLM -->
+    <section id="llm" class="tab">
+      <h2>LLM Settings</h2>
+      <label>Model <input id="llm-model" placeholder="model name" /></label>
+      <label>Context Tokens <input id="llm-ctx" type="number" /></label>
+      <label>Timeout (s) <input id="llm-timeout" type="number" /></label>
+      <button id="save-llm" class="btn">Save LLM</button>
+    </section>
+
+    <!-- EnviroGuard -->
+    <section id="enviro" class="tab">
+      <h2>EnviroGuard</h2>
+      <p>Status: <span id="env-status">-</span></p>
+      <label>Hot °C <input id="env-hot" type="number" /></label>
+      <label>Cold °C <input id="env-cold" type="number" /></label>
+      <label>Hysteresis °C <input id="env-hyst" type="number" /></label>
+      <button id="save-env" class="btn">Save EnviroGuard</button>
+    </section>
+
+    <!-- Ops Engine -->
+    <section id="ops" class="tab">
+      <h2>Ops Engine</h2>
+      <p>Coming soon — orchestration / playbooks will run here.</p>
+    </section>
+
+    <!-- Options (All) -->
+    <section id="options" class="tab">
+      <h2>Options (All)</h2>
+      <p>This renders every field from <code>/api/options</code> + <code>/api/schema</code>.</p>
+      <div id="opts-wrap"></div>
+      <div class="opts-actions">
+        <button id="save-options" class="btn primary">Save All Options</button>
       </div>
+    </section>
 
-      <div class="form-grid editor-grid">
-        <div class="form-row">
-          <label>Playbook</label>
-          <select id="pb-select">
-            <option value="">No playbooks found</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>New filename</label>
-          <input id="pb-new-name" type="text" placeholder="check_services.yml">
-        </div>
+    <!-- About -->
+    <section id="about" class="tab">
+      <h2>About Jarvis Prime</h2>
+      <p>Jarvis Prime — Technitium-style one-page UI. Ingress + direct host safe.</p>
+    </section>
+  </main>
 
-        <div class="form-row col-span-2">
-          <label>YAML</label>
-          <textarea id="pb-text" spellcheck="false" class="code" placeholder="---&#10;# your playbook here"></textarea>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <div id="toast" class="toast-box"></div>
-  <script src="app.js"></script>
+  <div id="toast"></div>
+  <script src="app.js?v=1.5"></script>
 </body>
 </html>
