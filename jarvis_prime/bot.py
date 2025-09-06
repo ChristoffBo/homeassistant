@@ -571,21 +571,18 @@ def _try_call(module, fn_name, *args, **kwargs):
     return None, None
 
 def _handle_command(ncmd: str) -> bool:
-    # --- Manual EnviroGuard override: "jarvis env auto|hot|normal|cold|boost" or "jarvis profile X"
+    # --- Manual EnviroGuard override: "jarvis env hot|normal|cold|boost" or "jarvis profile X"
     toks = ncmd.split()
     if toks and toks[0] in ("env", "profile"):
         if len(toks) >= 2:
             want = toks[1].lower()
-            # accept 'auto' as synonym for 'normal'
-            if want == "auto":
-                want = "normal"
             if want in (ENVGUARD.get("profiles") or {}):
                 ENVGUARD["profile"] = want
                 _enviroguard_apply(want)
                 try:
                     send_message(
                         "EnviroGuard",
-                        f"{'Auto mode' if want == 'normal' else 'Manual override'} → profile **{want.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
+                        f"Manual override → profile **{want.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
                         priority=4,
                         decorate=False
                     )
@@ -593,8 +590,7 @@ def _handle_command(ncmd: str) -> bool:
                     pass
                 return True
             else:
-                valid = list((ENVGUARD.get("profiles") or {}).keys()) + ["auto"]
-                send_message("EnviroGuard", f"Unknown profile '{want}'. Valid: {', '.join(valid)}", priority=3, decorate=False)
+                send_message("EnviroGuard", f"Unknown profile '{want}'. Valid: {', '.join((ENVGUARD.get('profiles') or {}).keys())}", priority=3, decorate=False)
                 return True
 
     m_arr = m_weather = m_kuma = m_tech = m_digest = m_chat = None
@@ -612,7 +608,7 @@ def _handle_command(ncmd: str) -> bool:
     except Exception: pass
 
     if ncmd in ("help", "commands"):
-        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...\nEnv: env <auto|hot|normal|cold|boost>",)
+        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...\nEnv: env <hot|normal|cold|boost>",)
         return True
 
     if ncmd in ("digest", "daily digest", "summary"):
@@ -1071,24 +1067,20 @@ async def _enviroguard_loop():
             t = _enviroguard_get_temp()
             if t is not None:
                 last = ENVGUARD.get("profile","normal")
-                # If in a manual profile (not 'normal'), do not auto-switch; just update temp & timestamp
-                if last in ("hot", "cold", "boost", "manual"):
-                    ENVGUARD.update({"temp_c": round(float(t), 1), "last_ts": int(time.time())})
-                else:
-                    prof = _enviroguard_profile_for(t, last)
-                    changed = (prof != last)
-                    ENVGUARD.update({"temp_c": round(float(t), 1), "profile": prof, "last_ts": int(time.time())})
-                    if changed:
-                        _enviroguard_apply(prof)
-                        try:
-                            send_message(
-                                "EnviroGuard",
-                                f"Ambient {t:.1f}°C → profile **{prof.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
-                                priority=4,
-                                decorate=False
-                            )
-                        except Exception:
-                            pass
+                prof = _enviroguard_profile_for(t, last)
+                changed = (prof != last)
+                ENVGUARD.update({"temp_c": round(float(t), 1), "profile": prof, "last_ts": int(time.time())})
+                if changed:
+                    _enviroguard_apply(prof)
+                    try:
+                        send_message(
+                            "EnviroGuard",
+                            f"Ambient {t:.1f}°C → profile **{prof.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
+                            priority=4,
+                            decorate=False
+                        )
+                    except Exception:
+                        pass
             # else: keep last profile
         except Exception as e:
             print(f"[EnviroGuard] loop error: {e}")
@@ -1123,4 +1115,3 @@ async def _run_forever():
 
 if __name__ == "__main__":
     main()
-```0
