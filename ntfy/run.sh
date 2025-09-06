@@ -25,7 +25,7 @@ resolve_ntfy() {
 }
 NTFY_BIN="$(resolve_ntfy)"
 
-# -------- read options (with sane defaults) --------
+# -------- read options (with defaults) --------
 jqbin="$(command -v jq || true)"
 if [ -z "$jqbin" ] || [ ! -f "$OPTS_FILE" ]; then
   echo "[ntfy-addon] WARNING: jq/options.json not available; using defaults"
@@ -61,10 +61,19 @@ else
   admin_pass=$(jq -r '.auth.admin_password // ""' "$OPTS_FILE")
 fi
 
-# -------- base_url defaulting (requested) --------
-# If base_url is empty/null, set a safe default so ntfy accepts attachments:
-# Using loopback + configured port avoids the "attachment-cache-dir requires base-url" crash.
-if [ -z "${base_url:-}" ] || [ "$base_url" = "null" ]; then
+# -------- normalize booleans --------
+normalize_bool() {
+  case "${1,,}" in
+    1|true|yes|on) echo true ;;
+    *) echo false ;;
+  esac
+}
+bp_bool="$(normalize_bool "${behind_proxy}")"
+att_bool="$(normalize_bool "${att_enabled}")"
+auth_bool="$(normalize_bool "${auth_enabled}")"
+
+# -------- default base_url if empty (requested) --------
+if [ -z "${base_url:-}" ] || [ "${base_url}" = "null" ]; then
   base_url="http://127.0.0.1:${listen_port}"
   echo "[ntfy-addon] INFO: base_url not set; defaulting to ${base_url}"
 fi
@@ -72,41 +81,45 @@ fi
 # Ensure dirs exist
 mkdir -p "$(dirname "$cache_file")" "$att_dir"
 
-# -------- build YAML config safely --------
 cfg="/data/server.yml"
-{
-  printf 'listen-http: "0.0.0.0:%s"\n' "${listen_port}"
-  if [ "${behind_proxy}" = "true" ] || [ "${behind_proxy}" = "True" ]; then
-    echo "behind-proxy: true"
-  else
-    echo "behind-proxy: false"
-  fi
-  printf 'base-url: "%s"\n' "${base_url}"
-  printf 'cache-file: "%s"\n' "${cache_file}"
+# Write the top-level config first
+cat > "$cfg" <<EOF
+listen-http: "0.0.0.0:${listen_port}"
+behind-proxy: ${bp_bool}
+base-url: "${base_url}"
+cache-file: "${cache_file}"
+EOF
 
-  if [ "${att_enabled}" = "true" ] || [ "${att_enabled}" = "True" ]; then
-    printf 'attachment-cache-dir: "%s"\n' "${att_dir}"
-    printf 'attachment-file-size-limit: "%s"\n' "${att_file_size}"
-    printf 'attachment-total-size-limit: "%s"\n' "${att_total_size}"
-    printf 'attachment-expiry-duration: "%s"\n' "${att_expiry}"
-  fi
-
-  if [ "${auth_enabled}" = "true" ] || [ "${auth_enabled}" = "True" ]; then
-    echo 'auth-file: "/data/user.db"'
-    printf 'auth-default-access: "%s"\n' "${auth_default}"
-    if [ -n "${admin_user}" ] && [ "${admin_user}" != "null" ] && [ -n "${admin_pass}" ] && [ "${admin_pass}" != "null" ]; then
-      hashed="$("$NTFY_BIN" user hash "$admin_pass" | tr -d '\r')"
-      echo "auth-users:"
-      printf '  - "%s:%s:admin"\n' "${admin_user}" "${hashed}"
-    fi
-  fi
-} > "$cfg"
-
-# quick syntax check to catch "did not find expected key"
-if command -v sed >/dev/null 2>&1; then
-  # ensure file ends with newline (some shells can omit)
-  sed -n '$p' "$cfg" >/dev/null || true
+# Attachments block (only if enabled)
+if [ "${att_bool}" = "true" ]; then
+  cat >> "$cfg" <<EOF
+attachment-cache-dir: "${att_dir}"
+attachment-file-size-limit: "${att_file_size}"
+attachment-total-size-limit: "${att_total_size}"
+attachment-expiry-duration: "${att_expiry}"
+EOF
 fi
+
+# Auth block (only if enabled)
+if [ "${auth_bool}" = "true" ]; then
+  cat >> "$cfg" <<EOF
+auth-file: "/data/user.db"
+auth-default-access: "${auth_default}"
+EOF
+  if [ -n "${admin_user}" ] && [ "${admin_user}" != "null" ] && [ -n "${admin_pass}" ] && [ "${admin_pass}" != "null" ]; then
+    hashed="$("$NTFY_BIN" user hash "$admin_pass" | tr -d '\r')"
+    cat >> "$cfg" <<EOF
+auth-users:
+  - "${admin_user}:${hashed}:admin"
+EOF
+  fi
+fi
+
+# Strip any accidental CRLFs (safety) and show the final YAML
+sed -i 's/\r$//' "$cfg" || true
+echo "[ntfy-addon] ------- /data/server.yml -------"
+cat "$cfg" || true
+echo "[ntfy-addon] --------------------------------"
 
 echo "[ntfy-addon] Using ntfy binary: $NTFY_BIN"
 echo "[ntfy-addon] Starting ntfy with /data/server.yml on port ${listen_port}"
