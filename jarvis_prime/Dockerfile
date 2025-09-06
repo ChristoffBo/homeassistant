@@ -33,6 +33,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       numpy \
       llama-cpp-python==0.2.90
 
+# ---- NEW (additive): Ansible + SSH client for AegisOps ----
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      openssh-client sshpass \
+  && rm -rf /var/lib/apt/lists/* \
+  && pip3 install --no-cache-dir --break-system-packages ansible-core
+
+# ---- NEW (additive): AegisOps defaults (used by runner.py / scripts) ----
+ENV AEGISOPS_BASE=/share/jarvis_prime/aegisops
+RUN mkdir -p /app/intakes /app/aegisops
+
 # ---- App content (keep your original layout) ----
 # Default system prompt (baked into image). Runtime falls back to /share/jarvis_prime/memory if present.
 RUN mkdir -p /app/memory
@@ -68,7 +78,6 @@ COPY apprise.py  /app/apprise.py
 COPY heartbeat.py  /app/heartbeat.py
 
 # ---- NEW (additive): place intake blueprint at the path bot.py expects ----
-RUN mkdir -p /app/intakes
 COPY apprise.py /app/intakes/apprise.py
 
 # Permissions
