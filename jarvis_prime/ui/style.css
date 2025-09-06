@@ -73,5 +73,30 @@ textarea{ min-height:80px; }
 .preview-body{
   background:var(--panel2);
   border:1px solid #2a3a56;
-  border-radius:8pxycemia-analysis code_execution_reasoning=json
-::contentReference[oaicite:0]{index=0}
+  border-radius:8px;
+}
+
+/* ================= AEGIS ADD-ONLY STYLES ================== */
+#a-hosts table, #a-playbooks table, #a-schedules table, #a-runs table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+}
+#a-hosts th, #a-playbooks th, #a-schedules th, #a-runs th {
+  background: #182033;
+  text-align: left;
+}
+#a-hosts td, #a-playbooks td, #a-schedules td, #a-runs td {
+  border-bottom: 1px solid #233047;
+  padding: 6px 8px;
+}
+
+#pb-editor textarea {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid #2a3a56;
+  border-radius: 8px;
+  font-family: monospace;
+  padding: 10px;
+  width: 100%;
+}
