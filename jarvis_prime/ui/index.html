@@ -1,240 +1,251 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis Prime • Inbox & AegisOps</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8">
+  <title>Jarvis Prime</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo">🧠</span>
-      <h1>Jarvis Prime</h1>
+      <span class="dot">🧠</span>
+      <span>Jarvis Prime</span>
     </div>
-    <nav class="tabbar">
-      <button class="tablink active" data-tab="inbox">Inbox</button>
-      <button class="tablink" data-tab="aeg-hosts">Aegis • Hosts</button>
-      <button class="tablink" data-tab="aeg-playbooks">Aegis • Playbooks</button>
-      <button class="tablink" data-tab="aeg-schedules">Aegis • Schedules</button>
-      <button class="tablink" data-tab="aeg-runs">Aegis • Runs</button>
-      <button class="tablink" data-tab="pb-editor">Playbook Editor</button>
+    <nav class="tabs">
+      <button class="tablink active" data-tab="tab-inbox">Inbox</button>
+      <button class="tablink" data-tab="tab-aegis-hosts">Aegis • Hosts</button>
+      <button class="tablink" data-tab="tab-aegis-pb">Aegis • Playbooks</button>
+      <button class="tablink" data-tab="tab-aegis-sch">Aegis • Schedules</button>
+      <button class="tablink" data-tab="tab-aegis-runs">Aegis • Runs</button>
+      <button class="tablink" data-tab="tab-editor">Playbook Editor</button>
     </nav>
   </header>
 
-  <main class="container">
-
-    <!-- ============== INBOX ============== -->
-    <section id="inbox" class="tab active">
-      <div class="grid grid-2">
-        <div class="card">
-          <div class="card-header">
-            <h3>Messages</h3>
-            <div class="right controls">
-              <label class="inline"><input type="checkbox" id="pv-follow" checked /> Follow newest</label>
-              <button id="del-all" class="btn danger">Delete All</button>
-              <label class="inline"><input type="checkbox" id="keep-arch" /> Keep archived</label>
-            </div>
+  <!-- ============== INBOX ============== -->
+  <section id="tab-inbox" class="tab active">
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-head">
+          <div class="title">Messages</div>
+          <div class="actions">
+            <label class="chk">
+              <input id="pv-follow" type="checkbox" checked>
+              <span>Follow newest</span>
+            </label>
+            <button id="del-all" class="btn danger">Delete All</button>
+            <label class="chk">
+              <input id="keep-arch" type="checkbox">
+              <span>Keep archived</span>
+            </label>
           </div>
+        </div>
+        <div class="table-wrap">
           <table class="table">
             <thead>
-              <tr>
-                <th>Time</th>
-                <th>Source</th>
-                <th>Title</th>
-                <th>Actions</th>
-              </tr>
+              <tr><th>Time</th><th>Source</th><th>Title</th><th>Actions</th></tr>
             </thead>
-            <tbody id="msg-body"></tbody>
+            <tbody id="msg-body">
+              <tr><td colspan="4">Loading…</td></tr>
+            </tbody>
           </table>
         </div>
+      </div>
 
-        <div class="card">
-          <div class="card-header">
-            <h3 id="pv-title">No message selected</h3>
-            <div id="pv-meta" class="muted">–</div>
-          </div>
-          <div id="pv-body" class="pre"></div>
-          <div class="stats-row">
-            <div class="stat"><div class="stat-val" id="msg-today">0</div><div class="stat-lbl">Today</div></div>
-            <div class="stat"><div class="stat-val" id="msg-arch">0</div><div class="stat-lbl">Archived</div></div>
-            <div class="stat"><div class="stat-val" id="msg-err">0</div><div class="stat-lbl">Errors</div></div>
-          </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="title" id="pv-title">No message selected</div>
+          <div class="meta" id="pv-meta">–</div>
+        </div>
+        <div class="pv-stats">
+          <div class="pill"><div class="n" id="msg-today">0</div><div class="l">Today</div></div>
+          <div class="pill"><div class="n" id="msg-arch">0</div><div class="l">Archived</div></div>
+          <div class="pill"><div class="n" id="msg-err">0</div><div class="l">Errors</div></div>
+        </div>
+        <pre id="pv-body" class="pv-body"><span class="muted">Click a message to see its contents here.</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== AEGIS • HOSTS ============== -->
+  <section id="tab-aegis-hosts" class="tab">
+    <div class="card">
+      <div class="card-head">
+        <div class="title">Inventory (inventory.ini)</div>
+        <div class="actions">
+          <button id="ag-host-refresh" class="btn">Refresh</button>
+          <button id="ag-host-add" class="btn">Add Host</button>
+          <button id="ag-host-save" class="btn primary">Save</button>
         </div>
       </div>
-    </section>
-
-    <!-- ============== AEGIS: HOSTS ============== -->
-    <section id="aeg-hosts" class="tab">
-      <div class="card">
-        <div class="card-header">
-          <h3>Inventory (inventory.ini)</h3>
-          <div class="right controls">
-            <button id="ag-host-refresh" class="btn">Refresh</button>
-            <button id="ag-host-add" class="btn">Add Host</button>
-            <button id="ag-host-save" class="btn primary">Save</button>
-          </div>
-        </div>
+      <div class="table-wrap">
         <table class="table">
-          <thead><tr><th>Name</th><th>Host/IP</th><th>User</th><th></th></tr></thead>
-          <tbody id="ag-hosts"></tbody>
+          <thead>
+            <tr><th>Name</th><th>Host/IP</th><th>User</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="ag-hosts">
+            <tr><td colspan="4">No hosts (use Add Host or Refresh)</td></tr>
+          </tbody>
         </table>
-        <p class="muted">Hosts are written to <code>/share/jarvis_prime/aegisops/inventory.ini</code>.</p>
       </div>
-    </section>
+      <div class="hint">Hosts are written to <code>/share/jarvis_prime/aegisops/inventory.ini</code>.</div>
+    </div>
+  </section>
 
-    <!-- ============== AEGIS: PLAYBOOKS ============== -->
-    <section id="aeg-playbooks" class="tab">
+  <!-- ============== AEGIS • PLAYBOOKS ============== -->
+  <section id="tab-aegis-pb" class="tab">
+    <div class="card">
+      <div class="card-head">
+        <div class="title">Playbooks</div>
+        <div class="actions">
+          <button id="ag-pb-refresh" class="btn">Refresh</button>
+          <button id="ag-pb-run" class="btn">Run Once (all hosts)</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Playbook</label>
+        <select id="ag-pb-select">
+          <option value="">No playbooks found</option>
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== AEGIS • SCHEDULES ============== -->
+  <section id="tab-aegis-sch" class="tab">
+    <div class="grid grid-2">
       <div class="card">
-        <div class="card-header">
-          <h3>Run Playbook</h3>
-          <div class="right controls">
-            <button id="ag-pb-refresh" class="btn">Refresh List</button>
-            <button id="ag-pb-run" class="btn primary">Run Now</button>
+        <div class="card-head">
+          <div class="title">New / Edit Schedule</div>
+          <div class="actions">
+            <button id="ag-meta-refresh" class="btn">Re-scan Hosts & Playbooks</button>
           </div>
         </div>
-        <div class="form">
-          <label>Playbook
-            <select id="ag-pb-select"></select>
-          </label>
-          <p class="muted">Playbooks are read from <code>/share/jarvis_prime/aegisops/playbooks</code>.</p>
-        </div>
-      </div>
-    </section>
 
-    <!-- ============== AEGIS: SCHEDULES ============== -->
-    <section id="aeg-schedules" class="tab">
-      <div class="grid grid-2">
-        <div class="card">
-          <div class="card-header">
-            <h3>New / Edit Schedule</h3>
-            <div class="right controls">
-              <button id="ag-meta-refresh" class="btn">Re-scan Hosts & Playbooks</button>
+        <div class="form-2col">
+          <div class="form-row">
+            <label>Schedule ID</label>
+            <input id="ag-sch-id" value="uptime-5m">
+          </div>
+          <div class="form-row">
+            <label>Playbook</label>
+            <select id="ag-sch-playbook-select">
+              <option value="">No playbooks found</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <label>Interval</label>
+            <select id="ag-sch-every">
+              <option>5m</option><option>15m</option><option>1h</option>
+              <option>6h</option><option>24h</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Forks</label>
+            <input id="ag-sch-forks" type="number" min="1" value="1">
+          </div>
+
+          <div class="form-row">
+            <label>Servers (multi)</label>
+            <select id="ag-sch-servers-select" multiple size="6">
+              <option>No hosts</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>&nbsp;</label>
+            <div class="stack">
+              <label class="chk"><input id="ag-notify-success" type="checkbox"><span>Notify on success</span></label>
+              <label class="chk"><input id="ag-notify-fail"    type="checkbox" checked><span>Notify on fail</span></label>
+              <label class="chk"><input id="ag-notify-change"  type="checkbox" checked><span>Only on state change</span></label>
             </div>
           </div>
-          <div class="form-grid">
-            <label>Schedule ID
-              <input id="ag-sch-id" placeholder="uptime-5m" />
-            </label>
 
-            <label>Playbook
-              <select id="ag-sch-playbook-select"></select>
-            </label>
-
-            <label>Servers (multi)
-              <select id="ag-sch-servers-select" multiple></select>
-            </label>
-
-            <label>Interval
-              <select id="ag-sch-every">
-                <option value="5m">5m</option>
-                <option value="15m">15m</option>
-                <option value="1h">1h</option>
-                <option value="6h">6h</option>
-                <option value="24h">24h</option>
-              </select>
-            </label>
-
-            <label>Forks
-              <input id="ag-sch-forks" type="number" min="1" value="1" />
-            </label>
+          <div class="form-row">
+            <label>Cooldown (min)</label>
+            <input id="ag-notify-cooldown" type="number" min="0" value="30">
+          </div>
+          <div class="form-row">
+            <label>Quiet Hours</label>
+            <input id="ag-notify-quiet" value="22:00-06:00">
           </div>
 
-          <div class="rule"></div>
-
-          <div class="grid grid-3 compact">
-            <label class="check"><input type="checkbox" id="ag-notify-success"> Notify on success</label>
-            <label class="check"><input type="checkbox" id="ag-notify-fail" checked> Notify on fail</label>
-            <label class="check"><input type="checkbox" id="ag-notify-change" checked> Only on state change</label>
+          <div class="form-row">
+            <label>Target Key</label>
+            <input id="ag-notify-key" value="uptime">
           </div>
-
-          <div class="form-grid">
-            <label>Cooldown (min)
-              <input id="ag-notify-cooldown" type="number" min="0" value="30" />
-            </label>
-            <label>Quiet Hours
-              <input id="ag-notify-quiet" placeholder="22:00-06:00" />
-            </label>
-            <label>Target Key
-              <input id="ag-notify-key" placeholder="uptime" />
-            </label>
-          </div>
-
-          <div class="controls end">
+          <div class="form-row">
+            <label>&nbsp;</label>
             <button id="ag-add" class="btn primary">Save Schedule</button>
           </div>
         </div>
+      </div>
 
-        <div class="card">
-          <div class="card-header">
-            <h3>Schedules</h3>
-          </div>
+      <div class="card">
+        <div class="card-head"><div class="title">Schedules</div></div>
+        <div class="table-wrap">
           <table class="table">
             <thead>
-              <tr><th>ID</th><th>Playbook</th><th>Servers</th><th>Every</th><th></th></tr>
+              <tr><th>ID</th><th>Playbook</th><th>Servers</th><th>Every</th><th>Actions</th></tr>
             </thead>
-            <tbody id="ag-table"></tbody>
+            <tbody id="ag-table">
+              <tr><td colspan="5">No schedules</td></tr>
+            </tbody>
           </table>
         </div>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- ============== AEGIS: RUNS ============== -->
-    <section id="aeg-runs" class="tab">
-      <div class="card">
-        <div class="card-header">
-          <h3>Recent Runs</h3>
-          <div class="right controls">
-            <button id="ag-refresh" class="btn">Refresh</button>
-          </div>
-        </div>
+  <!-- ============== AEGIS • RUNS ============== -->
+  <section id="tab-aegis-runs" class="tab">
+    <div class="card">
+      <div class="card-head">
+        <div class="title">Runs & Logs</div>
+        <div class="actions"><button id="ag-refresh" class="btn">Refresh</button></div>
+      </div>
+      <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr>
-              <th>Time</th><th>Playbook</th><th>Status</th>
-              <th>OK</th><th>Changed</th><th>Failed</th><th>Unreachable</th>
-            </tr>
+            <tr><th>Time</th><th>Playbook</th><th>Status</th><th>OK</th><th>Changed</th><th>Fail</th><th>Unreachable</th></tr>
           </thead>
-          <tbody id="ag-runs"></tbody>
+          <tbody id="ag-runs">
+            <tr><td colspan="7">No runs</td></tr>
+          </tbody>
         </table>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- ============== PLAYBOOK EDITOR ============== -->
-    <section id="pb-editor" class="tab">
-      <div class="card">
-        <div class="card-header">
-          <h3>Playbook Editor</h3>
-          <div class="right controls wrap">
-            <select id="pbSelect" title="Select existing playbook"></select>
-            <button class="btn" id="btnPbNew">New</button>
-            <button class="btn" id="btnPbDuplicate">Duplicate</button>
-            <button class="btn" id="btnPbDownload">Download</button>
-            <button class="btn primary" id="btnPbSave">Save</button>
-          </div>
+  <!-- ============== PLAYBOOK EDITOR ============== -->
+  <section id="tab-editor" class="tab">
+    <div class="card">
+      <div class="card-head">
+        <div class="title">Playbook Editor</div>
+        <div class="actions">
+          <button id="pb-load" class="btn">Load</button>
+          <button id="pb-save" class="btn primary">Save</button>
+          <button id="pb-delete" class="btn danger">Delete</button>
         </div>
-
-        <div class="form-grid">
-          <label>Filename
-            <input id="pbName" placeholder="check_services.yml" />
-          </label>
-        </div>
-
-        <label>Content
-          <textarea id="pbEditor" class="codearea" spellcheck="false" placeholder="---
-- name: Example
-  hosts: all
-  gather_facts: false
-  tasks:
-    - debug: { msg: 'hello' }"></textarea>
-        </label>
-        <p class="muted">Files are read/written under <code>/share/jarvis_prime/aegisops/playbooks</code>.</p>
       </div>
-    </section>
 
-  </main>
+      <div class="form-2col">
+        <div class="form-row">
+          <label>Playbook</label>
+          <select id="pb-select"><option value="">No playbooks found</option></select>
+        </div>
+        <div class="form-row">
+          <label>New filename</label>
+          <input id="pb-new-name" placeholder="e.g. my_playbook.yml">
+        </div>
+      </div>
 
-  <div id="toast" class="toast-stack"></div>
+      <textarea id="pb-editor" spellcheck="false" class="editor" placeholder="# YAML content here"></textarea>
+      <div class="hint">Files are saved under <code>/share/jarvis_prime/aegisops/playbooks/</code>.</div>
+    </div>
+  </section>
+
+  <div id="toast" class="toasts"></div>
   <script src="app.js"></script>
 </body>
 </html>
