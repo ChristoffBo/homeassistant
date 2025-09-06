@@ -237,7 +237,7 @@ mkdir -p \
   "${AEGISOPS_BASE}/helpers" \
   "${AEGISOPS_BASE}/callback_plugins" || true
 
-# seed files if empty/missing (NO functions, clean heredocs)
+# seed files if empty/missing (plain heredocs)
 if [ ! -s "${AEGISOPS_BASE}/schedules.json" ]; then
   echo "[aegisops] seeding schedules.json"
   cat > "${AEGISOPS_BASE}/schedules.json" <<'JSON_EOF'
@@ -288,6 +288,195 @@ if [ ! -s "${AEGISOPS_BASE}/uptime_targets.yml" ]; then
 checks:
   - { name: jarvis ui http, target: localhost, mode: http, url: "http://127.0.0.1:2581/api/health", expect: [200,204] }
 YAML_EOF
+fi
+
+# --- Seed playbook, helper, and callback plugin if missing/empty ---
+if [ ! -s "${AEGISOPS_BASE}/helpers/_do_check.yml" ]; then
+  echo "[aegisops] seeding helpers/_do_check.yml"
+  mkdir -p "${AEGISOPS_BASE}/helpers"
+  cat > "${AEGISOPS_BASE}/helpers/_do_check.yml" <<'YAML_EOF'
+---
+# helper to execute one check item (ping|tcp|http) and append normalized result to hostvars._results
+# expects `item` with fields:
+#   name, mode: ping|tcp|http
+#   target (host/IP), port (for tcp), timeout_s (optional)
+#   url, expect (list of acceptable status codes) for http
+- name: ensure result bucket exists
+  set_fact:
+    _results: "{{ _results | default([]) }}"
+
+- name: ping check
+  when: item.mode | lower == 'ping'
+  block:
+    - name: ansible ping
+      ansible.builtin.ping:
+      register: _chk
+      ignore_errors: yes
+    - name: append ping result
+      set_fact:
+        _results: "{{ _results + [ {
+          'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
+          'name': item.name | default('ping'),
+          'mode': 'ping',
+          'target': item.target | default(inventory_hostname),
+          'status': ('ok' if (_chk is defined and _chk.ping is defined and _chk.ping == 'pong') else 'fail'),
+          'detail': (_chk | to_nice_json)
+        } ] }}"
+
+- name: tcp check
+  when: item.mode | lower == 'tcp'
+  block:
+    - name: wait for tcp port
+      ansible.builtin.wait_for:
+        host: "{{ item.target | default(inventory_hostname) }}"
+        port: "{{ item.port | int }}"
+        state: started
+        timeout: "{{ (item.timeout_s | default(5)) | int }}"
+      register: _chk
+      ignore_errors: yes
+    - name: append tcp result
+      set_fact:
+        _results: "{{ _results + [ {
+          'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
+          'name': item.name | default('tcp'),
+          'mode': 'tcp',
+          'target': item.target | default(inventory_hostname),
+          'status': ('ok' if (_chk is defined and (_chk.failed | default(false)) == false) else 'fail'),
+          'detail': (_chk | to_nice_json)
+        } ] }}"
+
+- name: http check
+  when: item.mode | lower == 'http'
+  block:
+    - name: GET url
+      ansible.builtin.uri:
+        url: "{{ item.url }}"
+        method: GET
+        status_code: "{{ item.expect | default([200,204]) }}"
+        timeout: "{{ (item.timeout_s | default(5)) | int }}"
+        validate_certs: false
+      register: _chk
+      ignore_errors: yes
+    - name: append http result
+      set_fact:
+        _results: "{{ _results + [ {
+          'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
+          'name': item.name | default('http'),
+          'mode': 'http',
+          'target': item.url | default(''),
+          'status': ('ok' if (_chk is defined and (_chk.failed | default(false)) == false) else 'fail'),
+          'detail': (_chk | combine({'status': _chk.status | default(0)}, recursive=True) | to_nice_json)
+        } ] }}"
+YAML_EOF
+fi
+
+if [ ! -s "${AEGISOPS_BASE}/playbooks/check_services.yml" ]; then
+  echo "[aegisops] seeding playbooks/check_services.yml"
+  mkdir -p "${AEGISOPS_BASE}/playbooks"
+  cat > "${AEGISOPS_BASE}/playbooks/check_services.yml" <<'YAML_EOF'
+---
+- name: AegisOps Uptime-lite
+  hosts: all
+  gather_facts: false
+  vars:
+    _uptime: "{{ lookup('file', '/share/jarvis_prime/aegisops/uptime_targets.yml') | from_yaml }}"
+    checks: "{{ _uptime.checks | default([]) }}"
+  tasks:
+    - name: collect checks for this host
+      set_fact:
+        my_checks: "{{ checks }}"
+
+    - name: skip host with no checks
+      meta: end_play
+      when: my_checks | length == 0
+
+    - name: run checks
+      include_tasks: /share/jarvis_prime/aegisops/helpers/_do_check.yml
+      loop: "{{ my_checks }}"
+      loop_control:
+        loop_var: item
+
+    - name: expose results to callback
+      ansible.builtin.set_stats:
+        data:
+          _results: "{{ _results | default([]) }}"
+YAML_EOF
+fi
+
+if [ ! -s "${AEGISOPS_BASE}/callback_plugins/aegisops_notify.py" ]; then
+  echo "[aegisops] seeding callback_plugins/aegisops_notify.py"
+  mkdir -p "${AEGISOPS_BASE}/callback_plugins"
+  cat > "${AEGISOPS_BASE}/callback_plugins/aegisops_notify.py" <<'PY_EOF'
+# minimal, best-effort AegisOps callback
+from __future__ import annotations
+import os, sqlite3, time
+from ansible.plugins.callback import CallbackBase
+
+CALLBACK_VERSION = 2.0
+CALLBACK_TYPE = 'notification'
+CALLBACK_NAME = 'aegisops_notify'
+CALLBACK_NEEDS_WHITELIST = False
+
+DB_PATH = "/share/jarvis_prime/aegisops/db/aegisops.db"
+
+def _safe_connect():
+    try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        return sqlite3.connect(DB_PATH)
+    except Exception:
+        return None
+
+def _init(conn):
+    try:
+        cur = conn.cursor()
+        cur.execute("""CREATE TABLE IF NOT EXISTS ansible_runs (
+          id INTEGER PRIMARY KEY,
+          ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+          playbook TEXT,
+          status TEXT,
+          ok_count INTEGER,
+          changed_count INTEGER,
+          fail_count INTEGER,
+          unreachable_count INTEGER,
+          target_key TEXT
+        );""")
+        conn.commit()
+    except Exception:
+        pass
+
+class CallbackModule(CallbackBase):
+    def v2_playbook_on_stats(self, stats):
+        try:
+            pb = os.environ.get('ANSIBLE_PLAYBOOK_NAME','')
+        except Exception:
+            pb = ''
+        try:
+            s = {
+              "ok": sum(stats.ok.values()),
+              "changed": sum(stats.changed.values()),
+              "failures": sum(stats.failures.values()),
+              "unreachable": sum(stats.unreachable.values())
+            }
+        except Exception:
+            s = {"ok":0,"changed":0,"failures":0,"unreachable":0}
+        status = "ok" if s["failures"]==0 and s["unreachable"]==0 else "fail"
+        tkey = os.environ.get("J_TARGET_KEY","")
+        conn = _safe_connect()
+        if conn:
+            try:
+                _init(conn)
+                cur = conn.cursor()
+                cur.execute(
+                  "INSERT INTO ansible_runs(playbook,status,ok_count,changed_count,fail_count,unreachable_count,target_key) VALUES (?,?,?,?,?,?,?)",
+                  (pb or "", status, s["ok"], s["changed"], s["failures"], s["unreachable"], tkey)
+                )
+                conn.commit()
+            except Exception:
+                pass
+            finally:
+                try: conn.close()
+                except: pass
+PY_EOF
 fi
 
 # make sure a db file exists (SQLite will create if not present)
