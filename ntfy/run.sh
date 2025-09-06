@@ -17,12 +17,15 @@ resolve_ntfy() {
       echo "$found"; return 0
     fi
   fi
-  echo "ERROR: ntfy binary not found" >&2
+  echo "ERROR: ntfy binary not found in PATH or common locations (/usr/bin/ntfy, /bin/ntfy, /usr/local/bin/ntfy, /app/ntfy), and search failed." >&2
+  echo "INFO: Contents of /usr/local/bin:" >&2; ls -lah /usr/local/bin || true
+  echo "INFO: Contents of /usr/bin:" >&2; ls -lah /usr/bin || true
+  echo "INFO: PATH is: $PATH" >&2
   exit 127
 }
 NTFY_BIN="$(resolve_ntfy)"
 
-# -------- read options --------
+# -------- read options (with defaults) --------
 jqbin="$(command -v jq || true)"
 if [ -z "$jqbin" ] || [ ! -f "$OPTS_FILE" ]; then
   echo "[ntfy-addon] WARNING: jq/options.json not available; using defaults"
@@ -55,48 +58,69 @@ else
   admin_pass=$(jq -r '.auth.admin_password // ""' "$OPTS_FILE")
 fi
 
-# -------- defaults --------
-if [ -z "${base_url}" ] || [ "${base_url}" = "null" ]; then
+# -------- normalize booleans --------
+normalize_bool() {
+  case "${1,,}" in
+    1|true|yes|on) echo true ;;
+    *) echo false ;;
+  esac
+}
+bp_bool="$(normalize_bool "${behind_proxy}")"
+att_bool="$(normalize_bool "${att_enabled}")"
+auth_bool="$(normalize_bool "${auth_enabled}")"
+
+# -------- default & sanitize base_url (ntfy forbids paths) --------
+if [ -z "${base_url:-}" ] || [ "${base_url}" = "null" ]; then
   base_url="http://127.0.0.1:${listen_port}"
   echo "[ntfy-addon] INFO: base_url not set; defaulting to ${base_url}"
 fi
+orig_base="${base_url}"
+# strip any path (e.g., https://ha/api/hassio_ingress/xyz -> https://ha)
+base_url="$(printf '%s' "${base_url}" | sed -E 's#^(https?://[^/]+).*#\1#')"
+if [ "${orig_base}" != "${base_url}" ]; then
+  echo "[ntfy-addon] WARNING: base_url contained a path and was sanitized to '${base_url}'. ntfy does not support sub-paths."
+fi
 
+# Ensure dirs exist
 mkdir -p "$(dirname "$cache_file")" "$att_dir"
 
-# -------- build YAML config --------
 cfg="/data/server.yml"
+
+# -------- build YAML config via heredocs (safe formatting) --------
 cat > "$cfg" <<EOF
-listen-http: 0.0.0.0:${listen_port}
-behind-proxy: ${behind_proxy}
-base-url: ${base_url}
-cache-file: ${cache_file}
+listen-http: "0.0.0.0:${listen_port}"
+behind-proxy: ${bp_bool}
+base-url: "${base_url}"
+cache-file: "${cache_file}"
 EOF
 
-if [ "${att_enabled}" = "true" ]; then
-cat >> "$cfg" <<EOF
-attachment-cache-dir: ${att_dir}
-attachment-file-size-limit: ${att_file_size}
-attachment-total-size-limit: ${att_total_size}
-attachment-expiry-duration: ${att_expiry}
+if [ "${att_bool}" = "true" ]; then
+  cat >> "$cfg" <<EOF
+attachment-cache-dir: "${att_dir}"
+attachment-file-size-limit: "${att_file_size}"
+attachment-total-size-limit: "${att_total_size}"
+attachment-expiry-duration: "${att_expiry}"
 EOF
 fi
 
-if [ "${auth_enabled}" = "true" ]; then
-cat >> "$cfg" <<EOF
-auth-file: /data/user.db
-auth-default-access: ${auth_default}
+if [ "${auth_bool}" = "true" ]; then
+  cat >> "$cfg" <<EOF
+auth-file: "/data/user.db"
+auth-default-access: "${auth_default}"
 EOF
-  if [ -n "${admin_user}" ] && [ -n "${admin_pass}" ]; then
+  if [ -n "${admin_user}" ] && [ "${admin_user}" != "null" ] && [ -n "${admin_pass}" ] && [ "${admin_pass}" != "null" ]; then
     hashed="$("$NTFY_BIN" user hash "$admin_pass" | tr -d '\r')"
     cat >> "$cfg" <<EOF
 auth-users:
-  - ${admin_user}:${hashed}:admin
+  - "${admin_user}:${hashed}:admin"
 EOF
   fi
 fi
 
+# strip CRLFs; show final YAML
+sed -i 's/\r$//' "$cfg" || true
 echo "[ntfy-addon] ------- /data/server.yml -------"
-cat "$cfg"
+cat "$cfg" || true
 echo "[ntfy-addon] --------------------------------"
 
 echo "[ntfy-addon] Using ntfy binary: $NTFY_BIN"
