@@ -136,7 +136,6 @@ if [ "$push_ntfy_enabled" != "true" ] && [ "$push_ntfy_enabled" != "1" ]; then
   echo "[launcher] hard-off: ntfy pushes disabled (env blanked)"
 fi
 
-
 # Personalities
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
@@ -165,9 +164,9 @@ if [ "$CLEANUP" = "true" ]; then
 fi
 ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
 if [ "$LLM_ENABLED" = "true" ]; then
-  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi‑3";
+  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi-3";
   elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL"; LLM_STATUS="TinyLlama";
-  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen‑0.5b";
+  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen-0.5b";
   else ENGINE="none-selected"; LLM_STATUS="Disabled"; fi
   if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
     if [ ! -s "$ACTIVE_PATH" ]; then echo "[Jarvis Prime] 🔮 Downloading model ($ENGINE)…"; py_download "$ACTIVE_URL" "$ACTIVE_PATH"; fi
@@ -215,6 +214,20 @@ if [[ "${PROXY_ENABLED}" == "true" ]]; then
   echo "[launcher] starting bot (bot.py)";    python3 /app/bot.py    & BOT_PID=$!   || true
 else
   echo "[launcher] proxy disabled"
+fi
+
+# ===== NEW: AegisOps Runner =====
+AEGISOPS_BASE="/share/jarvis_prime/aegisops"
+if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
+  if [ -f "${AEGISOPS_BASE}/runner.py" ]; then
+    echo "[launcher] starting AegisOps runner (runner.py)"
+    python3 "${AEGISOPS_BASE}/runner.py" &
+    AEGISOPS_PID=$! || true
+  else
+    echo "[launcher] ⚠️ AegisOps runner.py not found at ${AEGISOPS_BASE}/runner.py"
+  fi
+else
+  echo "[launcher] AegisOps disabled"
 fi
 
 wait "$API_PID"
