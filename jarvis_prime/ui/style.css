@@ -50,13 +50,6 @@ textarea{ min-height:80px; }
 .btn.primary { background:var(--blue); color:#001 }
 .btn.danger  { background:var(--red); color:#001 }
 
-.grid2{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
-.grid3{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px }
-.grid-auto{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px }
-
-fieldset{ border:1px solid #2a3a56; border-radius:10px; padding:10px; margin:10px 0; background:#111a2a }
-legend{ color:#9fd2ff; padding:0 6px }
-
 #toast { position:fixed; bottom:10px; right:10px; display:grid; gap:6px }
 .toast { background:#222; padding:6px 10px; border-radius:6px }
 
@@ -99,6 +92,5 @@ legend{ color:#9fd2ff; padding:0 6px }
 .msg-row.selected{ background:#182844 }
 
 @media (max-width:900px){
-  .grid2,.grid3{ grid-template-columns:1fr }
   .inbox-wrap{ grid-template-columns: 1fr }
 }
