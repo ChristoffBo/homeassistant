@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 # Rundeck Home Assistant add-on — wraps the official Rundeck image (amd64 only).
 FROM rundeck/rundeck:SNAPSHOT
+# or pin a fixed version instead:
+# FROM rundeck/rundeck:5.15.0-20250902
 
 # Install jq to read /data/options.json
 USER root
@@ -14,5 +16,5 @@ COPY --chmod=0755 run.sh /usr/local/bin/ha-run.sh
 # Drop back to the rundeck user (uid 1000 in upstream image)
 USER rundeck
 
-# Start the launcher
-CMD ["/usr/local/bin/ha-run.sh"]
+# Make our launcher the entrypoint so Java doesn't treat it as a class arg
+ENTRYPOINT ["/usr/local/bin/ha-run.sh"]
