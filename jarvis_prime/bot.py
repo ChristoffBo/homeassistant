@@ -941,34 +941,6 @@ async def _internal_emit(request):
         print(f"[bot] internal emit error: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
-# ---- AegisOps inbox bridge (new) ----
-async def _internal_aegisops(request):
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    title = str(data.get("title") or "AegisOps")
-    message = str(data.get("message") or "")
-    prio = int(data.get("priority", 5))
-    status = str(data.get("status") or "")
-    target = str(data.get("target") or "")
-    # Compose a simple body that includes status/target if provided
-    body_lines = []
-    if status:
-        body_lines.append(f"status: {status}")
-    if target:
-        body_lines.append(f"target: {target}")
-    if message:
-        body_lines.append(message)
-    body_text = "\n".join(body_lines) if body_lines else ""
-    try:
-        # decorate=False so we preserve raw content for inbox
-        send_message(title, body_text, priority=prio, decorate=False)
-        return web.json_response({"ok": True})
-    except Exception as e:
-        print(f"[bot] internal aegisops error: {e}")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
-
 async def _start_internal_server():
     if web is None:
         print("[bot] aiohttp not available; internal server disabled")
@@ -977,13 +949,11 @@ async def _start_internal_server():
         app = web.Application()
         app.router.add_post("/internal/wake", _internal_wake)
         app.router.add_post("/internal/emit", _internal_emit)
-        app.router.add_post("/internal/aegisops", _internal_aegisops)  # NEW route for AegisOps notifications
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "127.0.0.1", 2599)
         await site.start()
         print("[bot] internal server listening on 127.0.0.1:2599 (/internal/wake, /internal/emit)")
-        print("[bot] AegisOps endpoint active at /internal/aegisops")  # additive info line
     except Exception as e:
         print(f"[bot] failed to start internal server: {e}")
 
