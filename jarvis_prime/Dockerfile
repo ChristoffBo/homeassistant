@@ -80,6 +80,11 @@ COPY heartbeat.py  /app/heartbeat.py
 # ---- NEW (additive): place intake blueprint at the path bot.py expects ----
 COPY apprise.py /app/intakes/apprise.py
 
+# ---- NEW (additive): AegisOps scaffold from repo (so run.sh can copy/launch)
+# Expect these files/folders to exist in your build context under ./aegisops/**
+# If you don’t have them yet, create minimal placeholders so COPY succeeds.
+COPY aegisops/ /app/aegisops/
+
 # Permissions
 RUN chmod +x /run.sh
 
