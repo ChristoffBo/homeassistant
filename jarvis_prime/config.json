@@ -140,6 +140,7 @@
 
     "llm_enabled": false,
     "llm_persona_riffs_enabled": true,
+    "llm_rewrite_enabled": false,
     "llm_cleanup_on_disable": true,
     "llm_models_dir": "/share/jarvis_prime/models",
     "llm_timeout_seconds": 20,
@@ -305,6 +306,7 @@
 
     "llm_enabled": "bool",
     "llm_persona_riffs_enabled": "bool",
+    "llm_rewrite_enabled": "bool",
     "llm_cleanup_on_disable": "bool",
     "llm_models_dir": "str",
     "llm_timeout_seconds": "int(1,)",
