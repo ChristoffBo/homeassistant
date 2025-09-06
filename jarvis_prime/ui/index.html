@@ -25,14 +25,16 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=1.6" />
+  <link rel="stylesheet" href="style.css?v=1.7" />
 </head>
 <body>
   <header class="topnav">
     <div class="brand">Jarvis Prime</div>
     <nav>
       <button class="tablink active" data-tab="inbox">Inbox</button>
+      <!-- keep Jarvis Settings as-is for now -->
       <button class="tablink" data-tab="jarvis-settings">Jarvis Settings</button>
+      <!-- AegisOps tabs -->
       <button class="tablink" data-tab="aegis-settings">AegisOps – Settings</button>
       <button class="tablink" data-tab="aegis-schedules">AegisOps – Schedules</button>
       <button class="tablink" data-tab="aegis-runs">AegisOps – Runs & Logs</button>
@@ -84,146 +86,103 @@
       </div>
     </section>
 
-    <!-- Jarvis Settings (curated: personas, intakes, retention/quiet, LLM, Enviro) -->
+    <!-- Jarvis Settings (leave as-is for now) -->
     <section id="jarvis-settings" class="tab">
       <h2>Jarvis Settings</h2>
+      <p class="muted">This section is intentionally left as it currently exists. We’ll refactor later.</p>
 
       <fieldset>
-        <legend>Personas</legend>
-        <label class="lbl"><input type="checkbox" id="p-dude"> Dude</label>
-        <label class="lbl"><input type="checkbox" id="p-chick"> Chick</label>
-        <label class="lbl"><input type="checkbox" id="p-nerd"> Nerd</label>
-        <label class="lbl"><input type="checkbox" id="p-rager"> Rager</label>
-        <div><button id="save-personas" class="btn">Save Personas</button></div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Intakes (Email / Gotify / ntfy)</legend>
-        <div class="grid3">
-          <div>
-            <h3>Email</h3>
-            <input id="smtp-host" placeholder="smtp.gmail.com" />
-            <input id="smtp-port" placeholder="587" />
-            <input id="smtp-user" placeholder="user" />
-            <input id="smtp-pass" type="password" placeholder="password" />
-            <input id="smtp-from" placeholder="From name" />
-            <div class="grid2">
-              <button id="test-email" class="btn">Test Email</button>
-            </div>
-          </div>
-          <div>
-            <h3>Gotify</h3>
-            <input id="gotify-url" placeholder="http://10.0.0.99:8091" />
-            <input id="gotify-token" placeholder="token" />
-            <button id="test-gotify" class="btn">Test Gotify</button>
-          </div>
-          <div>
-            <h3>ntfy</h3>
-            <input id="ntfy-url" placeholder="http://10.0.0.99:8080" />
-            <input id="ntfy-topic" placeholder="topic" />
-            <button id="test-ntfy" class="btn">Test ntfy</button>
-          </div>
-        </div>
-        <button id="save-channels" class="btn primary">Save Intakes</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>Inbox Retention & Purge</legend>
-        <div class="grid3">
-          <label>Retention days <input id="retention" type="number" /></label>
-          <div>
-            <label>Purge older than <input id="purge-days" type="number" /></label>
-            <button id="purge" class="btn danger">Run Purge</button>
-          </div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Quiet Hours</legend>
-        <div class="grid3">
-          <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
-          <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
-          <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
-        </div>
-        <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
-        <button id="save-quiet" class="btn">Save Quiet Hours</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>LLM</legend>
-        <div class="grid3">
-          <label>Model <input id="llm-model" placeholder="model name" /></label>
-          <label>Context Tokens <input id="llm-ctx" type="number" /></label>
-          <label>Timeout (s) <input id="llm-timeout" type="number" /></label>
-        </div>
-        <button id="save-llm" class="btn">Save LLM</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>EnviroGuard</legend>
-        <p>Status: <span id="env-status">-</span></p>
-        <div class="grid3">
-          <label>Hot °C <input id="env-hot" type="number" /></label>
-          <label>Cold °C <input id="env-cold" type="number" /></label>
-          <label>Hysteresis °C <input id="env-hyst" type="number" /></label>
-        </div>
-        <button id="save-env" class="btn">Save EnviroGuard</button>
+        <legend>Placeholders (existing wiring)</legend>
+        <p class="muted">The real controls you already had remain functional behind the scenes. We will redesign this screen after AegisOps is finished.</p>
       </fieldset>
     </section>
 
     <!-- AegisOps – Settings -->
     <section id="aegis-settings" class="tab">
       <h2>AegisOps — Settings</h2>
-      <p class="muted">Manage inventory and playbooks. (Backed by files in <code>/share/jarvis_prime/aegisops/</code>.)</p>
+      <p class="muted">No typing. Everything below is click-select. Lists auto-populate from <code>/share/jarvis_prime/aegisops/</code>. If an endpoint is missing, you’ll get a toast and the control disables instead of breaking.</p>
 
+      <!-- INVENTORY -->
       <fieldset>
-        <legend>Inventory</legend>
-        <p class="muted">Hosts / groups from <code>inventory.ini</code>. (UI editing to be wired.)</p>
-        <textarea id="aegis-inventory-view" placeholder="[all]
-localhost ansible_host=127.0.0.1 ansible_user=root"></textarea>
-        <button id="aegis-inventory-save" class="btn">Save Inventory</button>
+        <legend>Inventory (Hosts)</legend>
+        <div class="toolbar">
+          <button id="ag-host-refresh" class="btn">Refresh</button>
+          <button id="ag-host-add" class="btn">Add Host</button>
+          <button id="ag-host-save" class="btn primary">Save Inventory</button>
+        </div>
+        <table class="msg-table">
+          <thead><tr><th>Name</th><th>Host / IP</th><th>SSH User</th><th>Actions</th></tr></thead>
+          <tbody id="ag-hosts"><tr><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+        <p class="muted">Backed by <code>inventory.ini</code>. Rows save as lines like: <code>name ansible_host=1.2.3.4 ansible_user=root</code></p>
       </fieldset>
 
+      <!-- PLAYBOOKS -->
       <fieldset>
         <legend>Playbooks</legend>
-        <p class="muted">Available playbooks under <code>playbooks/</code>. (Listing/runner to be wired.)</p>
-        <input id="aegis-playbook-path" placeholder="playbooks/check_services.yml" />
-        <button id="aegis-playbook-run" class="btn">Run Once (Manual)</button>
+        <div class="toolbar">
+          <label class="inline">
+            Playbook:
+            <select id="ag-pb-select" class="w-auto"></select>
+          </label>
+          <button id="ag-pb-refresh" class="btn">Refresh List</button>
+          <button id="ag-pb-run" class="btn">Run Once (Manual)</button>
+        </div>
+        <p class="muted">Lists files from <code>playbooks/</code>. Drop in new files → click Refresh.</p>
       </fieldset>
     </section>
 
     <!-- AegisOps – Schedules -->
     <section id="aegis-schedules" class="tab">
       <h2>AegisOps — Schedules</h2>
-      <p class="muted">Create/edit scheduled jobs (backed by <code>schedules.json</code>).</p>
+      <p class="muted">Create/edit jobs (backed by <code>schedules.json</code>). Use the dropdowns: no filenames to remember, no hostnames to type.</p>
 
       <fieldset>
-        <legend>New Schedule</legend>
+        <legend>New / Edit Schedule</legend>
         <div class="grid3">
-          <label>Id <input id="ag-sch-id" placeholder="uptime-5m" /></label>
-          <label>Playbook <input id="ag-sch-playbook" placeholder="check_services.yml" /></label>
-          <label>Servers <input id="ag-sch-servers" placeholder="all or host1,host2" /></label>
-          <label>Every <select id="ag-sch-every">
-            <option>5m</option><option>15m</option><option>1h</option><option>6h</option><option>24h</option>
-          </select></label>
-          <label>Forks <input id="ag-sch-forks" type="number" value="1"/></label>
+          <label>Schedule Id
+            <input id="ag-sch-id" placeholder="uptime-5m" />
+          </label>
+          <label>Playbook
+            <select id="ag-sch-playbook-select"></select>
+          </label>
+          <label>Servers (multi-select)
+            <select id="ag-sch-servers-select" multiple size="6"></select>
+          </label>
+          <label>Every
+            <select id="ag-sch-every">
+              <option>5m</option><option>15m</option><option>1h</option><option>6h</option><option>24h</option>
+            </select>
+          </label>
+          <label>Forks
+            <input id="ag-sch-forks" type="number" value="1"/>
+          </label>
         </div>
         <div class="grid3">
           <label class="lbl"><input id="ag-notify-success" type="checkbox" /> Notify on success</label>
           <label class="lbl"><input id="ag-notify-fail" type="checkbox" checked/> Notify on fail</label>
           <label class="lbl"><input id="ag-notify-change" type="checkbox" checked/> Only on state change</label>
-          <label>Cooldown (min) <input id="ag-notify-cooldown" type="number" value="30"/></label>
-          <label>Quiet Hours <input id="ag-notify-quiet" placeholder="22:00-06:00"/></label>
-          <label>Target Key <input id="ag-notify-key" placeholder="uptime"/></label>
+          <label>Cooldown (min)
+            <input id="ag-notify-cooldown" type="number" value="30"/>
+          </label>
+          <label>Quiet Hours
+            <input id="ag-notify-quiet" placeholder="22:00-06:00"/>
+          </label>
+          <label>Target Key
+            <input id="ag-notify-key" placeholder="uptime"/>
+          </label>
         </div>
-        <button id="ag-add" class="btn primary">Add / Update</button>
+        <div class="toolbar">
+          <button id="ag-add" class="btn primary">Add / Update</button>
+          <button id="ag-meta-refresh" class="btn">Refresh Hosts & Playbooks</button>
+        </div>
       </fieldset>
 
       <fieldset>
         <legend>Existing Schedules</legend>
         <table class="msg-table">
           <thead><tr><th>ID</th><th>Playbook</th><th>Servers</th><th>Every</th><th>Actions</th></tr></thead>
-          <tbody id="ag-table"><tr><td colspan="5">No data (wire API)</td></tr></tbody>
+          <tbody id="ag-table"><tr><td colspan="5">Loading…</td></tr></tbody>
         </table>
       </fieldset>
     </section>
@@ -231,16 +190,18 @@ localhost ansible_host=127.0.0.1 ansible_user=root"></textarea>
     <!-- AegisOps – Runs & Logs -->
     <section id="aegis-runs" class="tab">
       <h2>AegisOps — Runs & Logs</h2>
-      <p class="muted">Recent executions from the AegisOps SQLite DB.</p>
+      <p class="muted">Rows are read from the AegisOps DB.</p>
+      <div class="toolbar">
+        <button id="ag-refresh" class="btn">Refresh</button>
+      </div>
       <table class="msg-table">
         <thead><tr><th>Time</th><th>Playbook</th><th>Status</th><th>OK</th><th>Changed</th><th>Failed</th><th>Unreach</th></tr></thead>
-        <tbody id="ag-runs"><tr><td colspan="7">No data (wire API)</td></tr></tbody>
+        <tbody id="ag-runs"><tr><td colspan="7">Loading…</td></tr></tbody>
       </table>
-      <button id="ag-refresh" class="btn">Refresh</button>
     </section>
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=1.6"></script>
+  <script src="app.js?v=1.7"></script>
 </body>
 </html>
