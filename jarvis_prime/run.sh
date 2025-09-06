@@ -250,6 +250,57 @@ if [ ! -f "${AEGISOPS_BASE}/runner.py" ] && [ -f "/app/aegisops/runner.py" ]; th
   cp "/app/aegisops/runner.py" "${AEGISOPS_BASE}/runner.py" || true
 fi
 
+# ---- Seed AegisOps defaults if files are missing/empty (idempotent) ----
+ensure_file() { # ensure_file <path> <here-doc label>
+  local p="$1"; local label="$2"
+  if [ ! -s "$p" ]; then
+    echo "[aegisops] seeding $(basename "$p")"
+    # shellcheck disable=SC2188
+    cat >"$p" <<"$label"
+$label
+  fi
+}
+
+ensure_file "${AEGISOPS_BASE}/schedules.json" "JSON_EOF"
+[
+  {
+    "id": "uptime-5m",
+    "playbook": "check_services.yml",
+    "servers": ["all"],
+    "every": "5m",
+    "forks": 1,
+    "notify": {
+      "on_success": false,
+      "on_fail": true,
+      "only_on_state_change": true,
+      "cooldown_min": 30,
+      "quiet_hours": "22:00-06:00",
+      "target_key": "uptime"
+    }
+  }
+]
+JSON_EOF
+
+ensure_file "${AEGISOPS_BASE}/ansible.cfg" "CFG_EOF"
+[defaults]
+inventory = /share/jarvis_prime/aegisops/inventory.ini
+callback_plugins = /share/jarvis_prime/aegisops/callback_plugins
+callbacks_enabled = aegisops_notify
+retry_files_enabled = False
+stdout_callback = yaml
+host_key_checking = False
+CFG_EOF
+
+ensure_file "${AEGISOPS_BASE}/inventory.ini" "INV_EOF"
+[all]
+localhost ansible_host=127.0.0.1 ansible_user=root
+INV_EOF
+
+ensure_file "${AEGISOPS_BASE}/uptime_targets.yml" "YAML_EOF"
+checks:
+  - { name: jarvis ui http, target: localhost, mode: http, url: "http://127.0.0.1:2581/api/health", expect: [200,204] }
+YAML_EOF
+
 # ===== NEW: AegisOps Runner =====
 if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
   if [ -f "${AEGISOPS_BASE}/runner.py" ]; then
