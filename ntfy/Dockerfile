@@ -1,7 +1,8 @@
 # Dockerfile — Home Assistant ntfy add-on (fixed to run our run.sh as ENTRYPOINT)
 
-ARG BUILD_FROM=binwiederhier/ntfy:latest
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
+ARG BUILD_ARCH
 
 # Add tools to parse options and run entrypoint; try multiple package managers
 RUN (command -v apk >/dev/null && apk add --no-cache bash jq findutils) || \
