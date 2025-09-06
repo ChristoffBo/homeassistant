@@ -1,65 +1,58 @@
-# 🔔 ntfy Server – Home Assistant Add-on (Official image)
+# 🧩 ntfy Server Home Assistant Add-on
 
-> Self‑hosted **ntfy** server with **Ingress** and **persistent storage**. Built **FROM the official Docker image** and tailored for Home Assistant.
+Self-hosted ntfy server for publishing and subscribing to notifications.  
 
-## Features
-- ✅ Uses the **official** Docker image (`binwiederhier/ntfy`) as the base
-- ✅ **Ingress** support (no extra ports required)
-- ✅ **/data** persistence (database, cache & attachments survive updates)
-- ✅ Optional **Auth** (provision an admin on first start)
-- ✅ Attachment cache size/file limits & expiry
+✅ Uses the official Docker image: binwiederhier/ntfy  
+✅ Full Web UI on configurable port  
+✅ Persistent storage enabled (/data)  
+✅ All settings exposed in options.json  
+✅ No ingress — for browser notifications you must put it behind HTTPS (reverse proxy or self-signed)  
 
-## How it works
-- Supervisor builds this add-on (`Dockerfile`) which is **FROM binwiederhier/ntfy**.
-- An entrypoint script (`run.sh`) reads `/data/options.json`, generates `/data/server.yml`, then runs `ntfy serve`.
-- The web UI & API are exposed to Home Assistant via **Ingress** (and optionally a host port if you set one).
+📁 Files:  
+- /data/options.json — stores add-on settings  
+- /data/cache.db — SQLite cache database  
+- /data/attachments — directory for cached attachments  
+- /data/user.db — auth database (created if auth enabled)  
 
-## Install (Local add-on)
-1. Extract the `ntfy` folder into your HA host at `/addons/ntfy` (or use the provided ZIP).
-2. Go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories →** Add your local folder.
-3. Open the add-on → **Install** → **Start** → **Open Web UI**.
+⚙️ Configuration:  
+{  
+  "listen_port": 8008,  
+  "base_url": "http://10.0.0.100",  
+  "behind_proxy": false,  
+  "attachments": {  
+    "enabled": true,  
+    "dir": "/data/attachments",  
+    "file_size_limit": "15M",  
+    "total_size_limit": "5G",  
+    "expiry": "3h"  
+  },  
+  "cache": {  
+    "file": "/data/cache.db"  
+  },  
+  "auth": {  
+    "enabled": false,  
+    "default_access": "read-write",  
+    "admin_user": "",  
+    "admin_password": ""  
+  }  
+}  
 
-## Configuration (Options)
-```yaml
-listen_port: 8008             # Internal container port for ntfy (Ingress uses this)
-base_url: ""                  # Optional external URL; set if you expose ntfy outside HA
-behind_proxy: true            # Keep true for HA Ingress/reverse proxy
+🧪 Options:  
+listen_port — port ntfy listens on inside the container (default: 8008)  
+base_url — must be a plain origin (e.g., https://ntfy.example.com if proxied); required for attachments and browser notifications  
+behind_proxy — true if you use a reverse proxy that sets X-Forwarded-* headers  
+attachments.enabled — enable/disable attachment cache  
+attachments.dir — directory where attachments are stored  
+attachments.file_size_limit — maximum size per file  
+attachments.total_size_limit — total cache size limit  
+attachments.expiry — expiry duration for cached files  
+cache.file — path to ntfy cache db  
+auth.enabled — enable authentication  
+auth.default_access — access policy for unauthenticated users  
+auth.admin_user — optional admin user created on first boot if a password is set  
+auth.admin_password — optional admin password (hashed internally on first boot)  
 
-attachments:
-  enabled: true
-  dir: /data/attachments
-  file_size_limit: "15M"      # e.g. "300k", "2M", "100M"
-  total_size_limit: "5G"      # e.g. "1G", "20G"
-  expiry: "3h"                # e.g. "20h", "7d"
+🌍 Web UI access:  
+Accessible at http://<your-ip>:<port> (e.g., http://10.0.0.100:8008). For browser push notifications to work, ntfy must be served over HTTPS — set up a reverse proxy (Zoraxy, NGINX, Traefik, Caddy) and point a domain like https://ntfy.mydomain.com at the add-on.  
 
-cache:
-  file: /data/cache.db
-
-auth:
-  enabled: false
-  default_access: read-write  # read-write | read-only | write-only | deny-all
-  admin_user: ""              # optional (used only at first boot when a password is set)
-  admin_password: ""          # optional; plaintext is hashed with `ntfy user hash`
-```
-
-### Ports
-- Ingress: **enabled by default**.
-- Optional direct access: set a **Host port** for `8008/tcp` in the add-on UI.
-- The add-on listens on `0.0.0.0:<listen_port>` inside the container.
-
-## Data locations
-- Config generated at: `/data/server.yml`
-- Cache DB: `/data/cache.db`
-- Attachments: `/data/attachments`
-- Auth DB: `/data/user.db` (when auth is enabled)
-
-## Notes
-- The first admin user (if provided) is **provisioned** via config on startup using the built‑in CLI.
-- Replace `icon.png` and `logo.png` with the **official ntfy logo assets** if you have them (these are simple placeholders).
-
-## Upstream Docs & References
-- ntfy configuration & Docker examples: https://ntfy.sh/docs/config/  
-- ntfy install & image details: https://docs.ntfy.sh/install/  
-- Home Assistant add-on Ingress: https://developers.home-assistant.io/docs/add-ons/configuration/
-```
-
+🧠 Fully self-hosted. No external account required.
