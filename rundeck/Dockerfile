@@ -1,5 +1,7 @@
-# Use official Rundeck image
-FROM rundeck/rundeck:latest
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
+ARG BUILD_ARCH
+
 
 # Ensure Debian-based add-on compatibility with HA
 RUN apt-get update && apt-get upgrade -y || true \
