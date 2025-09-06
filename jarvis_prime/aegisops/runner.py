@@ -1,94 +1,126 @@
 #!/usr/bin/env python3
-# AegisOps runner.py
-# - Reads schedules.json
-# - Executes ansible-playbook at intervals
-# - Pushes results via callback plugin (aegisops_notify)
-
-import os, json, time, asyncio, subprocess, signal
-from datetime import datetime, timedelta
+import os, json, time, subprocess, sys, threading, signal
+from datetime import datetime
 
 BASE = "/share/jarvis_prime/aegisops"
-SCHEDULES_FILE = os.path.join(BASE, "schedules.json")
-PLAYBOOKS_DIR = os.path.join(BASE, "playbooks")
+INV  = f"{BASE}/inventory.ini"
+PB_DIR = f"{BASE}/playbooks"
+CFG  = f"{BASE}/ansible.cfg"
+SCHEDULES = f"{BASE}/schedules.json"
 
-DEFAULT_INTERVALS = {
-    "5m": 5 * 60,
-    "15m": 15 * 60,
-    "1h": 60 * 60,
-    "6h": 6 * 60 * 60,
-    "24h": 24 * 60 * 60,
-}
+INTERVALS = {"5m":300, "15m":900, "1h":3600, "6h":21600, "24h":86400}
 
-class Schedule:
-    def __init__(self, entry: dict):
-        self.id = entry.get("id")
-        self.playbook = entry.get("playbook")
-        self.servers = entry.get("servers", ["all"])
-        self.every = entry.get("every", "1h")
-        self.forks = int(entry.get("forks", 1))
-        self.notify = entry.get("notify", {})
-        self.next_run = datetime.now()
+def log(msg):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[aegisops] {ts} {msg}", flush=True)
 
-    def interval_seconds(self):
-        return DEFAULT_INTERVALS.get(self.every, 3600)
+def load_schedules():
+    try:
+        with open(SCHEDULES, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+            if not raw:
+                return []
+            data = json.loads(raw)
+            return data if isinstance(data, list) else []
+    except FileNotFoundError:
+        log(f"waiting: {SCHEDULES} not found")
+    except json.JSONDecodeError as e:
+        log(f"schedules.json invalid JSON: {e}; treating as empty")
+    except Exception as e:
+        log(f"error reading schedules.json: {e}")
+    return []
 
-    def due(self):
-        return datetime.now() >= self.next_run
+def seconds_for(every):
+    return INTERVALS.get(str(every).lower().strip())
 
-    def bump(self):
-        self.next_run = datetime.now() + timedelta(seconds=self.interval_seconds())
+def run_playbook_once(item):
+    pb_name = (item or {}).get("playbook")
+    servers = (item or {}).get("servers", ["all"])
+    forks = int((item or {}).get("forks", 1))
 
-async def run_playbook(schedule: Schedule):
-    pb_path = os.path.join(PLAYBOOKS_DIR, schedule.playbook)
-    if not os.path.isfile(pb_path):
-        print(f"[runner] missing playbook {pb_path}")
+    if not pb_name:
+        log("schedule missing playbook")
         return
-    cmd = [
-        "ansible-playbook", pb_path,
-        "-i", os.path.join(BASE, "inventory.ini"),
-        "--forks", str(schedule.forks)
-    ]
-    if schedule.servers and schedule.servers != ["all"]:
-        cmd.extend(["-l", ",".join(schedule.servers)])
+
+    pb_path = f"{PB_DIR}/{pb_name}"
+    if not os.path.isfile(pb_path):
+        log(f"playbook not found: {pb_path}")
+        return
 
     env = os.environ.copy()
-    # Pass notify flags for callback plugin
-    for k, v in schedule.notify.items():
-        env[f"J_{k.upper()}"] = str(v)
+    notify = (item or {}).get("notify", {}) or {}
+    env["J_ON_SUCCESS"] = str(bool(notify.get("on_success", False))).lower()
+    env["J_ON_FAIL"] = str(bool(notify.get("on_fail", True))).lower()
+    env["J_ONLY_ON_STATE_CHANGE"] = str(bool(notify.get("only_on_state_change", True))).lower()
+    env["J_COOLDOWN_MIN"] = str(int(notify.get("cooldown_min", 30)))
+    env["J_QUIET_HOURS"] = str(notify.get("quiet_hours", "") or "")
+    env["J_TARGET_KEY"] = str(notify.get("target_key", "") or "")
+    env["ANSIBLE_CONFIG"] = CFG
 
-    print(f"[runner] running schedule {schedule.id} → {cmd}")
+    cmd = [
+        "ansible-playbook", pb_path,
+        "-i", INV,
+        "--forks", str(forks),
+        "--limit", ",".join(servers)
+    ]
+
+    log(f"run: {' '.join(cmd)}")
     try:
         subprocess.run(cmd, env=env, check=False)
+    except FileNotFoundError:
+        log("ansible-playbook not found in PATH; install Ansible in the image")
     except Exception as e:
-        print(f"[runner] error executing {cmd}: {e}")
+        log(f"playbook error: {e}")
 
-async def main():
+def scheduler_loop():
+    last_sig = 0
+    while True:
+        items = load_schedules()
+        if not items:
+            time.sleep(5)
+            continue
+
+        # build slots
+        slots = []
+        now = time.time()
+        for it in items:
+            every = seconds_for((it or {}).get("every"))
+            if every:
+                slots.append({"spec": it, "period": every, "next_due": now})
+
+        if not slots:
+            time.sleep(5)
+            continue
+
+        while True:
+            now = time.time()
+            for slot in slots:
+                if now >= slot["next_due"]:
+                    threading.Thread(target=run_playbook_once, args=(slot["spec"],), daemon=True).start()
+                    slot["next_due"] = now + slot["period"]
+            time.sleep(1)
+            # Periodically break to re-read schedules.json (updates take effect)
+            if int(now) % 30 == 0:
+                break
+
+def main():
+    log(f"runner starting; BASE={BASE}")
+    if not os.path.isdir(BASE):
+        log(f"missing {BASE}; create it and add schedules.json / playbooks/")
+
+    def handle_sig(sig, frame):
+        log(f"signal {sig}; exiting")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_sig)
+    signal.signal(signal.SIGINT, handle_sig)
+
     while True:
         try:
-            if not os.path.isfile(SCHEDULES_FILE):
-                await asyncio.sleep(30)
-                continue
-
-            with open(SCHEDULES_FILE, "r") as f:
-                data = json.load(f)
-            schedules = [Schedule(entry) for entry in data]
-
-            while True:
-                for sched in schedules:
-                    if sched.due():
-                        await run_playbook(sched)
-                        sched.bump()
-                await asyncio.sleep(5)
+            scheduler_loop()
         except Exception as e:
-            print(f"[runner] loop error: {e}")
-            await asyncio.sleep(60)
+            log(f"scheduler crash: {e}")
+            time.sleep(3)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("[runner] stopped by user")
-        try:
-            os.killpg(0, signal.SIGTERM)
-        except Exception:
-            pass
+    main()
