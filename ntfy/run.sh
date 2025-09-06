@@ -4,17 +4,16 @@ set -euo pipefail
 OPTS_FILE="/data/options.json"
 mkdir -p /data /data/ntfy || true
 
-# Resolve ntfy binary robustly
+# -------- find ntfy binary --------
 resolve_ntfy() {
   for p in "$(command -v ntfy 2>/dev/null || true)" /usr/bin/ntfy /bin/ntfy /usr/local/bin/ntfy /app/ntfy; do
-    if [ -n "$p" ] && [ -x "$p" ]; then
+    if [ -n "${p:-}" ] && [ -x "$p" ]; then
       echo "$p"; return 0
     fi
   done
-  # fallback: find it
   if command -v find >/dev/null 2>&1; then
     found="$(find / -maxdepth 3 -type f -name ntfy -perm -111 2>/dev/null | head -n 1 || true)"
-    if [ -n "$found" ]; then
+    if [ -n "${found:-}" ]; then
       echo "$found"; return 0
     fi
   fi
@@ -24,13 +23,12 @@ resolve_ntfy() {
   echo "INFO: PATH is: $PATH" >&2
   exit 127
 }
-
 NTFY_BIN="$(resolve_ntfy)"
 
-# Read options with defaults
+# -------- read options (with sane defaults) --------
 jqbin="$(command -v jq || true)"
-if [ -z "$jqbin" ]; then
-  echo "[ntfy-addon] WARNING: jq not found; using defaults only"
+if [ -z "$jqbin" ] || [ ! -f "$OPTS_FILE" ]; then
+  echo "[ntfy-addon] WARNING: jq/options.json not available; using defaults"
   listen_port=8008
   base_url=""
   behind_proxy=true
@@ -63,34 +61,52 @@ else
   admin_pass=$(jq -r '.auth.admin_password // ""' "$OPTS_FILE")
 fi
 
+# -------- base_url defaulting (requested) --------
+# If base_url is empty/null, set a safe default so ntfy accepts attachments:
+# Using loopback + configured port avoids the "attachment-cache-dir requires base-url" crash.
+if [ -z "${base_url:-}" ] || [ "$base_url" = "null" ]; then
+  base_url="http://127.0.0.1:${listen_port}"
+  echo "[ntfy-addon] INFO: base_url not set; defaulting to ${base_url}"
+fi
+
+# Ensure dirs exist
 mkdir -p "$(dirname "$cache_file")" "$att_dir"
 
+# -------- build YAML config safely --------
 cfg="/data/server.yml"
 {
-  echo "listen-http: \"0.0.0.0:${listen_port}\""
-  if [ "$behind_proxy" = "true" ]; then
+  printf 'listen-http: "0.0.0.0:%s"\n' "${listen_port}"
+  if [ "${behind_proxy}" = "true" ] || [ "${behind_proxy}" = "True" ]; then
     echo "behind-proxy: true"
+  else
+    echo "behind-proxy: false"
   fi
-  if [ -n "$base_url" ] && [ "$base_url" != "null" ]; then
-    echo "base-url: \"$base_url\""
+  printf 'base-url: "%s"\n' "${base_url}"
+  printf 'cache-file: "%s"\n' "${cache_file}"
+
+  if [ "${att_enabled}" = "true" ] || [ "${att_enabled}" = "True" ]; then
+    printf 'attachment-cache-dir: "%s"\n' "${att_dir}"
+    printf 'attachment-file-size-limit: "%s"\n' "${att_file_size}"
+    printf 'attachment-total-size-limit: "%s"\n' "${att_total_size}"
+    printf 'attachment-expiry-duration: "%s"\n' "${att_expiry}"
   fi
-  echo "cache-file: \"$cache_file\""
-  if [ "$att_enabled" = "true" ]; then
-    echo "attachment-cache-dir: \"$att_dir\""
-    echo "attachment-file-size-limit: \"$att_file_size\""
-    echo "attachment-total-size-limit: \"$att_total_size\""
-    echo "attachment-expiry-duration: \"$att_expiry\""
-  fi
-  if [ "$auth_enabled" = "true" ]; then
-    echo "auth-file: \"/data/user.db\""
-    echo "auth-default-access: \"$auth_default\""
-    if [ -n "$admin_user" ] && [ "$admin_user" != "null" ] && [ -n "$admin_pass" ] && [ "$admin_pass" != "null" ]; then
+
+  if [ "${auth_enabled}" = "true" ] || [ "${auth_enabled}" = "True" ]; then
+    echo 'auth-file: "/data/user.db"'
+    printf 'auth-default-access: "%s"\n' "${auth_default}"
+    if [ -n "${admin_user}" ] && [ "${admin_user}" != "null" ] && [ -n "${admin_pass}" ] && [ "${admin_pass}" != "null" ]; then
       hashed="$("$NTFY_BIN" user hash "$admin_pass" | tr -d '\r')"
       echo "auth-users:"
-      echo "  - \"${admin_user}:${hashed}:admin\""
+      printf '  - "%s:%s:admin"\n' "${admin_user}" "${hashed}"
     fi
   fi
 } > "$cfg"
+
+# quick syntax check to catch "did not find expected key"
+if command -v sed >/dev/null 2>&1; then
+  # ensure file ends with newline (some shells can omit)
+  sed -n '$p' "$cfg" >/dev/null || true
+fi
 
 echo "[ntfy-addon] Using ntfy binary: $NTFY_BIN"
 echo "[ntfy-addon] Starting ntfy with /data/server.yml on port ${listen_port}"
