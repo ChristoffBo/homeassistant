@@ -113,7 +113,6 @@
         tb.appendChild(tr);
       }
 
-      // Auto-select: keep current selection if it still exists; else follow newest if enabled
       const follow = $('#pv-follow')?.checked;
       const stillExists = SELECTED_ID && items.some(x=> String(x.id)===String(SELECTED_ID));
       if (stillExists) {
@@ -180,7 +179,6 @@
           if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
             loadInbox().then(()=>{
               if (data.event==='created' && $('#pv-follow')?.checked) {
-                // If server sends an id, prefer it; else rely on loadInbox auto-follow
                 if (data.id) selectRowById(data.id);
               }
             });
@@ -345,79 +343,6 @@
     }catch{ toast('Save failed'); }
   });
 
-  /* -------- Options (All) dynamic editor -------- */
-  function guessWidget(key, type, val){
-    const lower = key.toLowerCase();
-    if (type.startsWith('int') || type==='float') return `<input type="number" data-key="${key}" value="${val ?? ''}">`;
-    if (type==='bool') return `<label class="lbl"><input type="checkbox" data-key="${key}" ${val ? 'checked':''}/> ${key}</label>`;
-    // long-ish strings → textarea
-    if ((typeof val==='string' && val.length>80) || /_map$|_profiles$|_times$/.test(lower)) {
-      return `<textarea data-key="${key}">${val ?? ''}</textarea>`;
-    }
-    return `<input type="text" data-key="${key}" value="${val ?? ''}">`;
-  }
-  function renderOptions(options, schema){
-    const wrap = $('#opts-wrap');
-    wrap.innerHTML = '';
-    const groups = {
-      core: [], io: [], llm: [], services: [], env: [], misc: []
-    };
-    Object.keys(options||{}).forEach(k=>{
-      const t = (schema && schema[k]) ? String(schema[k]) : 'str';
-      const v = options[k];
-      const row = `<div class="opt-row">${guessWidget(k, t, v)}</div>`;
-
-      if (/^(bot_|jarvis_|beautify_|greeting_|chat_|personality_|active_persona|cache_refresh|heartbeat_)/.test(k)) groups.core.push(row);
-      else if (/^(gotify_|ntfy_|push_|ingest_|smtp_|proxy_|webhook_|intake_)/.test(k)) groups.io.push(row);
-      else if (/^llm_/.test(k) || /^(tinyllama|llama32_)/.test(k)) groups.llm.push(row);
-      else if (/^(radarr_|sonarr_|technitium_|uptimekuma_)/.test(k)) groups.services.push(row);
-      else if (/^weather_/.test(k)) groups.env.push(row);
-      else groups.misc.push(row);
-    });
-
-    function section(title, rows){
-      return `<fieldset><legend>${title}</legend><div class="grid-auto">${rows.join('')}</div></fieldset>`;
-    }
-    wrap.innerHTML =
-      section('Core', groups.core) +
-      section('I/O & Channels', groups.io) +
-      section('LLM', groups.llm) +
-      section('Services', groups.services) +
-      section('Environment / Weather', groups.env) +
-      section('Misc', groups.misc);
-  }
-  async function loadOptionsAll(){
-    try{
-      const [opts, sch] = await Promise.all([
-        jfetch(API('api/options')),
-        jfetch(API('api/schema'))
-      ]);
-      renderOptions(opts, sch);
-    }catch(e){
-      console.error(e);
-      $('#opts-wrap').innerHTML = '<div class="toast">Failed to load options/schema</div>';
-    }
-  }
-  $('#save-options').addEventListener('click', async()=>{
-    try{
-      // Rebuild object by reading every [data-key]
-      const fields = Array.from($('#opts-wrap').querySelectorAll('[data-key]'));
-      const payload = {};
-      for(const el of fields){
-        const key = el.dataset.key;
-        if (el.type === 'checkbox') payload[key] = !!el.checked;
-        else if (el.tagName === 'TEXTAREA') payload[key] = el.value;
-        else if (el.type === 'number') payload[key] = el.value==='' ? '' : (String(el.value).includes('.') ? parseFloat(el.value) : parseInt(el.value,10));
-        else payload[key] = el.value;
-      }
-      await jfetch(API('api/options'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(payload)
-      });
-      toast('Options saved');
-    }catch(e){ toast('Save failed'); }
-  });
-
   /* ----------------- Boot ---------------- */
   (async function boot(){
     await loadInbox();
@@ -426,8 +351,7 @@
       loadChannels(),
       loadInboxSettings(),
       loadLLM(),
-      loadEnviro(),
-      loadOptionsAll()
+      loadEnviro()
     ]);
   })();
 })();
