@@ -6,7 +6,8 @@ from typing import List, Tuple, Optional, Dict, Any
 # -------- Regex library --------
 IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
 # tolerate spaces/newlines between ] and (, and angle-bracketed URLs
-MD_IMG_RE  = re.compile(r'!\[[^\]]*\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
+# CAPTURE ALT (group 1) + URL (group 2)
+MD_IMG_RE  = re.compile(r'!\[([^\]]*)\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
 KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$', re.M)
 
 # timestamps and types
@@ -15,11 +16,11 @@ DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[
 TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
 
 # Strict IPv4: each octet 0-255
-IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b')
+IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{2})\b')
 HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
 
-EMOJI_RE = re.compile("["
+EMOJI_RE = re.compile("["  # a few unicode ranges
     "\U0001F300-\U0001F6FF"
     "\U0001F900-\U0001F9FF"
     "\U00002600-\U000026FF"
@@ -54,43 +55,71 @@ def _normalize(text: str) -> str:
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s.strip()
 
-def _linewise_dedup_markdown(text: str) -> str:
-    """Safe de-dup that never splits on '.' so IPs like 10.0.0.249 remain intact."""
+def _linewise_dedup_markdown(text: str, protect_message: bool = False) -> str:
+    """Safe de-dup that never splits on '.' and can protect the 📝 Message block."""
     lines = text.splitlines()
     out: List[str] = []
     seen: set = set()
     in_code = False
+    in_msg  = False
+
     for ln in lines:
         t = ln.rstrip()
+
+        # code fences pass-through
         if t.strip().startswith("```"):
             in_code = not in_code
-            out.append(t)
-            continue
+            out.append(t); continue
         if in_code:
-            out.append(t)
+            out.append(t); continue
+
+        # Message block protection
+        if protect_message:
+            if t.strip().startswith("📝 Message"):
+                in_msg = True
+                out.append(t); continue
+            # a new section header ends the message block
+            if in_msg and (t.strip().startswith("📄 ") or t.strip().startswith("🧠 ") or t.strip().startswith("![") or t.strip().startswith("📟 ")):
+                in_msg = False
+
+        if protect_message and in_msg:
+            out.append(t)  # no dedup inside the Message block
             continue
+
         key = re.sub(r'\s+', ' ', t.strip()).lower()
         if key and key not in seen:
             seen.add(key); out.append(t)
         elif t.strip() == "":
             if out and out[-1].strip() != "":
                 out.append(t)
+
     return "\n".join(out).strip()
 
-def _harvest_images(text: str) -> Tuple[str, List[str]]:
-    if not text: return "", []
+def _harvest_images(text: str) -> Tuple[str, List[str], List[str]]:
+    """Strip images from body but keep meaning: retain ALT as [image: ALT]."""
+    if not text: return "", [], []
     urls: List[str] = []
-    def _md(m):  urls.append(m.group(1)); return ""
+    alts: List[str] = []
+
+    def _md(m):
+        alt = (m.group(1) or "").strip()
+        url = m.group(2)
+        alts.append(alt)
+        urls.append(url)
+        return f"[image: {alt}]" if alt else "[image]"
+
     def _bare(m):
-        u = m.group(1).rstrip('.,;:)]}>"\'')  # trim common trailing punctuation
+        u = m.group(1).rstrip('.,;:)]}>"\'')
         urls.append(u)
-        return ""
+        return ""  # remove bare URL
+
     text = MD_IMG_RE.sub(_md, text)
     text = IMG_URL_RE.sub(_bare, text)
+
     uniq=[]; seen=set()
     for u in sorted(urls, key=_prefer_host_key):
         if u not in seen: seen.add(u); uniq.append(u)
-    return text.strip(), uniq
+    return text.strip(), uniq, alts
 
 def _find_ips(*texts: str) -> List[str]:
     ips=[]; seen=set()
@@ -202,18 +231,16 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
         else:
             details.append(_fmt_kv(k, v))
 
-    # also infer IPs/hosts/versions
     ip_list = _find_ips(title, body)
     for ip in ip_list:
-        if f"`{ip}`" not in " ".join(details):  # avoid dup
+        if f"`{ip}`" not in " ".join(details):
             details.append(_fmt_kv("IP", ip))
     for host in HOST_RE.findall(body or ""):
         if not IP_RE.match(host):
             details.append(_fmt_kv("host", host))
-
     for m in VER_RE.finditer(body or ""):
         ver = m.group(0)
-        if any(ver in ip for ip in ip_list):  # skip if part of IP
+        if any(ver in ip for ip in ip_list):
             continue
         details.append(_fmt_kv("version", ver))
 
@@ -221,7 +248,6 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
         first = _first_nonempty_line(body)
         if first: facts.append(_fmt_kv("Info", first))
 
-    # De-dup linewise (safe)
     def _uniq(lines: List[str]) -> List[str]:
         seen=set(); out=[]
         for ln in lines:
@@ -265,15 +291,6 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
 
 # --------- ADDITIVE: global helpers for riffs & persona ----------
 def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
-    """
-    If persona wasn't provided by intake, try resolve a default without changing existing behavior.
-    Priority:
-      1) passed_persona
-      2) /data/personality_state.json -> {"current_persona": "..."}
-      3) /data/options.json -> {"default_persona": "..."}
-      4) env DEFAULT_PERSONA
-      5) None (no change)
-    """
     if passed_persona:
         return passed_persona
     try:
@@ -296,18 +313,11 @@ def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
     return p or None
 
 def _global_riff_hint(extras_in: Optional[Dict[str, Any]], source_hint: Optional[str]) -> bool:
-    """
-    Make riffs effectively 'on' for all known intakes unless explicitly disabled.
-    Preserves explicit riff_hint=False from the caller.
-    """
-    # Respect explicit False if provided
     if isinstance(extras_in, dict) and "riff_hint" in extras_in:
         try:
             return bool(extras_in.get("riff_hint"))
         except Exception:
             return True
-
-    # Auto-on for common sources (covers SMTP, Proxy, Webhook, Apprise, ntfy, etc.)
     src = (source_hint or "").strip().lower()
     auto_sources = {
         "smtp","proxy","webhook","webhooks","apprise","gotify","ntfy",
@@ -315,8 +325,6 @@ def _global_riff_hint(extras_in: Optional[Dict[str, Any]], source_hint: Optional
     }
     if src in auto_sources:
         return True
-
-    # Default-on globally; can be tuned via env BEAUTIFY_RIFFS_DEFAULT (defaults True)
     default_on = os.getenv("BEAUTIFY_RIFFS_DEFAULT", "true").lower() in ("1","true","yes")
     return default_on
 
@@ -332,11 +340,9 @@ def _debug(msg: str) -> None:
 # ============================
 _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
-    # - /radarr (lscr.io/linuxserver/radarr:nightly): 30052c06bbef updated to 2091a873a55d
     re.compile(
         r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*\((?P<img>[^)]+)\)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
         re.I),
-    # - radarr: abcdef updated to 123456
     re.compile(
         r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
         re.I),
@@ -350,12 +356,8 @@ def _watchtower_host_from_title(title: str) -> Optional[str]:
     return None
 
 def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, Dict[str, Any]]:
-    """
-    Parse Watchtower email body and return a concise markdown list of updated items only.
-    Skips 'Fresh' lines. Works across registries (ghcr.io/lscr.io/docker.io/etc).
-    """
     lines = (body or "").splitlines()
-    updated: List[Tuple[str, str, str]] = []  # (name, image, newdigest)
+    updated: List[Tuple[str, str, str]] = []
     for ln in lines:
         if _WT_FRESH_RX.search(ln):
             continue
@@ -366,7 +368,6 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
                 img  = (m.groupdict().get("img") or "").strip()
                 new  = (m.groupdict().get("new") or "").strip()
                 if not img:
-                    # if no explicit (img) captured, keep name as image hint
                     img = name
                 updated.append((name, img, new))
                 break
@@ -391,20 +392,18 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """
-    extras_in: may carry riff_hint and other intake-provided metadata
-    """
+
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
-    normalized = html.unescape(normalized)  # unescape HTML entities for poster URLs
+    normalized = html.unescape(normalized)
 
-    # images (pre-harvest; we never let LLM touch the message content)
-    body_wo_imgs, images = _harvest_images(normalized)
+    # images (keep meaning via ALT placeholders)
+    body_wo_imgs, images, image_alts = _harvest_images(normalized)
 
     kind = _detect_type(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs)
 
-    # ===== ADDITIVE EARLY PATH: Watchtower-aware summary =====
+    # ===== Watchtower special-case =====
     if kind == "Watchtower":
         lines: List[str] = []
         lines += _header("Watchtower", badge)
@@ -417,27 +416,26 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         wt_md, wt_meta = _summarize_watchtower(title, body_wo_imgs)
         lines += ["", wt_md]
 
-        # persona riffs allowed for this type (we keep lists/numbers)
         ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
         riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
         if eff_persona and riff_hint:
             riffs = _persona_llm_riffs(ctx, eff_persona)
-        if riffs:
+        real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
+        real_riffs = [ r for r in real_riffs if r ]
+        if real_riffs:
             lines += ["", f"🧠 {eff_persona} riff"]
-            for r in riffs:
-                sr = r.replace("\r", "").strip()
-                if sr:
-                    lines.append("> " + sr)
+            for r in real_riffs:
+                lines.append("> " + r)
 
         text = "\n".join(lines).strip()
         text = _format_align_check(text)
-        text = _linewise_dedup_markdown(text)
+        text = _linewise_dedup_markdown(text, protect_message=True)
 
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
             "jarvis::beautified": True,
-            "jarvis::llm_riff_lines": len(riffs or []),
+            "jarvis::llm_riff_lines": len(real_riffs or []),
             "watchtower::host": wt_meta.get("watchtower::host"),
             "watchtower::updated_count": wt_meta.get("watchtower::updated_count"),
         }
@@ -445,20 +443,16 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["watchtower::truncated"] = True
         if isinstance(extras_in, dict):
             extras.update(extras_in)
-        # keep images in extras in case upstream wants them (none expected for Watchtower)
         if images:
             extras["jarvis::allImageUrls"] = images
-
+            extras["client::notification"] = {"bigImageUrl": images[0]}
         return text, extras
-    # ===== END Watchtower special-case =====
 
+    # ===== Standard path =====
     lines: List[str] = []
     lines += _header(kind, badge)
 
-    # persona resolution (additive; does not change caller's explicit persona)
     eff_persona = _effective_persona(persona)
-
-    # persona overlay line inside the card (top)
     if persona_quip:
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
@@ -469,43 +463,51 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if details:
         lines += ["", "📄 Details", *details]
 
-    # Inline the first image so the app view shows a poster (while push uses bigImageUrl)
+    # --- Always keep human content visible
+    def _first_paragraph(s: str) -> str:
+        s = (s or "").strip()
+        if not s: return ""
+        parts = [p.strip() for p in re.split(r'\n\s*\n', s) if p.strip()]
+        return parts[0] if parts else s
+
+    message_snip = _first_paragraph(body_wo_imgs)
+    if not message_snip:
+        message_snip = _first_paragraph(normalized)
+
+    if message_snip:
+        lines += ["", "📝 Message", message_snip]
+
+    # Inline the first image as poster; keep list in extras
     if images:
         lines += ["", f"![poster]({images[0]})"]
 
-    # --- LLM persona riffs at the bottom (1–3 lines) ---
+    # LLM persona riffs (render only if non-empty)
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
     riffs: List[str] = []
-
-    # ADDITIVE global riff switch: default-on across all intakes unless explicitly disabled
     riff_hint = _global_riff_hint(extras_in, source_hint)
-
     _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
-
     if eff_persona and riff_hint:
         riffs = _persona_llm_riffs(ctx, eff_persona)
 
-    if riffs:
+    real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
+    real_riffs = [ r for r in real_riffs if r ]
+    if real_riffs:
         lines += ["", f"🧠 {eff_persona} riff"]
-        for r in riffs:
-            sr = r.replace("\r", "").strip()
-            if sr:
-                lines.append("> " + sr)
+        for r in real_riffs:
+            lines.append("> " + r)
 
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
-    text = _linewise_dedup_markdown(text)
+    text = _linewise_dedup_markdown(text, protect_message=True)
 
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images,
-        "jarvis::llm_riff_lines": len(riffs or []),
+        "jarvis::llm_riff_lines": len(real_riffs or []),
     }
     if images:
         extras["client::notification"] = {"bigImageUrl": images[0]}
-
-    # carry over input extras safely
     if isinstance(extras_in, dict):
         extras.update(extras_in)
 
