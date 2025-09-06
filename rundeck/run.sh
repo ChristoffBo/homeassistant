@@ -15,7 +15,7 @@ fi
 # Persistent data (HA add-on /data is persistent)
 export RDECK_BASE="/data/rundeck"
 mkdir -p "${RDECK_BASE}"
-# official image uses uid 1000
+# Try to fix ownership; ignore if not allowed
 chown -R 1000:1000 "${RDECK_BASE}" || true
 
 # Ingress / proxy friendliness
@@ -35,4 +35,19 @@ echo "[INFO] server.port=${UI_PORT}"
 [ -n "${RUNDECK_GRAILS_URL:-}" ] && echo "[INFO] RUNDECK_GRAILS_URL=${RUNDECK_GRAILS_URL}"
 echo "[INFO] RUNDECK_SERVER_FORWARDED=${RUNDECK_SERVER_FORWARDED}"
 
-exec /docker-entrypoint.sh
+# Hand off to the image's original entrypoint if present; else start the WAR directly
+for p in \
+  /docker-entrypoint.sh \
+  /home/rundeck/docker-entrypoint.sh \
+  /home/rundeck/docker-lib/entry.sh \
+  /home/rundeck/bin/docker-lib/entry.sh \
+  /entrypoint.sh \
+  /entry.sh
+do
+  if [ -x "$p" ]; then
+    exec "$p"
+  fi
+done
+
+echo "[WARN] Could not find Rundeck entrypoint; starting WAR directly."
+exec java $JAVA_OPTS -jar /home/rundeck/rundeck.war
