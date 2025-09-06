@@ -2,40 +2,73 @@
   const $  = s => document.querySelector(s);
   const $$ = s => document.querySelectorAll(s);
 
-  // Robust API base
-  function apiRoot(){
-    if (window.JARVIS_API_BASE) return String(window.JARVIS_API_BASE).replace(/\/?$/, '/');
+  /* ---------- API base (Ingress-safe) ---------- */
+  function computeBase(){
+    // Prefer window.JARVIS_API_BASE if the backend sets it
+    if (window.JARVIS_API_BASE) {
+      const b = String(window.JARVIS_API_BASE);
+      return b.endsWith('/') ? b : b + '/';
+    }
+    // Otherwise use document.baseURI and keep the path segment as-is
     try{
       const u = new URL(document.baseURI);
-      let p = u.pathname;
+      let p = u.pathname || '/';
+      // remove trailing index.html
       if (p.endsWith('/index.html')) p = p.slice(0, -'/index.html'.length);
-      if (p.endsWith('/ui/'))      p = p.slice(0, -4);
-      if (!p.endsWith('/'))        p += '/';
+      if (!p.endsWith('/')) p += '/';
       u.pathname = p;
       return u.toString();
-    }catch{ return document.baseURI; }
+    }catch{
+      return './';
+    }
   }
-  const ROOT = apiRoot();
-  const API  = path => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
+  const ROOT = computeBase();
+
+  // Build two variants: absolute & relative; jfetch will try both
+  function API(path){
+    const rel = String(path).replace(/^\/+/, '');
+    let abs;
+    try{ abs = new URL(rel, ROOT).toString(); }
+    catch{ abs = rel; }
+    return [abs, rel];
+  }
 
   function toast(msg){
     const d=document.createElement('div');
     d.className='toast'; d.textContent=msg;
     $('#toast').appendChild(d);
-    setTimeout(()=>d.remove(),3500);
+    setTimeout(()=>d.remove(), 3500);
   }
 
-  async function jfetch(url, opts){
-    const r = await fetch(url, opts);
-    if(!r.ok){
-      let t=''; try{ t = await r.text(); }catch{}
-      throw new Error(r.status+' '+r.statusText+' @ '+url+'\n'+t);
+  async function jfetch(urlOrList, opts){
+    const variants = Array.isArray(urlOrList) ? urlOrList : [urlOrList];
+    let lastErr;
+    for (const url of variants){
+      try{
+        const r = await fetch(url, opts);
+        if (!r.ok){ lastErr = new Error(`${r.status} ${r.statusText}`); continue; }
+        const ct = (r.headers.get('content-type')||'').toLowerCase();
+        return ct.includes('application/json') ? r.json() : r.text();
+      }catch(e){ lastErr = e; }
     }
-    const ct = r.headers.get('content-type')||'';
-    return ct.includes('application/json') ? r.json() : r.text();
+    throw lastErr || new Error('Request failed');
   }
 
-  // Tabs
+  function openEventSource(path, onmsg, onerr){
+    const [abs, rel] = API(path);
+    let es = new EventSource(abs);
+    es.onmessage = onmsg;
+    es.onerror = ()=>{
+      try{ es.close(); }catch{}
+      // Try relative as fallback
+      const es2 = new EventSource(rel);
+      es2.onmessage = onmsg;
+      es2.onerror = onerr || (()=>{});
+    };
+    return es;
+  }
+
+  /* ---------- Tabs ---------- */
   $$('.tablink').forEach(b=>b.addEventListener('click',()=>{
     $$('.tablink').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
@@ -43,7 +76,7 @@
     $('#'+b.dataset.tab).classList.add('active');
   }));
 
-  /* ---------------- Inbox ---------------- */
+  /* ---------- Inbox ---------- */
   function fmt(ts){
     try{
       const v = Number(ts||0);
@@ -66,7 +99,12 @@
   let SELECTED_ID = null;
 
   function renderPreview(m){
-    if(!m){ $('#pv-title').textContent='No message selected'; $('#pv-meta').textContent='–'; $('#pv-body').innerHTML='<p class="muted">Click a message to see its contents here.</p>'; return; }
+    if(!m){
+      $('#pv-title').textContent='No message selected';
+      $('#pv-meta').textContent='–';
+      $('#pv-body').innerHTML='<span class="muted">Click a message to see its contents here.</span>';
+      return;
+    }
     $('#pv-title').textContent = m.title || '(no title)';
     const metaBits = [];
     if (m.source) metaBits.push(m.source);
@@ -92,8 +130,7 @@
       tb.innerHTML = '';
       if(!items.length){
         tb.innerHTML = '<tr><td colspan="4">No messages</td></tr>';
-        updateCounters([]);
-        renderPreview(null);
+        updateCounters([]); renderPreview(null);
         return;
       }
       updateCounters(items);
@@ -119,12 +156,14 @@
       } else if (follow) {
         const last = items[items.length-1];
         if (last) selectRowById(last.id);
+        else renderPreview(null);
       } else {
         renderPreview(null);
       }
     }catch(e){
-      console.error(e);
+      console.error('[inbox] load failed', e);
       tb.innerHTML = '<tr><td colspan="4">Failed to load</td></tr>';
+      renderPreview(null);
       toast('Inbox load error');
     }
   }
@@ -153,6 +192,7 @@
       }catch{ toast('Action failed'); }
     })();
   });
+
   $('#del-all').addEventListener('click', async()=>{
     if(!confirm('Delete ALL messages?')) return;
     const keep = $('#keep-arch')?.checked ? 1 : 0;
@@ -163,40 +203,24 @@
     }catch{ toast('Delete all failed'); }
   });
 
-  // Live updates via SSE with exponential backoff
-  (function startStream(){
-    let es=null, backoff=1000;
-    function connect(){
-      try{ es && es.close(); }catch{}
-      es = new EventSource(API('api/stream'));
-      es.onopen = ()=> backoff = 1000;
-      es.onerror = ()=>{ try{es.close();}catch{}; setTimeout(connect, Math.min(backoff, 15000)); backoff = Math.min(backoff*2, 15000); };
-      es.onmessage = (ev)=>{
-        try{
-          const data = JSON.parse(ev.data||'{}');
-          if(['created','deleted','deleted_all','saved','purged'].includes(data.event)){
-            loadInbox().then(()=>{
-              if (data.event==='created' && $('#pv-follow')?.checked) {
-                if (data.id) selectRowById(data.id);
-              }
-            });
-          }
-        }catch{}
-      };
-    }
-    connect();
-    setInterval(loadInbox, 300000);
+  // Live updates (SSE) with fallback to relative path
+  (function(){
+    openEventSource('api/stream', (ev)=>{
+      try{
+        const d = JSON.parse(ev.data||'{}');
+        if(['created','deleted','deleted_all','saved','purged'].includes(d.event)){
+          loadInbox().then(()=>{
+            if (d.event==='created' && $('#pv-follow')?.checked && d.id) selectRowById(d.id);
+          });
+        }
+      }catch{}
+    }, ()=>{/* ignore */});
   })();
 
-  /* =================== AEGISOPS =================== */
+  /* ---------- AEGISOPS ---------- */
+  const AEG = { hosts:[], playbooks:[], schedules:[] };
 
-  const AEG = {
-    hosts: [],        // [{name,host,user}]
-    playbooks: [],    // ["check_services.yml", ...]
-    schedules: []     // [{id, playbook, servers, every, ...}]
-  };
-
-  // --- tiny INI-ish parser (just enough for inventory.ini one-line hosts) ---
+  // minimal INI parser for inventory.ini (one host per line)
   function parseInventoryIni(txt){
     const rows=[];
     (txt||'').split(/\r?\n/).forEach(line=>{
@@ -209,15 +233,10 @@
         const i=p.indexOf('=');
         return i>0 ? [p.slice(0,i), p.slice(i+1)] : [p, true];
       }));
-      rows.push({
-        name,
-        host: kv.ansible_host || '',
-        user: kv.ansible_user || ''
-      });
+      rows.push({ name, host: kv.ansible_host||'', user: kv.ansible_user||'' });
     });
     return rows;
   }
-
   function buildInventoryIni(rows){
     const lines=['[all]'];
     rows.forEach(r=>{
@@ -229,141 +248,94 @@
     return lines.join('\n')+'\n';
   }
 
-  // ---- API helpers (graceful when backend not ready) ----
-  async function aeg_list_playbooks(){
-    try{
+  // API helpers (backend may not exist yet — soft-fail with toasts)
+  const aeg = {
+    async listPlaybooks(){ try{
       const res = await jfetch(API('api/aegisops/playbooks'));
-      return Array.isArray(res?.items) ? res.items
-           : Array.isArray(res) ? res
-           : [];
-    }catch(e){ toast('Playbook list unavailable'); return []; }
-  }
-  async function aeg_get_inventory(){
-    try{
+      return Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+    }catch(e){ toast('Playbook list unavailable'); return []; }},
+
+    async getInventory(){ try{
       const txt = await jfetch(API('api/aegisops/inventory'));
       return String(txt);
-    }catch(e){ toast('Inventory not reachable'); return ''; }
-  }
-  async function aeg_save_inventory(text){
-    try{
-      await jfetch(API('api/aegisops/inventory'), {
-        method:'POST',
-        headers:{'Content-Type':'text/plain'},
-        body:text
-      });
+    }catch(e){ toast('Inventory not reachable'); return ''; }},
+
+    async saveInventory(text){ try{
+      await jfetch(API('api/aegisops/inventory'), {method:'POST', headers:{'Content-Type':'text/plain'}, body:text});
       toast('Inventory saved');
-    }catch(e){ toast('Save failed (backend missing?)'); }
-  }
-  async function aeg_list_schedules(){
-    try{
+    }catch(e){ toast('Save failed (backend?)'); }},
+
+    async listSchedules(){ try{
       const res = await jfetch(API('api/aegisops/schedules'));
       return Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
-    }catch(e){ toast('Schedules not reachable'); return []; }
-  }
-  async function aeg_save_schedule(sch){
-    try{
-      await jfetch(API('api/aegisops/schedules'), {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(sch)
-      });
+    }catch(e){ toast('Schedules not reachable'); return []; }},
+
+    async saveSchedule(s){ try{
+      await jfetch(API('api/aegisops/schedules'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(s)});
       toast('Schedule saved');
-    }catch(e){ toast('Save schedule failed'); }
-  }
-  async function aeg_delete_schedule(id){
-    try{
+    }catch(e){ toast('Save schedule failed'); }},
+
+    async deleteSchedule(id){ try{
       await jfetch(API('api/aegisops/schedules/'+encodeURIComponent(id)), {method:'DELETE'});
       toast('Schedule deleted');
-    }catch(e){ toast('Delete failed'); }
-  }
-  async function aeg_runs(){
-    try{
+    }catch(e){ toast('Delete failed'); }},
+
+    async runs(){ try{
       const res = await jfetch(API('api/aegisops/runs?limit=100'));
       return Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
-    }catch(e){ toast('Runs not reachable'); return []; }
-  }
-  async function aeg_run_once(playbook, servers, forks){
-    try{
-      await jfetch(API('api/aegisops/run'), {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({playbook, servers, forks})
-      });
+    }catch(e){ toast('Runs not reachable'); return []; }},
+
+    async runOnce(playbook, servers, forks){ try{
+      await jfetch(API('api/aegisops/run'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({playbook, servers, forks})});
       toast('Run triggered');
-    }catch(e){ toast('Run failed'); }
-  }
+    }catch(e){ toast('Run failed'); }},
 
-  // ---- Playbook file API (REST first, then fallback to /file + /save) ----
-  async function aeg_get_playbook_file(name){
-    try{
-      const r = await jfetch(API('api/aegisops/playbooks/' + encodeURIComponent(name)));
-      if (r && typeof r.content === 'string') return r.content;
-      if (typeof r === 'string') return r;
-    }catch{}
-    try{
-      const r = await jfetch(API('api/aegisops/file?kind=playbook&name=' + encodeURIComponent(name)));
-      if (r && typeof r.content === 'string') return r.content;
-      if (typeof r === 'string') return r;
-    }catch{}
-    throw new Error('Playbook fetch failed for ' + name);
-  }
+    // Editor endpoints
+    async getPlaybook(name){ try{
+      return await jfetch(API('api/aegisops/playbook?name='+encodeURIComponent(name)));
+    }catch(e){ toast('Load failed'); return ''; }},
+    async savePlaybook(name, content){ try{
+      await jfetch(API('api/aegisops/playbook'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, content})});
+      toast('Saved');
+    }catch(e){ toast('Save failed'); }},
+    async deletePlaybook(name){ try{
+      await jfetch(API('api/aegisops/playbook'), {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+      toast('Deleted');
+    }catch(e){ toast('Delete failed'); }},
+  };
 
-  async function aeg_save_playbook_file(name, content){
-    try{
-      await jfetch(API('api/aegisops/playbooks'), {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ name, content })
-      });
-      return true;
-    }catch{}
-    try{
-      await jfetch(API('api/aegisops/save'), {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ kind: 'playbook', name, content })
-      });
-      return true;
-    }catch(e){
-      console.error(e);
-      return false;
-    }
-  }
-
-  // ---- RENDER: Inventory table ----
+  /* ---- Hosts UI ---- */
   function renderHosts(){
     const tb = $('#ag-hosts');
-    if(!tb){ return; }
     tb.innerHTML = '';
     if(!AEG.hosts.length){
       tb.innerHTML = '<tr><td colspan="4">No hosts (use Add Host or Refresh)</td></tr>';
       return;
     }
-    for(let i=0;i<AEG.hosts.length;i++){
-      const h = AEG.hosts[i];
+    AEG.hosts.forEach((h,i)=>{
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><input class="ag-host-name" value="${h.name||''}" /></td>
-        <td><input class="ag-host-host" value="${h.host||''}" /></td>
-        <td><input class="ag-host-user" value="${h.user||''}" /></td>
-        <td><button class="btn danger" data-idx="${i}" data-act="del-host">Delete</button></td>
-      `;
+        <td><input class="ag-host-name" value="${h.name||''}"></td>
+        <td><input class="ag-host-host" value="${h.host||''}"></td>
+        <td><input class="ag-host-user" value="${h.user||''}"></td>
+        <td><button class="btn danger" data-idx="${i}" data-act="del-host">Delete</button></td>`;
       tb.appendChild(tr);
-    }
+    });
   }
-  $('#ag-hosts')?.addEventListener('click',(e)=>{
+
+  $('#ag-hosts').addEventListener('click',(e)=>{
     const b = e.target.closest('button[data-act="del-host"]');
     if(!b) return;
     const idx = parseInt(b.dataset.idx,10);
-    if(isNaN(idx)) return;
-    AEG.hosts.splice(idx,1);
-    renderHosts(); renderServersSelect();
+    if(Number.isFinite(idx)){ AEG.hosts.splice(idx,1); renderHosts(); renderServersSelect(); }
   });
-  $('#ag-host-add')?.addEventListener('click',()=>{
+
+  $('#ag-host-add').addEventListener('click',()=>{
     AEG.hosts.push({name:'host',host:'127.0.0.1',user:'root'});
     renderHosts(); renderServersSelect();
   });
-  $('#ag-host-save')?.addEventListener('click',()=>{
+
+  $('#ag-host-save').addEventListener('click',()=>{
     const names = $$('#ag-hosts .ag-host-name');
     const hosts = $$('#ag-hosts .ag-host-host');
     const users = $$('#ag-hosts .ag-host-user');
@@ -371,145 +343,53 @@
     for(let i=0;i<names.length;i++){
       const name = names[i].value.trim();
       if(!name) continue;
-      rows.push({name, host: (hosts[i].value||'').trim(), user:(users[i].value||'').trim()});
+      rows.push({name, host:(hosts[i].value||'').trim(), user:(users[i].value||'').trim()});
     }
     AEG.hosts = rows;
-    aeg_save_inventory(buildInventoryIni(AEG.hosts)).then(()=>{
-      renderHosts(); renderServersSelect();
-    });
+    aeg.saveInventory(buildInventoryIni(AEG.hosts)).then(()=>{ renderHosts(); renderServersSelect(); });
   });
-  $('#ag-host-refresh')?.addEventListener('click', async()=>{
-    const txt = await aeg_get_inventory();
+
+  $('#ag-host-refresh').addEventListener('click', async()=>{
+    const txt = await aeg.getInventory();
     AEG.hosts = parseInventoryIni(txt);
     renderHosts(); renderServersSelect();
   });
 
-  // ---- RENDER: Playbooks ----
+  /* ---- Playbooks dropdown ---- */
   function renderPlaybooks(){
-    const s1 = $('#ag-pb-select');
-    const s2 = $('#ag-sch-playbook-select');
-    const s3 = $('#pbSelect'); // NEW editor select (optional)
-
-    function fill(sel){
-      if(!sel) return;
+    const fills = [$('#ag-pb-select'), $('#ag-sch-playbook-select'), $('#pb-select')];
+    fills.forEach(sel=>{
       sel.innerHTML='';
       if(!AEG.playbooks.length){
-        const o = document.createElement('option');
-        o.textContent = 'No playbooks found';
-        o.value = '';
-        sel.appendChild(o);
+        sel.innerHTML = '<option value="">No playbooks found</option>';
         sel.disabled = true;
-        return;
+      }else{
+        sel.disabled = false;
+        AEG.playbooks.forEach(pb=>{
+          const o=document.createElement('option'); o.value=pb; o.textContent=pb; sel.appendChild(o);
+        });
       }
-      sel.disabled = false;
-      AEG.playbooks.forEach(pb=>{
-        const o=document.createElement('option');
-        o.value=pb; o.textContent=pb;
-        sel.appendChild(o);
-      });
-    }
-    fill(s1); fill(s2); fill(s3);
+    });
   }
-  $('#ag-pb-refresh')?.addEventListener('click', async()=>{
-    AEG.playbooks = await aeg_list_playbooks();
+
+  $('#ag-pb-refresh').addEventListener('click', async()=>{
+    AEG.playbooks = await aeg.listPlaybooks();
     renderPlaybooks();
   });
-  $('#ag-pb-run')?.addEventListener('click', ()=>{
-    const pb = $('#ag-pb-select')?.value;
+
+  $('#ag-pb-run').addEventListener('click', ()=>{
+    const pb = $('#ag-pb-select').value;
     if(!pb){ toast('Select a playbook'); return; }
     const servers = AEG.hosts.map(h=>h.name);
-    aeg_run_once(pb, servers, 1);
+    aeg.runOnce(pb, servers, 1);
   });
 
-  // -------- Playbook Editor (optional tab) --------
-  function initPlaybookEditor(){
-    const sel = $('#pbSelect');
-    const name = $('#pbName');
-    const editor = $('#pbEditor');
-    const btnNew = $('#btnPbNew');
-    const btnDup = $('#btnPbDuplicate');
-    const btnSave = $('#btnPbSave');
-    const btnDl  = $('#btnPbDownload');
-
-    if(!sel || !name || !editor) return;
-
-    async function loadEditorListAndSelect(){
-      if (!AEG.playbooks.length) {
-        try { AEG.playbooks = await aeg_list_playbooks(); } catch{}
-      }
-      renderPlaybooks();
-      if (AEG.playbooks.length){
-        const def = AEG.playbooks.includes('check_services.yml')
-          ? 'check_services.yml' : AEG.playbooks[0];
-        sel.value = def;
-        name.value = def;
-        try{
-          const txt = await aeg_get_playbook_file(def);
-          editor.value = typeof txt === 'string' ? txt : '';
-        }catch{ editor.value = ''; }
-      }else{
-        sel.innerHTML = '<option disabled selected>No playbooks found</option>';
-        editor.value = '';
-      }
-    }
-
-    sel.addEventListener('change', async ()=>{
-      name.value = sel.value || '';
-      try{
-        const txt = await aeg_get_playbook_file(sel.value);
-        editor.value = typeof txt === 'string' ? txt : '';
-      }catch{ editor.value = ''; toast('Could not load file'); }
-    });
-
-    btnNew && btnNew.addEventListener('click', ()=>{
-      name.value = 'new_playbook.yml';
-      editor.value = `---
-- name: New AegisOps Playbook
-  hosts: all
-  gather_facts: false
-  tasks:
-    - debug:
-        msg: "hello world"`;
-      toast('New file primed (unsaved)');
-    });
-
-    btnDup && btnDup.addEventListener('click', ()=>{
-      const cur = (name.value || sel.value || 'playbook').trim();
-      const dot = cur.lastIndexOf('.');
-      name.value = dot > 0 ? cur.slice(0, dot) + '.copy' + cur.slice(dot) : (cur + '.copy.yml');
-      toast('Filename duplicated; click Save to write it');
-    });
-
-    btnSave && btnSave.addEventListener('click', async ()=>{
-      const nm = (name.value||'').trim();
-      if(!nm) return toast('Enter a filename before saving');
-      const ok = await aeg_save_playbook_file(nm, editor.value);
-      if(!ok) return toast('Save failed');
-      toast('Saved ✔');
-      try{ AEG.playbooks = await aeg_list_playbooks(); }catch{}
-      renderPlaybooks();
-      if (sel) sel.value = nm;
-    });
-
-    btnDl && btnDl.addEventListener('click', ()=>{
-      const nm = (name.value || 'playbook.yml').trim();
-      const blob = new Blob([editor.value], {type:'text/yaml'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = nm; a.click();
-      URL.revokeObjectURL(a.href);
-    });
-
-    loadEditorListAndSelect();
-  }
-
-  // ---- RENDER: Servers (multi-select in Schedules) ----
+  /* ---- Servers multiselect ---- */
   function renderServersSelect(){
     const sel = $('#ag-sch-servers-select');
-    if(!sel) return;
     sel.innerHTML='';
     if(!AEG.hosts.length){
-      const o=document.createElement('option'); o.value=''; o.textContent='No hosts'; sel.appendChild(o); sel.disabled=true; return;
+      sel.innerHTML='<option value="">No hosts</option>'; sel.disabled=true; return;
     }
     sel.disabled=false;
     AEG.hosts.forEach(h=>{
@@ -517,14 +397,11 @@
     });
   }
 
-  // ---- Schedules table ----
+  /* ---- Schedules ---- */
   function renderSchedules(){
     const tb = $('#ag-table');
-    if(!tb) return;
     tb.innerHTML='';
-    if(!AEG.schedules.length){
-      tb.innerHTML='<tr><td colspan="5">No schedules</td></tr>'; return;
-    }
+    if(!AEG.schedules.length){ tb.innerHTML='<tr><td colspan="5">No schedules</td></tr>'; return; }
     AEG.schedules.forEach(s=>{
       const tr=document.createElement('tr');
       tr.innerHTML = `
@@ -539,20 +416,20 @@
       tb.appendChild(tr);
     });
   }
-  $('#ag-table')?.addEventListener('click', (e)=>{
+
+  $('#ag-table').addEventListener('click', (e)=>{
     const b = e.target.closest('button[data-act]');
     if(!b) return;
-    const id = b.dataset.id;
-    const act= b.dataset.act;
+    const id=b.dataset.id, act=b.dataset.act;
     if(act==='del-sch'){
       if(!confirm('Delete schedule '+id+'?')) return;
-      aeg_delete_schedule(id).then(loadSchedules);
+      aeg.deleteSchedule(id).then(loadSchedules);
     }else if(act==='edit-sch'){
       const s = AEG.schedules.find(x=>x.id===id);
       if(!s) return;
-      $('#ag-sch-id').value = s.id || '';
-      $('#ag-sch-every').value = s.every || '5m';
-      $('#ag-sch-forks').value = s.forks || 1;
+      $('#ag-sch-id').value = s.id||'';
+      $('#ag-sch-every').value = s.every||'5m';
+      $('#ag-sch-forks').value = s.forks||1;
       $('#ag-notify-success').checked = !!(s.notify?.on_success);
       $('#ag-notify-fail').checked    = !!(s.notify?.on_fail ?? true);
       $('#ag-notify-change').checked  = !!(s.notify?.only_on_state_change ?? true);
@@ -562,12 +439,12 @@
       $('#ag-sch-playbook-select').value = s.playbook || '';
       const sel = $('#ag-sch-servers-select');
       const set = new Set((Array.isArray(s.servers)?s.servers:[]).map(String));
-      ;[...sel.options].forEach(o=> o.selected = set.has(o.value));
+      [...sel.options].forEach(o=> o.selected = set.has(o.value));
       toast('Loaded schedule into editor');
     }
   });
 
-  $('#ag-add')?.addEventListener('click', ()=>{
+  $('#ag-add').addEventListener('click', ()=>{
     const id = $('#ag-sch-id').value.trim();
     if(!id){ toast('Schedule id required'); return; }
     const playbook = $('#ag-sch-playbook-select').value;
@@ -588,20 +465,19 @@
         target_key: $('#ag-notify-key').value || ''
       }
     };
-    aeg_save_schedule(sch).then(loadSchedules);
+    aeg.saveSchedule(sch).then(loadSchedules);
   });
 
   async function loadSchedules(){
-    AEG.schedules = await aeg_list_schedules();
+    AEG.schedules = await aeg.listSchedules();
     renderSchedules();
   }
 
-  // ---- Runs table ----
+  /* ---- Runs ---- */
   async function loadRuns(){
     const tb = $('#ag-runs');
-    if(!tb){ return; }
     tb.innerHTML = '<tr><td colspan="7">Loading…</td></tr>';
-    const rows = await aeg_runs();
+    const rows = await aeg.runs();
     tb.innerHTML='';
     if(!rows.length){ tb.innerHTML='<tr><td colspan="7">No runs</td></tr>'; return; }
     rows.forEach(r=>{
@@ -613,33 +489,58 @@
         <td>${r.ok_count??''}</td>
         <td>${r.changed_count??''}</td>
         <td>${r.fail_count??''}</td>
-        <td>${r.unreachable_count??''}</td>
-      `;
+        <td>${r.unreachable_count??''}</td>`;
       tb.appendChild(tr);
     });
   }
-  $('#ag-refresh')?.addEventListener('click', loadRuns);
-  $('#ag-meta-refresh')?.addEventListener('click', async()=>{
-    const [inv, pbs] = await Promise.all([aeg_get_inventory(), aeg_list_playbooks()]);
-    AEG.hosts = parseInventoryIni(inv);
-    AEG.playbooks = pbs;
+  $('#ag-refresh').addEventListener('click', loadRuns);
+  $('#ag-meta-refresh').addEventListener('click', async()=>{
+    const [inv, pbs] = await Promise.allSettled([aeg.getInventory(), aeg.listPlaybooks()]);
+    if(inv.status==='fulfilled') AEG.hosts = parseInventoryIni(inv.value); else AEG.hosts=[];
+    if(pbs.status==='fulfilled') AEG.playbooks = pbs.value; else AEG.playbooks=[];
     renderHosts(); renderServersSelect(); renderPlaybooks();
   });
 
-  /* ----------------- Boot ---------------- */
-  (async function boot(){
-    // inbox
-    await loadInbox();
+  /* ---- Playbook Editor ---- */
+  $('#pb-load').addEventListener('click', async()=>{
+    const name = $('#pb-select').value;
+    if(!name){ toast('Pick a playbook'); return; }
+    const txt = await aeg.getPlaybook(name);
+    $('#pb-editor').value = String(txt || '');
+    $('#pb-new-name').value = name; // default save target to same file
+  });
 
-    // AegisOps metadata
-    const [inv, pbs] = await Promise.allSettled([aeg_get_inventory(), aeg_list_playbooks()]);
+  $('#pb-save').addEventListener('click', async()=>{
+    const name = ($('#pb-new-name').value || '').trim();
+    if(!name){ toast('Enter a filename'); return; }
+    await aeg.savePlaybook(name, $('#pb-editor').value);
+    // refresh list
+    AEG.playbooks = await aeg.listPlaybooks();
+    renderPlaybooks();
+    $('#pb-select').value = name;
+  });
+
+  $('#pb-delete').addEventListener('click', async()=>{
+    const name = $('#pb-select').value || $('#pb-new-name').value;
+    if(!name){ toast('Pick a playbook'); return; }
+    if(!confirm('Delete '+name+'?')) return;
+    await aeg.deletePlaybook(name);
+    $('#pb-editor').value = '';
+    $('#pb-new-name').value = '';
+    AEG.playbooks = await aeg.listPlaybooks();
+    renderPlaybooks();
+  });
+
+  /* ---------- Boot ---------- */
+  (async function boot(){
+    // Inbox
+    await loadInbox();
+    // Aegis metadata
+    const [inv, pbs] = await Promise.allSettled([aeg.getInventory(), aeg.listPlaybooks()]);
     if(inv.status==='fulfilled') AEG.hosts = parseInventoryIni(inv.value); else AEG.hosts=[];
     if(pbs.status==='fulfilled') AEG.playbooks = pbs.value; else AEG.playbooks=[];
     renderHosts(); renderServersSelect(); renderPlaybooks();
     loadSchedules();
     loadRuns();
-
-    // NEW: start Playbook Editor only if its elements exist
-    initPlaybookEditor();
   })();
 })();
