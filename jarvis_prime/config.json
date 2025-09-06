@@ -181,7 +181,9 @@
     "llm_enviroguard_hot_c": 30,
     "llm_enviroguard_cold_c": 10,
     "llm_enviroguard_hysteresis_c": 2,
-    "llm_enviroguard_profiles": "{\"manual\":{\"cpu_percent\":80,\"ctx_tokens\":4096,\"timeout_seconds\":20},\"hot\":{\"cpu_percent\":50,\"ctx_tokens\":2048,\"timeout_seconds\":15},\"normal\":{\"cpu_percent\":80,\"ctx_tokens\":4096,\"timeout_seconds\":20},\"boost\":{\"cpu_percent\":95,\"ctx_tokens\":8192,\"timeout_seconds\":25}}"
+    "llm_enviroguard_profiles": "{\"manual\":{\"cpu_percent\":80,\"ctx_tokens\":4096,\"timeout_seconds\":20},\"hot\":{\"cpu_percent\":50,\"ctx_tokens\":2048,\"timeout_seconds\":15},\"normal\":{\"cpu_percent\":80,\"ctx_tokens\":4096,\"timeout_seconds\":20},\"boost\":{\"cpu_percent\":95,\"ctx_tokens\":8192,\"timeout_seconds\":25}}",
+
+    "aegisops_enabled": false
   },
   "schema": {
     "bot_name": "str",
@@ -346,7 +348,9 @@
     "llm_enviroguard_hot_c": "int",
     "llm_enviroguard_cold_c": "int",
     "llm_enviroguard_hysteresis_c": "int",
-    "llm_enviroguard_profiles": "str"
+    "llm_enviroguard_profiles": "str",
+
+    "aegisops_enabled": "bool"
   },
   "ingress": true,
   "ingress_port": 2581,
