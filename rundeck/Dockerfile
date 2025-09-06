@@ -3,7 +3,7 @@
 
 # Give BUILD_FROM a real default so local builds work even if the builder
 # doesn’t inject it. Only amd64 is supported by upstream images.
-ARG BUILD_FROM=rundeck/rundeck:SNAPSHOT
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 # Install jq to read /data/options.json (run as root, then drop back)
