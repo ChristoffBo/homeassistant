@@ -53,7 +53,7 @@ async def _sse(request: web.Request):
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
     try:
-        await resp.write(b": hello\\n\\n")
+        await resp.write(b": hello\n\n")
     except Exception:
         pass
     try:
@@ -61,7 +61,7 @@ async def _sse(request: web.Request):
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             try:
-                await resp.write(b"data: " + payload + b"\\n\\n")
+                await resp.write(b"data: " + payload + b"\n\n")
             except (ConnectionResetError, RuntimeError, BrokenPipeError):
                 break
     except asyncio.CancelledError:
@@ -455,20 +455,4 @@ def register_aegisops_routes(app):
     app.router.add_get   ("/api/aegisops/inventory",           aeg_get_inventory)
     app.router.add_post  ("/api/aegisops/inventory",           aeg_put_inventory)  # UI posts text/plain
 
-    app.router.add_get   ("/api/aegisops/schedules",           aeg_list_schedules)
-    app.router.add_post  ("/api/aegisops/schedules",           aeg_save_schedule)
-    app.router.add_delete("/api/aegisops/schedules/{sid}",     aeg_delete_schedule)
-
-    app.router.add_get   ("/api/aegisops/runs",                aeg_list_runs)
-    app.router.add_post  ("/api/aegisops/run",                 aeg_run_once)
-
-# Try to register immediately if `app` exists in this module.
-try:
-    register_aegisops_routes(app)  # type: ignore[name-defined]
-except Exception as _e:
-    # If your file creates the aiohttp app later, just call register_aegisops_routes(app)
-    # right after the app is created.
-    pass
-
-# ===================== END AEGISOPS API (ADD-ONLY) ==========================
-
+    app.router.add_get   (
