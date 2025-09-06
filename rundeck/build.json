@@ -1,0 +1,7 @@
+{
+  "build_from": {
+    "amd64": "rundeck/rundeck:latest",
+    "aarch64": "rundeck/rundeck:latest",
+    "armv7": "rundeck/rundeck:latest"
+  }
+}
