@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Home Assistant ntfy add-on entrypoint (no YAML; CLI flags only)
+# Home Assistant ntfy add-on entrypoint (CLI flags only; no YAML)
 # - Reads /data/options.json
-# - Sanitizes base_url (origin only, no path)
-# - Starts ntfy via CLI flags (avoids YAML parse errors)
+# - Strips stray quotes from base_url, enforces origin-only (no path)
+# - Starts ntfy with CLI flags to avoid YAML parser issues
 
 OPTS_FILE="/data/options.json"
 mkdir -p /data /data/ntfy || true
@@ -64,16 +64,22 @@ bp_bool="$(norm_bool "${behind_proxy}")"
 att_bool="$(norm_bool "${att_enabled}")"
 auth_bool="$(norm_bool "${auth_enabled}")"
 
-# ---------- sanitize/default base_url (MUST be origin; no path allowed) ----------
+# ---------- sanitize/default base_url ----------
+# 1) default if empty
 if [ -z "${base_url:-}" ] || [ "${base_url}" = "null" ]; then
   base_url="http://127.0.0.1:${listen_port}"
   echo "[ntfy-addon] INFO: base_url not set; defaulting to ${base_url}"
 fi
+# 2) strip CR and surrounding quotes (if user placed quotes in options.json)
+base_url="$(printf '%s' "${base_url}" | tr -d '\r')"
+# strip leading/trailing double and single quotes
+base_url="${base_url%\"}"; base_url="${base_url#\"}"
+base_url="${base_url%\'}"; base_url="${base_url#\'}"
+# 3) enforce origin only (no path/query/fragment)
 orig_base="${base_url}"
-# strip any path/query/fragment: keep only scheme://host[:port]
 base_url="$(printf '%s' "${base_url}" | sed -E 's#^(https?://[^/]+).*#\1#')"
 if [ "${orig_base}" != "${base_url}" ]; then
-  echo "[ntfy-addon] WARNING: base_url contained a path; sanitized to '${base_url}'. ntfy forbids sub-paths."
+  echo "[ntfy-addon] WARNING: base_url contained a path and was sanitized to '${base_url}'. ntfy forbids sub-paths."
 fi
 
 # ---------- ensure dirs ----------
@@ -83,12 +89,12 @@ mkdir -p "$(dirname "$cache_file")" "$att_dir"
 args=( serve )
 args+=( --listen-http "0.0.0.0:${listen_port}" )
 args+=( --cache-file "${cache_file}" )
-args+=( --base-url ${base_url} )   # IMPORTANT: no extra quotes here
+# IMPORTANT: do NOT wrap ${base_url} in quotes when adding to the array
+args+=( --base-url ${base_url} )
 if [ "${bp_bool}" = "true" ]; then
   args+=( --behind-proxy )
 fi
 
-# attachments require base-url; we have one sanitized above
 if [ "${att_bool}" = "true" ]; then
   args+=( --attachment-cache-dir "${att_dir}" )
   args+=( --attachment-file-size-limit "${att_file_size}" )
@@ -96,7 +102,6 @@ if [ "${att_bool}" = "true" ]; then
   args+=( --attachment-expiry-duration "${att_expiry}" )
 fi
 
-# auth: create auth file if enabled; add admin if provided
 if [ "${auth_bool}" = "true" ]; then
   auth_file="/data/user.db"
   : > "${auth_file}"
