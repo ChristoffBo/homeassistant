@@ -1,58 +1,94 @@
 #!/usr/bin/env python3
-import os, json, time, subprocess
-from helpers.db import init as db_init, purge_older_than_days
+# AegisOps runner.py
+# - Reads schedules.json
+# - Executes ansible-playbook at intervals
+# - Pushes results via callback plugin (aegisops_notify)
 
-SCHEDULES = "/share/jarvis_prime/aegisops/schedules.json"
-ANSIBLE_CFG_DIR = "/share/jarvis_prime/aegisops"
-DEFAULT_KEEP_DAYS = int(os.getenv("AEGISOPS_KEEP_DAYS", "30"))
+import os, json, time, asyncio, subprocess, signal
+from datetime import datetime, timedelta
 
-def _load_schedules():
-    if not os.path.exists(SCHEDULES):
-        return []
-    with open(SCHEDULES, "r", encoding="utf-8") as f:
-        return json.load(f)
+BASE = "/share/jarvis_prime/aegisops"
+SCHEDULES_FILE = os.path.join(BASE, "schedules.json")
+PLAYBOOKS_DIR = os.path.join(BASE, "playbooks")
 
-def _parse_every(s):
-    n = int(''.join([c for c in s if c.isdigit()]) or "5")
-    u = ''.join([c for c in s if c.isalpha()]) or "m"
-    if u == "m": return n * 60
-    if u == "h": return n * 3600
-    if u == "d": return n * 86400
-    return 300
+DEFAULT_INTERVALS = {
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "1h": 60 * 60,
+    "6h": 6 * 60 * 60,
+    "24h": 24 * 60 * 60,
+}
 
-def run_playbook(playbook, servers, forks, target_key):
-    env = os.environ.copy()
-    env["ANSIBLE_CONFIG"] = os.path.join(ANSIBLE_CFG_DIR, "ansible.cfg")
-    env["AEGISOPS_PLAYBOOK"] = playbook
-    env["AEGISOPS_TARGET_KEY"] = target_key
+class Schedule:
+    def __init__(self, entry: dict):
+        self.id = entry.get("id")
+        self.playbook = entry.get("playbook")
+        self.servers = entry.get("servers", ["all"])
+        self.every = entry.get("every", "1h")
+        self.forks = int(entry.get("forks", 1))
+        self.notify = entry.get("notify", {})
+        self.next_run = datetime.now()
+
+    def interval_seconds(self):
+        return DEFAULT_INTERVALS.get(self.every, 3600)
+
+    def due(self):
+        return datetime.now() >= self.next_run
+
+    def bump(self):
+        self.next_run = datetime.now() + timedelta(seconds=self.interval_seconds())
+
+async def run_playbook(schedule: Schedule):
+    pb_path = os.path.join(PLAYBOOKS_DIR, schedule.playbook)
+    if not os.path.isfile(pb_path):
+        print(f"[runner] missing playbook {pb_path}")
+        return
     cmd = [
-        "ansible-playbook",
-        os.path.join(ANSIBLE_CFG_DIR, "playbooks", playbook),
-        "-i", os.path.join(ANSIBLE_CFG_DIR, "inventory.ini"),
-        "--forks", str(forks),
-        "--limit", ",".join(servers)
+        "ansible-playbook", pb_path,
+        "-i", os.path.join(BASE, "inventory.ini"),
+        "--forks", str(schedule.forks)
     ]
-    subprocess.run(cmd, env=env)
+    if schedule.servers and schedule.servers != ["all"]:
+        cmd.extend(["-l", ",".join(schedule.servers)])
 
-def main():
-    db_init()
-    last_run = {}
+    env = os.environ.copy()
+    # Pass notify flags for callback plugin
+    for k, v in schedule.notify.items():
+        env[f"J_{k.upper()}"] = str(v)
+
+    print(f"[runner] running schedule {schedule.id} → {cmd}")
+    try:
+        subprocess.run(cmd, env=env, check=False)
+    except Exception as e:
+        print(f"[runner] error executing {cmd}: {e}")
+
+async def main():
     while True:
-        schedules = _load_schedules()
-        now = time.time()
-        for sch in schedules:
-            interval = _parse_every(sch.get("every", "5m"))
-            sid = sch["id"]
-            if sid not in last_run or now - last_run[sid] >= interval:
-                run_playbook(
-                    sch["playbook"],
-                    sch.get("servers", ["all"]),
-                    sch.get("forks", 1),
-                    sch.get("notify", {}).get("target_key", "")
-                )
-                last_run[sid] = now
-        purge_older_than_days(DEFAULT_KEEP_DAYS)
-        time.sleep(30)
+        try:
+            if not os.path.isfile(SCHEDULES_FILE):
+                await asyncio.sleep(30)
+                continue
+
+            with open(SCHEDULES_FILE, "r") as f:
+                data = json.load(f)
+            schedules = [Schedule(entry) for entry in data]
+
+            while True:
+                for sched in schedules:
+                    if sched.due():
+                        await run_playbook(sched)
+                        sched.bump()
+                await asyncio.sleep(5)
+        except Exception as e:
+            print(f"[runner] loop error: {e}")
+            await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("[runner] stopped by user")
+        try:
+            os.killpg(0, signal.SIGTERM)
+        except Exception:
+            pass
