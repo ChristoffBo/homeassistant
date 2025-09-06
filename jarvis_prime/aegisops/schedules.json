@@ -1,0 +1,17 @@
+[
+  {
+    "id": "uptime-5m",
+    "playbook": "check_services.yml",
+    "servers": ["all"],
+    "every": "5m",
+    "forks": 1,
+    "notify": {
+      "on_success": false,
+      "on_fail": true,
+      "only_on_state_change": true,
+      "cooldown_min": 30,
+      "quiet_hours": "22:00-06:00",
+      "target_key": "uptime"
+    }
+  }
+]
