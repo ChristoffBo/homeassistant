@@ -1,22 +1,30 @@
 ---
 - name: AegisOps Uptime-lite
-  hosts: "{{ target | default('all') }}"
+  hosts: all
   gather_facts: false
-  vars_files:
-    - /share/jarvis_prime/aegisops/uptime_targets.yml
+
   vars:
-    default_timeout_s: 5
+    _uptime: "{{ lookup('file', '/share/jarvis_prime/aegisops/uptime_targets.yml') | from_yaml }}"
+    checks: "{{ _uptime.checks | default([]) }}"
 
   tasks:
     - name: collect checks for this host
-      ansible.builtin.set_fact:
-        host_checks: "{{ (checks | selectattr('target','equalto', inventory_hostname) | list) }}"
+      set_fact:
+        my_checks: "{{ checks }}"
 
     - name: skip host with no checks
-      ansible.builtin.meta: end_host
-      when: host_checks | length == 0
+      meta: end_play
+      when: my_checks | length == 0
 
     - name: run checks
-      ansible.builtin.include_tasks: /share/jarvis_prime/aegisops/helpers/_do_check.yml
-      loop: "{{ host_checks }}"
-      loop_control: { loop_var: _chk }
+      include_tasks: /share/jarvis_prime/aegisops/helpers/_do_check.yml
+      vars:
+        check_item: "{{ item }}"
+      loop: "{{ my_checks }}"
+      loop_control:
+        loop_var: item
+
+    - name: expose results to callback
+      ansible.builtin.set_stats:
+        data:
+          _results: "{{ _results | default([]) }}"
