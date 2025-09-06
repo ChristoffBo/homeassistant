@@ -1,4 +1,3 @@
-# /app/beautify.py
 from __future__ import annotations
 import re, json, importlib, random, html, os
 from typing import List, Tuple, Optional, Dict, Any
@@ -20,7 +19,7 @@ IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]
 HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
 
-EMOJI_RE = re.compile("["  # a few unicode ranges
+EMOJI_RE = re.compile("["
     "\U0001F300-\U0001F6FF"
     "\U0001F900-\U0001F9FF"
     "\U00002600-\U000026FF"
@@ -32,6 +31,71 @@ EMOJI_RE = re.compile("["  # a few unicode ranges
 LIKELY_POSTER_HOSTS = (
     "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
 )
+
+# === NEW: universal finish helpers (non-destructive) ===
+CODE_FENCE_RE = re.compile(r'```.*?```', re.S)
+LINK_RE       = re.compile(r'\[[^\]]+?\]\([^)]+?\)')
+
+def _fold_repeats(text: str, threshold: int = 3) -> str:
+    """Collapse runs of identical lines into a single line with ×N, keep head/tail if huge."""
+    lines = text.splitlines()
+    out, i = [], 0
+    while i < len(lines):
+        j = i + 1
+        while j < len(lines) and lines[j] == lines[i]:
+            j += 1
+        n = j - i
+        if n > threshold:
+            out.append(f"{lines[i]}  ×{n}")
+        else:
+            out.extend(lines[i:j])
+        i = j
+    if len(out) > 1200:
+        return "\n".join(out[:700] + ["…(folded)"] + out[-300:])
+    return "\n".join(out)
+
+def _safe_truncate(s: str, max_len: int = 3500) -> str:
+    """
+    Non-destructive truncation: never cuts inside code fences, markdown links/images, or raw image URLs.
+    Applies only if the final message is extremely long.
+    """
+    if len(s) <= max_len:
+        return s
+    protected = []
+    for rx in (CODE_FENCE_RE, MD_IMG_RE, LINK_RE, IMG_URL_RE):
+        for m in rx.finditer(s):
+            protected.append((m.start(), m.end()))
+    protected.sort()
+    out, pos, used, budget = [], 0, 0, max_len
+    for a, b in protected:
+        if a > pos:
+            chunk = s[pos:a]
+            if used + len(chunk) > budget:
+                room = max(0, budget - used - 8)
+                sub  = chunk[:room]
+                cut  = max(sub.rfind("\n"), sub.rfind(" "), sub.rfind("\t"))
+                if cut < room * 0.6:
+                    cut = room
+                out.append(sub[:cut].rstrip() + "\n\n…(truncated)")
+                return "".join(out)
+            out.append(chunk); used += len(chunk)
+        seg = s[a:b]
+        if used + len(seg) > budget:
+            out.append("\n\n…(truncated)")
+            return "".join(out)
+        out.append(seg); used += len(seg); pos = b
+    if pos < len(s):
+        tail = s[pos:]
+        if used + len(tail) > budget:
+            room = max(0, budget - used - 8)
+            sub  = tail[:room]
+            cut  = max(sub.rfind("\n"), sub.rfind(" "), sub.rfind("\t"))
+            if cut < room * 0.6:
+                cut = room
+            out.append(sub[:cut].rstrip() + "\n\n…(truncated)")
+            return "".join(out)
+        out.append(tail)
+    return "".join(out)
 
 # -------- Helpers --------
 def _prefer_host_key(url: str) -> int:
@@ -356,7 +420,7 @@ def _beautify_is_disabled() -> bool:
 _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
     re.compile(
-        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*\((?P<img>[^)]+)\)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
         re.I),
     re.compile(
         r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
@@ -462,6 +526,10 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         text = "\n".join(lines).strip()
         text = _format_align_check(text)
         text = _linewise_dedup_markdown(text, protect_message=True)
+        # === NEW universal finish ===
+        text = _fold_repeats(text)
+        max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
+        text = _safe_truncate(text, max_len=max_len)
 
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
@@ -522,6 +590,10 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
     text = _linewise_dedup_markdown(text, protect_message=True)
+    # === NEW universal finish ===
+    text = _fold_repeats(text)
+    max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
+    text = _safe_truncate(text, max_len=max_len)
 
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
