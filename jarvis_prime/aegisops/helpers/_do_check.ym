@@ -1,12 +1,16 @@
 ---
-# Executes one check_item (ping|tcp|http) and appends normalized result.
+# helper to execute one check item (ping|tcp|http) and append normalized result to hostvars._results
+# expects `check` with fields:
+#   name, mode: ping|tcp|http
+#   target (host/IP), port (for tcp), timeout_s (optional)
+#   url, expect (list of acceptable status codes) for http
 
 - name: ensure result bucket exists
   set_fact:
     _results: "{{ _results | default([]) }}"
 
 - name: ping check
-  when: (check_item.mode | lower) == 'ping'
+  when: (check.mode | default('') | lower) == 'ping'
   block:
     - name: ansible ping
       ansible.builtin.ping:
@@ -17,22 +21,22 @@
       set_fact:
         _results: "{{ _results + [ {
           'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
-          'name': (check_item.name | default('ping')),
+          'name': check.name | default('ping'),
           'mode': 'ping',
-          'target': (check_item.target | default(inventory_hostname)),
+          'target': check.target | default(inventory_hostname),
           'status': ('ok' if (_chk is defined and _chk.ping is defined and _chk.ping == 'pong') else 'fail'),
           'detail': (_chk | to_nice_json)
         } ] }}"
 
 - name: tcp check
-  when: (check_item.mode | lower) == 'tcp'
+  when: (check.mode | default('') | lower) == 'tcp'
   block:
     - name: wait for tcp port
       ansible.builtin.wait_for:
-        host: "{{ check_item.target | default(inventory_hostname) }}"
-        port: "{{ check_item.port | int }}"
+        host: "{{ check.target | default(inventory_hostname) }}"
+        port: "{{ check.port | int }}"
         state: started
-        timeout: "{{ (check_item.timeout_s | default(5)) | int }}"
+        timeout: "{{ (check.timeout_s | default(5)) | int }}"
       register: _chk
       ignore_errors: yes
 
@@ -40,23 +44,23 @@
       set_fact:
         _results: "{{ _results + [ {
           'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
-          'name': (check_item.name | default('tcp')),
+          'name': check.name | default('tcp'),
           'mode': 'tcp',
-          'target': (check_item.target | default(inventory_hostname)),
-          'status': ('ok' if (_chk is defined and (_chk.failed is not defined or not _chk.failed)) else 'fail'),
+          'target': check.target | default(inventory_hostname),
+          'status': ('ok' if (_chk is defined and (_chk.failed | default(false)) == false) else 'fail'),
           'detail': (_chk | to_nice_json)
         } ] }}"
 
 - name: http check
-  when: (check_item.mode | lower) == 'http'
+  when: (check.mode | default('') | lower) == 'http'
   block:
     - name: GET url
       ansible.builtin.uri:
-        url: "{{ check_item.url }}"
+        url: "{{ check.url }}"
         method: GET
-        status_code: "{{ check_item.expect | default([200]) }}"
-        validate_certs: no
-        timeout: "{{ (check_item.timeout_s | default(5)) | int }}"
+        status_code: "{{ check.expect | default([200,204]) }}"
+        timeout: "{{ (check.timeout_s | default(5)) | int }}"
+        validate_certs: false
       register: _chk
       ignore_errors: yes
 
@@ -64,9 +68,9 @@
       set_fact:
         _results: "{{ _results + [ {
           'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
-          'name': (check_item.name | default('http')),
+          'name': check.name | default('http'),
           'mode': 'http',
-          'target': (check_item.url),
-          'status': ('ok' if (_chk is defined and (_chk.failed is not defined or not _chk.failed)) else 'fail'),
-          'detail': (_chk | to_nice_json)
+          'target': check.url | default(''),
+          'status': ('ok' if (_chk is defined and (_chk.failed | default(false)) == false) else 'fail'),
+          'detail': (_chk | combine({'status': _chk.status | default(0)}, recursive=True) | to_nice_json)
         } ] }}"
