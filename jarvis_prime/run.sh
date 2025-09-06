@@ -120,6 +120,9 @@ export NTFY_TOKEN=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
 export push_gotify_enabled=$(jq -r '.push_gotify_enabled // false' "$CONFIG_PATH")
 export push_ntfy_enabled=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
 
+# >>> ADDITIVE: AegisOps feature toggle (default false so nothing runs)
+export AEGISOPS_ENABLED=$(jq -r '.aegisops_enabled // false' "$CONFIG_PATH")
+
 echo "[launcher] toggles: push_gotify_enabled=$push_gotify_enabled, push_ntfy_enabled=$push_ntfy_enabled"
 
 # Hard-off pushes by blanking env if disabled
@@ -239,25 +242,9 @@ mkdir -p \
 
 # seed files if empty/missing (plain heredocs)
 if [ ! -s "${AEGISOPS_BASE}/schedules.json" ]; then
-  echo "[aegisops] seeding schedules.json"
+  echo "[aegisops] seeding schedules.json (empty to prevent auto-run)"
   cat > "${AEGISOPS_BASE}/schedules.json" <<'JSON_EOF'
-[
-  {
-    "id": "uptime-5m",
-    "playbook": "check_services.yml",
-    "servers": ["all"],
-    "every": "5m",
-    "forks": 1,
-    "notify": {
-      "on_success": false,
-      "on_fail": true,
-      "only_on_state_change": true,
-      "cooldown_min": 30,
-      "quiet_hours": "22:00-06:00",
-      "target_key": "uptime"
-    }
-  }
-]
+[]
 JSON_EOF
 fi
 
@@ -285,8 +272,7 @@ fi
 if [ ! -s "${AEGISOPS_BASE}/uptime_targets.yml" ]; then
   echo "[aegisops] seeding uptime_targets.yml"
   cat > "${AEGISOPS_BASE}/uptime_targets.yml" <<'YAML_EOF'
-checks:
-  - { name: jarvis ui http, target: localhost, mode: http, url: "http://127.0.0.1:2581/api/health", expect: [200,204] }
+checks: []
 YAML_EOF
 fi
 
@@ -297,73 +283,77 @@ if [ ! -s "${AEGISOPS_BASE}/helpers/_do_check.yml" ]; then
   cat > "${AEGISOPS_BASE}/helpers/_do_check.yml" <<'YAML_EOF'
 ---
 # helper to execute one check item (ping|tcp|http) and append normalized result to hostvars._results
-# expects `item` with fields:
+# expects `check_item` with fields:
 #   name, mode: ping|tcp|http
 #   target (host/IP), port (for tcp), timeout_s (optional)
 #   url, expect (list of acceptable status codes) for http
+
 - name: ensure result bucket exists
   set_fact:
     _results: "{{ _results | default([]) }}"
 
 - name: ping check
-  when: item.mode | lower == 'ping'
+  when: (check_item.mode | lower) == 'ping'
   block:
     - name: ansible ping
       ansible.builtin.ping:
       register: _chk
       ignore_errors: yes
+
     - name: append ping result
       set_fact:
         _results: "{{ _results + [ {
           'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
-          'name': item.name | default('ping'),
+          'name': (check_item.name | default('ping')),
           'mode': 'ping',
-          'target': item.target | default(inventory_hostname),
+          'target': (check_item.target | default(inventory_hostname)),
           'status': ('ok' if (_chk is defined and _chk.ping is defined and _chk.ping == 'pong') else 'fail'),
           'detail': (_chk | to_nice_json)
         } ] }}"
 
 - name: tcp check
-  when: item.mode | lower == 'tcp'
+  when: (check_item.mode | lower) == 'tcp'
   block:
     - name: wait for tcp port
       ansible.builtin.wait_for:
-        host: "{{ item.target | default(inventory_hostname) }}"
-        port: "{{ item.port | int }}"
+        host: "{{ check_item.target | default(inventory_hostname) }}"
+        port: "{{ check_item.port | int }}"
         state: started
-        timeout: "{{ (item.timeout_s | default(5)) | int }}"
+        timeout: "{{ (check_item.timeout_s | default(5)) | int }}"
       register: _chk
       ignore_errors: yes
+
     - name: append tcp result
       set_fact:
         _results: "{{ _results + [ {
           'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
-          'name': item.name | default('tcp'),
+          'name': (check_item.name | default('tcp')),
           'mode': 'tcp',
-          'target': item.target | default(inventory_hostname),
+          'target': (check_item.target | default(inventory_hostname)),
           'status': ('ok' if (_chk is defined and (_chk.failed | default(false)) == false) else 'fail'),
           'detail': (_chk | to_nice_json)
         } ] }}"
 
 - name: http check
-  when: item.mode | lower == 'http'
+  when: (check_item.mode | lower) == 'http'
   block:
     - name: GET url
       ansible.builtin.uri:
-        url: "{{ item.url }}"
+        url: "{{ check_item.url }}"
         method: GET
-        status_code: "{{ item.expect | default([200,204]) }}"
-        timeout: "{{ (item.timeout_s | default(5)) | int }}"
+        status_code: "{{ check_item.expect | default([200,204]) }}"
+        timeout: "{{ (check_item.timeout_s | default(5)) | int }}"
         validate_certs: false
       register: _chk
       ignore_errors: yes
+
     - name: append http result
       set_fact:
         _results: "{{ _results + [ {
           'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
-          'name': item.name | default('http'),
+          'name': (check_item.name | default('http')),
           'mode': 'http',
-          'target': item.url | default(''),
+          'target': (check_item.url | default('')),
           'status': ('ok' if (_chk is defined and (_chk.failed | default(false)) == false) else 'fail'),
           'detail': (_chk | combine({'status': _chk.status | default(0)}, recursive=True) | to_nice_json)
         } ] }}"
@@ -392,6 +382,8 @@ if [ ! -s "${AEGISOPS_BASE}/playbooks/check_services.yml" ]; then
 
     - name: run checks
       include_tasks: /share/jarvis_prime/aegisops/helpers/_do_check.yml
+      vars:
+        check_item: "{{ item }}"
       loop: "{{ my_checks }}"
       loop_control:
         loop_var: item
@@ -409,7 +401,7 @@ if [ ! -s "${AEGISOPS_BASE}/callback_plugins/aegisops_notify.py" ]; then
   cat > "${AEGISOPS_BASE}/callback_plugins/aegisops_notify.py" <<'PY_EOF'
 # minimal, best-effort AegisOps callback
 from __future__ import annotations
-import os, sqlite3, time
+import os, sqlite3
 from ansible.plugins.callback import CallbackBase
 
 CALLBACK_VERSION = 2.0
@@ -482,8 +474,8 @@ fi
 # make sure a db file exists (SQLite will create if not present)
 : > "${AEGISOPS_BASE}/db/aegisops.db"
 
-# ===== AegisOps Runner (prefer /share; fall back to /app) =====
-if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
+# ===== AegisOps Runner (prefer /share; gated by AEGISOPS_ENABLED) =====
+if [ "${AEGISOPS_ENABLED}" = "true" ] || [ "${AEGISOPS_ENABLED}" = "1" ]; then
   if [ -f "${AEGISOPS_BASE}/runner.py" ]; then
     echo "[launcher] starting AegisOps runner (runner.py)"
     python3 "${AEGISOPS_BASE}/runner.py" &
@@ -496,7 +488,7 @@ if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
     echo "[launcher] ⚠️ AegisOps runner.py not found in /share or /app"
   fi
 else
-  echo "[launcher] AegisOps disabled"
+  echo "[launcher] AegisOps disabled (enable via options.json: aegisops_enabled=true)"
 fi
 
 wait "$API_PID"
