@@ -1,21 +1,18 @@
 # syntax=docker/dockerfile:1
-# Rundeck Home Assistant add-on — wraps the official Rundeck image.
+# Rundeck Home Assistant add-on — wraps the official Rundeck image (amd64 only).
+FROM rundeck/rundeck:SNAPSHOT
+# or pin a fixed version instead:
+# FROM rundeck/rundeck:5.15.0-20250902
 
-# Give BUILD_FROM a real default so local builds work even if the builder
-# doesn’t inject it. Only amd64 is supported by upstream images.
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
-
-# Install jq to read /data/options.json (run as root, then drop back)
+# Install jq to read /data/options.json
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends jq \
  && rm -rf /var/lib/apt/lists/*
 USER rundeck
 
-# Add the launcher that reads HA options and execs the official entrypoint
+# Launcher that reads HA options then execs the official entrypoint
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
-# Start
 CMD ["/run.sh"]
