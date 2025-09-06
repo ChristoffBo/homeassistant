@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 CONFIG_PATH=/data/options.json
+log() { echo "[$(date '+%F %T')] $*"; }
+
+## best-effort base refresh (won't fail offline) — per locked rule
+(apt-get update && apt-get -y upgrade) >/dev/null 2>&1 || true
 
 banner() {
   echo "──────────────────────────────────────────────"
@@ -154,14 +158,14 @@ TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH"); TINY_PATH=$(jq -r '
 QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH");  QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH")
 
 export LLM_MODEL_PATH=""; export LLM_MODEL_URLS=""; export LLM_MODEL_URL=""; export LLM_ENABLED; export LLM_STATUS="Disabled"
-if [ "$CLEANUP" = "true" ]; then
-  if [ "$LLM_ENABLED" = "false" ]; then rm -f "$PHI_PATH" "$TINY_PATH" "$QWEN_PATH" || true
-  else
-    [ "$PHI_ON"  = "false" ] && [ -f "$PHI_PATH" ]  && rm -f "$PHI_PATH"  || true
-    [ "$TINY_ON" = "false" ] && [ -f "$TINY_PATH" ] && rm -f "$TINY_PATH" || true
-    [ "$QWEN_ON" = "false" ] && [ -f "$QWEN_PATH" ] && rm -f "$QWEN_PATH" || true
-  fi
+if [ "$CLEANUP" = "true" ] && [ "$LLM_ENABLED" = "false" ]; then
+  rm -f "$PHI_PATH" "$TINY_PATH" "$QWEN_PATH" || true
+elif [ "$CLEANUP" = "true" ]; then
+  [ "$PHI_ON"  = "false" ] && [ -f "$PHI_PATH" ]  && rm -f "$PHI_PATH"  || true
+  [ "$TINY_ON" = "false" ] && [ -f "$TINY_PATH" ] && rm -f "$TINY_PATH" || true
+  [ "$QWEN_ON" = "false" ] && [ -f "$QWEN_PATH" ] && rm -f "$QWEN_PATH" || true
 fi
+
 ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
 if [ "$LLM_ENABLED" = "true" ]; then
   if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi-3";
@@ -217,13 +221,25 @@ else
 fi
 
 # ===== Ensure AegisOps structure (bootstrap; additive only) =====
+AEGIS_APP="/app/aegisops"
 AEGISOPS_BASE="/share/jarvis_prime/aegisops"
+sync_from_image() {
+  local src="$1" dst="$2"
+  if [ -d "$src" ]; then
+    mkdir -p "$dst"
+    (cd "$src" && find . -type f | while read -r f; do
+      mkdir -p "$dst/$(dirname "$f")"
+      if [ ! -f "$dst/$f" ]; then cp -a "$src/$f" "$dst/$f"; fi
+    done)
+  fi
+}
+sync_from_image "$AEGIS_APP" "$AEGISOPS_BASE"
 mkdir -p \
   "${AEGISOPS_BASE}/db" \
   "${AEGISOPS_BASE}/playbooks" \
   "${AEGISOPS_BASE}/helpers" \
   "${AEGISOPS_BASE}/callback_plugins" || true
-# create empty/sentinel files if missing
+# create empty/sentinel files if missing (harmless if already copied)
 touch "${AEGISOPS_BASE}/ansible.cfg" \
       "${AEGISOPS_BASE}/inventory.ini" \
       "${AEGISOPS_BASE}/schedules.json" \
@@ -235,11 +251,14 @@ if [ ! -f "${AEGISOPS_BASE}/runner.py" ] && [ -f "/app/aegisops/runner.py" ]; th
 fi
 
 # ===== NEW: AegisOps Runner =====
-AEGISOPS_BASE="/share/jarvis_prime/aegisops"
 if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
   if [ -f "${AEGISOPS_BASE}/runner.py" ]; then
     echo "[launcher] starting AegisOps runner (runner.py)"
     python3 "${AEGISOPS_BASE}/runner.py" &
+    AEGISOPS_PID=$! || true
+  elif [ -f "/app/aegisops/runner.py" ]; then
+    echo "[launcher] starting AegisOps runner from image (/app/aegisops/runner.py)"
+    python3 "/app/aegisops/runner.py" &
     AEGISOPS_PID=$! || true
   else
     echo "[launcher] ⚠️ AegisOps runner.py not found at ${AEGISOPS_BASE}/runner.py"
