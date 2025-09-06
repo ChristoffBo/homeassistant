@@ -1,0 +1,105 @@
+---
+- name: normalize
+  ansible.builtin.set_fact:
+    _timeout: "{{ (_chk.timeout_s | default(default_timeout_s)) | int }}"
+    _expect: "{{ _chk.expect | default([200]) }}"
+
+- name: ping
+  when: _chk.mode == 'ping'
+  block:
+    - ansible.builtin.ping:
+      register: _r
+      ignore_errors: yes
+    - ansible.builtin.set_fact:
+        _res: "{{ {
+          'name': _chk.name, 'mode': 'ping',
+          'status': ('ok' if (_r is defined and (_r.ping | default('') == 'pong')) else 'fail'),
+          'detail': (_r.msg | default('')) | string,
+          'host': inventory_hostname
+        } }}"
+    - name: write result to AegisOps DB
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import sqlite3, os
+        dbp="/share/jarvis_prime/aegisops/db/aegisops.db"
+        os.makedirs(os.path.dirname(dbp), exist_ok=True)
+        con=sqlite3.connect(dbp)
+        con.execute("""CREATE TABLE IF NOT EXISTS uptime_runs(
+          id INTEGER PRIMARY KEY, ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+          host TEXT, check_name TEXT, mode TEXT, status TEXT, detail TEXT)""")
+        d={{ _res | to_json }}
+        con.execute("INSERT INTO uptime_runs(host,check_name,mode,status,detail) VALUES(?,?,?,?,?)",
+                    (d["host"], d["name"], d["mode"], d["status"], d["detail"]))
+        con.commit(); con.close()
+        PY
+      args: { executable: /bin/bash }
+
+- name: tcp
+  when: _chk.mode == 'tcp'
+  block:
+    - ansible.builtin.wait_for:
+        host: "{{ inventory_hostname }}"
+        port: "{{ _chk.port }}"
+        timeout: "{{ _timeout }}"
+        state: started
+      register: _r
+      ignore_errors: yes
+    - ansible.builtin.set_fact:
+        _res: "{{ {
+          'name': _chk.name, 'mode': 'tcp', 'port': _chk.port,
+          'status': ('ok' if (_r is defined and not _r.failed) else 'fail'),
+          'detail': (_r.msg | default('')) | string,
+          'host': inventory_hostname
+        } }}"
+    - name: write result to AegisOps DB
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import sqlite3, os
+        dbp="/share/jarvis_prime/aegisops/db/aegisops.db"
+        os.makedirs(os.path.dirname(dbp), exist_ok=True)
+        con=sqlite3.connect(dbp)
+        con.execute("""CREATE TABLE IF NOT EXISTS uptime_runs(
+          id INTEGER PRIMARY KEY, ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+          host TEXT, check_name TEXT, mode TEXT, status TEXT, detail TEXT)""")
+        d={{ _res | to_json }}
+        con.execute("INSERT INTO uptime_runs(host,check_name,mode,status,detail) VALUES(?,?,?,?,?)",
+                    (d["host"], d["name"], d["mode"], d["status"], d["detail"]))
+        con.commit(); con.close()
+        PY
+      args: { executable: /bin/bash }
+
+- name: http
+  when: _chk.mode == 'http'
+  block:
+    - ansible.builtin.uri:
+        url: "{{ _chk.url }}"
+        method: GET
+        return_content: false
+        timeout: "{{ _timeout }}"
+        status_code: "{{ _expect }}"
+        validate_certs: false
+      register: _r
+      ignore_errors: yes
+    - ansible.builtin.set_fact:
+        _res: "{{ {
+          'name': _chk.name, 'mode': 'http', 'url': _chk.url,
+          'status': ('ok' if (_r is defined and not _r.failed) else 'fail'),
+          'detail': (_r.msg | default('')) | string,
+          'host': inventory_hostname
+        } }}"
+    - name: write result to AegisOps DB
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import sqlite3, os
+        dbp="/share/jarvis_prime/aegisops/db/aegisops.db"
+        os.makedirs(os.path.dirname(dbp), exist_ok=True)
+        con=sqlite3.connect(dbp)
+        con.execute("""CREATE TABLE IF NOT EXISTS uptime_runs(
+          id INTEGER PRIMARY KEY, ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+          host TEXT, check_name TEXT, mode TEXT, status TEXT, detail TEXT)""")
+        d={{ _res | to_json }}
+        con.execute("INSERT INTO uptime_runs(host,check_name,mode,status,detail) VALUES(?,?,?,?,?)",
+                    (d["host"], d["name"], d["mode"], d["status"], d["detail"]))
+        con.commit(); con.close()
+        PY
+      args: { executable: /bin/bash }
