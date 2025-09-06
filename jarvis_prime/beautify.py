@@ -8,7 +8,7 @@ IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s
 # tolerate spaces/newlines between ] and (, and angle-bracketed URLs
 # CAPTURE ALT (group 1) + URL (group 2)
 MD_IMG_RE  = re.compile(r'!\[([^\]]*)\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
-KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+?)\s*$', re.M)
+KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+)$', re.M)
 
 # timestamps and types
 TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
@@ -463,16 +463,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if details:
         lines += ["", "📄 Details", *details]
 
-    # --- Always keep human content visible
-    def _first_paragraph(s: str) -> str:
-        s = (s or "").strip()
-        if not s: return ""
-        parts = [p.strip() for p in re.split(r'\n\s*\n', s) if p.strip()]
-        return parts[0] if parts else s
-
-    message_snip = _first_paragraph(body_wo_imgs)
-    if not message_snip:
-        message_snip = _first_paragraph(normalized)
+    # --- Always keep human content visible (entire body, not just first paragraph)
+    message_snip = (body_wo_imgs or "").strip() or (normalized or "").strip()
 
     if message_snip:
         lines += ["", "📝 Message", message_snip]
