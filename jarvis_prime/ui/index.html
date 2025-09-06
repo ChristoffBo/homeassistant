@@ -2,17 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime</title>
 
-  <!-- Optional: override API base if UI is hosted elsewhere -->
-  <script>
-    window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;
-  </script>
+  <script>window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;</script>
 
-  <!-- Make relative URLs work for both Ingress and direct host -->
   <script>
     (function () {
       var p = location.pathname;
@@ -23,7 +17,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=1.6" />
+  <link rel="stylesheet" href="style.css?v=1.7" />
 </head>
 <body>
   <header class="topnav">
@@ -41,6 +35,20 @@
         <div class="stat blue">Messages Today: <span id="msg-today">-</span></div>
         <div class="stat green">Archived: <span id="msg-arch">-</span></div>
         <div class="stat red">Errors: <span id="msg-err">-</span></div>
+        <div class="stat purple">
+          Chat:
+          <input id="chat-input" placeholder="Type…" />
+          <button id="chat-send" class="btn primary">Send</button>
+        </div>
+        <div class="stat orange">
+          Purge:
+          <select id="purge-select">
+            <option value="1">1 day</option>
+            <option value="7" selected>7 days</option>
+            <option value="30">30 days</option>
+          </select>
+          <button id="purge-now" class="btn danger">Run</button>
+        </div>
       </div>
 
       <div class="inbox-wrap">
@@ -80,6 +88,6 @@
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=1.6"></script>
+  <script src="app.js?v=1.7"></script>
 </body>
 </html>
