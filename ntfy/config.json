@@ -1,8 +1,8 @@
 {
   "name": "ntfy Server (Official)",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "slug": "ntfy",
-  "description": "Self-hosted ntfy server using the official Docker image, with Ingress and persistent storage (/data).",
+  "description": "Self-hosted ntfy server using the official Docker image, with persistent storage (/data).",
   "url": "https://ntfy.sh",
   "arch": [
     "aarch64",
@@ -13,22 +13,20 @@
   "startup": "services",
   "init": false,
   "ingress": false,
-  "ingress_port": 8008,
-  "ingress_stream": true,
   "panel_icon": "mdi:bell",
   "panel_title": "ntfy",
   "webui": "http://[HOST]:[PORT:8008]",
   "watchdog": "tcp://[HOST]:[PORT:8008]",
   "ports": {
-    "8008/tcp": null
+    "8008/tcp": 8008
   },
   "ports_description": {
-    "8008/tcp": "Optional direct access to ntfy web/API (set a Host port or leave empty for Ingress-only)"
+    "8008/tcp": "Direct access to ntfy Web UI & API"
   },
   "options": {
     "listen_port": 8008,
-    "base_url": "",
-    "behind_proxy": true,
+    "base_url": "http://10.0.0.100",
+    "behind_proxy": false,
     "attachments": {
       "enabled": true,
       "dir": "/data/attachments",
