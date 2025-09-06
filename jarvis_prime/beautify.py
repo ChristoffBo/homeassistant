@@ -283,8 +283,14 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
     if ts: facts.append(_fmt_kv("Time", ts))
     if title.strip(): facts.append(_fmt_kv("Subject", title.strip()))
 
+    # IGNORE transport-layer kv keys so they don't pollute Details
+    IGNORED_KV_KEYS = {"title", "message", "priority", "topic", "tags"}
+
     for k,v in _extract_keyvals(body):
         key = k.strip().lower()
+        if key in IGNORED_KV_KEYS:
+            # skip these; they come from proxies/querystrings, not the human message
+            continue
         val = v
         if key in ("ip","ip address","address"):
             val = _repair_ipv4(v, title, body)
@@ -548,6 +554,18 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         normalized = unquote_plus(qs_title.get("message") or "") or normalized
     if qs_body and "message" in qs_body and not (normalized or "").strip():
         normalized = unquote_plus(qs_body.get("message") or "") or normalized
+
+    # If the entire title string looks querystring-ish, decode it once
+    if (title or "").strip() and (qs_title or qs_body):
+        try:
+            title_decoded = unquote_plus(title.strip())
+            # Prefer parsed "title=" if present; otherwise keep the decoded string
+            if qs_title and "title" in qs_title:
+                title = unquote_plus(qs_title.get("title") or "").strip() or title_decoded
+            else:
+                title = title_decoded
+        except Exception:
+            pass
 
     # remove 'action says:' lines from the visible body (riffs unaffected elsewhere)
     normalized = _strip_action_says(normalized)
