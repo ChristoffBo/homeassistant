@@ -1,0 +1,24 @@
+{
+  "name": "Rundeck",
+  "version": "1.0.0",
+  "slug": "rundeck",
+  "description": "Rundeck Automation with Web UI",
+  "arch": ["amd64", "aarch64", "armv7"],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "panel_icon": "mdi:play-circle",
+  "ports": {
+    "4440/tcp": 4440
+  },
+  "ports_description": {
+    "4440/tcp": "Rundeck Web UI"
+  },
+  "map": ["config:rw"],
+  "options": {
+    "ui_port": 4440
+  },
+  "schema": {
+    "ui_port": "int"
+  }
+}
