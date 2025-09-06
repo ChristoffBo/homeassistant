@@ -1,4 +1,0 @@
-checks:
-  - { name: proxmox reachability, target: proxmox1, mode: ping }
-  - { name: plex tcp, target: media01, mode: tcp, port: 32400, timeout_s: 5 }
-  - { name: jarvis ui http, target: jarvis, mode: http, url: "http://127.0.0.1:2599/health", expect: [200,204] }
