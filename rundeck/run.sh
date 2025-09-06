@@ -15,7 +15,7 @@ fi
 # Persistent data (HA add-on /data is persistent)
 export RDECK_BASE="/data/rundeck"
 mkdir -p "${RDECK_BASE}"
-# Try to fix ownership; ignore if not allowed
+# Ownership fix; ignore if not allowed
 chown -R 1000:1000 "${RDECK_BASE}" || true
 
 # Ingress / proxy friendliness
