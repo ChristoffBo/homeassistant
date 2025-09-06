@@ -7,9 +7,7 @@
     content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Jarvis Prime</title>
 
-  <!-- Optional: override API base if UI is hosted elsewhere
-       Example: window.JARVIS_API_BASE='http://10.0.0.100:2581/';
-  -->
+  <!-- Optional: override API base if UI is hosted elsewhere -->
   <script>
     window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;
   </script>
@@ -25,22 +23,13 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=1.5" />
+  <link rel="stylesheet" href="style.css?v=1.6" />
 </head>
 <body>
   <header class="topnav">
     <div class="brand">Jarvis Prime</div>
     <nav>
       <button class="tablink active" data-tab="inbox">Inbox</button>
-      <button class="tablink" data-tab="personas">Personas</button>
-      <button class="tablink" data-tab="intakes">Intakes</button>
-      <button class="tablink" data-tab="outputs">Notify Outputs</button>
-      <button class="tablink" data-tab="settings">Settings</button>
-      <button class="tablink" data-tab="llm">LLM</button>
-      <button class="tablink" data-tab="enviro">EnviroGuard</button>
-      <button class="tablink" data-tab="ops">Ops Engine</button>
-      <button class="tablink" data-tab="options">Options (All)</button>
-      <button class="tablink" data-tab="about">About</button>
     </nav>
   </header>
 
@@ -69,6 +58,9 @@
               <input type="checkbox" id="keep-arch" /> Keep archived
             </label>
             <button id="del-all" class="btn danger">🗑 Delete All</button>
+            <label class="lbl ph-follow">
+              <input type="checkbox" id="pv-follow" checked /> Auto-preview new
+            </label>
           </div>
         </div>
 
@@ -78,119 +70,16 @@
               <div class="ph-title" id="pv-title">No message selected</div>
               <div class="ph-meta" id="pv-meta">–</div>
             </div>
-            <label class="lbl ph-follow">
-              <input type="checkbox" id="pv-follow" checked /> Auto‑preview new
-            </label>
           </div>
           <div class="preview-body" id="pv-body">
-            <p class="muted">Click a message to see its contents here. When Auto‑preview is on, the newest message will show as it arrives.</p>
+            <p class="muted">Click a message to see its contents here.</p>
           </div>
         </aside>
       </div>
     </section>
-
-    <!-- Personas -->
-    <section id="personas" class="tab">
-      <h2>Personas</h2>
-      <label><input type="checkbox" id="p-dude"> Dude</label>
-      <label><input type="checkbox" id="p-chick"> Chick</label>
-      <label><input type="checkbox" id="p-nerd"> Nerd</label>
-      <label><input type="checkbox" id="p-rager"> Rager</label>
-      <button id="save-personas" class="btn">Save Personas</button>
-    </section>
-
-    <!-- Intakes -->
-    <section id="intakes" class="tab">
-      <h2>Intakes (Email / Gotify / ntfy)</h2>
-      <div>
-        <h3>Email</h3>
-        <input id="smtp-host" placeholder="smtp.gmail.com" />
-        <input id="smtp-port" placeholder="587" />
-        <input id="smtp-user" placeholder="user" />
-        <input id="smtp-pass" type="password" placeholder="password" />
-        <input id="smtp-from" placeholder="From name" />
-        <button id="test-email" class="btn">Test Email</button>
-      </div>
-      <div>
-        <h3>Gotify</h3>
-        <input id="gotify-url" placeholder="http://10.0.0.99:8091" />
-        <input id="gotify-token" placeholder="token" />
-        <button id="test-gotify" class="btn">Test Gotify</button>
-      </div>
-      <div>
-        <h3>ntfy</h3>
-        <input id="ntfy-url" placeholder="http://10.0.0.99:8080" />
-        <input id="ntfy-topic" placeholder="topic" />
-        <button id="test-ntfy" class="btn">Test ntfy</button>
-      </div>
-      <button id="save-channels" class="btn primary">Save Intakes</button>
-    </section>
-
-    <!-- Notify Outputs -->
-    <section id="outputs" class="tab">
-      <h2>Notify Outputs</h2>
-      <p>Configure outbound channels here.</p>
-    </section>
-
-    <!-- Settings (curated subset) -->
-    <section id="settings" class="tab">
-      <h2>Settings</h2>
-      <label>Retention days <input id="retention" type="number" /></label>
-      <button id="save-retention" class="btn">Save</button>
-      <label>Purge older than <input id="purge-days" type="number" /></label>
-      <button id="purge" class="btn danger">Run Purge</button>
-
-      <h3>Quiet Hours</h3>
-      <label>Timezone <input id="qh-tz" placeholder="Africa/Johannesburg" /></label>
-      <label>Quiet start <input id="qh-start" placeholder="22:00" /></label>
-      <label>Quiet end <input id="qh-end" placeholder="06:00" /></label>
-      <label class="lbl"><input id="qh-allow-critical" type="checkbox" /> Allow Critical Outside</label>
-      <button id="save-quiet" class="btn">Save Quiet Hours</button>
-    </section>
-
-    <!-- LLM -->
-    <section id="llm" class="tab">
-      <h2>LLM Settings</h2>
-      <label>Model <input id="llm-model" placeholder="model name" /></label>
-      <label>Context Tokens <input id="llm-ctx" type="number" /></label>
-      <label>Timeout (s) <input id="llm-timeout" type="number" /></label>
-      <button id="save-llm" class="btn">Save LLM</button>
-    </section>
-
-    <!-- EnviroGuard -->
-    <section id="enviro" class="tab">
-      <h2>EnviroGuard</h2>
-      <p>Status: <span id="env-status">-</span></p>
-      <label>Hot °C <input id="env-hot" type="number" /></label>
-      <label>Cold °C <input id="env-cold" type="number" /></label>
-      <label>Hysteresis °C <input id="env-hyst" type="number" /></label>
-      <button id="save-env" class="btn">Save EnviroGuard</button>
-    </section>
-
-    <!-- Ops Engine -->
-    <section id="ops" class="tab">
-      <h2>Ops Engine</h2>
-      <p>Coming soon — orchestration / playbooks will run here.</p>
-    </section>
-
-    <!-- Options (All) -->
-    <section id="options" class="tab">
-      <h2>Options (All)</h2>
-      <p>This renders every field from <code>/api/options</code> + <code>/api/schema</code>.</p>
-      <div id="opts-wrap"></div>
-      <div class="opts-actions">
-        <button id="save-options" class="btn primary">Save All Options</button>
-      </div>
-    </section>
-
-    <!-- About -->
-    <section id="about" class="tab">
-      <h2>About Jarvis Prime</h2>
-      <p>Jarvis Prime — Technitium-style one-page UI. Ingress + direct host safe.</p>
-    </section>
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=1.5"></script>
+  <script src="app.js?v=1.6"></script>
 </body>
 </html>
