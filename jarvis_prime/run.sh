@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 CONFIG_PATH=/data/options.json
-log() { echo "[$(date '+%F %T')] $*"; }
-
-## best-effort base refresh (won't fail offline) — per locked rule
-(apt-get update && apt-get -y upgrade) >/dev/null 2>&1 || true
 
 banner() {
   echo "──────────────────────────────────────────────"
@@ -140,6 +136,7 @@ if [ "$push_ntfy_enabled" != "true" ] && [ "$push_ntfy_enabled" != "1" ]; then
   echo "[launcher] hard-off: ntfy pushes disabled (env blanked)"
 fi
 
+
 # Personalities
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
@@ -158,14 +155,14 @@ TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH"); TINY_PATH=$(jq -r '
 QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH");  QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH")
 
 export LLM_MODEL_PATH=""; export LLM_MODEL_URLS=""; export LLM_MODEL_URL=""; export LLM_ENABLED; export LLM_STATUS="Disabled"
-if [ "$CLEANUP" = "true" ] && [ "$LLM_ENABLED" = "false" ]; then
-  rm -f "$PHI_PATH" "$TINY_PATH" "$QWEN_PATH" || true
-elif [ "$CLEANUP" = "true" ]; then
-  [ "$PHI_ON"  = "false" ] && [ -f "$PHI_PATH" ]  && rm -f "$PHI_PATH"  || true
-  [ "$TINY_ON" = "false" ] && [ -f "$TINY_PATH" ] && rm -f "$TINY_PATH" || true
-  [ "$QWEN_ON" = "false" ] && [ -f "$QWEN_PATH" ] && rm -f "$QWEN_PATH" || true
+if [ "$CLEANUP" = "true" ]; then
+  if [ "$LLM_ENABLED" = "false" ]; then rm -f "$PHI_PATH" "$TINY_PATH" "$QWEN_PATH" || true
+  else
+    [ "$PHI_ON"  = "false" ] && [ -f "$PHI_PATH" ]  && rm -f "$PHI_PATH"  || true
+    [ "$TINY_ON" = "false" ] && [ -f "$TINY_PATH" ] && rm -f "$TINY_PATH" || true
+    [ "$QWEN_ON" = "false" ] && [ -f "$QWEN_PATH" ] && rm -f "$QWEN_PATH" || true
+  fi
 fi
-
 ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
 if [ "$LLM_ENABLED" = "true" ]; then
   if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi-3";
@@ -220,48 +217,30 @@ else
   echo "[launcher] proxy disabled"
 fi
 
-# ===== Ensure AegisOps structure (bootstrap; additive only) =====
+# ===== AegisOps bootstrap (additive, idempotent) =====
 AEGIS_APP="/app/aegisops"
 AEGISOPS_BASE="/share/jarvis_prime/aegisops"
-sync_from_image() {
-  local src="$1" dst="$2"
-  if [ -d "$src" ]; then
-    mkdir -p "$dst"
-    (cd "$src" && find . -type f | while read -r f; do
-      mkdir -p "$dst/$(dirname "$f")"
-      if [ ! -f "$dst/$f" ]; then cp -a "$src/$f" "$dst/$f"; fi
-    done)
-  fi
-}
-sync_from_image "$AEGIS_APP" "$AEGISOPS_BASE"
+
+# copy-from-image ONLY if file missing in /share (preserve user edits)
+if [ -d "$AEGIS_APP" ]; then
+  mkdir -p "$AEGISOPS_BASE"
+  (cd "$AEGIS_APP" && find . -type f | while read -r f; do
+    mkdir -p "$AEGISOPS_BASE/$(dirname "$f")"
+    [ -f "$AEGISOPS_BASE/$f" ] || cp -a "$AEGIS_APP/$f" "$AEGISOPS_BASE/$f"
+  done)
+fi
+
+# ensure base folders
 mkdir -p \
   "${AEGISOPS_BASE}/db" \
   "${AEGISOPS_BASE}/playbooks" \
   "${AEGISOPS_BASE}/helpers" \
   "${AEGISOPS_BASE}/callback_plugins" || true
-# create empty/sentinel files if missing (harmless if already copied)
-touch "${AEGISOPS_BASE}/ansible.cfg" \
-      "${AEGISOPS_BASE}/inventory.ini" \
-      "${AEGISOPS_BASE}/schedules.json" \
-      "${AEGISOPS_BASE}/uptime_targets.yml" \
-      "${AEGISOPS_BASE}/db/aegisops.db" || true
-# optional: seed runner from image if present but not yet copied
-if [ ! -f "${AEGISOPS_BASE}/runner.py" ] && [ -f "/app/aegisops/runner.py" ]; then
-  cp "/app/aegisops/runner.py" "${AEGISOPS_BASE}/runner.py" || true
-fi
 
-# ---- Seed AegisOps defaults if files are missing/empty (idempotent) ----
-ensure_file() { # ensure_file <path> <here-doc label>
-  local p="$1"; local label="$2"
-  if [ ! -s "$p" ]; then
-    echo "[aegisops] seeding $(basename "$p")"
-    # shellcheck disable=SC2188
-    cat >"$p" <<"$label"
-$label
-  fi
-}
-
-ensure_file "${AEGISOPS_BASE}/schedules.json" "JSON_EOF"
+# seed files if empty/missing (NO functions, clean heredocs)
+if [ ! -s "${AEGISOPS_BASE}/schedules.json" ]; then
+  echo "[aegisops] seeding schedules.json"
+  cat > "${AEGISOPS_BASE}/schedules.json" <<'JSON_EOF'
 [
   {
     "id": "uptime-5m",
@@ -280,8 +259,11 @@ ensure_file "${AEGISOPS_BASE}/schedules.json" "JSON_EOF"
   }
 ]
 JSON_EOF
+fi
 
-ensure_file "${AEGISOPS_BASE}/ansible.cfg" "CFG_EOF"
+if [ ! -s "${AEGISOPS_BASE}/ansible.cfg" ]; then
+  echo "[aegisops] seeding ansible.cfg"
+  cat > "${AEGISOPS_BASE}/ansible.cfg" <<'CFG_EOF'
 [defaults]
 inventory = /share/jarvis_prime/aegisops/inventory.ini
 callback_plugins = /share/jarvis_prime/aegisops/callback_plugins
@@ -290,18 +272,28 @@ retry_files_enabled = False
 stdout_callback = yaml
 host_key_checking = False
 CFG_EOF
+fi
 
-ensure_file "${AEGISOPS_BASE}/inventory.ini" "INV_EOF"
+if [ ! -s "${AEGISOPS_BASE}/inventory.ini" ]; then
+  echo "[aegisops] seeding inventory.ini"
+  cat > "${AEGISOPS_BASE}/inventory.ini" <<'INV_EOF'
 [all]
 localhost ansible_host=127.0.0.1 ansible_user=root
 INV_EOF
+fi
 
-ensure_file "${AEGISOPS_BASE}/uptime_targets.yml" "YAML_EOF"
+if [ ! -s "${AEGISOPS_BASE}/uptime_targets.yml" ]; then
+  echo "[aegisops] seeding uptime_targets.yml"
+  cat > "${AEGISOPS_BASE}/uptime_targets.yml" <<'YAML_EOF'
 checks:
   - { name: jarvis ui http, target: localhost, mode: http, url: "http://127.0.0.1:2581/api/health", expect: [200,204] }
 YAML_EOF
+fi
 
-# ===== NEW: AegisOps Runner =====
+# make sure a db file exists (SQLite will create if not present)
+: > "${AEGISOPS_BASE}/db/aegisops.db"
+
+# ===== AegisOps Runner (prefer /share; fall back to /app) =====
 if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
   if [ -f "${AEGISOPS_BASE}/runner.py" ]; then
     echo "[launcher] starting AegisOps runner (runner.py)"
@@ -312,7 +304,7 @@ if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
     python3 "/app/aegisops/runner.py" &
     AEGISOPS_PID=$! || true
   else
-    echo "[launcher] ⚠️ AegisOps runner.py not found at ${AEGISOPS_BASE}/runner.py"
+    echo "[launcher] ⚠️ AegisOps runner.py not found in /share or /app"
   fi
 else
   echo "[launcher] AegisOps disabled"
