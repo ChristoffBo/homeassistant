@@ -1,105 +1,72 @@
 ---
-- name: normalize
-  ansible.builtin.set_fact:
-    _timeout: "{{ (_chk.timeout_s | default(default_timeout_s)) | int }}"
-    _expect: "{{ _chk.expect | default([200]) }}"
+# Executes one check_item (ping|tcp|http) and appends normalized result.
 
-- name: ping
-  when: _chk.mode == 'ping'
+- name: ensure result bucket exists
+  set_fact:
+    _results: "{{ _results | default([]) }}"
+
+- name: ping check
+  when: (check_item.mode | lower) == 'ping'
   block:
-    - ansible.builtin.ping:
-      register: _r
+    - name: ansible ping
+      ansible.builtin.ping:
+      register: _chk
       ignore_errors: yes
-    - ansible.builtin.set_fact:
-        _res: "{{ {
-          'name': _chk.name, 'mode': 'ping',
-          'status': ('ok' if (_r is defined and (_r.ping | default('') == 'pong')) else 'fail'),
-          'detail': (_r.msg | default('')) | string,
-          'host': inventory_hostname
-        } }}"
-    - name: write result to AegisOps DB
-      ansible.builtin.shell: |
-        python3 - <<'PY'
-        import sqlite3, os
-        dbp="/share/jarvis_prime/aegisops/db/aegisops.db"
-        os.makedirs(os.path.dirname(dbp), exist_ok=True)
-        con=sqlite3.connect(dbp)
-        con.execute("""CREATE TABLE IF NOT EXISTS uptime_runs(
-          id INTEGER PRIMARY KEY, ts DATETIME DEFAULT CURRENT_TIMESTAMP,
-          host TEXT, check_name TEXT, mode TEXT, status TEXT, detail TEXT)""")
-        d={{ _res | to_json }}
-        con.execute("INSERT INTO uptime_runs(host,check_name,mode,status,detail) VALUES(?,?,?,?,?)",
-                    (d["host"], d["name"], d["mode"], d["status"], d["detail"]))
-        con.commit(); con.close()
-        PY
-      args: { executable: /bin/bash }
 
-- name: tcp
-  when: _chk.mode == 'tcp'
+    - name: append ping result
+      set_fact:
+        _results: "{{ _results + [ {
+          'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
+          'name': (check_item.name | default('ping')),
+          'mode': 'ping',
+          'target': (check_item.target | default(inventory_hostname)),
+          'status': ('ok' if (_chk is defined and _chk.ping is defined and _chk.ping == 'pong') else 'fail'),
+          'detail': (_chk | to_nice_json)
+        } ] }}"
+
+- name: tcp check
+  when: (check_item.mode | lower) == 'tcp'
   block:
-    - ansible.builtin.wait_for:
-        host: "{{ inventory_hostname }}"
-        port: "{{ _chk.port }}"
-        timeout: "{{ _timeout }}"
+    - name: wait for tcp port
+      ansible.builtin.wait_for:
+        host: "{{ check_item.target | default(inventory_hostname) }}"
+        port: "{{ check_item.port | int }}"
         state: started
-      register: _r
+        timeout: "{{ (check_item.timeout_s | default(5)) | int }}"
+      register: _chk
       ignore_errors: yes
-    - ansible.builtin.set_fact:
-        _res: "{{ {
-          'name': _chk.name, 'mode': 'tcp', 'port': _chk.port,
-          'status': ('ok' if (_r is defined and not _r.failed) else 'fail'),
-          'detail': (_r.msg | default('')) | string,
-          'host': inventory_hostname
-        } }}"
-    - name: write result to AegisOps DB
-      ansible.builtin.shell: |
-        python3 - <<'PY'
-        import sqlite3, os
-        dbp="/share/jarvis_prime/aegisops/db/aegisops.db"
-        os.makedirs(os.path.dirname(dbp), exist_ok=True)
-        con=sqlite3.connect(dbp)
-        con.execute("""CREATE TABLE IF NOT EXISTS uptime_runs(
-          id INTEGER PRIMARY KEY, ts DATETIME DEFAULT CURRENT_TIMESTAMP,
-          host TEXT, check_name TEXT, mode TEXT, status TEXT, detail TEXT)""")
-        d={{ _res | to_json }}
-        con.execute("INSERT INTO uptime_runs(host,check_name,mode,status,detail) VALUES(?,?,?,?,?)",
-                    (d["host"], d["name"], d["mode"], d["status"], d["detail"]))
-        con.commit(); con.close()
-        PY
-      args: { executable: /bin/bash }
 
-- name: http
-  when: _chk.mode == 'http'
+    - name: append tcp result
+      set_fact:
+        _results: "{{ _results + [ {
+          'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
+          'name': (check_item.name | default('tcp')),
+          'mode': 'tcp',
+          'target': (check_item.target | default(inventory_hostname)),
+          'status': ('ok' if (_chk is defined and (_chk.failed is not defined or not _chk.failed)) else 'fail'),
+          'detail': (_chk | to_nice_json)
+        } ] }}"
+
+- name: http check
+  when: (check_item.mode | lower) == 'http'
   block:
-    - ansible.builtin.uri:
-        url: "{{ _chk.url }}"
+    - name: GET url
+      ansible.builtin.uri:
+        url: "{{ check_item.url }}"
         method: GET
-        return_content: false
-        timeout: "{{ _timeout }}"
-        status_code: "{{ _expect }}"
-        validate_certs: false
-      register: _r
+        status_code: "{{ check_item.expect | default([200]) }}"
+        validate_certs: no
+        timeout: "{{ (check_item.timeout_s | default(5)) | int }}"
+      register: _chk
       ignore_errors: yes
-    - ansible.builtin.set_fact:
-        _res: "{{ {
-          'name': _chk.name, 'mode': 'http', 'url': _chk.url,
-          'status': ('ok' if (_r is defined and not _r.failed) else 'fail'),
-          'detail': (_r.msg | default('')) | string,
-          'host': inventory_hostname
-        } }}"
-    - name: write result to AegisOps DB
-      ansible.builtin.shell: |
-        python3 - <<'PY'
-        import sqlite3, os
-        dbp="/share/jarvis_prime/aegisops/db/aegisops.db"
-        os.makedirs(os.path.dirname(dbp), exist_ok=True)
-        con=sqlite3.connect(dbp)
-        con.execute("""CREATE TABLE IF NOT EXISTS uptime_runs(
-          id INTEGER PRIMARY KEY, ts DATETIME DEFAULT CURRENT_TIMESTAMP,
-          host TEXT, check_name TEXT, mode TEXT, status TEXT, detail TEXT)""")
-        d={{ _res | to_json }}
-        con.execute("INSERT INTO uptime_runs(host,check_name,mode,status,detail) VALUES(?,?,?,?,?)",
-                    (d["host"], d["name"], d["mode"], d["status"], d["detail"]))
-        con.commit(); con.close()
-        PY
-      args: { executable: /bin/bash }
+
+    - name: append http result
+      set_fact:
+        _results: "{{ _results + [ {
+          'ts': lookup('pipe','date +%Y-%m-%dT%H:%M:%S'),
+          'name': (check_item.name | default('http')),
+          'mode': 'http',
+          'target': (check_item.url),
+          'status': ('ok' if (_chk is defined and (_chk.failed is not defined or not _chk.failed)) else 'fail'),
+          'detail': (_chk | to_nice_json)
+        } ] }}"
