@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Home Assistant ntfy add-on entrypoint (no YAML; CLI flags only)
+# - Reads /data/options.json
+# - Sanitizes base_url (origin only, no path)
+# - Starts ntfy via CLI flags (avoids YAML parse errors)
+
 OPTS_FILE="/data/options.json"
 mkdir -p /data /data/ntfy || true
 
@@ -78,7 +83,7 @@ mkdir -p "$(dirname "$cache_file")" "$att_dir"
 args=( serve )
 args+=( --listen-http "0.0.0.0:${listen_port}" )
 args+=( --cache-file "${cache_file}" )
-args+=( --base-url "${base_url}" )
+args+=( --base-url ${base_url} )   # IMPORTANT: no extra quotes here
 if [ "${bp_bool}" = "true" ]; then
   args+=( --behind-proxy )
 fi
