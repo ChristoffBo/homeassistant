@@ -293,9 +293,47 @@
     }catch(e){ toast('Run failed'); }
   }
 
+  // ---- Playbook file API (REST first, then fallback to /file + /save) ----
+  async function aeg_get_playbook_file(name){
+    try{
+      const r = await jfetch(API('api/aegisops/playbooks/' + encodeURIComponent(name)));
+      if (r && typeof r.content === 'string') return r.content;
+      if (typeof r === 'string') return r;
+    }catch{}
+    try{
+      const r = await jfetch(API('api/aegisops/file?kind=playbook&name=' + encodeURIComponent(name)));
+      if (r && typeof r.content === 'string') return r.content;
+      if (typeof r === 'string') return r;
+    }catch{}
+    throw new Error('Playbook fetch failed for ' + name);
+  }
+
+  async function aeg_save_playbook_file(name, content){
+    try{
+      await jfetch(API('api/aegisops/playbooks'), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name, content })
+      });
+      return true;
+    }catch{}
+    try{
+      await jfetch(API('api/aegisops/save'), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ kind: 'playbook', name, content })
+      });
+      return true;
+    }catch(e){
+      console.error(e);
+      return false;
+    }
+  }
+
   // ---- RENDER: Inventory table ----
   function renderHosts(){
     const tb = $('#ag-hosts');
+    if(!tb){ return; }
     tb.innerHTML = '';
     if(!AEG.hosts.length){
       tb.innerHTML = '<tr><td colspan="4">No hosts (use Add Host or Refresh)</td></tr>';
@@ -313,7 +351,7 @@
       tb.appendChild(tr);
     }
   }
-  $('#ag-hosts').addEventListener('click',(e)=>{
+  $('#ag-hosts')?.addEventListener('click',(e)=>{
     const b = e.target.closest('button[data-act="del-host"]');
     if(!b) return;
     const idx = parseInt(b.dataset.idx,10);
@@ -321,12 +359,11 @@
     AEG.hosts.splice(idx,1);
     renderHosts(); renderServersSelect();
   });
-  $('#ag-host-add').addEventListener('click',()=>{
+  $('#ag-host-add')?.addEventListener('click',()=>{
     AEG.hosts.push({name:'host',host:'127.0.0.1',user:'root'});
     renderHosts(); renderServersSelect();
   });
-  $('#ag-host-save').addEventListener('click',()=>{
-    // pull edits from inputs
+  $('#ag-host-save')?.addEventListener('click',()=>{
     const names = $$('#ag-hosts .ag-host-name');
     const hosts = $$('#ag-hosts .ag-host-host');
     const users = $$('#ag-hosts .ag-host-user');
@@ -341,7 +378,7 @@
       renderHosts(); renderServersSelect();
     });
   });
-  $('#ag-host-refresh').addEventListener('click', async()=>{
+  $('#ag-host-refresh')?.addEventListener('click', async()=>{
     const txt = await aeg_get_inventory();
     AEG.hosts = parseInventoryIni(txt);
     renderHosts(); renderServersSelect();
@@ -351,7 +388,10 @@
   function renderPlaybooks(){
     const s1 = $('#ag-pb-select');
     const s2 = $('#ag-sch-playbook-select');
+    const s3 = $('#pbSelect'); // NEW editor select (optional)
+
     function fill(sel){
+      if(!sel) return;
       sel.innerHTML='';
       if(!AEG.playbooks.length){
         const o = document.createElement('option');
@@ -368,22 +408,105 @@
         sel.appendChild(o);
       });
     }
-    fill(s1); fill(s2);
+    fill(s1); fill(s2); fill(s3);
   }
-  $('#ag-pb-refresh').addEventListener('click', async()=>{
+  $('#ag-pb-refresh')?.addEventListener('click', async()=>{
     AEG.playbooks = await aeg_list_playbooks();
     renderPlaybooks();
   });
-  $('#ag-pb-run').addEventListener('click', ()=>{
-    const pb = $('#ag-pb-select').value;
+  $('#ag-pb-run')?.addEventListener('click', ()=>{
+    const pb = $('#ag-pb-select')?.value;
     if(!pb){ toast('Select a playbook'); return; }
     const servers = AEG.hosts.map(h=>h.name);
     aeg_run_once(pb, servers, 1);
   });
 
+  // -------- Playbook Editor (optional tab) --------
+  function initPlaybookEditor(){
+    const sel = $('#pbSelect');
+    const name = $('#pbName');
+    const editor = $('#pbEditor');
+    const btnNew = $('#btnPbNew');
+    const btnDup = $('#btnPbDuplicate');
+    const btnSave = $('#btnPbSave');
+    const btnDl  = $('#btnPbDownload');
+
+    if(!sel || !name || !editor) return;
+
+    async function loadEditorListAndSelect(){
+      if (!AEG.playbooks.length) {
+        try { AEG.playbooks = await aeg_list_playbooks(); } catch{}
+      }
+      renderPlaybooks();
+      if (AEG.playbooks.length){
+        const def = AEG.playbooks.includes('check_services.yml')
+          ? 'check_services.yml' : AEG.playbooks[0];
+        sel.value = def;
+        name.value = def;
+        try{
+          const txt = await aeg_get_playbook_file(def);
+          editor.value = typeof txt === 'string' ? txt : '';
+        }catch{ editor.value = ''; }
+      }else{
+        sel.innerHTML = '<option disabled selected>No playbooks found</option>';
+        editor.value = '';
+      }
+    }
+
+    sel.addEventListener('change', async ()=>{
+      name.value = sel.value || '';
+      try{
+        const txt = await aeg_get_playbook_file(sel.value);
+        editor.value = typeof txt === 'string' ? txt : '';
+      }catch{ editor.value = ''; toast('Could not load file'); }
+    });
+
+    btnNew && btnNew.addEventListener('click', ()=>{
+      name.value = 'new_playbook.yml';
+      editor.value = `---
+- name: New AegisOps Playbook
+  hosts: all
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "hello world"`;
+      toast('New file primed (unsaved)');
+    });
+
+    btnDup && btnDup.addEventListener('click', ()=>{
+      const cur = (name.value || sel.value || 'playbook').trim();
+      const dot = cur.lastIndexOf('.');
+      name.value = dot > 0 ? cur.slice(0, dot) + '.copy' + cur.slice(dot) : (cur + '.copy.yml');
+      toast('Filename duplicated; click Save to write it');
+    });
+
+    btnSave && btnSave.addEventListener('click', async ()=>{
+      const nm = (name.value||'').trim();
+      if(!nm) return toast('Enter a filename before saving');
+      const ok = await aeg_save_playbook_file(nm, editor.value);
+      if(!ok) return toast('Save failed');
+      toast('Saved ✔');
+      try{ AEG.playbooks = await aeg_list_playbooks(); }catch{}
+      renderPlaybooks();
+      if (sel) sel.value = nm;
+    });
+
+    btnDl && btnDl.addEventListener('click', ()=>{
+      const nm = (name.value || 'playbook.yml').trim();
+      const blob = new Blob([editor.value], {type:'text/yaml'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = nm; a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    loadEditorListAndSelect();
+  }
+
   // ---- RENDER: Servers (multi-select in Schedules) ----
   function renderServersSelect(){
     const sel = $('#ag-sch-servers-select');
+    if(!sel) return;
     sel.innerHTML='';
     if(!AEG.hosts.length){
       const o=document.createElement('option'); o.value=''; o.textContent='No hosts'; sel.appendChild(o); sel.disabled=true; return;
@@ -397,6 +520,7 @@
   // ---- Schedules table ----
   function renderSchedules(){
     const tb = $('#ag-table');
+    if(!tb) return;
     tb.innerHTML='';
     if(!AEG.schedules.length){
       tb.innerHTML='<tr><td colspan="5">No schedules</td></tr>'; return;
@@ -415,7 +539,7 @@
       tb.appendChild(tr);
     });
   }
-  $('#ag-table').addEventListener('click', (e)=>{
+  $('#ag-table')?.addEventListener('click', (e)=>{
     const b = e.target.closest('button[data-act]');
     if(!b) return;
     const id = b.dataset.id;
@@ -435,9 +559,7 @@
       $('#ag-notify-cooldown').value  = s.notify?.cooldown_min ?? 30;
       $('#ag-notify-quiet').value     = s.notify?.quiet_hours ?? '';
       $('#ag-notify-key').value       = s.notify?.target_key ?? '';
-      // select playbook
       $('#ag-sch-playbook-select').value = s.playbook || '';
-      // select servers
       const sel = $('#ag-sch-servers-select');
       const set = new Set((Array.isArray(s.servers)?s.servers:[]).map(String));
       ;[...sel.options].forEach(o=> o.selected = set.has(o.value));
@@ -445,7 +567,7 @@
     }
   });
 
-  $('#ag-add').addEventListener('click', ()=>{
+  $('#ag-add')?.addEventListener('click', ()=>{
     const id = $('#ag-sch-id').value.trim();
     if(!id){ toast('Schedule id required'); return; }
     const playbook = $('#ag-sch-playbook-select').value;
@@ -477,6 +599,7 @@
   // ---- Runs table ----
   async function loadRuns(){
     const tb = $('#ag-runs');
+    if(!tb){ return; }
     tb.innerHTML = '<tr><td colspan="7">Loading…</td></tr>';
     const rows = await aeg_runs();
     tb.innerHTML='';
@@ -495,8 +618,8 @@
       tb.appendChild(tr);
     });
   }
-  $('#ag-refresh').addEventListener('click', loadRuns);
-  $('#ag-meta-refresh').addEventListener('click', async()=>{
+  $('#ag-refresh')?.addEventListener('click', loadRuns);
+  $('#ag-meta-refresh')?.addEventListener('click', async()=>{
     const [inv, pbs] = await Promise.all([aeg_get_inventory(), aeg_list_playbooks()]);
     AEG.hosts = parseInventoryIni(inv);
     AEG.playbooks = pbs;
@@ -507,9 +630,6 @@
   (async function boot(){
     // inbox
     await loadInbox();
-    (function startStream(){
-      // already defined above, keep inbox SSE
-    })();
 
     // AegisOps metadata
     const [inv, pbs] = await Promise.allSettled([aeg_get_inventory(), aeg_list_playbooks()]);
@@ -518,5 +638,8 @@
     renderHosts(); renderServersSelect(); renderPlaybooks();
     loadSchedules();
     loadRuns();
+
+    // NEW: start Playbook Editor only if its elements exist
+    initPlaybookEditor();
   })();
 })();
