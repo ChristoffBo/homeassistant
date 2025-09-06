@@ -216,6 +216,24 @@ else
   echo "[launcher] proxy disabled"
 fi
 
+# ===== Ensure AegisOps structure (bootstrap; additive only) =====
+AEGISOPS_BASE="/share/jarvis_prime/aegisops"
+mkdir -p \
+  "${AEGISOPS_BASE}/db" \
+  "${AEGISOPS_BASE}/playbooks" \
+  "${AEGISOPS_BASE}/helpers" \
+  "${AEGISOPS_BASE}/callback_plugins" || true
+# create empty/sentinel files if missing
+touch "${AEGISOPS_BASE}/ansible.cfg" \
+      "${AEGISOPS_BASE}/inventory.ini" \
+      "${AEGISOPS_BASE}/schedules.json" \
+      "${AEGISOPS_BASE}/uptime_targets.yml" \
+      "${AEGISOPS_BASE}/db/aegisops.db" || true
+# optional: seed runner from image if present but not yet copied
+if [ ! -f "${AEGISOPS_BASE}/runner.py" ] && [ -f "/app/aegisops/runner.py" ]; then
+  cp "/app/aegisops/runner.py" "${AEGISOPS_BASE}/runner.py" || true
+fi
+
 # ===== NEW: AegisOps Runner =====
 AEGISOPS_BASE="/share/jarvis_prime/aegisops"
 if [ "${AEGISOPS_ENABLED:-true}" = "true" ]; then
