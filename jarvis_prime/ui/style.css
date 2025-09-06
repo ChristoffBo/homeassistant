@@ -29,7 +29,7 @@ main { padding:12px }
 .stat.red  { border-color:var(--red) }
 
 table { width:100%; border-collapse:collapse; background:var(--panel) }
-th,td { padding:6px 8px; border-bottom:1px solid #223 }
+th,td { padding:6px 8px; border-bottom:1px solid #223; vertical-align:middle }
 th { background:#182033; text-align:left }
 
 .inbox-actions { display:flex; gap:10px; align-items:center; margin-top:8px }
@@ -98,7 +98,14 @@ legend{ color:#9fd2ff; padding:0 6px }
 .msg-row:hover{ background:#172035 }
 .msg-row.selected{ background:#182844 }
 
+/* ---- AegisOps helpers ---- */
+.toolbar{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0 8px }
+.inline{ display:flex; align-items:center; gap:8px }
+.w-auto{ width:auto; min-width:240px }
+select[multiple]{ min-height: 140px; }
+
 @media (max-width:900px){
   .grid2,.grid3{ grid-template-columns:1fr }
   .inbox-wrap{ grid-template-columns: 1fr }
+  .w-auto{ width:100% }
 }
