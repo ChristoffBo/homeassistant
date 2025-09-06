@@ -209,30 +209,26 @@
       </div>
     </section>
 
-    <!-- Playbook Editor (frontend only; backend wiring optional) -->
+    <!-- Playbook Editor -->
     <section id="pb-editor" class="tab">
       <div class="panel">
         <div class="panel-head">
           <h2>Playbook Editor</h2>
           <div class="row-actions">
-            <button id="pe-load" class="btn">Load</button>
+            <button id="pe-open" class="btn">Load</button>
             <button id="pe-save" class="btn primary">Save</button>
             <button id="pe-delete" class="btn danger">Delete</button>
-            <button id="pe-new" class="btn">New</button>
           </div>
         </div>
         <div class="grid2">
           <label>Existing
-            <select id="pe-select"><option value="">No playbooks found</option></select>
+            <select id="pe-list"><option value="">No playbooks</option></select>
           </label>
-          <label>File name
-            <input id="pe-name" placeholder="check_services.yml" />
+          <label>New Name
+            <input id="pe-new-name" placeholder="uptime.yml" />
           </label>
         </div>
-        <label>Contents (YAML)
-          <textarea id="pe-body" style="min-height:300px" spellcheck="false"></textarea>
-        </label>
-        <p class="muted">Files live in <code>/share/jarvis_prime/aegisops/playbooks</code>. (Editor calls <code>/api/aegisops/playbook</code> endpoints if present.)</p>
+        <textarea id="pe-area" spellcheck="false"></textarea>
       </div>
     </section>
   </main>
