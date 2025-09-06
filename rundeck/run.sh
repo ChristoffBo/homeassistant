@@ -1,15 +1,38 @@
-#!/usr/bin/with-contenv bash
-set -e
+#!/bin/bash
+set -euo pipefail
 
-# Best effort update
-apt-get update || true
-apt-get upgrade -y || true
+OPTIONS_FILE="/data/options.json"
+UI_PORT=4440
+EXTERNAL_URL=""
+EXTRA_JAVA_OPTS=""
 
-# Get port from options.json
-PORT=$(jq -r '.ui_port' /data/options.json)
+if [ -f "$OPTIONS_FILE" ]; then
+  UI_PORT="$(jq -r '.ui_port // 4440' "$OPTIONS_FILE")"
+  EXTERNAL_URL="$(jq -r '.external_url // ""' "$OPTIONS_FILE")"
+  EXTRA_JAVA_OPTS="$(jq -r '.extra_java_opts // ""' "$OPTIONS_FILE")"
+fi
 
-echo "[INFO] Starting Rundeck on port ${PORT}..."
+# Persistent data (HA add-on /data is persistent)
+export RDECK_BASE="/data/rundeck"
+mkdir -p "${RDECK_BASE}"
+# official image uses uid 1000
+chown -R 1000:1000 "${RDECK_BASE}" || true
 
-# Rundeck uses /home/rundeck/server/config by default
-# We map HA's /config to persist it
-exec java -jar /home/rundeck/rundeck.war --server.port=${PORT}
+# Ingress / proxy friendliness
+export RUNDECK_SERVER_FORWARDED="true"
+if [ -n "${EXTERNAL_URL}" ] && [ "${EXTERNAL_URL}" != "null" ]; then
+  export RUNDECK_GRAILS_URL="${EXTERNAL_URL}"
+fi
+
+JAVA_OPTS="-Dserver.port=${UI_PORT}"
+if [ -n "${EXTRA_JAVA_OPTS}" ] && [ "${EXTRA_JAVA_OPTS}" != "null" ]; then
+  JAVA_OPTS="${JAVA_OPTS} ${EXTRA_JAVA_OPTS}"
+fi
+export JAVA_OPTS
+
+echo "[INFO] RDECK_BASE=${RDECK_BASE}"
+echo "[INFO] server.port=${UI_PORT}"
+[ -n "${RUNDECK_GRAILS_URL:-}" ] && echo "[INFO] RUNDECK_GRAILS_URL=${RUNDECK_GRAILS_URL}"
+echo "[INFO] RUNDECK_SERVER_FORWARDED=${RUNDECK_SERVER_FORWARDED}"
+
+exec /docker-entrypoint.sh
