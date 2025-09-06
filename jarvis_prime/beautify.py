@@ -335,6 +335,21 @@ def _debug(msg: str) -> None:
         except Exception:
             pass
 
+# ===== NEW: global OFF switch =====
+def _beautify_is_disabled() -> bool:
+    env = (os.getenv("BEAUTIFY_ENABLED") or "").strip().lower()
+    if env in ("0","false","no","off","disabled"):
+        return True
+    try:
+        with open("/data/options.json","r",encoding="utf-8") as f:
+            opt = json.load(f)
+            v = str(opt.get("beautify_enabled","true")).strip().lower()
+            if v in ("0","false","no","off","disabled"):
+                return True
+    except Exception:
+        pass
+    return False
+
 # ============================
 # ADDITIVE: Watchtower-aware summarizer
 # ============================
@@ -392,6 +407,22 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
+
+    # Honor global OFF switch: pass-through (no image/regex processing)
+    if _beautify_is_disabled():
+        title_s = (title or "").strip()
+        body_s  = (body or "").strip()
+        lines: List[str] = [ "📟 Jarvis Prime — Message" ]
+        if title_s:
+            lines += ["", "📄 Facts", f"- **Subject:** {title_s}"]
+        if body_s:
+            lines += ["", "📝 Message", body_s]
+        text = "\n".join(lines).strip()
+        extras: Dict[str, Any] = {
+            "client::display": {"contentType": "text/markdown"},
+            "jarvis::beautified": False
+        }
+        return text, extras
 
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
