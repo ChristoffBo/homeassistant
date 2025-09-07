@@ -58,6 +58,7 @@ COPY enviroguard.py /app/enviroguard.py
 COPY llm_client.py /app/llm_client.py
 COPY llm_memory.py /app/llm_memory.py
 COPY personality_state.py /app/personality_state.py
+COPY chat_memory.py /app/chat_memory.py
 
 # ---- NEW: Inbox server + UI + storage + fan-out clients ----
 COPY api_messages.py /app/api_messages.py
