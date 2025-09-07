@@ -4,23 +4,43 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any  # ADDITIVE
 
 # -----------------------------
-# Load config from /data/options.json
+# Load config from /data/options.json (JSON or YAML). Fallback: /data/config.json
 # -----------------------------
-try:
-    with open("/data/options.json", "r") as f:
-        text = f.read()
+def _load_options() -> Dict[str, Any]:
+    paths = ["/data/options.json", "/data/config.json"]
+    merged: Dict[str, Any] = {}
+    for p in paths:
         try:
-            options = json.loads(text)        # try JSON first
-        except json.JSONDecodeError:
-            options = yaml.safe_load(text)    # fallback to YAML
+            with open(p, "r") as f:
+                text = f.read()
+                try:
+                    cfg = json.loads(text)        # try JSON first
+                except json.JSONDecodeError:
+                    cfg = yaml.safe_load(text)    # fallback to YAML
+                if isinstance(cfg, dict):
+                    merged.update(cfg)
+        except Exception:
+            continue
+    return merged
 
-        ENABLED = options.get("weather_enabled", False)
-        LAT = options.get("weather_lat", -26.2041)
-        LON = options.get("weather_lon", 28.0473)
-        CITY = options.get("weather_city", "Unknown")
-except Exception as e:
-    print(f"[Weather] ⚠️ Could not load options.json: {e}")
-    ENABLED, LAT, LON, CITY = False, -26.2041, 28.0473, "Unknown"
+_options = _load_options()
+
+# Core weather options
+ENABLED = bool(_options.get("weather_enabled", False))
+LAT = _options.get("weather_lat", -26.2041)
+LON = _options.get("weather_lon", 28.0473)
+CITY = _options.get("weather_city", "Unknown")
+
+# Optional Home Assistant (for indoor temp line)
+HA_ENABLED = bool(_options.get("ha_enabled", False))
+HA_BASE_URL = str(_options.get("ha_base_url", "") or "").rstrip("/")
+HA_TOKEN = str(_options.get("ha_token", "") or "").strip()
+# allow multiple key names; first non-empty wins
+HA_INDOOR_ENTITY = (
+    str(_options.get("ha_indoor_temp_entity") or "") or
+    str(_options.get("ha_temp_entity_id") or "") or
+    str(_options.get("weather_ha_temp_entity_id") or "")
+).strip()
 
 # -----------------------------
 # Helpers
@@ -120,19 +140,56 @@ def _commentary(temp_max, code):
     if code in [95,96,99]:
         return random.choice(storm_lines)
 
-    if temp_max >= 30:
-        return random.choice(hot_lines)
-    elif 20 <= temp_max < 30:
-        return random.choice(warm_lines)
-    elif 10 <= temp_max < 20:
-        return random.choice(mild_lines)
-    elif temp_max < 10:
-        return random.choice(cold_lines)
+    if isinstance(temp_max, (int, float)):
+        if temp_max >= 30:
+            return random.choice(hot_lines)
+        elif 20 <= temp_max < 30:
+            return random.choice(warm_lines)
+        elif 10 <= temp_max < 20:
+            return random.choice(mild_lines)
+        elif temp_max < 10:
+            return random.choice(cold_lines)
 
     return "🌤 Looks like a balanced day ahead."
 
 def _kv(label, value):
     return f"    {label}: {value}"
+
+# -----------------------------
+# Home Assistant: optional indoor temperature fetch
+# -----------------------------
+def _ha_get_state(entity_id: str) -> Optional[Dict[str, Any]]:
+    if not (HA_ENABLED and HA_BASE_URL and HA_TOKEN and entity_id):
+        return None
+    try:
+        url = f"{HA_BASE_URL}/api/states/{entity_id}"
+        headers = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"}
+        r = requests.get(url, headers=headers, timeout=8)
+        if not r.ok:
+            return None
+        return r.json()
+    except Exception:
+        return None
+
+def _get_ha_indoor_temp_c() -> Optional[float]:
+    st = _ha_get_state(HA_INDOOR_ENTITY) if HA_INDOOR_ENTITY else None
+    if not st:
+        return None
+    # Prefer numeric state, else attribute 'temperature'
+    cand = st.get("state")
+    try:
+        v = float(cand)
+        return v
+    except Exception:
+        pass
+    attrs = st.get("attributes") or {}
+    for k in ("temperature", "current_temperature", "temp", "value"):
+        if k in attrs:
+            try:
+                return float(attrs[k])
+            except Exception:
+                continue
+    return None
 
 # -----------------------------
 # ADDITIVE: lightweight probe for controllers (EnviroGuard, etc.)
@@ -222,10 +279,15 @@ def current_weather():
     code = cw.get("weathercode", -1)
     icon_big = _icon_for_code(code, big=True)
 
+    # Optional: Home Assistant indoor temperature
+    indoor_c = _get_ha_indoor_temp_c()
+
     # Sleek aligned block
     lines = []
     lines.append(f"{icon_big} Current Weather — {CITY}")
     lines.append(_kv("🌡 Temperature", f"{temp}°C"))
+    if indoor_c is not None:
+        lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))  # nice home icon
     lines.append(_kv("🌬 Wind", f"{wind} km/h"))
     ts = cw.get("time")
     if ts:
@@ -263,10 +325,20 @@ def forecast_weather():
     code0 = codes[0] if len(codes) > 0 else -1
     icon0_big = _icon_for_code(code0, big=True)
 
+    # Optional: Home Assistant indoor temperature (include alongside today's range)
+    indoor_c = _get_ha_indoor_temp_c()
+
     lines = []
     lines.append(f"{icon0_big} Today — {CITY}")
     lines.append(_kv("Range", f"{tmin0}°C – {tmax0}°C"))
-    lines.append(_kv("Outlook", _commentary(tmax0 if isinstance(tmax0, (int, float)) else 0, code0)))
+    if indoor_c is not None:
+        lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
+    # cast tmax0 to float for commentary if possible
+    try:
+        tmax0_f = float(tmax0)
+    except Exception:
+        tmax0_f = None
+    lines.append(_kv("Outlook", _commentary(tmax0_f, code0)))
 
     # Next days
     lines.append("")
