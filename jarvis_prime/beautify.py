@@ -207,6 +207,26 @@ def _first_nonempty_line(s: str) -> str:
         if t: return t
     return ""
 
+def _first_meaningful_line(s: str) -> str:
+    """Return the first human line, skipping image placeholders and labels."""
+    for ln in (s or "").splitlines():
+        t = ln.strip()
+        if not t:
+            continue
+        # skip pure image placeholders or poster markdown
+        if t.startswith("![poster]") or t.lower().startswith("[image"):
+            continue
+        # If the line starts with Subject/Message, strip the label and use the rest
+        m = re.match(r'(?i)^(subject|message)\s*:?\s*(.*)$', t)
+        if m:
+            rest = m.group(2).strip()
+            if rest:
+                return rest
+            else:
+                continue
+        return t
+    return ""
+
 def _fmt_kv(label: str, value: str) -> str:
     v = value.strip()
     if re.search(r'\d', v):  # emphasize numeric values
@@ -591,15 +611,20 @@ def _clean_subject(raw_title: str, body: str) -> str:
     t = re.sub(r'^\s*\[(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\]\s*', '', t, flags=re.I)
     # If the title is literally just an intake keyword, try to mine a better subject
     if t.strip().lower() in INTAKE_NAMES or t.strip().lower() in {"message","notification","test"}:
+        new_t = None
         # Look for 'Subject: XYZ' inside body
         for ln in (body or "").splitlines():
             m = re.match(r'\s*Subject\s*:\s*(.+)\s*$', ln, flags=re.I)
             if m:
-                t = m.group(1).strip()
+                new_t = m.group(1).strip()
                 break
-        # If still empty, use the first non-empty human line
-        if not t:
-            t = _first_nonempty_line(body)
+        # If still not found, use the first meaningful human line
+        if not new_t:
+            cand = _first_meaningful_line(body)
+            if cand and cand.strip().lower() not in INTAKE_NAMES:
+                new_t = cand
+        if new_t:
+            t = new_t
     # Remove duplicate 'Jarvis Prime:' prefix(es)
     t = re.sub(r'^\s*(?:jarvis\s*prime\s*:?\s*)+', '', t, flags=re.I)
     return (t or "").strip()
@@ -722,6 +747,17 @@ def _normalize_intake(source: str, title: str, body: str) -> Tuple[str, str]:
         return _preprocess_proxy(title, body)
     return _preprocess_generic(title, body)
 
+# --- Riff promotion for content-type cards ---------------------------------------
+def _promote_riffs_to_message_if_needed(title: str, message_snip: str, riffs: List[str]) -> Tuple[str, List[str]]:
+    # If body already exists, keep it.
+    if message_snip.strip():
+        return message_snip, riffs
+    # Move riffs into the body for content-style titles.
+    if re.search(r'(?i)\b(joke|quip|weird\s*fact|fact|quote)\b', (title or "")) and riffs:
+        merged = "\n".join(r.strip().strip('"') for r in riffs if r.strip())
+        return merged, []
+    return message_snip, riffs
+
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
@@ -779,12 +815,12 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     # prefer explicit fields; do NOT touch persona/riffs
     if qs_title and "title" in qs_title:
         title = unquote_plus(qs_title.get("title") or "") or title
-    if qs_body and "title" in qs_body and not (title or "").strip():
+    if qs_body and "title" in qs_body:
         title = unquote_plus(qs_body.get("title") or "") or title
 
     if qs_title and "message" in qs_title:
         normalized = unquote_plus(qs_title.get("message") or "") or normalized
-    if qs_body and "message" in qs_body and not (normalized or "").strip():
+    if qs_body and "message" in qs_body:
         normalized = unquote_plus(qs_body.get("message") or "") or normalized
 
     # If the entire title string looks querystring-ish, decode it once
@@ -860,7 +896,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["jarvis::allImageUrls"] = images
             extras["client::notification"] = {"bigImageUrl": images[0]}
         else:
-            poster = _poster_fallback(title, body_wo_imgs)
+            poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
             if poster:
                 extras["jarvis::allImageUrls"] = [poster]
                 extras["client::notification"] = {"bigImageUrl": poster}
@@ -898,19 +934,14 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     except Exception:
         pass
 
-    if message_snip:
-        lines += ["", "📝 Message", message_snip]
-
-    # Inline the first image as poster; keep list in extras (or use fallback)
+    # Prepare poster (but append after message)
     poster = None
     if images:
         poster = images[0]
     else:
-        poster = _poster_fallback(title, body_wo_imgs)
+        poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
         if poster:
             images = [poster]
-    if poster:
-        lines += ["", f"![poster]({poster})"]
 
     # LLM persona riffs (render only if non-empty), independent toggle
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
@@ -922,6 +953,19 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
     real_riffs = [ r for r in real_riffs if r ]
+
+    # Promote riffs to the message when appropriate (e.g., Joke/Quip/Fact)
+    message_snip, real_riffs = _promote_riffs_to_message_if_needed(subj, message_snip, real_riffs)
+
+    # Now append message
+    if message_snip:
+        lines += ["", "📝 Message", message_snip]
+
+    # Append poster after the body
+    if poster:
+        lines += ["", f"![poster]({poster})"]
+
+    # Finally, append remaining riffs (if any)
     if real_riffs:
         lines += ["", f"🧠 {eff_persona} riff"]
         for r in real_riffs:
