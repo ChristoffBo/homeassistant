@@ -31,16 +31,35 @@ LON = _options.get("weather_lon", 28.0473)
 CITY = _options.get("weather_city", "Unknown")
 
 # Optional Home Assistant (for indoor temp line)
-HA_ENABLED = bool(_options.get("ha_enabled", False))
-HA_BASE_URL = str(_options.get("ha_base_url", "") or "").rstrip("/")
-HA_TOKEN = str(_options.get("ha_token", "") or "").strip()
-# allow multiple key names; first non-empty wins
+# Accept BOTH classic ha_* keys and EnviroGuard llm_enviroguard_ha_* keys.
+HA_ENABLED = bool(
+    _options.get("ha_enabled", False)
+    or _options.get("llm_enviroguard_ha_enabled", False)
+    or _options.get("weather_show_indoor", False)
+)
+
+HA_BASE_URL = (
+    str(
+        _options.get("ha_base_url")
+        or _options.get("llm_enviroguard_ha_base_url")
+        or ""
+    ).rstrip("/")
+)
+
+HA_TOKEN = str(
+    _options.get("ha_token")
+    or _options.get("llm_enviroguard_ha_token")
+    or ""
+).strip()
+
+# allow multiple key names; first non-empty wins (entity can come from either side)
 HA_INDOOR_ENTITY = (
     str(_options.get("ha_indoor_temp_entity") or "") or
+    str(_options.get("weather_indoor_sensor_entity") or "") or
+    str(_options.get("llm_enviroguard_ha_temp_entity") or "") or
     str(_options.get("ha_temp_entity") or "") or
     str(_options.get("ha_temp_entity_id") or "") or
-    str(_options.get("weather_ha_temp_entity_id") or "") or
-    str(_options.get("weather_indoor_sensor_entity") or "")
+    str(_options.get("weather_ha_temp_entity_id") or "")
 ).strip()
 
 # -----------------------------
