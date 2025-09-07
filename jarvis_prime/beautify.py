@@ -374,7 +374,7 @@ def _personality_enabled() -> bool:
 def _ui_persona_header_enabled() -> bool:
     # If the UI renders its own persona header, don't inline ours (avoid duplicates)
     opt = _read_options()
-    env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=False)
+    env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)  # default TRUE to prevent duplicate persona
     return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
 
 def _llm_message_rewrite_enabled() -> bool:
@@ -625,6 +625,19 @@ def _icon_from_env(keyword: str) -> Optional[str]:
     v = os.getenv(key) or ""
     return v.strip() or None
 
+def _default_icon() -> Optional[str]:
+    # default poster if nothing matches
+    try:
+        with open("/data/options.json","r",encoding="utf-8") as f:
+            opt = json.load(f) or {}
+            d = opt.get("default_icon") or ""
+            if str(d).strip():
+                return str(d).strip()
+    except Exception:
+        pass
+    v = os.getenv("ICON_DEFAULT_URL") or ""
+    return v.strip() or None
+
 def _poster_fallback(title: str, body: str) -> Optional[str]:
     """Pick a poster icon if the intake didn't provide one, using keywords."""
     keywords = ["sonarr","radarr","lidarr","prowlarr","readarr","bazarr",
@@ -636,7 +649,8 @@ def _poster_fallback(title: str, body: str) -> Optional[str]:
     for word in keywords:
         if word in text:
             return opt_map.get(word) or _icon_from_env(word)
-    return None
+    # fallback default
+    return _default_icon()
 
 def _remove_kv_lines(text: str) -> str:
     """
@@ -683,6 +697,10 @@ def _preprocess_proxy(title: str, body: str) -> Tuple[str, str]:
     # Capture blocks
     blocks = re.findall(r'(?is)name="(title|message)"\s*\r?\n\r?\n(.*?)(?:\r?\n--|$)', b)
     fields = {k.lower(): v.strip() for k,v in blocks}
+    # Also support URL-encoded query payloads in the body
+    qs = _maybe_parse_query_payload(b)
+    if qs:
+        fields.update({k.lower(): v for k,v in qs.items()})
     if fields.get("title"): t = fields["title"]
     if fields.get("message"): b = fields["message"]
     # Clean remaining MIME noise
