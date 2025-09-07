@@ -473,7 +473,7 @@ def _llm_then_beautify(title: str, message: str):
 
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
-        final = f"{final.rstrip()}\\n\\n{foot}"
+        final = f"{final.rstrip()}\n\n{foot}"
     return final, extras, used_llm, used_beautify
 
 # ============================
@@ -481,8 +481,8 @@ def _llm_then_beautify(title: str, message: str):
 # ============================
 def _clean(s: str) -> str:
     s = s.lower().strip()
-    s = re.sub(r"[^\\w\\s]", " ", s)
-    s = re.sub(r"\\s+", " ", s).strip()
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
     return s
 
 def normalize_cmd(cmd: str) -> str:
@@ -502,7 +502,7 @@ def extract_command_from(title: str, message: str) -> str:
     return ""
 
 def _env_status_line() -> str:
-    \"\"\"Builds a single-line EnviroGuard status for the boot card.\"\"\"
+    """Builds a single-line EnviroGuard status for the boot card."""
     try:
         if not bool(merged.get("llm_enviroguard_enabled", False)):
             return "🌡️ EnviroGuard — OFF"
@@ -552,7 +552,7 @@ def post_startup_card():
         f"Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'}",
         "Status: All systems nominal",
     ]
-    send_message("Startup", "\\n".join(lines), priority=4, decorate=False)
+    send_message("Startup", "\n".join(lines), priority=4, decorate=False)
 
 def _try_call(module, fn_name, *args, **kwargs):
     try:
@@ -621,8 +621,52 @@ def _handle_command(ncmd: str) -> bool:
     try: m_chat = __import__("chat")
     except Exception: pass
 
+    # --- NEW: freeform chat in persona
+    # Usage: "jarvis chat <message>" or "jarvis say <message>" or common small-talk triggers
+    if ncmd.startswith("chat "):
+        user_text = ncmd[5:].strip()
+        if m_chat and hasattr(m_chat, "handle_chat_text"):
+            try:
+                msg = m_chat.handle_chat_text(user_text)
+            except Exception as e:
+                msg = f"⚠️ Chat error: {e}"
+        else:
+            # fallback: echo in persona formatting via beautifier
+            msg = user_text or ""
+        send_message("Chat", msg or "…")
+        return True
+
+    if ncmd.startswith("say "):
+        user_text = ncmd[4:].strip()
+        if m_chat and hasattr(m_chat, "handle_chat_text"):
+            try:
+                msg = m_chat.handle_chat_text(user_text)
+            except Exception as e:
+                msg = f"⚠️ Chat error: {e}"
+        else:
+            msg = user_text or ""
+        send_message("Chat", msg or "…")
+        return True
+
+    if ncmd in ("how are you", "how r u", "how you doing", "how are u"):
+        user_text = "How are you?"
+        if m_chat and hasattr(m_chat, "handle_chat_text"):
+            try:
+                msg = m_chat.handle_chat_text(user_text)
+            except Exception as e:
+                msg = f"⚠️ Chat error: {e}"
+        else:
+            msg = "Operational and caffeinated ☕"
+        send_message("Chat", msg or "…")
+        return True
+
     if ncmd in ("help", "commands"):
-        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...\nEnv: env <hot|normal|cold|boost|auto>",)
+        send_message(
+            "Help",
+            "dns | kuma | weather | forecast | digest | joke | chat <text> | say <text>\n"
+            "ARR: upcoming movies/series, counts, longest ...\n"
+            "Env: env <hot|normal|cold|boost|auto>",
+        )
         return True
 
     if ncmd in ("digest", "daily digest", "summary"):
@@ -630,7 +674,7 @@ def _handle_command(ncmd: str) -> bool:
             title2, msg2, pr = m_digest.build_digest(merged)
             try:
                 if _personality and hasattr(_personality, "quip"):
-                    msg2 += f"\\n\\n{_personality.quip(ACTIVE_PERSONA)}"
+                    msg2 += f\"\n\n{_personality.quip(ACTIVE_PERSONA)}\"
             except Exception:
                 pass
             send_message("Digest", msg2, priority=pr)
