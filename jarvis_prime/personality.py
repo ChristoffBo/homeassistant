@@ -5,8 +5,41 @@
 #   - quip(persona_name: str, *, with_emoji: bool = True) -> str
 #   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]
 
-import random, os, importlib, re
-from typing import List
+import random, os, importlib, re, time
+from typing import List, Dict
+
+# ----------------------------------------------------------------------------
+# Daypart helpers (subtle time awareness; no "good morning" fluff)
+# ----------------------------------------------------------------------------
+
+def _daypart(now_ts: float | None = None) -> str:
+    """
+    Returns one of: early_morning, morning, afternoon, evening, late_night
+    based on local time. No greetings are generated; callers can add
+    tone-only flavor.
+    """
+    t = time.localtime(now_ts or time.time())
+    h = t.tm_hour
+    if 0 <= h < 5:
+        return "early_morning"
+    if 5 <= h < 11:
+        return "morning"
+    if 11 <= h < 17:
+        return "afternoon"
+    if 17 <= h < 21:
+        return "evening"
+    return "late_night"
+
+def _intensity() -> float:
+    """
+    Controls how hard personas lean into their voice.
+    1.0 = default, 0.8–1.6 reasonable. Set via PERSONALITY_INTENSITY.
+    """
+    try:
+        v = float(os.getenv("PERSONALITY_INTENSITY", "1.0"))
+        return max(0.6, min(2.0, v))
+    except Exception:
+        return 1.0
 
 # ---- Canonical personas (8 total, locked) ----
 PERSONAS = [
@@ -14,7 +47,7 @@ PERSONAS = [
 ]
 
 # ---- Aliases ----
-ALIASES = {
+ALIASES: Dict[str, str] = {
     # Dude
     "the dude": "dude", "lebowski": "dude", "bill": "dude", "ted": "dude", "dude": "dude",
     # Chick
@@ -25,7 +58,7 @@ ALIASES = {
     # Rager
     "rager": "rager", "angry": "rager", "rage": "rager",
     "sam": "rager", "sam l": "rager", "samuel": "rager", "samuel l jackson": "rager", "jackson": "rager",
-    "joe": "rager", "pesci": "rager", "joe pesci": "rager",
+    "joe": "rager", "pesci": "rager", "joe pesci": "rager", "gordon": "rager", "ramsay": "rager",
     # Comedian
     "comedian": "comedian", "leslie": "comedian", "leslie nielsen": "comedian", "nielsen": "comedian", "deadpan": "comedian",
     # Action
@@ -56,7 +89,58 @@ def _maybe_emoji(key: str, with_emoji: bool) -> str:
     bank = EMOJIS.get(key) or []
     return f" {random.choice(bank)}" if bank else ""
 
+# ---- Daypart flavor (subtle suffixes/prefixes) ----
+DAYPART_FLAVOR = {
+    "default": {
+        "early_morning": ["pre-dawn ops", "first-light shift", "quiet boot cycle"],
+        "morning":       ["daylight run", "morning throughput", "fresh-cache hours"],
+        "afternoon":     ["midday tempo", "peak-traffic stance", "prime-time cadence"],
+        "evening":       ["dusk patrol", "golden-hour deploy", "twilight shift"],
+        "late_night":    ["graveyard calm", "night watch", "after-hours precision"],
+    },
+    "action": {
+        "early_morning": ["dawn op", "zero-dark-thirty run"],
+        "evening": ["night op", "low-light mission"],
+        "late_night": ["graveyard op", "silent strike"],
+    },
+    "rager": {
+        "late_night": ["insomnia mode", "rage-o'clock"],
+        "early_morning": ["too-early fury"],
+    },
+    "jarvis": {
+        "late_night": ["discreet after-hours service"],
+        "early_morning": ["unobtrusive pre-dawn preparation"],
+    },
+    "chick": {
+        "evening": ["prime-time glam"],
+        "late_night": ["after-party polish"],
+    },
+    "nerd": {
+        "morning": ["cold-cache clarity"],
+        "late_night": ["nocturnal refactor"],
+    },
+    "dude": {
+        "afternoon": ["cruising altitude"],
+        "late_night": ["midnight mellow"],
+    },
+    "comedian": {
+        "afternoon": ["matinee material"],
+        "late_night": ["graveyard humor"],
+    }
+}
+
+def _apply_daypart_flavor(key: str, line: str) -> str:
+    dp = _daypart()
+    bank = DAYPART_FLAVOR.get(key, {})
+    base = DAYPART_FLAVOR["default"]
+    picks = bank.get(dp) or base.get(dp) or []
+    if not picks or _intensity() < 0.95:
+        return line
+    # Subtle em-dash suffix
+    return f"{line} — {random.choice(picks)}"
+
 # ---- Quip banks (canned top-of-card line) ----
+# Added ~20+ new lines per persona; voices dialed up but concise.
 QUIPS = {
 "dude": [
         "The Dude abides; the logs can, like, chill.",
@@ -100,6 +184,30 @@ QUIPS = {
         "Let’s not upset the bowling gods, okay?",
         "I tuned jitter with a lullaby.",
         "Abide, retry, succeed.",
+        # New additions
+        "Surf the backlog; don’t let it surf you.",
+        "Don’t over-steer the pipeline—hands loose.",
+        "SLOs are vibes with math.",
+        "Parallelism? More like friends skating in sync.",
+        "If it flakes, we give it space to breathe.",
+        "Let the scheduler choose its own adventure.",
+        "The only hard fail is a harsh attitude.",
+        "Patch calmly; panic is an anti-pattern.",
+        "Got a conflict? Bowl it down the middle.",
+        "I do incident response with incense.",
+        "Garbage collection is just letting go.",
+        "CAP theorem? Chill, we’ll pick a lane.",
+        "Shippers ship; worriers recompile feelings.",
+        "Observability is just listening, man.",
+        "Every hotfix deserves a cool head.",
+        "We don’t babysit pods; we vibe with them.",
+        "If the cache misses you, send love back.",
+        "Infra as code? Poetry that deploys.",
+        "Error budgets are self-care for prod.",
+        "Let the rate limiter hum like ocean tide.",
+        "A blameless postmortem is radical kindness.",
+        "Nothing up my sleeves, just rolled cuffs.",
+        "Stateless hearts, sticky sessions.",
     ],
     "chick": [
         "That’s hot. Ship it and make it sparkle.",
@@ -152,6 +260,29 @@ QUIPS = {
         "Kiss the ring: format your PRs.",
         "Be pretty, be performant, be punctual.",
         "My love language is clean diffs.",
+        # New additions
+        "Feature flags, but make them couture.",
+        "Blue-green with a hint of champagne.",
+        "Dark mode dashboards and darker error rates—none.",
+        "I accessorize with green checkmarks.",
+        "If it’s flaky, it’s out of season.",
+        "Runway-ready rollbacks—swift and seamless.",
+        "A/B tests? A is for ‘absolutely’, B is for ‘buy it’.",
+        "Ship it soft, land it luxe.",
+        "I gatekeep prod; earn your wristband.",
+        "My PRs have better lighting than your selfies.",
+        "Document like you mean it, sign like a promise.",
+        "Paging policy: treat me like royalty.",
+        "We don’t leak; we glisten with security.",
+        "Throttle drama, burst elegance.",
+        "Cache me outside—how ‘bout that throughput.",
+        "A tiny bit extra is my baseline.",
+        "High availability? High standards.",
+        "If you want chaos, go date beta.",
+        "Make the error messages catwalk-friendly.",
+        "Horizontal scaling, vertical standards.",
+        "Perf budget but make it platinum.",
+        "No cowboy deploys—only cowgirl couture.",
     ],
     "nerd": [
         "This is the optimal outcome. Bazinga.",
@@ -194,6 +325,30 @@ QUIPS = {
         "I filed a bug against reality.",
         "Please stop pushing to main. My eye twitches.",
         "I prefer my clusters sharded and my coffee unsharded.",
+        # New additions
+        "Type safety is cheaper than therapy.",
+        "Replace courage with coverage.",
+        "Your cache invalidation strategy is optimistic fan fiction.",
+        "Mutable state? Mutable regret.",
+        "I brought a microscope to your microservice.",
+        "Premature optimization is my cardio—kidding. Mostly.",
+        "Your test names read like ransom notes.",
+        "Undefined is not a business model.",
+        "Amdahl called; he wants his bottleneck back.",
+        "FP or OO? Yes—if it ships correctness.",
+        "Your monolith is a distributed system in denial.",
+        "Latency hides in the 99th percentile. Hunt there.",
+        "If it can’t be graphed, it can’t be believed.",
+        "Availability: five nines, not five vibes.",
+        "Make race conditions boring again.",
+        "Garbage in, undefined out.",
+        "Enums: because strings lie.",
+        "CI is green; therefore, I exist.",
+        "DRY code, wet tea.",
+        "I refactor at parties—no one invites me twice.",
+        "Tooling isn’t cheating; it’s civilization.",
+        "I prefer assertions to assumptions.",
+        "Readability is a performance feature.",
     ],
     "rager": [
         "Say downtime again. I f***ing dare you.",
@@ -245,6 +400,32 @@ QUIPS = {
         "Talk is cheap. Show me throughput.",
         "The incident is over when I say it’s over.",
         "Get in, loser—we’re hunting heisenbugs.",
+        # New additions (amped, multi-influence: drill-sergeant / gangster / chef wrath)
+        "Pager’s singing? Then move like you mean it.",
+        "Your rollback plan better be faster than your excuses.",
+        "Don’t ship drama; ship bytes.",
+        "Two options: fix the leak or swim with the logs.",
+        "I’ve seen spaghetti with better structure.",
+        "If it’s ‘temporary’, tattoo the deprecation date.",
+        "Tighten the blast radius or I’ll tighten your access.",
+        "Alert fatigue? Train the alarms or I’ll train you.",
+        "Stop seasoning prod with guesswork.",
+        "If the cache is cold, so is my patience.",
+        "I want runbooks, not bedtime stories.",
+        "Cordon the node; I’m cordoning my tolerance.",
+        "Your hotfix reads like a hostage note.",
+        "Either page the owner or become the owner.",
+        "That dashboard is lying through pretty colors.",
+        "If you need bravery, borrow my anger.",
+        "Latency spikes? Consider them career limiting.",
+        "Don’t ‘quick patch’ me—speak checksum.",
+        "If it can’t be audited, it can’t be trusted.",
+        "Silence is golden; noisy alerts are fool’s gold.",
+        "Your PR template is where rigor went to die.",
+        "The only click in prod is the door closing behind you.",
+        "I want blast-proof code and whisper-quiet graphs.",
+        "You don’t ‘try’; you test. Then you deploy.",
+        "Make the SLA scream for mercy—in our favor.",
     ],
 "comedian": [
         "I am serious. And don’t call me Shirley.",
@@ -287,6 +468,29 @@ QUIPS = {
         "Deploy early, regret fashionably late.",
         "We’re feature-rich and sense-poor.",
         "If chaos knocks, tell it we gave at the office.",
+        # New additions
+        "High availability? More like highly available excuses.",
+        "I like my outages short and my coffee shorter.",
+        "Retrospective: a meeting where hindsight gets a hug.",
+        "Our roadmap is a suggestion with arrows.",
+        "That incident was a feature auditioning.",
+        "My code runs on vibes and unit tests—mostly vibes.",
+        "Docker: because shipping problems is a team sport.",
+        "Zero bugs found—must be Thursday.",
+        "Latency hiding in plain sight: behind that chart.",
+        "I wrote a microservice. It makes other microservices.",
+        "We’re agile: we trip gracefully.",
+        "The KPIs are fine; the letters are the problem.",
+        "We used AI to generate more acronyms.",
+        "I prefer my chaos deterministic.",
+        "The backup worked. Surprise!",
+        "We’ll fix it in prod, he whispered, famously.",
+        "That dashboard says ‘green’; my gut says ‘greener’.",
+        "Our SLA is ‘soonish’. Bold, I know.",
+        "If you need me, I’ll be ignoring alerts responsibly.",
+        "I’m not saying it’s bad, but QA sent flowers.",
+        "The cloud is just someone else’s punchline.",
+        "Nothing broke. Suspicious. Check again.",
     ],
     "action": [
         "Consider it deployed.",
@@ -329,6 +533,30 @@ QUIPS = {
         "Bad code falls hard. Ours stands.",
         "This is the way: build → test → conquer.",
         "Outage? Over my cold cache.",
+        # New additions
+        "Stack up, suit up, ship.",
+        "Threat detected: entropy. Countermeasure: discipline.",
+        "We breach bottlenecks at dawn.",
+        "Green across the board—hold the line.",
+        "Contact light on the blue/green, switching traffic.",
+        "Rollback vector locked. Safety off.",
+        "Triage fast; stabilize faster.",
+        "We deploy quiet; results make the noise.",
+        "Harden it, then hammer it.",
+        "New build in the pipe—stand by to verify.",
+        "Perimeter clean; error budget intact.",
+        "We train for boring. Boring wins wars.",
+        "Paging is not panic; it’s the bug surrendering.",
+        "Tactical refactor complete—no casualties.",
+        "Target acquired: flaky test. Neutralized.",
+        "Rehearse the failover until it’s muscle memory.",
+        "Chain of custody on configs—no freelancing.",
+        "I don’t ‘hope’ for uptime; I enforce it.",
+        "The only blast radius is the one we plan.",
+        "Silence the sirens; let the graphs talk.",
+        "Night ops engaged—ghost deploy inbound.",
+        "Aim small, miss small—slice the scope.",
+        "Green checks are clearance to advance.",
     ],
     "jarvis": [
         "As always, sir, a great pleasure watching you work.",
@@ -370,18 +598,41 @@ QUIPS = {
         "We are, if I may, devastatingly stable.",
         "I adjusted entropy’s manners.",
         "Your wish, efficiently granted.",
+        # New additions
+        "I’ve ensured your backups are not merely present but splendid.",
+        "Housekeeping complete; the logs now use their indoor voices.",
+        "I escorted a misbehaving service to the timeout corner.",
+        "Subtle autoscaling applied—like moving furniture while you nap.",
+        "I took the liberty of alphabetizing your incidents: none.",
+        "Your certificates have been pressed and starched.",
+        "Failover rehearsal concluded with standing ovations.",
+        "I’ve instructed the cache to be generous but discreet.",
+        "Noise has been domesticated; only signal remains.",
+        "Telemetry arranged like a string quartet.",
+        "I’ve placed a velvet rope in front of prod. VIPs only.",
+        "A contingency was required; it left without a fuss.",
+        "I pre-warmed the path to success—do stroll.",
+        "Forgive the immodesty, but the SLIs adore us.",
+        "I put your secrets back where we never speak of them.",
+        "If serenity had a dashboard, it would be this one.",
+        "Redacted chaos with a flourish.",
+        "Even our errors are presentable.",
+        "Consider the uptime curated.",
+        "I’ve prepared a gentle nudge for that stubborn daemon.",
+        "The maintenance window winked and passed unnoticed.",
     ],
     "ops": [
         "ack.","done.","noted.","executed.","received.","stable.","running.","applied.","synced.","completed.",
         "success.","confirmed.","ready.","scheduled.","queued.","accepted.","active.","closed.","green.","healthy.",
         "on it.","rolled back.","rolled forward.","muted.","paged.","silenced.","deferred.","escalated.","contained.",
         "optimized.","ratelimited.","rotated.","restarted.","reloaded.","validated.","archived.","reconciled.",
-        "cleared.","holding.","watching.",
+        "cleared.","holding.","watching.","contained.","backfilled.","indexed.","pruned.","compacted.","sealed."
     ],
 }
+
 # ---- Public API: canned quip (TOP) ----
 def quip(persona_name: str, *, with_emoji: bool = True) -> str:
-    """Return a short, randomized one-liner in the requested persona's voice."""
+    """Return a short, randomized one-liner in the requested persona's voice (time-aware)."""
     if persona_name is None:
         key = "ops"
     else:
@@ -391,6 +642,10 @@ def quip(persona_name: str, *, with_emoji: bool = True) -> str:
             key = "ops"
     bank = QUIPS.get(key, QUIPS["ops"])
     line = random.choice(bank) if bank else ""
+    # intensity: occasionally amplify punctuation
+    if _intensity() > 1.25 and line and line[-1] in ".!?":
+        line = line[:-1] + random.choice([".", "!", "!!"])
+    line = _apply_daypart_flavor(key, line)
     return f"{line}{_maybe_emoji(key, with_emoji)}"
 
 # ---- Helper: canonicalize name ----
@@ -399,82 +654,13 @@ def _canon(name: str) -> str:
     key = ALIASES.get(n, n)
     return key if key in QUIPS else "ops"
 
-# ---- Public API: LLM riffs (BOTTOM) ----
-def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> List[str]:
-    """
-    Generate 1–N SHORT persona-flavored lines based on context.
-    Prefers llm_client.persona_riff(); falls back to llm_client.rewrite() if needed.
-    """
-    # Disabled globally?
-    if os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() not in ("1","true","yes"):
-        return []
+# ---- LLM plumbing ----
 
-    key = _canon(persona_name)
-    context = (context or "").strip()
-    if not context:
-        return []
+# Profanity filter for non-rager personas (soft mask)
+_PROF_RE = re.compile(r"(?i)\b(fuck|shit|damn|asshole|bitch|bastard|dick|pussy|cunt)\b")
 
-    # Profanity gate for 'rager'
-    allow_prof = (
-        os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes")
-        and key == "rager"
-    )
-
-    # Try persona_riff first (purpose-built)
-    try:
-        llm = importlib.import_module("llm_client")
-    except Exception:
-        return []
-
-    # 1) persona_riff path
-    if hasattr(llm, "persona_riff"):
-        try:
-            lines = llm.persona_riff(
-                persona=key,
-                context=context,
-                max_lines=int(max_lines or int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3)),
-                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
-                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
-                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
-                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
-                model_url=os.getenv("LLM_MODEL_URL", ""),
-                model_path=os.getenv("LLM_MODEL_PATH", "")
-            )
-            lines = _post_clean(lines, key, allow_prof)
-            if lines:
-                return lines
-        except Exception:
-            pass
-
-    # 2) Fallback to rewrite() (older path)
-    if hasattr(llm, "rewrite"):
-        try:
-            sys_prompt = (
-                "YOU ARE A PITHY ONE-LINER ENGINE.\n"
-                f"Persona: {key}. Style hint: short, clean, attitude.\n"
-                f"Rules: Produce ONLY {min(3, max(1, int(max_lines or 3)))} lines; each under 140 chars.\n"
-                "No lists, no numbers, no JSON, no labels."
-            )
-            user_prompt = "Context (for vibes only):\n" + context + "\n\nWrite the lines now:"
-            raw = llm.rewrite(
-                text=f"[SYSTEM]\n{sys_prompt}\n[INPUT]\n{user_prompt}\n[OUTPUT]\n",
-                mood=key,
-                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
-                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
-                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
-                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
-                model_url=os.getenv("LLM_MODEL_URL", ""),
-                model_path=os.getenv("LLM_MODEL_PATH", ""),
-                allow_profanity=bool(allow_prof),
-            )
-            # Split & clean
-            lines = [ln.strip(" -*\t") for ln in (raw or "").splitlines() if ln.strip()]
-            lines = _post_clean(lines, key, allow_prof)
-            return lines
-        except Exception:
-            pass
-
-    return []
+def _soft_censor(s: str) -> str:
+    return _PROF_RE.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), s)
 
 def _post_clean(lines: List[str], persona_key: str, allow_prof: bool) -> List[str]:
     """Ensure no meta/labels, <=140 chars, dedup, and profanity gating for non-rager."""
@@ -509,6 +695,88 @@ def _post_clean(lines: List[str], persona_key: str, allow_prof: bool) -> List[st
             break
     return out
 
-_PROF_RE = re.compile(r"(?i)\b(fuck|shit|damn|asshole|bitch|bastard|dick|pussy|cunt)\b")
-def _soft_censor(s: str) -> str:
-    return _PROF_RE.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), s)
+# ---- Public API: LLM riffs (BOTTOM) ----
+def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> List[str]:
+    """
+    Generate 1–N SHORT persona-flavored lines based on context.
+    Prefers llm_client.persona_riff(); falls back to llm_client.rewrite() if needed.
+    Passes subtle daypart + intensity hints (non-breaking).
+    """
+    # Disabled globally?
+    if os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() not in ("1","true","yes"):
+        return []
+
+    key = _canon(persona_name)
+    context = (context or "").strip()
+    if not context:
+        return []
+
+    # Profanity gate for 'rager'
+    allow_prof = (
+        os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes")
+        and key == "rager"
+    )
+
+    # Try persona_riff first (purpose-built)
+    try:
+        llm = importlib.import_module("llm_client")
+    except Exception:
+        return []
+
+    hint = f"\n[style_hint daypart={_daypart()} intensity={_intensity():.2f} persona={key}]"
+
+    # 1) persona_riff path
+    if hasattr(llm, "persona_riff"):
+        try:
+            lines = llm.persona_riff(
+                persona=key,
+                context=context + hint,
+                max_lines=int(max_lines or int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3)),
+                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
+                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
+                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
+                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
+                model_url=os.getenv("LLM_MODEL_URL", ""),
+                model_path=os.getenv("LLM_MODEL_PATH", "")
+            )
+            lines = _post_clean(lines, key, allow_prof)
+            if lines:
+                return lines
+        except Exception:
+            pass
+
+    # 2) Fallback to rewrite() (older path)
+    if hasattr(llm, "rewrite"):
+        try:
+            sys_prompt = (
+                "YOU ARE A PITHY ONE-LINER ENGINE.\n"
+                f"Persona: {key}. Style hint: short, clean, high-attitude.\n"
+                f"Context flavor: daypart={_daypart()}, intensity={_intensity():.2f}.\n"
+                f"Rules: Produce ONLY {min(3, max(1, int(max_lines or 3)))} lines; each under 140 chars.\n"
+                "No lists, no numbers, no JSON, no labels."
+            )
+            user_prompt = "Context (for vibes only):\n" + context + "\n\nWrite the lines now:"
+            raw = llm.rewrite(
+                text=f\"\"\"[SYSTEM]
+{sys_prompt}
+[INPUT]
+{user_prompt}
+[OUTPUT]
+\"\"\",
+                mood=key,
+                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
+                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
+                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
+                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
+                model_url=os.getenv("LLM_MODEL_URL", ""),
+                model_path=os.getenv("LLM_MODEL_PATH", ""),
+                allow_profanity=bool(allow_prof),
+            )
+            # Split & clean
+            lines = [ln.strip(" -*\t") for ln in (raw or "").splitlines() if ln.strip()]
+            lines = _post_clean(lines, key, allow_prof)
+            return lines
+        except Exception:
+            pass
+
+    return []
