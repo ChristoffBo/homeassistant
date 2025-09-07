@@ -167,7 +167,7 @@ def _harvest_images(text: str) -> Tuple[str, List[str], List[str]]:
         return f"[image: {alt}]" if alt else "[image]"
 
     def _bare(m):
-        u = m.group(1).rstrip('.,;:)]}>"\'')
+        u = m.group(1).rstrip('.,;:)]>\"\'')
         urls.append(u)
         return ""  # remove bare URL
 
@@ -754,6 +754,29 @@ def _final_qs_cleanup(text: str) -> str:
         return "\n".join(parts).strip() or text
     return text
 
+# -------- Meta/prompt scrubber (prevents visible "Tone/Rules" leakage) --------
+_META_LINE_RX = re.compile(
+    r'^\s*(?:tone|rule|rules|guidelines?|style(?:\s*hint)?|instruction|instructions|system(?:\s*prompt)?|persona|respond(?:\s*with)?|produce\s*only)\s*[:\-]',
+    re.I
+)
+_META_TAG_RX = re.compile(r'\s*\[(?:SYSTEM|INPUT|OUTPUT)\]\s*', re.I)
+
+def _scrub_meta(text: str) -> str:
+    if not text:
+        return ""
+    # Remove bracket tags inline
+    s = _META_TAG_RX.sub(" ", text)
+    # Drop meta-lines
+    keep: List[str] = []
+    for ln in s.splitlines():
+        if _META_LINE_RX.search(ln):
+            continue
+        keep.append(ln)
+    s = "\n".join(keep)
+    # compress blank lines
+    s = re.sub(r'\n{3,}', '\n\n', s).strip()
+    return s
+
 # -------- Intake preprocessors --------
 def _preprocess_smtp(title: str, body: str) -> Tuple[str, str]:
     body = _strip_mime_headers(body or "")
@@ -823,9 +846,12 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             pol = _persona_overlay_line(eff_persona)
             if pol: lines += [pol]
 
-        # Riffs independent toggle
+        # Riffs independent toggle (BODY-first context + scrubbed)
         if _llm_riffs_enabled() and eff_persona:
-            riffs = _persona_llm_riffs((title_s + "\n" + body_s).strip(), eff_persona)
+            riff_ctx = _scrub_meta(body_s)
+            if clean_subject:
+                riff_ctx = (riff_ctx + "\n\nSubject: " + clean_subject).strip()
+            riffs = _persona_llm_riffs(riff_ctx, eff_persona)
             real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
             real_riffs = [ r for r in real_riffs if r ]
             if real_riffs:
@@ -902,10 +928,13 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         wt_md, wt_meta = _summarize_watchtower(title, body_wo_imgs)
         lines += ["", wt_md]
 
-        ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
+        # BODY-first, scrubbed context for riffs
         riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
         if riff_hint and _llm_riffs_enabled() and eff_persona:
+            ctx = _scrub_meta(body_wo_imgs)
+            if clean_subject:
+                ctx = (ctx + "\n\nSubject: " + clean_subject).strip()
             riffs = _persona_llm_riffs(ctx, eff_persona)
         real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
         real_riffs = [ r for r in real_riffs if r ]
@@ -973,9 +1002,11 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     try:
         eff_persona_for_rewrite = _effective_persona(persona)
         max_chars = _llm_message_rewrite_max_chars()
-        rewritten = _persona_llm_rewrite(message_snip, eff_persona_for_rewrite, max_chars=max_chars)
+        # Scrub before sending to rewrite
+        rewrite_ctx = _scrub_meta(message_snip)
+        rewritten = _persona_llm_rewrite(rewrite_ctx, eff_persona_for_rewrite, max_chars=max_chars)
         if isinstance(rewritten, str) and rewritten.strip():
-            message_snip = rewritten.strip()
+            message_snip = _scrub_meta(rewritten.strip())
     except Exception:
         pass
 
@@ -994,11 +1025,14 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         lines += ["", f"![poster]({poster})"]
 
     # LLM persona riffs (render only if non-empty), independent toggle
-    ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
     riffs: List[str] = []
     riff_hint = _global_riff_hint(extras_in, source_hint)
     _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
     if riff_hint and _llm_riffs_enabled() and eff_persona:
+        # BODY-first, scrubbed, with subject as light seasoning
+        ctx = _scrub_meta(message_snip)
+        if subj:
+            ctx = (ctx + "\n\nSubject: " + subj).strip()
         riffs = _persona_llm_riffs(ctx, eff_persona)
 
     real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
