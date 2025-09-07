@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 import re, json, importlib, random, html, os
 from typing import List, Tuple, Optional, Dict, Any
@@ -20,14 +21,7 @@ IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]
 HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
 
-EMOJI_RE = re.compile("["
-    "\U0001F300-\U0001F6FF"
-    "\U0001F900-\U0001F9FF"
-    "\U00002600-\U000026FF"
-    "\U00002700-\U000027BF"
-    "\U0001FA70-\U0001FAFF"
-    "\U0001F1E6-\U0001F1FF"
-    "]", flags=re.UNICODE)
+EMOJI_RE = re.compile("[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]", flags=re.UNICODE)
 
 LIKELY_POSTER_HOSTS = (
     "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
@@ -236,13 +230,14 @@ def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
 
 # -------- Minimal header (no dash bars) --------
 def _header(kind: str, badge: str = "") -> List[str]:
-    return [f"📟 Jarvis Prime — {kind} {badge}".rstrip()]
+    # Drop intake/type label for a cleaner look; keep only Jarvis + severity badge
+    return [f"📟 Jarvis Prime {badge}".rstrip()]
 
 def _severity_badge(text: str) -> str:
     low = text.lower()
     if re.search(r'\b(error|failed|critical)\b', low): return "❌"
     if re.search(r'\b(warn|warning)\b', low): return "⚠️"
-    if re.search(r'\b(success|ok|online|completed)\b', low): return "✅"
+    if re.search(r'\b(success|ok|online|completed|pass|finished)\b', low): return "✅"
     return ""
 
 def _looks_json(body: str) -> bool:
@@ -276,6 +271,7 @@ def _extract_keyvals(text: str) -> List[Tuple[str,str]]:
     return out
 
 def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
+    # Kept for compatibility but not used in the simplified layout
     facts: List[str] = []
     details: List[str] = []
 
@@ -283,13 +279,11 @@ def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
     if ts: facts.append(_fmt_kv("Time", ts))
     if title.strip(): facts.append(_fmt_kv("Subject", title.strip()))
 
-    # IGNORE transport-layer kv keys so they don't pollute Details
     IGNORED_KV_KEYS = {"title", "message", "priority", "topic", "tags"}
 
     for k,v in _extract_keyvals(body):
         key = k.strip().lower()
         if key in IGNORED_KV_KEYS:
-            # skip these; they come from proxies/querystrings, not the human message
             continue
         val = v
         if key in ("ip","ip address","address"):
@@ -342,25 +336,6 @@ def _format_align_check(text: str) -> str:
 # --------------------
 # LLM persona riffs ONLY
 # --------------------
-def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
-    if not persona:
-        return []
-    enabled = os.getenv("BEAUTIFY_LLM_ENABLED", os.getenv("llm_enabled","true")).lower() in ("1","true","yes")
-    if not enabled:
-        return []
-    try:
-        mod = importlib.import_module("personality")
-        mod = importlib.reload(mod)
-        if hasattr(mod, "llm_quips"):
-            max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
-            out = mod.llm_quips(persona, context=context, max_lines=max_lines)
-            if isinstance(out, list):
-                return [str(x).strip() for x in out if str(x).strip()]
-    except Exception:
-        pass
-    return []
-
-# --- config helpers ---
 def _read_options() -> Dict[str, Any]:
     try:
         with open("/data/options.json", "r", encoding="utf-8") as f:
@@ -383,14 +358,21 @@ def _bool_from_options(opt: Dict[str, Any], key: str, default: bool = False) -> 
         return default
 
 def _llm_riffs_enabled() -> bool:
-    # existing behavior (env-based); also honor options.json if present
+    # Allow env overrides and support both 'llm_enabled' and 'llm_persona_riffs_enabled'
     opt = _read_options()
     env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
-    opt_enabled = _bool_from_options(opt, "llm_enabled", default=env_enabled)
-    return opt_enabled
+    # Prefer explicit llm_persona_riffs_enabled if present, else fall back to llm_enabled
+    opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
+    if opt_riffs is not None:
+        return opt_riffs
+    return _bool_from_options(opt, "llm_enabled", default=env_enabled)
+
+def _personality_enabled() -> bool:
+    opt = _read_options()
+    env_enabled = _bool_from_env("PERSONALITY_ENABLED", default=True)
+    return _bool_from_options(opt, "personality_enabled", default=env_enabled)
 
 def _llm_message_rewrite_enabled() -> bool:
-    # NEW: env overrides then options.json -> llm_rewrite_enabled
     opt = _read_options()
     env_enabled = _bool_from_env("BEAUTIFY_LLM_REWRITE_ENABLED", "LLM_MESSAGE_REWRITE_ENABLED", default=False)
     return _bool_from_options(opt, "llm_rewrite_enabled", default=env_enabled)
@@ -401,6 +383,23 @@ def _llm_message_rewrite_max_chars() -> int:
         return int(os.getenv("LLM_MESSAGE_REWRITE_MAX_CHARS") or opt.get("llm_message_rewrite_max_chars", 800))
     except Exception:
         return 800
+
+def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
+    if not persona:
+        return []
+    if not _llm_riffs_enabled():
+        return []
+    try:
+        mod = importlib.import_module("personality")
+        mod = importlib.reload(mod)
+        if hasattr(mod, "llm_quips"):
+            max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
+            out = mod.llm_quips(persona, context=context, max_lines=max_lines)
+            if isinstance(out, list):
+                return [str(x).strip() for x in out if str(x).strip()]
+    except Exception:
+        pass
+    return []
 
 # --------------------
 # LLM persona REWRITE (optional)
@@ -533,7 +532,6 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
 
     if len(updated) > max(1, limit):
         updated = updated[:limit]
-    # ensure we mark truncation if needed
         meta["watchtower::truncated"] = True
 
     bullets = "\n".join([f"• `{name}` → `{img}` @ `{new}`" for name, img, new in updated])
@@ -568,18 +566,62 @@ def _strip_action_says(text: str) -> str:
     out = _ACTION_SAYS_RX.sub("", text)
     return re.sub(r'\n{3,}', '\n\n', out).strip()
 
+# MIME header stripping (SMTP / proxy leakage)
+_MIME_HEADER_RX = re.compile(r'^\s*Content-(?:Disposition|Type|Length|Transfer-Encoding)\s*:.*$', re.I | re.M)
+def _strip_mime_headers(text: str) -> str:
+    if not text:
+        return ""
+    s = _MIME_HEADER_RX.sub("", text)
+    return re.sub(r'\n{3,}', '\n\n', s).strip()
+
 def _remove_kv_lines(text: str) -> str:
     """Drop lines that look like 'Key: Value' to avoid duplicating Details inside 📝 Message."""
     if not text:
         return ""
     kept = []
     for ln in text.splitlines():
-        if KV_RE.match(ln.strip()):
+        t = ln.strip()
+        if KV_RE.match(t):
+            continue
+        if t.lower().startswith("content-"):  # drop MIME lines in body
             continue
         kept.append(ln)
     s = "\n".join(kept)
     s = re.sub(r'\n{3,}', '\n\n', s).strip()
     return s
+
+# -------- Intake preprocessors --------
+def _preprocess_smtp(title: str, body: str) -> Tuple[str, str]:
+    body = _strip_mime_headers(body or "")
+    body = re.sub(r'\n{2,}', '\n\n', body).strip()
+    return (title or "").strip(), body
+
+def _preprocess_gotify_like(title: str, body: str) -> Tuple[str, str]:
+    qs = _maybe_parse_query_payload(body)
+    if qs:
+        t = qs.get("title", title)
+        m = qs.get("message", body)
+        return (t or "").strip(), (m or "").strip()
+    return (title or "").strip(), (body or "").strip()
+
+def _preprocess_proxy(title: str, body: str) -> Tuple[str, str]:
+    body = re.sub(r'(?im)^content-disposition.*name="[^"]+"\s*', '', body or '')
+    body = _strip_mime_headers(body)
+    body = re.sub(r'\n{2,}', '\n\n', body).strip()
+    return (title or "").strip(), body
+
+def _preprocess_generic(title: str, body: str) -> Tuple[str, str]:
+    return (title or "").strip(), (body or "").strip()
+
+def _normalize_intake(source: str, title: str, body: str) -> Tuple[str, str]:
+    src = (source or "").lower()
+    if src == "smtp":
+        return _preprocess_smtp(title, body)
+    if src in ("gotify","ntfy","apprise"):
+        return _preprocess_gotify_like(title, body)
+    if src == "proxy":
+        return _preprocess_proxy(title, body)
+    return _preprocess_generic(title, body)
 
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
@@ -587,15 +629,32 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
 
-    # Honor global OFF switch: pass-through (no image/regex processing)
+    # If beautifier is OFF, still allow persona + riffs independently (raw passthrough)
     if _beautify_is_disabled():
         title_s = (title or "").strip()
         body_s  = (body or "").strip()
-        lines: List[str] = [ "📟 Jarvis Prime — Message" ]
+        lines: List[str] = [ "📟 Jarvis Prime" ]
         if title_s:
-            lines += ["", "📄 Facts", f"- **Subject:** {title_s}"]
+            lines += ["", f"**Subject:** {title_s}"]
         if body_s:
             lines += ["", "📝 Message", body_s]
+
+        eff_persona = _effective_persona(persona)
+        # Personality overlay gated by personality_enabled toggle
+        if persona_quip and _personality_enabled():
+            pol = _persona_overlay_line(eff_persona)
+            if pol: lines += [pol]
+
+        # Riffs independent toggle
+        if _llm_riffs_enabled() and eff_persona:
+            riffs = _persona_llm_riffs((title_s + "\n" + body_s).strip(), eff_persona)
+            real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
+            real_riffs = [ r for r in real_riffs if r ]
+            if real_riffs:
+                lines += ["", f"🧠 {eff_persona} riff"]
+                for r in real_riffs:
+                    lines.append("> " + r)
+
         text = "\n".join(lines).strip()
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
@@ -603,9 +662,14 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         }
         return text, extras
 
+    # --------- Beautifier ON path ---------
+    # Normalize basic noise
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
     normalized = html.unescape(normalized)
+
+    # Normalize intake (per-source cleanup)
+    title, normalized = _normalize_intake(source_hint or "", title, normalized)
 
     # --- Querystring normalization (decode & extract clean title/message) ---
     qs_title = _maybe_parse_query_payload(title)
@@ -626,7 +690,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if (title or "").strip() and (qs_title or qs_body):
         try:
             title_decoded = unquote_plus(title.strip())
-            # Prefer parsed "title=" if present; otherwise keep the decoded string
             if qs_title and "title" in qs_title:
                 title = unquote_plus(qs_title.get("title") or "").strip() or title_decoded
             else:
@@ -634,8 +697,9 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         except Exception:
             pass
 
-    # remove 'action says:' lines from the visible body (riffs unaffected elsewhere)
+    # remove 'action says:' lines from the visible body (riffs unaffected elsewhere) and MIME junk
     normalized = _strip_action_says(normalized)
+    normalized = _strip_mime_headers(normalized)
 
     # images (keep meaning via ALT placeholders)
     body_wo_imgs, images, image_alts = _harvest_images(normalized)
@@ -649,7 +713,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         lines += _header("Watchtower", badge)
 
         eff_persona = _effective_persona(persona)
-        if persona_quip:
+        if persona_quip and _personality_enabled():
             pol = _persona_overlay_line(eff_persona)
             if pol: lines += [pol]
 
@@ -659,7 +723,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
         riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
-        if eff_persona and riff_hint:
+        if riff_hint and _llm_riffs_enabled() and eff_persona:
             riffs = _persona_llm_riffs(ctx, eff_persona)
         real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
         real_riffs = [ r for r in real_riffs if r ]
@@ -671,7 +735,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         text = "\n".join(lines).strip()
         text = _format_align_check(text)
         text = _linewise_dedup_markdown(text, protect_message=True)
-        # === NEW universal finish ===
         text = _fold_repeats(text)
         max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
         text = _safe_truncate(text, max_len=max_len)
@@ -692,32 +755,24 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["client::notification"] = {"bigImageUrl": images[0]}
         return text, extras
 
-    # ===== Standard path =====
+    # ===== Standard path (Message-only layout) =====
     lines: List[str] = []
     lines += _header(kind, badge)
 
     eff_persona = _effective_persona(persona)
-    if persona_quip:
+    if persona_quip and _personality_enabled():
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
-    # if payload was querystring, don't feed raw k=v pairs into key/val extractor
-    raw_was_query = bool(qs_title or qs_body)
-    kv_source = body_wo_imgs if not raw_was_query else (normalized or "")
-    facts, details = _categorize_bullets(title, kv_source)
+    subj = (title or "").strip()
+    if subj:
+        lines += ["", f"**Subject:** {subj}"]
 
-    if facts:
-        lines += ["", "📄 Facts", *facts]
-    if details:
-        lines += ["", "📄 Details", *details]
-
-    # --- Always keep human content visible (entire body, not just first paragraph)
-    raw_message = (body_wo_imgs or "").strip() or (normalized or "").strip()
-    # strip KV-style lines so we don't echo what already appeared in 📄 Details
+    # Always keep human content visible (entire body); drop kv/mime noise
+    raw_message = (body_wo_imgs or "").strip() or normalized.strip()
     message_snip = _remove_kv_lines(raw_message)
 
     # ---- OPTIONAL LLM MESSAGE REWRITE (toggleable) ----
-    # We pass the cleaned message to the persona rewriter; if it returns text, we use it.
     try:
         eff_persona_for_rewrite = _effective_persona(persona)
         max_chars = _llm_message_rewrite_max_chars()
@@ -725,7 +780,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         if isinstance(rewritten, str) and rewritten.strip():
             message_snip = rewritten.strip()
     except Exception:
-        # fail-safe: show original content if anything goes wrong
         pass
 
     if message_snip:
@@ -735,12 +789,12 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if images:
         lines += ["", f"![poster]({images[0]})"]
 
-    # LLM persona riffs (render only if non-empty)
+    # LLM persona riffs (render only if non-empty), independent toggle
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
     riffs: List[str] = []
     riff_hint = _global_riff_hint(extras_in, source_hint)
     _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
-    if eff_persona and riff_hint and _llm_riffs_enabled():
+    if riff_hint and _llm_riffs_enabled() and eff_persona:
         riffs = _persona_llm_riffs(ctx, eff_persona)
 
     real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
@@ -753,7 +807,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     text = "\n".join(lines).strip()
     text = _format_align_check(text)
     text = _linewise_dedup_markdown(text, protect_message=True)
-    # === NEW universal finish ===
     text = _fold_repeats(text)
     max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
     text = _safe_truncate(text, max_len=max_len)
