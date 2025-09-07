@@ -169,7 +169,10 @@
     "llm_enviroguard_ha_enabled": true,
     "llm_enviroguard_ha_base_url": "http://homeassistant:8123",
     "llm_enviroguard_ha_token": "",
-    "llm_enviroguard_ha_temp_entity": "sensor.living_room_temperature"
+    "llm_enviroguard_ha_temp_entity": "sensor.living_room_temperature",
+    "llm_enviroguard_off_c": 42,
+    "llm_enviroguard_normal_c": 22,
+    "llm_enviroguard_boost_c": 16
   },
   "schema": {
     "bot_name": "str",
@@ -316,7 +319,10 @@
     "llm_enviroguard_ha_enabled": "bool",
     "llm_enviroguard_ha_base_url": "str",
     "llm_enviroguard_ha_token": "str",
-    "llm_enviroguard_ha_temp_entity": "str"
+    "llm_enviroguard_ha_temp_entity": "str",
+    "llm_enviroguard_off_c": "int",
+    "llm_enviroguard_normal_c": "int",
+    "llm_enviroguard_boost_c": "int"
   },
   "ingress": true,
   "ingress_port": 2581,
