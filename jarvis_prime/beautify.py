@@ -579,17 +579,84 @@ def _strip_mime_headers(text: str) -> str:
     s = _MIME_HEADER_RX.sub("", text)
     return re.sub(r'\n{3,}', '\n\n', s).strip()
 
+# --- SUBJECT CLEANUP & CARD TITLE -------------------------------------------------
+INTAKE_NAMES = {"proxy","smtp","apprise","gotify","ntfy","webhook","webhooks"}
+
+def _clean_subject(raw_title: str, body: str) -> str:
+    """Remove intake tags, duplicate 'Jarvis Prime:' prefixes, and fallback to better subject."""
+    t = (raw_title or "").strip()
+    if not t:
+        t = ""
+    # Drop bracketed intake prefixes like [SMTP], [Proxy], etc.
+    t = re.sub(r'^\s*\[(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\]\s*', '', t, flags=re.I)
+    # If the title is literally just an intake keyword, try to mine a better subject
+    if t.strip().lower() in INTAKE_NAMES or t.strip().lower() in {"message","notification","test"}:
+        # Look for 'Subject: XYZ' inside body
+        for ln in (body or "").splitlines():
+            m = re.match(r'\s*Subject\s*:\s*(.+)\s*$', ln, flags=re.I)
+            if m:
+                t = m.group(1).strip()
+                break
+        # If still empty, use the first non-empty human line
+        if not t:
+            t = _first_nonempty_line(body)
+    # Remove duplicate 'Jarvis Prime:' prefix(es)
+    t = re.sub(r'^\s*(?:jarvis\s*prime\s*:?\s*)+', '', t, flags=re.I)
+    return (t or "").strip()
+
+def _build_client_title(subject: str) -> str:
+    subj = (subject or "").strip()
+    return f"Jarvis Prime: {subj}" if subj else "Jarvis Prime"
+
+# --- Poster/icon fallback ---------------------------------------------------------
+def _icon_map_from_options() -> Dict[str,str]:
+    try:
+        with open("/data/options.json","r",encoding="utf-8") as f:
+            opt = json.load(f) or {}
+            m = opt.get("icon_map") or {}
+            if isinstance(m, dict):
+                return {str(k).lower(): str(v) for k,v in m.items() if v}
+    except Exception:
+        pass
+    return {}
+
+def _icon_from_env(keyword: str) -> Optional[str]:
+    key = f"ICON_{keyword.upper()}_URL"
+    v = os.getenv(key) or ""
+    return v.strip() or None
+
+def _poster_fallback(title: str, body: str) -> Optional[str]:
+    """Pick a poster icon if the intake didn't provide one, using keywords."""
+    keywords = ["sonarr","radarr","lidarr","prowlarr","readarr","bazarr",
+                "qbittorrent","transmission","jellyfin","plex","emby",
+                "sabnzbd","overseerr","gluetun","pihole","unifi","portainer",
+                "watchtower","docker","homeassistant","speedtest","apt"]
+    text = f"{title} {body}".lower()
+    opt_map = _icon_map_from_options()
+    for word in keywords:
+        if word in text:
+            return opt_map.get(word) or _icon_from_env(word)
+    return None
+
 def _remove_kv_lines(text: str) -> str:
-    """Drop lines that look like 'Key: Value' to avoid duplicating Details inside 📝 Message."""
+    """
+    Keep human 'key: value' content (e.g., CPU: 68%). Only drop transport noise:
+    - Content-* MIME lines
+    - pure transport fields: title/message/topic/tags/priority (when alone)
+    """
     if not text:
         return ""
     kept = []
     for ln in text.splitlines():
         t = ln.strip()
-        if KV_RE.match(t):
+        if t.lower().startswith("content-"):
             continue
-        if t.lower().startswith("content-"):  # drop MIME lines in body
-            continue
+        m = KV_RE.match(t)
+        if m:
+            k = m.group(1).strip().lower()
+            if k in {"title","message","topic","tags","priority"}:
+                # skip transport/meta
+                continue
         kept.append(ln)
     s = "\n".join(kept)
     s = re.sub(r'\n{3,}', '\n\n', s).strip()
@@ -610,10 +677,19 @@ def _preprocess_gotify_like(title: str, body: str) -> Tuple[str, str]:
     return (title or "").strip(), (body or "").strip()
 
 def _preprocess_proxy(title: str, body: str) -> Tuple[str, str]:
-    body = re.sub(r'(?im)^content-disposition.*name="[^"]+"\s*', '', body or '')
-    body = _strip_mime_headers(body)
-    body = re.sub(r'\n{2,}', '\n\n', body).strip()
-    return (title or "").strip(), body
+    # Extract form fields like: Content-Disposition: form-data; name="title"\r\n\r\nVALUE
+    t = title or ""
+    b = body or ""
+    # Capture blocks
+    blocks = re.findall(r'(?is)name="(title|message)"\s*\r?\n\r?\n(.*?)(?:\r?\n--|$)', b)
+    fields = {k.lower(): v.strip() for k,v in blocks}
+    if fields.get("title"): t = fields["title"]
+    if fields.get("message"): b = fields["message"]
+    # Clean remaining MIME noise
+    b = re.sub(r'(?im)^content-disposition.*name="[^"]+"\s*', '', b)
+    b = _strip_mime_headers(b)
+    b = re.sub(r'\n{2,}', '\n\n', b).strip()
+    return (t or "").strip(), b
 
 def _preprocess_generic(title: str, body: str) -> Tuple[str, str]:
     return (title or "").strip(), (body or "").strip()
@@ -638,9 +714,10 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if _beautify_is_disabled():
         title_s = (title or "").strip()
         body_s  = (body or "").strip()
+        clean_subject = _clean_subject(title_s, body_s)
         lines: List[str] = [ "📟 Jarvis Prime" ]
-        if title_s:
-            lines += ["", f"**Subject:** {title_s}"]
+        if clean_subject:
+            lines += ["", f"**Subject:** {clean_subject}"]
         if body_s:
             lines += ["", "📝 Message", body_s]
 
@@ -663,7 +740,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         text = "\n".join(lines).strip()
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
-            "client::title": "Jarvis Prime",
+            "client::title": _build_client_title(clean_subject),
             "jarvis::beautified": False
         }
         return text, extras
@@ -713,6 +790,9 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     kind = _detect_type(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs)
 
+    # Build cleaned subject and set card title
+    clean_subject = _clean_subject(title, body_wo_imgs)
+
     # ===== Watchtower special-case =====
     if kind == "Watchtower":
         lines: List[str] = []
@@ -747,7 +827,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
-            "client::title": "Jarvis Prime",
+            "client::title": _build_client_title(clean_subject),
             "jarvis::beautified": True,
             "jarvis::llm_riff_lines": len(real_riffs or []),
             "watchtower::host": wt_meta.get("watchtower::host"),
@@ -757,9 +837,17 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["watchtower::truncated"] = True
         if isinstance(extras_in, dict):
             extras.update(extras_in)
+        # Poster (harvested or fallback)
         if images:
             extras["jarvis::allImageUrls"] = images
             extras["client::notification"] = {"bigImageUrl": images[0]}
+        else:
+            poster = _poster_fallback(title, body_wo_imgs)
+            if poster:
+                extras["jarvis::allImageUrls"] = [poster]
+                extras["client::notification"] = {"bigImageUrl": poster}
+                lines += ["", f"![poster]({poster})"]
+                text = "\n".join(lines).strip()
         return text, extras
 
     # ===== Standard path (Message-only layout) =====
@@ -771,13 +859,16 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
-    subj = (title or "").strip()
+    subj = (clean_subject or "").strip()
     if subj:
         lines += ["", f"**Subject:** {subj}"]
 
-    # Always keep human content visible (entire body); drop kv/mime noise
+    # Always keep human content visible (entire body); drop only transport kv/mime noise
     raw_message = (body_wo_imgs or "").strip() or normalized.strip()
-    message_snip = _remove_kv_lines(raw_message)
+    message_snip = _remove_kv_lines(raw_message).strip()
+    if not message_snip:
+        # Fallbacks to guarantee a message
+        message_snip = (raw_message or normalized or "No message provided.").strip()
 
     # ---- OPTIONAL LLM MESSAGE REWRITE (toggleable) ----
     try:
@@ -792,9 +883,16 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if message_snip:
         lines += ["", "📝 Message", message_snip]
 
-    # Inline the first image as poster; keep list in extras
+    # Inline the first image as poster; keep list in extras (or use fallback)
+    poster = None
     if images:
-        lines += ["", f"![poster]({images[0]})"]
+        poster = images[0]
+    else:
+        poster = _poster_fallback(title, body_wo_imgs)
+        if poster:
+            images = [poster]
+    if poster:
+        lines += ["", f"![poster]({poster})"]
 
     # LLM persona riffs (render only if non-empty), independent toggle
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
@@ -820,7 +918,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
-        "client::title": "Jarvis Prime",
+        "client::title": _build_client_title(clean_subject),
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images,
         "jarvis::llm_riff_lines": len(real_riffs or []),
