@@ -305,7 +305,7 @@ def current_weather():
     # Sleek aligned block
     lines = []
     lines.append(f"{icon_big} Current Weather — {CITY}")
-    lines.append(_kv("🌡 Temperature", f"{temp}°C"))
+    lines.append(_kv("🌡 Outdoor", f"{temp}°C"))
     if indoor_c is not None:
         lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
     lines.append(_kv("🌬 Wind", f"{wind} km/h"))
