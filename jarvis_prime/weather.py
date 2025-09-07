@@ -1,7 +1,6 @@
 import json, yaml, requests, random
 from datetime import datetime, timezone
-# No tabulate: sleek AI-style aligned output (no tables)
-from typing import Optional, Tuple, Dict, Any  # ADDITIVE
+from typing import Optional, Tuple, Dict, Any
 
 # -----------------------------
 # Load config from /data/options.json (JSON or YAML). Fallback: /data/config.json
@@ -35,12 +34,13 @@ CITY = _options.get("weather_city", "Unknown")
 HA_ENABLED = bool(_options.get("ha_enabled", False))
 HA_BASE_URL = str(_options.get("ha_base_url", "") or "").rstrip("/")
 HA_TOKEN = str(_options.get("ha_token", "") or "").strip()
-# allow multiple key names; first non-empty wins (INCLUDES ha_temp_entity)
+# allow multiple key names; first non-empty wins
 HA_INDOOR_ENTITY = (
-    str(_options.get("ha_temp_entity") or "") or
     str(_options.get("ha_indoor_temp_entity") or "") or
+    str(_options.get("ha_temp_entity") or "") or
     str(_options.get("ha_temp_entity_id") or "") or
-    str(_options.get("weather_ha_temp_entity_id") or "")
+    str(_options.get("weather_ha_temp_entity_id") or "") or
+    str(_options.get("weather_indoor_sensor_entity") or "")
 ).strip()
 
 # -----------------------------
@@ -288,7 +288,7 @@ def current_weather():
     lines.append(f"{icon_big} Current Weather — {CITY}")
     lines.append(_kv("🌡 Temperature", f"{temp}°C"))
     if indoor_c is not None:
-        lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))  # nice home icon
+        lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
     lines.append(_kv("🌬 Wind", f"{wind} km/h"))
     ts = cw.get("time")
     if ts:
@@ -350,7 +350,6 @@ def forecast_weather():
         tmax = tmaxs[i] if i < len(tmaxs) else "?"
         code = codes[i] if i < len(codes) else -1
         icon = _icon_for_code(code, big=False)
-        # Use bullet, no tabulation
         prefix = "• Today" if i == 0 else f"• {date}"
         lines.append(f"{prefix} — {tmin}°C to {tmax}°C {icon}")
 
