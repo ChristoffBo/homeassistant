@@ -1,7 +1,7 @@
 {
   "name": "Jarvis Prime",
   "slug": "jarvis_prime",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Smart Bot Assistant (Prime Edition) Notification orchestrator/server with beautifier, monitoring, SMTP intake, proxy, and optional local LLM",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
