@@ -1,267 +1,313 @@
+
 #!/usr/bin/env python3
 # /app/enviroguard.py
-# Minimal EnviroGuard module for Jarvis Prime
-# - Primary ambient temperature from Home Assistant (if configured)
-# - Fallback to Open-Meteo if HA is unavailable
-# - OFF / HOT / NORMAL / COLD profiles with hysteresis
-# - Manual lock file override to force LLM OFF
-# - Writes /data/enviroguard_state.json with profile + llm_blocked
-# - Exposes read_ha_temperature_c() for Weather to show 'Indoor' when available
-# - start_background_poll() helper to run a polling loop from bot.py
+# EnviroGuard — ambient-aware LLM performance governor for Jarvis Prime
 #
-# Configuration is read from /data/options.json (written by HA Supervisor from config.json schema).
+# Responsibilities:
+# - Periodically read ambient temperature (Home Assistant sensor if configured; otherwise Open‑Meteo)
+# - Decide a profile (hot/normal/cold/boost/off/manual) using hysteresis to avoid flapping
+# - Apply profile by updating the shared "merged" config + select env vars so other modules immediately see it
+# - Optionally hard-disable LLM/riffs in the "off" profile (cpu_percent <= 0 implies OFF)
 #
-# Expected option keys (flat):
-#   llm_enviroguard_enabled: bool
-#   llm_enviroguard_poll_minutes: int
-#   llm_enviroguard_hot_c: float
-#   llm_enviroguard_cold_c: float
-#   llm_enviroguard_hysteresis_c: float   # general hysteresis (optional; kept for future use)
-#   llm_enviroguard_off_c: float          # OFF threshold (>= off_c -> off)
-#   llm_enviroguard_off_hyst_c: float     # OFF hysteresis (resume below off_c - this)
-#   ha_enabled: bool
-#   ha_base_url: str
-#   ha_token: str
-#   ha_temp_entity: str
-#   ha_verify_ssl: bool
-#   openmeteo_lat / openmeteo_lon (or weather_lat / weather_lon) for fallback (optional)
+# Public API expected by /app/bot.py:
+#   - get_boot_status_line(merged: dict) -> str
+#   - command(want: str, merged: dict, send_message: callable) -> bool
+#   - start_background_poll(merged: dict, send_message: callable) -> None
+#   - stop_background_poll() -> None
 #
-# State file (/data/enviroguard_state.json):
-#   { "profile": "off|hot|normal|cold",
-#     "ambient_c": 33.2,
-#     "llm_blocked": true,
-#     "manual_lock": false,
-#     "ts": 1690000000 }
-#
-# Manual override:
-#   touch /data/llm_off.lock   -> forces llm_blocked = true until removed.
-#
-# Usage from bot.py (threaded):
-#   from enviroguard import start_background_poll
-#   start_background_poll()  # uses llm_enviroguard_poll_minutes, defaults to 30m
-#
-# Or single-tick:
-#   from enviroguard import enviroguard_tick
-#   enviroguard_tick()
+# The module is intentionally dependency-light (requests only).
+
 from __future__ import annotations
+import os, json, time, asyncio, requests
+from typing import Optional, Dict, Any
 
-import json
-import math
-import os
-import ssl
-import time
-import urllib.parse
-import urllib.request
-from typing import Optional
+# ------------------------------
+# Internal state
+# ------------------------------
+_state: Dict[str, Any] = {
+    "enabled": False,
+    "mode": "auto",        # auto | manual
+    "profile": "normal",
+    "last_temp_c": None,   # float | None
+    "last_ts": 0,          # epoch seconds of last temp fetch
+    "source": None,        # 'homeassistant' | 'open-meteo' | None
+    "task": None,          # asyncio.Task or None
+    "forced_off": False,   # we turned LLM off due to OFF profile
+}
 
-STATE_PATH = "/data/enviroguard_state.json"
-OPT_PATH   = "/data/options.json"
-LOCK_PATH  = "/data/llm_off.lock"  # manual override: if present, llm_blocked = True
+_cfg_template: Dict[str, Any] = {
+    "enabled": False,
+    "poll_minutes": 30,
+    "max_stale_minutes": 120,
+    "hot_c": 30,
+    "cold_c": 10,
+    "hyst_c": 2,
+    # Profiles note:
+    # - Any profile with cpu_percent <= 0 implies "OFF": disable LLM/riffs
+    # - Keys: cpu_percent, ctx_tokens, timeout_seconds
+    "profiles": {
+        "manual": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
+        "hot":    { "cpu_percent": 50, "ctx_tokens": 2048, "timeout_seconds": 15 },
+        "normal": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
+        "boost":  { "cpu_percent": 95, "ctx_tokens": 8192, "timeout_seconds": 25 },
+        "cold":   { "cpu_percent": 85, "ctx_tokens": 6144, "timeout_seconds": 25 },
+        # Optional OFF profile (hard disable)
+        # "off": { "cpu_percent": 0, "ctx_tokens": 0, "timeout_seconds": 0 },
+    },
+    # Optional Home Assistant hook (used if fully configured)
+    "ha_url": "",                # e.g., http://homeassistant.local:8123
+    "ha_token": "",              # long-lived token
+    "ha_temperature_entity": "", # e.g., sensor.living_room_temperature
+    # Fallback Open‑Meteo
+    "weather_enabled": True,
+    "weather_lat": -26.2041,
+    "weather_lon": 28.0473,
+}
 
+# ------------------------------
+# Utilities
+# ------------------------------
+def _as_bool(v, default=False):
+    s = str(v).strip().lower()
+    if s in ("1","true","yes","on"): return True
+    if s in ("0","false","no","off"): return False
+    return bool(default)
 
-# --------------------- options & utils ---------------------
-
-def _read_json(path: str) -> dict:
-    """Read JSON file; return {} on any error."""
+def _cfg_from(merged: dict) -> Dict[str, Any]:
+    cfg = dict(_cfg_template)
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
+        cfg["enabled"] = _as_bool(merged.get("llm_enviroguard_enabled", cfg["enabled"]), cfg["enabled"])
+        cfg["poll_minutes"] = int(merged.get("llm_enviroguard_poll_minutes", cfg["poll_minutes"]))
+        cfg["max_stale_minutes"] = int(merged.get("llm_enviroguard_max_stale_minutes", cfg["max_stale_minutes"]))
+        cfg["hot_c"] = int(merged.get("llm_enviroguard_hot_c", cfg["hot_c"]))
+        cfg["cold_c"] = int(merged.get("llm_enviroguard_cold_c", cfg["cold_c"]))
+        cfg["hyst_c"] = int(merged.get("llm_enviroguard_hysteresis_c", cfg["hyst_c"]))
+        prof = merged.get("llm_enviroguard_profiles", cfg["profiles"])
+        if isinstance(prof, str):
+            try:
+                prof = json.loads(prof)
+            except Exception:
+                prof = cfg["profiles"]
+        if isinstance(prof, dict):
+            cfg["profiles"] = prof
+        # HA
+        cfg["ha_url"] = str(merged.get("ha_url", cfg["ha_url"])).strip()
+        cfg["ha_token"] = str(merged.get("ha_token", cfg["ha_token"])).strip()
+        cfg["ha_temperature_entity"] = str(merged.get("ha_temperature_entity", cfg["ha_temperature_entity"])).strip()
+        # Fallback weather
+        cfg["weather_enabled"] = _as_bool(merged.get("weather_enabled", cfg["weather_enabled"]), cfg["weather_enabled"])
+        cfg["weather_lat"] = float(merged.get("weather_lat", cfg["weather_lat"]))
+        cfg["weather_lon"] = float(merged.get("weather_lon", cfg["weather_lon"]))
     except Exception:
-        return {}
-
-
-def _read_options() -> dict:
-    """Load /data/options.json (HA add-on runtime config)."""
-    return _read_json(OPT_PATH)
-
-
-def _write_state(d: dict) -> None:
-    """Write the enviroguard state JSON to STATE_PATH."""
-    try:
-        with open(STATE_PATH, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
-    except Exception:
-        # non-fatal
         pass
+    return cfg
 
-
-def _read_state() -> dict:
-    """Return last state (or {})."""
-    return _read_json(STATE_PATH)
-
-
-def _http_get(url: str, headers: dict, timeout: float = 6.0, verify_ssl: bool = True) -> str:
-    """Simple HTTP GET with optional TLS verify disable (for self-signed HA)."""
-    req = urllib.request.Request(url, headers=headers)
-    ctx = None
-    if not verify_ssl:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
-        return r.read().decode("utf-8", "replace")
-
-
-# --------------------- Home Assistant sensor ---------------------
-
-def read_ha_temperature_c() -> Optional[float]:
-    """Return indoor temperature (°C) from a Home Assistant sensor, or None if unavailable."""
-    opt = _read_options()
-    ha_enabled = str(opt.get("ha_enabled", False)).lower() in ("1","true","yes","on")
-    if not ha_enabled:
-        return None
-    base   = (opt.get("ha_base_url") or "").rstrip("/")
-    token  = opt.get("ha_token") or ""
-    entity = opt.get("ha_temp_entity") or ""
-    verify = str(opt.get("ha_verify_ssl", True)).lower() in ("1","true","yes","on")
-    if not (base and token and entity):
-        return None
-    try:
-        raw = _http_get(f"{base}/api/states/{entity}",
-                        {"Authorization": f"Bearer {token}", "Accept": "application/json"},
-                        verify_ssl=verify)
-        data = json.loads(raw)
-        state = str(data.get("state", "")).strip()
-        if state in ("unknown","unavailable","None",""):
-            return None
-        val = float(state)
-        unit = (data.get("attributes", {}).get("unit_of_measurement") or "").strip().lower()
-        if unit in ("°f","f","fahrenheit"):
-            return (val - 32.0) * (5.0/9.0)
-        return val
-    except Exception:
-        return None
-
-
-# --------------------- Open-Meteo fallback ---------------------
-
-def _open_meteo_c() -> Optional[float]:
-    """Fetch outdoor temperature (°C) from Open-Meteo. Returns None on failure.
-    Coordinates are taken from options if present; otherwise from env; otherwise None.
-    Keys tried (in order):
-      options.json: openmeteo_lat/openmeteo_lon OR weather_lat/weather_lon
-      env: OM_LAT/OM_LON OR LAT/LON
-    """
-    opt = _read_options()
-    lat = opt.get("openmeteo_lat") or opt.get("weather_lat") or os.getenv("OM_LAT") or os.getenv("LAT")
-    lon = opt.get("openmeteo_lon") or opt.get("weather_lon") or os.getenv("OM_LON") or os.getenv("LON")
-    try:
-        if not (lat and lon):
-            return None
-        q = urllib.parse.urlencode({"latitude": lat, "longitude": lon, "current": "temperature_2m"})
-        url = f"https://api.open-meteo.com/v1/forecast?{q}"
-        raw = _http_get(url, {"Accept": "application/json"}, timeout=6.0, verify_ssl=True)
-        data = json.loads(raw)
-        cur = data.get("current", {}) or {}
-        t = cur.get("temperature_2m")
-        if t is None:
-            return None
-        return float(t)
-    except Exception:
-        return None
-
-
-def get_ambient_c() -> Optional[float]:
-    """Preferred order: HA indoor temp → Open-Meteo outdoor temp."""
-    t = read_ha_temperature_c()
-    if t is not None and math.isfinite(t):
-        return t
-    return _open_meteo_c()
-
-
-# --------------------- Profiles & state ---------------------
-
-def _manual_lock_active() -> bool:
-    """Return True if manual lock file exists (forces LLM OFF)."""
-    try:
-        return os.path.exists(LOCK_PATH)
-    except Exception:
-        return False
-
-
-def _pick_profile(ambient_c: float, prev_profile: Optional[str]) -> str:
-    """Decide off/hot/normal/cold with OFF hysteresis."""
-    opt = _read_options()
-    off_c    = float(opt.get("llm_enviroguard_off_c", 33.0))
-    off_hyst = float(opt.get("llm_enviroguard_off_hyst_c", 1.0))
-    hot_c    = float(opt.get("llm_enviroguard_hot_c", 30.0))
-    cold_c   = float(opt.get("llm_enviroguard_cold_c", 15.0))
-
-    # OFF with hysteresis
-    if (prev_profile or "") == "off" and ambient_c >= (off_c - off_hyst):
-        return "off"
-    if ambient_c >= off_c:
-        return "off"
-
-    if ambient_c >= hot_c:
+def _hysteresis_profile_for(temp_c: float, last_profile: str, cfg: Dict[str, Any]) -> str:
+    hot = int(cfg["hot_c"]); cold = int(cfg["cold_c"]); hyst = int(cfg["hyst_c"])
+    lp = (last_profile or "normal").lower()
+    if lp == "hot":
+        if temp_c <= hot - hyst: return "normal"
         return "hot"
-    if ambient_c <= cold_c:
+    if lp == "cold":
+        if temp_c >= cold + hyst: return "normal"
         return "cold"
+    # normal baseline
+    if temp_c >= hot: return "hot"
+    if temp_c <= cold: return "cold"
     return "normal"
 
+def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
+    name = (name or "normal").lower()
+    prof = (cfg.get("profiles") or {}).get(name) or {}
+    cpu = int(prof.get("cpu_percent", merged.get("llm_max_cpu_percent", 80)))
+    ctx = int(prof.get("ctx_tokens",  merged.get("llm_ctx_tokens", 4096)))
+    tout= int(prof.get("timeout_seconds", merged.get("llm_timeout_seconds", 20)))
 
-def enviroguard_tick() -> None:
-    """Single evaluation tick. Call on a timer from bot.py."""
-    prev = (_read_state() or {}).get("profile", "normal")
-    ambient = get_ambient_c()
-    if ambient is None or not math.isfinite(ambient):
-        return  # nothing to do
-    prof = _pick_profile(ambient, prev)
-    manual = _manual_lock_active()
-    llm_blocked = manual or (prof == "off")
+    # Apply to merged so rest of app sees it immediately
+    merged["llm_max_cpu_percent"] = cpu
+    merged["llm_ctx_tokens"] = ctx
+    merged["llm_timeout_seconds"] = tout
 
-    st = _read_state() or {}
-    changed = (
-        st.get("profile") != prof or
-        st.get("llm_blocked") != llm_blocked or
-        st.get("ambient_c") != round(ambient, 2) or
-        st.get("manual_lock") != manual
-    )
-    if changed:
-        _write_state({
-            "profile": prof,
-            "ambient_c": round(ambient, 2),
-            "llm_blocked": llm_blocked,
-            "manual_lock": manual,
-            "ts": int(time.time())
-        })
-        # Optionally: emit a Jarvis notification card here if your app supports it.
+    # Reflect in environment for sidecars / modules that read env
+    os.environ["LLM_MAX_CPU_PERCENT"] = str(cpu)
+    os.environ["LLM_CTX_TOKENS"] = str(ctx)
+    os.environ["LLM_TIMEOUT_SECONDS"] = str(tout)
 
+    # LLM hard disable if cpu <= 0
+    if cpu <= 0 or name == "off":
+        _state["forced_off"] = True
+        os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
+        merged["llm_enabled"] = False
+        merged["llm_rewrite_enabled"] = False
+    else:
+        # Only re-enable if we previously forced it off
+        if _state.get("forced_off"):
+            os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
+            merged["llm_enabled"] = True
+            # do not force rewrite back on; respect existing value
+        _state["forced_off"] = False
 
-# --------------------- Convenience: background starter ---------------------
+    _state["profile"] = name
 
-def start_background_poll(loop_seconds: Optional[int] = None) -> None:
-    """Fire-and-forget background polling using threading. Use if bot.py isn't async.
-    Reads llm_enviroguard_poll_minutes from options.json when loop_seconds is None.
+def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
+    url = cfg.get("ha_url") or ""
+    token = cfg.get("ha_token") or ""
+    entity = cfg.get("ha_temperature_entity") or ""
+    if not (url and token and entity):
+        return None
+    try:
+        # Try the state endpoint first
+        s_url = f"{url.rstrip('/')}/api/states/{entity}"
+        r = requests.get(s_url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, timeout=6)
+        if not r.ok:
+            return None
+        j = r.json() or {}
+        v = j.get("state")
+        if v is None or str(v).lower() in ("unknown","unavailable"):
+            return None
+        return float(v)
+    except Exception:
+        return None
+
+def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
+    if not cfg.get("weather_enabled", True):
+        return None
+    lat = cfg.get("weather_lat", -26.2041)
+    lon = cfg.get("weather_lon", 28.0473)
+    try:
+        url = (
+            "https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}&current_weather=true&temperature_unit=celsius"
+        )
+        r = requests.get(url, timeout=8)
+        if not r.ok:
+            return None
+        j = r.json() or {}
+        cw = j.get("current_weather") or {}
+        t = cw.get("temperature")
+        if isinstance(t, (int, float)):
+            return float(t)
+    except Exception:
+        return None
+    return None
+
+def _get_temperature(cfg: Dict[str, Any]) -> (Optional[float], Optional[str]):
+    # Prefer HA if configured; else Open‑Meteo
+    t = _ha_get_temperature(cfg)
+    if t is not None:
+        return round(float(t), 1), "homeassistant"
+    t = _meteo_get_temperature(cfg)
+    if t is not None:
+        return round(float(t), 1), "open-meteo"
+    return None, None
+
+# ------------------------------
+# Public API
+# ------------------------------
+def get_boot_status_line(merged: dict) -> str:
+    cfg = _cfg_from(merged)
+    if not cfg.get("enabled"):
+        return "🌡️ EnviroGuard — OFF"
+    prof = _state.get("profile", "normal")
+    t = _state.get("last_temp_c")
+    suffix = f" (profile={prof}" + (f", {t} °C" if t is not None else "") + ")"
+    return "🌡️ EnviroGuard — ACTIVE" + suffix
+
+def command(want: str, merged: dict, send_message) -> bool:
     """
-    try:
-        import threading
-        if loop_seconds is None:
-            opt = _read_options()
-            mins = int(opt.get("llm_enviroguard_poll_minutes", 30))
-            loop_seconds = max(60, mins * 60)
-    except Exception:
-        loop_seconds = 1800  # default 30 minutes
-
-    def _runner():
-        while True:
+    Handle 'jarvis env <auto|PROFILE>' routed from bot.
+    """
+    cfg = _cfg_from(merged)
+    w = (want or "").strip().lower()
+    if w == "auto":
+        _state["mode"] = "auto"
+        if callable(send_message):
             try:
-                enviroguard_tick()
-            except Exception as e:
-                try:
-                    print(f"[enviroguard] tick error: {e}")
-                except Exception:
-                    pass
-            time.sleep(loop_seconds)
+                send_message("EnviroGuard", "Auto mode resumed — ambient temperature will control the profile.", priority=4, decorate=False)
+            except Exception:
+                pass
+        return True
+    profiles = (cfg.get("profiles") or {}).keys()
+    if w in profiles:
+        _state["mode"] = "manual"
+        _apply_profile(w, merged, cfg)
+        if callable(send_message):
+            try:
+                send_message("EnviroGuard", f"Manual override → profile **{w.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)", priority=4, decorate=False)
+            except Exception:
+                pass
+        return True
+    return False
 
-    t = threading.Thread(target=_runner, daemon=True)
-    t.start()
+async def _poll_loop(merged: dict, send_message) -> None:
+    cfg = _cfg_from(merged)
+    poll = max(1, int(cfg.get("poll_minutes", 30)))
+    # Initial apply from current profile to ensure knobs are set
+    _apply_profile(_state.get("profile","normal"), merged, cfg)
+    while True:
+        try:
+            if not cfg.get("enabled", False):
+                await asyncio.sleep(poll * 60)
+                continue
 
+            temp_c, source = _get_temperature(cfg)
+            if temp_c is not None:
+                _state["last_temp_c"] = temp_c
+                _state["source"] = source or _state.get("source")
+                _state["last_ts"] = int(time.time())
 
-if __name__ == "__main__":
-    # Manual one-shot for testing
-    enviroguard_tick()
+            if _state.get("mode","auto") == "auto" and temp_c is not None:
+                last = _state.get("profile","normal")
+                nextp = _hysteresis_profile_for(temp_c, last, cfg)
+                if nextp != last:
+                    _apply_profile(nextp, merged, cfg)
+                    if callable(send_message):
+                        try:
+                            send_message(
+                                "EnviroGuard",
+                                f"Ambient {temp_c:.1f}°C → profile **{nextp.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
+                                priority=4,
+                                decorate=False
+                            )
+                        except Exception:
+                            pass
+        except Exception as e:
+            # keep the loop alive
+            print(f"[EnviroGuard] poll error: {e}")
+        await asyncio.sleep(poll * 60)
+
+def start_background_poll(merged: dict, send_message) -> None:
+    """
+    Create/replace the background polling task. Safe to call multiple times.
+    """
+    # Initialize enabled flag & profile from merged (support hot reload)
+    cfg = _cfg_from(merged)
+    _state["enabled"] = bool(cfg.get("enabled"))
+    _state["mode"] = _state.get("mode","auto")
+    _state["profile"] = _state.get("profile","normal")
+
     try:
-        print(json.dumps(_read_state(), indent=2))
-    except Exception:
-        pass
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Not in async context; caller should schedule us
+        return
+
+    # Cancel existing
+    t = _state.get("task")
+    if t and isinstance(t, asyncio.Task) and not t.done():
+        try:
+            t.cancel()
+        except Exception:
+            pass
+
+    # Start new
+    _state["task"] = loop.create_task(_poll_loop(merged, send_message))
+
+def stop_background_poll() -> None:
+    t = _state.get("task")
+    if t and isinstance(t, asyncio.Task) and not t.done():
+        try:
+            t.cancel()
+        except Exception:
+            pass
+    _state["task"] = None
