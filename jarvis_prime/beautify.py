@@ -371,6 +371,12 @@ def _personality_enabled() -> bool:
     env_enabled = _bool_from_env("PERSONALITY_ENABLED", default=True)
     return _bool_from_options(opt, "personality_enabled", default=env_enabled)
 
+def _ui_persona_header_enabled() -> bool:
+    # If the UI renders its own persona header, don't inline ours (avoid duplicates)
+    opt = _read_options()
+    env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=False)
+    return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
+
 def _llm_message_rewrite_enabled() -> bool:
     opt = _read_options()
     env_enabled = _bool_from_env("BEAUTIFY_LLM_REWRITE_ENABLED", "LLM_MESSAGE_REWRITE_ENABLED", default=False)
@@ -639,8 +645,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             lines += ["", "📝 Message", body_s]
 
         eff_persona = _effective_persona(persona)
-        # Personality overlay gated by personality_enabled toggle
-        if persona_quip and _personality_enabled():
+        # Personality overlay gated by personality_enabled toggle and UI header setting
+        if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
             pol = _persona_overlay_line(eff_persona)
             if pol: lines += [pol]
 
@@ -657,6 +663,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         text = "\n".join(lines).strip()
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
+            "client::title": "Jarvis Prime",
             "jarvis::beautified": False
         }
         return text, extras
@@ -712,7 +719,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         lines += _header("Watchtower", badge)
 
         eff_persona = _effective_persona(persona)
-        if persona_quip and _personality_enabled():
+        if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
             pol = _persona_overlay_line(eff_persona)
             if pol: lines += [pol]
 
@@ -740,6 +747,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
+            "client::title": "Jarvis Prime",
             "jarvis::beautified": True,
             "jarvis::llm_riff_lines": len(real_riffs or []),
             "watchtower::host": wt_meta.get("watchtower::host"),
@@ -759,7 +767,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     lines += _header(kind, badge)
 
     eff_persona = _effective_persona(persona)
-    if persona_quip and _personality_enabled():
+    if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
         pol = _persona_overlay_line(eff_persona)
         if pol: lines += [pol]
 
@@ -812,6 +820,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     extras: Dict[str, Any] = {
         "client::display": {"contentType": "text/markdown"},
+        "client::title": "Jarvis Prime",
         "jarvis::beautified": True,
         "jarvis::allImageUrls": images,
         "jarvis::llm_riff_lines": len(real_riffs or []),
