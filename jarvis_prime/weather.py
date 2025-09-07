@@ -35,8 +35,9 @@ CITY = _options.get("weather_city", "Unknown")
 HA_ENABLED = bool(_options.get("ha_enabled", False))
 HA_BASE_URL = str(_options.get("ha_base_url", "") or "").rstrip("/")
 HA_TOKEN = str(_options.get("ha_token", "") or "").strip()
-# allow multiple key names; first non-empty wins
+# allow multiple key names; first non-empty wins (INCLUDES ha_temp_entity)
 HA_INDOOR_ENTITY = (
+    str(_options.get("ha_temp_entity") or "") or
     str(_options.get("ha_indoor_temp_entity") or "") or
     str(_options.get("ha_temp_entity_id") or "") or
     str(_options.get("weather_ha_temp_entity_id") or "")
