@@ -22,6 +22,17 @@
   → In short: EnviroGuard keeps Jarvis’s brain cool in the heat, boosts it when safe, and tells you whenever it shifts modes.
 - **New:** Riffs explained — a "riff" is a short persona-driven remark or embellishment added to each message by Jarvis’s LLM + Beautify engine.  
   Example: a plain "Backup complete" message becomes "📦 Backup complete — mission accomplished, Captain!" depending on the active persona.
+- **Personality Engine:** deep build-out & tuning  
+  • ~100 quips per persona with tighter characterization (Dude, Chick, Nerd, Rager, Comedian, Action, Jarvis, Ops)  
+  • Chick refreshed with Elle-style smart-glam; Comedian expanded with Deadpool-style meta; Jarvis blended with a subtle HAL-like calm  
+  • Rager now **always uncensored** (no soft-censor path)  
+  • Time-aware daypart flavor + intensity amplifier for quips (subtle, non-breaking)  
+  • Riff prompts use **style descriptors only** (no actor/brand names) to avoid quote-parroting
+- **Beautify Engine:** refined  
+  • Stronger persona style descriptors and safer formatting rules  
+  • Unified profanity handling (Rager exempt; others respect `PERSONALITY_ALLOW_PROFANITY`)  
+  • Cleaner post-processing: ≤140 chars, dedupe, no meta/system leakage  
+  • More consistent emoji and punctuation polish tied to intensity
 
 ## 1.1.3 (2025-09-02 21:30:00)
 - Added Webhook intake server with token support (POST /webhook)
