@@ -1,3 +1,12 @@
+## latest (2025-09-07 14:00:00)
+- Updated LLM configuration: only 3 models available  
+  • Phi-3 Mini (Q4_K_M ~2.3 GB)  
+  • Phi-3.5 Mini (Q4_K_M ~2.3 GB)  
+  • Phi-3.5 Small (Q5_K_M ~5.8 GB)  
+- Removed other LLM options (TinyLlama, Qwen, etc.) for clarity  
+- Normalized naming scheme (`phi3_mini`, `phi35_mini`, `phi35_small_q5`)  
+- Verified autodownload URLs and local paths  
+- EnviroGuard settings kept, schema cleaned for consistency
 ## 1.1.4 (2025-09-04 19:00:00)
 - Jarvis is now fully self-contained: all intakes (SMTP, Proxy, Webhook, Apprise) forward into /internal/emit
 - Removed all hardcoded Gotify posting from sidecars — Jarvis is no longer dependent on Gotify as a server
