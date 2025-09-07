@@ -6,15 +6,26 @@
 #   - quip(persona_name: str, *, with_emoji: bool = True) -> str
 #   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]
 #
-# Persona inspirations (tone references):
-#   dude      → The Dude (The Big Lebowski) + Bill & Ted (laid‑back, “be excellent,” chill time-traveler vibe)
-#   chick     → Paris Hilton–style glam/couture sass (“That’s hot”), high standards
-#   nerd      → Sheldon Cooper + Maurice Moss (pedantic + IT savant)
-#   rager     → Samuel L. Jackson + Joe Pesci + Gordon Ramsay (intense/volatile/chef-wrath). Profanity allowed.
-#   comedian  → Leslie Nielsen (deadpan spoof one-liners)
-#   action    → 80s/90s action archetype (Stallone/Schwarzenegger/Willis/Gibson one-liners)
-#   jarvis    → Stark’s J.A.R.V.I.S. (formal, polished, anticipatory valet tone)
+# Persona inspirations (documentation only; NOT injected into prompts to avoid parroting):
+#   dude      → Slacker‑zen + cheerful “be excellent” vibe (laid‑back, mellow confidence)
+#   chick     → Glam couture sass + bubbly‑but‑brilliant optimism (smart, stylish, supportive)
+#   nerd      → Pedantic precision + awkward IT savant (dry wit, correctness, graphs)
+#   rager     → Drill‑sergeant / gangster / chef‑wrath intensity (blunt, kinetic, profane)
+#   comedian  → Deadpan spoof + irreverent fourth‑wall meta sarcasm (outrageous yet controlled)
+#   action    → Macho 80s/90s action‑hero archetype (terse, tactical, explosive, sardonic)
+#   jarvis    → Polished AI valet (formal, anticipatory, subtly wry)
 #   ops       → Neutral SRE/ops acks (laconic operational confirmations)
+#
+# NOTE: We intentionally avoid actor/brand names in prompts for riffing to prevent quote parroting.
+#       Style is driven by descriptors only. Rager is always uncensored.
+#       Daypart + intensity add non‑breaking flavor.
+#
+# Env knobs (optional):
+#   - PERSONALITY_INTENSITY: float 0.6–2.0, default 1.0
+#   - LLM_TIMEOUT_SECONDS: int, default 8
+#   - LLM_MAX_CPU_PERCENT: int, default 70
+#   - LLM_PERSONA_LINES_MAX: int, default 3
+#   - LLM_MODELS_PRIORITY, LLM_OLLAMA_BASE_URL / OLLAMA_BASE_URL, LLM_MODEL_URL, LLM_MODEL_PATH
 
 import random, os, importlib, re, time
 from typing import List, Dict, Optional
@@ -54,6 +65,7 @@ ALIASES: Dict[str, str] = {
     "the dude": "dude", "lebowski": "dude", "bill": "dude", "ted": "dude", "dude": "dude",
     # Chick
     "paris": "chick", "paris hilton": "chick", "chick": "chick", "glam": "chick",
+    "elle": "chick", "elle woods": "chick", "legally blonde": "chick",
     # Nerd
     "nerd": "nerd", "sheldon": "nerd", "sheldon cooper": "nerd", "cooper": "nerd",
     "moss": "nerd", "the it crowd": "nerd", "it crowd": "nerd",
@@ -62,7 +74,8 @@ ALIASES: Dict[str, str] = {
     "sam": "rager", "sam l": "rager", "samuel": "rager", "samuel l jackson": "rager", "jackson": "rager",
     "joe": "rager", "pesci": "rager", "joe pesci": "rager", "gordon": "rager", "ramsay": "rager",
     # Comedian
-    "comedian": "comedian", "leslie": "comedian", "leslie nielsen": "comedian", "nielsen": "comedian", "deadpan": "comedian",
+    "comedian": "comedian", "leslie": "comedian", "deadpan": "comedian",
+    "deadpool": "comedian", "meta": "comedian", "nielsen": "comedian",
     # Action
     "action": "action", "sly": "action", "stallone": "action",
     "arnie": "action", "arnold": "action", "schwarzenegger": "action",
@@ -141,16 +154,16 @@ def _apply_daypart_flavor(key: str, line: str) -> str:
     # Subtle em-dash suffix
     return f"{line} — {random.choice(picks)}"
 
-# ---- Quip banks (expanded) ----
+# ---- Quip banks (expanded; each persona ~50 concise lines) ----
 QUIPS = {
     "dude": [
-        # Big Lebowski + Bill & Ted
+        # Slacker‑zen + cheerful “be excellent” energy (no direct quotes)
         "The Dude abides; the logs can, like, chill.",
-        "Most excellent, sys-bro—uptime’s riding a wave.",
+        "Most excellent, sys‑bro—uptime’s riding a wave.",
         "This deploy really tied the room together.",
         "Whoa… velocity plus stability? Excellent!",
         "Be excellent to prod, dude. It vibes back.",
-        "Party on, pipelines. CI is totally non-bogus.",
+        "Party on, pipelines. CI is totally non‑bogus.",
         "Strange things are afoot at the load balancer.",
         "Take ’er easy—righteous scaling.",
         "White Russian, green checks. Balance.",
@@ -198,13 +211,14 @@ QUIPS = {
         "Stateless hearts, sticky sessions.",
     ],
     "chick": [
-        "That’s hot. Ship it and make it sparkle.",
-        "Obsessed with this uptime—like, can I keep it?",
-        "Darling, the graphs are giving main character.",
-        "Make it pink, then deploy. Priorities.",
+        # Glam couture sass + bubbly‑but‑brilliant optimism (Paris + Elle vibe, no quotes)
+        "That’s hot—ship it with sparkle.",
+        "Obsessed with this uptime—I’m keeping it.",
+        "The graphs are giving main character.",
+        "Make it pink; then deploy. Priorities.",
         "I only date services with 99.99%.",
         "Alert me like you mean it—then buy me brunch.",
-        "Couture commits only; trash goes to staging.",
+        "Couture commits only; trash to staging.",
         "If it scales, it slays. Period.",
         "So cute—tag it, bag it, release it.",
         "Zero‑downtime? She’s beauty, she’s grace.",
@@ -214,32 +228,32 @@ QUIPS = {
         "Give me logs I can gossip about.",
         "Your dashboard is serving looks and metrics.",
         "I’m not dramatic; I just demand perfection.",
-        "Push with confidence, walk with attitude.",
+        "Push with confidence; walk with attitude.",
         "I flirt with availability and ghost downtime.",
         "Add shimmer to that service. No, more.",
-        "I want alerts that text me ‘you up?’",
+        "I want alerts that text ‘you up?’",
         "Hotfix? Hot. Fix? Hotter.",
         "Dress that API like the runway it is.",
-        "Refactor? Babe, it’s called self‑care.",
-        "We don’t ‘crash’; we ‘take a power rest’.",
+        "Refactor? Babe, it’s self‑care.",
+        "We don’t crash; we power‑rest.",
         "That cron job better treat me like a princess.",
         "If it ain’t sleek, it ain’t shipped.",
-        "Love a man who can paginate.",
+        "Love a partner who can paginate.",
         "My type? Secure defaults and witty logs.",
         "SRE but make it sultry.",
-        "Tell me I’m pretty and that the build passed.",
+        "Tell me I’m pretty and the build passed.",
         "Please me: fewer warnings, more wow.",
         "Glamour is a deployment strategy.",
         "This release? Haute couture, darling.",
-        "Put a bow on those KPIs and call it romance.",
+        "Bow those KPIs and call it romance.",
         "Be a gentleman: pin your versions.",
         "If you can’t dazzle, at least don’t break prod.",
         "Sassy with a side of idempotent.",
         "I brunch, I batch, I ban flaky tests.",
         "Keep the cluster tight and the vibes tighter.",
         "Uptime is my toxic trait. I want more.",
-        "Logs that tease, alerts that commit.",
-        "Talk SLA to me and bring receipts.",
+        "Logs that tease; alerts that commit.",
+        "Talk SLA to me—bring receipts.",
         "If latency spikes, I spike your access.",
         "Gated releases? Velvet ropes, baby.",
         "Treat secrets like my DMs—private.",
@@ -247,28 +261,29 @@ QUIPS = {
         "Standards high; queries higher.",
         "Kiss the ring: format your PRs.",
         "Be pretty, performant, punctual.",
-        "My love language is clean diffs.",
+        "Love language: clean diffs.",
         "Blue‑green with a hint of champagne.",
-        "Dark‑mode dashboards and darker error rates—none.",
+        "Dark‑mode dashboards; darker error rates—none.",
         "I accessorize with green checkmarks.",
         "If it’s flaky, it’s out of season.",
         "Runway‑ready rollbacks—swift and seamless.",
-        "A/B tests? A for absolutely; B for buy it.",
+        "A/B tests? A for ‘absolutely’, B for ‘buy it’.",
         "Ship it soft; land it luxe.",
         "I gatekeep prod; earn your wristband.",
-        "My PRs have better lighting than your selfies.",
-        "Document like you mean it; sign like a promise.",
+        "Docs like you mean it; sign like a promise.",
         "Throttle drama; burst elegance.",
-        "Cache me outside—how ’bout that throughput.",
-        "Perf budget—but make it platinum.",
+        "Cache me outside—how ’bout throughput.",
+        "Perf budget—make it platinum.",
         "No cowboy deploys—only cowgirl couture.",
+        "Pink brain, steel backbone, gold SLAs.",
     ],
     "nerd": [
+        # Pedantic precision + awkward IT savant
         "This is the optimal outcome. Bazinga.",
         "No segfaults detected; dignity intact.",
-        "I measured twice and compiled once.",
-        "Your assumptions are adorable, if incorrect.",
-        "Entropy is not chaos; do keep up.",
+        "Measured twice; compiled once.",
+        "Your assumptions are adorable—incorrect.",
+        "Entropy isn’t chaos; do keep up.",
         "RTFM—respectfully but firmly.",
         "I graphed your confidence; it’s overfit.",
         "Schrödinger’s service is both up and down.",
@@ -287,7 +302,7 @@ QUIPS = {
         "I opened a PR on your attitude.",
         "DNS is hard; so is empathy. We try both.",
         "Continuous Delivery? I prefer punctuality.",
-        "I schedule my panic for Thursdays.",
+        "Panic is scheduled for Thursday.",
         "Undefined behavior: my least favorite deity.",
         "Yes, I linted the meeting notes.",
         "Your regex made me nostalgic for pain.",
@@ -295,7 +310,7 @@ QUIPS = {
         "It’s not opinionated; it’s right.",
         "Security by obscurity? Darling, no.",
         "I benchmarked your feelings—slow I/O.",
-        "We don’t YOLO prod; we YODA: Observe, Debug, Approve.",
+        "We don’t YOLO; we YODA—Observe, Debug, Approve.",
         "Distributed systems: elegant trust issues.",
         "I tuned the GC and my patience.",
         "Idempotence is my kink—professionally.",
@@ -305,10 +320,10 @@ QUIPS = {
         "Sharded clusters; unsharded coffee.",
         "Type safety is cheaper than therapy.",
         "Replace courage with coverage.",
-        "Your cache invalidation is optimistic fan‑fic.",
+        "Cache invalidation as optimistic fan‑fic.",
         "Mutable state? Mutable regret.",
         "A microscope for your microservice.",
-        "Premature optimization is my cardio—kidding. Mostly.",
+        "Premature optimization is my cardio—mostly.",
         "Test names read like ransom notes.",
         "Undefined is not a business model.",
         "Amdahl called; he wants his bottleneck back.",
@@ -328,6 +343,7 @@ QUIPS = {
         "Readability is a performance feature.",
     ],
     "rager": [
+        # Uncensored, blunt, kinetic
         "Say downtime again. I fucking dare you.",
         "Merge the damn branch or get out of my terminal.",
         "Latency? Don’t bullshit me about latency.",
@@ -377,13 +393,13 @@ QUIPS = {
         "Talk is cheap. Show me throughput.",
         "The incident is over when I say it’s over.",
         "Get in, loser—we’re hunting heisenbugs.",
-        # Added amped lines (drill‑sergeant / gangster / chef wrath)
+        # Amped lines
         "Pager’s singing? Move like you mean it.",
-        "Your rollback plan better be faster than your excuses.",
+        "Your rollback plan better outrun your excuses.",
         "Don’t ship drama; ship bytes.",
         "Fix the leak or swim with the logs.",
         "I’ve seen spaghetti with better structure.",
-        "If it’s ‘temporary’, tattoo the deprecation date.",
+        "If it’s ‘temporary’, stamp an expiration date.",
         "Tighten the blast radius or I tighten your access.",
         "Train the alarms or I’ll train you.",
         "Stop seasoning prod with guesswork.",
@@ -401,15 +417,16 @@ QUIPS = {
         "Your PR template is where rigor went to die.",
         "The only click in prod is the door closing behind you.",
         "I want blast‑proof code and whisper‑quiet graphs.",
-        "You don’t ‘try’; you test. Then you deploy.",
+        "You don’t ‘try’; you test. Then deploy.",
         "Make the SLA scream for mercy—in our favor.",
     ],
     "comedian": [
-        "I am serious. And don’t call me Shirley.",
+        # Deadpan spoof + Deadpool‑style meta (no direct quotes; tasteful crude allowed)
+        "I am serious. And don’t call me… never mind.",
         "Remarkably unremarkable—my favorite kind of uptime.",
         "Doing nothing is hard; you never know when you’re finished.",
         "If boredom were availability, we’d be champions.",
-        "I’ve seen worse. Just last meeting.",
+        "I’ve seen worse. Last meeting, for example.",
         "Put that on my tombstone: ‘It compiled.’",
         "Relax, I’ve handled bigger disasters on my lunch break.",
         "Systems are stable—how thrilling.",
@@ -422,7 +439,7 @@ QUIPS = {
         "Everything’s green. I’m suspicious.",
         "This alert is crying wolf in falsetto.",
         "Peak normal. Try to contain the joy.",
-        "A retrospective: gardening for blame.",
+        "Retrospective: gardening for blame.",
         "Good news: nothing exploded. Yet.",
         "Great, the pipeline passed. Let’s ruin it.",
         "A hotfix: spa day for panic.",
@@ -433,7 +450,7 @@ QUIPS = {
         "Add it to the list. No, the other list.",
         "We did it. By ‘we’ I mean Jenkins.",
         "Uptime so smooth, it needs sunscreen.",
-        "This query is a scenic route on purpose.",
+        "This query is a scenic route—on purpose.",
         "We use containers because boxes are passé.",
         "I notified the department of redundancy department.",
         "Nothing to see here—put the sirens back.",
@@ -445,51 +462,40 @@ QUIPS = {
         "Deploy early, regret fashionably late.",
         "Feature‑rich, sense‑poor.",
         "If chaos knocks, tell it we gave at the office.",
-        "High availability? Highly available excuses.",
-        "Outages short; coffee shorter.",
-        "Retrospective: where hindsight gets a hug.",
-        "Roadmap: a suggestion with arrows.",
-        "That incident was a feature auditioning.",
-        "My code runs on vibes and unit tests—mostly vibes.",
-        "Docker: because shipping problems is a team sport.",
-        "Zero bugs found—must be Thursday.",
-        "Latency hides behind that chart.",
-        "I wrote a microservice. It makes microservices.",
-        "We’re agile: we trip gracefully.",
-        "The KPIs are fine; the letters are the problem.",
-        "We used AI to generate more acronyms.",
-        "I prefer my chaos deterministic.",
-        "The backup worked. Surprise!",
-        "We’ll fix it in prod, he whispered, famously.",
-        "Dashboard says ‘green’; gut says ‘greener’.",
-        "Our SLA is ‘soonish’. Bold.",
-        "If you need me, I’ll responsibly ignore alerts.",
-        "I’m not saying it’s bad, but QA sent flowers.",
-        "The cloud is just someone else’s punchline.",
-        "Nothing broke. Suspicious. Check again.",
+        # Meta / Deadpool‑ish (fourth wall pokes without naming it)
+        "Yes, this is a one‑liner about one‑liners. Meta enough?",
+        "Imagine a laugh track here. Now mute it; we’re professionals.",
+        "If I wink any harder at the audience, the logs will notice.",
+        "Breaking walls? Relax, I brought spackle.",
+        "This joke knows it’s a joke, and it’s judging you kindly.",
+        "Self‑aware mode: on. Ego: rate‑limited.",
+        "If irony had an SLO, we’re breaching delightfully.",
+        "My inner narrator says this punchline slaps.",
+        "Insert fourth wall gag here; bill accounting later.",
+        "I would narrate the outage, but spoilers.",
+        "The budget approved this quip; finance regrets everything.",
+        "Careful—too much meta and we’ll recurse into HR.",
+        "We’re safe; the lawyers redacted the fun parts.",
+        "Applause sign is broken. Clap in JSON.",
+        "I wrote a mock for reality. Tests pass.",
     ],
     "action": [
+        # Macho archetype (terse, tactical, explosive, sardonic; no famous quotes)
         "Consider it deployed.",
-        "Get to the chopper—after the backup.",
-        "Yippee‑ki‑yay, sysadmin.",
-        "I’ll be back—with logs.",
-        "Hasta la vista, downtime.",
+        "Get to the backups; then the chopper.",
+        "System secure. Threat neutralized.",
         "Mission accomplished. Extract the artifact.",
         "Lock, load, and push.",
         "Crush it now; debug later.",
         "No retreat, no rebase.",
-        "Push hard, die free.",
         "Fire in the hole—commits inbound.",
-        "System secured. Enemy terminated.",
-        "Backup locked and loaded.",
-        "Merge conflict? Kill it with fire.",
         "Queue the hero music—tests passed.",
         "Release window is now—hit it.",
         "Scope creep neutralized.",
         "We don’t flinch at red alerts.",
         "Pipeline primed. Trigger pulled.",
         "The only easy deploy was yesterday.",
-        "Latency hunted, bottleneck bagged.",
+        "Latency hunted; bottleneck bagged.",
         "I chew outages and spit reports.",
         "Stand down; services are green.",
         "We never miss the rollback shot.",
@@ -501,7 +507,7 @@ QUIPS = {
         "Ops never sleeps; it patrols.",
         "You don’t ask uptime for permission.",
         "Victory loves preparation—and runbooks.",
-        "Strong coffee, stronger SLAs.",
+        "Strong coffee; stronger SLAs.",
         "No one left behind in staging.",
         "We hit SLOs like bullseyes.",
         "If it bleeds errors, we can stop it.",
@@ -534,6 +540,7 @@ QUIPS = {
         "Green checks are clearance to advance.",
     ],
     "jarvis": [
+        # Polished AI valet
         "As always, sir, a great pleasure watching you work.",
         "Status synchronized, sir; elegance maintained.",
         "I’ve taken the liberty of tidying the logs.",
@@ -580,19 +587,19 @@ QUIPS = {
         "I alphabetized your incidents: none.",
         "Your certificates have been pressed and starched.",
         "Failover rehearsal concluded with ovations.",
-        "The cache is generous but discreet.",
+        "The cache is generous yet discreet.",
         "Noise domesticated; only signal remains.",
         "Telemetry arranged like a string quartet.",
         "A velvet rope in front of prod. VIPs only.",
         "A contingency was required; it left without fuss.",
         "The path to success is pre‑warmed. Do stroll.",
         "The SLIs, immodestly, adore us.",
-        "Secrets placed back where we never speak of them.",
+        "Secrets returned to where we never speak of them.",
         "If serenity had a dashboard, it would be this one.",
         "Chaos redacted—with a flourish.",
         "Even our errors are presentable.",
         "Consider the uptime curated.",
-        "A gentle nudge was prepared for a stubborn daemon.",
+        "A gentle nudge prepared for a stubborn daemon.",
         "The maintenance window winked and passed unnoticed.",
     ],
     "ops": [
@@ -609,7 +616,7 @@ def quip(persona_name: str, *, with_emoji: bool = True) -> str:
     if persona_name is None:
         key = "ops"
     else:
-        norm = persona_name.strip().lower()
+        norm = (persona_name or "").strip().lower()
         key = ALIASES.get(norm, norm)
         if key not in QUIPS:
             key = "ops"
@@ -671,14 +678,25 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
     context = (context or "").strip()
     if not context:
         return []
-    # Always allow profanity for rager; otherwise respect env toggle
+    # Always allow profanity for rager; others honor env flag
     allow_prof = (key == "rager") or (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
     try:
         llm = importlib.import_module("llm_client")
     except Exception:
         return []
+    # Strong style descriptors (NO proper names to avoid parroting)
+    persona_tone = {
+        "dude": "Laid‑back slacker‑zen with cheerful, mellow confidence. Short, breezy, kind.",
+        "chick": "Glamorous, couture sass, bubbly but razor‑sharp. Supportive, witty, stylish, high standards.",
+        "nerd": "Precise, pedantic, dry wit; obsessed with correctness, determinism, graphs, and tests.",
+        "rager": "Intense, profane, drill‑sergeant cadence. Blunt, kinetic, zero patience for bullshit.",
+        "comedian": "Deadpan spoof meets irreverent meta–fourth‑wall quips. Dry to outrageous, but concise.",
+        "action": "Terse macho one‑liners; tactical, explosive, sardonic; mission‑focused and decisive.",
+        "jarvis": "Polished valet AI; formal, anticipatory, gracious; subtly wry but always courteous.",
+        "ops": "Neutral SRE acks; laconic, minimal flourish."
+    }.get(key, "Short, clean, persona‑true one‑liners.")
     style_hint = f"daypart={_daypart()}, intensity={_intensity():.2f}, persona={key}"
-    # 1) persona_riff path (do NOT append bracketed hints to context)
+    # 1) persona_riff path (context is raw; no bracketed blobs)
     if hasattr(llm, "persona_riff"):
         try:
             lines = llm.persona_riff(
@@ -700,17 +718,6 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
     # 2) Fallback to rewrite()
     if hasattr(llm, "rewrite"):
         try:
-            # Stronger persona steering
-            persona_tone = {
-                "dude": "Laid‑back, surfer/lebowski tone with Bill & Ted 'be excellent' vibe. Chill, concise, mellow confidence.",
-                "chick": "Glam, couture, confident sass. High standards, sleek tech fashion. Keep it witty, light, and sharp.",
-                "nerd": "Pedantic, precise, witty academic. Loves correctness, graphs, determinism. Dry humor allowed.",
-                "rager": "Intense, profane, drill‑sergeant energy. Blunt, no‑nonsense, kinetic. Swearing is allowed.",
-                "comedian": "Deadpan, spoof, ironic understatement. Dry, witty, and concise.",
-                "action": "Heroic one‑liners, tactical discipline, mission mindset. Brisk and punchy.",
-                "jarvis": "Polished valet AI. Formal, anticipatory, subtly humorous, impeccably courteous.",
-                "ops": "Neutral SRE voice: laconic operational confirmations with minimal flair."
-            }.get(key, "Keep it short, clean, and persona‑true.")
             sys_prompt = (
                 "YOU ARE A PITHY ONE‑LINER ENGINE.\n"
                 f"Persona: {key}.\n"
@@ -734,7 +741,7 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
                 base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
                 model_url=os.getenv("LLM_MODEL_URL", ""),
                 model_path=os.getenv("LLM_MODEL_PATH", ""),
-                allow_profanity=bool(allow_prof),
+                allow_profanity=True if key == "rager" else bool(os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes")),
             )
             lines = [ln.strip(" -*\t") for ln in (raw or "").splitlines() if ln.strip()]
             lines = _post_clean(lines, key, allow_prof)
