@@ -207,26 +207,6 @@ def _first_nonempty_line(s: str) -> str:
         if t: return t
     return ""
 
-def _first_meaningful_line(s: str) -> str:
-    """Return the first human line, skipping image placeholders and labels."""
-    for ln in (s or "").splitlines():
-        t = ln.strip()
-        if not t:
-            continue
-        # skip pure image placeholders or poster markdown
-        if t.startswith("![poster]") or t.lower().startswith("[image"):
-            continue
-        # If the line starts with Subject/Message, strip the label and use the rest
-        m = re.match(r'(?i)^(subject|message)\s*:?\s*(.*)$', t)
-        if m:
-            rest = m.group(2).strip()
-            if rest:
-                return rest
-            else:
-                continue
-        return t
-    return ""
-
 def _fmt_kv(label: str, value: str) -> str:
     v = value.strip()
     if re.search(r'\d', v):  # emphasize numeric values
@@ -602,29 +582,48 @@ def _strip_mime_headers(text: str) -> str:
 # --- SUBJECT CLEANUP & CARD TITLE -------------------------------------------------
 INTAKE_NAMES = {"proxy","smtp","apprise","gotify","ntfy","webhook","webhooks"}
 
+def _infer_subject_from_body(body: str) -> Optional[str]:
+    """Try to infer a friendly subject from common test and status texts."""
+    b = (body or "").strip()
+    # 1) Look for explicit Subject: line
+    for ln in b.splitlines():
+        m = re.match(r'\s*Subject\s*:\s*(.+?)\s*$', ln, re.I)
+        if m:
+            return m.group(1).strip()
+    # 2) Sonarr/Radarr-style tests
+    m = re.search(r'\btest message from\s+(sonarr|radarr|lidarr|prowlarr|readarr)\b', b, re.I)
+    if m:
+        svc = m.group(1).title()
+        return f"{svc} - Test Notification"
+    # 3) Speedtest
+    if re.search(r'\bspeedtest\b', b, re.I):
+        return "SpeedTest Result"
+    # 4) Fallback: first meaningful line that isn't boilerplate
+    for ln in b.splitlines():
+        t = ln.strip()
+        if not t:
+            continue
+        if re.match(r'^(?:subject|title|message)\s*[:=]', t, re.I):
+            continue
+        return t[:120]
+    return None
+
 def _clean_subject(raw_title: str, body: str) -> str:
     """Remove intake tags, duplicate 'Jarvis Prime:' prefixes, and fallback to better subject."""
     t = (raw_title or "").strip()
     if not t:
         t = ""
-    # Drop bracketed intake prefixes like [SMTP], [Proxy], etc.
-    t = re.sub(r'^\s*\[(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\]\s*', '', t, flags=re.I)
-    # If the title is literally just an intake keyword, try to mine a better subject
+    # Drop bracketed intake prefixes like [SMTP], [Proxy], etc. (allow multiples)
+    t = re.sub(r'^\s*(?:\[(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\]\s*)+', '', t, flags=re.I)
+    # Drop naked intake prefixes like "SMTP:" or "Proxy -"
+    t = re.sub(r'^\s*(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*[:\-]\s*', '', t, flags=re.I)
+
+    # If the title is literally just an intake keyword or very generic, infer from body
     if t.strip().lower() in INTAKE_NAMES or t.strip().lower() in {"message","notification","test"}:
-        new_t = None
-        # Look for 'Subject: XYZ' inside body
-        for ln in (body or "").splitlines():
-            m = re.match(r'\s*Subject\s*:\s*(.+)\s*$', ln, flags=re.I)
-            if m:
-                new_t = m.group(1).strip()
-                break
-        # If still not found, use the first meaningful human line
-        if not new_t:
-            cand = _first_meaningful_line(body)
-            if cand and cand.strip().lower() not in INTAKE_NAMES:
-                new_t = cand
+        new_t = _infer_subject_from_body(body)
         if new_t:
             t = new_t
+
     # Remove duplicate 'Jarvis Prime:' prefix(es)
     t = re.sub(r'^\s*(?:jarvis\s*prime\s*:?\s*)+', '', t, flags=re.I)
     return (t or "").strip()
@@ -644,6 +643,39 @@ def _icon_map_from_options() -> Dict[str,str]:
     except Exception:
         pass
     return {}
+
+def _builtin_icon_map() -> Dict[str,str]:
+    # Conservative built-ins so every intake can show *something* even without user config.
+    base = "https://raw.githubusercontent.com/walkxcode/dashboard-icons/master/png"
+    return {
+        "sonarr": f"{base}/sonarr.png",
+        "radarr": f"{base}/radarr.png",
+        "lidarr": f"{base}/lidarr.png",
+        "prowlarr": f"{base}/prowlarr.png",
+        "readarr": f"{base}/readarr.png",
+        "bazarr": f"{base}/bazarr.png",
+        "qbittorrent": f"{base}/qbittorrent.png",
+        "transmission": f"{base}/transmission.png",
+        "jellyfin": f"{base}/jellyfin.png",
+        "plex": f"{base}/plex.png",
+        "emby": f"{base}/emby.png",
+        "sabnzbd": f"{base}/sabnzbd.png",
+        "overseerr": f"{base}/overseerr.png",
+        "gluetun": f"{base}/gluetun.png",
+        "pihole": f"{base}/pi-hole.png",
+        "unifi": f"{base}/unifi-network.png",
+        "portainer": f"{base}/portainer.png",
+        "watchtower": f"{base}/watchtower.png",
+        "docker": f"{base}/docker.png",
+        "homeassistant": f"{base}/home-assistant.png",
+        "speedtest": f"{base}/speedtest.png",
+        "apt": f"{base}/debian.png",
+        "smtp": f"{base}/mail.png",
+        "apprise": f"{base}/bell.png",
+        "gotify": f"{base}/bell.png",
+        "ntfy": f"{base}/bell.png",
+        "proxy": f"{base}/reverse-proxy.png",
+    }
 
 def _icon_from_env(keyword: str) -> Optional[str]:
     key = f"ICON_{keyword.upper()}_URL"
@@ -668,12 +700,14 @@ def _poster_fallback(title: str, body: str) -> Optional[str]:
     keywords = ["sonarr","radarr","lidarr","prowlarr","readarr","bazarr",
                 "qbittorrent","transmission","jellyfin","plex","emby",
                 "sabnzbd","overseerr","gluetun","pihole","unifi","portainer",
-                "watchtower","docker","homeassistant","speedtest","apt"]
+                "watchtower","docker","homeassistant","speedtest","apt",
+                "smtp","apprise","gotify","ntfy","proxy"]
     text = f"{title} {body}".lower()
     opt_map = _icon_map_from_options()
+    builtin = _builtin_icon_map()
     for word in keywords:
         if word in text:
-            return opt_map.get(word) or _icon_from_env(word)
+            return opt_map.get(word) or _icon_from_env(word) or builtin.get(word)
     # fallback default
     return _default_icon()
 
@@ -700,6 +734,25 @@ def _remove_kv_lines(text: str) -> str:
     s = "\n".join(kept)
     s = re.sub(r'\n{3,}', '\n\n', s).strip()
     return s
+
+def _final_qs_cleanup(text: str) -> str:
+    """If the *visible* message still looks like a querystring, decode and keep only human text."""
+    if not text:
+        return ""
+    maybe = _maybe_parse_query_payload(text)
+    if maybe:
+        # Prefer 'message' or 'text' fields; else render as simple lines
+        for k in ("message","text","body","m"):
+            if k in maybe and maybe[k].strip():
+                return maybe[k].strip()
+        # or join remaining fields in a readable way
+        parts = []
+        for k,v in maybe.items():
+            if k.lower() in {"title","topic","tags","priority"}:
+                continue
+            parts.append(f"{k}: {v}")
+        return "\n".join(parts).strip() or text
+    return text
 
 # -------- Intake preprocessors --------
 def _preprocess_smtp(title: str, body: str) -> Tuple[str, str]:
@@ -746,17 +799,6 @@ def _normalize_intake(source: str, title: str, body: str) -> Tuple[str, str]:
     if src == "proxy":
         return _preprocess_proxy(title, body)
     return _preprocess_generic(title, body)
-
-# --- Riff promotion for content-type cards ---------------------------------------
-def _promote_riffs_to_message_if_needed(title: str, message_snip: str, riffs: List[str]) -> Tuple[str, List[str]]:
-    # If body already exists, keep it.
-    if message_snip.strip():
-        return message_snip, riffs
-    # Move riffs into the body for content-style titles.
-    if re.search(r'(?i)\b(joke|quip|weird\s*fact|fact|quote)\b', (title or "")) and riffs:
-        merged = "\n".join(r.strip().strip('"') for r in riffs if r.strip())
-        return merged, []
-    return message_snip, riffs
 
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
@@ -924,6 +966,9 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         # Fallbacks to guarantee a message
         message_snip = (raw_message or normalized or "No message provided.").strip()
 
+    # Decoded leftover querystrings if any
+    message_snip = _final_qs_cleanup(message_snip)
+
     # ---- OPTIONAL LLM MESSAGE REWRITE (toggleable) ----
     try:
         eff_persona_for_rewrite = _effective_persona(persona)
@@ -934,7 +979,10 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     except Exception:
         pass
 
-    # Prepare poster (but append after message)
+    if message_snip:
+        lines += ["", "📝 Message", message_snip]
+
+    # Inline the first image as poster; keep list in extras (or use fallback)
     poster = None
     if images:
         poster = images[0]
@@ -942,6 +990,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
         if poster:
             images = [poster]
+    if poster:
+        lines += ["", f"![poster]({poster})"]
 
     # LLM persona riffs (render only if non-empty), independent toggle
     ctx = (title or "").strip() + "\n" + (body_wo_imgs or "").strip()
@@ -953,19 +1003,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
     real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
     real_riffs = [ r for r in real_riffs if r ]
-
-    # Promote riffs to the message when appropriate (e.g., Joke/Quip/Fact)
-    message_snip, real_riffs = _promote_riffs_to_message_if_needed(subj, message_snip, real_riffs)
-
-    # Now append message
-    if message_snip:
-        lines += ["", "📝 Message", message_snip]
-
-    # Append poster after the body
-    if poster:
-        lines += ["", f"![poster]({poster})"]
-
-    # Finally, append remaining riffs (if any)
     if real_riffs:
         lines += ["", f"🧠 {eff_persona} riff"]
         for r in real_riffs:
