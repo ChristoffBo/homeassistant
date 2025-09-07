@@ -52,6 +52,8 @@ COPY personality.py /app/personality.py
 COPY smtp_server.py /app/smtp_server.py
 COPY proxy.py /app/proxy.py
 COPY beautify.py /app/beautify.py
+COPY enviroguard.py /app/enviroguard.py
+
 # LLM + memory
 COPY llm_client.py /app/llm_client.py
 COPY llm_memory.py /app/llm_memory.py
