@@ -356,7 +356,6 @@ def _persona_line(quip_text: str) -> str:
     if len(quip_text) > 140:
         quip_text = quip_text[:137] + "..."
     return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
-
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
 
@@ -381,9 +380,18 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     except Exception:
         quip_text = ""
 
+    # --- PATCH: build dynamic persona header using Lexi via personality.persona_header() ---
+    try:
+        if _personality and hasattr(_personality, "persona_header"):
+            header = _personality.persona_header(ACTIVE_PERSONA)
+        else:
+            header = _persona_line(quip_text)
+    except Exception:
+        header = _persona_line(quip_text)
+    # --- end patch ---
+
     # --- ADDITIVE: don't prepend persona header when bypassing ---
     if not _bypass:
-        header = _persona_line(quip_text)
         message = (header + ("\n" + (message or ""))) if header else (message or "")
     else:
         message = message or ""
