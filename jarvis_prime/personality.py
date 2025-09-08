@@ -1127,6 +1127,35 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False) -> li
         if len(out) >= n:
             break
     return out
+# ============================
+# Persona header (Lexi-aware)
+# ============================
+def persona_header(persona_name: str) -> str:
+    """
+    Build the dynamic header Jarvis shows above messages.
+    Prefer Lexi's quip; fall back to stock quip; always safe.
+    """
+    who = (persona_name or "neutral").strip()
+    # Try Lexi first
+    try:
+        if 'lexi_quip' in globals() and callable(globals()['lexi_quip']):
+            q = lexi_quip(who, with_emoji=False)
+            q = (q or "").strip().replace("\n", " ")
+            if len(q) > 140:
+                q = q[:137] + "..."
+            return f"💬 {who} says: {q}"
+    except Exception:
+        pass
+
+    # Fallback to canned quip()
+    try:
+        q2 = quip(who, with_emoji=False)
+        q2 = (q2 or "").strip().replace("\n", " ")
+        if len(q2) > 140:
+            q2 = q2[:137] + "..."
+        return f"💬 {who} says: {q2}" if q2 else f"💬 {who} says:"
+    except Exception:
+        return f"💬 {who} says:"
 
 # Optional: quick manual test (kept inert unless run directly)
 if __name__ == "__main__":
