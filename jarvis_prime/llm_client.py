@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (FULL)
+# Jarvis Prime - LLM client (FULL)
 # - GGUF local loading via llama-cpp (if available)
-# - Optional Ollama HTTP generation (if base_url provided & reachable)
+# - Optional Ollama HTTP generation (if base_url provided and reachable)
 # - Hugging Face downloads with Authorization header preserved across redirects
 # - SHA256 optional integrity check
 # - Hard timeouts; best-effort, never crash callers
 # - Message checks (max lines / soft-length guard)
-# - Persona riffs (1–3 short lines)
+# - Persona riffs (1-3 short lines)
 #
 # Public entry points expected by the rest of Jarvis:
 #   ensure_loaded(...)
@@ -108,7 +109,7 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
 class _AuthRedirectHandler(urllib.request.HTTPRedirectHandler):
     """
     Keep Authorization header across redirects (Hugging Face needs this).
-    Python's urllib strips 'Authorization' on redirect by default.
+    Python's urllib strips Authorization on redirect by default.
     """
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -205,7 +206,7 @@ def _resolve_model_from_options(
     hf_token: Optional[str]
 ) -> Tuple[str, str, Optional[str]]:
     """
-    If caller didn't pass model_url/path, derive them from /data/options.json.
+    If caller did not pass model_url/path, derive them from /data/options.json.
     Supports:
       - llm_choice == "custom" -> llm_model_url/path
       - llm_choice == "<name>" -> llm_<name>_url/path
@@ -265,7 +266,7 @@ def _resolve_model_from_options(
     return url, path, token
 
 # ============================
-# Options → runtime defaults (ADDITIVE)
+# Options -> runtime defaults (ADDITIVE)
 # ============================
 def _options_defaults() -> Tuple[int, int, int]:
     """
@@ -412,7 +413,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         return False
     try:
         params = _effective_llama_exec_params(ctx_tokens, cpu_limit)
-        # ensure env hints too (OMP/LLAMA) – llama.cpp honors these in some code paths
+        # ensure env hints too (OMP/LLAMA) - llama.cpp honors these in some code paths
         os.environ.setdefault("OMP_NUM_THREADS", str(params["n_threads"]))
         os.environ.setdefault("LLAMA_THREADS", str(params["n_threads"]))
         # llama-cpp params verified in docs (n_ctx, n_threads, n_threads_batch, n_batch)
@@ -495,13 +496,13 @@ def _trim_lines(text: str, max_lines: int) -> str:
     if max_lines and len(lines) > max_lines:
         keep = lines[:max_lines]
         if keep:
-            keep[-1] = keep[-1].rstrip() + " …"
+            keep[-1] = keep[-1].rstrip() + " ..."
         return "\n".join(keep)
     return text
 
 def _soft_trim_chars(text: str, max_chars: int) -> str:
     if max_chars and len(text) > max_chars:
-        return text[: max(0, max_chars - 1)].rstrip() + "…"
+        return text[: max(0, max_chars - 1)].rstrip() + "..."
     return text
 
 # ============================
@@ -564,7 +565,7 @@ def ensure_loaded(
                     os.remove(LOADED_MODEL_PATH)
                 except Exception as e:
                     _log(f"cleanup_on_switch: remove failed: {e}")
-        # If target path exists but filename doesn't align with URL basename, optionally refresh it
+        # If target path exists but filename does not align with URL basename, optionally refresh it
         if cleanup_on_disable and os.path.exists(model_path) and model_url:
             url_base = os.path.basename(model_url)
             file_base = os.path.basename(model_path)
@@ -615,7 +616,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
-# ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
+# ADDITIVE: Riff post-cleaner to remove leaked instructions or boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
     r'^\s*no\s+lists.*$',
@@ -770,7 +771,7 @@ def riff(
     allow_profanity: bool = False
 ) -> str:
     """
-    Generate 1–3 very short riff lines for the bottom of a card.
+    Generate 1-3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
     # Merge defaults from /data/options.json (ADDITIVE)
@@ -814,7 +815,7 @@ def riff(
 
     joined = "\n".join(cleaned[:3]) if cleaned else ""
     if len(joined) > 120:
-        joined = joined[:119].rstrip() + "…"
+        joined = joined[:119].rstrip() + "..."
     return joined
 
 # ============================
@@ -837,7 +838,7 @@ def persona_riff(
     hf_token: Optional[str] = None
 ) -> List[str]:
     """
-    Generate 1–N SHORT persona-flavored lines from context (title + body). Returns a list of lines.
+    Generate 1-N SHORT persona-flavored lines from context (title + body). Returns a list of lines.
     """
     if allow_profanity is None:
         allow_profanity = (
@@ -896,7 +897,7 @@ def persona_riff(
 
     sys_rules = [
         f"Voice: {vibe}.",
-        "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
+        "Write up to {N} distinct one-liners. Each <= 140 chars.",
         "No bullets or numbering. No labels. No lists. No JSON.",
         "No quotes or catchphrases. No character or actor names.",
         "No explanations or meta-commentary. Output ONLY the lines.",
@@ -973,4 +974,3 @@ if __name__ == "__main__":
     except Exception as e:
         print("self-check error:", e)
     print("llm_client self-check end")
-```0
