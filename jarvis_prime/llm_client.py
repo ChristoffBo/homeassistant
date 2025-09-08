@@ -295,6 +295,7 @@ def _available_cpus() -> int:
         pass
     try:
         with open("/sys/fs/cgroup/cpu.max", "r", encoding="utf-8") as f:
+        # rest of code continues
             raw = f.read().strip().split()
             if len(raw) == 2:
                 quota, period = raw
@@ -910,3 +911,4 @@ if __name__ == "__main__":
     except Exception as e:
         print("self-check error:", e)
     print("llm_client self-check end")
+```0
