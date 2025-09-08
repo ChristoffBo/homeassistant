@@ -337,6 +337,19 @@ atexit.register(stop_sidecars)
 # ============================
 jarvis_app_id = None
 
+# --- ADDITIVE: bypass list + helper for chat.py payloads ---
+_CHAT_BYPASS_TITLES = {"Joke", "Quip", "Weird Fact"}
+def _should_bypass_decor(title: str, extras=None) -> bool:
+    try:
+        if title in _CHAT_BYPASS_TITLES:
+            return True
+        if isinstance(extras, dict) and extras.get("bypass_beautify") is True:
+            return True
+    except Exception:
+        pass
+    return False
+# --- end additive ---
+
 def _persona_line(quip_text: str) -> str:
     who = ACTIVE_PERSONA or "neutral"
     quip_text = (quip_text or "").strip().replace("\n", " ")
@@ -346,6 +359,13 @@ def _persona_line(quip_text: str) -> str:
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
+
+    # --- ADDITIVE: auto-bypass for chat.py jokes/quip/weirdfacts ---
+    _bypass = _should_bypass_decor(orig_title, extras)
+    if _bypass:
+        decorate = False
+    # --- end additive ---
+
     try:
         if decorate and _personality and hasattr(_personality, "decorate_by_persona"):
             title, message = _personality.decorate_by_persona(title, message, ACTIVE_PERSONA, PERSONA_TOD, chance=1.0)
@@ -360,8 +380,14 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         quip_text = _personality.quip(ACTIVE_PERSONA) if _personality and hasattr(_personality, "quip") else ""
     except Exception:
         quip_text = ""
-    header = _persona_line(quip_text)
-    message = (header + ("\n" + (message or ""))) if header else (message or "")
+
+    # --- ADDITIVE: don't prepend persona header when bypassing ---
+    if not _bypass:
+        header = _persona_line(quip_text)
+        message = (header + ("\n" + (message or ""))) if header else (message or "")
+    else:
+        message = message or ""
+    # --- end additive ---
 
     if _personality and hasattr(_personality, "apply_priority"):
         try:
@@ -456,6 +482,16 @@ def _llm_then_beautify(title: str, message: str):
     # Reflect LLM state in footer tag
     used_llm = bool(merged.get("llm_enabled")) or bool(merged.get("llm_rewrite_enabled")) or LLM_REWRITE_ENABLED
     used_beautify = True if _beautify else False
+
+    # --- ADDITIVE: bypass beautifier entirely for chat.py payloads by title ---
+    if title in _CHAT_BYPASS_TITLES:
+        final = message or ""
+        extras = None
+        used_beautify = False
+        # No footer either; return as-is
+        return final, extras, used_llm, used_beautify
+    # --- end additive ---
+
     final = message or ""
     extras = None
 
@@ -676,9 +712,10 @@ def _handle_command(ncmd: str) -> bool:
                 msg, _ = m_chat.handle_chat_command("joke")
             except Exception as e:
                 msg = f"⚠️ Chat error: {e}"
-            send_message("Joke", msg or "No joke available right now.")
         else:
-            send_message("Joke", "Chat engine unavailable.")
+            msg = "Chat engine unavailable."
+        # keep title "Joke"; bypass handled automatically by title-based logic
+        send_message("Joke", msg or "No joke available right now.")
         return True
 
     if ncmd in ("upcoming movies", "upcoming films", "movies upcoming", "films upcoming"):
