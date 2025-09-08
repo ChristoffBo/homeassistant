@@ -1,5 +1,5 @@
 ## latest (2025-09-08 14:00:00)
-- Replaced the LLM's with the Phi3 family llms' they just run better.
+- Replaced the LLM's with the Phi3 family llms' they just run better. Also be aware the the uncesored LLM is not very nice.
 ## latest (2025-09-07 14:00:00)
 - EnviroGuard settings kept, schema cleaned for consistency
 ## 1.1.4 (2025-09-04 19:00:00)
