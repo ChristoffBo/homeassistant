@@ -265,6 +265,25 @@ def _resolve_model_from_options(
     return url, path, token
 
 # ============================
+# Options → runtime defaults (ADDITIVE)
+# ============================
+def _options_defaults() -> Tuple[int, int, int]:
+    """
+    Returns (cpu_limit_percent, ctx_tokens, timeout_seconds) from /data/options.json if present,
+    otherwise sensible fallbacks. This lets config.json drive behavior even if callers pass
+    hardcoded defaults.
+    """
+    opts = _read_options()
+    cpu = int(opts.get("llm_max_cpu_percent", 80) or 80)
+    ctx = int(opts.get("llm_ctx_tokens", 4096) or 4096)
+    to  = int(opts.get("llm_timeout_seconds", 20) or 20)
+    # sanitize
+    cpu = max(1, min(100, cpu))
+    ctx = max(256, ctx)
+    to  = max(2, to)
+    return cpu, ctx, to
+
+# ============================
 # CPU / Threads (throttling)
 # ============================
 def _parse_cpuset_list(s: str) -> int:
@@ -339,6 +358,13 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
         pct = 100
     t = max(1, int(math.ceil(cores * (pct / 100.0))))
     t = min(cores, t)
+    # ADDITIVE: clamp default threads to avoid pegging all cores (user can override via env)
+    clamp = _int_env("ENVGUARD_MAX_THREADS", None)
+    if clamp is not None:
+        t = max(1, min(t, clamp))
+    else:
+        # default soft clamp = min(cores-1, 4) to keep UI responsive
+        t = max(1, min(t, max(1, min(cores - 1, 4))))
     _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
     return t
 
@@ -353,24 +379,53 @@ def _try_import_llama_cpp():
         _log(f"llama-cpp not available: {e}")
         return None
 
+def _effective_llama_exec_params(ctx_tokens: int, cpu_limit: int) -> Dict[str, int]:
+    """
+    Derive sane defaults that reduce CPU spikes:
+    - n_threads: small clamp (see _threads_from_cpu_limit)
+    - n_threads_batch: half of n_threads
+    - n_batch: keep modest to limit prompt-ingest spikes
+    Allow overrides via ENVGUARD_N_THREADS(_BATCH) and ENVGUARD_N_BATCH.
+    """
+    threads = _threads_from_cpu_limit(cpu_limit)
+    thr_env = _int_env("ENVGUARD_N_THREADS", None)
+    if thr_env is not None:
+        threads = max(1, thr_env)
+
+    thrb = max(1, threads // 2)
+    thrb_env = _int_env("ENVGUARD_N_THREADS_BATCH", None)
+    if thrb_env is not None:
+        thrb = max(1, thrb_env)
+
+    # keep batch small-ish; never exceed ctx
+    nb = min(ctx_tokens, max(64, min(256, ctx_tokens // 4)))
+    nb_env = _int_env("ENVGUARD_N_BATCH", None)
+    if nb_env is not None:
+        nb = max(16, min(ctx_tokens, nb_env))
+
+    return {"n_threads": threads, "n_threads_batch": thrb, "n_batch": nb}
+
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH
     llama_cpp = _try_import_llama_cpp()
     if not llama_cpp:
         return False
     try:
-        threads = _threads_from_cpu_limit(cpu_limit)
-        os.environ.setdefault("OMP_NUM_THREADS", str(threads))
-        os.environ.setdefault("LLAMA_THREADS", str(threads))
-        # llama-cpp params verified in docs (n_ctx, n_threads)
+        params = _effective_llama_exec_params(ctx_tokens, cpu_limit)
+        # ensure env hints too (OMP/LLAMA) – llama.cpp honors these in some code paths
+        os.environ.setdefault("OMP_NUM_THREADS", str(params["n_threads"]))
+        os.environ.setdefault("LLAMA_THREADS", str(params["n_threads"]))
+        # llama-cpp params verified in docs (n_ctx, n_threads, n_threads_batch, n_batch)
         LLM = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=ctx_tokens,
-            n_threads=threads,
+            n_threads=params["n_threads"],
+            n_threads_batch=params["n_threads_batch"],
+            n_batch=params["n_batch"],
         )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
-        _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
+        _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, n_threads={params['n_threads']}, n_threads_batch={params['n_threads_batch']}, n_batch={params['n_batch']})")
         return True
     except Exception as e:
         _log(f"llama load failed: {e}")
@@ -668,6 +723,12 @@ def rewrite(
     """Best-effort rewrite. If LLM unavailable, returns input text."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
+    # Merge defaults from /data/options.json (ADDITIVE)
+    _cpu_opt, _ctx_opt, _to_opt = _options_defaults()
+    if cpu_limit in (80, None): cpu_limit = _cpu_opt
+    if ctx_tokens in (4096, None): ctx_tokens = _ctx_opt
+    if timeout in (12, None): timeout = _to_opt
+
     g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
@@ -712,6 +773,10 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
+    # Merge defaults from /data/options.json (ADDITIVE)
+    _cpu_opt, _ctx_opt, _to_opt = _options_defaults()
+    if timeout in (8, None): timeout = _to_opt
+
     # ADD: EnviroGuard timeout override
     _, _, g_to = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
@@ -723,7 +788,7 @@ def riff(
             model_path=model_path,
             model_sha256="",
             ctx_tokens=2048,
-            cpu_limit=80,
+            cpu_limit=_cpu_opt,
             hf_token=None,
             base_url=base_url
         )
@@ -779,6 +844,12 @@ def persona_riff(
             (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
             and (persona or "").lower().strip() == "rager"
         )
+
+    # Merge defaults from /data/options.json (ADDITIVE)
+    _cpu_opt, _ctx_opt, _to_opt = _options_defaults()
+    if cpu_limit in (80, None): cpu_limit = _cpu_opt
+    if ctx_tokens in (4096, None): ctx_tokens = _ctx_opt
+    if timeout in (8, None): timeout = _to_opt
 
     g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -902,3 +973,4 @@ if __name__ == "__main__":
     except Exception as e:
         print("self-check error:", e)
     print("llm_client self-check end")
+```0
