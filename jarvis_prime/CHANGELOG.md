@@ -1,3 +1,6 @@
+## latest (2025-09-08 14:40:00)
+- Added Lexi-driven persona headers in bot.py
+- Integrated persona_header() into personality.py for dynamic message intros
 ## latest (2025-09-08 14:00:00)
 - Replaced the LLM's with the Phi3 family llms' they just run better. Also be aware that the uncesored LLM is not very nice.
 ## latest (2025-09-07 14:00:00)
