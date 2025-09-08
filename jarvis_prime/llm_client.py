@@ -237,15 +237,16 @@ def _resolve_model_from_options(
             (opts.get(f"llm_{choice}_path") or "").strip()
         ))
 
-    # Build order from priority string (if present), else default to Phi 3.5 Q5 -> Q4 -> Phi-3
+    # Build order from priority string (if present), else default to include uncensored too
     priority_raw = (opts.get("llm_models_priority") or "").strip()
     if priority_raw:
         names = [n.strip().lower() for n in priority_raw.split(",") if n.strip()]
     else:
-        names = ["phi35_q5", "phi35_q4", "phi3"]
+        names = ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]
 
+    # Collect enabled candidates in order (with a safe tail)
     seen = set()
-    for name in names + ["phi35_q5", "phi35_q4", "phi3"]:
+    for name in names + ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]:
         key = name.lower()
         if key in seen:
             continue
@@ -298,7 +299,8 @@ def _available_cpus() -> int:
             if len(raw) == 2:
                 quota, period = raw
                 if quota != "max":
-                    q = int(quota); p = int(period)
+                    q = int(quota)
+                    p = int(period)
                     if q > 0 and p > 0:
                         return max(1, q // p)
     except Exception:
@@ -360,7 +362,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         threads = _threads_from_cpu_limit(cpu_limit)
         os.environ.setdefault("OMP_NUM_THREADS", str(threads))
         os.environ.setdefault("LLAMA_THREADS", str(threads))
-        # llama-cpp params verified in docs (n_ctx, n_threads) :contentReference[oaicite:1]{index=1}
+        # llama-cpp params verified in docs (n_ctx, n_threads)
         LLM = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=ctx_tokens,
@@ -421,7 +423,6 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
     except Exception as e:
         _log(f"ollama error: {e}")
         return ""
-    # API shape validated against common references. :contentReference[oaicite:2]{index=2}
 
 def _model_name_from_url(model_url: str) -> str:
     if not model_url:
@@ -491,7 +492,37 @@ def ensure_loaded(
     LLM = None
     LOADED_MODEL_PATH = None
 
+    # Read options to check cleanup behavior and priority resolution
+    opts = _read_options()
+
+    # Resolve URL/path/Token from options if not provided
     model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
+
+    # --- CLEANUP ON SWITCH ----------------------------------------------
+    # If a previous model is loaded and target path differs, optionally delete the old file
+    try:
+        cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
+        if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
+            if os.path.exists(LOADED_MODEL_PATH):
+                _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
+                try:
+                    os.remove(LOADED_MODEL_PATH)
+                except Exception as e:
+                    _log(f"cleanup_on_switch: remove failed: {e}")
+        # If target path exists but filename doesn't align with URL basename, optionally refresh it
+        if cleanup_on_disable and os.path.exists(model_path) and model_url:
+            url_base = os.path.basename(model_url)
+            file_base = os.path.basename(model_path)
+            if url_base and file_base and (os.path.splitext(file_base)[0] != os.path.splitext(url_base)[0]):
+                _log(f"cleanup_on_switch: target path exists with different basename; removing {model_path} to force re-download")
+                try:
+                    os.remove(model_path)
+                except Exception as e:
+                    _log(f"cleanup_on_switch: remove target failed: {e}")
+    except Exception as e:
+        _log(f"cleanup_on_switch: error: {e}")
+    # --------------------------------------------------------------------
+
     path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
     if not path:
         _log("ensure_local_model failed")
