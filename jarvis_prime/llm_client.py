@@ -450,6 +450,16 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
     return text
 
 # ============================
+# Phi chat prompt helpers
+# ============================
+def _phi_chat(system_text: str, user_text: str) -> str:
+    return (
+        "<|system|>\n" + system_text.strip() + "\n<|end|>\n"
+        "<|user|>\n"   + user_text.strip()   + "\n<|end|>\n"
+        "<|assistant|>\n"
+    )
+
+# ============================
 # Ensure loaded
 # ============================
 def ensure_loaded(
@@ -499,7 +509,6 @@ def ensure_loaded(
     model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
 
     # --- CLEANUP ON SWITCH ----------------------------------------------
-    # If a previous model is loaded and target path differs, optionally delete the old file
     try:
         cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
         if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
@@ -509,7 +518,6 @@ def ensure_loaded(
                     os.remove(LOADED_MODEL_PATH)
                 except Exception as e:
                     _log(f"cleanup_on_switch: remove failed: {e}")
-        # If target path exists but filename doesn't align with URL basename, optionally refresh it
         if cleanup_on_disable and os.path.exists(model_path) and model_url:
             url_base = os.path.basename(model_url)
             file_base = os.path.basename(model_path)
@@ -541,9 +549,9 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
     user = (
         "Rewrite the text clearly. Keep short, readable sentences.\n"
         f"Mood (subtle): {mood or 'neutral'}\n\n"
-        f"Text:\n{text}"
+        f"{text}"
     )
-    return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+    return _phi_chat(sys_prompt, user)
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     vibe = {
@@ -555,9 +563,9 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
         "comedian": "wry, dry"
     }.get((persona or "").lower(), "neutral, light")
     guard = "" if allow_profanity else " Avoid profanity."
-    sys_prompt = f"You write a single punchy riff line (<=20 words). Style: {vibe}.{guard}"
-    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
-    return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+    sys_prompt = f"Write 1–3 ultra-short lines (≤20 words). No lists, numbers, labels, or JSON.{guard}"
+    user = f"Voice: {vibe}\nSubject: {subject or 'Status update'}\nOutput only the lines."
+    return _phi_chat(sys_prompt, user)
 
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
@@ -610,11 +618,11 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
 
         out = LLM(
             prompt,
-            max_tokens=256,
+            max_tokens=96,
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=["</s>"]
+            stop=["<|end|>", "<|endoftext|>"]
         )
 
         if hasattr(signal, "SIGALRM"):
@@ -843,7 +851,7 @@ def persona_riff(
         f"{context.strip()}\n\n"
         f"Write up to {max_lines} short lines in the requested voice."
     )
-    prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+    prompt = _phi_chat(sys_prompt, user)
 
     raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
     if not raw:
