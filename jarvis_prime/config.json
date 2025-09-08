@@ -1,7 +1,7 @@
 {
   "name": "Jarvis Prime",
   "slug": "jarvis_prime",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "Smart Bot Assistant (Prime Edition) Notification orchestrator/server with beautifier, monitoring, SMTP intake, proxy, and optional local LLM",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
@@ -127,7 +127,7 @@
     "uptimekuma_url": "http://10.0.0.99:3001",
     "uptimekuma_api_key": "uk2_1w672vOa6MPVybKDrMkeeCcHZmBnpLUXIxglqOmS",
     "uptimekuma_status_slug": "",
-    "llm_enabled": false,
+    "llm_enabled": true,
     "llm_persona_riffs_enabled": true,
     "llm_rewrite_enabled": false,
     "llm_cleanup_on_disable": true,
@@ -138,7 +138,7 @@
     "llm_gen_tokens": 300,
     "llm_max_lines": 30,
     "llm_system_prompt": "",
-    "llm_models_priority": "phi35_q5,phi35_q4,phi3",
+    "llm_models_priority": "phi35_q5_uncensored,phi35_q5,phi35_q4,phi3",
     "llm_memory_enabled": true,
     "llm_autodownload": true,
     "llm_hf_token": "",
@@ -151,9 +151,13 @@
     "llm_phi35_q4_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
     "llm_phi35_q4_path": "/share/jarvis_prime/models/Phi-3.5-mini-instruct-q4.gguf",
 
-    "llm_phi35_q5_enabled": false,
+    "llm_phi35_q5_enabled": true,
     "llm_phi35_q5_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q5_K_M.gguf",
     "llm_phi35_q5_path": "/share/jarvis_prime/models/Phi-3.5-mini-instruct-q5.gguf",
+
+    "llm_phi35_q5_uncensored_enabled": false,
+    "llm_phi35_q5_uncensored_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-uncensored-Q5_K_M.gguf",
+    "llm_phi35_q5_uncensored_path": "/share/jarvis_prime/models/Phi-3.5-mini-uncensored-q5.gguf",
 
     "llm_enviroguard_enabled": true,
     "llm_enviroguard_poll_minutes": 30,
@@ -300,6 +304,10 @@
     "llm_phi35_q5_enabled": "bool",
     "llm_phi35_q5_url": "str",
     "llm_phi35_q5_path": "str",
+
+    "llm_phi35_q5_uncensored_enabled": "bool",
+    "llm_phi35_q5_uncensored_url": "str",
+    "llm_phi35_q5_uncensored_path": "str",
 
     "llm_enviroguard_enabled": "bool",
     "llm_enviroguard_poll_minutes": "int(1,)",
