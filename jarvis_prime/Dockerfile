@@ -73,7 +73,7 @@ COPY heartbeat.py  /app/heartbeat.py
 
 # ---- NEW (additive): place intake blueprint at the path bot.py expects ----
 RUN mkdir -p /app/intakes
-COPY apprise.py /app/intakes/apprise.py
+COPY /intakes/apprise.py /app/intakes/apprise.py
 
 # Permissions
 RUN chmod +x /run.sh
