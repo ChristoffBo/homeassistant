@@ -414,10 +414,9 @@ def _post_one():
         text = _pick_local_line(cat)
     if not text:
         return
-    title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird
-title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird Fact"}.get(cat, "Note")
+    title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird Fact"}.get(cat, "Note")
     if _emit_to_jarvis(title, text, priority=5):
-        now = _now_local()
+now = _now_local()
         _state["last_post_at"] = now.isoformat()
         _state["posts_today"] = _state.get("posts_today", 0) + 1
         _save_state()
