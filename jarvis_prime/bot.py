@@ -290,7 +290,6 @@ def _apprise_env() -> dict:
     env["INTAKE_APPRISE_ALLOWED_KEYS"] = ",".join(INTAKE_APPRISE_ALLOWED_KEYS)
     env["JARVIS_INTERNAL_EMIT_URL"] = "http://127.0.0.1:2599/internal/emit"
     return env
-
 # NEW: ensure smtp_server.py and proxy.py also forward into the core beautifier/LLM
 def _forward_env(extra: Optional[dict] = None) -> dict:
     env = os.environ.copy()
@@ -454,7 +453,6 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
             print(f"[bot] storage save failed: {e}")
 
     return True
-
 def delete_original_message(msg_id: int):
     try:
         if not (msg_id and GOTIFY_URL and CLIENT_TOKEN):
@@ -618,7 +616,6 @@ def post_startup_card():
         "Status: All systems nominal",
     ]
     send_message("Startup", "\n".join(lines), priority=4, decorate=False)
-
 def _try_call(module, fn_name, *args, **kwargs):
     try:
         if module and hasattr(module, fn_name):
