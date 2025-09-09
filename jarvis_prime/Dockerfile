@@ -50,8 +50,8 @@ COPY uptimekuma.py /app/uptimekuma.py
 COPY aliases.py /app/aliases.py
 COPY /personality/personality.py /app/personality.py
 COPY /personality/personality_tappit.py /app/personality_tappit.py
-COPY smtp_server.py /app/smtp_server.py
-COPY proxy.py /app/proxy.py
+COPY /intakes/smtp_server.py /app/smtp_server.py
+COPY /intakes/proxy.py /app/proxy.py
 COPY beautify.py /app/beautify.py
 COPY enviroguard.py /app/enviroguard.py
 
@@ -62,13 +62,13 @@ COPY /personality/personality_state.py /app/personality_state.py
 
 
 # ---- NEW: Inbox server + UI + storage + fan-out clients ----
-COPY api_messages.py /app/api_messages.py
+COPY /intakes/api_messages.py /app/api_messages.py
 COPY storage.py      /app/storage.py
-COPY ntfy_client.py  /app/ntfy_client.py
-COPY smtp_client.py  /app/smtp_client.py
+COPY /intakes/ntfy_client.py  /app/ntfy_client.py
+COPY /intakes/smtp_client.py  /app/smtp_client.py
 COPY ui/ /app/ui/
-COPY webhook_server.py  /app/webhook_server.py
-COPY apprise.py  /app/apprise.py
+COPY /intakes/webhook_server.py  /app/webhook_server.py
+COPY /intakes/apprise.py  /app/apprise.py
 COPY heartbeat.py  /app/heartbeat.py
 
 # ---- NEW (additive): place intake blueprint at the path bot.py expects ----
