@@ -43,7 +43,10 @@ DEFAULTS = {
         "quotable":    {"enabled": True},
         "numbers":     {"enabled": True},
         "uselessfacts":{"enabled": True},
-        "officialjoke":{"enabled": True}
+        "officialjoke":{"enabled": True},
+        "adviceslip":  {"enabled": True},
+        "catfact":     {"enabled": True},
+        "bored":       {"enabled": True}
     }
 }
 
@@ -181,7 +184,6 @@ def _load_options():
         data = {}
     merged = json.loads(json.dumps(DEFAULTS))
     merged.update(data)
-    # alias: accept chat_enabled as toggle
     if 'chat_enabled' in merged and 'personality_enabled' not in merged:
         merged['personality_enabled'] = bool(merged.get('chat_enabled'))
     _opts = merged
@@ -314,7 +316,6 @@ def _api_quotable():
 
 def _api_numbers():
     try:
-        # Try HTTPS first, then HTTP fallback
         for base in ["https://numbersapi.com/random/trivia?json",
                      "http://numbersapi.com/random/trivia?json"]:
             try:
@@ -341,6 +342,31 @@ def _api_officialjoke():
             if s and p: return f"{s} — {p}"
     except Exception: return None
 
+# --- NEW APIs ---
+def _api_adviceslip():
+    try:
+        r = requests.get("https://api.adviceslip.com/advice", timeout=6)
+        if r.ok:
+            j = r.json()
+            return j.get("slip", {}).get("advice", "").strip()
+    except Exception: return None
+
+def _api_catfact():
+    try:
+        r = requests.get("https://catfact.ninja/fact", timeout=6)
+        if r.ok:
+            j = r.json()
+            return j.get("fact", "").strip()
+    except Exception: return None
+
+def _api_bored():
+    try:
+        r = requests.get("https://www.boredapi.com/api/activity", timeout=6)
+        if r.ok:
+            j = r.json()
+            return j.get("activity", "").strip()
+    except Exception: return None
+
 _API_ORDER = [
     ("jokeapi", _api_jokeapi),
     ("dadjoke", _api_dadjoke),
@@ -350,48 +376,71 @@ _API_ORDER = [
     ("numbers", _api_numbers),
     ("uselessfacts", _api_uselessfacts),
     ("quotable", _api_quotable),
+    ("adviceslip", _api_adviceslip),
+    ("catfact", _api_catfact),
+    ("bored", _api_bored),
 ]
 
-def _pick_api_line():
-    for name, fn in _API_ORDER:
+CATEGORY_APIS = {
+    "jokes": ["jokeapi", "dadjoke", "geekjokes", "chucknorris", "officialjoke", "adviceslip"],
+    "weirdfacts": ["numbers", "uselessfacts", "catfact"],
+    "quips": ["bored"]
+}
+
+def _pick_api_line(category: str):
+    allowed = CATEGORY_APIS.get(category, [])
+    if not allowed:
+        return None
+    pool = allowed[:]
+    random.shuffle(pool)
+    for name in pool:
+        fn = dict(_API_ORDER).get(name)
+        if not fn: continue
         try:
             val = fn()
             if val and (not _opts.get("personality_family_friendly", True) or _family_filter(val)):
                 ok, h = _distinct(val)
-                if ok: _remember(h); return val
+                if ok:
+                    _remember(h)
+                    return val
         except Exception:
             continue
     return None
 
 def _post_one():
     cat = _select_category()
-    # API vs Local roll (normalized by ratio)
-    api_ratio = max(0, int(_opts.get("personality_api_ratio", 30)))
-    local_ratio = max(0, int(_opts.get("personality_local_ratio", 70)))
-    choose_api = random.randint(1, max(1, api_ratio + local_ratio)) <= api_ratio
-    text = _pick_api_line() if choose_api else None
+    text = _pick_api_line(cat)
     if not text:
         text = _pick_local_line(cat)
-    title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird Fact"}.get(cat,"Note")
+    if not text:
+        return
+    title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird
+title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird Fact"}.get(cat, "Note")
     if _emit_to_jarvis(title, text, priority=5):
         now = _now_local()
         _state["last_post_at"] = now.isoformat()
-        _state["posts_today"] = _state.get("posts_today",0)+1
+        _state["posts_today"] = _state.get("posts_today", 0) + 1
         _save_state()
 
 def _engine_loop():
     while True:
         try:
-            _load_options(); _load_state()
-            if _eligible_to_post(): _post_one()
+            _load_options()
+            _load_state()
+            if _eligible_to_post():
+                _post_one()
             time.sleep(max(15, 60 + random.randint(-15, 30)))
         except Exception:
             time.sleep(30)
 
 def start_personality_engine():
-    _load_options(); _load_state()
-    if not _opts.get("personality_enabled", False): return False
-    t = threading.Thread(target=_engine_loop, name="JarvisPersonality", daemon=True); t.start(); return True
+    _load_options()
+    _load_state()
+    if not _opts.get("personality_enabled", False):
+        return False
+    t = threading.Thread(target=_engine_loop, name="JarvisPersonality", daemon=True)
+    t.start()
+    return True
 
 # === On-demand jokes for bot.py ===
 
@@ -402,10 +451,9 @@ def _one_liner():
         _load_state()
     except Exception:
         pass
-    line = _pick_api_line()
+    line = _pick_api_line("jokes")
     if not line:
         line = _pick_local_line("jokes")
-    # last-ditch fallback so we never return empty
     return line or "I told a UDP joke… you might not get it."
 
 def get_joke():
@@ -430,5 +478,7 @@ def handle_chat_command(cmd: str):
             return f"⚠️ Joke error: {e}", None
     return None, None
 
-try: start_personality_engine()
-except Exception as _e: print(f"[chat.py] Failed to start engine: {_e}")
+try:
+    start_personality_engine()
+except Exception as _e:
+    print(f"[chat.py] Failed to start engine: {_e}")
