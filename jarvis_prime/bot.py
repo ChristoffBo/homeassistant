@@ -173,8 +173,6 @@ if _pstate and hasattr(_pstate, "get_active_persona"):
         pass
 
 # --- ADDITIVE: tappit wakeword detection ---
-from personality_state import set_active_persona
-
 def _detect_wakeword(msg: str) -> str | None:
     m = (msg or "").lower()
     if "jarvis tappit" in m or "jarvis welkom" in m or "fok" in m:
@@ -409,9 +407,9 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
 
     # --- ADDITIVE: check wakeword + switch persona ---
     persona_switch = _detect_wakeword(f"{title} {body}")
-    if persona_switch:
+    if persona_switch and _pstate and hasattr(_pstate, "set_active_persona"):
         try:
-            set_active_persona(persona_switch)
+            _pstate.set_active_persona(persona_switch)
             global ACTIVE_PERSONA, PERSONA_TOD
             ACTIVE_PERSONA, PERSONA_TOD = _pstate.get_active_persona()
             # strip wakeword phrases from message so they don't leak into output
@@ -444,7 +442,6 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             _purge_after(int(original_id))
     except Exception:
         pass
-
 # ============================
 # Gotify WebSocket intake
 # ============================
@@ -568,6 +565,7 @@ async def _joke_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] joke error: {e}")
         await asyncio.sleep(30)
+
 async def _heartbeat_scheduler_loop():
     # Fires on interval and within allowed time window
     from datetime import datetime
@@ -603,7 +601,6 @@ async def _heartbeat_scheduler_loop():
         except Exception as e:
             print(f"[Scheduler] heartbeat error: {e}")
         await asyncio.sleep(30)
-
 # ============================
 # Internal HTTP server (wake + emit)
 # ============================
@@ -704,7 +701,6 @@ async def _apprise_watchdog():
         except Exception as e:
             print(f"[bot] apprise watchdog error: {e}")
         await asyncio.sleep(5)
-
 # ============================
 # Main / loop
 # ============================
