@@ -56,7 +56,7 @@ def _intensity() -> float:
 
 # ---- Canonical personas ----
 PERSONAS = [
-    "dude", "chick", "nerd", "rager", "comedian", "action", "jarvis", "ops",
+    "dude", "chick", "nerd", "rager", "comedian", "action", "jarvis", "ops", "tappit",
 ]
 
 # ---- Aliases ----
@@ -84,6 +84,8 @@ ALIASES: Dict[str, str] = {
     "jarvis": "jarvis", "ai": "jarvis", "majordomo": "jarvis", "hal": "jarvis", "hal 9000": "jarvis",
     # Ops / Neutral
     "ops": "ops", "neutral": "ops", "no persona": "ops",
+    # tappit
+    "tappit": "tappit", "rev": "tappit", "ref": "tappit", "ref-ref": "tappit",
 }
 
 # ---- Emoji palettes ----
