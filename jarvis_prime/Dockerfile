@@ -56,7 +56,7 @@ COPY beautify.py /app/beautify.py
 COPY enviroguard.py /app/enviroguard.py
 
 # LLM + memory
-COPY llm_client.py /app/llm_client.py
+COPY /llm/llm_client.py /app/llm_client.py
 COPY llm_memory.py /app/llm_memory.py
 COPY /personality/personality_state.py /app/personality_state.py
 
