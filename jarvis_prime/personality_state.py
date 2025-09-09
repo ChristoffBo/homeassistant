@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /app/personality_state.py — selector for personas (no moods)
-import json, datetime
+import json, datetime, os  # ADDITIVE: os for saving config
 
 CONFIG_PATH = "/data/options.json"
 STATE_PATH = "/data/personality_state.json"
@@ -23,10 +23,23 @@ def _load(path):
 
 def _save_state(state):
     try:
+        os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)  # ADDITIVE: ensure dir
         with open(STATE_PATH, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
+
+# ADDITIVE: generic save helper + config saver
+def _save_json(path, data):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _save_config(cfg):
+    _save_json(CONFIG_PATH, cfg)
 
 def _tod(now=None):
     now = now or datetime.datetime.now()
@@ -149,11 +162,29 @@ def get_active_persona():
 def set_active_persona(name: str):
     """
     Force a persona at runtime (used for wakeword triggers).
-    Persists until changed or reset.
+    Persists until changed or reset. Writes BOTH:
+      - /data/personality_state.json (for visibility)
+      - /data/options.json (active_persona + personas_enabled)
     """
     persona = _canonical(name)
-    state = {"persona": persona, "time_of_day": _tod(), "pool": [persona]}
+
+    # Persist to state file (nice for debugging/visibility)
+    state = {"persona": persona, "time_of_day": _tod(), "pool": [persona], "source": "override"}
     _save_state(state)
+
+    # Persist to options.json so get_active_persona() & the bot pick it up
+    cfg = _load(CONFIG_PATH)
+    cfg["active_persona"] = persona
+
+    # Keep personas_enabled map coherent (only selected persona true)
+    pe = cfg.get("personas_enabled")
+    if not isinstance(pe, dict):
+        pe = {}
+    for p in NEW_PERSONAS:
+        pe[p] = (p == persona)
+    cfg["personas_enabled"] = pe
+
+    _save_config(cfg)
     return persona
 
 if __name__ == "__main__":
