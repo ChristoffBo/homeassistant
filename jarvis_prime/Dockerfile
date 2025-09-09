@@ -49,6 +49,7 @@ COPY digest.py /app/digest.py
 COPY uptimekuma.py /app/uptimekuma.py
 COPY aliases.py /app/aliases.py
 COPY personality.py /app/personality.py
+COPY personality_tappit.py /app/personality_tappit.py
 COPY smtp_server.py /app/smtp_server.py
 COPY proxy.py /app/proxy.py
 COPY beautify.py /app/beautify.py
@@ -58,6 +59,7 @@ COPY enviroguard.py /app/enviroguard.py
 COPY llm_client.py /app/llm_client.py
 COPY llm_memory.py /app/llm_memory.py
 COPY personality_state.py /app/personality_state.py
+
 
 # ---- NEW: Inbox server + UI + storage + fan-out clients ----
 COPY api_messages.py /app/api_messages.py
