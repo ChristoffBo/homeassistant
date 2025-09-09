@@ -1399,16 +1399,30 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False) -> li
             break
     return out
 
+
 # ============================
 # Persona header (Lexi-aware)
 # ============================
 def persona_header(persona_name: str) -> str:
     """
     Build the dynamic header Jarvis shows above messages.
-    Prefer Lexi's quip; fall back to stock quip; always safe.
+    Force Lexi quip for Tappit; otherwise prefer Lexi's quip,
+    then fall back to stock quip. Always safe.
     """
     who = (persona_name or "neutral").strip()
-    # Try Lexi first
+
+    # Force Tappit to always use lexi_quip if available
+    if who.lower() == "tappit":
+        try:
+            q = lexi_quip("tappit", with_emoji=False)
+            q = (q or "").strip().replace("\n", " ")
+            if len(q) > 140:
+                q = q[:137] + "..."
+            return f"💬 {who} says: {q}"
+        except Exception as _e:
+            print(f"[personality] ⚠️ Tappit lexi_quip failed: {_e}")
+
+    # Try Lexi quip for other personas
     try:
         if 'lexi_quip' in globals() and callable(globals()['lexi_quip']):
             q = lexi_quip(who, with_emoji=False)
@@ -1428,6 +1442,8 @@ def persona_header(persona_name: str) -> str:
         return f"💬 {who} says: {q2}" if q2 else f"💬 {who} says:"
     except Exception:
         return f"💬 {who} says:"
+
+
 # === Tappit persona wire-up ================================================
 try:
     import personality_tappit
