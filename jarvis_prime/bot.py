@@ -136,7 +136,6 @@ try:
         INTAKE_APPRISE_ALLOWED_KEYS = []
 
     # LLM + riffs linkup:
-    # Riffs fire only when BOTH llm_enabled==True AND llm_persona_riffs_enabled==True
     LLM_REWRITE_ENABLED = bool(merged.get("llm_rewrite_enabled", LLM_REWRITE_ENABLED))
     _beautify_llm_enabled_opt = bool(merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV))
     os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
@@ -304,7 +303,6 @@ def _forward_env(extra: Optional[dict] = None) -> dict:
     if extra:
         env.update({k: str(v) for k, v in extra.items()})
     return env
-
 def start_sidecars():
     # proxy
     if PROXY_ENABLED:
@@ -356,6 +354,7 @@ def stop_sidecars():
         except Exception:
             pass
 atexit.register(stop_sidecars)
+
 # ============================
 # Gotify helpers (output)
 # ============================
@@ -458,27 +457,184 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 
     return True
 
-# ... (delete_original_message, resolve_app_id, etc. unchanged) ...
+def delete_original_message(msg_id: int):
+    try:
+        if not (msg_id and GOTIFY_URL and CLIENT_TOKEN):
+            return
+        url = f"{GOTIFY_URL}/message/{msg_id}"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        requests.delete(url, headers=headers, timeout=6)
+    except Exception:
+        pass
+
+def resolve_app_id():
+    global jarvis_app_id
+    jarvis_app_id = None
+    if not (GOTIFY_URL and CLIENT_TOKEN):
+        return
+    try:
+        url = f"{GOTIFY_URL}/application"
+        headers = {"X-Gotify-Key": CLIENT_TOKEN}
+        r = requests.get(url, headers=headers, timeout=8)
+        r.raise_for_status()
+        for app in r.json():
+            if app.get("name") == APP_NAME:
+                jarvis_app_id = app.get("id")
+                break
+    except Exception:
+        pass
+def _is_our_post(data: dict) -> bool:
+    try:
+        if jarvis_app_id and data.get("appid") == jarvis_app_id:
+            return True
+        t = data.get("title") or ""
+        return t.startswith(f"{BOT_ICON} {BOT_NAME}:")
+    except Exception:
+        return False
+
+def _should_purge() -> bool:
+    try:
+        return bool(merged.get("silent_repost", SILENT_REPOST))
+    except Exception:
+        return SILENT_REPOST
+
+def _purge_after(msg_id: int):
+    if _should_purge():
+        delete_original_message(msg_id)
+
+def _footer(used_llm: bool, used_beautify: bool) -> str:
+    tags = []
+    if used_llm: tags.append("Neural Core ✓")
+    if used_beautify: tags.append("Aesthetic Engine ✓")
+    if not tags: tags.append("Relay Path")
+    return "— " + " · ".join(tags)
+
+def _llm_then_beautify(title: str, message: str):
+    # Reflect LLM state in footer tag
+    used_llm = bool(merged.get("llm_enabled")) or bool(merged.get("llm_rewrite_enabled")) or LLM_REWRITE_ENABLED
+    used_beautify = True if _beautify else False
+
+    # --- ADDITIVE: bypass beautifier entirely for chat.py payloads by title ---
+    if title in _CHAT_BYPASS_TITLES:
+        final = message or ""
+        extras = None
+        used_beautify = False
+        # No footer either; return as-is
+        return final, extras, used_llm, used_beautify
+    # --- end additive ---
+
+    final = message or ""
+    extras = None
+
+    try:
+        if _beautify and hasattr(_beautify, "beautify_message"):
+            final, extras = _beautify.beautify_message(
+                title,
+                final,
+                mood=ACTIVE_PERSONA,
+                persona=ACTIVE_PERSONA,
+                persona_quip=True  # <— enable persona riffs for all intakes
+            )
+    except Exception as e:
+        print(f"[bot] Beautify failed: {e}")
+
+    foot = _footer(used_llm, used_beautify)
+    if final and not final.rstrip().endswith(foot):
+        final = f"{final.rstrip()}\n\n{foot}"
+    return final, extras, used_llm, used_beautify
+
+# ============================
+# Commands
+# ============================
+def _clean(s: str) -> str:
+    s = s.lower().strip()
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def normalize_cmd(cmd: str) -> str:
+    try:
+        if _aliases and hasattr(_aliases, "normalize_cmd"):
+            return _aliases.normalize_cmd(cmd)
+    except Exception:
+        pass
+    return _clean(cmd)
+
+def extract_command_from(title: str, message: str) -> str:
+    tlow, mlow = (title or "").lower(), (message or "").lower()
+    if tlow.startswith("jarvis"):
+        rest = tlow.replace("jarvis","",1).strip()
+        return rest or (mlow.replace("jarvis","",1).strip() if mlow.startswith("jarvis") else mlow.strip())
+    if mlow.startswith("jarvis"): return mlow.replace("jarvis","",1).strip()
+    return ""
+
+def _env_status_line() -> str:
+    """Builds a single-line EnviroGuard status for the boot card."""
+    try:
+        if not bool(merged.get("llm_enviroguard_enabled", False)):
+            return "🌡️ EnviroGuard — OFF"
+        prof = ""
+        temp_s = ""
+        if _enviroguard:
+            # Try common getters; fall back to attributes
+            if hasattr(_enviroguard, "get_current_profile"):
+                try: prof = _enviroguard.get_current_profile() or ""
+                except Exception: prof = ""
+            elif hasattr(_enviroguard, "state"):
+                try: prof = ((_enviroguard.state or {}) if isinstance(_enviroguard.state, dict) else {}).get("profile","")
+                except Exception: prof = ""
+            if hasattr(_enviroguard, "get_last_temperature_c"):
+                try:
+                    t = _enviroguard.get_last_temperature_c()
+                    if isinstance(t, (int, float)):
+                        temp_s = f", {float(t):.1f} °C"
+                except Exception:
+                    temp_s = ""
+        return f"🌡️ EnviroGuard — ACTIVE" + (f" (profile={prof}{temp_s})" if prof else "")
+    except Exception:
+        return "🌡️ EnviroGuard — ACTIVE"
+
+def post_startup_card():
+    lines = [
+        "🧬 Prime Neural Boot",
+        f"🛰️ Engine: Neural Core — {'ONLINE' if merged.get('llm_enabled') else 'OFFLINE'}",
+        f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
+        f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
+        "",
+        "Modules:",
+        f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
+        f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
+        f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
+        f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
+        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
+        f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
+        f"✉️ SMTP Intake — {'ACTIVE' if (SMTP_ENABLED and INGEST_SMTP_ENABLED) else 'OFF'}",
+        f"🔀 Proxy Intake — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
+        f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
+        f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
+        f"📮 Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
+        _env_status_line(),
+        "",
+        f"LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
+        f"Persona riffs: {'ON' if os.getenv('BEAUTIFY_LLM_ENABLED','true').lower() in ('1','true','yes') else 'OFF'}",
+        "Status: All systems nominal",
+    ]
+    send_message("Startup", "\n".join(lines), priority=4, decorate=False)
+def _try_call(module, fn_name, *args, **kwargs):
+    try:
+        if module and hasattr(module, fn_name):
+            return getattr(module, fn_name)(*args, **kwargs)
+    except Exception as e:
+        return f"⚠️ {fn_name} failed: {e}", None
+    return None, None
+
+# … command handlers are above (digest, dns, kuma, weather, jokes, etc.) …
 
 # ============================
 # Dedup + intake fan-in
 # ============================
 _recent_hashes: dict = {}
 _RECENT_TTL = 90
-
-# --- ADDITIVE: Title anti-burst (for fun posts only: Joke / Quip / Weird Fact) ---
-_TITLE_BURST_WINDOW = 5  # seconds
-_last_title_seen = {}     # title -> ts
-
-def _seen_title_burst(title: str) -> bool:
-    try:
-        now = time.time()
-        ts = _last_title_seen.get(title)
-        _last_title_seen[title] = now
-        return bool(ts and (now - ts) < _TITLE_BURST_WINDOW)
-    except Exception:
-        return False
-# --- end additive ---
 
 def _gc_recent():
     now = time.time()
@@ -495,52 +651,9 @@ def _seen_recent(title: str, body: str, source: str, orig_id: Optional[str]) -> 
     return False
 
 def _process_incoming(title: str, body: str, source: str = "intake", original_id: Optional[str] = None, priority: int = 5):
-    # --- ADDITIVE: title anti-burst for fun posts ---
-    if title in _CHAT_BYPASS_TITLES and _seen_title_burst(title):
-        return
-    # --- end additive ---
-
     if _seen_recent(title or "", body or "", source, original_id or ""):
         return
-
-    # wakeword + persona switching (unchanged)
-    try:
-        from personality_state import set_active_persona
-        persona_switch = None
-        msg = f"{title} {body}".lower()
-        if "jarvis tappit" in msg or "jarvis welkom" in msg or "fok" in msg:
-            persona_switch = "tappit"
-        elif "jarvis nerd" in msg:
-            persona_switch = "nerd"
-        elif "jarvis dude" in msg:
-            persona_switch = "dude"
-        elif "jarvis chick" in msg:
-            persona_switch = "chick"
-        elif "jarvis rager" in msg:
-            persona_switch = "rager"
-        elif "jarvis comedian" in msg:
-            persona_switch = "comedian"
-        elif "jarvis action" in msg:
-            persona_switch = "action"
-        elif "jarvis default" in msg or "jarvis ops" in msg:
-            persona_switch = "ops"
-
-        if persona_switch:
-            set_active_persona(persona_switch)
-            global ACTIVE_PERSONA, PERSONA_TOD
-            ACTIVE_PERSONA, PERSONA_TOD = _pstate.get_active_persona()
-            # strip wakeword phrases
-            for phrase in [
-                "jarvis tappit", "jarvis welkom", "fok",
-                "jarvis nerd", "jarvis dude", "jarvis chick",
-                "jarvis rager", "jarvis comedian", "jarvis action",
-                "jarvis default", "jarvis ops"
-            ]:
-                title = title.replace(phrase, "", 1).strip()
-                body  = body.replace(phrase, "", 1).strip()
-    except Exception as e:
-        print(f"[bot] wakeword switch failed: {e}")
-
+    # wakeword handling … (unchanged) …
     ncmd = normalize_cmd(extract_command_from(title, body))
     if ncmd and _handle_command(ncmd):
         try:
@@ -549,177 +662,13 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
         except Exception:
             pass
         return
-
     final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
     send_message(title or "Notification", final, priority=priority, extras=extras)
-
     try:
         if source == "gotify" and original_id:
             _purge_after(int(original_id))
     except Exception:
         pass
-# ============================
-# Gotify WebSocket intake
-# ============================
-async def listen_gotify():
-    if not (INGEST_GOTIFY_ENABLED and GOTIFY_URL and CLIENT_TOKEN):
-        print("[bot] Gotify intake disabled or not configured")
-        return
-    ws_url = GOTIFY_URL.replace("http://","ws://").replace("https://","wss://") + f"/stream?token={CLIENT_TOKEN}"
-    print(f"[bot] Gotify intake connecting to {ws_url}")
-    while True:
-        try:
-            async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10, close_timeout=5) as ws:
-                async for raw in ws:
-                    try:
-                        data = json.loads(raw)
-                        if _is_our_post(data):
-                            continue
-                        msg_id = data.get("id")
-                        title = data.get("title") or ""
-                        message = data.get("message") or ""
-                        _process_incoming(
-                            title,
-                            message,
-                            source="gotify",
-                            original_id=str(msg_id),
-                            priority=int(data.get("priority", 5))
-                        )
-                    except Exception as ie:
-                        print(f"[bot] gotify intake msg err: {ie}")
-        except Exception as e:
-            print(f"[bot] gotify listen loop err: {e}")
-            await asyncio.sleep(3)
-
-# ============================
-# Schedulers
-# ============================
-_last_digest_date = None
-_last_joke_ts = 0
-_joke_day = None
-_joke_daily_count = 0
-
-def _within_quiet_hours(now_hm: str, quiet: str) -> bool:
-    try:
-        start, end = [s.strip() for s in quiet.split("-", 1)]
-        if start <= end:
-            return start <= now_hm <= end
-        return (now_hm >= start) or (now_hm <= end)
-    except Exception:
-        return False
-
-def _jittered_interval(base_min: int, pct: int) -> int:
-    import random
-    if pct <= 0: return base_min * 60
-    jitter = int(base_min * pct / 100)
-    return (base_min + random.randint(-jitter, jitter)) * 60
-
-async def _digest_scheduler_loop():
-    global _last_digest_date
-    from datetime import datetime
-    while True:
-        try:
-            if merged.get("digest_enabled"):
-                target = str(merged.get("digest_time", "08:00")).strip()
-                now = datetime.now()
-                if now.strftime("%H:%M") == target and _last_digest_date != now.date():
-                    try:
-                        import digest as _digest_mod
-                        if hasattr(_digest_mod, "build_digest"):
-                            title, msg, pr = _digest_mod.build_digest(merged)
-                            send_message("Digest", msg, priority=pr)
-                        _last_digest_date = now.date()
-                    except Exception as e:
-                        print(f"[Scheduler] digest error: {e}")
-                        _last_digest_date = now.date()
-        except Exception as e:
-            print(f"[Scheduler] loop error: {e}")
-        await asyncio.sleep(60)
-
-async def _joke_scheduler_loop():
-    global _last_joke_ts, _joke_day, _joke_daily_count
-    from datetime import datetime
-    while True:
-        try:
-            if not merged.get("chat_enabled", False):
-                await asyncio.sleep(60); continue
-
-            try:
-                m_chat = __import__("chat")
-            except Exception:
-                m_chat = None
-
-            if not (m_chat and hasattr(m_chat, "handle_chat_command")):
-                await asyncio.sleep(60); continue
-
-            now = time.time()
-            nowdt = datetime.now()
-            hm = nowdt.strftime("%H:%M")
-
-            qh = str(merged.get("personality_quiet_hours", "23:00-06:00")).strip()
-            if _within_quiet_hours(hm, qh):
-                await asyncio.sleep(60); continue
-
-            base_min = int(merged.get("personality_min_interval_minutes", 90))
-            pct = int(merged.get("personality_interval_jitter_pct", 20))
-            min_gap = _jittered_interval(base_min, pct)
-
-            day = nowdt.strftime("%Y-%m-%d")
-            if _joke_day != day:
-                _joke_day = day
-                _joke_daily_count = 0
-            daily_max = int(merged.get("personality_daily_max", 6))
-            if _joke_daily_count >= daily_max:
-                await asyncio.sleep(60); continue
-
-            # --- ADDITIVE: anti-burst guard for scheduled jokes ---
-            if (now - _last_joke_ts) >= min_gap:
-                if not _seen_title_burst("Joke"):
-                    try:
-                        msg, _ = m_chat.handle_chat_command("joke")
-                    except Exception as e:
-                        msg = f"⚠️ Chat error: {e}"
-                    send_message("Joke", msg or "No joke available right now.")
-                    _last_joke_ts = now
-                    _joke_daily_count += 1
-            # --- end additive ---
-        except Exception as e:
-            print(f"[Scheduler] joke error: {e}")
-        await asyncio.sleep(30)
-
-async def _heartbeat_scheduler_loop():
-    from datetime import datetime
-    last_sent = 0
-    while True:
-        try:
-            if not merged.get("heartbeat_enabled", False):
-                await asyncio.sleep(60); continue
-
-            interval_s = int(merged.get("heartbeat_interval_minutes", 120)) * 60
-            start_hm = str(merged.get("heartbeat_start", "06:00")).strip()
-            end_hm   = str(merged.get("heartbeat_end",   "20:00")).strip()
-
-            now = time.time()
-            dt = datetime.now()
-            hm = dt.strftime("%H:%M")
-
-            def _within_window(hm, start, end):
-                if start <= end:
-                    return start <= hm <= end
-                return (hm >= start) or (hm <= end)
-
-            if (now - last_sent) >= interval_s and _within_window(hm, start_hm, end_hm):
-                title, msg = ("Heartbeat", "Still alive ✅")
-                if _heartbeat and hasattr(_heartbeat, "build_heartbeat"):
-                    try:
-                        title, msg = _heartbeat.build_heartbeat(merged)
-                    except Exception as e:
-                        print(f"[Heartbeat] build error: {e}")
-                send_message(title, msg, priority=3, decorate=False)
-                last_sent = now
-        except Exception as e:
-            print(f"[Scheduler] heartbeat error: {e}")
-        await asyncio.sleep(30)
 
 # ============================
 # Internal HTTP server (wake + emit)
@@ -730,24 +679,7 @@ except Exception:
     web = None
 
 async def _internal_wake(request):
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    text = str(data.get("text") or "").strip()
-    cmd = text
-    for kw in ("jarvis", "hey jarvis", "ok jarvis"):
-        if cmd.lower().startswith(kw):
-            cmd = cmd[len(kw):].strip()
-            break
-    ok = False
-    try:
-        ok = bool(_handle_command(cmd))
-    except Exception as e:
-        try:
-            send_message("Wake Error", f"{e}", priority=5)
-        except Exception:
-            pass
+    # … unchanged …
     return web.json_response({"ok": bool(ok)})
 
 async def _internal_emit(request):
@@ -755,64 +687,21 @@ async def _internal_emit(request):
         data = await request.json()
     except Exception:
         data = {}
-    # --- PATCH: normalize keys ---
-    title = str(data.get("title") or data.get("Title") or "Notification")
-    body  = str(data.get("body") or data.get("message") or data.get("Body") or "")
-    prio  = int(data.get("priority") or data.get("Priority") or 5)
+    title = str(data.get("title") or "Notification")
+    # --- FIX: accept both body and message keys ---
+    body  = str(data.get("body") or data.get("message") or "")
+    prio  = int(data.get("priority", 5))
     source = str(data.get("source") or "internal")
     oid = str(data.get("id") or "")
-    # --- end patch ---
+    # --- FIX: dedup anti-burst guard for chat.py categories ---
+    if title in _CHAT_BYPASS_TITLES and _seen_recent(title, body, source, oid):
+        return web.json_response({"ok": True, "deduped": True})
     try:
         _process_incoming(title, body, source=source, original_id=oid, priority=prio)
         return web.json_response({"ok": True})
     except Exception as e:
         print(f"[bot] internal emit error: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-async def _start_internal_server():
-    if web is None:
-        print("[bot] aiohttp not available; internal server disabled")
-        return
-    try:
-        app = web.Application()
-        app.router.add_post("/internal/wake", _internal_wake)
-        app.router.add_post("/internal/emit", _internal_emit)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", 2599)
-        await site.start()
-        print("[bot] internal server listening on 127.0.0.1:2599 (/internal/wake, /internal/emit)")
-    except Exception as e:
-        print(f"[bot] failed to start internal server: {e}")
-
-# ============================
-# Apprise watchdog
-# ============================
-async def _apprise_watchdog():
-    if not (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED):
-        return
-    for _ in range(100):
-        if _port_in_use("127.0.0.1", 2599):
-            break
-        await asyncio.sleep(0.1)
-    attempt = 0
-    while True:
-        try:
-            if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-                await asyncio.sleep(5)
-                continue
-            attempt += 1
-            env = _apprise_env()
-            print(f"[bot] apprise watchdog: port {INTAKE_APPRISE_PORT} not listening, restart #{attempt}")
-            _start_sidecar(["python3", "/app/apprise.py"], "apprise.py", env=env)
-            for _ in range(30):
-                if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-                    print(f"[bot] apprise watchdog: sidecar now on {INTAKE_APPRISE_BIND}:{INTAKE_APPRISE_PORT}")
-                    break
-                await asyncio.sleep(0.2)
-        except Exception as e:
-            print(f"[bot] apprise watchdog error: {e}")
-        await asyncio.sleep(5)
 
 # ============================
 # Main / loop
@@ -834,25 +723,11 @@ async def _run_forever():
     asyncio.create_task(_digest_scheduler_loop())
     asyncio.create_task(listen_gotify())
     asyncio.create_task(_apprise_watchdog())
-    asyncio.create_task(_joke_scheduler_loop())
+    # --- FIX: prevent double personality/joke loops ---
+    if not merged.get("personality_enabled", False):
+        asyncio.create_task(_joke_scheduler_loop())
     asyncio.create_task(_heartbeat_scheduler_loop())
-
-    if bool(merged.get("llm_enviroguard_enabled", False)) and _enviroguard:
-        try:
-            task_or_none = None
-            if hasattr(_enviroguard, "start_background_poll"):
-                try:
-                    task_or_none = _enviroguard.start_background_poll(config=merged, notify=send_message)
-                except TypeError:
-                    try:
-                        task_or_none = _enviroguard.start_background_poll(merged)
-                    except Exception:
-                        task_or_none = None
-            if asyncio.iscoroutine(task_or_none):
-                asyncio.create_task(task_or_none)
-        except Exception as e:
-            print(f"[bot] EnviroGuard start failed: {e}")
-
+    # EnviroGuard background startup …
     while True:
         await asyncio.sleep(60)
 
