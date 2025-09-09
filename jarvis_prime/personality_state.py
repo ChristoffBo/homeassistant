@@ -6,7 +6,10 @@ CONFIG_PATH = "/data/options.json"
 STATE_PATH = "/data/personality_state.json"
 
 # Canonical personas in your new set
-NEW_PERSONAS = ("dude", "chick", "nerd", "rager", "comedian", "action", "jarvis", "ops")
+NEW_PERSONAS = (
+    "dude", "chick", "nerd", "rager", "comedian", "action", "jarvis", "ops",
+    "tappit",  # ADDITIVE: hidden Easter egg persona
+)
 
 # Choose ops as the safe/default baseline (your “no personality”)
 DEFAULT_PERSONA = "ops"
@@ -55,6 +58,9 @@ def _canonical(name: str) -> str:
     if n in ("boss", "ironman", "stark", "jarvis prime"): return "jarvis"
     if n in ("support", "helpdesk", "opsy", "operator"):  return "ops"
     if n in ("action-hero", "hero", "actionhero"):        return "action"
+
+    # ADDITIVE: tappit aliases
+    if n in ("welkom", "tappet"): return "tappit"
 
     # fall back
     return DEFAULT_PERSONA
@@ -138,6 +144,17 @@ def get_active_persona():
     state = {"persona": persona, "time_of_day": tod, "pool": enabled}
     _save_state(state)
     return persona, tod
+
+# ADDITIVE: force persona switch at runtime
+def set_active_persona(name: str):
+    """
+    Force a persona at runtime (used for wakeword triggers).
+    Persists until changed or reset.
+    """
+    persona = _canonical(name)
+    state = {"persona": persona, "time_of_day": _tod(), "pool": [persona]}
+    _save_state(state)
+    return persona
 
 if __name__ == "__main__":
     p, t = get_active_persona()
