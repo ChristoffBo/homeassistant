@@ -174,7 +174,6 @@ SEASONAL = {10: ["🎃 Spooky uptime detected.", "🦇 Dark mode, darker jokes."
 _lock = threading.RLock()
 _state = {"snooze_until": None, "last_post_at": None, "posts_today": 0, "recent_ids": []}
 _opts = {}
-
 def _load_options():
     global _opts
     try:
@@ -202,17 +201,22 @@ def _load_state():
     try:
         with open(STATE_PATH, "r") as f:
             s = json.load(f)
-            for k in _state.keys(): _state[k] = s.get(k, _state[k])
+            for k in _state.keys(): 
+                _state[k] = s.get(k, _state[k])
     except Exception:
         pass
 
-def _now_local(): return datetime.now(tz=LOCAL_TZ)
+def _now_local(): 
+    return datetime.now(tz=LOCAL_TZ)
 
 def _parse_quiet_hours(rng: str):
     try:
-        s, e = rng.split("-"); sh, sm = map(int, s.split(":")); eh, em = map(int, e.split(":"))
+        s, e = rng.split("-")
+        sh, sm = map(int, s.split(":"))
+        eh, em = map(int, e.split(":"))
         return (sh, sm), (eh, em)
-    except Exception: return (23, 0), (6, 0)
+    except Exception: 
+        return (23, 0), (6, 0)
 
 def _in_quiet_hours(t: datetime, rng: str):
     (sh, sm), (eh, em) = _parse_quiet_hours(rng)
@@ -220,7 +224,8 @@ def _in_quiet_hours(t: datetime, rng: str):
     end = t.replace(hour=eh, minute=em, second=0, microsecond=0)
     return start <= t <= end if start <= end else (t >= start or t <= end)
 
-def _hash_line(s: str): return hashlib.sha1(s.encode("utf-8")).hexdigest()
+def _hash_line(s: str): 
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
 def _distinct(line: str):
     h = _hash_line(line.strip())
@@ -233,17 +238,22 @@ def _remember(h: str):
         _state["recent_ids"] = _state["recent_ids"][-win:]
 
 def _family_filter(s: str):
-    if not s: return False
+    if not s: 
+        return False
     if _opts.get("personality_family_friendly", True):
         for w in {"kill","suicide","murder","rape","racist","nazi"}:
-            if w in s.lower(): return False
+            if w in s.lower(): 
+                return False
     return 1 <= len(s) <= 280
 
 def _eligible_to_post():
-    if not _opts.get("personality_enabled", False): return False
+    if not _opts.get("personality_enabled", False): 
+        return False
     now = _now_local()
-    if _in_quiet_hours(now, _opts.get("personality_quiet_hours", "23:00-06:00")): return False
-    if _state.get("posts_today", 0) >= int(_opts.get("personality_daily_max", 6)): return False
+    if _in_quiet_hours(now, _opts.get("personality_quiet_hours", "23:00-06:00")): 
+        return False
+    if _state.get("posts_today", 0) >= int(_opts.get("personality_daily_max", 6)): 
+        return False
     min_m = max(1, int(_opts.get("personality_min_interval_minutes", 90)))
     jitter = int((min_m * int(_opts.get("personality_interval_jitter_pct", 20))) / 100)
     required = max(1, min_m + random.randint(-jitter, jitter))
@@ -253,29 +263,39 @@ def _eligible_to_post():
             last_dt = datetime.fromisoformat(last)
             if (now - last_dt).total_seconds() / 60.0 < required:
                 return False
-        except Exception: pass
+        except Exception: 
+            pass
     return True
 
 def _select_category():
     w = _opts.get("personality_weights", DEFAULTS["personality_weights"])
     cats, weights = list(w.keys()), list(w.values())
-    total = sum(weights) or 1; r = random.randint(1, total); acc = 0
+    total = sum(weights) or 1
+    r = random.randint(1, total)
+    acc = 0
     for c, k in zip(cats, weights):
         acc += k
-        if r <= acc: return c
+        if r <= acc: 
+            return c
     return "quips"
 
 def _pick_local_line(category: str):
     pool = {"quips": QUIPS, "jokes": DARK_JOKES, "weirdfacts": WEIRD_FACTS}.get(category, QUIPS)
     if _opts.get("personality_seasonal_enabled", True):
-        month = _now_local().month; seasonals = SEASONAL.get(month, [])
-        if seasonals and random.random() < 0.15: pool = pool + seasonals
+        month = _now_local().month
+        seasonals = SEASONAL.get(month, [])
+        if seasonals and random.random() < 0.15: 
+            pool = pool + seasonals
     for _ in range(min(20, len(pool))):
         line = random.choice(pool).strip()
         if not _opts.get("personality_family_friendly", True) or _family_filter(line):
             ok, h = _distinct(line)
-            if ok: _remember(h); return line
-    line = random.choice(pool).strip(); _remember(_hash_line(line)); return line
+            if ok: 
+                _remember(h)
+                return line
+    line = random.choice(pool).strip()
+    _remember(_hash_line(line))
+    return line
 
 # -----------------------------
 # APIs (all free, no key)
@@ -286,33 +306,43 @@ def _api_jokeapi():
         r = requests.get(f"https://v2.jokeapi.dev/joke/Programming,Pun?type=single{safe}", timeout=6)
         if r.ok:
             j = r.json()
-            if j.get("type") == "single": return j.get("joke","").strip()
-    except Exception: return None
+            if j.get("type") == "single": 
+                return j.get("joke","").strip()
+    except Exception: 
+        return None
 
 def _api_dadjoke():
     try:
         r = requests.get("https://icanhazdadjoke.com/", headers={"Accept": "text/plain"}, timeout=6)
-        if r.ok: return r.text.strip()
-    except Exception: return None
+        if r.ok: 
+            return r.text.strip()
+    except Exception: 
+        return None
 
 def _api_chucknorris():
     try:
         r = requests.get("https://api.chucknorris.io/jokes/random", timeout=6)
-        if r.ok: return r.json().get("value","").strip()
-    except Exception: return None
+        if r.ok: 
+            return r.json().get("value","").strip()
+    except Exception: 
+        return None
 
 def _api_geekjokes():
     try:
         r = requests.get("https://geek-jokes.sameerkumar.website/api", timeout=6)
-        if r.ok: return r.text.strip().strip('\"')
-    except Exception: return None
+        if r.ok: 
+            return r.text.strip().strip('\"')
+    except Exception: 
+        return None
 
 def _api_quotable():
     try:
         r = requests.get("https://api.quotable.io/random?tags=technology|famous-quotes", timeout=6)
         if r.ok:
-            j = r.json(); return f"{j.get('content','').strip()} — {j.get('author','')}"
-    except Exception: return None
+            j = r.json()
+            return f"{j.get('content','').strip()} — {j.get('author','')}"
+    except Exception: 
+        return None
 
 def _api_numbers():
     try:
@@ -331,16 +361,22 @@ def _api_numbers():
 def _api_uselessfacts():
     try:
         r = requests.get("https://uselessfacts.jsph.pl/random.json?language=en", timeout=6)
-        if r.ok: return r.json().get("text","").strip()
-    except Exception: return None
+        if r.ok: 
+            return r.json().get("text","").strip()
+    except Exception: 
+        return None
 
 def _api_officialjoke():
     try:
         r = requests.get("https://official-joke-api.appspot.com/jokes/random", timeout=6)
         if r.ok:
-            j = r.json(); s = j.get("setup","").strip(); p = j.get("punchline","").strip()
-            if s and p: return f"{s} — {p}"
-    except Exception: return None
+            j = r.json()
+            s = j.get("setup","").strip()
+            p = j.get("punchline","").strip()
+            if s and p: 
+                return f"{s} — {p}"
+    except Exception: 
+        return None
 
 # --- NEW APIs ---
 def _api_adviceslip():
@@ -349,7 +385,8 @@ def _api_adviceslip():
         if r.ok:
             j = r.json()
             return j.get("slip", {}).get("advice", "").strip()
-    except Exception: return None
+    except Exception: 
+        return None
 
 def _api_catfact():
     try:
@@ -357,7 +394,8 @@ def _api_catfact():
         if r.ok:
             j = r.json()
             return j.get("fact", "").strip()
-    except Exception: return None
+    except Exception: 
+        return None
 
 def _api_bored():
     try:
@@ -365,7 +403,8 @@ def _api_bored():
         if r.ok:
             j = r.json()
             return j.get("activity", "").strip()
-    except Exception: return None
+    except Exception: 
+        return None
 
 _API_ORDER = [
     ("jokeapi", _api_jokeapi),
@@ -395,7 +434,8 @@ def _pick_api_line(category: str):
     random.shuffle(pool)
     for name in pool:
         fn = dict(_API_ORDER).get(name)
-        if not fn: continue
+        if not fn: 
+            continue
         try:
             val = fn()
             if val and (not _opts.get("personality_family_friendly", True) or _family_filter(val)):
@@ -416,7 +456,7 @@ def _post_one():
         return
     title = {"quips": "Quip", "jokes": "Joke", "weirdfacts": "Weird Fact"}.get(cat, "Note")
     if _emit_to_jarvis(title, text, priority=5):
-now = _now_local()
+        now = _now_local()
         _state["last_post_at"] = now.isoformat()
         _state["posts_today"] = _state.get("posts_today", 0) + 1
         _save_state()
@@ -444,7 +484,6 @@ def start_personality_engine():
 # === On-demand jokes for bot.py ===
 
 def _one_liner():
-    # ensure options/state are loaded so family filter etc. apply
     try:
         _load_options()
         _load_state()
@@ -456,19 +495,12 @@ def _one_liner():
     return line or "I told a UDP joke… you might not get it."
 
 def get_joke():
-    """Return a single joke/pun line (string)."""
     return _one_liner()
 
 def joke():
-    """Alias for get_joke() to support older callers."""
     return _one_liner()
 
 def handle_chat_command(cmd: str):
-    """
-    Minimal router used by bot.py.
-    Supports: 'joke', 'pun'
-    Returns (message, extras) to match the expected tuple signature.
-    """
     c = (cmd or "").strip().lower()
     if "joke" in c or "pun" in c:
         try:
