@@ -1429,7 +1429,6 @@ def persona_header(persona_name: str) -> str:
     except Exception:
         return f"💬 {who} says:"
 # === ADDITIVE: Wire in external Tappit persona ==============================
-
 try:
     if "tappit" not in PERSONAS:
         PERSONAS.append("tappit")
@@ -1453,7 +1452,8 @@ try:
     print("[personality] ✅ Tappit persona wired in.")
 except Exception as _e:
     print(f"[personality] ⚠️ Could not wire Tappit persona: {_e}")
-    # === FINAL WIRE-UP: pull persona data from external personality_tappit.py ===
+
+# === FINAL WIRE-UP: pull persona data from external personality_tappit.py ===
 try:
     # Ensure the persona name exists
     if "tappit" not in PERSONAS:
@@ -1464,11 +1464,13 @@ try:
         if "tappit" in personality_tappit.QUIPS:
             QUIPS["tappit"] = personality_tappit.QUIPS["tappit"]
 
-    # Copy templates for lexi_quip()
-    if "_TEMPLATES" in globals() and hasattr(personality_tappit, "_TEMPLATES"):
+    # Copy templates for lexi_quip()  🔧 FIXED (removed globals() check)
+    try:
         ext_tpl = getattr(personality_tappit, "_TEMPLATES", {})
         if isinstance(ext_tpl, dict) and "tappit" in ext_tpl:
             _TEMPLATES["tappit"] = ext_tpl["tappit"]
+    except Exception as _te:
+        print(f"[personality] ⚠️ Could not import Tappit templates: {_te}")
 
     # Copy lexicon (optional but nice to have)
     if hasattr(personality_tappit, "_LEX") and isinstance(personality_tappit._LEX, dict):
@@ -1487,4 +1489,3 @@ try:
     print("[personality] ✅ Tappit persona fully loaded from external file.")
 except Exception as _e:
     print(f"[personality] ⚠️ Could not import Tappit from external file: {_e}")
-
