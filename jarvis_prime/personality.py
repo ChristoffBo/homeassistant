@@ -26,7 +26,7 @@
 #   - LLM_MAX_CPU_PERCENT: int, default 70
 #   - LLM_PERSONA_LINES_MAX: int, default 3
 #   - LLM_MODELS_PRIORITY, LLM_OLLAMA_BASE_URL / OLLAMA_BASE_URL, LLM_MODEL_URL, LLM_MODEL_PATH
-
+import personality_tappit
 import random, os, importlib, re, time
 from typing import List, Dict, Optional
 
