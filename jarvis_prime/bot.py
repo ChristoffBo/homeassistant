@@ -33,7 +33,6 @@ except Exception as _e:
 # ============================
 BOT_NAME  = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON  = os.getenv("BOT_ICON", "🧠")
-
 # Output (Gotify used as one of many outputs; not hardwired as the only intake)
 GOTIFY_URL   = os.getenv("GOTIFY_URL", "").rstrip("/")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
@@ -145,7 +144,6 @@ except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
-
 # ============================
 # Load optional modules
 # ============================
@@ -259,7 +257,6 @@ def _llm_inputs_for_client() -> dict:
         kwargs["model_path"] = local_file
         kwargs["model_url"] = ""
     return kwargs
-
 # ============================
 # Sidecars (with port guards)
 # ============================
@@ -674,7 +671,6 @@ def _handle_command(ncmd: str) -> bool:
             else:
                 send_message("EnviroGuard", f"Unknown or unsupported profile '{want}'. Try: auto, or consult enviroguard profiles.", priority=3, decorate=False)
             return True
-
     m_arr = m_weather = m_kuma = m_tech = m_digest = m_chat = None
     try: m_arr = __import__("arr")
     except Exception: pass
