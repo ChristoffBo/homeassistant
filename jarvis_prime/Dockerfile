@@ -48,7 +48,7 @@ COPY technitium.py /app/technitium.py
 COPY digest.py /app/digest.py
 COPY uptimekuma.py /app/uptimekuma.py
 COPY aliases.py /app/aliases.py
-COPY personality.py /app/personality.py
+COPY /personality/personality.py /app/personality.py
 COPY /personality/personality_tappit.py /app/personality_tappit.py
 COPY smtp_server.py /app/smtp_server.py
 COPY proxy.py /app/proxy.py
