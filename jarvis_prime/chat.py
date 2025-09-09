@@ -6,6 +6,8 @@ import threading
 import hashlib
 import requests
 from datetime import datetime, timedelta, timezone
+import atexit  # ADDITIVE: for lock cleanup at process exit
+import errno   # ADDITIVE: for lock file errno checks
 
 # ============================================================
 # Jarvis Jnr Personality Engine (lean ~100 offline lines)
@@ -175,9 +177,46 @@ _lock = threading.RLock()
 _state = {"snooze_until": None, "last_post_at": None, "posts_today": 0, "recent_ids": []}
 _opts = {}
 
-# guard against multiple threads
+# guard against multiple threads (in-process)
 _engine_started = False
 _engine_thread = None
+
+# ADDITIVE: process-wide lock to prevent multiple engine starts across repeated imports
+LOCK_PATH = "/tmp/jarvis_personality.lock"
+_lock_fd = None
+
+def _acquire_global_lock() -> bool:
+    """
+    Create an exclusive lock file atomically. If it already exists, another importer started the engine.
+    """
+    global _lock_fd
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        _lock_fd = os.open(LOCK_PATH, flags, 0o644)  # atomic create
+        try:
+            os.write(_lock_fd, str(os.getpid()).encode("utf-8"))
+        except Exception:
+            pass
+        atexit.register(_release_global_lock)
+        return True
+    except OSError as e:
+        if e.errno == errno.EEXIST:
+            return False  # someone already started the engine
+        raise
+
+def _release_global_lock():
+    """
+    Best-effort lock release at process exit.
+    """
+    global _lock_fd
+    try:
+        if _lock_fd is not None:
+            os.close(_lock_fd)
+            _lock_fd = None
+        if os.path.exists(LOCK_PATH):
+            os.unlink(LOCK_PATH)
+    except Exception:
+        pass
 def _load_options():
     global _opts
     try:
@@ -479,10 +518,17 @@ def start_personality_engine():
     global _engine_started, _engine_thread
     _load_options()
     _load_state()
+
+    # In-process guard first (cheap)
     if _engine_started:
         return False
     if not _opts.get("personality_enabled", False):
         return False
+
+    # ADDITIVE: process-wide guard (prevents duplicate starts across multiple imports)
+    if not _acquire_global_lock():
+        return False
+
     t = threading.Thread(target=_engine_loop, name="JarvisPersonality", daemon=True)
     t.start()
     _engine_thread = t
