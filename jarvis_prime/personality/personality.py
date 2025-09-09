@@ -1453,3 +1453,38 @@ try:
     print("[personality] ✅ Tappit persona wired in.")
 except Exception as _e:
     print(f"[personality] ⚠️ Could not wire Tappit persona: {_e}")
+    # === FINAL WIRE-UP: pull persona data from external personality_tappit.py ===
+try:
+    # Ensure the persona name exists
+    if "tappit" not in PERSONAS:
+        PERSONAS.append("tappit")
+
+    # Copy QUIPS from the external file so _canon() accepts 'tappit'
+    if hasattr(personality_tappit, "QUIPS") and isinstance(personality_tappit.QUIPS, dict):
+        if "tappit" in personality_tappit.QUIPS:
+            QUIPS["tappit"] = personality_tappit.QUIPS["tappit"]
+
+    # Copy templates for lexi_quip()
+    if "_TEMPLATES" in globals() and hasattr(personality_tappit, "_TEMPLATES"):
+        ext_tpl = getattr(personality_tappit, "_TEMPLATES", {})
+        if isinstance(ext_tpl, dict) and "tappit" in ext_tpl:
+            _TEMPLATES["tappit"] = ext_tpl["tappit"]
+
+    # Copy lexicon (optional but nice to have)
+    if hasattr(personality_tappit, "_LEX") and isinstance(personality_tappit._LEX, dict):
+        if "tappit" in personality_tappit._LEX:
+            _LEX["tappit"] = personality_tappit._LEX["tappit"]
+
+    # Copy emojis if provided in the external file (otherwise keep your local set)
+    if hasattr(personality_tappit, "EMOJIS") and isinstance(personality_tappit.EMOJIS, dict):
+        if "tappit" in personality_tappit.EMOJIS:
+            EMOJIS["tappit"] = personality_tappit.EMOJIS["tappit"]
+
+    # Copy aliases if provided (your local ones are fine too)
+    if hasattr(personality_tappit, "ALIASES") and isinstance(personality_tappit.ALIASES, dict):
+        ALIASES.update({k: v for k, v in personality_tappit.ALIASES.items() if v == "tappit"})
+
+    print("[personality] ✅ Tappit persona fully loaded from external file.")
+except Exception as _e:
+    print(f"[personality] ⚠️ Could not import Tappit from external file: {_e}")
+
