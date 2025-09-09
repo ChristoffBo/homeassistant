@@ -31,7 +31,7 @@ DEFAULTS = {
     "personality_api_ratio": 30,
     "personality_family_friendly": True,
     "personality_mood": "playful",
-    "personality_weights": {"quips": 40, "jokes": 40, "weirdfacts": 20},
+    "personality_weights": {"quips": 2, "jokes": 60, "weirdfacts": 20},
     "personality_history_window": 20,
     "personality_interval_jitter_pct": 20,
     "personality_seasonal_enabled": True,
@@ -174,6 +174,10 @@ SEASONAL = {10: ["🎃 Spooky uptime detected.", "🦇 Dark mode, darker jokes."
 _lock = threading.RLock()
 _state = {"snooze_until": None, "last_post_at": None, "posts_today": 0, "recent_ids": []}
 _opts = {}
+
+# guard against multiple threads
+_engine_started = False
+_engine_thread = None
 def _load_options():
     global _opts
     try:
@@ -425,7 +429,6 @@ CATEGORY_APIS = {
     "weirdfacts": ["numbers", "uselessfacts", "catfact"],
     "quips": ["bored"]
 }
-
 def _pick_api_line(category: str):
     allowed = CATEGORY_APIS.get(category, [])
     if not allowed:
@@ -473,12 +476,17 @@ def _engine_loop():
             time.sleep(30)
 
 def start_personality_engine():
+    global _engine_started, _engine_thread
     _load_options()
     _load_state()
+    if _engine_started:
+        return False
     if not _opts.get("personality_enabled", False):
         return False
     t = threading.Thread(target=_engine_loop, name="JarvisPersonality", daemon=True)
     t.start()
+    _engine_thread = t
+    _engine_started = True
     return True
 
 # === On-demand jokes for bot.py ===
@@ -509,7 +517,8 @@ def handle_chat_command(cmd: str):
             return f"⚠️ Joke error: {e}", None
     return None, None
 
-try:
-    start_personality_engine()
-except Exception as _e:
-    print(f"[chat.py] Failed to start engine: {_e}")
+if __name__ != "__main__":
+    try:
+        start_personality_engine()
+    except Exception as _e:
+        print(f"[personality] Failed to start engine: {_e}")
