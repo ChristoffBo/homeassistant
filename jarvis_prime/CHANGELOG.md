@@ -1,3 +1,5 @@
+## latest (2025-09-09 06:42:00)
+- Persona can now be set via Wakeword
 ## latest (2025-09-08 14:40:00)
 - Added Lexi-driven persona headers in bot.py
 - Integrated persona_header() into personality.py for dynamic message intros
