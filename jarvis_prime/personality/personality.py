@@ -871,7 +871,8 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
         "comedian": "Deadpan spoof meets irreverent meta—fourth-wall pokes, concise and witty.",
         "action": "Terse macho one-liners; tactical, explosive, sardonic; mission-focused and decisive.",
         "jarvis": "Polished valet AI with calm, clinical machine logic. Courteous, anticipatory, slightly eerie.",
-        "ops": "Neutral SRE acks; laconic, minimal flourish."
+        "ops": "Neutral SRE acks; laconic, minimal flourish.",
+        "tappit": "South African tappit slang persona — brash, rev-heavy, lekker, car-culture street banter. Always slangy, never polished."
     }.get(key, "Short, clean, persona-true one-liners.")
     style_hint = f"daypart={_daypart()}, intensity={_intensity():.2f}, persona={key}"
     # 1) persona_riff path (context is raw; no bracketed blobs)
