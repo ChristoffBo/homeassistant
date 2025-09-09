@@ -342,16 +342,23 @@ def is_tappit_trigger(message: str) -> bool:
     """Returns True if the message should activate the hidden Tappit persona."""
     m = (message or "").lower().strip()
     return "welkom" in m or "tappit" in m or "fok" in m
+
+
 # --- Export quips for personality.py integration ----------------------------
 QUIPS = {
     "tappit": _LEX["tappit"].get("quip", [])
 }
 
 # Optional: templates for lexi_quip riffing
-_TEMPLATES = {
+try:
+    _TEMPLATES
+except NameError:
+    _TEMPLATES = {}
+
+_TEMPLATES.update({
     "tappit": [
         "{prefix} this {thing} is {adj_bad}, give it horns!",
         "{prefix} {verb} that {thing} before it goes kak.",
         "{prefix} the {metric} is {adj_good}, pull a ref-ref.",
     ]
-}
+})
