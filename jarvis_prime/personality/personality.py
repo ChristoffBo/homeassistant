@@ -1399,7 +1399,6 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False) -> li
             break
     return out
 
-
 # ============================
 # Persona header (Lexi-aware)
 # ============================
@@ -1444,6 +1443,13 @@ def persona_header(persona_name: str) -> str:
         return f"💬 {who} says:"
 
 
+# --- Ensure riff template dict exists ---------------------------------------
+try:
+    _TEMPLATES
+except NameError:
+    _TEMPLATES = {}
+
+
 # === Tappit persona wire-up ================================================
 try:
     import personality_tappit
@@ -1482,3 +1488,4 @@ try:
     print("[personality] ✅ Tappit persona fully loaded.")
 except Exception as _e:
     print(f"[personality] ⚠️ Could not wire Tappit persona: {_e}")
+
