@@ -1,3 +1,5 @@
+## latest (2025-09-09 08:00:00)
+Full Release
 ## latest (2025-09-09 06:42:00)
 - Persona can now be set via Wakeword
 ## latest (2025-09-08 14:40:00)
