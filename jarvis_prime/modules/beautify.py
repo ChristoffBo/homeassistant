@@ -274,7 +274,6 @@ def _harvest_timestamp(title: str, body: str) -> Optional[str]:
             m = rx.search(src)
             if m: return m.group(0).strip()
     return None
-
 # ====== Options & toggles ======
 def _read_options() -> Dict[str, Any]:
     try:
@@ -438,6 +437,7 @@ def _beautify_is_disabled() -> bool:
     except Exception:
         pass
     return False
+
 # ============================
 # Watchtower-aware summarizer
 # ============================
@@ -489,7 +489,6 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
     bullets = "\n".join([f"• `{name}` → `{img}` @ `{new}`" for name, img, new in updated])
     md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
     return md, meta
-
 # -------- querystring detection & body cleanup helpers --------
 _QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
 
@@ -568,6 +567,7 @@ def _clean_subject(raw_title: str, body: str) -> str:
 def _build_client_title(subject: str) -> str:
     subj = (subject or "").strip()
     return f"Jarvis Prime: {subj}" if subj else "Jarvis Prime"
+
 # --- Poster/icon fallback ---------------------------------------------------------
 def _icon_map_from_options() -> Dict[str,str]:
     try:
@@ -689,7 +689,8 @@ _META_LINE_RX = re.compile(
     r'^\s*(?:tone|rule|rules|guidelines?|style(?:\s*hint)?|instruction|instructions|system(?:\s*prompt)?|persona|respond(?:\s*with)?|produce\s*only)\s*[:\-]',
     re.I
 )
-_META_TAG_RX = re.compile(r'\s*(?:SYSTEM|INPUT|OUTPUT)\s*', re.I)
+# >>> CHANGED: also strip plain [SYSTEM]/[INPUT]/[OUTPUT] tags, not just special markers.
+_META_TAG_RX = re.compile(r'\s*(?:(?:SYSTEM|INPUT|OUTPUT)|(?:SYSTEM|INPUT|OUTPUT))\s*', re.I)
 
 def _scrub_meta(text: str) -> str:
     if not text:
@@ -745,6 +746,7 @@ def _normalize_intake(source: str, title: str, body: str) -> Tuple[str, str]:
     if src == "proxy":
         return _preprocess_proxy(title, body)
     return _preprocess_generic(title, body)
+
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
