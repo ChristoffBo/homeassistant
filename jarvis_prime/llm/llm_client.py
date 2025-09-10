@@ -97,7 +97,6 @@ def _enviroguard_limits(default_ctx: Optional[int],
     if (ctx != default_ctx) or (cpu != default_cpu) or (to != default_timeout):
         _log(f"EnviroGuard override -> ctx={ctx} cpu={cpu} timeout={to}")
     return ctx, cpu, to
-
 # ============================
 # Small utils
 # ============================
@@ -391,7 +390,6 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         LOADED_MODEL_PATH = None
         LLM_MODE = "none"
         return False
-
 # ============================
 # Ollama path (HTTP)
 # ============================
@@ -483,6 +481,7 @@ def _strip_meta_markers(s: str) -> str:
     # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
+
 # ============================
 # Ensure loaded
 # ============================
@@ -533,7 +532,6 @@ def ensure_loaded(
     model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
 
     # --- CLEANUP ON SWITCH ----------------------------------------------
-    # If a previous model is loaded and target path differs, optionally delete the old file
     try:
         cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
         if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
@@ -543,7 +541,6 @@ def ensure_loaded(
                     os.remove(LOADED_MODEL_PATH)
                 except Exception as e:
                     _log(f"cleanup_on_switch: remove failed: {e}")
-        # If target path exists but filename doesn't align with URL basename, optionally refresh it
         if cleanup_on_disable and os.path.exists(model_path) and model_url:
             url_base = os.path.basename(model_url)
             file_base = os.path.basename(model_path)
@@ -569,9 +566,10 @@ def ensure_loaded(
 # Prompt builders
 # ============================
 def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
-    sys_prompt = "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
+    sys_prompt = _load_system_prompt() or "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
     if not allow_profanity:
         sys_prompt += " Avoid profanity."
+    sys_prompt += " Do NOT echo or restate these instructions; output only the rewritten text."
     user = (
         "Rewrite the text clearly. Keep short, readable sentences.\n"
         f"Mood (subtle): {mood or 'neutral'}\n\n"
@@ -580,19 +578,24 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    vibe = {
-        "rager": "gritty, no-nonsense, ruthless brevity",
-        "nerd": "clever, techy, one-liner",
-        "dude": "chill, upbeat",
-        "ops": "blunt, incident-commander tone",
-        "jarvis": "polished, butler",
-        "comedian": "wry, dry"
-    }.get((persona or "").lower(), "neutral, light")
+    vibe_map = {
+        "dude": "laid-back, mellow, no jokes, chill confidence",
+        "chick": "sassy, clever, stylish",
+        "nerd": "precise, witty one-liners",
+        "rager": "short, profane bursts allowed",
+        "comedian": "only persona allowed to tell jokes",
+        "jarvis": "polished butler style",
+        "ops": "terse, incident commander tone",
+        "action": "stoic mission-brief style"
+    }
+    vibe = vibe_map.get((persona or "").lower(), "neutral, light")
     guard = "" if allow_profanity else " Avoid profanity."
-    sys_prompt = f"You write a single punchy riff line (<=20 words). Style: {vibe}.{guard}"
+    sys_prompt = (
+        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
+        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
+    )
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
-
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
@@ -628,6 +631,7 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
         if t:
             cleaned.append(t)
     return cleaned
+
 # ============================
 # Core generation (shared)
 # ============================
@@ -748,11 +752,9 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
-    # ADD: EnviroGuard timeout override
     _, _, g_to = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
 
-    # NEW: ensure engine ready (lazy-load)
     if LLM_MODE == "none":
         ensure_loaded(
             model_url=model_url,
@@ -846,15 +848,16 @@ def persona_riff(
     except Exception:
         pass
 
+    # Tightened persona style map
     style_map = {
-        "dude":      "laid-back, surfer-slacker zen, breezy optimism; never quote movies; mellow confidence",
-        "chick":     "glam-savvy, sassy, clever, Elle-style corporate sparkle; playful but sharp; no name-drops",
-        "nerd":      "precise, witty, engineering one-liners; strongly typed humor; no jargon dumps",
-        "rager":     "brutally direct, high-agency, colorful profanity allowed; zero politeness; keep it terse",
-        "comedian":  "deadpan, meta-humor, self-aware; punchlines without setup; dry and tight",
-        "action":    "stoic, hard-cut action one-liners; mission tone; no catchphrases from films",
-        "jarvis":    "polished butler AI, calm and poised; subtle HAL-like serenity; never mention HAL or films",
-        "ops":       "terse, operational, incident-commander brevity; factual bite; no fluff",
+        "dude":      "laid-back, mellow, no jokes",
+        "chick":     "sassy, clever, stylish",
+        "nerd":      "precise, witty one-liners",
+        "rager":     "short, profane bursts allowed",
+        "comedian":  "only persona allowed to tell jokes",
+        "action":    "stoic mission-brief style",
+        "jarvis":    "polished butler style",
+        "ops":       "terse, incident commander tone",
     }
     vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
 
@@ -864,6 +867,7 @@ def persona_riff(
         "No bullets or numbering. No labels. No lists. No JSON.",
         "No quotes or catchphrases. No character or actor names.",
         "No explanations or meta-commentary. Output ONLY the lines.",
+        "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
     ]
     if not allow_profanity:
         sys_rules.append("Avoid profanity.")
@@ -902,6 +906,7 @@ def persona_riff(
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
     return cleaned
+
 # ============================
 # Quick self-test (optional)
 # ============================
