@@ -263,7 +263,6 @@ def _resolve_model_from_options(
             return u, p, token
 
     return url, path, token
-
 # ============================
 # CPU / Threads (throttling)
 # ============================
@@ -448,6 +447,28 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
     if max_chars and len(text) > max_chars:
         return text[: max(0, max_chars - 1)].rstrip() + "…"
     return text
+
+# ============================
+# ADDITIVE: strip leaked meta tags from model output
+# ============================
+_META_LINE_RX = re.compile(
+    r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
+    re.I | re.M
+)
+def _strip_meta_markers(s: str) -> str:
+    if not s:
+        return s
+    # Drop pure marker lines
+    out = _META_LINE_RX.sub("", s)
+    # Remove inline fragments
+    out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
+    out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
+    out = out.replace("<s>", "").replace("</s>", "")
+    # Clean leftover quotes/backticks-only wrappers
+    out = out.strip().strip('`').strip().strip('"').strip("'").strip()
+    # Collapse extra blank lines
+    out = re.sub(r'\n{3,}', '\n\n', out)
+    return out
 
 # ============================
 # Ensure loaded
@@ -687,6 +708,9 @@ def rewrite(
     prompt = _prompt_for_rewrite(text, mood, allow_profanity)
     out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
     final = out if out else text
+
+    # ADD: strip any leaked meta tags/markers from the model output
+    final = _strip_meta_markers(final)
 
     if max_lines:
         final = _trim_lines(final, max_lines)
