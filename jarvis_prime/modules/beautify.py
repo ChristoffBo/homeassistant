@@ -106,6 +106,7 @@ def _kv_to_bullets(text: str) -> Optional[str]:
     if kvs:
         return "\n".join(kvs)
     return None
+
 # -------- Helpers --------
 def _prefer_host_key(url: str) -> int:
     try:
@@ -201,6 +202,7 @@ def _find_ips(*texts: str) -> List[str]:
             ip = m.group(0)
             if ip not in seen: seen.add(ip); ips.append(ip)
     return ips
+
 def _repair_ipv4(val: str, *contexts: str) -> str:
     cand = re.sub(r'\s*\.\s*', '.', (val or '').strip())
     m = IP_RE.search(cand)
@@ -313,17 +315,19 @@ def _ui_persona_header_enabled() -> bool:
     env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)
     return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
 
+# >>> CHANGED: rewrite toggle reads ONLY config.json; default False
 def _llm_message_rewrite_enabled() -> bool:
     opt = _read_options()
-    env_enabled = _bool_from_env("BEAUTIFY_LLM_REWRITE_ENABLED", "LLM_MESSAGE_REWRITE_ENABLED", default=False)
-    return _bool_from_options(opt, "llm_rewrite_enabled", default=env_enabled)
+    return _bool_from_options(opt, "llm_rewrite_enabled", default=False)
 
+# >>> CHANGED: default cap = 350; sourced from config.json if present
 def _llm_message_rewrite_max_chars() -> int:
     opt = _read_options()
     try:
-        return int(os.getenv("LLM_MESSAGE_REWRITE_MAX_CHARS") or opt.get("llm_message_rewrite_max_chars", 800))
+        return int(opt.get("llm_message_rewrite_max_chars", 350))
     except Exception:
-        return 800
+        return 350
+
 def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
     if not persona:
         return []
@@ -341,22 +345,35 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
         pass
     return []
 
-def _persona_llm_rewrite(context: str, persona: Optional[str], max_chars: int = 800) -> Optional[str]:
+# >>> NEW: neutral LLM rewrite (no persona), respects only config.json toggle
+def _neutral_llm_rewrite(context: str, max_chars: int = 350) -> Optional[str]:
     """
-    Optional: rewrite/summarize the body with persona style via personality.llm_rewrite.
-    Returns None to keep original.
+    Neutral, terse rewrite to keep key facts. No persona. Returns None to keep original.
     """
-    if not persona or not _llm_riffs_enabled():
-        return None
     if not _llm_message_rewrite_enabled():
         return None
     try:
-        mod = importlib.import_module("personality")
-        mod = importlib.reload(mod)
-        if hasattr(mod, "llm_rewrite"):
-            out = mod.llm_rewrite(persona, context=context, max_chars=int(max_chars))
-            if isinstance(out, str) and out.strip():
-                return out.strip()
+        llm = importlib.import_module("llm_client")
+    except Exception:
+        return None
+    try:
+        # Keep it neutral + short; no formatting, no lists, no emojis.
+        sys_prompt = (
+            "YOU ARE A NEUTRAL, TERSE REWRITER.\n"
+            f"Rules: Preserve key facts, remove fluff, <= {max_chars} chars, no bullets, no markdown, no emojis, no persona."
+        )
+        user_prompt = "Rewrite neutrally:\n" + (context or "").strip()
+        if hasattr(llm, "rewrite"):
+            raw = llm.rewrite(
+                text=f"[SYSTEM]\n{sys_prompt}\n[INPUT]\n{user_prompt}\n[OUTPUT]\n",
+                mood="neutral",
+                timeout=8,
+                cpu_limit=70,
+                allow_profanity=False,
+            )
+            s = (raw or "").strip()
+            if s:
+                return s[:max_chars].strip()
     except Exception:
         pass
     return None
@@ -421,7 +438,6 @@ def _beautify_is_disabled() -> bool:
     except Exception:
         pass
     return False
-
 # ============================
 # Watchtower-aware summarizer
 # ============================
@@ -870,8 +886,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                 lines += ["", f"![poster]({poster})"]
                 text = "\n".join(lines).strip()
         return text, extras
-
-    # ===== Standard path (Message-only layout) =====
+# ===== Standard path (Message-only layout) =====
     lines: List[str] = []
     lines += _header(kind, badge)
 
@@ -898,14 +913,14 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if kv_bullets:
         message_snip = kv_bullets
 
-    # ---- OPTIONAL LLM MESSAGE REWRITE (toggleable) ----
+    # ---- OPTIONAL LLM MESSAGE REWRITE (neutral, toggleable) ----
     try:
-        eff_persona_for_rewrite = _effective_persona(persona)
-        max_chars = _llm_message_rewrite_max_chars()
-        rewrite_ctx = _scrub_meta(message_snip)
-        rewritten = _persona_llm_rewrite(rewrite_ctx, eff_persona_for_rewrite, max_chars=max_chars)
-        if isinstance(rewritten, str) and rewritten.strip():
-            message_snip = _scrub_meta(rewritten.strip())
+        if _llm_message_rewrite_enabled():
+            max_chars = _llm_message_rewrite_max_chars()
+            rewrite_ctx = _scrub_meta(message_snip)
+            rewritten = _neutral_llm_rewrite(rewrite_ctx, max_chars=max_chars)
+            if isinstance(rewritten, str) and rewritten.strip():
+                message_snip = _scrub_meta(rewritten.strip())
     except Exception:
         pass
 
