@@ -74,12 +74,21 @@ Enable it by adding to /data/options.json:
   "llm_enviroguard_cold_c": 10,
   "llm_enviroguard_hysteresis_c": 2,
   "llm_enviroguard_profiles": {
-    "manual": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
-    "hot":    { "cpu_percent": 50, "ctx_tokens": 2048, "timeout_seconds": 15 },
-    "normal": { "cpu_percent": 80, "ctx_tokens": 4096, "timeout_seconds": 20 },
-    "boost":  { "cpu_percent": 95, "ctx_tokens": 8192, "timeout_seconds": 25 }
+    "manual": { "cpu_percent": 80, "ctx_tokens": 2048, "timeout_seconds": 15 },
+    "hot":    { "cpu_percent": 50, "ctx_tokens": 1024, "timeout_seconds": 12 },
+    "normal": { "cpu_percent": 80, "ctx_tokens": 2048, "timeout_seconds": 15 },
+    "boost":  { "cpu_percent": 90, "ctx_tokens": 4096, "timeout_seconds": 20 }
   }
 }
 When active, the boot card shows EnviroGuard’s state, profile, and current temperature.  
 Whenever EnviroGuard shifts profile (e.g. from normal → hot), Jarvis notifies you:  
-“Ambient 31.2 °C → profile HOT (CPU=50%, ctx=2048, to=15s)”
+“Ambient 31.2 °C → profile HOT (CPU=50%, ctx=1024, to=12s)”
+
+LLM Best Defaults
+Jarvis Prime comes tuned for efficiency on homelab hardware:  
+• Context tokens: 2048 (≈1500 words of working memory, enough for logs and events)  
+• Generation tokens: 150 (≈110 words per rewrite/riff)  
+• Riff lines: max 30 tokens (≈20 words, short bursts)  
+• Rewrite lines: max 50 tokens (≈35 words, clear rewrites)  
+• Persona riff: max 100 tokens (≈70 words, punchy multiple lines)  
+These defaults balance CPU load, heat, and latency while keeping messages concise, polished, and easy to read.
