@@ -40,12 +40,25 @@ LOADED_MODEL_PATH = None
 OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
+SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
 
 # ============================
 # Logging
 # ============================
 def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
+
+# ============================
+# ADDITIVE: System prompt loader
+# ============================
+def _load_system_prompt() -> str:
+    try:
+        if os.path.exists(SYSTEM_PROMPT_PATH):
+            with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
+                return f.read().strip()
+    except Exception as e:
+        _log(f"system_prompt load failed: {e}")
+    return ""
 
 # ============================
 # ADDITIVE: EnviroGuard env overrides
@@ -127,7 +140,6 @@ def _build_opener_with_headers(headers: Dict[str, str]):
     opener = urllib.request.build_opener(*handlers)
     opener.addheaders = list(headers.items())
     return opener
-
 def _http_get(url: str, headers: Dict[str, str], timeout: int = 180) -> bytes:
     opener = _build_opener_with_headers(headers)
     with opener.open(url, timeout=timeout) as r:
@@ -430,7 +442,6 @@ def _model_name_from_url(model_url: str) -> str:
     if "." in tail:
         tail = tail.split(".")[0]
     return tail or "llama3"
-
 # ============================
 # Message checks / guards
 # ============================
@@ -579,7 +590,6 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     sys_prompt = f"You write a single punchy riff line (<=20 words). Style: {vibe}.{guard}"
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
-
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
