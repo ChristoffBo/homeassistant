@@ -29,7 +29,7 @@ JSON-SCHEMA (authoritative):
     "extras": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Optional key/value pairs extracted from the message (e.g., app, host, jobId)"
+      "description": "Optional key/value pairs extracted from the message (e.g., app, host, jobId, version, path)"
     }
   }
 }
@@ -149,6 +149,24 @@ panic: disk I/O error on /dev/sda during write operation
 >>>
 Response:
 {"title":"Disk I/O error","summary":"Critical I/O error occurred on /dev/sda during write operation.","source":"","severity":"critical","tags":["disk","io","error"],"render":{"style":"card-detailed","footer":"/dev/sda"},"extras":{"device":"/dev/sda"}}
+
+---
+
+Message:
+<<<
+Unraid: Array started - parity check in progress
+>>>
+Response:
+{"title":"Unraid parity check started","summary":"Unraid array has started with a parity check in progress.","source":"unraid","severity":"notice","tags":["unraid","array","parity"],"render":{"style":"card-detailed","footer":"parity check"},"extras":{"app":"unraid","action":"parity check"}}
+
+---
+
+Message:
+<<<
+Home Assistant: Automation failed - Living Room Lights - Script error at 21:05
+>>>
+Response:
+{"title":"Home Assistant automation failed","summary":"Living Room Lights automation failed at 21:05 due to a script error.","source":"homeassistant","severity":"error","tags":["homeassistant","automation","lights"],"render":{"style":"card-detailed","footer":"21:05"},"extras":{"automation":"Living Room Lights","time":"21:05"}}
 
 ---
 
