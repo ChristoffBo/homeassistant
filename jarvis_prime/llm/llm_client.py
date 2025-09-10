@@ -41,6 +41,7 @@ OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:1143
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
 SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
+SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
 
 # ============================
 # Logging
@@ -140,6 +141,7 @@ def _build_opener_with_headers(headers: Dict[str, str]):
     opener = urllib.request.build_opener(*handlers)
     opener.addheaders = list(headers.items())
     return opener
+
 def _http_get(url: str, headers: Dict[str, str], timeout: int = 180) -> bytes:
     opener = _build_opener_with_headers(headers)
     with opener.open(url, timeout=timeout) as r:
@@ -442,6 +444,7 @@ def _model_name_from_url(model_url: str) -> str:
     if "." in tail:
         tail = tail.split(".")[0]
     return tail or "llama3"
+
 # ============================
 # Message checks / guards
 # ============================
@@ -480,7 +483,6 @@ def _strip_meta_markers(s: str) -> str:
     # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
-
 # ============================
 # Ensure loaded
 # ============================
@@ -590,6 +592,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     sys_prompt = f"You write a single punchy riff line (<=20 words). Style: {vibe}.{guard}"
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
@@ -625,7 +628,6 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
         if t:
             cleaned.append(t)
     return cleaned
-
 # ============================
 # Core generation (shared)
 # ============================
@@ -785,7 +787,6 @@ def riff(
     if len(joined) > 120:
         joined = joined[:119].rstrip() + "…"
     return joined
-
 # ============================
 # Public: persona_riff
 # ============================
@@ -901,7 +902,6 @@ def persona_riff(
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
     return cleaned
-
 # ============================
 # Quick self-test (optional)
 # ============================
@@ -931,7 +931,11 @@ if __name__ == "__main__":
             print("rewrite sample ->", txt[:120])
             r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
             print("riff sample ->", r)
-            rl = persona_riff(persona="nerd", context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]", base_url=os.getenv("TEST_OLLAMA","").strip())
+            rl = persona_riff(
+                persona="nerd",
+                context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]",
+                base_url=os.getenv("TEST_OLLAMA","").strip()
+            )
             print("persona_riff sample ->", rl[:3])
     except Exception as e:
         print("self-check error:", e)
