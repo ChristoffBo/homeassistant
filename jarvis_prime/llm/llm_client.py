@@ -200,7 +200,6 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
         except Exception as e:
             _log(f"sha256 check failed (continuing without): {e}")
     return path
-
 # ============================
 # Options resolver (add-on config awareness)
 # ============================
@@ -476,6 +475,13 @@ def _strip_meta_markers(s: str) -> str:
     out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
     out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
     out = out.replace("<s>", "").replace("</s>", "")
+    # 🔽 ADDITIVE: strip leaked "YOU ARE … REWRITER" echoes
+    out = re.sub(
+        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
+        '',
+        out,
+        flags=re.I | re.M
+    )
     # Clean leftover quotes/backticks-only wrappers
     out = out.strip().strip('`').strip().strip('"').strip("'").strip()
     # Collapse extra blank lines
@@ -561,7 +567,6 @@ def ensure_loaded(
 
     ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
     return bool(ok)
-
 # ============================
 # Prompt builders
 # ============================
@@ -596,6 +601,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     )
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
@@ -681,7 +687,6 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         return _llama_generate(prompt, timeout=max(4, int(timeout)))
 
     return ""
-
 # ============================
 # Public: rewrite
 # ============================
@@ -789,6 +794,7 @@ def riff(
     if len(joined) > 120:
         joined = joined[:119].rstrip() + "…"
     return joined
+
 # ============================
 # Public: persona_riff
 # ============================
