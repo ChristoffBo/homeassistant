@@ -568,7 +568,6 @@ def _clean_subject(raw_title: str, body: str) -> str:
 def _build_client_title(subject: str) -> str:
     subj = (subject or "").strip()
     return f"Jarvis Prime: {subj}" if subj else "Jarvis Prime"
-
 # --- Poster/icon fallback ---------------------------------------------------------
 def _icon_map_from_options() -> Dict[str,str]:
     try:
@@ -746,7 +745,6 @@ def _normalize_intake(source: str, title: str, body: str) -> Tuple[str, str]:
     if src == "proxy":
         return _preprocess_proxy(title, body)
     return _preprocess_generic(title, body)
-
 # -------- Public API --------
 def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      source_hint: Optional[str] = None, mode: str = "standard",
