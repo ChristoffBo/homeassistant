@@ -42,18 +42,18 @@ COPY memory/system_prompt.txt /app/memory/system_prompt.txt
 COPY run.sh /run.sh
 COPY bot.py /app/bot.py
 COPY /personality/chat.py /app/chat.py
-COPY arr.py /app/arr.py
-COPY weather.py /app/weather.py
-COPY technitium.py /app/technitium.py
-COPY digest.py /app/digest.py
-COPY uptimekuma.py /app/uptimekuma.py
+COPY /modules/arr.py /app/arr.py
+COPY /modules/weather.py /app/weather.py
+COPY /modules/technitium.py /app/technitium.py
+COPY /modules/digest.py /app/digest.py
+COPY /modules/uptimekuma.py /app/uptimekuma.py
 COPY aliases.py /app/aliases.py
 COPY /personality/personality.py /app/personality.py
 COPY /personality/personality_tappit.py /app/personality_tappit.py
 COPY /intakes/smtp_server.py /app/smtp_server.py
 COPY /intakes/proxy.py /app/proxy.py
-COPY beautify.py /app/beautify.py
-COPY enviroguard.py /app/enviroguard.py
+COPY /modules/beautify.py /app/beautify.py
+COPY /modules/enviroguard.py /app/enviroguard.py
 
 # LLM + memory
 COPY /llm/llm_client.py /app/llm_client.py
@@ -63,13 +63,13 @@ COPY /personality/personality_state.py /app/personality_state.py
 
 # ---- NEW: Inbox server + UI + storage + fan-out clients ----
 COPY /intakes/api_messages.py /app/api_messages.py
-COPY storage.py      /app/storage.py
+COPY /modules/storage.py      /app/storage.py
 COPY /intakes/ntfy_client.py  /app/ntfy_client.py
 COPY /intakes/smtp_client.py  /app/smtp_client.py
 COPY ui/ /app/ui/
 COPY /intakes/webhook_server.py  /app/webhook_server.py
 COPY /intakes/apprise.py  /app/apprise.py
-COPY heartbeat.py  /app/heartbeat.py
+COPY /modules/heartbeat.py  /app/heartbeat.py
 
 # ---- NEW (additive): place intake blueprint at the path bot.py expects ----
 RUN mkdir -p /app/intakes
