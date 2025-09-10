@@ -91,6 +91,21 @@ def _safe_truncate(s: str, max_len: int = 3500) -> str:
         out.append(tail)
     return "".join(out)
 
+# -------- NEW: key/value to bullets --------
+def _kv_to_bullets(text: str) -> Optional[str]:
+    """Turn key: value lines into neat bullets for readability."""
+    if not text:
+        return None
+    kvs = []
+    for ln in text.splitlines():
+        m = KV_RE.match(ln)
+        if m:
+            key, val = m.group(1).strip(), m.group(2).strip()
+            if key.lower() not in {"title", "message", "topic", "tags", "priority"}:
+                kvs.append(f"- **{key}:** {val}")
+    if kvs:
+        return "\n".join(kvs)
+    return None
 # -------- Helpers --------
 def _prefer_host_key(url: str) -> int:
     try:
@@ -136,12 +151,11 @@ def _linewise_dedup_markdown(text: str, protect_message: bool = False) -> str:
             if t.strip().startswith("📝 Message"):
                 in_msg = True
                 out.append(t); continue
-            # a new section header ends the message block
             if in_msg and (t.strip().startswith("📄 ") or t.strip().startswith("🧠 ") or t.strip().startswith("![") or t.strip().startswith("📟 ")):
                 in_msg = False
 
         if protect_message and in_msg:
-            out.append(t)  # no dedup inside the Message block
+            out.append(t)
             continue
 
         key = re.sub(r'\s+', ' ', t.strip()).lower()
@@ -187,7 +201,6 @@ def _find_ips(*texts: str) -> List[str]:
             ip = m.group(0)
             if ip not in seen: seen.add(ip); ips.append(ip)
     return ips
-
 def _repair_ipv4(val: str, *contexts: str) -> str:
     cand = re.sub(r'\s*\.\s*', '.', (val or '').strip())
     m = IP_RE.search(cand)
@@ -229,7 +242,6 @@ def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
 
 # -------- Minimal header (no dash bars) --------
 def _header(kind: str, badge: str = "") -> List[str]:
-    # Drop intake/type label for a cleaner look; keep only Jarvis + severity badge
     return [f"📟 Jarvis Prime {badge}".rstrip()]
 
 def _severity_badge(text: str) -> str:
@@ -261,80 +273,7 @@ def _harvest_timestamp(title: str, body: str) -> Optional[str]:
             if m: return m.group(0).strip()
     return None
 
-def _extract_keyvals(text: str) -> List[Tuple[str,str]]:
-    out: List[Tuple[str,str]] = []
-    for ln in (text or "").splitlines():
-        m = KV_RE.match(ln)
-        if m:
-            out.append((m.group(1).strip(), m.group(2).strip()))
-    return out
-
-def _categorize_bullets(title: str, body: str) -> Tuple[List[str], List[str]]:
-    # Kept for compatibility but not used in the simplified layout
-    facts: List[str] = []
-    details: List[str] = []
-
-    ts = _harvest_timestamp(title, body)
-    if ts: facts.append(_fmt_kv("Time", ts))
-    if title.strip(): facts.append(_fmt_kv("Subject", title.strip()))
-
-    IGNORED_KV_KEYS = {"title", "message", "priority", "topic", "tags"}
-
-    for k,v in _extract_keyvals(body):
-        key = k.strip().lower()
-        if key in IGNORED_KV_KEYS:
-            continue
-        val = v
-        if key in ("ip","ip address","address"):
-            val = _repair_ipv4(v, title, body)
-            details.append(_fmt_kv("IP", val))
-        elif key in ("ping","download","upload","latency","jitter","loss","speed"):
-            facts.append(_fmt_kv(k, v))
-        elif key in ("status","result","state","ok","success","warning","error"):
-            facts.append(_fmt_kv(k, v))
-        else:
-            details.append(_fmt_kv(k, v))
-
-    ip_list = _find_ips(title, body)
-    for ip in ip_list:
-        if f"`{ip}`" not in " ".join(details):
-            details.append(_fmt_kv("IP", ip))
-    for host in HOST_RE.findall(body or ""):
-        if not IP_RE.match(host):
-            details.append(_fmt_kv("host", host))
-    for m in VER_RE.finditer(body or ""):
-        ver = m.group(0)
-        if any(ver in ip for ip in ip_list):
-            continue
-        details.append(_fmt_kv("version", ver))
-
-    if not facts:
-        first = _first_nonempty_line(body)
-        if first: facts.append(_fmt_kv("Info", first))
-
-    def _uniq(lines: List[str]) -> List[str]:
-        seen=set(); out=[]
-        for ln in lines:
-            key = re.sub(r'\s+',' ', ln.strip()).lower()
-            if key and key not in seen: seen.add(key); out.append(ln)
-        return out
-
-    return _uniq(facts), _uniq(details)
-
-def _format_align_check(text: str) -> str:
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    while lines and lines[0].strip() == "": lines.pop(0)
-    out=[]
-    for ln in lines:
-        if ln.strip() == "":
-            if out and out[-1].strip() == "":
-                continue
-        out.append(ln)
-    return "\n".join(out).strip()
-
-# --------------------
-# LLM persona riffs ONLY
-# --------------------
+# ====== Options & toggles ======
 def _read_options() -> Dict[str, Any]:
     try:
         with open("/data/options.json", "r", encoding="utf-8") as f:
@@ -357,10 +296,8 @@ def _bool_from_options(opt: Dict[str, Any], key: str, default: bool = False) -> 
         return default
 
 def _llm_riffs_enabled() -> bool:
-    # Allow env overrides and support both 'llm_enabled' and 'llm_persona_riffs_enabled'
     opt = _read_options()
     env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
-    # Prefer explicit llm_persona_riffs_enabled if present, else fall back to llm_enabled
     opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
     if opt_riffs is not None:
         return opt_riffs
@@ -372,9 +309,8 @@ def _personality_enabled() -> bool:
     return _bool_from_options(opt, "personality_enabled", default=env_enabled)
 
 def _ui_persona_header_enabled() -> bool:
-    # If the UI renders its own persona header, don't inline ours (avoid duplicates)
     opt = _read_options()
-    env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)  # default TRUE to prevent duplicate persona
+    env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)
     return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
 
 def _llm_message_rewrite_enabled() -> bool:
@@ -388,7 +324,6 @@ def _llm_message_rewrite_max_chars() -> int:
         return int(os.getenv("LLM_MESSAGE_REWRITE_MAX_CHARS") or opt.get("llm_message_rewrite_max_chars", 800))
     except Exception:
         return 800
-
 def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
     if not persona:
         return []
@@ -406,18 +341,14 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
         pass
     return []
 
-# --------------------
-# LLM persona REWRITE (optional)
-# --------------------
 def _persona_llm_rewrite(context: str, persona: Optional[str], max_chars: int = 800) -> Optional[str]:
     """
     Optional: rewrite/summarize the body with persona style via personality.llm_rewrite.
     Returns None to keep original.
     """
-    if not persona or not _llm_riffs_enabled():  # piggyback on global LLM allow
+    if not persona or not _llm_riffs_enabled():
         return None
-    enabled = _llm_message_rewrite_enabled()
-    if not enabled:
+    if not _llm_message_rewrite_enabled():
         return None
     try:
         mod = importlib.import_module("personality")
@@ -430,7 +361,7 @@ def _persona_llm_rewrite(context: str, persona: Optional[str], max_chars: int = 
         pass
     return None
 
-# --------- ADDITIVE: global helpers for riffs & persona ----------
+# --------- global helpers for riffs & persona ----------
 def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
     if passed_persona:
         return passed_persona
@@ -476,7 +407,7 @@ def _debug(msg: str) -> None:
         except Exception:
             pass
 
-# ===== NEW: global OFF switch =====
+# ===== global OFF switch =====
 def _beautify_is_disabled() -> bool:
     env = (os.getenv("BEAUTIFY_ENABLED") or "").strip().lower()
     if env in ("0","false","no","off","disabled"):
@@ -492,7 +423,7 @@ def _beautify_is_disabled() -> bool:
     return False
 
 # ============================
-# ADDITIVE: Watchtower-aware summarizer
+# Watchtower-aware summarizer
 # ============================
 _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
@@ -543,7 +474,7 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
     md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
     return md, meta
 
-# -------- ADD: querystring detection & body cleanup helpers --------
+# -------- querystring detection & body cleanup helpers --------
 _QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
 
 def _maybe_parse_query_payload(s: Optional[str]) -> Optional[Dict[str, str]]:
@@ -585,20 +516,16 @@ INTAKE_NAMES = {"proxy","smtp","apprise","gotify","ntfy","webhook","webhooks"}
 def _infer_subject_from_body(body: str) -> Optional[str]:
     """Try to infer a friendly subject from common test and status texts."""
     b = (body or "").strip()
-    # 1) Look for explicit Subject: line
     for ln in b.splitlines():
         m = re.match(r'\s*Subject\s*:\s*(.+?)\s*$', ln, re.I)
         if m:
             return m.group(1).strip()
-    # 2) Sonarr/Radarr-style tests
     m = re.search(r'\btest message from\s+(sonarr|radarr|lidarr|prowlarr|readarr)\b', b, re.I)
     if m:
         svc = m.group(1).title()
         return f"{svc} - Test Notification"
-    # 3) Speedtest
     if re.search(r'\bspeedtest\b', b, re.I):
         return "SpeedTest Result"
-    # 4) Fallback: first meaningful line that isn't boilerplate
     for ln in b.splitlines():
         t = ln.strip()
         if not t:
@@ -613,18 +540,12 @@ def _clean_subject(raw_title: str, body: str) -> str:
     t = (raw_title or "").strip()
     if not t:
         t = ""
-    # Drop bracketed intake prefixes like [SMTP], [Proxy], etc. (allow multiples)
     t = re.sub(r'^\s*(?:(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*)+', '', t, flags=re.I)
-    # Drop naked intake prefixes like "SMTP:" or "Proxy -"
     t = re.sub(r'^\s*(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*[:\-]\s*', '', t, flags=re.I)
-
-    # If the title is literally just an intake keyword or very generic, infer from body
     if t.strip().lower() in INTAKE_NAMES or t.strip().lower() in {"message","notification","test"}:
         new_t = _infer_subject_from_body(body)
         if new_t:
             t = new_t
-
-    # Remove duplicate 'Jarvis Prime:' prefix(es)
     t = re.sub(r'^\s*(?:jarvis\s*prime\s*:?\s*)+', '', t, flags=re.I)
     return (t or "").strip()
 
@@ -645,7 +566,6 @@ def _icon_map_from_options() -> Dict[str,str]:
     return {}
 
 def _builtin_icon_map() -> Dict[str,str]:
-    # Conservative built-ins so every intake can show *something* even without user config.
     base = "https://raw.githubusercontent.com/walkxcode/dashboard-icons/master/png"
     return {
         "sonarr": f"{base}/sonarr.png",
@@ -683,7 +603,6 @@ def _icon_from_env(keyword: str) -> Optional[str]:
     return v.strip() or None
 
 def _default_icon() -> Optional[str]:
-    # default poster if nothing matches
     try:
         with open("/data/options.json","r",encoding="utf-8") as f:
             opt = json.load(f) or {}
@@ -708,7 +627,6 @@ def _poster_fallback(title: str, body: str) -> Optional[str]:
     for word in keywords:
         if word in text:
             return opt_map.get(word) or _icon_from_env(word) or builtin.get(word)
-    # fallback default
     return _default_icon()
 
 def _remove_kv_lines(text: str) -> str:
@@ -728,7 +646,6 @@ def _remove_kv_lines(text: str) -> str:
         if m:
             k = m.group(1).strip().lower()
             if k in {"title","message","topic","tags","priority"}:
-                # skip transport/meta
                 continue
         kept.append(ln)
     s = "\n".join(kept)
@@ -741,11 +658,9 @@ def _final_qs_cleanup(text: str) -> str:
         return ""
     maybe = _maybe_parse_query_payload(text)
     if maybe:
-        # Prefer 'message' or 'text' fields; else render as simple lines
         for k in ("message","text","body","m"):
             if k in maybe and maybe[k].strip():
                 return maybe[k].strip()
-        # or join remaining fields in a readable way
         parts = []
         for k,v in maybe.items():
             if k.lower() in {"title","topic","tags","priority"}:
@@ -764,16 +679,13 @@ _META_TAG_RX = re.compile(r'\s*(?:SYSTEM|INPUT|OUTPUT)\s*', re.I)
 def _scrub_meta(text: str) -> str:
     if not text:
         return ""
-    # Remove bracket tags inline
     s = _META_TAG_RX.sub(" ", text)
-    # Drop meta-lines
     keep: List[str] = []
     for ln in s.splitlines():
         if _META_LINE_RX.search(ln):
             continue
         keep.append(ln)
     s = "\n".join(keep)
-    # compress blank lines
     s = re.sub(r'\n{3,}', '\n\n', s).strip()
     return s
 
@@ -792,19 +704,15 @@ def _preprocess_gotify_like(title: str, body: str) -> Tuple[str, str]:
     return (title or "").strip(), (body or "").strip()
 
 def _preprocess_proxy(title: str, body: str) -> Tuple[str, str]:
-    # Extract form fields like: Content-Disposition: form-data; name="title"\r\n\r\nVALUE
     t = title or ""
     b = body or ""
-    # Capture blocks
     blocks = re.findall(r'(?is)name="(title|message)"\s*\r?\n\r?\n(.*?)(?:\r?\n--|$)', b)
     fields = {k.lower(): v.strip() for k,v in blocks}
-    # Also support URL-encoded query payloads in the body
     qs = _maybe_parse_query_payload(b)
     if qs:
         fields.update({k.lower(): v for k,v in qs.items()})
     if fields.get("title"): t = fields["title"]
     if fields.get("message"): b = fields["message"]
-    # Clean remaining MIME noise
     b = re.sub(r'(?im)^content-disposition.*name="[^"]+"\s*', '', b)
     b = _strip_mime_headers(b)
     b = re.sub(r'\n{2,}', '\n\n', b).strip()
@@ -829,28 +737,23 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
 
-    # If beautifier is OFF, pass the message through RAW:
-    # - do NOT clean/alter subject or body
-    # - prepend optional persona overlay line
-    # - append optional persona riff block
+    # RAW passthrough if beautifier is OFF:
     if _beautify_is_disabled():
-        # Use the incoming values exactly as provided
         raw_title = title if title is not None else ""
         raw_body  = body  if body  is not None else ""
 
         lines: List[str] = []
 
-        # Persona overlay (only if enabled AND UI not already rendering its own header)
         eff_persona = _effective_persona(persona)
         if _personality_enabled() and not _ui_persona_header_enabled():
             pol = _persona_overlay_line(eff_persona)
             if pol:
                 lines.append(pol)
 
-        # RAW BODY, unchanged — no stripping, no section headers
+        # Show raw body untouched
         lines.append(raw_body)
 
-        # Optional persona riffs at the bottom (BODY-only context, scrub meta so prompts don't leak)
+        # Optional riffs
         if _llm_riffs_enabled() and eff_persona:
             riff_ctx = _scrub_meta(raw_body if isinstance(raw_body, str) else "")
             riffs = _persona_llm_riffs(riff_ctx, eff_persona)
@@ -862,8 +765,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                     lines.append("> " + r)
 
         text = "\n".join(lines)
-
-        # Client extras: keep only minimal metadata; no client title rewrite
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
             "jarvis::beautified": False
@@ -871,19 +772,16 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         return text, extras
 
     # --------- Beautifier ON path ---------
-    # Normalize basic noise
     stripped = _strip_noise(body)
     normalized = _normalize(stripped)
     normalized = html.unescape(normalized)
 
-    # Normalize intake (per-source cleanup)
     title, normalized = _normalize_intake(source_hint or "", title, normalized)
 
-    # --- Querystring normalization (decode & extract clean title/message) ---
+    # --- Querystring normalization ---
     qs_title = _maybe_parse_query_payload(title)
     qs_body  = _maybe_parse_query_payload(normalized)
 
-    # prefer explicit fields; do NOT touch persona/riffs
     if qs_title and "title" in qs_title:
         title = unquote_plus(qs_title.get("title") or "") or title
     if qs_body and "title" in qs_body:
@@ -894,7 +792,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if qs_body and "message" in qs_body:
         normalized = unquote_plus(qs_body.get("message") or "") or normalized
 
-    # If the entire title string looks querystring-ish, decode it once
     if (title or "").strip() and (qs_title or qs_body):
         try:
             title_decoded = unquote_plus(title.strip())
@@ -905,7 +802,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         except Exception:
             pass
 
-    # remove 'action says:' lines from the visible body (riffs unaffected elsewhere) and MIME junk
+    # remove 'action says:' lines and MIME junk
     normalized = _strip_action_says(normalized)
     normalized = _strip_mime_headers(normalized)
 
@@ -915,7 +812,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     kind = _detect_type(title, body_wo_imgs)
     badge = _severity_badge(title + " " + body_wo_imgs)
 
-    # Build cleaned subject and set card title
     clean_subject = _clean_subject(title, body_wo_imgs)
 
     # ===== Watchtower special-case =====
@@ -931,7 +827,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         wt_md, wt_meta = _summarize_watchtower(title, body_wo_imgs)
         lines += ["", wt_md]
 
-        # BODY-first, scrubbed context for riffs
         riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
         if riff_hint and _llm_riffs_enabled() and eff_persona:
@@ -947,7 +842,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                 lines.append("> " + r)
 
         text = "\n".join(lines).strip()
-        text = _format_align_check(text)
         text = _linewise_dedup_markdown(text, protect_message=True)
         text = _fold_repeats(text)
         max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
@@ -965,7 +859,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             extras["watchtower::truncated"] = True
         if isinstance(extras_in, dict):
             extras.update(extras_in)
-        # Poster (harvested or fallback)
         if images:
             extras["jarvis::allImageUrls"] = images
             extras["client::notification"] = {"bigImageUrl": images[0]}
@@ -995,17 +888,20 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     raw_message = (body_wo_imgs or "").strip() or normalized.strip()
     message_snip = _remove_kv_lines(raw_message).strip()
     if not message_snip:
-        # Fallbacks to guarantee a message
         message_snip = (raw_message or normalized or "No message provided.").strip()
 
-    # Decoded leftover querystrings if any
+    # Decode leftover querystrings
     message_snip = _final_qs_cleanup(message_snip)
+
+    # === NEW: Convert Key:Value lines to bullets (non-destructive) ===
+    kv_bullets = _kv_to_bullets(message_snip)
+    if kv_bullets:
+        message_snip = kv_bullets
 
     # ---- OPTIONAL LLM MESSAGE REWRITE (toggleable) ----
     try:
         eff_persona_for_rewrite = _effective_persona(persona)
         max_chars = _llm_message_rewrite_max_chars()
-        # Scrub before sending to rewrite
         rewrite_ctx = _scrub_meta(message_snip)
         rewritten = _persona_llm_rewrite(rewrite_ctx, eff_persona_for_rewrite, max_chars=max_chars)
         if isinstance(rewritten, str) and rewritten.strip():
@@ -1016,7 +912,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if message_snip:
         lines += ["", "📝 Message", message_snip]
 
-    # Inline the first image as poster; keep list in extras (or use fallback)
     poster = None
     if images:
         poster = images[0]
@@ -1027,12 +922,10 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     if poster:
         lines += ["", f"![poster]({poster})"]
 
-    # LLM persona riffs (render only if non-empty), independent toggle
     riffs: List[str] = []
     riff_hint = _global_riff_hint(extras_in, source_hint)
     _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
     if riff_hint and _llm_riffs_enabled() and eff_persona:
-        # BODY-first, scrubbed, with subject as light seasoning
         ctx = _scrub_meta(message_snip)
         if subj:
             ctx = (ctx + "\n\nSubject: " + subj).strip()
@@ -1046,7 +939,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
             lines.append("> " + r)
 
     text = "\n".join(lines).strip()
-    text = _format_align_check(text)
     text = _linewise_dedup_markdown(text, protect_message=True)
     text = _fold_repeats(text)
     max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
@@ -1065,4 +957,3 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         extras.update(extras_in)
 
     return text, extras
-```0
