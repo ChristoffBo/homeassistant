@@ -167,7 +167,7 @@ def _harvest_images(text: str) -> Tuple[str, List[str], List[str]]:
         return f"[image: {alt}]" if alt else "[image]"
 
     def _bare(m):
-        u = m.group(1).rstrip('.,;:)]>\"\'')
+        u = m.group(1).rstrip('.,;:)]>"\'')
         urls.append(u)
         return ""  # remove bare URL
 
@@ -614,7 +614,7 @@ def _clean_subject(raw_title: str, body: str) -> str:
     if not t:
         t = ""
     # Drop bracketed intake prefixes like [SMTP], [Proxy], etc. (allow multiples)
-    t = re.sub(r'^\s*(?:\[(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\]\s*)+', '', t, flags=re.I)
+    t = re.sub(r'^\s*(?:(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*)+', '', t, flags=re.I)
     # Drop naked intake prefixes like "SMTP:" or "Proxy -"
     t = re.sub(r'^\s*(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*[:\-]\s*', '', t, flags=re.I)
 
@@ -759,7 +759,7 @@ _META_LINE_RX = re.compile(
     r'^\s*(?:tone|rule|rules|guidelines?|style(?:\s*hint)?|instruction|instructions|system(?:\s*prompt)?|persona|respond(?:\s*with)?|produce\s*only)\s*[:\-]',
     re.I
 )
-_META_TAG_RX = re.compile(r'\s*\[(?:SYSTEM|INPUT|OUTPUT)\]\s*', re.I)
+_META_TAG_RX = re.compile(r'\s*(?:SYSTEM|INPUT|OUTPUT)\s*', re.I)
 
 def _scrub_meta(text: str) -> str:
     if not text:
@@ -829,40 +829,43 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
 
-    # If beautifier is OFF, still allow persona + riffs independently (raw passthrough)
+    # If beautifier is OFF, pass the message through RAW:
+    # - do NOT clean/alter subject or body
+    # - prepend optional persona overlay line
+    # - append optional persona riff block
     if _beautify_is_disabled():
-        title_s = (title or "").strip()
-        body_s  = (body or "").strip()
-        clean_subject = _clean_subject(title_s, body_s)
-        lines: List[str] = [ "📟 Jarvis Prime" ]
-        if clean_subject:
-            lines += ["", f"**Subject:** {clean_subject}"]
-        if body_s:
-            lines += ["", "📝 Message", body_s]
+        # Use the incoming values exactly as provided
+        raw_title = title if title is not None else ""
+        raw_body  = body  if body  is not None else ""
 
+        lines: List[str] = []
+
+        # Persona overlay (only if enabled AND UI not already rendering its own header)
         eff_persona = _effective_persona(persona)
-        # Personality overlay gated by personality_enabled toggle and UI header setting
-        if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
+        if _personality_enabled() and not _ui_persona_header_enabled():
             pol = _persona_overlay_line(eff_persona)
-            if pol: lines += [pol]
+            if pol:
+                lines.append(pol)
 
-        # Riffs independent toggle (BODY-first context + scrubbed)
+        # RAW BODY, unchanged — no stripping, no section headers
+        lines.append(raw_body)
+
+        # Optional persona riffs at the bottom (BODY-only context, scrub meta so prompts don't leak)
         if _llm_riffs_enabled() and eff_persona:
-            riff_ctx = _scrub_meta(body_s)
-            if clean_subject:
-                riff_ctx = (riff_ctx + "\n\nSubject: " + clean_subject).strip()
+            riff_ctx = _scrub_meta(raw_body if isinstance(raw_body, str) else "")
             riffs = _persona_llm_riffs(riff_ctx, eff_persona)
-            real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
-            real_riffs = [ r for r in real_riffs if r ]
+            real_riffs = [(r or "").replace("\r","").strip() for r in (riffs or [])]
+            real_riffs = [r for r in real_riffs if r]
             if real_riffs:
                 lines += ["", f"🧠 {eff_persona} riff"]
                 for r in real_riffs:
                     lines.append("> " + r)
 
-        text = "\n".join(lines).strip()
+        text = "\n".join(lines)
+
+        # Client extras: keep only minimal metadata; no client title rewrite
         extras: Dict[str, Any] = {
             "client::display": {"contentType": "text/markdown"},
-            "client::title": _build_client_title(clean_subject),
             "jarvis::beautified": False
         }
         return text, extras
@@ -1062,3 +1065,4 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         extras.update(extras_in)
 
     return text, extras
+```0
