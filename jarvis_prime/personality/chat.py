@@ -70,6 +70,7 @@ def _emit_to_jarvis(title: str, message: str, priority: int = 5) -> bool:
             "tags": ["personality", "quips"],
             "icon": BOT_ICON,
             "app": BOT_NAME,
+            "extras": {"jarvis::raw_persona": True},  # NEW FLAG
         }
         r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6)
         r.raise_for_status()
@@ -217,6 +218,7 @@ def _release_global_lock():
             os.unlink(LOCK_PATH)
     except Exception:
         pass
+
 def _load_options():
     global _opts
     try:
@@ -468,6 +470,7 @@ CATEGORY_APIS = {
     "weirdfacts": ["numbers", "uselessfacts", "catfact"],
     "quips": ["bored"]
 }
+
 def _pick_api_line(category: str):
     allowed = CATEGORY_APIS.get(category, [])
     if not allowed:
