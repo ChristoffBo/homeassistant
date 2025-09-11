@@ -755,6 +755,18 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
 
+    # >>> ADDITIVE: Hard-skip ALL processing for Joke messages (exactly what you asked)
+    if isinstance(title, str) and "joke" in title.lower():
+        text = body if isinstance(body, str) else ("" if body is None else str(body))
+        extras: Dict[str, Any] = {
+            "client::display": {"contentType": "text/markdown"},
+            "client::title": (title.strip() or "Jarvis Prime: Joke"),
+            "jarvis::beautified": False,
+            "jarvis::raw_joke": True,
+            "riff_hint": False,
+        }
+        return (text or "").strip(), extras
+
     # NEW: Skip beautifying/persona riffs if personality marked it as 'raw'.
     if isinstance(extras_in, dict) and extras_in.get("jarvis::raw_persona"):
         text = body if isinstance(body, str) else ("" if body is None else str(body))
