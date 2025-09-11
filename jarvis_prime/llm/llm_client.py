@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (FULL)
+# Jarvis Prime — LLM client (FULL, hardened)
 # - GGUF local loading via llama-cpp (if available)
 # - Optional Ollama HTTP generation (if base_url provided & reachable)
 # - Hugging Face downloads with Authorization header preserved across redirects
@@ -9,6 +9,8 @@
 # - Hard timeouts; best-effort, never crash callers
 # - Message checks (max lines / soft-length guard)
 # - Persona riffs (1–3 short lines)
+# - NEW: prompt preflight to always stay within context window
+# - NEW: never bubble exceptions to callers; fail-open to empty string
 #
 # Public entry points expected by the rest of Jarvis:
 #   ensure_loaded(...)
@@ -28,7 +30,7 @@ import random
 import urllib.request
 import urllib.error
 import http.client
-import re  # ADDITIVE: for riff post-cleaning
+import re  # for riff post-cleaning
 from typing import Optional, Dict, Any, Tuple, List
 
 # ============================
@@ -40,8 +42,8 @@ LOADED_MODEL_PATH = None
 OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
-SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
-SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
+SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # external system prompt file
+SYS_PROMPT = ""  # cached system prompt contents
 
 # ============================
 # Logging
@@ -50,7 +52,7 @@ def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
 
 # ============================
-# ADDITIVE: System prompt loader
+# System prompt loader
 # ============================
 def _load_system_prompt() -> str:
     try:
@@ -62,7 +64,7 @@ def _load_system_prompt() -> str:
     return ""
 
 # ============================
-# ADDITIVE: EnviroGuard env overrides
+# EnviroGuard env overrides
 # ============================
 def _int_env(name: str, default: Optional[int]) -> Optional[int]:
     try:
@@ -97,6 +99,7 @@ def _enviroguard_limits(default_ctx: Optional[int],
     if (ctx != default_ctx) or (cpu != default_cpu) or (to != default_timeout):
         _log(f"EnviroGuard override -> ctx={ctx} cpu={cpu} timeout={to}")
     return ctx, cpu, to
+
 # ============================
 # Small utils
 # ============================
@@ -200,6 +203,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
         except Exception as e:
             _log(f"sha256 check failed (continuing without): {e}")
     return path
+
 # ============================
 # Options resolver (add-on config awareness)
 # ============================
@@ -275,6 +279,7 @@ def _resolve_model_from_options(
             return u, p, token
 
     return url, path, token
+
 # ============================
 # CPU / Threads (throttling)
 # ============================
@@ -389,6 +394,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         LOADED_MODEL_PATH = None
         LLM_MODE = "none"
         return False
+
 # ============================
 # Ollama path (HTTP)
 # ============================
@@ -409,8 +415,8 @@ def _ollama_ready(base_url: str, timeout: int = 2) -> bool:
     except Exception:
         return False
 
-def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20) -> str:
-    """Minimal Ollama /api/generate call. Non-streaming."""
+def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20, max_new_tokens: int = 128) -> str:
+    """Minimal Ollama /api/generate call. Non-streaming. Caps num_predict."""
     try:
         url = base_url.rstrip("/") + "/api/generate"
         payload = {
@@ -420,7 +426,8 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
             "options": {
                 "temperature": 0.3,
                 "top_p": 0.9,
-                "repeat_penalty": 1.1
+                "repeat_penalty": 1.1,
+                "num_predict": max(1, int(max_new_tokens)),
             }
         }
         data = json.dumps(payload).encode("utf-8")
@@ -459,8 +466,53 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
         return text[: max(0, max_chars - 1)].rstrip() + "…"
     return text
 
+# ----------------------------
+# Token tools & prompt preflight (NEW)
+# ----------------------------
+def _token_count(text: str) -> int:
+    """Prefer llama-cpp's tokenizer when available; fallback to ~4 chars/token."""
+    try:
+        if LLM_MODE == "llama" and LLM is not None:
+            toks = LLM.tokenize(text.encode("utf-8"), add_bos=True)
+            return int(len(toks))
+    except Exception as e:
+        _log(f"tokenize failed, falling back: {e}")
+    # Rule of thumb: 1 token ≈ 4 chars
+    return max(1, len(text) // 4)
+
+def _preflight_prompt(prompt: str, max_new_tokens: int, ctx_tokens: Optional[int] = None) -> str:
+    """
+    Ensure prompt tokens + max_new_tokens stay within context. Truncate if needed.
+    Leaves a small safety margin (64 tokens).
+    """
+    ctx = int(ctx_tokens or DEFAULT_CTX or 4096)
+    margin = 64
+    budget = max(256, ctx - margin - max(1, int(max_new_tokens)))
+    if budget <= 256:
+        # super defensive: still allow a minimal prompt
+        budget = 256
+    # fast path
+    if _token_count(prompt) <= budget:
+        return prompt
+    # approximate binary search on character length until token budget fits
+    lo, hi = 0, len(prompt)
+    best = ""
+    for _ in range(8):  # few steps are enough
+        mid = (lo + hi) // 2
+        cand = prompt[:mid]
+        if _token_count(cand) <= budget:
+            best = cand
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    trimmed = (best or prompt[: int(len(prompt) * 0.7)]).rstrip()
+    if not trimmed:
+        # absolute floor: keep first ~budget*4 chars
+        trimmed = prompt[: budget * 4].rstrip()
+    return trimmed
+
 # ============================
-# ADDITIVE: strip leaked meta tags from model output
+# strip leaked meta tags from model output
 # ============================
 _META_LINE_RX = re.compile(
     r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
@@ -469,22 +521,17 @@ _META_LINE_RX = re.compile(
 def _strip_meta_markers(s: str) -> str:
     if not s:
         return s
-    # Drop pure marker lines
     out = _META_LINE_RX.sub("", s)
-    # Remove inline fragments
     out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
     out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
     out = out.replace("<s>", "").replace("</s>", "")
-    # 🔽 ADDITIVE: strip leaked "YOU ARE … REWRITER" echoes
     out = re.sub(
         r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
         '',
         out,
         flags=re.I | re.M
     )
-    # Clean leftover quotes/backticks-only wrappers
     out = out.strip().strip('`').strip().strip('"').strip("'").strip()
-    # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
 
@@ -567,6 +614,7 @@ def ensure_loaded(
 
     ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
     return bool(ok)
+
 # ============================
 # Prompt builders
 # ============================
@@ -603,7 +651,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
-# ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
+# Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
     r'^\s*no\s+lists.*$',
@@ -641,7 +689,7 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 # ============================
 # Core generation (shared)
 # ============================
-def _llama_generate(prompt: str, timeout: int = 12) -> str:
+def _llama_generate(prompt: str, timeout: int = 12, max_new_tokens: int = 128) -> str:
     """Generate text via local llama-cpp (non-streaming)."""
     try:
         import signal
@@ -653,7 +701,7 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
 
         out = LLM(
             prompt,
-            max_tokens=256,
+            max_tokens=max(1, int(max_new_tokens)),
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
@@ -672,8 +720,8 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str) -> str:
-    """Route to Ollama or llama-cpp, depending on LLM_MODE."""
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_new_tokens: int) -> str:
+    """Route to Ollama or llama-cpp, depending on LLM_MODE. Enforce max_new_tokens."""
     if LLM_MODE == "ollama" and OLLAMA_URL:
         name = ""
         cand = (model_name_hint or "").strip()
@@ -681,12 +729,13 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
             name = cand
         else:
             name = _model_name_from_url(model_url)
-        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
+        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_new_tokens=max_new_tokens)
 
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)))
+        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_new_tokens=max_new_tokens)
 
     return ""
+
 # ============================
 # Public: rewrite
 # ============================
@@ -715,22 +764,30 @@ def rewrite(
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
+    # Options for gen/ctx
+    opts = _read_options()
+    opt_ctx = int(opts.get("llm_ctx_tokens", ctx_tokens or DEFAULT_CTX or 4096) or 4096)
+    gen_tok = int(opts.get("llm_gen_tokens", 128) or 128)
+    DEFAULT_CTX = max(DEFAULT_CTX, opt_ctx)
+
     if LLM_MODE == "none":
         ensure_loaded(
             model_url=model_url,
             model_path=model_path,
             model_sha256=model_sha256,
-            ctx_tokens=ctx_tokens,
+            ctx_tokens=opt_ctx,
             cpu_limit=cpu_limit,
             hf_token=hf_token,
             base_url=base_url
         )
 
     prompt = _prompt_for_rewrite(text, mood, allow_profanity)
-    out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+    prompt = _preflight_prompt(prompt, gen_tok, opt_ctx)
+
+    out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_new_tokens=gen_tok)
     final = out if out else text
 
-    # ADD: strip any leaked meta tags/markers from the model output
+    # strip any leaked meta tags/markers from the model output
     final = _strip_meta_markers(final)
 
     if max_lines:
@@ -760,12 +817,18 @@ def riff(
     _, _, g_to = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
 
+    # Options for gen/ctx
+    opts = _read_options()
+    opt_ctx = int(opts.get("llm_ctx_tokens", DEFAULT_CTX or 4096) or 4096)
+    gen_tok = int(opts.get("llm_gen_tokens", 64) or 64)
+    DEFAULT_CTX = max(DEFAULT_CTX, opt_ctx)
+
     if LLM_MODE == "none":
         ensure_loaded(
             model_url=model_url,
             model_path=model_path,
             model_sha256="",
-            ctx_tokens=2048,
+            ctx_tokens=opt_ctx,
             cpu_limit=80,
             hf_token=None,
             base_url=base_url
@@ -775,7 +838,9 @@ def riff(
         return ""
 
     prompt = _prompt_for_riff(persona, subject, allow_profanity)
-    out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+    prompt = _preflight_prompt(prompt, gen_tok, opt_ctx)
+
+    out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_new_tokens=gen_tok)
     if not out:
         return ""
 
@@ -828,12 +893,18 @@ def persona_riff(
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
+    # Options for gen/ctx
+    opts = _read_options()
+    opt_ctx = int(opts.get("llm_ctx_tokens", ctx_tokens or DEFAULT_CTX or 4096) or 4096)
+    gen_tok = int(opts.get("llm_gen_tokens", 96) or 96)
+    DEFAULT_CTX = max(DEFAULT_CTX, opt_ctx)
+
     if LLM_MODE == "none":
         ensure_loaded(
             model_url=model_url,
             model_path=model_path,
             model_sha256=model_sha256,
-            ctx_tokens=ctx_tokens,
+            ctx_tokens=opt_ctx,
             cpu_limit=cpu_limit,
             hf_token=hf_token,
             base_url=base_url
@@ -890,7 +961,9 @@ def persona_riff(
     )
     prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-    raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+    prompt = _preflight_prompt(prompt, gen_tok, opt_ctx)
+
+    raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_new_tokens=gen_tok)
     if not raw:
         return []
 
@@ -923,7 +996,7 @@ if __name__ == "__main__":
             model_url=os.getenv("TEST_MODEL_URL",""),
             model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
             model_sha256=os.getenv("TEST_MODEL_SHA256",""),
-            ctx_tokens=int(os.getenv("TEST_CTX","2048")),
+            ctx_tokens=int(os.getenv("TEST_CTX","4096")),
             cpu_limit=int(os.getenv("TEST_CPU","80")),
             hf_token=os.getenv("TEST_HF_TOKEN",""),
             base_url=os.getenv("TEST_OLLAMA","").strip()
@@ -937,7 +1010,7 @@ if __name__ == "__main__":
                 base_url=os.getenv("TEST_OLLAMA","").strip(),
                 model_url=os.getenv("TEST_MODEL_URL",""),
                 model_path=os.getenv("TEST_MODEL_NAME",""),
-                ctx_tokens=2048
+                ctx_tokens=4096
             )
             print("rewrite sample ->", txt[:120])
             r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
