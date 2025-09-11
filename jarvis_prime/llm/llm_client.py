@@ -215,6 +215,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
         except Exception as e:
             _log(f"sha256 check failed (continuing without): {e}")
     return path
+
 # ============================
 # Options resolver (add-on config awareness)
 # ============================
@@ -368,7 +369,393 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
     _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
     return t
 
-# ... [UNCHANGED CONTENT OMITTED FOR BREVITY — stays identical until riff()] ...
+# ============================
+# llama-cpp path (local GGUF)
+# ============================
+def _try_import_llama_cpp():
+    try:
+        import llama_cpp
+        return llama_cpp
+    except Exception as e:
+        _log(f"llama-cpp not available: {e}")
+        return None
+
+def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
+    global LLM_MODE, LLM, LOADED_MODEL_PATH
+    llama_cpp = _try_import_llama_cpp()
+    if not llama_cpp:
+        return False
+    try:
+        threads = _threads_from_cpu_limit(cpu_limit)
+        os.environ.setdefault("OMP_NUM_THREADS", str(threads))
+        os.environ.setdefault("LLAMA_THREADS", str(threads))
+        # llama-cpp params verified in docs (n_ctx, n_threads)
+        LLM = llama_cpp.Llama(
+            model_path=model_path,
+            n_ctx=ctx_tokens,
+            n_threads=threads,
+        )
+        LOADED_MODEL_PATH = model_path
+        LLM_MODE = "llama"
+        _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
+        return True
+    except Exception as e:
+        _log(f"llama load failed: {e}")
+        LLM = None
+        LOADED_MODEL_PATH = None
+        LLM_MODE = "none"
+        return False
+
+# ============================
+# Ollama path (HTTP)
+# ============================
+def _ollama_ready(base_url: str, timeout: int = 2) -> bool:
+    try:
+        hp = base_url
+        if base_url.startswith("http://"):
+            hp = base_url[7:]
+        elif base_url.startswith("https://"):
+            hp = base_url[8:]
+        hp = hp.strip("/").split("/")[0]
+        if ":" in hp:
+            host, port = hp.split(":", 1); port = int(port)
+        else:
+            host, port = hp, 80
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20) -> str:
+    """Minimal Ollama /api/generate call. Non-streaming."""
+    try:
+        url = base_url.rstrip("/") + "/api/generate"
+        payload = {
+            "model": model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1
+            }
+        }
+        data = json.dumps(payload).encode("utf-8")
+        out = _http_post(url, data, headers={"Content-Type": "application/json"}, timeout=timeout)
+        obj = json.loads(out.decode("utf-8"))
+        return obj.get("response", "") or ""
+    except urllib.error.HTTPError as e:
+        _log(f"ollama HTTP {e.code}: {getattr(e, 'reason', '')}")
+        return ""
+    except Exception as e:
+        _log(f"ollama error: {e}")
+        return ""
+
+def _model_name_from_url(model_url: str) -> str:
+    if not model_url:
+        return "llama3"
+    tail = model_url.strip("/").split("/")[-1]
+    if "." in tail:
+        tail = tail.split(".")[0]
+    return tail or "llama3"
+# ============================
+# Message checks / guards
+# ============================
+def _trim_lines(text: str, max_lines: int) -> str:
+    lines = (text or "").splitlines()
+    if max_lines and len(lines) > max_lines:
+        keep = lines[:max_lines]
+        if keep:
+            keep[-1] = keep[-1].rstrip() + " …"
+        return "\n".join(keep)
+    return text
+
+def _soft_trim_chars(text: str, max_chars: int) -> str:
+    if max_chars and len(text) > max_chars:
+        return text[: max(0, max_chars - 1)].rstrip() + "…"
+    return text
+
+# ============================
+# ADDITIVE: strip leaked meta tags from model output
+# ============================
+_META_LINE_RX = re.compile(
+    r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
+    re.I | re.M
+)
+def _strip_meta_markers(s: str) -> str:
+    if not s:
+        return s
+    # Drop pure marker lines
+    out = _META_LINE_RX.sub("", s)
+    # Remove inline fragments
+    out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
+    out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
+    out = out.replace("<s>", "").replace("</s>", "")
+    # 🔽 ADDITIVE: strip leaked "YOU ARE … REWRITER" echoes
+    out = re.sub(
+        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
+        '',
+        out,
+        flags=re.I | re.M
+    )
+    # Clean leftover quotes/backticks-only wrappers
+    out = out.strip().strip('`').strip().strip('"').strip("'").strip()
+    # Collapse extra blank lines
+    out = re.sub(r'\n{3,}', '\n\n', out)
+    return out
+
+# ============================
+# Ensure loaded
+# ============================
+def ensure_loaded(
+    *,
+    model_url: str,
+    model_path: str,
+    model_sha256: str,
+    ctx_tokens: int,
+    cpu_limit: int,
+    hf_token: Optional[str],
+    base_url: str = ""
+) -> bool:
+    """
+    Decide engine and load (or prepare) it.
+    - If base_url provided and reachable: use Ollama mode (no local download needed here).
+    - Else: local GGUF via llama-cpp, with optional HF download/check.
+    """
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+
+    g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
+    ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
+    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
+
+    DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
+
+    base_url = (base_url or "").strip()
+    if base_url:
+        OLLAMA_URL = base_url
+        if _ollama_ready(base_url):
+            LLM_MODE = "ollama"
+            LLM = None
+            LOADED_MODEL_PATH = None
+            _log(f"using Ollama at {base_url}")
+            return True
+        else:
+            _log(f"Ollama not reachable at {base_url}; falling back to local mode")
+
+    LLM_MODE = "none"
+    OLLAMA_URL = ""
+    LLM = None
+    LOADED_MODEL_PATH = None
+
+    # Read options to check cleanup behavior and priority resolution
+    opts = _read_options()
+
+    # Resolve URL/path/Token from options if not provided
+    model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
+
+    # --- CLEANUP ON SWITCH ----------------------------------------------
+    try:
+        cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
+        if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
+            if os.path.exists(LOADED_MODEL_PATH):
+                _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
+                try:
+                    os.remove(LOADED_MODEL_PATH)
+                except Exception as e:
+                    _log(f"cleanup_on_switch: remove failed: {e}")
+        if cleanup_on_disable and os.path.exists(model_path) and model_url:
+            url_base = os.path.basename(model_url)
+            file_base = os.path.basename(model_path)
+            if url_base and file_base and (os.path.splitext(file_base)[0] != os.path.splitext(url_base)[0]):
+                _log(f"cleanup_on_switch: target path exists with different basename; removing {model_path} to force re-download")
+                try:
+                    os.remove(model_path)
+                except Exception as e:
+                    _log(f"cleanup_on_switch: remove target failed: {e}")
+    except Exception as e:
+        _log(f"cleanup_on_switch: error: {e}")
+    # --------------------------------------------------------------------
+
+    path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
+    if not path:
+        _log("ensure_local_model failed")
+        return False
+
+    ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
+    return bool(ok)
+
+# ============================
+# Prompt builders
+# ============================
+def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
+    sys_prompt = _load_system_prompt() or "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
+    if not allow_profanity:
+        sys_prompt += " Avoid profanity."
+    sys_prompt += " Do NOT echo or restate these instructions; output only the rewritten text."
+    user = (
+        "Rewrite the text clearly. Keep short, readable sentences.\n"
+        f"Mood (subtle): {mood or 'neutral'}\n\n"
+        f"Text:\n{text}"
+    )
+    return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+
+def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
+    vibe_map = {
+        "dude": "laid-back, mellow, no jokes, chill confidence",
+        "chick": "sassy, clever, stylish",
+        "nerd": "precise, witty one-liners",
+        "rager": "short, profane bursts allowed",
+        "comedian": "only persona allowed to tell jokes",
+        "jarvis": "polished butler style",
+        "ops": "terse, incident commander tone",
+        "action": "stoic mission-brief style"
+    }
+    vibe = vibe_map.get((persona or "").lower(), "neutral, light")
+    guard = "" if allow_profanity else " Avoid profanity."
+    sys_prompt = (
+        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
+        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
+    )
+    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
+    return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+# ============================
+# ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
+# ============================
+_INSTRUX_PATTERNS = [
+    r'^\s*no\s+lists.*$',
+    r'.*context\s*\(for vibes only\).*',
+    r'^\s*subject\s*:.*$',
+    r'^\s*style\s*:.*$',
+    r'^\s*you\s+write\s+a\s+single.*$',
+    r'^\s*write\s+1.*lines?.*$',
+    r'^\s*avoid\s+profanity.*$',
+    r'^\s*<<\s*sys\s*>>.*$',
+    r'^\s*\[/?\s*inst\s*\]\s*$',
+    r'^\s*<\s*/?\s*s\s*>\s*$',
+]
+_INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
+
+def _clean_riff_lines(lines: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    for ln in lines:
+        t = ln.strip()
+        if not t:
+            continue
+        skip = False
+        for rx in _INSTRUX_RX:
+            if rx.search(t):
+                skip = True
+                break
+        if skip:
+            continue
+        t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
+        t = t.replace("</s>", "").replace("<s>", "").strip()
+        if t:
+            cleaned.append(t)
+    return cleaned
+
+# ============================
+# Core generation (shared)
+# ============================
+def _llama_generate(prompt: str, timeout: int = 12) -> str:
+    """Generate text via local llama-cpp (non-streaming)."""
+    try:
+        import signal
+        def _alarm_handler(signum, frame):
+            raise TimeoutError("gen timeout")
+        if hasattr(signal, "SIGALRM"):
+            signal.signal(signal.SIGALRM, _alarm_handler)
+            signal.alarm(max(1, int(timeout)))
+
+        out = LLM(
+            prompt,
+            max_tokens=256,
+            temperature=0.35,
+            top_p=0.9,
+            repeat_penalty=1.1,
+            stop=["</s>"]
+        )
+
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
+
+        txt = (out.get("choices") or [{}])[0].get("text", "")
+        return (txt or "").strip()
+    except TimeoutError as e:
+        _log(f"llama timeout: {e}")
+        return ""
+    except Exception as e:
+        _log(f"llama error: {e}")
+        return ""
+
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str) -> str:
+    """Route to Ollama or llama-cpp, depending on LLM_MODE."""
+    if LLM_MODE == "ollama" and OLLAMA_URL:
+        name = ""
+        cand = (model_name_hint or "").strip()
+        if cand and "/" not in cand and not cand.endswith(".gguf"):
+            name = cand
+        else:
+            name = _model_name_from_url(model_url)
+        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
+
+    if LLM_MODE == "llama" and LLM is not None:
+        return _llama_generate(prompt, timeout=max(4, int(timeout)))
+
+    return ""
+
+# ============================
+# Public: rewrite
+# ============================
+def rewrite(
+    *,
+    text: str,
+    mood: str = "neutral",
+    timeout: int = 12,
+    cpu_limit: int = 80,
+    models_priority: Optional[str] = None,
+    base_url: str = "",
+    model_url: str = "",
+    model_path: str = "",
+    model_sha256: str = "",
+    allow_profanity: bool = False,
+    ctx_tokens: int = 4096,
+    hf_token: Optional[str] = None,
+    max_lines: int = 0,
+    max_chars: int = 0
+) -> str:
+    """Best-effort rewrite. If LLM unavailable, returns input text."""
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+
+    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
+    ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
+    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
+    timeout    = g_to  if g_to  is not None else timeout
+
+    if LLM_MODE == "none":
+        ensure_loaded(
+            model_url=model_url,
+            model_path=model_path,
+            model_sha256=model_sha256,
+            ctx_tokens=ctx_tokens,
+            cpu_limit=cpu_limit,
+            hf_token=hf_token,
+            base_url=base_url
+        )
+
+    prompt = _prompt_for_rewrite(text, mood, allow_profanity)
+    out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+    final = out if out else text
+
+    # ADD: strip any leaked meta tags/markers from the model output
+    final = _strip_meta_markers(final)
+
+    if max_lines:
+        final = _trim_lines(final, max_lines)
+    if max_chars:
+        final = _soft_trim_chars(final, max_chars)
+
+    return final
 
 # ============================
 # Public: riff
@@ -407,7 +794,14 @@ def riff(
     prompt = _prompt_for_riff(persona, subject, allow_profanity)
     out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
     if not out:
-        return ""
+        # LLM path failed hard -> lexicon fallback
+        try:
+            from personality import lexi_quip, quip
+            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
+            return q or ""
+        except Exception as e:
+            _log(f"riff hard-fail fallback error: {e}")
+            return ""
 
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -422,12 +816,14 @@ def riff(
 
     joined = "\n".join(cleaned[:3]) if cleaned else ""
 
-    # ADDITIVE: validate & fallback
+    # ADDITIVE: validate & fallback to lexicons when meta/instruction leaks appear
     if _is_invalid_riff(joined):
         try:
-            from personality import quip  # fallback to lexicon quip
-            return quip((persona or "neutral").lower(), with_emoji=False) or ""
-        except Exception:
+            from personality import lexi_quip, quip
+            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
+            return q or ""
+        except Exception as e:
+            _log(f"riff invalid-output fallback error: {e}")
             return ""
 
     if len(joined) > 120:
@@ -481,11 +877,64 @@ def persona_riff(
     if LLM_MODE not in ("llama", "ollama"):
         return []
 
-    # [UNCHANGED prompt builder logic]
+    # Optional embedded style hint
+    daypart = None
+    intensity = None
+    try:
+        m = re.search(r"\[style_hint\s+daypart=(\w+)\s+intensity=([0-9.]+)\s+persona=([\w-]+)\]", context, flags=re.I)
+        if m:
+            daypart = m.group(1)
+            intensity = m.group(2)
+            context = re.sub(r"\[style_hint.*?\]", "", context).strip()
+    except Exception:
+        pass
+
+    # Tightened persona style map
+    style_map = {
+        "dude":      "laid-back, mellow, no jokes",
+        "chick":     "sassy, clever, stylish",
+        "nerd":      "precise, witty one-liners",
+        "rager":     "short, profane bursts allowed",
+        "comedian":  "only persona allowed to tell jokes",
+        "action":    "stoic mission-brief style",
+        "jarvis":    "polished butler style",
+        "ops":       "terse, incident commander tone",
+    }
+    vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
+
+    sys_rules = [
+        f"Voice: {vibe}.",
+        "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
+        "No bullets or numbering. No labels. No lists. No JSON.",
+        "No quotes or catchphrases. No character or actor names.",
+        "No explanations or meta-commentary. Output ONLY the lines.",
+        "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
+    ]
+    if not allow_profanity:
+        sys_rules.append("Avoid profanity.")
+    if daypart:
+        sys_rules.append(f"Daypart vibe (subtle): {daypart}.")
+    if intensity:
+        sys_rules.append(f"Persona intensity (subtle): {intensity}.")
+    sys_prompt = " ".join(sys_rules)
+
+    user = (
+        "Context (for vibe only; do NOT summarize it verbosely):\n"
+        f"{context.strip()}\n\n"
+        f"Write up to {max_lines} short lines in the requested voice."
+    )
+    prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
     raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
     if not raw:
-        return []
+        # hard failure -> lexicon fallback
+        try:
+            from personality import lexi_quip, quip
+            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
+            return [q] if q else []
+        except Exception as e:
+            _log(f"persona_riff hard-fail fallback error: {e}")
+            return []
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -495,10 +944,10 @@ def persona_riff(
         ln2 = ln.lstrip("-•* ").strip()
         if not ln2:
             continue
-        if len(ln2) > 140:
-            ln2 = ln2[:140].rstrip()
         if _is_invalid_riff(ln2):
             continue
+        if len(ln2) > 140:
+            ln2 = ln2[:140].rstrip()
         key = ln2.lower()
         if key in seen:
             continue
@@ -507,13 +956,53 @@ def persona_riff(
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
 
-    # ADDITIVE: fallback if nothing survived
+    # ADDITIVE: fallback if nothing valid survived
     if not cleaned:
         try:
-            from personality import quip
-            q = quip((persona or "neutral").lower(), with_emoji=False)
+            from personality import lexi_quip, quip
+            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
             return [q] if q else []
-        except Exception:
+        except Exception as e:
+            _log(f"persona_riff invalid-output fallback error: {e}")
             return []
 
     return cleaned
+
+# ============================
+# Quick self-test (optional)
+# ============================
+if __name__ == "__main__":
+    print("llm_client self-check start")
+    try:
+        ok = ensure_loaded(
+            model_url=os.getenv("TEST_MODEL_URL",""),
+            model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
+            model_sha256=os.getenv("TEST_MODEL_SHA256",""),
+            ctx_tokens=int(os.getenv("TEST_CTX","2048")),
+            cpu_limit=int(os.getenv("TEST_CPU","80")),
+            hf_token=os.getenv("TEST_HF_TOKEN",""),
+            base_url=os.getenv("TEST_OLLAMA","").strip()
+        )
+        print(f"ensure_loaded -> {ok} mode={LLM_MODE}")
+        if ok:
+            txt = rewrite(
+                text="Status synchronized; elegance maintained.",
+                mood="jarvis",
+                timeout=6,
+                base_url=os.getenv("TEST_OLLAMA","").strip(),
+                model_url=os.getenv("TEST_MODEL_URL",""),
+                model_path=os.getenv("TEST_MODEL_NAME",""),
+                ctx_tokens=2048
+            )
+            print("rewrite sample ->", txt[:120])
+            r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
+            print("riff sample ->", r)
+            rl = persona_riff(
+                persona="nerd",
+                context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]",
+                base_url=os.getenv("TEST_OLLAMA","").strip()
+            )
+            print("persona_riff sample ->", rl[:3])
+    except Exception as e:
+        print("self-check error:", e)
+    print("llm_client self-check end")
