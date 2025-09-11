@@ -274,6 +274,7 @@ def _harvest_timestamp(title: str, body: str) -> Optional[str]:
             m = rx.search(src)
             if m: return m.group(0).strip()
     return None
+
 # ====== Options & toggles ======
 def _read_options() -> Dict[str, Any]:
     try:
@@ -489,6 +490,7 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
     bullets = "\n".join([f"• `{name}` → `{img}` @ `{new}`" for name, img, new in updated])
     md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
     return md, meta
+
 # -------- querystring detection & body cleanup helpers --------
 _QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
 
@@ -753,6 +755,17 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                      persona: Optional[str] = None, persona_quip: bool = True,
                      extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
 
+    # NEW: Skip beautifying/persona riffs if personality marked it as 'raw'.
+    if isinstance(extras_in, dict) and extras_in.get("jarvis::raw_persona"):
+        text = body if isinstance(body, str) else ("" if body is None else str(body))
+        extras: Dict[str, Any] = {
+            "client::display": {"contentType": "text/markdown"},
+            "client::title": _build_client_title(_clean_subject(title or "", text)),
+            "jarvis::beautified": False,
+            "jarvis::raw_persona": True,
+        }
+        return text, extras
+
     # RAW passthrough if beautifier is OFF:
     if _beautify_is_disabled():
         raw_title = title if title is not None else ""
@@ -886,7 +899,8 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                 lines += ["", f"![poster]({poster})"]
                 text = "\n".join(lines).strip()
         return text, extras
-# ===== Standard path (Message-only layout) =====
+
+    # ===== Standard path (Message-only layout) =====
     lines: List[str] = []
     lines += _header(kind, badge)
 
