@@ -316,10 +316,6 @@
     "llm_enviroguard_normal_c": "int",
     "llm_enviroguard_boost_c": "int"
   },
-  "environment": {
-    "LLAMA_THREADS": "3",
-    "OMP_NUM_THREADS": "3"
-  },
   "ingress": true,
   "ingress_port": 2581,
   "host_network": true,
