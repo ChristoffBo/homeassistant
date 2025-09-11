@@ -142,23 +142,19 @@
     "llm_memory_enabled": true,
     "llm_autodownload": true,
     "llm_hf_token": "",
-
+    "llm_threads": 3,
     "llm_phi3_enabled": true,
     "llm_phi3_url": "https://huggingface.co/bartowski/Phi-3-mini-4k-instruct-GGUF/resolve/main/Phi-3-mini-4k-instruct-Q4_K_M.gguf",
     "llm_phi3_path": "/share/jarvis_prime/models/Phi-3-mini-4k-instruct-q4.gguf",
-
     "llm_phi35_q4_enabled": false,
     "llm_phi35_q4_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
     "llm_phi35_q4_path": "/share/jarvis_prime/models/Phi-3.5-mini-instruct-q4.gguf",
-
     "llm_phi35_q5_enabled": true,
     "llm_phi35_q5_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q5_K_M.gguf",
     "llm_phi35_q5_path": "/share/jarvis_prime/models/Phi-3.5-mini-instruct-q5.gguf",
-
     "llm_phi35_q5_uncensored_enabled": false,
     "llm_phi35_q5_uncensored_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-uncensored-Q5_K_M.gguf",
     "llm_phi35_q5_uncensored_path": "/share/jarvis_prime/models/Phi-3.5-mini-uncensored-q5.gguf",
-
     "llm_enviroguard_enabled": true,
     "llm_enviroguard_poll_minutes": 30,
     "llm_enviroguard_max_stale_minutes": 120,
@@ -292,23 +288,19 @@
     "llm_memory_enabled": "bool",
     "llm_autodownload": "bool",
     "llm_hf_token": "str",
-
+    "llm_threads": "int(1,)",
     "llm_phi3_enabled": "bool",
     "llm_phi3_url": "str",
     "llm_phi3_path": "str",
-
     "llm_phi35_q4_enabled": "bool",
     "llm_phi35_q4_url": "str",
     "llm_phi35_q4_path": "str",
-
     "llm_phi35_q5_enabled": "bool",
     "llm_phi35_q5_url": "str",
     "llm_phi35_q5_path": "str",
-
     "llm_phi35_q5_uncensored_enabled": "bool",
     "llm_phi35_q5_uncensored_url": "str",
     "llm_phi35_q5_uncensored_path": "str",
-
     "llm_enviroguard_enabled": "bool",
     "llm_enviroguard_poll_minutes": "int(1,)",
     "llm_enviroguard_max_stale_minutes": "int(1,)",
@@ -323,6 +315,10 @@
     "llm_enviroguard_off_c": "int",
     "llm_enviroguard_normal_c": "int",
     "llm_enviroguard_boost_c": "int"
+  },
+  "environment": {
+    "LLAMA_THREADS": "3",
+    "OMP_NUM_THREADS": "3"
   },
   "ingress": true,
   "ingress_port": 2581,
