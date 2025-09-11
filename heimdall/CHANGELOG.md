@@ -1,3 +1,7 @@
+## v2.7.5-ls320 (2025-09-11 04:01:37)
+- Update from v2.7.4-ls320 to v2.7.5-ls320
+- Docker Image: [linuxserver/heimdall:v2.7.5-ls320](https://fleet.linuxserver.io/image?name=)
+
 ## v2.7.4-ls320 (2025-08-23 04:01:32)
 - Update from v2.7.4-ls319 to v2.7.4-ls320
 - Docker Image: [linuxserver/heimdall:v2.7.4-ls320](https://fleet.linuxserver.io/image?name=)
