@@ -487,7 +487,6 @@ def _strip_meta_markers(s: str) -> str:
     # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
-
 # ============================
 # Ensure loaded
 # ============================
@@ -567,6 +566,7 @@ def ensure_loaded(
 
     ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
     return bool(ok)
+
 # ============================
 # Prompt builders
 # ============================
@@ -883,8 +883,8 @@ def persona_riff(
         sys_rules.append(f"Persona intensity (subtle): {intensity}.")
     sys_prompt = " ".join(sys_rules)
 
+    # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
     user = (
-        "Context (for vibe only; do NOT summarize it verbosely):\n"
         f"{context.strip()}\n\n"
         f"Write up to {max_lines} short lines in the requested voice."
     )
