@@ -1410,17 +1410,7 @@ def persona_header(persona_name: str) -> str:
     """
     who = (persona_name or "neutral").strip()
 
-    # Force Tappit to always use lexi_quip if available
-    if who.lower() == "tappit":
-        try:
-            q = lexi_quip("tappit", with_emoji=False)
-            q = (q or "").strip().replace("\n", " ")
-            if len(q) > 140:
-                q = q[:137] + "..."
-            return f"💬 {who} says: {q}"
-        except Exception as _e:
-            print(f"[personality] ⚠️ Tappit lexi_quip failed: {_e}")
-
+   
     # Try Lexi quip for other personas
     try:
         if 'lexi_quip' in globals() and callable(globals()['lexi_quip']):
