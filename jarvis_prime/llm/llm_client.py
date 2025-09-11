@@ -50,8 +50,8 @@ _GEN_LOCK = threading.RLock()
 def _lock_timeout() -> int:
     """Optional env-configurable lock wait. Defaults to 10s."""
     try:
-        v = int(os.getenv("LLM_LOCK_TIMEOUT_SECONDS", "60").strip())
-        return max(1, min(60, v))
+        v = int(os.getenv("LLM_LOCK_TIMEOUT_SECONDS", "300").strip())
+        return max(1, min(300, v))
     except Exception:
         return 10
 
