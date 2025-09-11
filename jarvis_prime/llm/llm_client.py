@@ -97,21 +97,6 @@ def _enviroguard_limits(default_ctx: Optional[int],
     if (ctx != default_ctx) or (cpu != default_cpu) or (to != default_timeout):
         _log(f"EnviroGuard override -> ctx={ctx} cpu={cpu} timeout={to}")
     return ctx, cpu, to
-
-# ============================
-# ADDITIVE: riff validator
-# ============================
-def _is_invalid_riff(s: str) -> bool:
-    """Reject meta/instructional junk that should never surface as a riff."""
-    if not s:
-        return True
-    t = s.strip().lower()
-    bad_starts = ("tone:", "context:", "style:", "system:", "instructions:")
-    if any(t.startswith(bs) for bs in bad_starts):
-        return True
-    if "json" in t or "schema" in t or "output must" in t:
-        return True
-    return False
 # ============================
 # Small utils
 # ============================
@@ -215,7 +200,6 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
         except Exception as e:
             _log(f"sha256 check failed (continuing without): {e}")
     return path
-
 # ============================
 # Options resolver (add-on config awareness)
 # ============================
@@ -405,7 +389,6 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         LOADED_MODEL_PATH = None
         LLM_MODE = "none"
         return False
-
 # ============================
 # Ollama path (HTTP)
 # ============================
@@ -458,6 +441,7 @@ def _model_name_from_url(model_url: str) -> str:
     if "." in tail:
         tail = tail.split(".")[0]
     return tail or "llama3"
+
 # ============================
 # Message checks / guards
 # ============================
@@ -583,7 +567,6 @@ def ensure_loaded(
 
     ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
     return bool(ok)
-
 # ============================
 # Prompt builders
 # ============================
@@ -618,6 +601,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     )
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
@@ -703,7 +687,6 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         return _llama_generate(prompt, timeout=max(4, int(timeout)))
 
     return ""
-
 # ============================
 # Public: rewrite
 # ============================
@@ -794,14 +777,7 @@ def riff(
     prompt = _prompt_for_riff(persona, subject, allow_profanity)
     out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
     if not out:
-        # LLM path failed hard -> lexicon fallback
-        try:
-            from personality import lexi_quip, quip
-            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
-            return q or ""
-        except Exception as e:
-            _log(f"riff hard-fail fallback error: {e}")
-            return ""
+        return ""
 
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -815,17 +791,6 @@ def riff(
             break
 
     joined = "\n".join(cleaned[:3]) if cleaned else ""
-
-    # ADDITIVE: validate & fallback to lexicons when meta/instruction leaks appear
-    if _is_invalid_riff(joined):
-        try:
-            from personality import lexi_quip, quip
-            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
-            return q or ""
-        except Exception as e:
-            _log(f"riff invalid-output fallback error: {e}")
-            return ""
-
     if len(joined) > 120:
         joined = joined[:119].rstrip() + "…"
     return joined
@@ -927,14 +892,7 @@ def persona_riff(
 
     raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
     if not raw:
-        # hard failure -> lexicon fallback
-        try:
-            from personality import lexi_quip, quip
-            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
-            return [q] if q else []
-        except Exception as e:
-            _log(f"persona_riff hard-fail fallback error: {e}")
-            return []
+        return []
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -943,8 +901,6 @@ def persona_riff(
     for ln in lines:
         ln2 = ln.lstrip("-•* ").strip()
         if not ln2:
-            continue
-        if _is_invalid_riff(ln2):
             continue
         if len(ln2) > 140:
             ln2 = ln2[:140].rstrip()
@@ -955,17 +911,6 @@ def persona_riff(
         cleaned.append(ln2)
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
-
-    # ADDITIVE: fallback if nothing valid survived
-    if not cleaned:
-        try:
-            from personality import lexi_quip, quip
-            q = lexi_quip(persona, with_emoji=False) or quip(persona, with_emoji=False)
-            return [q] if q else []
-        except Exception as e:
-            _log(f"persona_riff invalid-output fallback error: {e}")
-            return []
-
     return cleaned
 
 # ============================
