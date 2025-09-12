@@ -8,6 +8,8 @@
 # - Hard timeouts; best-effort, never crash callers
 # - Message checks (max lines / soft-length guard)
 # - Persona riffs (1–3 short lines)
+# - Hot-load model at startup, keep in memory
+# - Lexicon fallback if generation unavailable
 #
 # Public entry points expected by the rest of Jarvis:
 #   ensure_loaded(...)
@@ -31,6 +33,12 @@ import re
 import threading
 from typing import Optional, Dict, Any, Tuple, List
 
+# Lexicon quips (fallback)
+try:
+    from personality import quip  # type: ignore
+except Exception as _e:
+    quip = None  # graceful fallback
+
 # ============================
 # Globals
 # ============================
@@ -46,6 +54,7 @@ SYS_PROMPT = ""
 _GEN_LOCK = threading.RLock()
 
 def _lock_timeout() -> int:
+    """Wait time for generation lock. Env override allowed; defaults to 300s."""
     try:
         v = int(os.getenv("LLM_LOCK_TIMEOUT_SECONDS", "300").strip())
         return max(1, min(300, v))
@@ -53,6 +62,7 @@ def _lock_timeout() -> int:
         return 10
 
 class _GenCritical:
+    """Serialize LLM load/generation sections without deadlocks."""
     def __init__(self, timeout: Optional[int] = None):
         self.timeout = max(1, int(timeout or _lock_timeout()))
         self.acquired = False
@@ -76,6 +86,7 @@ class _GenCritical:
 # ============================
 def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
+
 # ============================
 # System prompt loader
 # ============================
@@ -103,6 +114,7 @@ def _int_env(name: str, default: Optional[int]) -> Optional[int]:
 def _enviroguard_limits(default_ctx: Optional[int],
                         default_cpu: Optional[int],
                         default_timeout: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    # EnviroGuard is authoritative if set
     ctx = _int_env("ENVGUARD_CTX_TOKENS", default_ctx)
     cpu = _int_env("ENVGUARD_CPU_PERCENT", default_cpu)
     to  = _int_env("ENVGUARD_TIMEOUT_SECONDS", default_timeout)
@@ -154,6 +166,7 @@ def _cpu_limit_from_options(default_val: int = 80) -> int:
 # HTTP helpers (with HF auth)
 # ============================
 class _AuthRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep Authorization/Cookie across redirects (Hugging Face)."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is None:
@@ -223,6 +236,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
         except Exception as e:
             _log(f"sha256 check failed (continuing without): {e}")
     return path
+
 # ============================
 # Options resolver (add-on config awareness)
 # ============================
@@ -307,6 +321,7 @@ def _parse_cpuset_list(s: str) -> int:
     return total or 0
 
 def _available_cpus() -> int:
+    """Best-effort count of CPUs available to this process (cgroups/affinity-aware)."""
     try:
         if hasattr(os, "sched_getaffinity"):
             return max(1, len(os.sched_getaffinity(0)))
@@ -318,7 +333,8 @@ def _available_cpus() -> int:
             if len(raw) == 2:
                 quota, period = raw
                 if quota != "max":
-                    q = int(quota); p = int(period)
+                    q = int(quota)
+                    p = int(period)
                     if q > 0 and p > 0:
                         return max(1, q // p)
     except Exception:
@@ -371,17 +387,29 @@ def _try_import_llama_cpp():
         return None
 
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
+    """Load the model if not already loaded; if already loaded at the same path, keep it."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH
     llama_cpp = _try_import_llama_cpp()
     if not llama_cpp:
         return False
     try:
+        # If already loaded with same path, keep it (hot)
+        if LLM_MODE == "llama" and LLM is not None and LOADED_MODEL_PATH:
+            try:
+                if os.path.abspath(LOADED_MODEL_PATH) == os.path.abspath(model_path):
+                    _log(f"reusing loaded model: {LOADED_MODEL_PATH}")
+                    return True
+            except Exception:
+                pass
+
         threads = _threads_from_cpu_limit(cpu_limit)
         os.environ.setdefault("OMP_NUM_THREADS", str(threads))
         os.environ.setdefault("LLAMA_THREADS", str(threads))
-        LLM = llama_cpp.Llama(model_path=model_path,
-                              n_ctx=ctx_tokens,
-                              n_threads=threads)
+        LLM = llama_cpp.Llama(
+            model_path=model_path,
+            n_ctx=ctx_tokens,
+            n_threads=threads,
+        )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
         _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
@@ -394,7 +422,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         return False
 
 # ============================
-# Ensure loaded
+# Ensure loaded (NO RESET between calls)
 # ============================
 def ensure_loaded(
     *,
@@ -405,6 +433,10 @@ def ensure_loaded(
     cpu_limit: int,
     hf_token: Optional[str]
 ) -> bool:
+    """
+    Load model if not loaded yet, or if target path differs from loaded one.
+    Keeps the model hot in memory across calls.
+    """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, DEFAULT_CTX
 
     g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
@@ -414,27 +446,38 @@ def ensure_loaded(
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
     with _GenCritical():
-        LLM_MODE = "none"
-        LLM = None
-        LOADED_MODEL_PATH = None
-
+        # Resolve URL/path/Token from options if not provided
         opts = _read_options()
         model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
 
+        # If already loaded with the same file, skip reload
+        try:
+            if LLM_MODE == "llama" and LLM is not None and LOADED_MODEL_PATH:
+                if os.path.abspath(LOADED_MODEL_PATH) == os.path.abspath(model_path):
+                    _log("ensure_loaded: already loaded; skipping reload")
+                    return True
+        except Exception:
+            pass
+
+        # Optional cleanup on switch
         try:
             cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
             if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
                 if os.path.exists(LOADED_MODEL_PATH):
                     _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
-                    try: os.remove(LOADED_MODEL_PATH)
-                    except Exception as e: _log(f"cleanup_on_switch: remove failed: {e}")
+                    try:
+                        os.remove(LOADED_MODEL_PATH)
+                    except Exception as e:
+                        _log(f"cleanup_on_switch: remove failed: {e}")
             if cleanup_on_disable and os.path.exists(model_path) and model_url:
                 url_base = os.path.basename(model_url)
                 file_base = os.path.basename(model_path)
                 if url_base and file_base and (os.path.splitext(file_base)[0] != os.path.splitext(url_base)[0]):
                     _log(f"cleanup_on_switch: removing {model_path} to force re-download")
-                    try: os.remove(model_path)
-                    except Exception as e: _log(f"cleanup_on_switch: remove target failed: {e}")
+                    try:
+                        os.remove(model_path)
+                    except Exception as e:
+                        _log(f"cleanup_on_switch: remove target failed: {e}")
         except Exception as e:
             _log(f"cleanup_on_switch: error: {e}")
 
@@ -445,6 +488,7 @@ def ensure_loaded(
 
         ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
         return bool(ok)
+
 # ============================
 # Message checks / guards
 # ============================
@@ -476,7 +520,12 @@ def _strip_meta_markers(s: str) -> str:
     out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
     out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
     out = out.replace("<s>", "").replace("</s>", "")
-    out = re.sub(r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$', '', out, flags=re.I | re.M)
+    out = re.sub(
+        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
+        '',
+        out,
+        flags=re.I | re.M
+    )
     out = out.strip().strip('`').strip().strip('"').strip("'").strip()
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
@@ -572,12 +621,15 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
             signal.signal(signal.SIGALRM, _alarm_handler)
             signal.alarm(max(1, int(timeout)))
 
-        out = LLM(prompt,
-                  max_tokens=256,
-                  temperature=0.35,
-                  top_p=0.9,
-                  repeat_penalty=1.1,
-                  stop=["</s>"])
+        out = LLM(
+            prompt,
+            max_tokens=256,
+            temperature=0.35,
+            top_p=0.9,
+            repeat_penalty=1.1,
+            stop=["</s>"]
+        )
+
         if hasattr(signal, "SIGALRM"):
             signal.alarm(0)
 
@@ -598,11 +650,22 @@ def _do_generate(prompt: str, *, timeout: int, model_url: str, model_name_hint: 
 # ============================
 # Public: rewrite
 # ============================
-def rewrite(*, text: str, mood: str = "neutral", timeout: int = 12,
-            cpu_limit: int = 80, models_priority: Optional[str] = None,
-            model_url: str = "", model_path: str = "", model_sha256: str = "",
-            allow_profanity: bool = False, ctx_tokens: int = 4096,
-            hf_token: Optional[str] = None, max_lines: int = 0, max_chars: int = 0) -> str:
+def rewrite(
+    *,
+    text: str,
+    mood: str = "neutral",
+    timeout: int = 12,
+    cpu_limit: int = 80,
+    models_priority: Optional[str] = None,
+    model_url: str = "",
+    model_path: str = "",
+    model_sha256: str = "",
+    allow_profanity: bool = False,
+    ctx_tokens: int = 4096,
+    hf_token: Optional[str] = None,
+    max_lines: int = 0,
+    max_chars: int = 0
+) -> str:
     global LLM_MODE, LLM, LOADED_MODEL_PATH, DEFAULT_CTX
     g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -611,27 +674,45 @@ def rewrite(*, text: str, mood: str = "neutral", timeout: int = 12,
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            ok = ensure_loaded(model_url=model_url, model_path=model_path,
-                               model_sha256=model_sha256, ctx_tokens=ctx_tokens,
-                               cpu_limit=cpu_limit, hf_token=hf_token)
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256=model_sha256,
+                ctx_tokens=ctx_tokens,
+                cpu_limit=cpu_limit,
+                hf_token=hf_token
+            )
             if not ok:
+                # soft fallback: return original text
                 return text
+
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout,
-                           model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, model_url=model_url, model_name_hint=model_path)
         final = out if out else text
 
     final = _strip_meta_markers(final)
-    if max_lines: final = _trim_lines(final, max_lines)
-    if max_chars: final = _soft_trim_chars(final, max_chars)
+    if max_lines:
+        final = _trim_lines(final, max_lines)
+    if max_chars:
+        final = _soft_trim_chars(final, max_chars)
     return final
 
 # ============================
-# Public: riff
+# Public: riff (with lexicon fallback)
 # ============================
-def riff(*, subject: str, persona: str = "neutral", timeout: int = 8,
-         model_url: str = "", model_path: str = "",
-         allow_profanity: bool = False) -> str:
+def riff(
+    *,
+    subject: str,
+    persona: str = "neutral",
+    timeout: int = 8,
+    model_url: str = "",
+    model_path: str = "",
+    allow_profanity: bool = False
+) -> str:
+    """
+    Generate 1–3 very short riff lines for the bottom of a card.
+    Returns empty string only if neither LLM nor lexicon can respond.
+    """
     _, _, g_to = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
 
@@ -640,40 +721,84 @@ def riff(*, subject: str, persona: str = "neutral", timeout: int = 8,
             limit = _cpu_limit_from_options(80)
             est_threads = _threads_from_cpu_limit(limit)
             _log(f"riff using cpu_limit={limit}% (threads≈{est_threads})")
-            ok = ensure_loaded(model_url=model_url, model_path=model_path,
-                               model_sha256="", ctx_tokens=2048,
-                               cpu_limit=limit, hf_token=None)
-            if not ok: return ""
-        if LLM_MODE != "llama": return ""
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256="",
+                ctx_tokens=2048,
+                cpu_limit=limit,
+                hf_token=None
+            )
+            if not ok:
+                # LLM unavailable → lexicon fallback
+                if quip:
+                    try:
+                        return quip(persona, with_emoji=False) or ""
+                    except Exception as e:
+                        _log(f"lexicon riff fallback failed: {e}")
+                return ""
+
+        if LLM_MODE != "llama" or LLM is None:
+            if quip:
+                try:
+                    return quip(persona, with_emoji=False) or ""
+                except Exception as e:
+                    _log(f"lexicon riff fallback failed: {e}")
+            return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout,
-                           model_url=model_url, model_name_hint=model_path)
-        if not out: return ""
+        out = _do_generate(prompt, timeout=timeout, model_url=model_url, model_name_hint=model_path)
+
+    if not out:
+        if quip:
+            try:
+                return quip(persona, with_emoji=False) or ""
+            except Exception as e:
+                _log(f"lexicon riff fallback failed: {e}")
+        return ""
 
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
-    cleaned = []
+
+    cleaned: List[str] = []
     for ln in lines:
         ln = ln.lstrip("-•* ").strip()
-        if ln: cleaned.append(ln)
-        if len(cleaned) >= 3: break
+        if ln:
+            cleaned.append(ln)
+        if len(cleaned) >= 3:
+            break
+
     joined = "\n".join(cleaned[:3]) if cleaned else ""
-    if len(joined) > 120: joined = joined[:119].rstrip() + "…"
+    if len(joined) > 120:
+        joined = joined[:119].rstrip() + "…"
     return joined
 
 # ============================
-# Public: persona_riff
+# Public: persona_riff (with lexicon fallback)
 # ============================
-def persona_riff(*, persona: str, context: str, max_lines: int = 3,
-                 timeout: int = 8, cpu_limit: int = 80,
-                 models_priority: Optional[List[str]] = None,
-                 model_url: str = "", model_path: str = "",
-                 model_sha256: str = "", allow_profanity: Optional[bool] = None,
-                 ctx_tokens: int = 4096, hf_token: Optional[str] = None) -> List[str]:
+def persona_riff(
+    *,
+    persona: str,
+    context: str,
+    max_lines: int = 3,
+    timeout: int = 8,
+    cpu_limit: int = 80,
+    models_priority: Optional[List[str]] = None,
+    model_url: str = "",
+    model_path: str = "",
+    model_sha256: str = "",
+    allow_profanity: Optional[bool] = None,
+    ctx_tokens: int = 4096,
+    hf_token: Optional[str] = None
+) -> List[str]:
+    """
+    Generate 1–N SHORT persona-flavored lines from context (title + body).
+    """
     if allow_profanity is None:
-        allow_profanity = ((os.getenv("PERSONALITY_ALLOW_PROFANITY","false").lower() in ("1","true","yes"))
-                           and (persona or "").lower().strip() == "rager")
+        allow_profanity = (
+            (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
+            and (persona or "").lower().strip() == "rager"
+        )
 
     g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -685,21 +810,40 @@ def persona_riff(*, persona: str, context: str, max_lines: int = 3,
             limit = cpu_limit or _cpu_limit_from_options(80)
             est_threads = _threads_from_cpu_limit(limit)
             _log(f"persona_riff using cpu_limit={limit}% (threads≈{est_threads})")
-            ok = ensure_loaded(model_url=model_url, model_path=model_path,
-                               model_sha256=model_sha256, ctx_tokens=ctx_tokens,
-                               cpu_limit=limit, hf_token=hf_token)
-            if not ok: return []
-        if LLM_MODE != "llama": return []
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256=model_sha256,
+                ctx_tokens=ctx_tokens,
+                cpu_limit=limit,
+                hf_token=hf_token
+            )
+            if not ok:
+                if quip:
+                    try:
+                        return [quip(persona, with_emoji=False)]
+                    except Exception as e:
+                        _log(f"lexicon persona_riff fallback failed: {e}")
+                return []
 
+        if LLM_MODE != "llama" or LLM is None:
+            if quip:
+                try:
+                    return [quip(persona, with_emoji=False)]
+                except Exception as e:
+                    _log(f"lexicon persona_riff fallback failed: {e}")
+            return []
+
+        # Persona style map
         style_map = {
-            "dude": "laid-back, mellow, no jokes",
-            "chick": "sassy, clever, stylish",
-            "nerd": "precise, witty one-liners",
-            "rager": "short, profane bursts allowed",
-            "comedian": "only persona allowed to tell jokes",
-            "action": "stoic mission-brief style",
-            "jarvis": "polished butler style",
-            "ops": "terse, incident commander tone",
+            "dude":      "laid-back, mellow, no jokes",
+            "chick":     "sassy, clever, stylish",
+            "nerd":      "precise, witty one-liners",
+            "rager":     "short, profane bursts allowed",
+            "comedian":  "only persona allowed to tell jokes",
+            "action":    "stoic mission-brief style",
+            "jarvis":    "polished butler style",
+            "ops":       "terse, incident commander tone",
         }
         vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
 
@@ -711,27 +855,66 @@ def persona_riff(*, persona: str, context: str, max_lines: int = 3,
             "No explanations or meta-commentary. Output ONLY the lines.",
             "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
         ]
-        if not allow_profanity: sys_rules.append("Avoid profanity.")
+        if not allow_profanity:
+            sys_rules.append("Avoid profanity.")
         sys_prompt = " ".join(sys_rules)
 
-        user = f"{context.strip()}\n\nWrite up to {max_lines} short lines in the requested voice."
+        user = (
+            f"{context.strip()}\n\n"
+            f"Write up to {max_lines} short lines in the requested voice."
+        )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
-        raw = _do_generate(prompt, timeout=timeout,
-                           model_url=model_url, model_name_hint=model_path)
-        if not raw: return []
+
+        raw = _do_generate(prompt, timeout=timeout, model_url=model_url, model_name_hint=model_path)
+
+    if not raw:
+        if quip:
+            try:
+                return [quip(persona, with_emoji=False)]
+            except Exception as e:
+                _log(f"lexicon persona_riff fallback failed: {e}")
+        return []
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
-    cleaned, seen = [], set()
+    cleaned: List[str] = []
+    seen: set = set()
     for ln in lines:
         ln2 = ln.lstrip("-•* ").strip()
-        if not ln2: continue
-        if len(ln2) > 140: ln2 = ln2[:140].rstrip()
+        if not ln2:
+            continue
+        if len(ln2) > 140:
+            ln2 = ln2[:140].rstrip()
         key = ln2.lower()
-        if key in seen: continue
-        seen.add(key); cleaned.append(ln2)
-        if len(cleaned) >= max(1, int(max_lines or 3)): break
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(ln2)
+        if len(cleaned) >= max(1, int(max_lines or 3)):
+            break
     return cleaned
+
+# ============================
+# Hot-load at startup (keep model in memory)
+# ============================
+try:
+    opts = _read_options()
+    # Honour EnviroGuard for ctx/cpu at boot too
+    base_ctx = int(opts.get("llm_ctx_tokens", 2048))
+    base_cpu = int(opts.get("llm_max_cpu_percent", 80))
+    g_ctx, g_cpu, _ = _enviroguard_limits(base_ctx, base_cpu, None)
+    model_url_boot, model_path_boot, hf_token_boot = _resolve_model_from_options("", "", None)
+    ensure_loaded(
+        model_url=model_url_boot,
+        model_path=model_path_boot,
+        model_sha256=opts.get("llm_model_sha256", ""),
+        ctx_tokens=g_ctx if g_ctx is not None else base_ctx,
+        cpu_limit=g_cpu if g_cpu is not None else base_cpu,
+        hf_token=hf_token_boot
+    )
+    _log("Hot-load complete at add-on startup.")
+except Exception as e:
+    _log(f"Hot-load failed: {e}")
 
 # ============================
 # Quick self-test
@@ -739,25 +922,32 @@ def persona_riff(*, persona: str, context: str, max_lines: int = 3,
 if __name__ == "__main__":
     print("llm_client self-check start")
     try:
-        ok = ensure_loaded(model_url=os.getenv("TEST_MODEL_URL",""),
-                           model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
-                           model_sha256=os.getenv("TEST_MODEL_SHA256",""),
-                           ctx_tokens=int(os.getenv("TEST_CTX","2048")),
-                           cpu_limit=int(os.getenv("TEST_CPU","80")),
-                           hf_token=os.getenv("TEST_HF_TOKEN",""))
+        ok = ensure_loaded(
+            model_url=os.getenv("TEST_MODEL_URL",""),
+            model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
+            model_sha256=os.getenv("TEST_MODEL_SHA256",""),
+            ctx_tokens=int(os.getenv("TEST_CTX","2048")),
+            cpu_limit=int(os.getenv("TEST_CPU","80")),
+            hf_token=os.getenv("TEST_HF_TOKEN","")
+        )
         print(f"ensure_loaded -> {ok} mode={LLM_MODE}")
         if ok:
-            txt = rewrite(text="Status synchronized; elegance maintained.",
-                          mood="jarvis", timeout=6,
-                          model_url=os.getenv("TEST_MODEL_URL",""),
-                          model_path=os.getenv("TEST_MODEL_NAME",""),
-                          ctx_tokens=2048)
+            txt = rewrite(
+                text="Status synchronized; elegance maintained.",
+                mood="jarvis",
+                timeout=6,
+                model_url=os.getenv("TEST_MODEL_URL",""),
+                model_path=os.getenv("TEST_MODEL_NAME",""),
+                ctx_tokens=2048
+            )
             print("rewrite sample ->", txt[:120])
             r = riff(subject="Sonarr ingestion nominal", persona="rager")
             print("riff sample ->", r)
-            rl = persona_riff(persona="nerd",
-                              context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified.",
-                              max_lines=3)
+            rl = persona_riff(
+                persona="nerd",
+                context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified.",
+                max_lines=3
+            )
             print("persona_riff sample ->", rl[:3])
     except Exception as e:
         print("self-check error:", e)
