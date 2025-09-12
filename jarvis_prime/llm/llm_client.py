@@ -10,6 +10,7 @@
 # - Persona riffs (1–3 short lines)
 # - Hot-load model at startup, keep in memory
 # - Lexicon fallback if generation unavailable
+# - Perf: mmap weights, no mlock, tuned n_batch, min 2 threads, shorter riff tokens
 #
 # Public entry points expected by the rest of Jarvis:
 #   ensure_loaded(...)
@@ -370,7 +371,7 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
         pct = max(1, min(100, int(limit_pct or 100)))
     except Exception:
         pct = 100
-    t = max(1, int(math.ceil(cores * (pct / 100.0))))
+    t = max(2, int(math.ceil(cores * (pct / 100.0))))  # enforce min 2 threads for latency
     t = min(cores, t)
     _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
     return t
@@ -409,6 +410,10 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
             model_path=model_path,
             n_ctx=ctx_tokens,
             n_threads=threads,
+            use_mmap=True,                               # PERF: mmap weights
+            use_mlock=False,                             # PERF: avoid locking pages
+            n_batch=min(256, max(64, ctx_tokens // 8)),  # PERF: decent CPU batch size
+            embedding=False
         )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
@@ -443,7 +448,7 @@ def ensure_loaded(
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
 
-    DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
+    DEFAULT_CTX = max(512, int(ctx_tokens or 2048))
 
     with _GenCritical():
         # Resolve URL/path/Token from options if not provided
@@ -613,7 +618,7 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 # ============================
 # Core generation
 # ============================
-def _llama_generate(prompt: str, timeout: int = 12) -> str:
+def _llama_generate(prompt: str, timeout: int = 12, *, max_tokens: int = 256) -> str:
     try:
         import signal
         def _alarm_handler(signum, frame): raise TimeoutError("gen timeout")
@@ -623,7 +628,7 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
 
         out = LLM(
             prompt,
-            max_tokens=256,
+            max_tokens=max_tokens,
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
@@ -642,9 +647,10 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, model_url: str, model_name_hint: str) -> str:
+def _do_generate(prompt: str, *, timeout: int, model_url: str,
+                 model_name_hint: str, max_tokens: int) -> str:
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)))
+        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens)
     return ""
 
 # ============================
@@ -687,7 +693,8 @@ def rewrite(
                 return text
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, model_url=model_url,
+                           model_name_hint=model_path, max_tokens=160)
         final = out if out else text
 
     final = _strip_meta_markers(final)
@@ -725,7 +732,7 @@ def riff(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256="",
-                ctx_tokens=2048,
+                ctx_tokens=1024,  # smaller ctx is fine for riffs
                 cpu_limit=limit,
                 hf_token=None
             )
@@ -747,7 +754,8 @@ def riff(
             return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, model_url=model_url,
+                           model_name_hint=model_path, max_tokens=60)
 
     if not out:
         if quip:
@@ -814,7 +822,7 @@ def persona_riff(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256=model_sha256,
-                ctx_tokens=ctx_tokens,
+                ctx_tokens=max(1024, min(2048, ctx_tokens)),
                 cpu_limit=limit,
                 hf_token=hf_token
             )
@@ -865,7 +873,8 @@ def persona_riff(
         )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-        raw = _do_generate(prompt, timeout=timeout, model_url=model_url, model_name_hint=model_path)
+        raw = _do_generate(prompt, timeout=timeout, model_url=model_url,
+                           model_name_hint=model_path, max_tokens=80)
 
     if not raw:
         if quip:
