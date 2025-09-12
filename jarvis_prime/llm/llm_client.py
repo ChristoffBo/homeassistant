@@ -95,7 +95,7 @@ def _load_system_prompt() -> str:
     return ""
 
 # ============================
-# ADDITIVE: EnviroGuard env overrides
+# ADDITIVE: EnviroGuard env overrides (ctx/timeout only)
 # ============================
 def _int_env(name: str, default: Optional[int]) -> Optional[int]:
     try:
@@ -107,7 +107,7 @@ def _int_env(name: str, default: Optional[int]) -> Optional[int]:
         return default
 
 def _enviroguard_limits(default_ctx: Optional[int],
-                        default_cpu: Optional[int],
+                        default_cpu: Optional[int],   # kept for compatibility; we won't use it now
                         default_timeout: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
     ctx = _int_env("ENVGUARD_CTX_TOKENS", default_ctx)
     cpu = _int_env("ENVGUARD_CPU_PERCENT", default_cpu)
@@ -150,12 +150,13 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
     return model_path
 
 # ============================
-# FIXED: read CPU limit from options.json (no hardcoded 80%)
+# Options CPU reader (no 80 default)
+# ============================
 def _cpu_limit_from_options(default_val: int = 100) -> int:
     """
     Read CPU limit from /data/options.json.
     - Honors llm_max_cpu_percent if present.
-    - Falls back to 100 (no cap) if not set.
+    - Falls back to default_val (100 = no cap) if not set.
     """
     try:
         opts = _read_options()
@@ -552,7 +553,7 @@ def ensure_loaded(
     model_path: str,
     model_sha256: str,
     ctx_tokens: int,
-    cpu_limit: int,
+    cpu_limit: Optional[int],
     hf_token: Optional[str],
     base_url: str = ""
 ) -> bool:
@@ -563,9 +564,15 @@ def ensure_loaded(
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
-    g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
+    # EnviroGuard may adjust ctx only; do not let it override CPU here
+    g_ctx, _, _ = _enviroguard_limits(ctx_tokens, None, None)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
+
+    # Resolve CPU from options unless explicitly provided
+    opt_cpu = _cpu_limit_from_options(100)
+    final_cpu = (cpu_limit if isinstance(cpu_limit, int) and cpu_limit > 0 else opt_cpu)
+    _log(f"CPU resolve -> options={opt_cpu}% param={cpu_limit if cpu_limit else '—'} final={final_cpu}%")
+    cpu_limit = final_cpu
 
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
@@ -664,13 +671,13 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
-    r'^\s*tone\s*:.*$',            # remove "Tone: ..." lines
-    r'^\s*voice\s*:.*$',           # remove "Voice: ..." lines
-    r'^\s*context\s*:.*$',         # remove "Context: ..." lines
-    r'^\s*style\s*:.*$',           # remove "Style: ..." lines
-    r'^\s*subject\s*:.*$',         # remove "Subject: ..." lines
-    r'^\s*write\s+up\s+to\s+\d+.*$', # remove "Write up to ..." echoes
-    r'^\s*\[image\]\s*$',          # remove bare [image]
+    r'^\s*tone\s*:.*$',
+    r'^\s*voice\s*:.*$',
+    r'^\s*context\s*:.*$',
+    r'^\s*style\s*:.*$',
+    r'^\s*subject\s*:.*$',
+    r'^\s*write\s+up\s+to\s+\d+.*$',
+    r'^\s*\[image\]\s*$',
     r'^\s*no\s+lists.*$',
     r'.*context\s*\(for vibes only\).*',
     r'^\s*you\s+write\s+a\s+single.*$',
@@ -688,11 +695,9 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
         t = ln.strip()
         if not t:
             continue
-        # Drop label-looking lines (colon in first 12 chars)
         if ":" in t[:12]:
             if re.match(r'^\s*(tone|voice|context|style|subject)\s*:', t, flags=re.I):
                 continue
-        # Strip common leak tokens inline
         t = t.replace("[image]", "").replace("[INST]", "").replace("[/INST]", "").strip()
         skip = False
         for rx in _INSTRUX_RX:
@@ -765,7 +770,7 @@ def rewrite(
     text: str,
     mood: str = "neutral",
     timeout: int = 12,
-    cpu_limit: int = 80,
+    cpu_limit: Optional[int] = None,
     models_priority: Optional[str] = None,
     base_url: str = "",
     model_url: str = "",
@@ -780,20 +785,20 @@ def rewrite(
     """Best-effort rewrite. If LLM unavailable, returns input text."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
+    g_ctx, _, g_to = _enviroguard_limits(ctx_tokens, None, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
-    # Serialize: acquire lock; if busy too long, fail soft by returning original text
     with _GenCritical(timeout):
         if LLM_MODE == "none":
+            opt_cpu = _cpu_limit_from_options(100)
+            limit = cpu_limit if (isinstance(cpu_limit, int) and cpu_limit > 0) else opt_cpu
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256=model_sha256,
                 ctx_tokens=ctx_tokens,
-                cpu_limit=cpu_limit,
+                cpu_limit=limit,
                 hf_token=hf_token,
                 base_url=base_url
             )
@@ -804,7 +809,6 @@ def rewrite(
         out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         final = out if out else text
 
-    # ADD: strip any leaked meta tags/markers from the model output
     final = _strip_meta_markers(final)
 
     if max_lines:
@@ -825,7 +829,8 @@ def riff(
     base_url: str = "",
     model_url: str = "",
     model_path: str = "",
-    allow_profanity: bool = False
+    allow_profanity: bool = False,
+    cpu_limit: Optional[int] = None
 ) -> str:
     """
     Generate 1–3 very short riff lines for the bottom of a card.
@@ -836,9 +841,10 @@ def riff(
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            limit = _cpu_limit_from_options(80)
+            opt_cpu = _cpu_limit_from_options(100)
+            limit = cpu_limit if (isinstance(cpu_limit, int) and cpu_limit > 0) else opt_cpu
             est_threads = _threads_from_cpu_limit(limit)
-            _log(f"riff using cpu_limit={limit}% (threads≈{est_threads})")
+            _log(f"riff cpu resolve -> options={opt_cpu}% param={cpu_limit if cpu_limit else '—'} final={limit}% (threads≈{est_threads})")
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
@@ -884,7 +890,7 @@ def persona_riff(
     context: str,
     max_lines: int = 3,
     timeout: int = 8,
-    cpu_limit: int = 80,
+    cpu_limit: Optional[int] = None,
     models_priority: Optional[List[str]] = None,
     base_url: str = "",
     model_url: str = "",
@@ -903,16 +909,16 @@ def persona_riff(
             and (persona or "").lower().strip() == "rager"
         )
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
+    g_ctx, _, g_to = _enviroguard_limits(ctx_tokens, None, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            limit = cpu_limit or _cpu_limit_from_options(80)
+            opt_cpu = _cpu_limit_from_options(100)
+            limit = cpu_limit if (isinstance(cpu_limit, int) and cpu_limit > 0) else opt_cpu
             est_threads = _threads_from_cpu_limit(limit)
-            _log(f"persona_riff using cpu_limit={limit}% (threads≈{est_threads})")
+            _log(f"persona_riff cpu resolve -> options={opt_cpu}% param={cpu_limit if cpu_limit else '—'} final={limit}% (threads≈{est_threads})")
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
@@ -928,7 +934,6 @@ def persona_riff(
         if LLM_MODE not in ("llama", "ollama"):
             return []
 
-        # Optional embedded style hint
         daypart = None
         intensity = None
         try:
@@ -940,7 +945,6 @@ def persona_riff(
         except Exception:
             pass
 
-        # Tightened persona style map
         style_map = {
             "dude":      "laid-back, mellow, no jokes",
             "chick":     "sassy, clever, stylish",
@@ -969,7 +973,6 @@ def persona_riff(
             sys_rules.append(f"Persona intensity (subtle): {intensity}.")
         sys_prompt = " ".join(sys_rules)
 
-        # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
         user = (
             f"{context.strip()}\n\n"
             f"Write up to {max_lines} short lines in the requested voice."
@@ -1010,7 +1013,7 @@ if __name__ == "__main__":
             model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
             model_sha256=os.getenv("TEST_MODEL_SHA256",""),
             ctx_tokens=int(os.getenv("TEST_CTX","2048")),
-            cpu_limit=int(os.getenv("TEST_CPU","80")),
+            cpu_limit=int(os.getenv("TEST_CPU","100")),  # no 80 default
             hf_token=os.getenv("TEST_HF_TOKEN",""),
             base_url=os.getenv("TEST_OLLAMA","").strip()
         )
