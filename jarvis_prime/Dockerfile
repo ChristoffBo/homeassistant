@@ -1,50 +1,43 @@
 # syntax=docker/dockerfile:1
-#
-# Jarvis Prime — Add-on image (matches your original base + Inbox/UI wiring)
-#
 FROM debian:stable-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive
 
-# System deps
+# Base system deps
 RUN apt-get update && apt-get install -y \
     python3 python3-pip curl jq ca-certificates tzdata pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# ---- Python deps ----
-# requirements.txt must include: aiohttp, requests, aiosmtpd, websockets
+# ---- Python deps (your existing app deps) ----
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 
-# ---- NEW (additive): Apprise intake server deps ----
-# We install flask (required by /app/intakes/apprise.py) and waitress (optional, used if present).
+# Apprise intake deps (unchanged)
 RUN pip3 install --no-cache-dir --break-system-packages flask waitress
 
-# ---- NEW (additive): Minimal build deps + modern llama-cpp-python for local GGUF ----
-# Build deps for compiling the wheel; OpenBLAS for faster CPU math.
+# ---- Build deps + BLAS (split for HA builder stability) ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential cmake libopenblas-dev \
-  && rm -rf /var/lib/apt/lists/* \
-  && pip3 install --no-cache-dir --break-system-packages --upgrade pip \
-  && pip3 install --no-cache-dir --break-system-packages numpy
+ && rm -rf /var/lib/apt/lists/*
 
-# Build a modern llama-cpp-python **from source** (K-quant support for Phi-4)
-# -DLLAMA_NATIVE=ON enables AVX2/AVX512/VNNI where available
-# -DGGML_BLAS=ON uses OpenBLAS for better CPU perf
+# NumPy first (wheels), pip upgrade
+RUN pip3 install --no-cache-dir --break-system-packages --upgrade pip numpy
+
+# ---- Modern llama-cpp-python from source (Phi-4 tokenizer + K-quants) ----
+# Native CPU paths and OpenBLAS enabled
 ENV CMAKE_ARGS="-DLLAMA_NATIVE=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS"
+# Use a 0.3.x build new enough for 'gpt-4o' pretokenizer support
 RUN pip3 install --no-cache-dir --break-system-packages --no-binary=:all: \
-      "llama-cpp-python==0.3.16"
+      "llama-cpp-python>=0.3.20"
 
-# ---- App content (keep your original layout) ----
-# Default system prompt (baked into image). Runtime falls back to /share/jarvis_prime/memory if present.
+# ---- App content (unchanged) ----
 RUN mkdir -p /app/memory
 COPY memory/system_prompt.txt /app/memory/system_prompt.txt
 
-# Core & modules (your originals)
 COPY run.sh /run.sh
 COPY /core/bot.py /app/bot.py
 COPY /personality/chat.py /app/chat.py
@@ -61,13 +54,11 @@ COPY /intakes/proxy.py /app/proxy.py
 COPY /modules/beautify.py /app/beautify.py
 COPY /modules/enviroguard.py /app/enviroguard.py
 
-# LLM + memory
 COPY /llm/llm_client.py /app/llm_client.py
 COPY /llm/llm_memory.py /app/llm_memory.py
 COPY /personality/personality_state.py /app/personality_state.py
 COPY /memory/system_prompt.txt /app/system_prompt.txt
 
-# ---- NEW: Inbox server + UI + storage + fan-out clients ----
 COPY /intakes/api_messages.py /app/api_messages.py
 COPY /modules/storage.py      /app/storage.py
 COPY /intakes/ntfy_client.py  /app/ntfy_client.py
@@ -77,25 +68,17 @@ COPY /intakes/webhook_server.py  /app/webhook_server.py
 COPY /intakes/apprise.py  /app/apprise.py
 COPY /modules/heartbeat.py  /app/heartbeat.py
 
-# ---- NEW (additive): place intake blueprint at the path bot.py expects ----
 RUN mkdir -p /app/intakes
 COPY /intakes/apprise.py /app/intakes/apprise.py
 
-# Permissions
 RUN chmod +x /run.sh
 
-# ---- Networking ----
-# 2525 = SMTP intake, 2580 = HTTP proxy (if used), 2581 = Inbox API/UI (LAN access)
-# NEW (additive): 2591 = Apprise intake Flask server
 EXPOSE 2525/tcp 2580/tcp 2581/tcp 2591/tcp
 
-# Simple healthcheck: Inbox API responds
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
   CMD curl -fsS http://127.0.0.1:2581/api/messages?limit=1 || exit 1
 
-# Entrypoint
 CMD [ "/run.sh" ]
 
-# Standalone mode defaults (can be overridden via options.json -> env)
 ENV BOT_INPUT_SSE=true BOT_INPUT_GOTIFY=true BOT_INPUT_NTFY=false \
     JARVIS_BASE=http://127.0.0.1:2581 DEDUPE_TTL_SECONDS=120 WORKERS=2
