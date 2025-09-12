@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Jarvis Prime — Add-on image (matches your original base + Inbox/UI wiring)
+# Jarvis Prime — Add-on image (modern llama-cpp-python, Phi-4 capable)
 #
 FROM debian:stable-slim
 
@@ -8,39 +8,31 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive
 
-# -------------------------
-# System dependencies
-# -------------------------
+# ---- System deps ----
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip curl jq ca-certificates tzdata pkg-config \
+    python3 python3-pip python3-dev \
+    curl jq ca-certificates tzdata pkg-config \
     build-essential cmake libopenblas-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# -------------------------
-# Python base deps
-# -------------------------
+# ---- Python deps from your requirements ----
+# (Do NOT upgrade pip here to avoid Debian's uninstall-no-record-file error)
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 
-# Flask + waitress (Apprise intake)
+# ---- Web intake deps ----
 RUN pip3 install --no-cache-dir --break-system-packages flask waitress
 
-# NumPy first (pin to stable 2.1.3)
-RUN pip3 install --no-cache-dir --break-system-packages numpy==2.1.3
+# ---- llama-cpp-python (prebuilt wheel; supports Phi-4 tokenizer) ----
+# If your CPU supports AVX/AVX2/VNNI, wheels will use it automatically.
+RUN pip3 install --no-cache-dir --break-system-packages "llama-cpp-python==0.3.20"
 
-# -------------------------
-# Modern llama-cpp-python (Phi-4 compatible)
-# Build from source with AVX/BLAS
-# -------------------------
-ENV CMAKE_ARGS="-DLLAMA_NATIVE=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS"
-RUN pip3 install --no-cache-dir --break-system-packages --no-binary=:all: \
-    "llama-cpp-python==0.3.20"
+# (Optional) NumPy for anything that needs it at runtime (no pip upgrade!)
+RUN pip3 install --no-cache-dir --break-system-packages "numpy>=1.26,<3"
 
-# -------------------------
-# App content (original layout)
-# -------------------------
+# ---- App content (your originals) ----
 RUN mkdir -p /app/memory
 COPY memory/system_prompt.txt /app/memory/system_prompt.txt
 
@@ -68,13 +60,13 @@ COPY /memory/system_prompt.txt /app/system_prompt.txt
 
 # Inbox server + UI + storage + fan-out clients
 COPY /intakes/api_messages.py /app/api_messages.py
-COPY /modules/storage.py      /app/storage.py
-COPY /intakes/ntfy_client.py  /app/ntfy_client.py
-COPY /intakes/smtp_client.py  /app/smtp_client.py
+COPY /modules/storage.py /app/storage.py
+COPY /intakes/ntfy_client.py /app/ntfy_client.py
+COPY /intakes/smtp_client.py /app/smtp_client.py
 COPY ui/ /app/ui/
-COPY /intakes/webhook_server.py  /app/webhook_server.py
-COPY /intakes/apprise.py  /app/apprise.py
-COPY /modules/heartbeat.py  /app/heartbeat.py
+COPY /intakes/webhook_server.py /app/webhook_server.py
+COPY /intakes/apprise.py /app/apprise.py
+COPY /modules/heartbeat.py /app/heartbeat.py
 
 # Place intake blueprint where bot.py expects
 RUN mkdir -p /app/intakes
@@ -83,24 +75,22 @@ COPY /intakes/apprise.py /app/intakes/apprise.py
 # Permissions
 RUN chmod +x /run.sh
 
-# -------------------------
-# Networking
-# -------------------------
-# 2525 = SMTP intake
-# 2580 = HTTP proxy
-# 2581 = Inbox API/UI
-# 2591 = Apprise intake
+# ---- Networking ----
+# 2525 = SMTP intake, 2580 = HTTP proxy (if used), 2581 = Inbox API/UI (LAN access)
+# 2591 = Apprise intake Flask server
 EXPOSE 2525/tcp 2580/tcp 2581/tcp 2591/tcp
 
-# Healthcheck: Inbox API responds
+# Simple healthcheck: Inbox API responds
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
   CMD curl -fsS http://127.0.0.1:2581/api/messages?limit=1 || exit 1
 
 # Entrypoint
 CMD [ "/run.sh" ]
 
-# -------------------------
-# Runtime defaults
-# -------------------------
-ENV BOT_INPUT_SSE=true BOT_INPUT_GOTIFY=true BOT_INPUT_NTFY=false \
-    JARVIS_BASE=http://127.0.0.1:2581 DEDUPE_TTL_SECONDS=120 WORKERS=2
+# Standalone mode defaults (can be overridden via options.json -> env)
+ENV BOT_INPUT_SSE=true \
+    BOT_INPUT_GOTIFY=true \
+    BOT_INPUT_NTFY=false \
+    JARVIS_BASE=http://127.0.0.1:2581 \
+    DEDUPE_TTL_SECONDS=120 \
+    WORKERS=2
