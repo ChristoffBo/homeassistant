@@ -149,6 +149,15 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
         return os.path.join(base, fname)
     return model_path
 
+# NEW: read CPU limit from options.json
+def _cpu_limit_from_options(default_val: int = 80) -> int:
+    try:
+        opts = _read_options()
+        v = int(opts.get("llm_max_cpu_percent", default_val))
+        return min(100, max(1, v))
+    except Exception:
+        return default_val
+
 # ============================
 # HTTP helpers (with HF auth)
 # ============================
@@ -524,6 +533,7 @@ def _strip_meta_markers(s: str) -> str:
     # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
+
 # ============================
 # Ensure loaded
 # ============================
@@ -645,11 +655,15 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
-    r'^\s*tone\s*:.*$',            # <<< ADDED: remove "Tone: ..." lines
+    r'^\s*tone\s*:.*$',            # remove "Tone: ..." lines
+    r'^\s*voice\s*:.*$',           # remove "Voice: ..." lines
+    r'^\s*context\s*:.*$',         # remove "Context: ..." lines
+    r'^\s*style\s*:.*$',           # remove "Style: ..." lines
+    r'^\s*subject\s*:.*$',         # remove "Subject: ..." lines
+    r'^\s*write\s+up\s+to\s+\d+.*$', # remove "Write up to ..." echoes
+    r'^\s*\[image\]\s*$',          # remove bare [image]
     r'^\s*no\s+lists.*$',
     r'.*context\s*\(for vibes only\).*',
-    r'^\s*subject\s*:.*$',
-    r'^\s*style\s*:.*$',
     r'^\s*you\s+write\s+a\s+single.*$',
     r'^\s*write\s+1.*lines?.*$',
     r'^\s*avoid\s+profanity.*$',
@@ -665,6 +679,12 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
         t = ln.strip()
         if not t:
             continue
+        # Drop label-looking lines (colon in first 12 chars)
+        if ":" in t[:12]:
+            if re.match(r'^\s*(tone|voice|context|style|subject)\s*:', t, flags=re.I):
+                continue
+        # Strip common leak tokens inline
+        t = t.replace("[image]", "").replace("[INST]", "").replace("[/INST]", "").strip()
         skip = False
         for rx in _INSTRUX_RX:
             if rx.search(t):
@@ -807,12 +827,15 @@ def riff(
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
+            limit = _cpu_limit_from_options(80)
+            est_threads = _threads_from_cpu_limit(limit)
+            _log(f"riff using cpu_limit={limit}% (threads≈{est_threads})")
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256="",
                 ctx_tokens=2048,
-                cpu_limit=80,
+                cpu_limit=limit,
                 hf_token=None,
                 base_url=base_url
             )
@@ -878,12 +901,15 @@ def persona_riff(
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
+            limit = cpu_limit or _cpu_limit_from_options(80)
+            est_threads = _threads_from_cpu_limit(limit)
+            _log(f"persona_riff using cpu_limit={limit}% (threads≈{est_threads})")
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256=model_sha256,
                 ctx_tokens=ctx_tokens,
-                cpu_limit=cpu_limit,
+                cpu_limit=limit,
                 hf_token=hf_token,
                 base_url=base_url
             )
