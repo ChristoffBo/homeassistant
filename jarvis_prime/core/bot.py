@@ -14,6 +14,56 @@ import socket
 import hashlib
 from typing import List, Optional, Tuple
 
+import re as _re_local, time as _time_local
+
+_JUNK_LINE_RE = _re_local.compile(
+    r'^\s*(Tone:|Context\s*\(|No\s+lists|No\s+numbers|No\s+JSON|No\s+labels)\b',
+    _re_local.I
+)
+
+def _clean_payload(_s: str) -> str:
+    if not _s:
+        return ""
+    s = _s.replace("\r", "").strip()
+    # remove instruction/meta lines
+    s = "\n".join(ln for ln in s.split("\n") if not _JUNK_LINE_RE.search(ln))
+    # remove raw [poster](http...) lines (these should render as images separately if needed)
+    s = "\n".join(ln for ln in s.split("\n") if not _re_local.search(r'\[poster\]\(https?://', ln, _re_local.I))
+    # fix stray **http(s):** markdown artifacts
+    s = _re_local.sub(r'\*+(https?://)', r'\1', s)
+    # collapse excessive blank lines
+    s = _re_local.sub(r'\n{3,}', '\n\n', s)
+    return s.strip()
+
+def _sanitize_riff(txt: str) -> str:
+    """Keep riffs short and free of instruction lines; never let them pollute payload."""
+    if not txt:
+        return ""
+    # strip instruction-ish lines and trim to 3 lines / 360 chars
+    lines = [ln.strip() for ln in txt.splitlines() if ln.strip() and not _JUNK_LINE_RE.search(ln)]
+    out = "\n".join(lines[:3])[:360].rstrip()
+    return out
+
+def _append_riff_safe(base: str, context: str, timeout_s: int = 12) -> str:
+    """
+    Calls llm_client.riff_once(context, timeout_s) and appends as a quoted block
+    only if a valid short riff is returned. If it fails/times out, returns base unchanged.
+    """
+    try:
+        from llm_client import riff_once  # must return str|None
+    except Exception:
+        return base
+    try:
+        cand = riff_once(context=context or "", timeout_s=timeout_s)
+        riff = _sanitize_riff(cand or "")
+        if riff:
+            return f"{base}\n\n> " + riff.replace("\n", "\n> ")
+    except Exception:
+        pass
+    return base
+# === /ADDITIVE ===
+
+
 # --- ADDITIVE: import for persona switching ---
 from personality_state import set_active_persona
 # --- end additive ---
