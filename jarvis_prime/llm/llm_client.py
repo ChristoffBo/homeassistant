@@ -645,6 +645,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
+    r'^\s*tone\s*:.*$',            # <<< ADDED: remove "Tone: ..." lines
     r'^\s*no\s+lists.*$',
     r'.*context\s*\(for vibes only\).*',
     r'^\s*subject\s*:.*$',
