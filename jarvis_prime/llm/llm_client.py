@@ -44,6 +44,9 @@ OPTIONS_PATH = "/data/options.json"
 SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
 SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
 
+# Track thread count used at load so we can reload if cpu limit changes
+CURRENT_THREADS = None
+
 # ADDITIVE: global reentrant lock so multiple incoming messages don't collide
 _GEN_LOCK = threading.RLock()
 
@@ -148,6 +151,14 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
         base = model_path or "/share/jarvis_prime/models"
         return os.path.join(base, fname)
     return model_path
+
+def _cpu_limit_from_options(default_val: int = 80) -> int:
+    try:
+        opts = _read_options()
+        v = int(opts.get("llm_max_cpu_percent", default_val))
+        return min(100, max(1, v))
+    except Exception:
+        return default_val
 
 # ============================
 # HTTP helpers (with HF auth)
@@ -401,7 +412,7 @@ def _try_import_llama_cpp():
         return None
 
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
-    global LLM_MODE, LLM, LOADED_MODEL_PATH
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, CURRENT_THREADS
     llama_cpp = _try_import_llama_cpp()
     if not llama_cpp:
         return False
@@ -417,6 +428,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
+        CURRENT_THREADS = threads
         _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
         return True
     except Exception as e:
@@ -560,7 +572,7 @@ def ensure_loaded(
     - If base_url provided and reachable: use Ollama mode (no local download needed here).
     - Else: local GGUF via llama-cpp, with optional HF download/check.
     """
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, CURRENT_THREADS
 
     g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -582,9 +594,18 @@ def ensure_loaded(
             else:
                 _log(f"Ollama not reachable at {base_url}; falling back to local mode")
 
+        # If already loaded with different thread target, drop to reload
+        desired_threads = _threads_from_cpu_limit(cpu_limit)
+        if LLM_MODE == "llama" and LLM is not None and LOADED_MODEL_PATH:
+            if desired_threads != (CURRENT_THREADS or desired_threads):
+                _log(f"cpu_limit change detected: {CURRENT_THREADS} -> {desired_threads}; reloading model")
+                try:
+                    LLM = None
+                except Exception:
+                    pass
+
         LLM_MODE = "none"
         OLLAMA_URL = ""
-        LLM = None
         LOADED_MODEL_PATH = None
 
         # Read options to check cleanup behavior and priority resolution
@@ -671,6 +692,7 @@ _INSTRUX_PATTERNS = [
     r'^\s*write\s+up\s+to\s+\d+.*lines?.*$',
     r'^\s*output\s+only\s+the\s+lines.*$',
     r'^\s*avoid\s+profanity.*$',
+    r'^\s*no\s+(lists|numbers|json|labels)\b.*$',
     r'^\s*<<\s*sys\s*>>.*$',
     r'^\s*\[/?\s*inst\s*\]\s*$',
     r'^\s*<\s*/?\s*s\s*>\s*$',
@@ -689,6 +711,9 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
                 continue
             if re.match(r'^\s*[A-Za-z]{2,12}\s*:', t):
                 continue
+        # Drop common instructiony phrases even mid-line
+        if re.search(r'\b(no\s+(lists|numbers|json|labels)|for vibes only)\b', t, flags=re.I):
+            continue
 
         skip = False
         for rx in _INSTRUX_RX:
@@ -779,6 +804,8 @@ def rewrite(
     """Best-effort rewrite. If LLM unavailable, returns input text."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
+    cpu_limit = cpu_limit or _cpu_limit_from_options(80)
+
     g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
@@ -835,12 +862,13 @@ def riff(
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
+            limit = _cpu_limit_from_options(80)
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256="",
                 ctx_tokens=2048,
-                cpu_limit=80,
+                cpu_limit=limit,
                 hf_token=None,
                 base_url=base_url
             )
@@ -899,19 +927,20 @@ def persona_riff(
             and (persona or "").lower().strip() == "rager"
         )
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
+    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit or _cpu_limit_from_options(80), timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
+    cpu_limit  = g_cpu if g_cpu is not None else (cpu_limit or _cpu_limit_from_options(80))
     timeout    = g_to  if g_to  is not None else timeout
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
+            limit = _cpu_limit_from_options(80)
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256=model_sha256,
                 ctx_tokens=ctx_tokens,
-                cpu_limit=cpu_limit,
+                cpu_limit=limit,
                 hf_token=hf_token,
                 base_url=base_url
             )
