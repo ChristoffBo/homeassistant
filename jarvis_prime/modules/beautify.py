@@ -328,11 +328,27 @@ def _llm_message_rewrite_max_chars() -> int:
     except Exception:
         return 350
 
+# ============================
+# Riffs (FIXED to use llm_client first)
+# ============================
 def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
     if not persona:
         return []
     if not _llm_riffs_enabled():
         return []
+    # Prefer cleaned path from llm_client first
+    try:
+        import importlib
+        llm = importlib.import_module("llm_client")
+        llm = importlib.reload(llm)
+        out = llm.persona_riff(persona=persona, context=context)
+        if isinstance(out, list) and out:
+            return [s.strip() for s in out if s and s.strip()]
+        if isinstance(out, str) and out.strip():
+            return [out.strip()]
+    except Exception:
+        pass
+    # Fallback to personality.llm_quips if llm_client failed
     try:
         mod = importlib.import_module("personality")
         mod = importlib.reload(mod)
