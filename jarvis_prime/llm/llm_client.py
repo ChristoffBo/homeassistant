@@ -149,13 +149,22 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
         return os.path.join(base, fname)
     return model_path
 
-# NEW: read CPU limit from options.json
-def _cpu_limit_from_options(default_val: int = 80) -> int:
+# ============================
+# FIXED: read CPU limit from options.json (no hardcoded 80%)
+def _cpu_limit_from_options(default_val: int = 100) -> int:
+    """
+    Read CPU limit from /data/options.json.
+    - Honors llm_max_cpu_percent if present.
+    - Falls back to 100 (no cap) if not set.
+    """
     try:
         opts = _read_options()
-        v = int(opts.get("llm_max_cpu_percent", default_val))
-        return min(100, max(1, v))
-    except Exception:
+        if "llm_max_cpu_percent" in opts:
+            v = int(opts["llm_max_cpu_percent"])
+            return min(100, max(1, v))
+        return default_val
+    except Exception as e:
+        _log(f"cpu_limit_from_options error: {e}")
         return default_val
 
 # ============================
