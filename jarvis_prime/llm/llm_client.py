@@ -44,9 +44,6 @@ OPTIONS_PATH = "/data/options.json"
 SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
 SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
 
-# Track thread count used at load so we can reload if cpu limit changes
-CURRENT_THREADS = None
-
 # ADDITIVE: global reentrant lock so multiple incoming messages don't collide
 _GEN_LOCK = threading.RLock()
 
@@ -151,14 +148,6 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
         base = model_path or "/share/jarvis_prime/models"
         return os.path.join(base, fname)
     return model_path
-
-def _cpu_limit_from_options(default_val: int = 80) -> int:
-    try:
-        opts = _read_options()
-        v = int(opts.get("llm_max_cpu_percent", default_val))
-        return min(100, max(1, v))
-    except Exception:
-        return default_val
 
 # ============================
 # HTTP helpers (with HF auth)
@@ -412,7 +401,7 @@ def _try_import_llama_cpp():
         return None
 
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, CURRENT_THREADS
+    global LLM_MODE, LLM, LOADED_MODEL_PATH
     llama_cpp = _try_import_llama_cpp()
     if not llama_cpp:
         return False
@@ -428,7 +417,6 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
-        CURRENT_THREADS = threads
         _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
         return True
     except Exception as e:
@@ -536,24 +524,6 @@ def _strip_meta_markers(s: str) -> str:
     # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
-
-# ============================
-# Tiny grammar for riffs (≤3 lines, ≤140 chars per line)
-# ============================
-_RIFF_GBNF = r"""
-root  ::= line ("\n" line){0,2}
-line  ::= ~"[^\\n]{1,140}"
-"""
-def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
-    if not use_grammar:
-        return kwargs
-    try:
-        # llama-cpp python supports raw 'grammar' string
-        kwargs["grammar"] = _RIFF_GBNF
-    except Exception:
-        pass
-    return kwargs
-
 # ============================
 # Ensure loaded
 # ============================
@@ -572,7 +542,7 @@ def ensure_loaded(
     - If base_url provided and reachable: use Ollama mode (no local download needed here).
     - Else: local GGUF via llama-cpp, with optional HF download/check.
     """
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, CURRENT_THREADS
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
     g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -594,18 +564,9 @@ def ensure_loaded(
             else:
                 _log(f"Ollama not reachable at {base_url}; falling back to local mode")
 
-        # If already loaded with different thread target, drop to reload
-        desired_threads = _threads_from_cpu_limit(cpu_limit)
-        if LLM_MODE == "llama" and LLM is not None and LOADED_MODEL_PATH:
-            if desired_threads != (CURRENT_THREADS or desired_threads):
-                _log(f"cpu_limit change detected: {CURRENT_THREADS} -> {desired_threads}; reloading model")
-                try:
-                    LLM = None
-                except Exception:
-                    pass
-
         LLM_MODE = "none"
         OLLAMA_URL = ""
+        LLM = None
         LOADED_MODEL_PATH = None
 
         # Read options to check cleanup behavior and priority resolution
@@ -662,37 +623,36 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     vibe_map = {
-        "dude": "laid-back, mellow; chill confidence; no jokes unless natural",
+        "dude": "laid-back, mellow, no jokes, chill confidence",
         "chick": "sassy, clever, stylish",
-        "nerd": "precise, terse, witty one-liners",
-        "rager": "short, intense; profanity allowed",
-        "comedian": "light jokes permitted; keep it tight",
-        "jarvis": "polished valet AI; calm, clinical, anticipatory",
-        "ops": "terse incident-commander tone",
-        "action": "stoic mission-brief tone"
+        "nerd": "precise, witty one-liners",
+        "rager": "short, profane bursts allowed",
+        "comedian": "only persona allowed to tell jokes",
+        "jarvis": "polished butler style",
+        "ops": "terse, incident commander tone",
+        "action": "stoic mission-brief style"
     }
     vibe = vibe_map.get((persona or "").lower(), "neutral, light")
     guard = "" if allow_profanity else " Avoid profanity."
     sys_prompt = (
-        "Write 1–3 punchy lines (each ≤ 20 words). "
-        f"Style is {vibe}.{guard} "
-        "Do not drift into other personas. Output only the lines."
+        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
+        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
     )
-    user = (subject or "Status update")
+    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
-    r'^\s*(tone|voice|context|style|subject)\s*:.*$',
-    r'.*\bcontext\b.*for vibes only.*$',
+    r'^\s*tone\s*:.*$',            # <<< ADDED: remove "Tone: ..." lines
+    r'^\s*no\s+lists.*$',
+    r'.*context\s*\(for vibes only\).*',
+    r'^\s*subject\s*:.*$',
+    r'^\s*style\s*:.*$',
     r'^\s*you\s+write\s+a\s+single.*$',
     r'^\s*write\s+1.*lines?.*$',
-    r'^\s*write\s+up\s+to\s+\d+.*lines?.*$',
-    r'^\s*output\s+only\s+the\s+lines.*$',
     r'^\s*avoid\s+profanity.*$',
-    r'^\s*no\s+(lists|numbers|json|labels)\b.*$',
     r'^\s*<<\s*sys\s*>>.*$',
     r'^\s*\[/?\s*inst\s*\]\s*$',
     r'^\s*<\s*/?\s*s\s*>\s*$',
@@ -705,16 +665,6 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
         t = ln.strip()
         if not t:
             continue
-        # Heuristic: drop colon-led labels (instruction echoes)
-        if ":" in t[:12]:
-            if re.match(r'^\s*(tone|voice|context|style|subject)\s*:', t, flags=re.I):
-                continue
-            if re.match(r'^\s*[A-Za-z]{2,12}\s*:', t):
-                continue
-        # Drop common instructiony phrases even mid-line
-        if re.search(r'\b(no\s+(lists|numbers|json|labels)|for vibes only)\b', t, flags=re.I):
-            continue
-
         skip = False
         for rx in _INSTRUX_RX:
             if rx.search(t):
@@ -731,7 +681,7 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 # ============================
 # Core generation (shared)
 # ============================
-def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) -> str:
+def _llama_generate(prompt: str, timeout: int = 12) -> str:
     """Generate text via local llama-cpp (non-streaming)."""
     try:
         import signal
@@ -741,17 +691,14 @@ def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) 
             signal.signal(signal.SIGALRM, _alarm_handler)
             signal.alarm(max(1, int(timeout)))
 
-        params = dict(
-            prompt=prompt,
+        out = LLM(
+            prompt,
             max_tokens=256,
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=["</s>", "[/INST]"],  # stronger stop for Ph4
+            stop=["</s>"]
         )
-        params = _maybe_with_grammar(params, with_grammar)
-
-        out = LLM(**params)
 
         if hasattr(signal, "SIGALRM"):
             signal.alarm(0)
@@ -765,7 +712,7 @@ def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) 
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, with_grammar: bool=False) -> str:
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str) -> str:
     """Route to Ollama or llama-cpp, depending on LLM_MODE."""
     if LLM_MODE == "ollama" and OLLAMA_URL:
         name = ""
@@ -777,7 +724,7 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
 
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)), with_grammar=with_grammar)
+        return _llama_generate(prompt, timeout=max(4, int(timeout)))
 
     return ""
 
@@ -803,8 +750,6 @@ def rewrite(
 ) -> str:
     """Best-effort rewrite. If LLM unavailable, returns input text."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
-
-    cpu_limit = cpu_limit or _cpu_limit_from_options(80)
 
     g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -862,13 +807,12 @@ def riff(
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            limit = _cpu_limit_from_options(80)
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256="",
                 ctx_tokens=2048,
-                cpu_limit=limit,
+                cpu_limit=80,
                 hf_token=None,
                 base_url=base_url
             )
@@ -879,7 +823,7 @@ def riff(
             return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         if not out:
             return ""
 
@@ -927,20 +871,19 @@ def persona_riff(
             and (persona or "").lower().strip() == "rager"
         )
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit or _cpu_limit_from_options(80), timeout)
+    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else (cpu_limit or _cpu_limit_from_options(80))
+    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            limit = _cpu_limit_from_options(80)
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256=model_sha256,
                 ctx_tokens=ctx_tokens,
-                cpu_limit=limit,
+                cpu_limit=cpu_limit,
                 hf_token=hf_token,
                 base_url=base_url
             )
@@ -962,38 +905,43 @@ def persona_riff(
         except Exception:
             pass
 
-        # Tightened persona style map (no label words)
+        # Tightened persona style map
         style_map = {
-            "dude":      "laid-back, mellow; chill confidence",
+            "dude":      "laid-back, mellow, no jokes",
             "chick":     "sassy, clever, stylish",
-            "nerd":      "precise, terse, witty one-liners",
-            "rager":     "short, intense; profanity allowed",
-            "comedian":  "light jokes permitted; keep it tight",
-            "action":    "stoic mission-brief tone",
-            "jarvis":    "polished valet AI; calm, clinical, anticipatory",
-            "ops":       "terse incident-commander tone",
+            "nerd":      "precise, witty one-liners",
+            "rager":     "short, profane bursts allowed",
+            "comedian":  "only persona allowed to tell jokes",
+            "action":    "stoic mission-brief style",
+            "jarvis":    "polished butler style",
+            "ops":       "terse, incident commander tone",
         }
         vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
 
         sys_rules = [
+            f"Voice: {vibe}.",
             "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
-            f"Style is {vibe}.",
-            "No bullets, numbering, labels, JSON, quotes, or catchphrases.",
-            "No explanations or meta-commentary. Output only the lines.",
+            "No bullets or numbering. No labels. No lists. No JSON.",
+            "No quotes or catchphrases. No character or actor names.",
+            "No explanations or meta-commentary. Output ONLY the lines.",
+            "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
         ]
         if not allow_profanity:
             sys_rules.append("Avoid profanity.")
         if daypart:
-            sys_rules.append(f"Subtle daypart vibe: {daypart}.")
+            sys_rules.append(f"Daypart vibe (subtle): {daypart}.")
         if intensity:
-            sys_rules.append(f"Subtle persona intensity: {intensity}.")
+            sys_rules.append(f"Persona intensity (subtle): {intensity}.")
         sys_prompt = " ".join(sys_rules)
 
-        # User content only (no labels, no directives)
-        user = context.strip()
+        # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
+        user = (
+            f"{context.strip()}\n\n"
+            f"Write up to {max_lines} short lines in the requested voice."
+        )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
+        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         if not raw:
             return []
 
@@ -1043,11 +991,7 @@ if __name__ == "__main__":
                 ctx_tokens=2048
             )
             print("rewrite sample ->", txt[:120])
-            r = riff(
-                subject="Sonarr ingestion nominal",
-                persona="rager",
-                base_url=os.getenv("TEST_OLLAMA","").strip()
-            )
+            r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
             print("riff sample ->", r)
             rl = persona_riff(
                 persona="nerd",
