@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # System deps
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip curl jq ca-certificates tzdata \
+    python3 python3-pip curl jq ca-certificates tzdata pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -24,14 +24,20 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 # We install flask (required by /app/intakes/apprise.py) and waitress (optional, used if present).
 RUN pip3 install --no-cache-dir --break-system-packages flask waitress
 
-# ---- NEW (additive): Minimal build deps + llama-cpp-python for local GGUF ----
-# Build deps are small and only for compiling wheels if prebuilt not available.
+# ---- NEW (additive): Minimal build deps + modern llama-cpp-python for local GGUF ----
+# Build deps for compiling the wheel; OpenBLAS for faster CPU math.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential cmake libopenblas-dev \
   && rm -rf /var/lib/apt/lists/* \
-  && pip3 install --no-cache-dir --break-system-packages \
-      numpy \
-      llama-cpp-python==0.2.90
+  && pip3 install --no-cache-dir --break-system-packages --upgrade pip \
+  && pip3 install --no-cache-dir --break-system-packages numpy
+
+# Build a modern llama-cpp-python **from source** (K-quant support for Phi-4)
+# -DLLAMA_NATIVE=ON enables AVX2/AVX512/VNNI where available
+# -DGGML_BLAS=ON uses OpenBLAS for better CPU perf
+ENV CMAKE_ARGS="-DLLAMA_NATIVE=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS"
+RUN pip3 install --no-cache-dir --break-system-packages --no-binary=:all: \
+      "llama-cpp-python==0.3.16"
 
 # ---- App content (keep your original layout) ----
 # Default system prompt (baked into image). Runtime falls back to /share/jarvis_prime/memory if present.
