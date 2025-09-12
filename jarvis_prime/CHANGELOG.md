@@ -1,3 +1,5 @@
+## latest (2025-09-12 22:00:00)
+Bumped llama-cpp-python==0.2.90 to 0.3.16
 ## latest (2025-09-10 08:00:00)
 - Fine tuned LLM rewrites and Riffs
 ## latest (2025-09-09 06:42:00)
