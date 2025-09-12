@@ -9,12 +9,6 @@
 # - Hard timeouts; best-effort, never crash callers
 # - Message checks (max lines / soft-length guard)
 # - Persona riffs (1–3 short lines) with lexicon fallback
-#
-# Public entry points expected by the rest of Jarvis:
-#   ensure_loaded(...)
-#   rewrite(...)
-#   riff(...)
-#   persona_riff(...)
 
 from __future__ import annotations
 import os
@@ -55,7 +49,7 @@ def _lock_timeout() -> int:
         return 10
 
 class _GenCritical:
-    """Serialize LLM load/generation; if lock not acquired in time, raise to force fallback."""
+    """Serialize LLM load/generation; if lock not acquired, log and continue (no hard fail)."""
     def __init__(self, timeout: Optional[int] = None):
         self.timeout = max(1, int(timeout or _lock_timeout()))
         self.acquired = False
@@ -66,8 +60,9 @@ class _GenCritical:
                 self.acquired = True
                 return True
             time.sleep(0.01)
-        # IMPORTANT: raise so the with-body never executes without the lock
-        raise TimeoutError("generation lock acquire timeout")
+        # Do not kill generation; continue without lock (avoids instant fallback)
+        _log(f"lock acquire timed out after {self.timeout}s — continuing without lock")
+        return True
     def __exit__(self, exc_type, exc, tb):
         if self.acquired:
             try:
@@ -158,6 +153,17 @@ def _cpu_limit_from_options() -> int:
         _log(f"cpu_limit_from_options error: {e}")
     _log("cpu from options missing -> default 100%")
     return 100
+
+# Use llm_timeout_seconds from options.json
+def _timeout_from_options(default_val: int) -> int:
+    try:
+        opts = _read_options()
+        if "llm_timeout_seconds" in opts:
+            v = int(opts["llm_timeout_seconds"])
+            return min(180, max(2, v))
+    except Exception as e:
+        _log(f"timeout_from_options error: {e}")
+    return max(2, int(default_val))
 
 # ============================
 # HTTP helpers (with HF auth)
@@ -721,7 +727,8 @@ def riff(
     cpu_limit: Optional[int] = None
 ) -> str:
     """Generate 1–3 very short riff lines for the bottom of a card. Always returns something."""
-    deadline = time.time() + max(1, int(timeout))
+    timeout = _timeout_from_options(timeout or 8)
+    deadline = time.time() + timeout
     chosen_cpu = int(cpu_limit) if (cpu_limit is not None and cpu_limit > 0) else _cpu_limit_from_options()
 
     try:
@@ -788,7 +795,8 @@ def rewrite(
     max_chars: int = 0
 ) -> str:
     """Best-effort rewrite. If LLM unavailable or timeout, returns input text."""
-    deadline = time.time() + max(1, int(timeout))
+    timeout = _timeout_from_options(timeout or 12)
+    deadline = time.time() + timeout
     chosen_cpu = int(cpu_limit) if (cpu_limit is not None and cpu_limit > 0) else _cpu_limit_from_options()
 
     try:
@@ -885,7 +893,8 @@ def persona_riff(
             and (persona or "").lower().strip() == "rager"
         )
 
-    deadline = time.time() + max(1, int(timeout))
+    timeout = _timeout_from_options(timeout or 8)
+    deadline = time.time() + timeout
     chosen_cpu = int(cpu_limit) if (cpu_limit is not None and cpu_limit > 0) else _cpu_limit_from_options()
 
     try:
@@ -988,7 +997,6 @@ def persona_riff(
 if __name__ == "__main__":
     print("llm_client self-check start")
     try:
-        # Note: TEST_CPU omitted -> options.json decides. Provide TEST_CPU to override explicitly.
         tcpu_env = os.getenv("TEST_CPU", "").strip()
         tcpu = int(tcpu_env) if (tcpu_env.isdigit() and int(tcpu_env) > 0) else None
 
@@ -1031,3 +1039,4 @@ if __name__ == "__main__":
     except Exception as e:
         print("self-check error:", e)
     print("llm_client self-check end")
+```0
