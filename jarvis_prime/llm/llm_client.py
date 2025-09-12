@@ -641,37 +641,35 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     vibe_map = {
-        "dude": "laid-back, mellow, no jokes, chill confidence",
+        "dude": "laid-back, mellow; chill confidence; no jokes unless natural",
         "chick": "sassy, clever, stylish",
-        "nerd": "precise, witty one-liners",
-        "rager": "short, profane bursts allowed",
-        "comedian": "only persona allowed to tell jokes",
-        "jarvis": "polished butler style",
-        "ops": "terse, incident commander tone",
-        "action": "stoic mission-brief style"
+        "nerd": "precise, terse, witty one-liners",
+        "rager": "short, intense; profanity allowed",
+        "comedian": "light jokes permitted; keep it tight",
+        "jarvis": "polished valet AI; calm, clinical, anticipatory",
+        "ops": "terse incident-commander tone",
+        "action": "stoic mission-brief tone"
     }
     vibe = vibe_map.get((persona or "").lower(), "neutral, light")
     guard = "" if allow_profanity else " Avoid profanity."
     sys_prompt = (
-        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
-        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
+        "Write 1–3 punchy lines (each ≤ 20 words). "
+        f"Style is {vibe}.{guard} "
+        "Do not drift into other personas. Output only the lines."
     )
-    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
+    user = (subject or "Status update")
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
-    r'^\s*tone\s*:.*$',            # <<< ADDED / existing patterns
-    r'^\s*no\s+lists.*$',
-    r'.*context\s*\(for vibes only\).*',
-    r'^\s*subject\s*:.*$',
-    r'^\s*style\s*:.*$',
+    r'^\s*(tone|voice|context|style|subject)\s*:.*$',
+    r'.*\bcontext\b.*for vibes only.*$',
     r'^\s*you\s+write\s+a\s+single.*$',
-    r'^\s*write\s+1.*lines?.*$',                 # existing
-    r'^\s*write\s+up\s+to\s+\d+.*lines?.*$',     # NEW: catch "Write up to N ..."
-    r'^\s*output\s+only\s+the\s+lines.*$',       # NEW: catch meta echoes
+    r'^\s*write\s+1.*lines?.*$',
+    r'^\s*write\s+up\s+to\s+\d+.*lines?.*$',
+    r'^\s*output\s+only\s+the\s+lines.*$',
     r'^\s*avoid\s+profanity.*$',
     r'^\s*<<\s*sys\s*>>.*$',
     r'^\s*\[/?\s*inst\s*\]\s*$',
@@ -685,6 +683,13 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
         t = ln.strip()
         if not t:
             continue
+        # Heuristic: drop colon-led labels (instruction echoes)
+        if ":" in t[:12]:
+            if re.match(r'^\s*(tone|voice|context|style|subject)\s*:', t, flags=re.I):
+                continue
+            if re.match(r'^\s*[A-Za-z]{2,12}\s*:', t):
+                continue
+
         skip = False
         for rx in _INSTRUX_RX:
             if rx.search(t):
@@ -928,40 +933,35 @@ def persona_riff(
         except Exception:
             pass
 
-        # Tightened persona style map
+        # Tightened persona style map (no label words)
         style_map = {
-            "dude":      "laid-back, mellow, no jokes",
+            "dude":      "laid-back, mellow; chill confidence",
             "chick":     "sassy, clever, stylish",
-            "nerd":      "precise, witty one-liners",
-            "rager":     "short, profane bursts allowed",
-            "comedian":  "only persona allowed to tell jokes",
-            "action":    "stoic mission-brief style",
-            "jarvis":    "polished butler style",
-            "ops":       "terse, incident commander tone",
+            "nerd":      "precise, terse, witty one-liners",
+            "rager":     "short, intense; profanity allowed",
+            "comedian":  "light jokes permitted; keep it tight",
+            "action":    "stoic mission-brief tone",
+            "jarvis":    "polished valet AI; calm, clinical, anticipatory",
+            "ops":       "terse incident-commander tone",
         }
         vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
 
         sys_rules = [
-            f"Voice: {vibe}.",
             "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
-            "No bullets or numbering. No labels. No lists. No JSON.",
-            "No quotes or catchphrases. No character or actor names.",
-            "No explanations or meta-commentary. Output ONLY the lines.",
-            "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
+            f"Style is {vibe}.",
+            "No bullets, numbering, labels, JSON, quotes, or catchphrases.",
+            "No explanations or meta-commentary. Output only the lines.",
         ]
         if not allow_profanity:
             sys_rules.append("Avoid profanity.")
         if daypart:
-            sys_rules.append(f"Daypart vibe (subtle): {daypart}.")
+            sys_rules.append(f"Subtle daypart vibe: {daypart}.")
         if intensity:
-            sys_rules.append(f"Persona intensity (subtle): {intensity}.")
+            sys_rules.append(f"Subtle persona intensity: {intensity}.")
         sys_prompt = " ".join(sys_rules)
 
-        # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
-        user = (
-            f"{context.strip()}\n\n"
-            f"Write up to {max_lines} short lines in the requested voice."
-        )
+        # User content only (no labels, no directives)
+        user = context.strip()
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
         raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
@@ -1014,7 +1014,11 @@ if __name__ == "__main__":
                 ctx_tokens=2048
             )
             print("rewrite sample ->", txt[:120])
-            r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
+            r = riff(
+                subject="Sonarr ingestion nominal",
+                persona="rager",
+                base_url=os.getenv("TEST_OLLAMA","").strip()
+            )
             print("riff sample ->", r)
             rl = persona_riff(
                 persona="nerd",
