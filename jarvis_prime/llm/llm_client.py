@@ -8,7 +8,7 @@
 # - SHA256 optional integrity check
 # - Hard timeouts; best-effort, never crash callers
 # - Message checks (max lines / soft-length guard)
-# - Persona riffs (1–3 short lines)
+# - Persona riffs (1–3 short lines) with LEXICON FALLBACK
 #
 # Public entry points expected by the rest of Jarvis:
 #   ensure_loaded(...)
@@ -652,51 +652,34 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
-# ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
+# LEXICON FALLBACK
 # ============================
-_INSTRUX_PATTERNS = [
-    r'^\s*tone\s*:.*$',            # remove "Tone: ..." lines
-    r'^\s*voice\s*:.*$',           # remove "Voice: ..." lines
-    r'^\s*context\s*:.*$',         # remove "Context: ..." lines
-    r'^\s*style\s*:.*$',           # remove "Style: ..." lines
-    r'^\s*subject\s*:.*$',         # remove "Subject: ..." lines
-    r'^\s*write\s+up\s+to\s+\d+.*$', # remove "Write up to ..." echoes
-    r'^\s*\[image\]\s*$',          # remove bare [image]
-    r'^\s*no\s+lists.*$',
-    r'.*context\s*\(for vibes only\).*',
-    r'^\s*you\s+write\s+a\s+single.*$',
-    r'^\s*write\s+1.*lines?.*$',
-    r'^\s*avoid\s+profanity.*$',
-    r'^\s*<<\s*sys\s*>>.*$',
-    r'^\s*\[/?\s*inst\s*\]\s*$',
-    r'^\s*<\s*/?\s*s\s*>\s*$',
-]
-_INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
+def _lexicon_default(persona: str, subject: str) -> str:
+    p = (persona or "").lower().strip()
+    if p == "rager":     return "Send it. No flinch."
+    if p == "nerd":      return "Parsed, verified, shipped."
+    if p == "jarvis":    return "At your service."
+    if p == "ops":       return "On it. Eyes up."
+    if p == "action":    return "Objective locked."
+    if p == "chick":     return "Clean, sharp, done."
+    if p == "dude":      return "Chill. It’s handled."
+    if p == "comedian":  return "All good—no punchline needed."
+    return subject or "Done."
 
-def _clean_riff_lines(lines: List[str]) -> List[str]:
-    cleaned: List[str] = []
-    for ln in lines:
-        t = ln.strip()
-        if not t:
-            continue
-        # Drop label-looking lines (colon in first 12 chars)
-        if ":" in t[:12]:
-            if re.match(r'^\s*(tone|voice|context|style|subject)\s*:', t, flags=re.I):
-                continue
-        # Strip common leak tokens inline
-        t = t.replace("[image]", "").replace("[INST]", "").replace("[/INST]", "").strip()
-        skip = False
-        for rx in _INSTRUX_RX:
-            if rx.search(t):
-                skip = True
-                break
-        if skip:
-            continue
-        t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
-        t = t.replace("</s>", "").replace("<s>", "").strip()
-        if t:
-            cleaned.append(t)
-    return cleaned
+def _riff_fallback(persona: str, subject: str) -> str:
+    # Try your personality module first, then hardcoded lexicon.
+    try:
+        import personality  # external, optional
+        q = None
+        if hasattr(personality, "quip"):
+            q = personality.quip(persona, with_emoji=False)
+        elif hasattr(personality, "riff"):
+            q = personality.riff(persona, subject, max_lines=1, with_emoji=False)
+        if q:
+            return (q if isinstance(q, str) else "\n".join(q)).strip()
+    except Exception as e:
+        _log(f"fallback riff (personality) failed: {e}")
+    return _lexicon_default(persona, subject)
 
 # ============================
 # Core generation (shared)
@@ -806,7 +789,7 @@ def rewrite(
     return final
 
 # ============================
-# Public: riff
+# Public: riff  (now ALWAYS returns something using lexicons)
 # ============================
 def riff(
     *,
@@ -820,14 +803,16 @@ def riff(
 ) -> str:
     """
     Generate 1–3 very short riff lines for the bottom of a card.
-    Returns empty string if engine unavailable.
+    Guaranteed non-empty via lexicon fallback.
     """
-    _, _, g_to = _enviroguard_limits(None, None, timeout)
+    # Honor EnviroGuard for both timeout and CPU here
+    cpu_default = _cpu_limit_from_options(80)
+    _, g_cpu, g_to = _enviroguard_limits(None, cpu_default, timeout)
     timeout = g_to if g_to is not None else timeout
+    limit = g_cpu if g_cpu is not None else cpu_default
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            limit = _cpu_limit_from_options(80)
             est_threads = _threads_from_cpu_limit(limit)
             _log(f"riff using cpu_limit={limit}% (threads≈{est_threads})")
             ok = ensure_loaded(
@@ -840,15 +825,15 @@ def riff(
                 base_url=base_url
             )
             if not ok:
-                return ""
+                return _riff_fallback(persona, subject or "Status")
 
         if LLM_MODE not in ("llama", "ollama"):
-            return ""
+            return _riff_fallback(persona, subject or "Status")
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
         out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         if not out:
-            return ""
+            return _riff_fallback(persona, subject or "Status")
 
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -862,12 +847,14 @@ def riff(
             break
 
     joined = "\n".join(cleaned[:3]) if cleaned else ""
+    if not joined:
+        return _riff_fallback(persona, subject or "Status")
     if len(joined) > 120:
         joined = joined[:119].rstrip() + "…"
     return joined
 
 # ============================
-# Public: persona_riff
+# Public: persona_riff (now ALWAYS returns >=1 line via lexicons)
 # ============================
 def persona_riff(
     *,
@@ -887,6 +874,7 @@ def persona_riff(
 ) -> List[str]:
     """
     Generate 1–N SHORT persona-flavored lines from context (title + body). Returns a list of lines.
+    Guaranteed to return at least one fallback line.
     """
     if allow_profanity is None:
         allow_profanity = (
@@ -901,23 +889,22 @@ def persona_riff(
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            limit = cpu_limit or _cpu_limit_from_options(80)
-            est_threads = _threads_from_cpu_limit(limit)
-            _log(f"persona_riff using cpu_limit={limit}% (threads≈{est_threads})")
+            est_threads = _threads_from_cpu_limit(cpu_limit)
+            _log(f"persona_riff using cpu_limit={cpu_limit}% (threads≈{est_threads})")
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256=model_sha256,
                 ctx_tokens=ctx_tokens,
-                cpu_limit=limit,
+                cpu_limit=cpu_limit,
                 hf_token=hf_token,
                 base_url=base_url
             )
             if not ok:
-                return []
+                return [_riff_fallback(persona, (context or "Status").strip().splitlines()[0])]
 
         if LLM_MODE not in ("llama", "ollama"):
-            return []
+            return [_riff_fallback(persona, (context or "Status").strip().splitlines()[0])]
 
         # Optional embedded style hint
         daypart = None
@@ -962,14 +949,47 @@ def persona_riff(
 
         # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
         user = (
-            f"{context.strip()}\n\n"
+            f"{(context or '').strip()}\n\n"
             f"Write up to {max_lines} short lines in the requested voice."
         )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
         raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         if not raw:
-            return []
+            return [_riff_fallback(persona, (context or "Status").strip().splitlines()[0])]
+
+    # post-clean
+    _INSTRUX_PATTERNS = [
+        r'^\s*tone\s*:.*$', r'^\s*voice\s*:.*$', r'^\s*context\s*:.*$',
+        r'^\s*style\s*:.*$', r'^\s*subject\s*:.*$', r'^\s*write\s+up\s+to\s+\d+.*$',
+        r'^\s*\[image\]\s*$', r'^\s*no\s+lists.*$', r'.*context\s*\(for vibes only\).*',
+        r'^\s*you\s+write\s+a\s+single.*$', r'^\s*write\s+1.*lines?.*$', r'^\s*avoid\s+profanity.*$',
+        r'^\s*<<\s*sys\s*>>.*$', r'^\s*\[/?\s*inst\s*\]\s*$', r'^\s*<\s*/?\s*s\s*>\s*$',
+    ]
+    _INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
+
+    def _clean_riff_lines(lines: List[str]) -> List[str]:
+        cleaned: List[str] = []
+        for ln in lines:
+            t = ln.strip()
+            if not t:
+                continue
+            if ":" in t[:12]:
+                if re.match(r'^\s*(tone|voice|context|style|subject)\s*:', t, flags=re.I):
+                    continue
+            t = t.replace("[image]", "").replace("[INST]", "").replace("[/INST]", "").strip()
+            skip = False
+            for rx in _INSTRUX_RX:
+                if rx.search(t):
+                    skip = True
+                    break
+            if skip:
+                continue
+            t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
+            t = t.replace("</s>", "").replace("<s>", "").strip()
+            if t:
+                cleaned.append(t)
+        return cleaned
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -988,6 +1008,9 @@ def persona_riff(
         cleaned.append(ln2)
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
+
+    if not cleaned:
+        return [_riff_fallback(persona, (context or "Status").strip().splitlines()[0])]
     return cleaned
 
 # ============================
@@ -1017,7 +1040,11 @@ if __name__ == "__main__":
                 ctx_tokens=2048
             )
             print("rewrite sample ->", txt[:120])
-            r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
+            r = riff(
+                subject="Sonarr ingestion nominal",
+                persona="rager",
+                base_url=os.getenv("TEST_OLLAMA","").strip()
+            )
             print("riff sample ->", r)
             rl = persona_riff(
                 persona="nerd",
