@@ -414,6 +414,8 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
             model_path=model_path,
             n_ctx=ctx_tokens,
             n_threads=threads,
+            n_batch=128,      # ADD: cap batch for faster prefill on CPU
+            n_ubatch=128      # ADD: match micro-batch
         )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
