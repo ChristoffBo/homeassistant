@@ -3,20 +3,20 @@
 # /app/llm_client.py
 #
 # Jarvis Prime — LLM client (Phi GGUF only, no Ollama)
-# - GGUF local loading via llama-cpp (if available)
+# - GGUF local loading via llama-cpp
 # - Hugging Face downloads with Authorization header preserved across redirects
 # - SHA256 optional integrity check
 # - Hard timeouts; best-effort, never crash callers
-# - Message checks (max lines / soft-length guard)
-# - Persona riffs (1–3 short lines)
-# - Phi chat template (<|system|>, <|user|>, <|assistant|>, <|end|>)
+# - Phi chat template (<|system|>, <|user|>, <|assistant|>, <|end|>) w/ correct EOS
 # - EnviroGuard + options.json respected for ctx/cpu/timeout/threads/gen_tokens
 #
-# Public entry points expected by the rest of Jarvis:
+# Public entry points:
 #   ensure_loaded(...)
 #   rewrite(...)
 #   riff(...)
 #   persona_riff(...)
+# Helper:
+#   get_chat_tokens() -> (BOS_TOKEN, EOS_TOKEN)
 
 from __future__ import annotations
 import os
@@ -32,6 +32,12 @@ import urllib.error
 from typing import Optional, Dict, Any, Tuple, List
 
 # ============================
+# Chat tokens (Phi-compatible)
+# ============================
+BOS_TOKEN = "<s>"
+EOS_TOKEN = "<|end|>"   # IMPORTANT: Phi chat EOS (NOT <|endoftext|>)
+
+# ============================
 # Globals
 # ============================
 LLM_MODE = "none"        # "none" | "llama"
@@ -39,10 +45,14 @@ LLM = None               # llama_cpp.Llama instance if LLM_MODE == "llama"
 LOADED_MODEL_PATH = None
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
-SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # external system prompt file
+SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"
 
 # Global reentrant lock to serialize load/generation
 _GEN_LOCK = threading.RLock()
+
+def get_chat_tokens() -> Tuple[str, str]:
+    """Expose BOS/EOS so external templates can stay in sync with this module."""
+    return BOS_TOKEN, EOS_TOKEN
 
 def _lock_timeout() -> int:
     """Optional env-configurable lock wait. Defaults to 300s."""
@@ -127,7 +137,7 @@ def _effective_limits(default_ctx: int,
     Returns: (ctx_tokens, cpu_percent, timeout_seconds, threads, gen_tokens)
     """
     opts = _read_options()
-    # Options.json
+    # options.json
     ctx = int(opts.get("llm_ctx_tokens", default_ctx))
     cpu = int(opts.get("llm_max_cpu_percent", default_cpu))
     timeout = int(opts.get("llm_timeout_seconds", default_timeout))
@@ -413,7 +423,7 @@ def ensure_loaded(
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, DEFAULT_CTX
 
-    # Merge limits (options + env). Ignore passed ctx/cpu in favor of merged values.
+    # Merge limits (options + env).
     ctx_eff, cpu_eff, _to, threads_eff, _gen = _effective_limits(
         default_ctx=ctx_tokens or 4096,
         default_cpu=cpu_limit or 80,
@@ -467,8 +477,9 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
         f"{text}"
     )
     return (
-        "<|system|>\n" + sys_prompt + "<|end|>\n"
-        "<|user|>\n"   + user       + "<|end|>\n"
+        f"{BOS_TOKEN}\n"
+        "<|system|>\n" + sys_prompt + f"{EOS_TOKEN}\n"
+        "<|user|>\n"   + user       + f"{EOS_TOKEN}\n"
         "<|assistant|>\n"
     )
 
@@ -491,8 +502,9 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     )
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return (
-        "<|system|>\n" + sys_prompt + "<|end|>\n"
-        "<|user|>\n"   + user       + "<|end|>\n"
+        f"{BOS_TOKEN}\n"
+        "<|system|>\n" + sys_prompt + f"{EOS_TOKEN}\n"
+        "<|user|>\n"   + user       + f"{EOS_TOKEN}\n"
         "<|assistant|>\n"
     )
 
@@ -555,7 +567,7 @@ def _llama_generate(prompt: str, timeout: int = 12, max_tokens: Optional[int] = 
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=["<|end|>", "<|assistant|>"]
+            stop=[EOS_TOKEN, "<|assistant|>"]
         )
 
         if hasattr(signal, "SIGALRM"):
@@ -738,8 +750,9 @@ def persona_riff(
 
         user = context.strip()
         prompt = (
-            "<|system|>\n" + sys_prompt + "<|end|>\n"
-            "<|user|>\n"   + user       + "<|end|>\n"
+            f"{BOS_TOKEN}\n"
+            "<|system|>\n" + sys_prompt + f"{EOS_TOKEN}\n"
+            "<|user|>\n"   + user       + f"{EOS_TOKEN}\n"
             "<|assistant|>\n"
         )
 
@@ -772,7 +785,6 @@ def persona_riff(
 if __name__ == "__main__":
     print("llm_client self-check start")
     try:
-        # Load using options.json priority
         ok = ensure_loaded(
             model_url=os.getenv("TEST_MODEL_URL",""),
             model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
@@ -784,6 +796,8 @@ if __name__ == "__main__":
         )
         print(f"ensure_loaded -> {ok} mode={LLM_MODE}")
         if ok:
+            bos, eos = get_chat_tokens()
+            print(f"BOS={bos} EOS={eos}")
             txt = rewrite(
                 text="Status synchronized; elegance maintained.",
                 mood="jarvis",
