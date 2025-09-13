@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (CONFIG-DRIVEN, FIXED MODEL RESOLUTION)
+# Jarvis Prime — LLM client (CONFIG-DRIVEN, ENVIRGUARD-AWARE PROFILES, PERSONA RIFF DEFAULT)
 # - GGUF local loading via llama-cpp (if available)
 # - Optional Ollama HTTP generation (if base_url provided & reachable)
 # - Hugging Face downloads with Authorization header preserved across redirects
 # - SHA256 optional integrity check
 # - Hard timeouts; best-effort, never crash callers
 # - Message checks (max lines / soft-length guard)
-# - Persona riffs (1–3 short lines)
+# - Persona riffs (1–3 short lines; riff() → persona_riff())
 #
 # Public entry points expected by the rest of Jarvis:
 #   ensure_loaded(...)
 #   rewrite(...)
-#   riff(...)
+#   riff(...)         → routes to persona_riff()
 #   persona_riff(...)
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ import time
 import math
 import hashlib
 import socket
-import random
 import urllib.request
 import urllib.error
 import http.client
@@ -42,7 +41,6 @@ OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:1143
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
 SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"
-SYS_PROMPT = ""
 
 # Model metadata (for auto grammar & stops)
 _MODEL_ARCH = ""
@@ -53,7 +51,7 @@ _MODEL_NAME_HINT = ""
 _GEN_LOCK = threading.RLock()
 
 def _lock_timeout() -> int:
-    """Optional env-configurable lock wait. Defaults to 10s."""
+    """Optional env-configurable lock wait. Defaults to 10s (capped to 300)."""
     try:
         v = int(os.getenv("LLM_LOCK_TIMEOUT_SECONDS", "300").strip())
         return max(1, min(300, v))
@@ -112,34 +110,102 @@ def _read_options() -> Dict[str, Any]:
 def _current_profile() -> Tuple[str, int, int, int]:
     """
     Resolve the active power profile and return (name, cpu_percent, ctx_tokens, timeout_seconds).
-    Supports either flat keys at root ('manual','hot','normal','boost') or nested under 'llm_profiles'/'profiles'.
-    Active profile key is read from: options['llm_power_profile'] or options['power_profile'] or env LLM_POWER_PROFILE; defaults to 'normal'.
+
+    Sources (priority):
+      1) Flat top-level dicts: manual/hot/normal/boost
+      2) Nested dict: llm_profiles / profiles
+      3) EnviroGuard table: llm_enviroguard_profiles (stringified JSON or dict)
+      4) Global knobs: llm_max_cpu_percent / llm_ctx_tokens / llm_timeout_seconds
+      5) Hard defaults: cpu=80, ctx=4096, timeout=25
+
+    Active profile name:
+      opts['llm_power_profile'] or opts['power_profile'] or $LLM_POWER_PROFILE or 'normal'
     """
     opts = _read_options()
-    prof_name = (opts.get("llm_power_profile") or opts.get("power_profile") or os.getenv("LLM_POWER_PROFILE") or "normal").strip().lower()
+    prof_name = (opts.get("llm_power_profile")
+                 or opts.get("power_profile")
+                 or os.getenv("LLM_POWER_PROFILE")
+                 or "normal").strip().lower()
+
+    # DEBUG: keys present
+    try:
+        _log(f"opts keys: {sorted(list(opts.keys()))[:12]}{' ...' if len(opts.keys())>12 else ''}")
+    except Exception:
+        pass
 
     profiles: Dict[str, Dict[str, Any]] = {}
-    for key in ("manual", "hot", "normal", "boost"):
-        if isinstance(opts.get(key), dict):
-            profiles[key] = opts[key]
 
+    # 1) Flat
+    for key in ("manual", "hot", "normal", "boost"):
+        v = opts.get(key)
+        if isinstance(v, dict):
+            profiles[key] = v
+
+    # 2) Nested
     nested = opts.get("llm_profiles") or opts.get("profiles")
     if isinstance(nested, dict):
         for k, v in nested.items():
             if isinstance(v, dict):
-                profiles[k] = v
+                profiles[k.strip().lower()] = v
 
-    pdata = profiles.get(prof_name) or profiles.get("normal") or (next(iter(profiles.values()), {}) if profiles else {})
+    source = "flat/nested" if profiles else ""
 
+    # 3) EnviroGuard table
+    if not profiles:
+        eg = opts.get("llm_enviroguard_profiles")
+        if isinstance(eg, str) and eg.strip():
+            try:
+                eg_dict = json.loads(eg)
+                if isinstance(eg_dict, dict):
+                    for k, v in eg_dict.items():
+                        if isinstance(v, dict):
+                            profiles[k.strip().lower()] = v
+                    if profiles:
+                        source = "enviroguard(string)"
+            except Exception as e:
+                _log(f"enviroguard profiles parse error: {e}")
+        elif isinstance(eg, dict):
+            for k, v in eg.items():
+                if isinstance(v, dict):
+                    profiles[k.strip().lower()] = v
+            if profiles:
+                source = "enviroguard(dict)"
+
+    # 4) Global knobs fallback
+    if not profiles:
+        cpu = opts.get("llm_max_cpu_percent")
+        ctx = opts.get("llm_ctx_tokens")
+        to  = opts.get("llm_timeout_seconds")
+        if cpu is not None or ctx is not None or to is not None:
+            def _maybe_int(x, d):
+                try:
+                    return int(str(x).strip())
+                except Exception:
+                    return d
+            profiles[prof_name] = {
+                "cpu_percent": _maybe_int(cpu, 80),
+                "ctx_tokens": _maybe_int(ctx, 4096),
+                "timeout_seconds": _maybe_int(to, 25),
+            }
+            source = "global_knobs"
+
+    # 5) Select profile
+    pdata = (profiles.get(prof_name)
+             or profiles.get("normal")
+             or (next(iter(profiles.values()), {}) if profiles else {}))
+
+    # Explicit logging if we still ended up empty
+    if not pdata:
+        _log("profile resolution: NO profiles found -> using hard defaults (80/4096/25)")
     cpu_percent = int(pdata.get("cpu_percent", 80))
     ctx_tokens = int(pdata.get("ctx_tokens", 4096))
     timeout_seconds = int(pdata.get("timeout_seconds", 25))
 
-    _log(f"profile: active='{prof_name}' cpu_percent={cpu_percent} ctx_tokens={ctx_tokens} timeout_seconds={timeout_seconds}")
+    _log(f"profile: src={source or 'defaults'} active='{prof_name}' cpu_percent={cpu_percent} ctx_tokens={ctx_tokens} timeout_seconds={timeout_seconds}")
     return prof_name, cpu_percent, ctx_tokens, timeout_seconds
 
 # ============================
-# EnviroGuard (fallback only)
+# EnviroGuard env var helpers (fallback only; not precedence)
 # ============================
 def _int_env(name: str, default: Optional[int]) -> Optional[int]:
     try:
@@ -262,7 +328,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
     return path
 
 # ============================
-# Options-based model resolution (RESTORED)
+# Options-based model resolution
 # ============================
 def _resolve_model_from_options(
     model_url: str,
@@ -358,7 +424,6 @@ def _available_cpus() -> int:
         pass
     try:
         with open("/sys/fs/cgroup/cpu.max", "r", encoding="utf-8") as f:
-        # ... intentionally minimal to avoid env-specific branches
             raw = f.read().strip().split()
             if len(raw) == 2:
                 quota, period = raw
@@ -389,9 +454,7 @@ def _available_cpus() -> int:
     return max(1, os.cpu_count() or 1)
 
 def _threads_from_cpu_limit(limit_pct: int) -> int:
-    """Map a CPU percentage to an integer thread count, respecting cgroup limits.
-       CONFIG takes priority. Environment variables do not override threads.
-    """
+    """Map a CPU percentage to an integer thread count, respecting cgroup limits."""
     cores = _available_cpus()
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
@@ -422,6 +485,8 @@ def _update_model_metadata():
         if isinstance(meta, dict):
             _MODEL_ARCH = str(meta.get("general.architecture") or "")
             _CHAT_TEMPLATE = str(meta.get("tokenizer.chat_template") or "")
+            if _CHAT_TEMPLATE:
+                _log(f"Using gguf chat template: {_CHAT_TEMPLATE[:120]}...")
     except Exception:
         pass
 
@@ -435,9 +500,10 @@ def _stops_for_model() -> List[str]:
     return ["</s>", "[/INST]"]
 
 def _should_use_grammar_auto() -> bool:
+    # Grammar is unsafe for Phi3-family chat templates; otherwise safe to enable.
     if _is_phi3_family():
         return False
-    if "INST" in _CHAT_TEMPLATE or "llama" in _CHAT_TEMPLATE.lower():
+    if "INST" in _CHAT_TEMPLATE or "llama" in (_CHAT_TEMPLATE or "").lower():
         return True
     return False
 
@@ -568,7 +634,7 @@ def _strip_meta_markers(s: str) -> str:
     return out
 
 # ============================
-# Grammar for riffs (≤3 lines, ≤140 chars per line) — FIXED
+# Grammar for riffs (≤3 lines, ≤140 chars per line) — SAFE
 # ============================
 _RIFF_GBNF = r"""
 root  ::= line ( "\n" line ){0,2}
@@ -657,12 +723,12 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
 # ============================
 def ensure_loaded(
     *,
-    model_url: str,
-    model_path: str,
-    model_sha256: str,
-    ctx_tokens: int,
-    cpu_limit: int,
-    hf_token: Optional[str],
+    model_url: str = "",
+    model_path: str = "",
+    model_sha256: str = "",
+    ctx_tokens: int = 4096,
+    cpu_limit: int = 80,
+    hf_token: Optional[str] = None,
     base_url: str = ""
 ) -> bool:
     """
@@ -671,6 +737,11 @@ def ensure_loaded(
     - Else: local GGUF via llama-cpp.
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, _MODEL_NAME_HINT
+
+    # Pull profile now for ctx / cpu
+    _, prof_cpu, prof_ctx, _ = _current_profile()
+    ctx_tokens = prof_ctx
+    cpu_limit = prof_cpu
 
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
@@ -772,8 +843,6 @@ def rewrite(
     max_chars: int = 0
 ) -> str:
     """Best-effort rewrite. If LLM unavailable, returns input text."""
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
-
     # Pull from config profile
     _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
     ctx_tokens = prof_ctx
@@ -952,8 +1021,10 @@ def persona_riff(
 if __name__ == "__main__":
     print("llm_client self-check start")
     try:
-        # Use profile-driven settings
-        _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
+        # Profile-driven settings (also logs src/active/values)
+        prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
+        _log(f"SELFTEST profile -> name={prof_name} cpu={prof_cpu} ctx={prof_ctx} timeout={prof_timeout}")
+
         ok = ensure_loaded(
             model_url=os.getenv("TEST_MODEL_URL",""),
             model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
