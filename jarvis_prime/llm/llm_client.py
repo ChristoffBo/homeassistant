@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (FULL)
+# Jarvis Prime — LLM client (FULL, local llama-cpp only)
 # - GGUF local loading via llama-cpp (if available)
-# - Optional Ollama HTTP generation (if base_url provided & reachable)
 # - Hugging Face downloads with Authorization header preserved across redirects
 # - SHA256 optional integrity check
 # - Hard timeouts; best-effort, never crash callers
@@ -35,10 +34,9 @@ from typing import Optional, Dict, Any, Tuple, List
 # ============================
 # Globals
 # ============================
-LLM_MODE = "none"        # "none" | "llama" | "ollama"
+LLM_MODE = "none"        # "none" | "llama"
 LLM = None               # llama_cpp.Llama instance if LLM_MODE == "llama"
 LOADED_MODEL_PATH = None
-OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
 SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
@@ -182,7 +180,7 @@ def _http_get(url: str, headers: Dict[str, str], timeout: int = 180) -> bytes:
 
 def _http_post(url: str, data: bytes, headers: Dict[str, str], timeout: int = 60) -> bytes:
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    opener = _build_opener_with_headers({})
+    opener = urllib.request.build_opener()
     with opener.open(req, timeout=timeout) as r:
         return r.read()
 
@@ -383,6 +381,7 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
     except Exception:
+    # default if unparsable
         pct = 100
     t = max(1, int(math.ceil(cores * (pct / 100.0))))
     t = min(cores, t)
@@ -425,59 +424,6 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         LOADED_MODEL_PATH = None
         LLM_MODE = "none"
         return False
-
-# ============================
-# Ollama path (HTTP)
-# ============================
-def _ollama_ready(base_url: str, timeout: int = 2) -> bool:
-    try:
-        hp = base_url
-        if base_url.startswith("http://"):
-            hp = base_url[7:]
-        elif base_url.startswith("https://"):
-            hp = base_url[8:]
-        hp = hp.strip("/").split("/")[0]
-        if ":" in hp:
-            host, port = hp.split(":", 1); port = int(port)
-        else:
-            host, port = hp, 80
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except Exception:
-        return False
-
-def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20) -> str:
-    """Minimal Ollama /api/generate call. Non-streaming."""
-    try:
-        url = base_url.rstrip("/") + "/api/generate"
-        payload = {
-            "model": model_name,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.3,
-                "top_p": 0.9,
-                "repeat_penalty": 1.1
-            }
-        }
-        data = json.dumps(payload).encode("utf-8")
-        out = _http_post(url, data, headers={"Content-Type": "application/json"}, timeout=timeout)
-        obj = json.loads(out.decode("utf-8"))
-        return obj.get("response", "") or ""
-    except urllib.error.HTTPError as e:
-        _log(f"ollama HTTP {e.code}: {getattr(e, 'reason', '')}")
-        return ""
-    except Exception as e:
-        _log(f"ollama error: {e}")
-        return ""
-
-def _model_name_from_url(model_url: str) -> str:
-    if not model_url:
-        return "llama3"
-    tail = model_url.strip("/").split("/")[-1]
-    if "." in tail:
-        tail = tail.split(".")[0]
-    return tail or "llama3"
 
 # ============================
 # Message checks / guards
@@ -524,6 +470,7 @@ def _strip_meta_markers(s: str) -> str:
     # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
+
 # ============================
 # Ensure loaded
 # ============================
@@ -535,14 +482,12 @@ def ensure_loaded(
     ctx_tokens: int,
     cpu_limit: int,
     hf_token: Optional[str],
-    base_url: str = ""
+    base_url: str = ""  # kept for API compatibility; ignored
 ) -> bool:
     """
-    Decide engine and load (or prepare) it.
-    - If base_url provided and reachable: use Ollama mode (no local download needed here).
-    - Else: local GGUF via llama-cpp, with optional HF download/check.
+    Decide engine and load it (local GGUF via llama-cpp).
     """
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, DEFAULT_CTX
 
     g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -552,23 +497,6 @@ def ensure_loaded(
 
     # Serialized: avoid race while switching modes / loading models
     with _GenCritical():
-        base_url = (base_url or "").strip()
-        if base_url:
-            OLLAMA_URL = base_url
-            if _ollama_ready(base_url):
-                LLM_MODE = "ollama"
-                LLM = None
-                LOADED_MODEL_PATH = None
-                _log(f"using Ollama at {base_url}")
-                return True
-            else:
-                _log(f"Ollama not reachable at {base_url}; falling back to local mode")
-
-        LLM_MODE = "none"
-        OLLAMA_URL = ""
-        LLM = None
-        LOADED_MODEL_PATH = None
-
         # Read options to check cleanup behavior and priority resolution
         opts = _read_options()
 
@@ -712,19 +640,9 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
         return ""
 
 def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str) -> str:
-    """Route to Ollama or llama-cpp, depending on LLM_MODE."""
-    if LLM_MODE == "ollama" and OLLAMA_URL:
-        name = ""
-        cand = (model_name_hint or "").strip()
-        if cand and "/" not in cand and not cand.endswith(".gguf"):
-            name = cand
-        else:
-            name = _model_name_from_url(model_url)
-        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
-
+    """Route to llama-cpp only (Ollama removed)."""
     if LLM_MODE == "llama" and LLM is not None:
         return _llama_generate(prompt, timeout=max(4, int(timeout)))
-
     return ""
 
 # ============================
@@ -737,7 +655,7 @@ def rewrite(
     timeout: int = 12,
     cpu_limit: int = 80,
     models_priority: Optional[str] = None,
-    base_url: str = "",
+    base_url: str = "",  # kept for API compatibility; ignored
     model_url: str = "",
     model_path: str = "",
     model_sha256: str = "",
@@ -748,7 +666,7 @@ def rewrite(
     max_chars: int = 0
 ) -> str:
     """Best-effort rewrite. If LLM unavailable, returns input text."""
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, DEFAULT_CTX
 
     g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
@@ -765,13 +683,13 @@ def rewrite(
                 ctx_tokens=ctx_tokens,
                 cpu_limit=cpu_limit,
                 hf_token=hf_token,
-                base_url=base_url
+                base_url=""  # ignored
             )
             if not ok:
                 return text
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, base_url="", model_url=model_url, model_name_hint=model_path)
         final = out if out else text
 
     # ADD: strip any leaked meta tags/markers from the model output
@@ -792,7 +710,7 @@ def riff(
     subject: str,
     persona: str = "neutral",
     timeout: int = 8,
-    base_url: str = "",
+    base_url: str = "",   # kept for API compatibility; ignored
     model_url: str = "",
     model_path: str = "",
     allow_profanity: bool = False
@@ -813,16 +731,16 @@ def riff(
                 ctx_tokens=2048,
                 cpu_limit=80,
                 hf_token=None,
-                base_url=base_url
+                base_url=""  # ignored
             )
             if not ok:
                 return ""
 
-        if LLM_MODE not in ("llama", "ollama"):
+        if LLM_MODE != "llama" or LLM is None:
             return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, base_url="", model_url=model_url, model_name_hint=model_path)
         if not out:
             return ""
 
@@ -853,7 +771,7 @@ def persona_riff(
     timeout: int = 8,
     cpu_limit: int = 80,
     models_priority: Optional[List[str]] = None,
-    base_url: str = "",
+    base_url: str = "",   # kept for API compatibility; ignored
     model_url: str = "",
     model_path: str = "",
     model_sha256: str = "",
@@ -884,12 +802,12 @@ def persona_riff(
                 ctx_tokens=ctx_tokens,
                 cpu_limit=cpu_limit,
                 hf_token=hf_token,
-                base_url=base_url
+                base_url=""  # ignored
             )
             if not ok:
                 return []
 
-        if LLM_MODE not in ("llama", "ollama"):
+        if LLM_MODE != "llama" or LLM is None:
             return []
 
         # Optional embedded style hint
@@ -940,7 +858,7 @@ def persona_riff(
         )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        raw = _do_generate(prompt, timeout=timeout, base_url="", model_url=model_url, model_name_hint=model_path)
         if not raw:
             return []
 
@@ -976,7 +894,7 @@ if __name__ == "__main__":
             ctx_tokens=int(os.getenv("TEST_CTX","2048")),
             cpu_limit=int(os.getenv("TEST_CPU","80")),
             hf_token=os.getenv("TEST_HF_TOKEN",""),
-            base_url=os.getenv("TEST_OLLAMA","").strip()
+            base_url=""  # ignored
         )
         print(f"ensure_loaded -> {ok} mode={LLM_MODE}")
         if ok:
@@ -984,18 +902,18 @@ if __name__ == "__main__":
                 text="Status synchronized; elegance maintained.",
                 mood="jarvis",
                 timeout=6,
-                base_url=os.getenv("TEST_OLLAMA","").strip(),
+                base_url="",  # ignored
                 model_url=os.getenv("TEST_MODEL_URL",""),
                 model_path=os.getenv("TEST_MODEL_NAME",""),
                 ctx_tokens=2048
             )
             print("rewrite sample ->", txt[:120])
-            r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
+            r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url="")
             print("riff sample ->", r)
             rl = persona_riff(
                 persona="nerd",
                 context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]",
-                base_url=os.getenv("TEST_OLLAMA","").strip()
+                base_url=""
             )
             print("persona_riff sample ->", rl[:3])
     except Exception as e:
