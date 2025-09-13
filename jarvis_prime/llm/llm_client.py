@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi3-aware chat format)
+# Jarvis Prime — LLM client (EnviroGuard-first, lean riffs, Phi3-aware chat format)
 #
 # Public entry points:
 #   ensure_loaded(...)
@@ -143,7 +143,7 @@ def _current_profile() -> Tuple[str, int, int, int]:
     source = ""
     enviroguard_active = False
 
-    # 1) EnviroGuard sovereign
+    # 1) EnviroGuard (sovereign)
     eg = opts.get("llm_enviroguard_profiles")
     if isinstance(eg, str) and eg.strip():
         try:
@@ -212,7 +212,7 @@ def _current_profile() -> Tuple[str, int, int, int]:
     return prof_name, cpu_percent, ctx_tokens, timeout_seconds
 
 # ============================
-# CPU / Threads / Affinity
+# CPU / Threads (derived from percent; EnviroGuard-first)
 # ============================
 def _parse_cpuset_list(s: str) -> int:
     total = 0
@@ -272,75 +272,26 @@ def _available_cpus() -> int:
             pass
     return max(1, os.cpu_count() or 1)
 
-def _pin_affinity(n: int) -> List[int]:
-    """
-    Hard-cap scheduler to the first n CPUs from current affinity set.
-    Returns the list we pinned to.
-    """
-    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
-        return []
-    try:
-        current = sorted(list(os.sched_getaffinity(0)))
-        if n >= len(current):
-            # already pinned to <= n cores
-            _log(f"affinity: keeping existing CPUs {current}")
-            return current
-        target = set(current[:max(1, n)])
-        os.sched_setaffinity(0, target)
-        pinned = sorted(list(os.sched_getaffinity(0)))
-        _log(f"affinity: pinned to CPUs {pinned}")
-        return pinned
-    except Exception as e:
-        _log(f"affinity pin failed (continuing): {e}")
-        return []
-
 def _threads_from_cpu_limit(limit_pct: int) -> int:
+    """Map a CPU percentage to an integer thread count, respecting cgroups.
+       EnviroGuard stays sovereign for %, but we floor cores by llm_threads (if set)."""
     cores = _available_cpus()
-    opts = _read_options()
-
-    # Detect EnviroGuard active (sovereign)
-    eg = opts.get("llm_enviroguard_profiles")
-    eg_enabled = bool(opts.get("llm_enviroguard_enabled", True))
-    eg_active = False
-    if eg_enabled:
-        try:
-            if isinstance(eg, str) and eg.strip():
-                eg_active = isinstance(json.loads(eg), dict)
-            elif isinstance(eg, dict):
-                eg_active = True
-        except Exception:
-            eg_active = False
-
-    if eg_active:
-        # GOD: ignore llm_threads; round DOWN to avoid overshooting
-        try:
-            pct = max(1, min(100, int(limit_pct or 100)))
-        except Exception:
-            pct = 100
-        t = max(1, min(cores, int(math.floor(cores * (pct / 100.0)))))
-        if t < 1:
-            t = 1
-        _log(f"EnviroGuard GOD: cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
-        return t
-
-    # EnviroGuard OFF: allow explicit llm_threads override
+    # Floor the visible cores by llm_threads from options.json (if present)
     try:
-        forced_threads = int(opts.get("llm_threads", 0) or 0)
+        opts = _read_options()
+        user_floor = int(opts.get("llm_threads", 0) or 0)
+        if user_floor > 0:
+            cores = max(cores, user_floor)
     except Exception:
-        forced_threads = 0
-    if forced_threads > 0:
-        t = max(1, min(cores, forced_threads))
-        _log(f"EnviroGuard OFF: threads override via llm_threads={forced_threads} -> using {t} (avail_cpus={cores})")
-        return t
+        user_floor = 0
 
-    # Fallback: derive from percent (round down)
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
     except Exception:
         pct = 100
-    t = max(1, min(cores, int(math.floor(cores * (pct / 100.0)))))
-    _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
-    return t
+    threads = max(1, min(cores, int(math.ceil(cores * (pct / 100.0)))))
+    _log(f"cpu_limit={pct}% -> threads={threads} (avail_cpus={_available_cpus()}, floor_by_llm_threads={user_floor}, resolved_cores={cores})")
+    return threads
 
 # ============================
 # HTTP helpers (with HF auth)
@@ -418,11 +369,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
             return None
     if want_sha256:
         try:
-            h = hashlib.sha256()
-            with open(path, "rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                    h.update(chunk)
-            got = h.hexdigest()
+            got = hashlib.sha256(open(path, "rb").read()).hexdigest()
             if got.lower() != want_sha256.lower():
                 _log(f"sha256 mismatch: got={got} want={want_sha256} (refusing to load)")
                 return None
@@ -478,27 +425,12 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         return False
     try:
         threads = _threads_from_cpu_limit(cpu_limit)
-
-        # HARD caps & pinning to prevent oversubscription
-        pinned = _pin_affinity(threads)  # may be [] if unsupported
         os.environ["OMP_NUM_THREADS"] = str(threads)
-        os.environ["OMP_DYNAMIC"] = "FALSE"
-        os.environ["OMP_PROC_BIND"] = "TRUE"
-        os.environ["OMP_PLACES"] = "cores"
         os.environ["LLAMA_THREADS"] = str(threads)
-        os.environ["GGML_NUM_THREADS"] = str(threads)
-        _log(f"thread env -> OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS')} "
-             f"OMP_DYNAMIC={os.environ.get('OMP_DYNAMIC')} "
-             f"OMP_PROC_BIND={os.environ.get('OMP_PROC_BIND')} "
-             f"OMP_PLACES={os.environ.get('OMP_PLACES')} "
-             f"GGML_NUM_THREADS={os.environ.get('GGML_NUM_THREADS')} "
-             f"affinity={'/'.join(map(str, pinned)) if pinned else 'unchanged'}")
-
         LLM = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=ctx_tokens,
             n_threads=threads,
-            n_threads_batch=threads,   # keep batch path aligned with main threads
             n_batch=128,
             n_ubatch=128
         )
@@ -534,7 +466,7 @@ def _ollama_ready(base_url: str, timeout: int = 2) -> bool:
     except Exception:
         return False
 
-def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20, max_tokens: int = 0, stops: Optional[List[str]] = None) -> str:
+def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20, max_tokens: int = 0, stops: Optional[List[str]] = None, *, temperature: float = 0.35) -> str:
     try:
         url = base_url.rstrip("/") + "/api/generate"
         payload = {
@@ -542,7 +474,7 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.3,
+                "temperature": float(temperature),
                 "top_p": 0.9,
                 "repeat_penalty": 1.1
             }
@@ -602,7 +534,7 @@ def _strip_meta_markers(s: str) -> str:
     out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
     out = out.replace("<s>", "").replace("</s>", "")
     out = re.sub(
-        r'^\s*you\s+are\s+(?:a|the)?\s*rewriter\.?\s*$',
+        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
         '',
         out,
         flags=re.I | re.M
@@ -636,8 +568,9 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
     cleaned = []
     for ln in lines:
         ln = _strip_meta_markers(ln)
+        # strip bullets/numbering and outer quotes
+        ln = re.sub(r'^\s*(?:[-•*]|\d+[\)\].])\s*', '', ln)
         ln = ln.strip().strip('"').strip("'")
-        ln = re.sub(r'^\s*[-•*]\s*', '', ln)
         if ln:
             cleaned.append(ln)
     return cleaned
@@ -648,7 +581,7 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 def _sigalrm_handler(signum, frame):
     raise TimeoutError("gen timeout")
 
-def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bool = False) -> str:
+def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bool = False, *, temperature: float = 0.35) -> str:
     try:
         if hasattr(signal, "SIGALRM"):
             signal.signal(signal.SIGALRM, _sigalrm_handler)
@@ -657,7 +590,7 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
         params = dict(
             prompt=prompt,
             max_tokens=max(1, int(max_tokens)),
-            temperature=0.35,
+            temperature=float(temperature),
             top_p=0.9,
             repeat_penalty=1.1,
             stop=_stops_for_model(),
@@ -681,16 +614,16 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_tokens: int, with_grammar_auto: bool=False) -> str:
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_tokens: int, with_grammar_auto: bool=False, temperature: float = 0.35) -> str:
     use_grammar = _should_use_grammar_auto() if with_grammar_auto else False
 
     if LLM_MODE == "ollama" and OLLAMA_URL:
         cand = (model_name_hint or "").strip()
         name = cand if (cand and "/" not in cand and not cand.endswith(".gguf")) else _model_name_from_url(model_url)
-        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model())
+        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model(), temperature=temperature)
 
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, with_grammar=use_grammar)
+        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, with_grammar=use_grammar, temperature=temperature)
 
     return ""
 
@@ -709,7 +642,7 @@ def ensure_loaded(
 ) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, _MODEL_NAME_HINT
 
-    # EnviroGuard profile (GOD)
+    # EnviroGuard-first profile
     prof_name, prof_cpu, prof_ctx, _ = _current_profile()
     ctx_tokens = prof_ctx
     cpu_limit = prof_cpu
@@ -892,7 +825,7 @@ def rewrite(
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
         _log(f"rewrite: effective timeout={timeout}s")
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=256, with_grammar_auto=False)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=256, with_grammar_auto=False, temperature=0.35)
         final = out if out else text
 
     final = _strip_meta_markers(final)
@@ -991,8 +924,6 @@ def persona_riff(
             persona_line,
             "Write up to {N} distinct one-liners. Each ≤ 140 chars. No bullets, numbering, lists, labels, JSON, or meta.",
         ]
-        if allow_profanity is False:
-            sys_parts.append("Avoid profanity.")
         if daypart:
             sys_parts.append(f"Daypart vibe (subtle): {daypart}.")
         if intensity:
@@ -1028,8 +959,9 @@ def persona_riff(
             base_url=base_url,
             model_url=model_url,
             model_name_hint=model_path,
-            max_tokens=32,  # lean for latency
-            with_grammar_auto=False
+            max_tokens=64,
+            with_grammar_auto=False,
+            temperature=0.6,   # riffs only
         )
         if not raw:
             return []
