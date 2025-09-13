@@ -44,6 +44,11 @@ OPTIONS_PATH = "/data/options.json"
 SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"
 SYS_PROMPT = ""
 
+# Model metadata (for auto grammar & stops)
+_MODEL_ARCH = ""
+_CHAT_TEMPLATE = ""
+_MODEL_NAME_HINT = ""
+
 # Global reentrant lock so multiple incoming messages don't collide
 _GEN_LOCK = threading.RLock()
 
@@ -408,6 +413,34 @@ def _try_import_llama_cpp():
         _log(f"llama-cpp not available: {e}")
         return None
 
+def _update_model_metadata():
+    global _MODEL_ARCH, _CHAT_TEMPLATE
+    try:
+        meta = getattr(LLM, "metadata", None)
+        if callable(meta):
+            meta = LLM.metadata()
+        if isinstance(meta, dict):
+            _MODEL_ARCH = str(meta.get("general.architecture") or "")
+            _CHAT_TEMPLATE = str(meta.get("tokenizer.chat_template") or "")
+    except Exception:
+        pass
+
+def _is_phi3_family() -> bool:
+    s = " ".join([_MODEL_ARCH, _CHAT_TEMPLATE]).lower()
+    return ("phi3" in s) or ("<|user|>" in s and "<|assistant|>" in s and "<|end|>" in s)
+
+def _stops_for_model() -> List[str]:
+    if _is_phi3_family():
+        return ["<|end|>", "<|endoftext|>"]
+    return ["</s>", "[/INST]"]
+
+def _should_use_grammar_auto() -> bool:
+    if _is_phi3_family():
+        return False
+    if "INST" in _CHAT_TEMPLATE or "llama" in _CHAT_TEMPLATE.lower():
+        return True
+    return False
+
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH
     llama_cpp = _try_import_llama_cpp()
@@ -424,6 +457,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
             n_batch=128,      # Cap batch for faster prefill on CPU
             n_ubatch=128
         )
+        _update_model_metadata()
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
         _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
@@ -455,7 +489,7 @@ def _ollama_ready(base_url: str, timeout: int = 2) -> bool:
     except Exception:
         return False
 
-def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20) -> str:
+def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20, max_tokens: int = 0, stops: Optional[List[str]] = None) -> str:
     """Minimal Ollama /api/generate call. Non-streaming."""
     try:
         url = base_url.rstrip("/") + "/api/generate"
@@ -469,6 +503,10 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
                 "repeat_penalty": 1.1
             }
         }
+        if max_tokens and max_tokens > 0:
+            payload["options"]["num_predict"] = int(max_tokens)
+        if stops:
+            payload["stop"] = stops
         data = json.dumps(payload).encode("utf-8")
         out = _http_post(url, data, headers={"Content-Type": "application/json"}, timeout=timeout)
         obj = json.loads(out.decode("utf-8"))
@@ -563,7 +601,7 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 # ============================
 # Core generation (shared)
 # ============================
-def _llama_generate(prompt: str, timeout: int, with_grammar: bool = False) -> str:
+def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bool = False) -> str:
     """Generate text via local llama-cpp (non-streaming)."""
     try:
         import signal
@@ -575,11 +613,11 @@ def _llama_generate(prompt: str, timeout: int, with_grammar: bool = False) -> st
 
         params = dict(
             prompt=prompt,
-            max_tokens=256,
+            max_tokens=max(1, int(max_tokens)),
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=["</s>", "[/INST]"],
+            stop=_stops_for_model(),
         )
         params = _maybe_with_grammar(params, with_grammar)
 
@@ -600,19 +638,17 @@ def _llama_generate(prompt: str, timeout: int, with_grammar: bool = False) -> st
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, with_grammar: bool=False) -> str:
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_tokens: int, with_grammar_auto: bool=False) -> str:
     """Route to Ollama or llama-cpp, depending on LLM_MODE."""
+    use_grammar = _should_use_grammar_auto() if with_grammar_auto else False
+
     if LLM_MODE == "ollama" and OLLAMA_URL:
-        name = ""
         cand = (model_name_hint or "").strip()
-        if cand and "/" not in cand and not cand.endswith(".gguf"):
-            name = cand
-        else:
-            name = _model_name_from_url(model_url)
-        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
+        name = cand if (cand and "/" not in cand and not cand.endswith(".gguf")) else _model_name_from_url(model_url)
+        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model())
 
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)), with_grammar=with_grammar)
+        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, with_grammar=use_grammar)
 
     return ""
 
@@ -634,7 +670,7 @@ def ensure_loaded(
     - If base_url provided and reachable: use Ollama mode.
     - Else: local GGUF via llama-cpp.
     """
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, _MODEL_NAME_HINT
 
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
@@ -646,6 +682,7 @@ def ensure_loaded(
                 LLM_MODE = "ollama"
                 LLM = None
                 LOADED_MODEL_PATH = None
+                _MODEL_NAME_HINT = model_path or ""
                 _log(f"using Ollama at {base_url}")
                 return True
             else:
@@ -656,12 +693,13 @@ def ensure_loaded(
         LLM = None
         LOADED_MODEL_PATH = None
 
-        # === RESTORED: resolve model url/path via options if not provided ===
+        # === RESOLVE via options if not provided ===
         model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
         if not (model_url or model_path):
             _log("no model_url/model_path resolved from options; cannot load model")
             return False
 
+        _MODEL_NAME_HINT = model_path or ""
         _log(f"model resolve -> url='{os.path.basename(model_url) if model_url else ''}' path='{model_path}'")
         model_local_path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
         if not model_local_path:
@@ -751,7 +789,7 @@ def rewrite(
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
         _log(f"rewrite: effective timeout={timeout}s")
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=256, with_grammar_auto=False)
         final = out if out else text
 
     final = _strip_meta_markers(final)
@@ -802,7 +840,7 @@ def riff(
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
         _log(f"riff: effective timeout={timeout}s")
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=64, with_grammar_auto=True)
         if not out:
             return ""
 
@@ -917,7 +955,7 @@ def persona_riff(
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
         _log(f"persona_riff: effective timeout={timeout}s")
-        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
+        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=64, with_grammar_auto=True)
         if not raw:
             return []
 
