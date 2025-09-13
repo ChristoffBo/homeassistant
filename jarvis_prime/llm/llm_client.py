@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi3-aware chat format)
+# Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi3-aware chat format, lexicon fallback)
 #
 # Public entry points:
 #   ensure_loaded(...)
@@ -106,6 +106,12 @@ def _extract_riff_training_block(full_text: str) -> str:
     if len(block) > 12000:
         block = block[:12000]
     return block
+
+# NEW: subject extractor
+def _extract_subject_from_context(ctx: str) -> str:
+    m = re.search(r"Subject:\s*(.+)", ctx, flags=re.I)
+    subj = (m.group(1) if m else ctx or "").strip()
+    return re.sub(r"\s+", " ", subj)[:140]
 
 # ============================
 # Options helpers
@@ -282,7 +288,6 @@ def _pin_affinity(n: int) -> List[int]:
     try:
         current = sorted(list(os.sched_getaffinity(0)))
         if n >= len(current):
-            # already pinned to <= n cores
             _log(f"affinity: keeping existing CPUs {current}")
             return current
         target = set(current[:max(1, n)])
@@ -298,7 +303,6 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
     cores = _available_cpus()
     opts = _read_options()
 
-    # Detect EnviroGuard active (sovereign)
     eg = opts.get("llm_enviroguard_profiles")
     eg_enabled = bool(opts.get("llm_enviroguard_enabled", True))
     eg_active = False
@@ -312,34 +316,29 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
             eg_active = False
 
     if eg_active:
-        # EnviroGuard ON: ignore llm_threads; round DOWN to avoid overshooting
         try:
             pct = max(1, min(100, int(limit_pct or 100)))
         except Exception:
             pct = 100
         t = max(1, min(cores, int(math.floor(cores * (pct / 100.0)))))
-        if t < 1:
-            t = 1
-        _log(f"enviroguard: cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
+        _log(f"threads: EnviroGuard enforced -> {t} (avail={cores}, limit={pct}%)")
         return t
 
-    # EnviroGuard OFF: allow explicit llm_threads override
     try:
         forced_threads = int(opts.get("llm_threads", 0) or 0)
     except Exception:
         forced_threads = 0
     if forced_threads > 0:
         t = max(1, min(cores, forced_threads))
-        _log(f"threads override via llm_threads={forced_threads} -> using {t} (avail_cpus={cores})")
+        _log(f"threads: override via llm_threads={forced_threads} -> using {t} (avail={cores})")
         return t
 
-    # Fallback: derive from percent (round down)
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
     except Exception:
         pct = 100
     t = max(1, min(cores, int(math.floor(cores * (pct / 100.0)))))
-    _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
+    _log(f"threads: derived from limit -> {t} (avail={cores}, limit={pct}%)")
     return t
 
 # ============================
@@ -542,12 +541,9 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
             "prompt": prompt,
             "stream": False,
             "options": {
-                # Match local sampling behaviour for variety
-                "temperature": 0.75,
-                "top_p": 0.95,
-                "top_k": 100,
-                "repeat_penalty": 1.1,
-                "seed": 0  # 0/random per request
+                "temperature": 0.35,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1
             }
         }
         if max_tokens and max_tokens > 0:
@@ -646,6 +642,100 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
     return cleaned
 
 # ============================
+# Lexicon fallback (personality.py)
+# ============================
+def _import_personality_module():
+    try:
+        if "/app" not in sys.path:
+            sys.path.insert(0, "/app")
+        import importlib
+        return importlib.import_module("personality")
+    except Exception as e:
+        _log(f"lexicon: personality.py import failed: {e}")
+        return None
+
+def _load_persona_lexicon(persona: str) -> List[str]:
+    mod = _import_personality_module()
+    if not mod:
+        return []
+    per_key = persona.strip().lower()
+    # 1) Dict containers
+    for key in ("LEXICONS", "PERSONA_LEXICONS", "LEXICON", "PERSONAS"):
+        d = getattr(mod, key, None)
+        if isinstance(d, dict):
+            for k in (per_key, per_key.upper(), per_key.capitalize()):
+                v = d.get(k) or d.get(k.upper()) or d.get(k.capitalize())
+                if isinstance(v, (list, tuple)) and v and all(isinstance(x, str) for x in v):
+                    return list(v)
+    # 2) Named lists
+    variants = [
+        f"{per_key}_lex", f"{per_key}_lexicon", f"{per_key}_words", f"{per_key}_vocab",
+        f"{per_key}_phrases", f"{per_key}_terms", f"{per_key}"
+    ]
+    ups = [v.upper() for v in variants]
+    for name in dir(mod):
+        if name.lower() in variants or name.upper() in ups:
+            val = getattr(mod, name, None)
+            if isinstance(val, (list, tuple)) and val and all(isinstance(x, str) for x in val):
+                return list(val)
+    # 3) Largest string list in module
+    best = []
+    for name in dir(mod):
+        val = getattr(mod, name, None)
+        if isinstance(val, (list, tuple)) and val and all(isinstance(x, str) for x in val):
+            if len(val) > len(best):
+                best = list(val)
+    return best
+
+def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_profanity: bool) -> List[str]:
+    import random
+    rnd = random.SystemRandom()
+    lex = [w.strip() for w in _load_persona_lexicon(persona) if isinstance(w, str) and w.strip()]
+    if not lex:
+        lex = ["noted", "ok", "done", "good", "heads-up", "tracked", "synced", "update"]
+    if not allow_profanity:
+        bad = re.compile(r"\b(fuck|shit|damn|bitch|asshole|cunt|dick|bastard)\b", re.I)
+        lex = [w for w in lex if not bad.search(w)] or lex
+
+    subj = (subject or "Update")
+    subj = re.sub(r"^\[(?:.+?)\]\s*", "", subj).strip()
+
+    persona = (persona or "neutral").lower().strip()
+    def pick(n=1): 
+        return [rnd.choice(lex) for _ in range(n)]
+
+    lines: List[str] = []
+    for _ in range(max(1, int(max_lines or 3))):
+        a, b = pick(2)
+        if persona == "dude":
+            line = f"{subj}: {a}. Nice and {b}."
+        elif persona == "chick":
+            line = f"{subj}: {a}—and make it {b}."
+        elif persona == "nerd":
+            line = f"{subj}: {a}; params tuned for {b}."
+        elif persona == "rager":
+            line = f"{subj}: {a}. {b}."
+        elif persona == "comedian":
+            line = f"{subj}: {a}. {b}. I’ll be here all week."
+        elif persona == "jarvis":
+            line = f"{subj}: {a}. {b}. As you wish."
+        elif persona == "ops":
+            line = f"{subj}: {a}. {b}. Incident noted."
+        elif persona == "action":
+            line = f"{subj}: {a}. {b}. Move."
+        else:
+            line = f"{subj}: {a}. {b}."
+        lines.append(line[:140].rstrip())
+    # De-dupe
+    seen = set(); uniq = []
+    for ln in lines:
+        k = ln.lower()
+        if k in seen:
+            continue
+        seen.add(k); uniq.append(ln)
+    return uniq[:max_lines]
+
+# ============================
 # Core generation (shared)
 # ============================
 def _sigalrm_handler(signum, frame):
@@ -660,11 +750,9 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
         params = dict(
             prompt=prompt,
             max_tokens=max(1, int(max_tokens)),
-            temperature=0.75,
-            top_p=0.95,
-            top_k=100,           # widen candidate pool for variety
+            temperature=0.35,
+            top_p=0.9,
             repeat_penalty=1.10,
-            seed=-1,             # -1 → new random seed each call
             stop=_stops_for_model(),
         )
         params = _maybe_with_grammar(params, with_grammar)
@@ -714,7 +802,7 @@ def ensure_loaded(
 ) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, _MODEL_NAME_HINT
 
-    # EnviroGuard profile (sovereign)
+    # EnviroGuard profile (priority)
     prof_name, prof_cpu, prof_ctx, _ = _current_profile()
     ctx_tokens = prof_ctx
     cpu_limit = prof_cpu
@@ -800,7 +888,7 @@ def _resolve_model_from_options(
             cand.append(((opts.get(f"llm_{key}_url") or "").strip(), (opts.get(f"llm_{key}_path") or "").strip()))
     for u, p in cand:
         if u and p:
-            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path={os.path.basename(p)} autodownload={autodl}")
+            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path='{os.path.basename(p)}' autodownload={autodl}")
             return u, p, token
     return url, path, token
 
@@ -831,7 +919,7 @@ def _persona_descriptor(persona: str) -> str:
         "rager": "angry, intense bursts; may be edgy.",
         "comedian": "quippy and playful; jokes allowed.",
         "jarvis": "polished, butler tone; concise.",
-        "ops": "ai, incident commander; direct.",
+        "ops": "terse, incident commander; direct.",
         "action": "stoic mission-brief style; clipped."
     }
     return mapping.get(p, "neutral, subtle tone.")
@@ -953,10 +1041,17 @@ def persona_riff(
             (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
             and (persona or "").lower().strip() == "rager"
         )
-    # Force-enable profanity for rager so the style isn't neutered
-    if (persona or "").strip().lower() == "rager" and allow_profanity is not True:
-        allow_profanity = True
 
+    opts = _read_options()
+    llm_enabled = bool(opts.get("llm_enabled", True))
+    riffs_enabled = bool(opts.get("llm_persona_riffs_enabled", True))
+
+    # If LLM disabled but riffs are enabled → lexicon fallback immediately
+    subj = _extract_subject_from_context(context or "")
+    if not llm_enabled and riffs_enabled:
+        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+
+    # Normal LLM path:
     prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
     ctx_tokens = prof_ctx
     cpu_limit = prof_cpu
@@ -964,20 +1059,23 @@ def persona_riff(
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
-            ok = ensure_loaded(
-                model_url=model_url,
-                model_path=model_path,
-                model_sha256=model_sha256,
-                ctx_tokens=ctx_tokens,
-                cpu_limit=cpu_limit,
-                hf_token=hf_token,
-                base_url=base_url
-            )
-            if not ok:
-                return []
+            if llm_enabled:
+                ok = ensure_loaded(
+                    model_url=model_url,
+                    model_path=model_path,
+                    model_sha256=model_sha256,
+                    ctx_tokens=ctx_tokens,
+                    cpu_limit=cpu_limit,
+                    hf_token=hf_token,
+                    base_url=base_url
+                )
+                if not ok:
+                    return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
+            else:
+                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
 
         if LLM_MODE not in ("llama", "ollama"):
-            return []
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
 
         # Optional embedded style hint
         daypart = None
@@ -1036,11 +1134,11 @@ def persona_riff(
             base_url=base_url,
             model_url=model_url,
             model_name_hint=model_path,
-            max_tokens=72,  # headroom for 3–4 short lines with variety
+            max_tokens=32,  # lean for latency
             with_grammar_auto=False
         )
         if not raw:
-            return []
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -1059,6 +1157,9 @@ def persona_riff(
         cleaned.append(ln2)
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
+
+    if not cleaned and riffs_enabled:
+        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
     return cleaned
 
 # ============================
