@@ -96,6 +96,31 @@ def _load_system_prompt() -> str:
         _log(f"system_prompt load failed: {e}")
     return ""
 
+def _extract_riff_training_block(full_text: str) -> str:
+    """
+    Return ONLY the '### RIFF TRAINING' section from system_prompt.txt.
+    If not found, return empty string.
+    """
+    if not full_text:
+        return ""
+    txt = full_text
+    # Locate the RIFF TRAINING header (case-insensitive, tolerant of spacing)
+    m = re.search(r'^\s*#{2,}\s*RIFF\s*TRAINING.*$', txt, flags=re.I | re.M)
+    if not m:
+        return ""
+    start = m.start()
+    # End at the next '### ' style header or EOF
+    m2 = re.search(r'^\s*#{2,}\s*[A-Z].*$', txt[m.end():], flags=re.I | re.M)
+    if m2:
+        end = m.end() + m2.start()
+    else:
+        end = len(txt)
+    block = txt[start:end].strip()
+    # Safety: keep it reasonably small
+    if len(block) > 12000:
+        block = block[:12000]
+    return block
+
 # ============================
 # Options helpers
 # ============================
@@ -460,8 +485,7 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
         pct = max(1, min(100, int(limit_pct or 100)))
     except Exception:
         pct = 100
-    t = max(1, int(math.ceil(cores * (pct / 100.0))))
-    t = min(cores, t)
+    t = max(1, min(cores, int(math.ceil(cores * (pct / 100.0)))))
     _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
     return t
 
@@ -574,7 +598,7 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
         if stops:
             payload["stop"] = stops
         data = json.dumps(payload).encode("utf-8")
-        out = _http_post(url, data, headers={"Content-Type": "application/json"}, timeout=timeout)
+        out = _http_post(url, data=data, headers={"Content-Type": "application/json"}, timeout=timeout)
         obj = json.loads(out.decode("utf-8"))
         return obj.get("response", "") or ""
     except urllib.error.HTTPError as e:
@@ -810,16 +834,18 @@ def _persona_descriptor(persona: str) -> str:
     return mapping.get(p, "neutral, subtle tone.")
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    base_sys = _load_system_prompt() or ""
+    # Use ONLY the '### RIFF TRAINING' section from system_prompt.txt (if present).
+    sys_full = _load_system_prompt() or ""
+    riff_training = _extract_riff_training_block(sys_full)
     persona_line = f"Persona style: { _persona_descriptor(persona) }"
     guard = "" if allow_profanity else " Avoid profanity."
-    riff_rules = (
-        "Write 1–3 punchy one-liners (<=20 words each)."
-        " Keep them distinct. No bullets or numbers. No meta-commentary."
-        " Output ONLY the lines."
-    )
-    sys_prompt = ("\n\n".join([s for s in [base_sys, persona_line, riff_rules + guard] if s])).strip()
-    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines."
+    # Minimal rules; RIFF TRAINING examples carry the style
+    rules = "Write 1–3 short one-liners (≤20 words). No bullets, lists, or meta." + guard
+    sys_parts = [persona_line, rules]
+    if riff_training:
+        sys_parts.append(riff_training)
+    sys_prompt = "\n\n".join(sys_parts).strip()
+    user = f"Subject: {subject or 'Status update'}\nWrite up to 3 short lines."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
@@ -966,23 +992,22 @@ def persona_riff(
         except Exception:
             pass
 
-        base_sys = _load_system_prompt() or ""
+        # Lean riff sys prompt: persona hint + minimal rules + RIFF TRAINING block only
+        sys_full = _load_system_prompt() or ""
+        riff_training = _extract_riff_training_block(sys_full)
         persona_line = f"Persona style: { _persona_descriptor(persona) }"
         sys_parts = [
-            base_sys,
             persona_line,
-            "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
-            "No bullets or numbering. No labels. No lists. No JSON.",
-            "No quotes or catchphrases. No character or actor names.",
-            "No explanations or meta-commentary. Output ONLY the lines.",
-            "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
+            "Write up to {N} distinct one-liners. Each ≤ 140 chars. No bullets, numbering, lists, labels, JSON, or meta.",
         ]
-        if not allow_profanity:
+        if allow_profanity is False:
             sys_parts.append("Avoid profanity.")
         if daypart:
             sys_parts.append(f"Daypart vibe (subtle): {daypart}.")
         if intensity:
             sys_parts.append(f"Persona intensity (subtle): {intensity}.")
+        if riff_training:
+            sys_parts.append(riff_training)
         sys_prompt = " ".join([s for s in sys_parts if s]).strip()
 
         user = (
@@ -992,7 +1017,15 @@ def persona_riff(
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
         _log(f"persona_riff: effective timeout={timeout}s")
-        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=64, with_grammar_auto=True)
+        raw = _do_generate(
+            prompt,
+            timeout=timeout,
+            base_url=base_url,
+            model_url=model_url,
+            model_name_hint=model_path,
+            max_tokens=64,
+            with_grammar_auto=False  # grammar off for riffs to reduce overhead
+        )
         if not raw:
             return []
 
