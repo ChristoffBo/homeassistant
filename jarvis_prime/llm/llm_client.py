@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (CONFIG-DRIVEN)
+# Jarvis Prime — LLM client (CONFIG-DRIVEN, FIXED MODEL RESOLUTION)
 # - GGUF local loading via llama-cpp (if available)
 # - Optional Ollama HTTP generation (if base_url provided & reachable)
 # - Hugging Face downloads with Authorization header preserved across redirects
@@ -113,7 +113,6 @@ def _current_profile() -> Tuple[str, int, int, int]:
     opts = _read_options()
     prof_name = (opts.get("llm_power_profile") or opts.get("power_profile") or os.getenv("LLM_POWER_PROFILE") or "normal").strip().lower()
 
-    # Collect possible profile maps
     profiles: Dict[str, Dict[str, Any]] = {}
     for key in ("manual", "hot", "normal", "boost"):
         if isinstance(opts.get(key), dict):
@@ -125,7 +124,6 @@ def _current_profile() -> Tuple[str, int, int, int]:
             if isinstance(v, dict):
                 profiles[k] = v
 
-    # Fallback to 'normal' or any available profile
     pdata = profiles.get(prof_name) or profiles.get("normal") or (next(iter(profiles.values()), {}) if profiles else {})
 
     cpu_percent = int(pdata.get("cpu_percent", 80))
@@ -136,7 +134,7 @@ def _current_profile() -> Tuple[str, int, int, int]:
     return prof_name, cpu_percent, ctx_tokens, timeout_seconds
 
 # ============================
-# EnviroGuard (still available, but config wins)
+# EnviroGuard (fallback only)
 # ============================
 def _int_env(name: str, default: Optional[int]) -> Optional[int]:
     try:
@@ -150,7 +148,6 @@ def _int_env(name: str, default: Optional[int]) -> Optional[int]:
 def _enviroguard_limits(default_ctx: Optional[int],
                         default_cpu: Optional[int],
                         default_timeout: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
-    # NOTE: We will *not* let env override the config profile; we only use env as a last resort if config is missing.
     ctx = _int_env("ENVGUARD_CTX_TOKENS", default_ctx)
     cpu = _int_env("ENVGUARD_CPU_PERCENT", default_cpu)
     to  = _int_env("ENVGUARD_TIMEOUT_SECONDS", default_timeout)
@@ -260,6 +257,72 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
     return path
 
 # ============================
+# Options-based model resolution (RESTORED)
+# ============================
+def _resolve_model_from_options(
+    model_url: str,
+    model_path: str,
+    hf_token: Optional[str]
+) -> Tuple[str, str, Optional[str]]:
+    """
+    If caller didn't pass model_url/path, derive them from /data/options.json.
+    Supports:
+      - llm_choice == "custom" -> llm_model_url/path
+      - llm_choice == "<name>" -> llm_<name>_url/path
+      - Fallback to first enabled of our known set, in llm_models_priority order
+    """
+    url = (model_url or "").strip()
+    path = (model_path or "").strip()
+    token = (hf_token or "").strip() or None
+
+    if url and path:
+        return url, path, token
+
+    opts = _read_options()
+    choice = (opts.get("llm_choice") or "").strip()
+    autodl = bool(opts.get("llm_autodownload", True))
+    if not token:
+        t = (opts.get("llm_hf_token") or "").strip()
+        token = t or None
+
+    cand: List[Tuple[str, str]] = []
+    if choice.lower() == "custom":
+        cand.append((
+            (opts.get("llm_model_url") or "").strip(),
+            (opts.get("llm_model_path") or "").strip()
+        ))
+    elif choice:
+        cand.append((
+            (opts.get(f"llm_{choice}_url") or "").strip(),
+            (opts.get(f"llm_{choice}_path") or "").strip()
+        ))
+
+    priority_raw = (opts.get("llm_models_priority") or "").strip()
+    if priority_raw:
+        names = [n.strip().lower() for n in priority_raw.split(",") if n.strip()]
+    else:
+        names = ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]
+
+    seen = set()
+    for name in names + ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if opts.get(f"llm_{key}_enabled", False):
+            cand.append((
+                (opts.get(f"llm_{key}_url") or "").strip(),
+                (opts.get(f"llm_{key}_path") or "").strip()
+            ))
+
+    for u, p in cand:
+        if u and p:
+            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u)} path={os.path.basename(p)} autodownload={autodl}")
+            return u, p, token
+
+    return url, path, token
+
+# ============================
 # CPU / Threads (CONFIG-DRIVEN)
 # ============================
 def _parse_cpuset_list(s: str) -> int:
@@ -290,6 +353,7 @@ def _available_cpus() -> int:
         pass
     try:
         with open("/sys/fs/cgroup/cpu.max", "r", encoding="utf-8") as f:
+        # ... intentionally minimal to avoid env-specific branches
             raw = f.read().strip().split()
             if len(raw) == 2:
                 quota, period = raw
@@ -321,7 +385,7 @@ def _available_cpus() -> int:
 
 def _threads_from_cpu_limit(limit_pct: int) -> int:
     """Map a CPU percentage to an integer thread count, respecting cgroup limits.
-       CONFIG takes priority. Environment variables no longer override threads.
+       CONFIG takes priority. Environment variables do not override threads.
     """
     cores = _available_cpus()
     try:
@@ -577,23 +641,14 @@ def ensure_loaded(
         LLM = None
         LOADED_MODEL_PATH = None
 
-        # Resolve URL/path/Token from options if not provided
-        url = (model_url or "").strip()
-        path = (model_path or "").strip()
-        token = (hf_token or "").strip() or None
-        if not (url and path):
-            opts = _read_options()
-            choice = (opts.get("llm_choice") or "").strip()
-            if choice.lower() == "custom":
-                url = (opts.get("llm_model_url") or "").strip()
-                path = (opts.get("llm_model_path") or "").strip()
-                token = token or (opts.get("llm_hf_token") or "").strip() or None
-            elif choice:
-                url = (opts.get(f"llm_{choice}_url") or "").strip()
-                path = (opts.get(f"llm_{choice}_path") or "").strip()
-                token = token or (opts.get("llm_hf_token") or "").strip() or None
+        # === RESTORED: resolve model url/path via options if not provided ===
+        model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
+        if not (model_url or model_path):
+            _log("no model_url/model_path resolved from options; cannot load model")
+            return False
 
-        model_local_path = _ensure_local_model(url, path, token, model_sha256 or "")
+        _log(f"model resolve -> url='{os.path.basename(model_url) if model_url else ''}' path='{model_path}'")
+        model_local_path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
         if not model_local_path:
             _log("ensure_local_model failed")
             return False
@@ -707,7 +762,7 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
-    # Pull from config profile (ignore default arg)
+    # Pull from config profile (ignore the 8s default arg)
     _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
     timeout = prof_timeout
     cpu_limit = prof_cpu
