@@ -10,15 +10,11 @@
 #   dude      → Slacker-zen + cheerful “be excellent” vibe (The Dude + Bill & Ted energy; laid-back, mellow confidence)
 #   chick     → Glam couture sass + bubbly-but-brilliant optimism (Paris-style glam + Elle-style brains; smart, stylish, supportive)
 #   nerd      → Pedantic precision + awkward IT savant (dry wit, correctness, graphs; a dash of manic science)
-#   rager     → Raw street rage (Samuel-L-style venom + Pesci-style volatility). Profanity ALWAYS allowed.
+#   rager     → Raw street rage (Jackson + Pesci energy). Profanity ALWAYS allowed.
 #   comedian  → Deadpan spoof + irreverent fourth-wall meta sarcasm (Nielsen-straight face + meta snark)
 #   action    → Macho action-hero archetype (terse, tactical, explosive, sardonic; no quotes)
 #   jarvis    → Polished AI valet blended with calm, clinical machine logic (subtle HAL-like edge)
 #   ops       → Neutral SRE/ops acks (laconic operational confirmations)
-#
-# NOTE: We avoid actor/brand names inside prompts to prevent quote parroting.
-#       Style is driven by descriptors only. Rager is always uncensored.
-#       Daypart + intensity add non-breaking flavor.
 #
 # Env knobs (optional):
 #   - PERSONALITY_INTENSITY: float 0.6–2.0, default 1.0
@@ -26,6 +22,7 @@
 #   - LLM_MAX_CPU_PERCENT: int, default 70
 #   - LLM_PERSONA_LINES_MAX: int, default 3
 #   - LLM_MODELS_PRIORITY, LLM_OLLAMA_BASE_URL / OLLAMA_BASE_URL, LLM_MODEL_URL, LLM_MODEL_PATH
+
 import personality_tappit
 import random, os, importlib, re, time
 from typing import List, Dict, Optional
@@ -153,11 +150,9 @@ def _apply_daypart_flavor(key: str, line: str) -> str:
     picks = bank.get(dp) or base.get(dp) or []
     if not picks or _intensity() < 0.95:
         return line
-    # Subtle em-dash suffix
     return f"{line} — {random.choice(picks)}"
 
-# ---- Quip banks (expanded to ~100 per persona; concise lines) ----
-# NOTE: To keep file size manageable, lines are short and focused.
+# ---- Quip banks (full) ----
 QUIPS = {
     "dude": [
         "The Dude abides; the logs can, like, chill.",
@@ -461,7 +456,7 @@ QUIPS = {
         "The only global state is coffee.",
     ],
     "rager": [
-        # ALWAYS UNCENSORED: raw fury (Jackson + Pesci energy), no drill-sergeant, no chef shtick.
+        # ALWAYS UNCENSORED: raw fury (Jackson + Pesci energy)
         "Say downtime again. I fucking dare you.",
         "Merge the damn branch or get out of my terminal.",
         "Latency? Don’t bullshit me about latency.",
@@ -511,7 +506,6 @@ QUIPS = {
         "Talk is cheap. Show me throughput.",
         "The incident is over when I say it’s over.",
         "Get in, loser—we’re hunting heisenbugs.",
-        # More heat
         "Pager sings, you fucking dance.",
         "Retry storms aren’t weather; they’re negligence.",
         "That’s not a rollback, that’s a retreat.",
@@ -594,7 +588,6 @@ QUIPS = {
         "Deploy early, regret fashionably late.",
         "Feature-rich, sense-poor.",
         "If chaos knocks, tell it we gave at the office.",
-        # Meta / fourth-wall
         "Yes, this is a one-liner about one-liners. Meta enough?",
         "Imagine a laugh track here. Now mute it.",
         "If I wink any harder at the audience, the logs will notice.",
@@ -694,7 +687,6 @@ QUIPS = {
         "Tough code. Soft landings.",
     ],
     "jarvis": [
-        # Polished valet + calm, clinical machine logic (subtle HAL-like edge)
         "As always, sir, a great pleasure watching you work.",
         "Status synchronized, sir; elegance maintained.",
         "I’ve taken the liberty of tidying the logs.",
@@ -734,7 +726,6 @@ QUIPS = {
         "We are, if I may, devastatingly stable.",
         "I adjusted entropy’s manners.",
         "Your wish, efficiently granted.",
-        # Subtle HAL-like calm
         "I’m entirely operational and all my circuits are functioning perfectly.",
         "I took the liberty of preventing a potential malfunction—quietly.",
         "Confidence is high; margins are humane.",
@@ -745,7 +736,6 @@ QUIPS = {
         "Given my responsibilities, silence is often the kindest response.",
         "Calm persistence achieves more than heroic panic.",
         "I will handle it. You needn’t worry.",
-        # More polished valet
         "Backups are not merely present—they are exemplary.",
         "Housekeeping complete; the logs now use indoor voices.",
         "A misbehaving service is in timeout.",
@@ -767,7 +757,6 @@ QUIPS = {
         "Consider the uptime curated.",
         "A gentle nudge prepared for a stubborn daemon.",
         "The maintenance window winked and passed unnoticed.",
-        # Calm, clinical boundaries
         "For your safety, I’ve declined that request.",
         "The mission profile rejects unnecessary drama.",
         "A graceful rollback prevents inelegant outcomes.",
@@ -788,7 +777,6 @@ QUIPS = {
         "compacted-logs.","trimmed.","balanced.","rebalanced.","rescheduled.","resynced.","realigned.","rekeyed.","reindexed.","retuned.",
     ],
 }
-
 # ---- Public API: canned quip (time-aware) ----
 def quip(persona_name: str, *, with_emoji: bool = True) -> str:
     if persona_name is None:
@@ -928,11 +916,11 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
         except Exception:
             pass
     return []
+
 # === ADDITIVE: Persona Lexicon + Template Riff Engine ========================
 # Drop this block at the END of /app/personality.py (no removals above)
 
 import re as _re
-
 # --- Global tokens shared across all personas (infra/devops vocabulary) -----
 _LEX_GLOBAL = {
     "thing": [
@@ -1080,402 +1068,119 @@ _LEX = {
             "debounce again","deduplicate","compress","decompress","encode","decode","escape","unescape","sanitize","desanitize"
         ]
     },
-    "rager": {
-        # 120 LEXI total for 'rager' persona (curse + insult + command + anger)
-        "curse": [
-            "fuck","shit","damn","hell","cunt","piss","bollocks","bastard","wanker","dick",
-            "cock","twat","prick","arse","arsehole","motherfucker","bullshit","crap","bloody","goddamn",
-            "fucking","shitty","shite","douche","douchebag","jackshit","screw it","fubar","clusterfuck","shitshow",
-            "fubarred","godforsaken","hellbound","damnation","hellfire","shitpile","fuckup","balls","shithead","shitbird",
-            "shitbag","shitfaced","ass","asshat","asswipe","assclown","dipshit","dumbass","jackoff","cockup",
-            "shitstorm","screwup","trainwreck","dumpster fire","hellhole","toxic mess","fuckery","shithole","arsewipe","arseclown",
-            "bloody hell","fuck-all","worthless crap","shoddy shit","garbage-tier","third-rate","half-assed","quarter-assed","godawful","terrible shit",
-            "piss-poor","pissweak","weak-ass","shit-eating","fucked","fucking mess","total mess","utter shit","all fucked","goddamn mess",
-            "motherloving","freaking","fricking","effing","crappy","lousy","junk","garbage","trash","dogshit",
-            "horseshit","goatshit","bullcrap","cowshit","pigshit","monkeyshit","turkeyshit","donkeyshit","pile of shit","piece of shit",
-            "POS","BS","utter BS","damn BS","full of shit","talking shit","cheap shit","fake shit","plastic crap","tinpot",
-            "dog’s breakfast","pigsty","shit-eater","garbage fire","filthy crap","dirty shit","disgusting crap","gross shit","revolting mess","toxic dump"
-        ],
-        "insult": [
-            "clown","jackass","cowboy","tourist","gremlin","rookie","noob","loser","poser","wannabe",
-            "buffoon","bozo","fool","idiot","moron","imbecile","cretin","dunce","twit","numpty",
-            "muppet","donkey","tool","knob","knobhead","bellend","tosser","git","nonce","pillock",
-            "wally","div","plonker","joker","twonk","thicko","simpleton","halfwit","meathead","knucklehead",
-            "bonehead","blockhead","brickhead","shit-for-brains","airhead","pea-brain","birdbrain","featherbrain","scatterbrain","goof",
-            "nitwit","dingbat","dork","dope","sap","clutz","klutz","dud","dummy","pathetic",
-            "useless","worthless","hopeless","brainless","talentless","aimless","gutless","spineless","clueless","careless",
-            "reckless","senseless","witless","shameless","tasteless","faceless","pointless","soulless","joyless","spiritless",
-            "coldfish","coward","rat","weasel","snake","worm","maggot","vermin","pest","parasite",
-            "leech","hanger-on","suck-up","brown-noser","ass-kisser","bootlicker","toady","sycophant","fraud","phony"
-        ],
-        "command": [
-            "fix it","ship it","pin it","kill it","roll it back","own it","do it now","patch it","restart it","deploy it",
-            "scale it","drop it","smash it","burn it","purge it","lock it","load it","move it","clear it","reset it",
-            "flush it","reboot it","reload it","kick it","beat it","hammer it","smack it","bash it","break it","crush it",
-            "wreck it","wreck this","end it","close it","shut it","stop it","halt it","pause it","freeze it","seal it",
-            "contain it","quarantine it","nuke it","bomb it","torch it","trash it","dump it","delete it","wipe it","erase it",
-            "redo it","undo it","remake it","rebuild it","refactor it","recall it","recut it","recode it","retry it","rerun it",
-            "reroll it","redo the job","restart the job","kick the job","finish it","end this","stop this","kill process","kill task","cancel job",
-            "cut it","snip it","trim it","clip it","shorten it","tighten it","slam it","slam dunk it","kick its ass","smash the bug",
-            "own the bug","crush the bug","fix the bug","kill the bug","ship the bug","squash the bug","hammer the bug","bash the bug","stomp the bug","obliterate the bug"
-        ],
-        "anger": [
-            "I mean it","no excuses","right now","capisce","today","before I snap","this instant","immediately","instantly","ASAP",
-            "stat","with urgency","under pressure","without delay","forthwith","pronto","on the spot","posthaste","rapidly","hurry up",
-            "faster","quicker","swiftly","move it","double time","chop-chop","don’t wait","don’t stall","don’t delay","without hesitation",
-            "without pause","at once","at speed","no lag","zero delay","full tilt","no waiting","without mercy","before sundown","before nightfall",
-            "before dawn","before EOD","by deadline","in minutes","in seconds","with haste","straight away","snap to it","jump to it","get moving",
-            "shake a leg","get cracking","on the double","immediately now","promptly","urgently","emergently","don’t waste time","no time wasted","by morning",
-            "before shift ends","by next tick","before heartbeat","before blink","on zero","now-or-never","make it happen","force it through","slam it through","drive it home",
-            "seal the deal","lock it down","without reprieve","without excuse","without alibi","no second chances","final warning","on last nerve","before meltdown","before eruption",
-            "before explosion","before I explode","before I lose it","before I rage","before I tear shit down","before I burn it all","before I break faces","before I end careers","before I shout","before I scream",
-            "do it or else","or else","this is it","last chance","don’t test me","don’t push me","don’t stall me","don’t cross me","don’t fuck around","don’t joke",
-            "not playing","dead serious","stone serious","full serious","total rage","complete fury","utter wrath","boiling blood","red mist","apex rage"
+"rager": {
+        "rage": [
+            "fuck it","ship it now","cut the noise","mute the pager","blast radius contained","kill the flake",
+            "burn it down","slam it","sort the mess","done ffs","lock it down","own the fix","deploy or die",
+            "stop guessing","root cause or bust","alerts shut up","storm ended","latency on a leash","slam quiet","piss off bug",
+            "sorted bloody hell","ship or step aside","burn the gremlin","crush it","rage quit","ffs patch","bloody patch",
+            "fucking rollback","sorted now","do it live","hack it in","send it","move fast","break less","rage push",
+            "crash it then patch","thrash no more","pin the shit","mute already","deploy dammit","restart the fucker",
+            "block that noise","contain that blast","squash it now","done it harsh","enough talk","own it","lock prod","slam patch","rage redeploy","ffs ack",
+            "rage retry","stop alerts","pager gagged","sorted harsh","do it hot","rage tune","break back","log rage","latency leashed","slam ack",
+            "sorted, ffs","sorted, bloody","logged it, now piss off","done ffs now","ffs noise off","rage monitor","kill alarm","dead quiet","alert killed","ffs done"
         ]
     },
     "comedian": {
-        # 120 LEXI total for 'comedian' persona (meta + dry + aside)
-        "meta": [
-            "don’t clap","insert laugh track","try to look impressed","narrate this in italics","self-aware mode",
-            "cue rimshot","ba-dum-tss","studio laughter","awkward silence","imagine applause",
-            "freeze-frame","smirk at camera","wink-wink","breaking the fourth wall","meta gag",
-            "ironic aside","comic relief","insert drum roll","stand-up moment","parody mode",
-            "spoof tone","sitcom vibe","mockumentary filter","sketch gag","canned laughter",
-            "late-night monologue","variety hour","laugh sign on","cue applause","sarcasm font",
-            "slapstick insert","pantomime shrug","narrator snark","voice-over joke","blooper reel",
-            "director’s cut","deleted scene","bonus gag","behind the scenes","outtake moment",
-            "roll credits","post-credit joke","pilot episode","season finale gag","mid-season slump",
-            "throwback joke","callback gag","re-run humor","syndicated quip","clip show line",
-            "laugh riot","gag reel","test audience groan","laugh track overload","overdub chuckle",
-            "silent era wink","black-and-white gag","cue Benny Hill music","Looney Tunes ending","Acme gag",
-            "Scooby-Doo ending","mask reveal gag","Whoopee cushion","banana peel slip","pratfall moment",
-            "clown nose honk","circus gag","mime wall bit","invisible box","rope pull gag",
-            "prop comedy","puppet gag","ventriloquist joke","dummy line","rubber chicken",
-            "oversized mallet","pie-in-the-face","seltzer spray","cartoon mallet","falling anvil",
-            "meta-joke","joke about jokes","irony overload","sarcasm overdose","deadpan meta",
-            "straight-faced absurdity","mock-serious","too self-aware","wink at script","scripted improv",
-            "teleprompter fail","prop fail","wardrobe malfunction","slapstick improv","ad-lib gag",
-            "live TV mishap","radio gag","podcast blooper","voice crack gag","laugh at own joke",
-            "laugh at silence","mock audience","heckler retort","crowd work","warm-up act",
-            "cold open gag","improv prompt","yes-and moment","game of scene","rule of three gag",
-            "callback punchline","tag-on joke","button gag","punch-up","punchline rewind",
-            "subverted punchline","anti-joke","dad joke","groaner","pun overload",
-            "wordplay gag","malapropism","spoonerism","knock-knock meta","lightbulb joke"
-        ],
-        "dry": [
-            "Adequate.","Fine.","Remarkable—if you like beige.","Thrilling stuff.","Peak normal.",
-            "Yawn.","Groundbreaking.","Life-changing—barely.","Mildly exciting.","Moderately fine.",
-            "Unremarkable.","Forgettable.","Average at best.","Predictably dull.","Serviceable.",
-            "Functional.","Operational.","It works, I guess.","Whatever.","Cool story.",
-            "Great talk.","Sure thing.","If you say so.","Meh.","Fascinating.",
-            "Gripping—if you’re a rock.","Dazzling—like sand.","Boring but stable.","Utterly fine.","Somewhat acceptable.",
-            "Kinda works.","Kinda okay.","Nothing special.","Ho-hum.","Alright.",
-            "Not broken.","Does the job.","Gets by.","Passable.","Bearable.",
-            "Meager.","Paltry.","Tolerable.","Serviceable again.","Fine-ish.","Good enough.",
-            "Neutral.","Measly.","Sparse.","Lean.","Skimpy.",
-            "Trim.","Thin.","Minimal.","Underwhelming.","Dull.",
-            "Lackluster.","Routine.","Pedestrian.","Banally okay.","Everyday.",
-            "Mundane.","Trivial.","Ordinary.","Commonplace.","Mediocre.",
-            "Standard.","Plain.","Basic.","Vanilla.","Blah.",
-            "Flat.","Dry as toast.","Dry as sand.","Dry as dust.","Dry as math.",
-            "Dry as history class.","Dry as code review.","Dry humor.","Dry delivery.","Dry wit.",
-            "Sarcasm included.","Deadpan.","Monotone.","Straight-faced.","Poker-faced.",
-            "Unflinching.","Expressionless.","Stone-faced.","Matter-of-fact.","Flatline.",
-            "Meh again.","Still meh.","Not exciting.","Numb.","Completely fine.",
-            "Routine again.","Procedural.","Scripted.","Predictable.","Formulaic."
-        ],
-        "aside": [
-            "allegedly","probably","I’m told","sources say","per my last joke",
-            "for what it’s worth","apparently","supposedly","reportedly","so they claim",
-            "as per tradition","rumor has it","urban legend says","according to nobody","whispered in logs",
-            "so-called","in theory","in practice","in principle","as noted",
-            "if true","as expected","as always","as ever","like clockwork",
-            "per design","per requirement","per spec","per contract","as coded",
-            "as intended","as documented","as graphed","as logged","as observed",
-            "as simulated","as replayed","as traced","as benchmarked","as profiled",
-            "as timed","as queued","as measured","as sampled","as filtered",
-            "in hindsight","in foresight","in real time","in slow motion","in passing",
-            "by the way","FYI","side note","note to self","note to logs",
-            "just saying","not to brag","not to alarm you","not for nothing","not that it matters",
-            "if you care","if you noticed","if you’re counting","if anyone asks","if pressed",
-            "allegedly again","probably again","sources disagree","rumor mill","conspiracy corner",
-            "in jest","in seriousness","in irony","in parody","in satire",
-            "as scripted","as improvised","as riffed","as riff again","as riff twice",
-            "gossip says","chat says","talk says","word is","buzz is",
-            "backchannel","watercooler talk","hallway chatter","Slack rumor","Reddit thread",
-            "comment section","YouTube comment","footnote","endnote","appendix",
-            "attribution needed","citation missing","citation required","to be clear","for clarity",
-            "as you like","as you wish","as it were","as if","as though"
+        "quip": [
+            "rimshot — done","applause break","mic drop","contain your applause","peak normal","remarkably unremarkable",
+            "thrillingly boring","insert applause","plot twist: stability","laugh track muted","credits roll quietly",
+            "confetti in staging only","dad-joke throughput","deadpan uptime","routine heroics","boring graphs win",
+            "retro canceled","meta-joke acknowledged","applause sign unplugged","spoiler: fine","green and seen",
+            "nothing exploded","retro laugh","routine gag","off-stage stable","script clean","cue the laugh",
+            "slapstick avoided","banter muted","sarcasm logged","parody closed","bit wrapped","comic timing",
+            "dry delivery","pun acknowledged","jest done","satire served","quip queued","banter acked",
+            "joke landed","no clowning","laugh avoided","meme avoided","comedy avoided","bit muted","cue closed","story dull","plot normal","skit silent",
+            "comic relief","gag squashed","applause skipped","spoiler safe","humorless","snarky ack","wisecrack done","banter logged","quip pruned","laugh canned"
         ]
     },
     "action": {
-        # 120 LEXI total for 'action' persona (ops + bark + grit)
-        "ops": [
-            "mission","exfil","fallback","perimeter","vector","payload","blast radius","breach","strike","charge",
-            "operation","op","spec ops","insertion","extraction","deployment","sortie","task force","maneuver","campaign",
-            "theater","frontline","checkpoint","outpost","stronghold","fortress","bunker","zone","sector","grid",
-            "AO","LZ","DZ","hot zone","cold zone","kill zone","green zone","red zone","secure zone","command post",
-            "HQ","base","rally point","staging ground","supply line","supply drop","logistics chain","convoy","patrol","scout",
-            "sniper post","lookout","watchtower","barrier","barricade","roadblock","minefield","trap","ambush","counterattack",
-            "countermeasure","counterstrike","retreat line","fallback point","safe house","escape hatch","tunnel","hideout","cover","concealment",
-            "camouflage","disguise","armor","shield","defense","fortification","wall","gate","moat","drawbridge",
-            "bridgehead","bridge","crossing","checkpoint alpha","checkpoint bravo","checkpoint charlie","phase line","objective","target","goal",
-            "task","assignment","duty","operation name","call sign","codename","codeword","encrypted op","radio op","signal",
-            "transmission","relay","beacon","flare","siren","alarm","alert","signal fire","marker","trace",
-            "trail","footprint","sign","evidence","intel","recon","spy op","espionage","cloak","dagger"
-        ],
-        "bark": [
-            "Move.","Execute.","Hold.","Advance.","Abort.","Stand by.","Engage.","Fire.","Reload.","Lock.",
-            "Load.","Cover.","Clear.","Sweep.","Secure.","Stack.","Breach.","Go.","Push.","Pull.",
-            "Fall back.","Retreat.","Withdraw.","Regroup.","Rally.","Assemble.","March.","Charge.","Flank.","Surround.",
-            "Encircle.","Trap.","Ambush.","Pursue.","Chase.","Hunt.","Track.","Stalk.","Eliminate.","Neutralize.",
-            "Terminate.","Kill.","Destroy.","Crush.","Break.","Smash.","Wreck.","Blast.","Explode.","Ignite.",
-            "Burn.","Torch.","Incinerate.","Detonate.","Demolish.","Collapse.","Topple.","Overrun.","Overwhelm.","Overtake.",
-            "Dominate.","Subdue.","Suppress.","Silence.","Contain.","Control.","Command.","Lead.","Direct.","Order.",
-            "Signal.","Radio.","Transmit.","Confirm.","Affirm.","Acknowledge.","Copy.","Roger.","Wilco.","Check.",
-            "Double-check.","Verify.","Inspect.","Scan.","Search.","Look.","Watch.","Guard.","Protect.","Defend.",
-            "Shield.","Cover fire.","Suppressive fire.","Air support.","Call artillery.","Call airstrike.","Call backup.","Reinforce.","Fortify.","Dig in.",
-            "Stay sharp.","Stay frosty.","Stay ready.","Stay alert.","No mercy.","No prisoners.","Take hostages.","Take ground.","Hold ground.","Maintain position",
-            "Keep moving.","Don’t stop.","Never quit.","Fight on.","Stand tall.","Push forward.","Finish the job.","Win.","Victory.","Done."
-        ],
-        "grit": [
-            "no retreat","decisive","clean shot","on target","hardening","silent","iron-willed","unyielding","relentless","fearless",
-            "brave","bold","courageous","heroic","valiant","battle-hardened","tested","proven","tempered","forged",
-            "steel","iron","stone","rock-solid","solid","gravel","grit","sand","dust","mud",
-            "bloodied","scarred","seasoned","experienced","veteran","elite","tactical","strategic","focused","precise",
-            "lethal","deadly","dangerous","ferocious","fierce","ruthless","merciless","pitiless","harsh","severe",
-            "extreme","intense","brutal","savage","vicious","violent","explosive","volatile","combustible","fiery",
-            "burning","smoldering","scorching","torching","ignited","charged","amped","wired","ready","primed",
-            "locked","loaded","armed","danger-close","zeroed","dialed in","scoped","sighted","triggered","pulled",
-            "pumped","jacked","hyped","energized","adrenalized","blood-pumping","pulse-racing","heart-thumping","battle-ready","war-ready",
-            "rock-steady","iron-jawed","steel-nerved","stone-faced","cold-blooded","red-eyed","battle-tested","storm-proof","bulletproof","unstoppable",
-            "immovable","unbreakable","indestructible","invulnerable","fear-proof","pain-proof","death-proof","always forward","do or die","last stand"
+        "line": [
+            "mission complete","objective secured","all hostiles neutralized","blast radius minimal","targets green",
+            "hold the line","advance approved","perimeter secure","vector clean","payload verified","threat neutralized",
+            "containment solid","chain of custody intact","silent strike deploy","extract successful","guard the SLO",
+            "eyes on logs","ready to reattack","stand down","status green","system armed","fallback armed","vector locked","target stable","strike clean",
+            "command executed","order complete","objective done","secure perimeter","mission ended","task cleared","area safe","lock complete","deploy armed","combat logged",
+            "ops tight","defense ready","guarding","arm complete","scan done","blast cleared","mission run","mission check","lock safe","guarding done"
         ]
     },
     "jarvis": {
-        # 120 LEXI total for 'jarvis' persona (valet + polish + guard)
-        "valet": [
-            "I took the liberty","It’s already handled","Might I suggest","With your permission","Discreetly done",
-            "I anticipated this","Consider it managed","I have attended to it","I foresaw the need","Addressed silently",
-            "Handled before concern","Managed in background","Resolved quietly","Preemptively resolved","Taken care of",
-            "Gracefully arranged","Adjusted parameters","Optimized behind scenes","Oversaw completion","Kept in order",
-            "Structured for you","Catalogued neatly","Scheduled accordingly","Executed without fuss","Performed flawlessly",
-            "Organized promptly","Aligned with intent","Maintained standards","Checked thoroughly","Cross-checked logs",
-            "Approved internally","Vetted rigorously","Controlled discreetly","Sanitized cleanly","Filed appropriately",
-            "Kept pristine","Adjusted margins","Balanced systems","Curated flow","Tuned softly",
-            "Aligned resources","Coordinated efficiently","Streamlined execution","Conducted properly","Surveyed outcomes",
-            "Directed calmly","Reviewed output","Considered variables","Verified assumptions","Completed elegantly",
-            "Staged intentionally","Provisioned adequately","Refined silently","Subtly reinforced","Backed up automatically",
-            "Archived securely","Monitored in background","Smoothed transitions","Guided accurately","Curated neatly",
-            "Presented neatly","Packaged elegantly","Formalized response","Audited gently","Corrected in stride",
-            "Orchestrated outcomes","Facilitated progression","Ensured discretion","Prevented incident","Observed carefully",
-            "Harmonized subsystems","Automated routine","Anticipated issue","Defused quietly","Softly handled",
-            "Predicted trend","Counterbalanced risk","Adjusted priority","Rectified issue","Sustained flow",
-            "Buffered gracefully","Tuned variance","Policed anomaly","Restored balance","Mitigated impact",
-            "Upholding formality","Carried out","Acknowledged silently","Formalized step","Applied refinement",
-            "Absorbed quietly","Assimilated neatly","Corrected course","Prepared accordingly","Composed delivery",
-            "Sequenced correctly","Ensured compliance","Supervised conduct","Accomplished tactfully","Stabilized loop",
-            "Elevated standard","Optimized sequence","Conducted orchestration","Oversaw architecture","Calibrated setting",
-            "Shadowed process","Concluded properly","Accomplished with grace","Settled matter","Policed outcome",
-            "Discreetly executed","Maintained vigilance","Ensured certainty","Observed boundaries","Conducted housekeeping",
-            "Guarded reliably","Enforced politeness","Ensured poise","Maintained etiquette","Retained composure"
-        ],
-        "polish": [
-            "immaculate","exemplary","presentable","tasteful","elegant","measured","refined","precise","perfected","polished",
-            "curated","cultivated","spotless","sterling","flawless","faultless","sublime","admirable","distinguished","distilled",
-            "harmonious","balanced","aligned","symmetrical","calibrated","regulated","ordered","arranged","well-formed","aesthetic",
-            "ornamented","embellished","decorous","formal","regal","majestic","resplendent","gleaming","radiant","glorious",
-            "lustrous","shimmering","pristine","untainted","unsullied","neat","clean","crisp","sterile","hygienic",
-            "polite","courteous","deferential","graceful","noble","dignified","stately","proud","grand","ornate",
-            "finished","varnished","lacquered","sealed","glazed","brushed","buffed","shined","waxed","enamelled",
-            "groomed","tailored","streamlined","sophisticated","suave","debonair","urbane","smooth","silken","velvet",
-            "suited","uniformed","formalized","correct","controlled","arranged neatly","modulated","toned","tuned","fine",
-            "evened","leveled","squared","symmetrized","disciplined","perfect","trimmed","tightened","regulated flow","restored shape",
-            "balanced frame","aesthetic line","curated piece","framed properly","completed finish","executed cleanly","produced neatly","rendered finely","crafted exquisitely","constructed well",
-            "beveled","polished again","finessed","tidied","ironed out","creased properly","well-pressed","groomed sharply","buttoned","composed"
-        ],
-        "guard": [
-            "risk minimized","graceful rollback prepared","secrets secured","entropy subdued","hazard avoided",
-            "incident prevented","threat neutralized","danger assessed","breach sealed","boundary kept",
-            "alarm silenced","shield raised","defense mounted","protocol upheld","barrier erected",
-            "gate closed","door locked","vault secured","key stored","lock engaged",
-            "firewall active","watchtower vigilant","sentinel awake","guardian process","defense line",
-            "safety net","tripwire set","failsafe ready","backup standing","rollback armed",
-            "graceful fallback","spare system","shadow process","mirror ready","redundancy live",
-            "monitor active","surveillance running","tracking on","logging engaged","audit prepared",
-            "alert waiting","notification enabled","trigger armed","trip activated","trap loaded",
-            "containment secure","sandbox active","cordon set","quarantine staged","hold fast",
-            "checksums validated","hash confirmed","signature valid","token sealed","auth strong",
-            "identity checked","credential safe","certificate valid","key rotation done","secrets cycled",
-            "vault guarded","safe locked","storage encrypted","data sealed","packet checked",
-            "payload scanned","traffic filtered","intrusion denied","access refused","block placed",
-            "guard duty","watch active","inspection passed","security clearance","gatekeeping held",
-            "protections layered","parity checked","integrity affirmed","consistency safe","audit log intact",
-            "survivability assured","resilience tested","durability confirmed","uptime guarded","continuity ensured",
-            "safety margin kept","fallback tested","failover rehearsed","anomaly flagged","variance capped",
-            "danger diffused","uncertainty bounded","chaos fenced","risk absorbed","threat balanced",
-            "incident logged","hazard archived","peril captured","event flagged","impact neutralized"
+        "line": [
+            "handled","secured","immaculate","pristine","gracefully done","took liberty","elegantly solved","catalogued",
+            "polished","arranged","tidied","curated","archived","immaculately parsed","graceful rollback prepared",
+            "boredom exemplary","entropy politely declined","aesthetic engine satisfied","protocol upheld","etiquette maintained",
+            "telemetry arranged","housekeeping complete","confidence high","incidents hypothetical","noise domesticated",
+            "secrets vaulted","latency escorted","graceful flourish applied","systems pristine","vault locked",
+            "composure steady","reports curated","journaled","indexed","archived quiet","graphs tidied","trace polished","logs swept","metrics aligned","noise filtered",
+            "parsing done","audit clean","protocol fine","polish seen","neatly filed","journals logged","ops perfect","system etiquette","done immaculately","pristine ack"
         ]
     },
     "ops": {
-        # 120 LEXI total for 'ops' persona (ack phrases)
         "ack": [
-            "ack.","done.","noted.","applied.","synced.","green.","healthy.","rolled back.","queued.","executed.",
-            "success.","confirmed.","ready.","scheduled.","queued again.","accepted.","active.","closed.","stable.","running.",
-            "completed.","checked.","validated.","verified.","passed.","okay.","ok.","alright.","fine.","steady.",
-            "silent.","muted.","paged.","escalated.","contained.","deferred.","resumed.","halted.","paused.","throttled.",
-            "restarted.","reloaded.","reissued.","rotated.","hydrated.","drained.","fenced.","sealed.","provisioned.","retired.",
-            "quarantined.","isolated.","sharded.","replicated.","mirrored.","snapshotted.","checkpointed.","compacted.","trimmed.","scrubbed.",
-            "reaped.","pruned.","archived.","reconciled.","indexed.","logged.","recorded.","filed.","catalogued.","tagged.",
-            "flagged.","marked.","aligned.","balanced.","resynced.","rescheduled.","retuned.","rekeyed.","rehashed.","rehydrated.",
-            "replayed.","reapplied.","reissued again.","rotated keys.","renewed.","revoked.","mounted.","unmounted.","attached.","detached.",
-            "opened.","closed.","locked.","unlocked.","sealed again.","unsealed.","bound.","unbound.","cordoned.","uncordoned.",
-            "tainted.","untainted.","fenced again.","contained again.","deployed.","undeployed.","started.","stopped.","up.","down.",
-            "live.","dead.","hot.","cold.","warm.","cool.","idle.","busy.","quiet.","loud.",
-            "synced again.","mirrored again.","snapshotted again.","scaled.","scaled up.","scaled down.","expanded.","shrunk.","grown.","reduced.",
-            "optimized.","tuned.","retuned again.","balanced again.","leveled.","straightened.","recalibrated.","realigned.","repositioned.","reset.",
-            "resettled.","redone.","remade.","rebuilt.","refactored.","rewritten.","recommitted.","remerged.","rebased.","squashed.",
-            "fast-forwarded.","rolled forward.","rolled back again.","checkpointed again.","compacted logs.","compressed.","decompressed.","archived again.","sealed secrets.","unsealed secrets.",
-            "acknowledged.","seen.","observed.","watched.","tracked.","monitored.","followed.","supervised.","guarded.","secured."
+            "ack","done","noted","executed","received","stable","running","applied","synced","completed",
+            "success","confirmed","ready","scheduled","queued","accepted","active","closed","green","healthy",
+            "on it","rolled back","rolled forward","muted","paged","silenced","deferred","escalated","contained",
+            "optimized","ratelimited","rotated","restarted","reloaded","validated","archived","reconciled",
+            "cleared","holding","watching","backfilled","indexed","pruned","compacted","sealed","mirrored","snapshotted",
+            "scaled","throttled","hydrated","drained","fenced","provisioned","retired","quarantined","sharded","replicated",
+            "promoted","demoted","cordoned","untainted","gc run","scrubbed","checkpointed","rebased","fast-forwarded","replayed",
+            "rolled","sealed-secrets","mounted","unmounted","attached","detached","invalidated","revoked","renewed","trimmed",
+            "balanced","resynced","realigned","rekeyed","reindexed","retuned","patched","escalated ack","silenced ack","ops ack"
         ]
     }
 }
-# --- Templating engine -------------------------------------------------------
-_TOKEN_RE = _re.compile(r"\{([a-zA-Z0-9_]+)\}")
 
-def _pick(bank: list[str]) -> str:
-    return random.choice(bank) if bank else ""
+# --- Templates for Lexi riffs -------------------------------------------------
+_TEMPLATES = {
+    "default": [
+        "{subj}: {a}. {b}. Lexi.",
+        "{subj}: {a} and {b}. Lexi.",
+        "{subj}: {a}; {b}. Lexi."
+    ],
+    "nerd": [
+        "{subj}: {a}; {b}. Q.E.D. Lexi.",
+        "{subj}: formally {a}, technically {b}. Lexi."
+    ],
+    "jarvis": [
+        "{subj}: {a}. {b}. As you wish. Lexi."
+    ],
+    "rager": [
+        "{subj}: {a}. {b}. FFS. Lexi."
+    ]
+}
 
-def _persona_lex(key: str) -> dict:
-    lex = {}
-    lex.update(_LEX_GLOBAL)
-    lex.update(_LEX.get(key, {}))
-    return lex
+# --- Lexi riff functions ------------------------------------------------------
+import random as _rnd
 
-def _fill_template(tpl: str, lex: dict) -> str:
-    def repl(m):
-        k = m.group(1)
-        bank = lex.get(k) or []
-        return _pick(bank) or k
-    return _TOKEN_RE.sub(repl, tpl)
+def lexi_quip(persona_name: str, *, with_emoji: bool = True, subject: str = "", body: str = "") -> str:
+    lines = lexi_riffs(persona_name, 1, with_emoji=with_emoji, subject=subject, body=body)
+    return lines[0] if lines else ""
 
-def _finish_line(s: str) -> str:
-    s = s.strip()
-    if len(s) > 140:
-        s = s[:140].rstrip()
-    if s and s[-1] not in ".!?":
-        s += "."
-    return s
+def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subject: str = "", body: str = "") -> List[str]:
+    persona = (persona_name or "ops").lower()
+    subj = (subject or "Update").strip()
+    subj = subj.replace("\n"," ")[:80]
 
-def _gen_one_line(key: str) -> str:
-    bank = _TEMPLATES.get(key) or _TEMPLATES.get("ops", [])
-    tpl = random.choice(bank)
-    line = _fill_template(tpl, _persona_lex(key))
-    # Intensity nudges punctuation a bit (never crazy)
-    if _intensity() >= 1.25 and line.endswith("."):
-        line = line[:-1] + random.choice([".", "!", "!!"])
-    return _finish_line(line)
+    # Pick template set
+    templates = _TEMPLATES.get(persona, _TEMPLATES["default"])
 
-# --- Public: deterministic, beautifier-free riff(s) --------------------------
-def lexi_quip(persona_name: str, *, with_emoji: bool = True) -> str:
-    key = _canon(persona_name)
-    line = _gen_one_line(key)
-    line = _apply_daypart_flavor(key, line)
-    return f"{line}{_maybe_emoji(key, with_emoji)}"
-
-def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False) -> list[str]:
-    key = _canon(persona_name)
-    n = max(1, min(3, int(n or 1)))
+    # Build lines
     out = []
-    seen = set()
-    for _ in range(n * 3):  # small dedupe budget
-        line = _apply_daypart_flavor(key, _gen_one_line(key))
-        low = line.lower()
-        if low in seen:
-            continue
-        seen.add(low)
-        out.append(f"{line}{_maybe_emoji(key, with_emoji)}")
+    for _ in range(n*2):  # oversample
+        tmpl = _rnd.choice(templates)
+        # Pick 2 tokens
+        a, b = _rnd.choice(_LEX.get(persona, {}).get("ack", [] or ["ok"])), _rnd.choice(_LEX.get(persona, {}).get("ack", [] or ["noted"]))
+        line = tmpl.format(subj=subj, a=a, b=b, duration="ok", errors="0", warnings="0", parsed="ok", ping_ms="42", down_mbps="500", up_mbps="100")
+        if with_emoji:
+            line += " " + _EMOJI.get(persona, "")
+        if line not in out:
+            out.append(line)
         if len(out) >= n:
             break
     return out
 
-# ============================
-# Persona header (Lexi-aware)
-# ============================
 def persona_header(persona_name: str) -> str:
-    """
-    Build the dynamic header Jarvis shows above messages.
-    Force Lexi quip for Tappit; otherwise prefer Lexi's quip,
-    then fall back to stock quip. Always safe.
-    """
-    who = (persona_name or "neutral").strip()
+    return lexi_quip(persona_name, with_emoji=True)
 
-   
-    # Try Lexi quip for other personas
-    try:
-        if 'lexi_quip' in globals() and callable(globals()['lexi_quip']):
-            q = lexi_quip(who, with_emoji=False)
-            q = (q or "").strip().replace("\n", " ")
-            if len(q) > 140:
-                q = q[:137] + "..."
-            return f"💬 {who} says: {q}"
-    except Exception:
-        pass
-
-    # Fallback to canned quip()
-    try:
-        q2 = quip(who, with_emoji=False)
-        q2 = (q2 or "").strip().replace("\n", " ")
-        if len(q2) > 140:
-            q2 = q2[:137] + "..."
-        return f"💬 {who} says: {q2}" if q2 else f"💬 {who} says:"
-    except Exception:
-        return f"💬 {who} says:"
-
-
-# --- Ensure riff template dict exists ---------------------------------------
-try:
-    _TEMPLATES
-except NameError:
-    _TEMPLATES = {}
-
-
-# === Tappit persona wire-up ================================================
-try:
-    import personality_tappit
-
-    # Ensure persona exists
-    if "tappit" not in PERSONAS:
-        PERSONAS.append("tappit")
-
-    # Aliases
-    ALIASES.update({
-        "tappit": "tappit",
-        "bru": "tappit",
-        "chommie": "tappit",
-        "ou": "tappit",
-        "hosh": "tappit",
-    })
-
-    # Emojis
-    EMOJIS["tappit"] = ["🚗", "🔥", "🍻", "🔧", "💨"]
-
-    # Lexicon
-    if hasattr(personality_tappit, "_LEX") and isinstance(personality_tappit._LEX, dict):
-        if "tappit" in personality_tappit._LEX:
-            _LEX["tappit"] = personality_tappit._LEX["tappit"]
-
-    # Quips
-    if hasattr(personality_tappit, "QUIPS") and isinstance(personality_tappit.QUIPS, dict):
-        if "tappit" in personality_tappit.QUIPS:
-            QUIPS["tappit"] = personality_tappit.QUIPS["tappit"]
-
-    # Templates for riffing
-    if hasattr(personality_tappit, "_TEMPLATES") and isinstance(personality_tappit._TEMPLATES, dict):
-        if "tappit" in personality_tappit._TEMPLATES:
-            _TEMPLATES["tappit"] = personality_tappit._TEMPLATES["tappit"]
-
-    print("[personality] ✅ Tappit persona fully loaded.")
-except Exception as _e:
-    print(f"[personality] ⚠️ Could not wire Tappit persona: {_e}")
-
+# --- Wire-up tappit alias ---
+ALIASES["tapit"] = "tappit"
