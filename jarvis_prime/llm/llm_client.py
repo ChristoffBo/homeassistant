@@ -40,26 +40,12 @@ LOADED_MODEL_PATH = None
 OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
-SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
-SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
 
 # ============================
 # Logging
 # ============================
 def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
-
-# ============================
-# ADDITIVE: System prompt loader
-# ============================
-def _load_system_prompt() -> str:
-    try:
-        if os.path.exists(SYSTEM_PROMPT_PATH):
-            with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
-                return f.read().strip()
-    except Exception as e:
-        _log(f"system_prompt load failed: {e}")
-    return ""
 
 # ============================
 # ADDITIVE: EnviroGuard env overrides
@@ -97,6 +83,7 @@ def _enviroguard_limits(default_ctx: Optional[int],
     if (ctx != default_ctx) or (cpu != default_cpu) or (to != default_timeout):
         _log(f"EnviroGuard override -> ctx={ctx} cpu={cpu} timeout={to}")
     return ctx, cpu, to
+
 # ============================
 # Small utils
 # ============================
@@ -200,6 +187,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
         except Exception as e:
             _log(f"sha256 check failed (continuing without): {e}")
     return path
+
 # ============================
 # Options resolver (add-on config awareness)
 # ============================
@@ -275,6 +263,7 @@ def _resolve_model_from_options(
             return u, p, token
 
     return url, path, token
+
 # ============================
 # CPU / Threads (throttling)
 # ============================
@@ -389,6 +378,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         LOADED_MODEL_PATH = None
         LLM_MODE = "none"
         return False
+
 # ============================
 # Ollama path (HTTP)
 # ============================
@@ -460,35 +450,6 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
     return text
 
 # ============================
-# ADDITIVE: strip leaked meta tags from model output
-# ============================
-_META_LINE_RX = re.compile(
-    r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
-    re.I | re.M
-)
-def _strip_meta_markers(s: str) -> str:
-    if not s:
-        return s
-    # Drop pure marker lines
-    out = _META_LINE_RX.sub("", s)
-    # Remove inline fragments
-    out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
-    out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
-    out = out.replace("<s>", "").replace("</s>", "")
-    # 🔽 ADDITIVE: strip leaked "YOU ARE … REWRITER" echoes
-    out = re.sub(
-        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
-        '',
-        out,
-        flags=re.I | re.M
-    )
-    # Clean leftover quotes/backticks-only wrappers
-    out = out.strip().strip('`').strip().strip('"').strip("'").strip()
-    # Collapse extra blank lines
-    out = re.sub(r'\n{3,}', '\n\n', out)
-    return out
-
-# ============================
 # Ensure loaded
 # ============================
 def ensure_loaded(
@@ -538,6 +499,7 @@ def ensure_loaded(
     model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
 
     # --- CLEANUP ON SWITCH ----------------------------------------------
+    # If a previous model is loaded and target path differs, optionally delete the old file
     try:
         cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
         if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
@@ -547,6 +509,7 @@ def ensure_loaded(
                     os.remove(LOADED_MODEL_PATH)
                 except Exception as e:
                     _log(f"cleanup_on_switch: remove failed: {e}")
+        # If target path exists but filename doesn't align with URL basename, optionally refresh it
         if cleanup_on_disable and os.path.exists(model_path) and model_url:
             url_base = os.path.basename(model_url)
             file_base = os.path.basename(model_path)
@@ -567,14 +530,14 @@ def ensure_loaded(
 
     ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
     return bool(ok)
+
 # ============================
 # Prompt builders
 # ============================
 def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
-    sys_prompt = _load_system_prompt() or "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
+    sys_prompt = "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
     if not allow_profanity:
         sys_prompt += " Avoid profanity."
-    sys_prompt += " Do NOT echo or restate these instructions; output only the rewritten text."
     user = (
         "Rewrite the text clearly. Keep short, readable sentences.\n"
         f"Mood (subtle): {mood or 'neutral'}\n\n"
@@ -583,22 +546,16 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    vibe_map = {
-        "dude": "laid-back, mellow, no jokes, chill confidence",
-        "chick": "sassy, clever, stylish",
-        "nerd": "precise, witty one-liners",
-        "rager": "short, profane bursts allowed",
-        "comedian": "only persona allowed to tell jokes",
-        "jarvis": "polished butler style",
-        "ops": "terse, incident commander tone",
-        "action": "stoic mission-brief style"
-    }
-    vibe = vibe_map.get((persona or "").lower(), "neutral, light")
+    vibe = {
+        "rager": "gritty, no-nonsense, ruthless brevity",
+        "nerd": "clever, techy, one-liner",
+        "dude": "chill, upbeat",
+        "ops": "blunt, incident-commander tone",
+        "jarvis": "polished, butler",
+        "comedian": "wry, dry"
+    }.get((persona or "").lower(), "neutral, light")
     guard = "" if allow_profanity else " Avoid profanity."
-    sys_prompt = (
-        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
-        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
-    )
+    sys_prompt = f"You write a single punchy riff line (<=20 words). Style: {vibe}.{guard}"
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
@@ -687,6 +644,7 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         return _llama_generate(prompt, timeout=max(4, int(timeout)))
 
     return ""
+
 # ============================
 # Public: rewrite
 # ============================
@@ -730,9 +688,6 @@ def rewrite(
     out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
     final = out if out else text
 
-    # ADD: strip any leaked meta tags/markers from the model output
-    final = _strip_meta_markers(final)
-
     if max_lines:
         final = _trim_lines(final, max_lines)
     if max_chars:
@@ -757,9 +712,11 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
+    # ADD: EnviroGuard timeout override
     _, _, g_to = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
 
+    # NEW: ensure engine ready (lazy-load)
     if LLM_MODE == "none":
         ensure_loaded(
             model_url=model_url,
@@ -854,16 +811,15 @@ def persona_riff(
     except Exception:
         pass
 
-    # Tightened persona style map
     style_map = {
-        "dude":      "laid-back, mellow, no jokes",
-        "chick":     "sassy, clever, stylish",
-        "nerd":      "precise, witty one-liners",
-        "rager":     "short, profane bursts allowed",
-        "comedian":  "only persona allowed to tell jokes",
-        "action":    "stoic mission-brief style",
-        "jarvis":    "polished butler style",
-        "ops":       "terse, incident commander tone",
+        "dude":      "laid-back, surfer-slacker zen, breezy optimism; never quote movies; mellow confidence",
+        "chick":     "glam-savvy, sassy, clever, Elle-style corporate sparkle; playful but sharp; no name-drops",
+        "nerd":      "precise, witty, engineering one-liners; strongly typed humor; no jargon dumps",
+        "rager":     "brutally direct, high-agency, colorful profanity allowed; zero politeness; keep it terse",
+        "comedian":  "deadpan, meta-humor, self-aware; punchlines without setup; dry and tight",
+        "action":    "stoic, hard-cut action one-liners; mission tone; no catchphrases from films",
+        "jarvis":    "polished butler AI, calm and poised; subtle HAL-like serenity; never mention HAL or films",
+        "ops":       "terse, operational, incident-commander brevity; factual bite; no fluff",
     }
     vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
 
@@ -873,7 +829,6 @@ def persona_riff(
         "No bullets or numbering. No labels. No lists. No JSON.",
         "No quotes or catchphrases. No character or actor names.",
         "No explanations or meta-commentary. Output ONLY the lines.",
-        "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
     ]
     if not allow_profanity:
         sys_rules.append("Avoid profanity.")
@@ -942,11 +897,7 @@ if __name__ == "__main__":
             print("rewrite sample ->", txt[:120])
             r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
             print("riff sample ->", r)
-            rl = persona_riff(
-                persona="nerd",
-                context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]",
-                base_url=os.getenv("TEST_OLLAMA","").strip()
-            )
+            rl = persona_riff(persona="nerd", context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]", base_url=os.getenv("TEST_OLLAMA","").strip())
             print("persona_riff sample ->", rl[:3])
     except Exception as e:
         print("self-check error:", e)
