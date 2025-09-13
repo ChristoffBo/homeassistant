@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi3-aware chat format, lexicon fallback)
+# Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi-family chat format, lexicon fallback)
 #
 # Public entry points:
 #   ensure_loaded(...)
@@ -117,26 +117,38 @@ def _extract_subject_from_context(ctx: str) -> str:
 # Persona-token scrubbing (ADDITIVE)
 # ============================
 _PERSONA_TOKENS = ("dude","chick","nerd","rager","comedian","jarvis","ops","action","tappit","neutral")
-# Matches leading sequences like "dude. comedian. " at the start of a string
-_PERS_SEQ_RX = re.compile(r'^(?:\s*(?:' + "|".join(_PERSONA_TOKENS) + r')\.\s*)+', flags=re.I)
+# Leading sequence like "dude. comedian. "
+_PERS_LEAD_SEQ_RX = re.compile(r'^(?:\s*(?:' + "|".join(_PERSONA_TOKENS) + r')\.\s*)+', flags=re.I)
+# After any colon: ": dude. nerd. "
+_PERS_AFTER_COLON_RX = re.compile(r'(:\s*)(?:(?:' + "|".join(_PERSONA_TOKENS) + r')\.\s*)+', flags=re.I)
+# After sentence/separator breaks: ". dude. nerd. " or "; jarvis. " or "— chick. "
+_PERS_AFTER_BREAK_RX = re.compile(r'([.!?]\s+|[;,\-–—]\s+)(?:(?:' + "|".join(_PERSONA_TOKENS) + r')\.\s*)+', flags=re.I)
 
 def _scrub_persona_tokens(s: str) -> str:
-    """Remove persona name tokens when they are prefacing content (e.g., at start
-    or immediately after a colon), without touching legitimate words later."""
+    """
+    Remove persona name tokens when they preface content:
+      - at start of string,
+      - after ANY colon in the string,
+      - after common sentence/separator breaks (., !, ?, ;, comma, dashes).
+    Will NOT touch legitimate words later if not in those positions.
+    Applies repeatedly until no further changes (to catch chains).
+    """
     if not s:
         return s
-    # 1) Remove any leading persona token sequence: "dude. comedian. "
-    s = _PERS_SEQ_RX.sub("", s).lstrip()
-
-    # 2) If there's a colon, scrub tokens that appear immediately after it
-    def _after_colon(m):
-        head = m.group(1)
-        tail = m.group(2)
-        tail = _PERS_SEQ_RX.sub("", tail).lstrip()
-        return f"{head}: {tail}"
-
-    s = re.sub(r'^(.*?):\s*(.*)$', lambda m: _after_colon(m), s, count=1)
-    return s.strip()
+    prev = None
+    cur = s
+    # Repeat to consume chained patterns
+    while prev != cur:
+        prev = cur
+        # 1) Start-of-string sequences
+        cur = _PERS_LEAD_SEQ_RX.sub("", cur).lstrip()
+        # 2) After any colon
+        cur = _PERS_AFTER_COLON_RX.sub(r"\1", cur)
+        # 3) After sentence/separator breaks
+        cur = _PERS_AFTER_BREAK_RX.sub(r"\1", cur)
+    # Normalize excessive spaces
+    cur = re.sub(r"\s{2,}", " ", cur).strip()
+    return cur
 
 def _sanitize_context_subject(ctx: str) -> str:
     """Find 'Subject: ...' inside context and scrub persona tokens from the subject."""
@@ -740,29 +752,29 @@ def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_pr
     # Scrub persona tokens from subject used in fallback
     subj = _scrub_persona_tokens(subj)
 
-    persona = (persona or "neutral").lower().strip()
+    persona_key = (persona or "neutral").lower().strip()
     def pick(n=1):
         return [rnd.choice(lex) for _ in range(n)]
 
     lines: List[str] = []
     for _ in range(max(1, int(max_lines or 3))):
         a, b = pick(2)
-        if persona == "dude":
+        if persona_key == "dude":
             line = f"{subj}: {a}. Nice and {b}."
-        elif persona == "chick":
+        elif persona_key == "chick":
             line = f"{subj}: {a}—and make it {b}."
-        elif persona == "nerd":
+        elif persona_key == "nerd":
             line = f"{subj}: {a}; params tuned for {b}."
-        elif persona == "rager":
+        elif persona_key == "rager":
             line = f"{subj}: {a}. {b}."
-        elif persona == "comedian":
+        elif persona_key == "comedian":
             line = f"{subj}: {a}. {b}. I’ll be here all week."
-        elif persona == "jarvis":
-            # Removed "As you wish." to avoid a fixed tag when fallback fires
-            line = f"{subj}: {a}. {b}."
-        elif persona == "ops":
+        elif persona_key == "jarvis":
+            # Jarvis fallback restored to include the signature
+            line = f"{subj}: {a}. {b}. As you wish."
+        elif persona_key == "ops":
             line = f"{subj}: {a}. {b}. Incident noted."
-        elif persona == "action":
+        elif persona_key == "action":
             line = f"{subj}: {a}. {b}. Move."
         else:
             line = f"{subj}: {a}. {b}."
