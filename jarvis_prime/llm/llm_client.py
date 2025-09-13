@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (FULL)
+# Jarvis Prime — LLM client (CONFIG-DRIVEN)
 # - GGUF local loading via llama-cpp (if available)
 # - Optional Ollama HTTP generation (if base_url provided & reachable)
 # - Hugging Face downloads with Authorization header preserved across redirects
@@ -28,8 +28,8 @@ import random
 import urllib.request
 import urllib.error
 import http.client
-import re  # ADDITIVE: for riff post-cleaning
-import threading  # ADDITIVE: for concurrency lock
+import re
+import threading
 from typing import Optional, Dict, Any, Tuple, List
 
 # ============================
@@ -41,10 +41,10 @@ LOADED_MODEL_PATH = None
 OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
-SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
-SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
+SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"
+SYS_PROMPT = ""
 
-# ADDITIVE: global reentrant lock so multiple incoming messages don't collide
+# Global reentrant lock so multiple incoming messages don't collide
 _GEN_LOCK = threading.RLock()
 
 def _lock_timeout() -> int:
@@ -61,7 +61,6 @@ class _GenCritical:
         self.timeout = max(1, int(timeout or _lock_timeout()))
         self.acquired = False
     def __enter__(self):
-        # RLock in CPython doesn't support timed acquire prior to 3.12 via keyword; emulate
         end = time.time() + self.timeout
         while time.time() < end:
             if _GEN_LOCK.acquire(blocking=False):
@@ -83,7 +82,7 @@ def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
 
 # ============================
-# ADDITIVE: System prompt loader
+# System prompt loader
 # ============================
 def _load_system_prompt() -> str:
     try:
@@ -95,7 +94,49 @@ def _load_system_prompt() -> str:
     return ""
 
 # ============================
-# ADDITIVE: EnviroGuard env overrides
+# Options helpers
+# ============================
+def _read_options() -> Dict[str, Any]:
+    try:
+        with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        _log(f"options read failed ({OPTIONS_PATH}): {e}")
+        return {}
+
+def _current_profile() -> Tuple[str, int, int, int]:
+    """
+    Resolve the active power profile and return (name, cpu_percent, ctx_tokens, timeout_seconds).
+    Supports either flat keys at root ('manual','hot','normal','boost') or nested under 'llm_profiles'/'profiles'.
+    Active profile key is read from: options['llm_power_profile'] or options['power_profile'] or env LLM_POWER_PROFILE; defaults to 'normal'.
+    """
+    opts = _read_options()
+    prof_name = (opts.get("llm_power_profile") or opts.get("power_profile") or os.getenv("LLM_POWER_PROFILE") or "normal").strip().lower()
+
+    # Collect possible profile maps
+    profiles: Dict[str, Dict[str, Any]] = {}
+    for key in ("manual", "hot", "normal", "boost"):
+        if isinstance(opts.get(key), dict):
+            profiles[key] = opts[key]
+
+    nested = opts.get("llm_profiles") or opts.get("profiles")
+    if isinstance(nested, dict):
+        for k, v in nested.items():
+            if isinstance(v, dict):
+                profiles[k] = v
+
+    # Fallback to 'normal' or any available profile
+    pdata = profiles.get(prof_name) or profiles.get("normal") or (next(iter(profiles.values()), {}) if profiles else {})
+
+    cpu_percent = int(pdata.get("cpu_percent", 80))
+    ctx_tokens = int(pdata.get("ctx_tokens", 4096))
+    timeout_seconds = int(pdata.get("timeout_seconds", 25))
+
+    _log(f"profile: active='{prof_name}' cpu_percent={cpu_percent} ctx_tokens={ctx_tokens} timeout_seconds={timeout_seconds}")
+    return prof_name, cpu_percent, ctx_tokens, timeout_seconds
+
+# ============================
+# EnviroGuard (still available, but config wins)
 # ============================
 def _int_env(name: str, default: Optional[int]) -> Optional[int]:
     try:
@@ -109,26 +150,12 @@ def _int_env(name: str, default: Optional[int]) -> Optional[int]:
 def _enviroguard_limits(default_ctx: Optional[int],
                         default_cpu: Optional[int],
                         default_timeout: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    # NOTE: We will *not* let env override the config profile; we only use env as a last resort if config is missing.
     ctx = _int_env("ENVGUARD_CTX_TOKENS", default_ctx)
     cpu = _int_env("ENVGUARD_CPU_PERCENT", default_cpu)
     to  = _int_env("ENVGUARD_TIMEOUT_SECONDS", default_timeout)
-    if ctx is not None:
-        try:
-            ctx = max(256, int(ctx))
-        except Exception:
-            ctx = default_ctx
-    if cpu is not None:
-        try:
-            cpu = min(100, max(1, int(cpu)))
-        except Exception:
-            cpu = default_cpu
-    if to is not None:
-        try:
-            to = max(2, int(to))
-        except Exception:
-            to = default_timeout
     if (ctx != default_ctx) or (cpu != default_cpu) or (to != default_timeout):
-        _log(f"EnviroGuard override -> ctx={ctx} cpu={cpu} timeout={to}")
+        _log(f"EnviroGuard override (fallback only) -> ctx={ctx} cpu={cpu} timeout={to}")
     return ctx, cpu, to
 
 # ============================
@@ -153,10 +180,7 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
 # HTTP helpers (with HF auth)
 # ============================
 class _AuthRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """
-    Keep Authorization header across redirects (Hugging Face needs this).
-    Python's urllib strips 'Authorization' on redirect by default.
-    """
+    """Keep Authorization header across redirects (Hugging Face needs this)."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is None:
@@ -182,7 +206,7 @@ def _http_get(url: str, headers: Dict[str, str], timeout: int = 180) -> bytes:
 
 def _http_post(url: str, data: bytes, headers: Dict[str, str], timeout: int = 60) -> bytes:
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    opener = _build_opener_with_headers({})
+    opener = urllib.request.build_opener()
     with opener.open(req, timeout=timeout) as r:
         return r.read()
 
@@ -236,83 +260,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
     return path
 
 # ============================
-# Options resolver (add-on config awareness)
-# ============================
-def _read_options() -> Dict[str, Any]:
-    try:
-        with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        _log(f"options read failed ({OPTIONS_PATH}): {e}")
-        return {}
-
-def _resolve_model_from_options(
-    model_url: str,
-    model_path: str,
-    hf_token: Optional[str]
-) -> Tuple[str, str, Optional[str]]:
-    """
-    If caller didn't pass model_url/path, derive them from /data/options.json.
-    Supports:
-      - llm_choice == "custom" -> llm_model_url/path
-      - llm_choice == "<name>" -> llm_<name>_url/path
-      - Fallback to first enabled of our known set, in llm_models_priority order
-    """
-    url = (model_url or "").strip()
-    path = (model_path or "").strip()
-    token = (hf_token or "").strip() or None
-
-    if url and path:
-        return url, path, token
-
-    opts = _read_options()
-    choice = (opts.get("llm_choice") or "").strip()
-    autodl = bool(opts.get("llm_autodownload", True))
-    if not token:
-        t = (opts.get("llm_hf_token") or "").strip()
-        token = t or None
-
-    cand: List[Tuple[str, str]] = []
-    if choice.lower() == "custom":
-        cand.append((
-            (opts.get("llm_model_url") or "").strip(),
-            (opts.get("llm_model_path") or "").strip()
-        ))
-    elif choice:
-        cand.append((
-            (opts.get(f"llm_{choice}_url") or "").strip(),
-            (opts.get(f"llm_{choice}_path") or "").strip()
-        ))
-
-    # Build order from priority string (if present), else default to include uncensored too
-    priority_raw = (opts.get("llm_models_priority") or "").strip()
-    if priority_raw:
-        names = [n.strip().lower() for n in priority_raw.split(",") if n.strip()]
-    else:
-        names = ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]
-
-    # Collect enabled candidates in order (with a safe tail)
-    seen = set()
-    for name in names + ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]:
-        key = name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        if opts.get(f"llm_{key}_enabled", False):
-            cand.append((
-                (opts.get(f"llm_{key}_url") or "").strip(),
-                (opts.get(f"llm_{key}_path") or "").strip()
-            ))
-
-    for u, p in cand:
-        if u and p:
-            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u)} path={os.path.basename(p)} autodownload={autodl}")
-            return u, p, token
-
-    return url, path, token
-
-# ============================
-# CPU / Threads (throttling)
+# CPU / Threads (CONFIG-DRIVEN)
 # ============================
 def _parse_cpuset_list(s: str) -> int:
     total = 0
@@ -372,13 +320,9 @@ def _available_cpus() -> int:
     return max(1, os.cpu_count() or 1)
 
 def _threads_from_cpu_limit(limit_pct: int) -> int:
-    """Map a CPU percentage to an integer thread count, respecting cgroup limits."""
-    for env_var in ("LLAMA_THREADS", "OMP_NUM_THREADS"):
-        v = os.getenv(env_var, "").strip()
-        if v.isdigit():
-            t = max(1, int(v))
-            _log(f"env override {env_var} -> threads={t}")
-            return t
+    """Map a CPU percentage to an integer thread count, respecting cgroup limits.
+       CONFIG takes priority. Environment variables no longer override threads.
+    """
     cores = _available_cpus()
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
@@ -407,15 +351,14 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         return False
     try:
         threads = _threads_from_cpu_limit(cpu_limit)
-        os.environ.setdefault("OMP_NUM_THREADS", str(threads))
-        os.environ.setdefault("LLAMA_THREADS", str(threads))
-        # llama-cpp params verified in docs (n_ctx, n_threads)
+        os.environ["OMP_NUM_THREADS"] = str(threads)
+        os.environ["LLAMA_THREADS"] = str(threads)
         LLM = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=ctx_tokens,
             n_threads=threads,
-            n_batch=128,      # ADD: cap batch for faster prefill on CPU
-            n_ubatch=128      # ADD: match micro-batch
+            n_batch=128,      # Cap batch for faster prefill on CPU
+            n_ubatch=128
         )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
@@ -499,7 +442,7 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
     return text
 
 # ============================
-# ADDITIVE: strip leaked meta tags from model output
+# Strip leaked meta tags from model output
 # ============================
 _META_LINE_RX = re.compile(
     r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
@@ -508,27 +451,22 @@ _META_LINE_RX = re.compile(
 def _strip_meta_markers(s: str) -> str:
     if not s:
         return s
-    # Drop pure marker lines
     out = _META_LINE_RX.sub("", s)
-    # Remove inline fragments
     out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
     out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
     out = out.replace("<s>", "").replace("</s>", "")
-    # 🔽 ADDITIVE: strip leaked "YOU ARE … REWRITER" echoes
     out = re.sub(
         r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
         '',
         out,
         flags=re.I | re.M
     )
-    # Clean leftover quotes/backticks-only wrappers
     out = out.strip().strip('`').strip().strip('"').strip("'").strip()
-    # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
 
 # ============================
-# Tiny grammar for riffs (≤3 lines, ≤140 chars per line)
+# Grammar for riffs (≤3 lines, ≤140 chars per line)
 # ============================
 _RIFF_GBNF = r"""
 root  ::= line ("\n" line){0,2}
@@ -538,11 +476,66 @@ def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
     if not use_grammar:
         return kwargs
     try:
-        # llama-cpp python supports raw 'grammar' string
         kwargs["grammar"] = _RIFF_GBNF
     except Exception:
         pass
     return kwargs
+
+# ============================
+# Core generation (shared)
+# ============================
+def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) -> str:
+    """Generate text via local llama-cpp (non-streaming)."""
+    try:
+        import signal
+        def _alarm_handler(signum, frame):
+            raise TimeoutError("gen timeout")
+        if hasattr(signal, "SIGALRM"):
+            signal.signal(signal.SIGALRM, _alarm_handler)
+            signal.alarm(max(1, int(timeout)))
+
+        params = dict(
+            prompt=prompt,
+            max_tokens=256,
+            temperature=0.35,
+            top_p=0.9,
+            repeat_penalty=1.1,
+            stop=["</s>", "[/INST]"],
+        )
+        params = _maybe_with_grammar(params, with_grammar)
+
+        t0 = time.time()
+        out = LLM(**params)
+        ttft = time.time() - t0
+        _log(f"TTFT ~ {ttft:.2f}s")
+
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
+
+        txt = (out.get("choices") or [{}])[0].get("text", "")
+        return (txt or "").strip()
+    except TimeoutError as e:
+        _log(f"llama timeout: {e}")
+        return ""
+    except Exception as e:
+        _log(f"llama error: {e}")
+        return ""
+
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, with_grammar: bool=False) -> str:
+    """Route to Ollama or llama-cpp, depending on LLM_MODE."""
+    if LLM_MODE == "ollama" and OLLAMA_URL:
+        name = ""
+        cand = (model_name_hint or "").strip()
+        if cand and "/" not in cand and not cand.endswith(".gguf"):
+            name = cand
+        else:
+            name = _model_name_from_url(model_url)
+        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
+
+    if LLM_MODE == "llama" and LLM is not None:
+        return _llama_generate(prompt, timeout=max(4, int(timeout)), with_grammar=with_grammar)
+
+    return ""
 
 # ============================
 # Ensure loaded
@@ -559,18 +552,13 @@ def ensure_loaded(
 ) -> bool:
     """
     Decide engine and load (or prepare) it.
-    - If base_url provided and reachable: use Ollama mode (no local download needed here).
-    - Else: local GGUF via llama-cpp, with optional HF download/check.
+    - If base_url provided and reachable: use Ollama mode.
+    - Else: local GGUF via llama-cpp.
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
-    g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
-    ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
-
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
-    # Serialized: avoid race while switching modes / loading models
     with _GenCritical():
         base_url = (base_url or "").strip()
         if base_url:
@@ -589,41 +577,28 @@ def ensure_loaded(
         LLM = None
         LOADED_MODEL_PATH = None
 
-        # Read options to check cleanup behavior and priority resolution
-        opts = _read_options()
-
         # Resolve URL/path/Token from options if not provided
-        model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
+        url = (model_url or "").strip()
+        path = (model_path or "").strip()
+        token = (hf_token or "").strip() or None
+        if not (url and path):
+            opts = _read_options()
+            choice = (opts.get("llm_choice") or "").strip()
+            if choice.lower() == "custom":
+                url = (opts.get("llm_model_url") or "").strip()
+                path = (opts.get("llm_model_path") or "").strip()
+                token = token or (opts.get("llm_hf_token") or "").strip() or None
+            elif choice:
+                url = (opts.get(f"llm_{choice}_url") or "").strip()
+                path = (opts.get(f"llm_{choice}_path") or "").strip()
+                token = token or (opts.get("llm_hf_token") or "").strip() or None
 
-        # --- CLEANUP ON SWITCH ----------------------------------------------
-        try:
-            cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
-            if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
-                if os.path.exists(LOADED_MODEL_PATH):
-                    _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
-                    try:
-                        os.remove(LOADED_MODEL_PATH)
-                    except Exception as e:
-                        _log(f"cleanup_on_switch: remove failed: {e}")
-            if cleanup_on_disable and os.path.exists(model_path) and model_url:
-                url_base = os.path.basename(model_url)
-                file_base = os.path.basename(model_path)
-                if url_base and file_base and (os.path.splitext(file_base)[0] != os.path.splitext(url_base)[0]):
-                    _log(f"cleanup_on_switch: target path exists with different basename; removing {model_path} to force re-download")
-                    try:
-                        os.remove(model_path)
-                    except Exception as e:
-                        _log(f"cleanup_on_switch: remove target failed: {e}")
-        except Exception as e:
-            _log(f"cleanup_on_switch: error: {e}")
-        # --------------------------------------------------------------------
-
-        path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
-        if not path:
+        model_local_path = _ensure_local_model(url, path, token, model_sha256 or "")
+        if not model_local_path:
             _log("ensure_local_model failed")
             return False
 
-        ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
+        ok = _load_llama(model_local_path, DEFAULT_CTX, cpu_limit)
         return bool(ok)
 
 # ============================
@@ -662,99 +637,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
-# ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
-# ============================
-_INSTRUX_PATTERNS = [
-    r'^\s*tone\s*:.*$',            # <<< ADDED / existing patterns
-    r'^\s*no\s+lists.*$',
-    r'.*context\s*\(for vibes only\).*',
-    r'^\s*subject\s*:.*$',
-    r'^\s*style\s*:.*$',
-    r'^\s*you\s+write\s+a\s+single.*$',
-    r'^\s*write\s+1.*lines?.*$',                 # existing
-    r'^\s*write\s+up\s+to\s+\d+.*lines?.*$',     # NEW: catch "Write up to N ..."
-    r'^\s*output\s+only\s+the\s+lines.*$',       # NEW: catch meta echoes
-    r'^\s*avoid\s+profanity.*$',
-    r'^\s*<<\s*sys\s*>>.*$',
-    r'^\s*\[/?\s*inst\s*\]\s*$',
-    r'^\s*<\s*/?\s*s\s*>\s*$',
-]
-_INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
-
-def _clean_riff_lines(lines: List[str]) -> List[str]:
-    cleaned: List[str] = []
-    for ln in lines:
-        t = ln.strip()
-        if not t:
-            continue
-        skip = False
-        for rx in _INSTRUX_RX:
-            if rx.search(t):
-                skip = True
-                break
-        if skip:
-            continue
-        t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
-        t = t.replace("</s>", "").replace("<s>", "").strip()
-        if t:
-            cleaned.append(t)
-    return cleaned
-
-# ============================
-# Core generation (shared)
-# ============================
-def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) -> str:
-    """Generate text via local llama-cpp (non-streaming)."""
-    try:
-        import signal
-        def _alarm_handler(signum, frame):
-            raise TimeoutError("gen timeout")
-        if hasattr(signal, "SIGALRM"):
-            signal.signal(signal.SIGALRM, _alarm_handler)
-            signal.alarm(max(1, int(timeout)))
-
-        params = dict(
-            prompt=prompt,
-            max_tokens=256,
-            temperature=0.35,
-            top_p=0.9,
-            repeat_penalty=1.1,
-            stop=["</s>", "[/INST]"],  # stronger stop for Ph4
-        )
-        params = _maybe_with_grammar(params, with_grammar)
-
-        out = LLM(**params)
-
-        if hasattr(signal, "SIGALRM"):
-            signal.alarm(0)
-
-        txt = (out.get("choices") or [{}])[0].get("text", "")
-        return (txt or "").strip()
-    except TimeoutError as e:
-        _log(f"llama timeout: {e}")
-        return ""
-    except Exception as e:
-        _log(f"llama error: {e}")
-        return ""
-
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, with_grammar: bool=False) -> str:
-    """Route to Ollama or llama-cpp, depending on LLM_MODE."""
-    if LLM_MODE == "ollama" and OLLAMA_URL:
-        name = ""
-        cand = (model_name_hint or "").strip()
-        if cand and "/" not in cand and not cand.endswith(".gguf"):
-            name = cand
-        else:
-            name = _model_name_from_url(model_url)
-        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
-
-    if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)), with_grammar=with_grammar)
-
-    return ""
-
-# ============================
-# Public: rewrite
+# Public: rewrite / riff / persona_riff (CONFIG-DRIVEN)
 # ============================
 def rewrite(
     *,
@@ -776,12 +659,12 @@ def rewrite(
     """Best-effort rewrite. If LLM unavailable, returns input text."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
-    ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
-    timeout    = g_to  if g_to  is not None else timeout
+    # Pull from config profile
+    _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
+    ctx_tokens = prof_ctx
+    cpu_limit = prof_cpu
+    timeout = prof_timeout
 
-    # Serialize: acquire lock; if busy too long, fail soft by returning original text
     with _GenCritical(timeout):
         if LLM_MODE == "none":
             ok = ensure_loaded(
@@ -797,10 +680,10 @@ def rewrite(
                 return text
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
+        _log(f"rewrite: effective timeout={timeout}s")
         out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         final = out if out else text
 
-    # ADD: strip any leaked meta tags/markers from the model output
     final = _strip_meta_markers(final)
 
     if max_lines:
@@ -810,9 +693,6 @@ def rewrite(
 
     return final
 
-# ============================
-# Public: riff
-# ============================
 def riff(
     *,
     subject: str,
@@ -827,8 +707,11 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
-    _, _, g_to = _enviroguard_limits(None, None, timeout)
-    timeout = g_to if g_to is not None else timeout
+    # Pull from config profile (ignore default arg)
+    _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
+    timeout = prof_timeout
+    cpu_limit = prof_cpu
+    ctx_tokens = min(prof_ctx, 2048)  # riffs are short; no need for huge ctx
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
@@ -836,8 +719,8 @@ def riff(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256="",
-                ctx_tokens=2048,
-                cpu_limit=80,
+                ctx_tokens=ctx_tokens,
+                cpu_limit=cpu_limit,
                 hf_token=None,
                 base_url=base_url
             )
@@ -848,6 +731,7 @@ def riff(
             return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
+        _log(f"riff: effective timeout={timeout}s")
         out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
         if not out:
             return ""
@@ -868,9 +752,6 @@ def riff(
         joined = joined[:119].rstrip() + "…"
     return joined
 
-# ============================
-# Public: persona_riff
-# ============================
 def persona_riff(
     *,
     persona: str,
@@ -896,10 +777,11 @@ def persona_riff(
             and (persona or "").lower().strip() == "rager"
         )
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
-    ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
-    cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
-    timeout    = g_to  if g_to  is not None else timeout
+    # Pull from config profile
+    _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
+    ctx_tokens = prof_ctx
+    cpu_limit = prof_cpu
+    timeout = prof_timeout
 
     with _GenCritical(timeout):
         if LLM_MODE == "none":
@@ -930,7 +812,6 @@ def persona_riff(
         except Exception:
             pass
 
-        # Tightened persona style map
         style_map = {
             "dude":      "laid-back, mellow, no jokes",
             "chick":     "sassy, clever, stylish",
@@ -959,13 +840,13 @@ def persona_riff(
             sys_rules.append(f"Persona intensity (subtle): {intensity}.")
         sys_prompt = " ".join(sys_rules)
 
-        # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
         user = (
             f"{context.strip()}\n\n"
             f"Write up to {max_lines} short lines in the requested voice."
         )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
+        _log(f"persona_riff: effective timeout={timeout}s")
         raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
         if not raw:
             return []
@@ -995,12 +876,14 @@ def persona_riff(
 if __name__ == "__main__":
     print("llm_client self-check start")
     try:
+        # Use profile-driven settings
+        _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
         ok = ensure_loaded(
             model_url=os.getenv("TEST_MODEL_URL",""),
             model_path=os.getenv("TEST_MODEL_PATH","/share/jarvis_prime/models/test.gguf"),
             model_sha256=os.getenv("TEST_MODEL_SHA256",""),
-            ctx_tokens=int(os.getenv("TEST_CTX","2048")),
-            cpu_limit=int(os.getenv("TEST_CPU","80")),
+            ctx_tokens=prof_ctx,
+            cpu_limit=prof_cpu,
             hf_token=os.getenv("TEST_HF_TOKEN",""),
             base_url=os.getenv("TEST_OLLAMA","").strip()
         )
@@ -1009,18 +892,16 @@ if __name__ == "__main__":
             txt = rewrite(
                 text="Status synchronized; elegance maintained.",
                 mood="jarvis",
-                timeout=6,
                 base_url=os.getenv("TEST_OLLAMA","").strip(),
                 model_url=os.getenv("TEST_MODEL_URL",""),
-                model_path=os.getenv("TEST_MODEL_NAME",""),
-                ctx_tokens=2048
+                model_path=os.getenv("TEST_MODEL_NAME","")
             )
             print("rewrite sample ->", txt[:120])
             r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
             print("riff sample ->", r)
             rl = persona_riff(
                 persona="nerd",
-                context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]",
+                context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified.",
                 base_url=os.getenv("TEST_OLLAMA","").strip()
             )
             print("persona_riff sample ->", rl[:3])
