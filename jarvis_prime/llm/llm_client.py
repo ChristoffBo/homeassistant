@@ -312,7 +312,7 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
             eg_active = False
 
     if eg_active:
-        # GOD: ignore llm_threads; round DOWN to avoid overshooting
+        # EnviroGuard ON: ignore llm_threads; round DOWN to avoid overshooting
         try:
             pct = max(1, min(100, int(limit_pct or 100)))
         except Exception:
@@ -320,7 +320,7 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
         t = max(1, min(cores, int(math.floor(cores * (pct / 100.0)))))
         if t < 1:
             t = 1
-        _log(f"EnviroGuard GOD: cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
+        _log(f"enviroguard: cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
         return t
 
     # EnviroGuard OFF: allow explicit llm_threads override
@@ -330,7 +330,7 @@ def _threads_from_cpu_limit(limit_pct: int) -> int:
         forced_threads = 0
     if forced_threads > 0:
         t = max(1, min(cores, forced_threads))
-        _log(f"EnviroGuard OFF: threads override via llm_threads={forced_threads} -> using {t} (avail_cpus={cores})")
+        _log(f"threads override via llm_threads={forced_threads} -> using {t} (avail_cpus={cores})")
         return t
 
     # Fallback: derive from percent (round down)
@@ -542,9 +542,12 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.3,
-                "top_p": 0.9,
-                "repeat_penalty": 1.1
+                # Match local sampling behaviour for variety
+                "temperature": 0.75,
+                "top_p": 0.95,
+                "top_k": 100,
+                "repeat_penalty": 1.1,
+                "seed": 0  # 0/random per request
             }
         }
         if max_tokens and max_tokens > 0:
@@ -659,7 +662,9 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
             max_tokens=max(1, int(max_tokens)),
             temperature=0.75,
             top_p=0.95,
+            top_k=100,           # widen candidate pool for variety
             repeat_penalty=1.10,
+            seed=-1,             # -1 → new random seed each call
             stop=_stops_for_model(),
         )
         params = _maybe_with_grammar(params, with_grammar)
@@ -709,7 +714,7 @@ def ensure_loaded(
 ) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, _MODEL_NAME_HINT
 
-    # EnviroGuard profile (GOD)
+    # EnviroGuard profile (sovereign)
     prof_name, prof_cpu, prof_ctx, _ = _current_profile()
     ctx_tokens = prof_ctx
     cpu_limit = prof_cpu
@@ -948,6 +953,9 @@ def persona_riff(
             (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
             and (persona or "").lower().strip() == "rager"
         )
+    # Force-enable profanity for rager so the style isn't neutered
+    if (persona or "").strip().lower() == "rager" and allow_profanity is not True:
+        allow_profanity = True
 
     prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
     ctx_tokens = prof_ctx
@@ -1028,7 +1036,7 @@ def persona_riff(
             base_url=base_url,
             model_url=model_url,
             model_name_hint=model_path,
-            max_tokens=32,  # lean for latency
+            max_tokens=72,  # headroom for 3–4 short lines with variety
             with_grammar_auto=False
         )
         if not raw:
