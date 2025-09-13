@@ -24,6 +24,7 @@ import re
 import threading
 import signal
 from typing import Optional, Dict, Any, Tuple, List
+from collections import deque
 
 # ============================
 # Globals
@@ -88,8 +89,10 @@ def _load_system_prompt() -> str:
         _log(f"system_prompt load failed: {e}")
     return ""
 
-# (kept for compatibility; not used by riffs anymore)
 def _extract_riff_training_block(full_text: str) -> str:
+    """
+    Legacy stub: we no longer inject RIFF TRAINING for riffs to keep prompts lean.
+    """
     return ""
 
 # NEW: subject extractor
@@ -608,6 +611,20 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
         return text[: max(0, max_chars - 1)].rstrip() + "…"
     return text
 
+# Clean sentence cut-off: prefer last . ! ? within 140 chars
+def _trim_to_sentence_140(s: str) -> str:
+    if not s:
+        return s
+    s = s.strip()
+    if len(s) <= 140:
+        cut = max(s.rfind("."), s.rfind("!"), s.rfind("?"))
+        return s[:cut+1] if cut != -1 else s
+    t = s[:140].rstrip()
+    cut = max(t.rfind("."), t.rfind("!"), t.rfind("?"))
+    if cut >= 40:  # avoid cutting too early; crude guard
+        return t[:cut+1]
+    return t
+
 # ============================
 # Strip leaked meta tags
 # ============================
@@ -667,9 +684,6 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 # ============================
 # Lexi fallback (fast, subject-aware phrases)
 # ============================
-from collections import deque
-
-# rolling de-dup cache for fallback phrases
 _LEXI_LRU_MAX = 32
 _LEXI_LRU: deque[str] = deque(maxlen=_LEXI_LRU_MAX)
 _LEXI_SEEN: set[str] = set()
@@ -680,8 +694,8 @@ def _lexi_seed(subj: str) -> int:
 
 def _lexi_phrase_banks(allow_profanity: bool) -> Dict[str, List[str]]:
     ack = [
-        "noted", "synced", "logged", "captured", "tracked", "queued", "recorded", "acknowledged",
-        "on file", "in the book", "added to ledger", "received"
+        "noted", "synced", "logged", "captured", "tracked", "queued",
+        "recorded", "acknowledged", "on file", "in the book", "added to ledger", "received"
     ]
     status = [
         "backup verified", "run completed", "snapshot created", "no changes", "deltas applied",
@@ -689,15 +703,14 @@ def _lexi_phrase_banks(allow_profanity: bool) -> Dict[str, List[str]]:
     ]
     action = [
         "will retry", "escalating", "re-queueing", "throttling IO", "cooldown engaged",
-        "next window scheduled", "compacting catalogs", "purging temp", "rotating keys",
-        "rebuilding index"
+        "next window scheduled", "compacting catalogs", "purging temp", "rotating keys", "rebuilding index"
     ]
     humor = [
         "beep boop paperwork", "robots hate dust", "bits behaving", "sleep is for disks",
         "coffee-fueled checksum", "backups doing backups"
     ]
+    # profanity banks could be added later; keep branch for policy
     if not allow_profanity:
-        # banks already clean; keep branch for future additions
         pass
     return {"ack": ack, "status": status, "action": action, "humor": humor}
 
@@ -718,7 +731,6 @@ def _lexi_weight_for_subject(subj: str) -> Dict[str, float]:
     return {"ack": 1.0, "status": 1.0, "action": 1.0, "humor": 0.6}
 
 def _lexi_pick(rnd, items: List[str], avoid: set[str]) -> str:
-    # try to avoid recent duplicates
     for _ in range(5):
         cand = rnd.choice(items)
         if cand not in avoid:
@@ -726,13 +738,11 @@ def _lexi_pick(rnd, items: List[str], avoid: set[str]) -> str:
     return rnd.choice(items)
 
 def _lexi_compose_line(subject: str, allow_profanity: bool) -> str:
-    import random
     subj = subject.strip()
     banks = _lexi_phrase_banks(allow_profanity)
     weights = _lexi_weight_for_subject(subj)
-    rnd = random.Random(_lexi_seed(subj))
+    rnd = __import__("random").Random(_lexi_seed(subj))
 
-    # weight selection by duplicating lists
     ack_pool = banks["ack"] * int(max(1, round(3 * weights["ack"])))
     status_pool = banks["status"] * int(max(1, round(4 * weights["status"])))
     action_pool = banks["action"] * int(max(1, round(3 * weights["action"])))
@@ -753,10 +763,8 @@ def _lexi_compose_line(subject: str, allow_profanity: bool) -> str:
         humor=pick_map["humor"] or ""
     )
     line = re.sub(r"\s{2,}", " ", line).strip()
-    # length guard
     if len(line) > 140:
         line = line[:140].rstrip()
-    # update LRU caches
     for k in ("ack", "status", "action", "humor"):
         v = pick_map.get(k)
         if v:
@@ -771,7 +779,6 @@ def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_pr
     used: set[str] = set()
     for _ in range(max(1, int(max_lines or 3))):
         ln = _lexi_compose_line(subj, allow_profanity)
-        # avoid emitting identical lines within the same call
         if ln in used:
             continue
         used.add(ln)
@@ -904,7 +911,6 @@ def _resolve_model_from_options(
 
     opts = _read_options()
     choice = (opts.get("llm_choice") or "").strip()
-    autodl = bool(opts.get("llm_autodownload", True))
     if not token:
         t = (opts.get("llm_hf_token") or "").strip()
         token = t or None
@@ -931,7 +937,7 @@ def _resolve_model_from_options(
             cand.append(((opts.get(f"llm_{key}_url") or "").strip(), (opts.get(f"llm_{key}_path") or "").strip()))
     for u, p in cand:
         if u and p:
-            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path='{os.path.basename(p)}' autodownload={autodl}")
+            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path='{os.path.basename(p)}'")
             return u, p, token
     return url, path, token
 
@@ -1148,7 +1154,6 @@ def persona_riff(
 
         _log(f"persona_riff: effective timeout={timeout}s")
         try:
-            # token debug (may fail if backend doesn't expose tokenize)
             n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
             _log(f"persona_riff: prompt_tokens={n_in}")
         except Exception as e:
@@ -1176,8 +1181,10 @@ def persona_riff(
             continue
         if len(ln2) > 140:
             ln2 = ln2[:140].rstrip()
+        # NEW: clean cut-off at sentence end within 140
+        ln2 = _trim_to_sentence_140(ln2)
         key = ln2.lower()
-        if key in seen:
+        if key in seen or not ln2:
             continue
         seen.add(key)
         cleaned.append(ln2)
@@ -1211,6 +1218,7 @@ def persona_riff_ex(
     Extended riff that also reports its source:
       - source == "llm"     → generated by the LLM
       - source == "lexicon" → generated by Lexi fallback
+    (Non-breaking: original persona_riff(...) remains unchanged and still returns List[str].)
     """
     opts = _read_options()
     llm_enabled = bool(opts.get("llm_enabled", True))
@@ -1218,9 +1226,11 @@ def persona_riff_ex(
     context = _sanitize_context_subject(context)
     subj = _extract_subject_from_context(context or "")
 
+    # Fast-path checks to mirror persona_riff()’s behavior while capturing source
     if not llm_enabled and riffs_enabled:
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity if allow_profanity is not None else False), "lexicon"
 
+    # Delegate to original function for actual generation/fallback
     lines = persona_riff(
         persona=persona,
         context=context,
@@ -1236,6 +1246,8 @@ def persona_riff_ex(
         ctx_tokens=ctx_tokens,
         hf_token=hf_token
     )
+
+    # If persona_riff returned nothing (or lexicon-like in shape), treat as lexicon source.
     source = "lexicon" if not lines else "llm"
     return lines, source
 
