@@ -524,6 +524,24 @@ def _strip_meta_markers(s: str) -> str:
     # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
+
+# ============================
+# Tiny grammar for riffs (≤3 lines, ≤140 chars per line)
+# ============================
+_RIFF_GBNF = r"""
+root  ::= line ("\n" line){0,2}
+line  ::= ~"[^\\n]{1,140}"
+"""
+def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
+    if not use_grammar:
+        return kwargs
+    try:
+        # llama-cpp python supports raw 'grammar' string
+        kwargs["grammar"] = _RIFF_GBNF
+    except Exception:
+        pass
+    return kwargs
+
 # ============================
 # Ensure loaded
 # ============================
@@ -645,13 +663,15 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
-    r'^\s*tone\s*:.*$',            # <<< ADDED: remove "Tone: ..." lines
+    r'^\s*tone\s*:.*$',            # <<< ADDED / existing patterns
     r'^\s*no\s+lists.*$',
     r'.*context\s*\(for vibes only\).*',
     r'^\s*subject\s*:.*$',
     r'^\s*style\s*:.*$',
     r'^\s*you\s+write\s+a\s+single.*$',
-    r'^\s*write\s+1.*lines?.*$',
+    r'^\s*write\s+1.*lines?.*$',                 # existing
+    r'^\s*write\s+up\s+to\s+\d+.*lines?.*$',     # NEW: catch "Write up to N ..."
+    r'^\s*output\s+only\s+the\s+lines.*$',       # NEW: catch meta echoes
     r'^\s*avoid\s+profanity.*$',
     r'^\s*<<\s*sys\s*>>.*$',
     r'^\s*\[/?\s*inst\s*\]\s*$',
@@ -681,7 +701,7 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 # ============================
 # Core generation (shared)
 # ============================
-def _llama_generate(prompt: str, timeout: int = 12) -> str:
+def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) -> str:
     """Generate text via local llama-cpp (non-streaming)."""
     try:
         import signal
@@ -691,14 +711,17 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
             signal.signal(signal.SIGALRM, _alarm_handler)
             signal.alarm(max(1, int(timeout)))
 
-        out = LLM(
-            prompt,
+        params = dict(
+            prompt=prompt,
             max_tokens=256,
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=["</s>"]
+            stop=["</s>", "[/INST]"],  # stronger stop for Ph4
         )
+        params = _maybe_with_grammar(params, with_grammar)
+
+        out = LLM(**params)
 
         if hasattr(signal, "SIGALRM"):
             signal.alarm(0)
@@ -712,7 +735,7 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str) -> str:
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, with_grammar: bool=False) -> str:
     """Route to Ollama or llama-cpp, depending on LLM_MODE."""
     if LLM_MODE == "ollama" and OLLAMA_URL:
         name = ""
@@ -724,7 +747,7 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
 
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)))
+        return _llama_generate(prompt, timeout=max(4, int(timeout)), with_grammar=with_grammar)
 
     return ""
 
@@ -823,7 +846,7 @@ def riff(
             return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
         if not out:
             return ""
 
@@ -941,7 +964,7 @@ def persona_riff(
         )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, with_grammar=True)
         if not raw:
             return []
 
