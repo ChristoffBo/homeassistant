@@ -657,7 +657,7 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
         params = dict(
             prompt=prompt,
             max_tokens=max(1, int(max_tokens)),
-            temperature=0.35,
+            temperature=0.75,
             top_p=0.9,
             repeat_penalty=1.1,
             stop=_stops_for_model(),
