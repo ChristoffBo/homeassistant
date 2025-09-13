@@ -682,7 +682,7 @@ def _load_persona_lexicon(persona: str) -> List[str]:
     best = []
     for name in dir(mod):
         val = getattr(mod, name, None)
-        if isinstance(val, (list, tuple)) and val and all(isinstance(x, str) for x in val):
+        if isinstance(val, (list, tuple)) and val and all(isinstance(val2, str) for val2 in val):
             if len(val) > len(best):
                 best = list(val)
     return best
@@ -920,7 +920,9 @@ def _persona_descriptor(persona: str) -> str:
         "comedian": "quippy and playful; jokes allowed.",
         "jarvis": "polished, butler tone; concise.",
         "ops": "terse, incident commander; direct.",
-        "action": "stoic mission-brief style; clipped."
+        "action": "stoic mission-brief style; clipped.",
+        # ADDITIVE: Tappit persona descriptor
+        "tappit": "rough, brash, Afrikaans slang; cheeky, blunt, playful but can be rude."
     }
     return mapping.get(p, "neutral, subtle tone.")
 
