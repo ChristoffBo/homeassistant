@@ -8,7 +8,8 @@
 # - SHA256 optional integrity check
 # - Hard timeouts; best-effort, never crash callers
 # - Phi chat template (<|system|>, <|user|>, <|assistant|>, <|end|>) w/ correct EOS
-# - EnviroGuard + options.json respected for ctx/cpu/timeout/threads/gen_tokens
+# - EnviroGuard respected FIRST, then options.json, then defaults
+# - ctx_tokens is never clamped — what you set is what you get
 #
 # Public entry points:
 #   ensure_loaded(...)
@@ -35,23 +36,22 @@ from typing import Optional, Dict, Any, Tuple, List
 # Chat tokens (Phi-compatible)
 # ============================
 BOS_TOKEN = "<s>"
-EOS_TOKEN = "<|end|>"   # IMPORTANT: Phi chat EOS (NOT <|endoftext|>)
+EOS_TOKEN = "<|end|>"   # Phi chat EOS (GGUF tokenizer may also emit <|endoftext|>)
 
 # ============================
 # Globals
 # ============================
 LLM_MODE = "none"        # "none" | "llama"
-LLM = None               # llama_cpp.Llama instance if LLM_MODE == "llama"
+LLM = None               # llama_cpp.Llama instance
 LOADED_MODEL_PATH = None
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
 SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"
 
-# Global reentrant lock to serialize load/generation
 _GEN_LOCK = threading.RLock()
 
 def get_chat_tokens() -> Tuple[str, str]:
-    """Expose BOS/EOS so external templates can stay in sync with this module."""
+    """Return BOS/EOS tokens for external template runners if needed."""
     return BOS_TOKEN, EOS_TOKEN
 
 def _lock_timeout() -> int:
@@ -63,7 +63,7 @@ def _lock_timeout() -> int:
         return 300
 
 class _GenCritical:
-    """Context manager to serialize LLM load/generation sections without deadlocks."""
+    """Serialize LLM load/generation to avoid collisions; best-effort timed acquire."""
     def __init__(self, timeout: Optional[int] = None):
         self.timeout = max(1, int(timeout or _lock_timeout()))
         self.acquired = False
@@ -77,10 +77,8 @@ class _GenCritical:
         return False
     def __exit__(self, exc_type, exc, tb):
         if self.acquired:
-            try:
-                _GEN_LOCK.release()
-            except Exception:
-                pass
+            try: _GEN_LOCK.release()
+            except Exception: pass
 
 # ============================
 # Logging
@@ -112,7 +110,7 @@ def _read_options() -> Dict[str, Any]:
         return {}
 
 # ============================
-# EnviroGuard + Options merging
+# EnviroGuard + Options merge
 # ============================
 def _int_env(name: str, default: Optional[int]) -> Optional[int]:
     try:
@@ -130,10 +128,10 @@ def _effective_limits(default_ctx: int,
                       default_gen_tokens: Optional[int] = None
                       ) -> Tuple[int, int, int, int, int]:
     """
-    Merge limits in priority:
-    1) EnviroGuard env vars (ENVGUARD_*), if set
-    2) /data/options.json values
-    3) Provided defaults
+    Priority:
+      1) EnviroGuard env vars (ENVGUARD_*), if set
+      2) /data/options.json values
+      3) Provided defaults
     Returns: (ctx_tokens, cpu_percent, timeout_seconds, threads, gen_tokens)
     """
     opts = _read_options()
@@ -144,22 +142,26 @@ def _effective_limits(default_ctx: int,
     threads_opt = int(opts.get("llm_threads", default_threads or 0) or 0)
     gen_tokens = int(opts.get("llm_gen_tokens", default_gen_tokens or 256))
 
-    # Env overrides
-    ctx = _int_env("ENVGUARD_CTX_TOKENS", ctx) or ctx
-    cpu = _int_env("ENVGUARD_CPU_PERCENT", cpu) or cpu
-    timeout = _int_env("ENVGUARD_TIMEOUT_SECONDS", timeout) or timeout
-    gen_tokens = _int_env("ENVGUARD_GEN_TOKENS", gen_tokens) or gen_tokens
+    # EnviroGuard overrides — WIN if set
+    env_ctx = _int_env("ENVGUARD_CTX_TOKENS", None)
+    if env_ctx is not None: ctx = env_ctx
+    env_cpu = _int_env("ENVGUARD_CPU_PERCENT", None)
+    if env_cpu is not None: cpu = env_cpu
+    env_timeout = _int_env("ENVGUARD_TIMEOUT_SECONDS", None)
+    if env_timeout is not None: timeout = env_timeout
+    env_gen = _int_env("ENVGUARD_GEN_TOKENS", None)
+    if env_gen is not None: gen_tokens = env_gen
 
-    # Sanitize
-    ctx = max(256, int(ctx))
+    # Final sanitization (NO clamping on ctx)
     cpu = min(100, max(1, int(cpu)))
     timeout = max(2, int(timeout))
-    gen_tokens = max(16, min(4096, int(gen_tokens)))  # safety bounds
+    gen_tokens = max(16, min(4096, int(gen_tokens)))
 
-    return ctx, cpu, timeout, int(threads_opt), gen_tokens
+    _log(f"effective limits -> ctx={ctx} cpu={cpu}% timeout={timeout}s threads={threads_opt} gen={gen_tokens}")
+    return int(ctx), cpu, timeout, int(threads_opt), gen_tokens
 
 # ============================
-# Small utils
+# SHA256 utils
 # ============================
 def _sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -169,7 +171,6 @@ def _sha256_file(path: str) -> str:
     return h.hexdigest()
 
 def _coerce_model_path(model_url: str, model_path: str) -> str:
-    """If model_path is a directory or empty, derive filename from URL."""
     if not model_path or model_path.endswith("/"):
         fname = model_url.split("/")[-1] if model_url else "model.gguf"
         base = model_path or "/share/jarvis_prime/models"
@@ -177,20 +178,16 @@ def _coerce_model_path(model_url: str, model_path: str) -> str:
     return model_path
 
 # ============================
-# HTTP helpers (with HF auth)
+# HTTP helpers (Hugging Face)
 # ============================
 class _AuthRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Keep Authorization header across redirects (Hugging Face needs this)."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is None:
-            return None
+        if new is None: return None
         auth = req.headers.get("Authorization")
-        if auth:
-            new.add_unredirected_header("Authorization", auth)
+        if auth: new.add_unredirected_header("Authorization", auth)
         cookie = req.headers.get("Cookie")
-        if cookie:
-            new.add_unredirected_header("Cookie", cookie)
+        if cookie: new.add_unredirected_header("Cookie", cookie)
         return new
 
 def _build_opener_with_headers(headers: Dict[str, str]):
@@ -205,22 +202,17 @@ def _http_get(url: str, headers: Dict[str, str], timeout: int = 180) -> bytes:
         return r.read()
 
 def _download(url: str, dst_path: str, token: Optional[str]) -> bool:
-    """Download to dst_path, sending HF token if provided."""
-    try:
-        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-    except Exception:
-        pass
+    try: os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    except Exception: pass
 
     headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token.strip()}"
+    if token: headers["Authorization"] = f"Bearer {token.strip()}"
     headers["User-Agent"] = "JarvisPrime/1.1 (urllib)"
 
     try:
         _log(f"downloading: {os.path.basename(url)} -> {dst_path}")
         buf = _http_get(url, headers=headers, timeout=180)
-        with open(dst_path, "wb") as f:
-            f.write(buf)
+        with open(dst_path, "wb") as f: f.write(buf)
         _log("downloaded ok")
         return True
     except urllib.error.HTTPError as e:
@@ -231,7 +223,6 @@ def _download(url: str, dst_path: str, token: Optional[str]) -> bool:
         return False
 
 def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], want_sha256: str) -> Optional[str]:
-    """Ensure a local GGUF file exists; download if missing; verify optional sha256."""
     path = _coerce_model_path(model_url, model_path)
     if not os.path.exists(path):
         if not model_url:
@@ -251,61 +242,9 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
     return path
 
 # ============================
-# Options resolver (add-on config awareness)
-# ============================
-def _resolve_model_from_options(model_url: str, model_path: str, hf_token: Optional[str]) -> Tuple[str, str, Optional[str]]:
-    """
-    If caller didn't pass model_url/path, derive them from /data/options.json.
-    Supports:
-      - llm_choice == "custom" -> llm_model_url/path
-      - llm_choice == "<name>" -> llm_<name>_url/path
-      - Fallback to first enabled of our known set, in llm_models_priority order
-    """
-    url = (model_url or "").strip()
-    path = (model_path or "").strip()
-    token = (hf_token or "").strip() or None
-
-    if url and path:
-        return url, path, token
-
-    opts = _read_options()
-    choice = (opts.get("llm_choice") or "").strip()
-    if not token:
-        t = (opts.get("llm_hf_token") or "").strip()
-        token = t or None
-
-    cand: List[Tuple[str, str]] = []
-    if choice.lower() == "custom":
-        cand.append(((opts.get("llm_model_url") or "").strip(), (opts.get("llm_model_path") or "").strip()))
-    elif choice:
-        cand.append(((opts.get(f"llm_{choice}_url") or "").strip(), (opts.get(f"llm_{choice}_path") or "").strip()))
-
-    priority_raw = (opts.get("llm_models_priority") or "").strip()
-    if priority_raw:
-        names = [n.strip().lower() for n in priority_raw.split(",") if n.strip()]
-    else:
-        names = ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]
-
-    seen = set()
-    for name in names + ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]:
-        key = name.lower()
-        if key in seen: continue
-        seen.add(key)
-        if opts.get(f"llm_{key}_enabled", False):
-            cand.append(((opts.get(f"llm_{key}_url") or "").strip(), (opts.get(f"llm_{key}_path") or "").strip()))
-
-    for u, p in cand:
-        if u and p:
-            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u)} path={os.path.basename(p)}")
-            return u, p, token
-
-    return url, path, token
-
-# ============================
-# CPU / Threads (throttling)
+# CPU / Threads
 # ============================
 def _available_cpus() -> int:
-    """Best-effort count of CPUs available to this process (affinity-aware)."""
     try:
         if hasattr(os, "sched_getaffinity"):
             return max(1, len(os.sched_getaffinity(0)))
@@ -314,17 +253,12 @@ def _available_cpus() -> int:
     return max(1, os.cpu_count() or 1)
 
 def _threads_from_limits(limit_pct: int, threads_opt: int) -> int:
-    # Explicit threads in options.json wins
     if threads_opt and threads_opt > 0:
         _log(f"options override -> threads={threads_opt}")
         return max(1, int(threads_opt))
-
-    # Else map CPU% to threads
     cores = _available_cpus()
-    try:
-        pct = max(1, min(100, int(limit_pct or 100)))
-    except Exception:
-        pct = 100
+    try: pct = max(1, min(100, int(limit_pct or 100)))
+    except Exception: pct = 100
     t = max(1, int(math.ceil(cores * (pct / 100.0))))
     t = min(cores, t)
     _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
@@ -344,8 +278,7 @@ def _try_import_llama_cpp():
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int, threads_opt: int) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH
     llama_cpp = _try_import_llama_cpp()
-    if not llama_cpp:
-        return False
+    if not llama_cpp: return False
     try:
         threads = _threads_from_limits(cpu_limit, threads_opt)
         os.environ["OMP_NUM_THREADS"] = str(threads)
@@ -358,6 +291,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int, threads_opt: i
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
         _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
+        _log("stopping on tokens: <|end|>, <|assistant|>, <|endoftext|>")
         return True
     except Exception as e:
         _log(f"llama load failed: {e}")
@@ -367,7 +301,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int, threads_opt: i
         return False
 
 # ============================
-# Message checks / guards
+# Output cleaning / guards
 # ============================
 def _trim_lines(text: str, max_lines: int) -> str:
     lines = (text or "").splitlines()
@@ -383,7 +317,6 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
         return text[: max(0, max_chars - 1)].rstrip() + "…"
     return text
 
-# Strip meta/marker leakage
 _META_LINE_RX = re.compile(
     r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
     re.I | re.M
@@ -406,7 +339,88 @@ def _strip_meta_markers(s: str) -> str:
     return out
 
 # ============================
-# Ensure loaded (no Ollama)
+# Prompt builders (Phi chat)
+# ============================
+def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
+    sys_prompt = _load_system_prompt() or "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
+    if not allow_profanity:
+        sys_prompt += " Avoid profanity."
+    user = (
+        "Rewrite the text clearly. Keep short, readable sentences.\n"
+        f"Mood (subtle): {mood or 'neutral'}\n\n"
+        f"{text}"
+    )
+    # Do NOT inject BOS; tokenizer metadata says add_bos_token=false
+    return (
+        "<|system|>\n" + sys_prompt + EOS_TOKEN + "\n"
+        "<|user|>\n"   + user       + EOS_TOKEN + "\n"
+        "<|assistant|>\n"
+    )
+
+def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
+    vibe_map = {
+        "dude": "laid-back, mellow, no jokes, chill confidence",
+        "chick": "sassy, clever, stylish",
+        "nerd": "precise, witty one-liners",
+        "rager": "short, profane bursts allowed",
+        "comedian": "only persona allowed to tell jokes",
+        "jarvis": "polished butler style",
+        "ops": "terse, incident commander tone",
+        "action": "stoic mission-brief style"
+    }
+    vibe = vibe_map.get((persona or "").lower(), "neutral, light")
+    guard = "" if allow_profanity else " Avoid profanity."
+    sys_prompt = (
+        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
+        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
+    )
+    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
+    return (
+        "<|system|>\n" + sys_prompt + EOS_TOKEN + "\n"
+        "<|user|>\n"   + user       + EOS_TOKEN + "\n"
+        "<|assistant|>\n"
+    )
+
+# ============================
+# Generation (llama-cpp only)
+# ============================
+def _llama_generate(prompt: str, timeout: int = 12, max_tokens: Optional[int] = None) -> str:
+    """Generate text via local llama-cpp (non-streaming)."""
+    try:
+        import signal
+        def _alarm_handler(signum, frame):
+            raise TimeoutError("gen timeout")
+        if hasattr(signal, "SIGALRM"):
+            signal.signal(signal.SIGALRM, _alarm_handler)
+            signal.alarm(max(1, int(timeout)))
+
+        # Pull llm_gen_tokens each call (respects EnviroGuard & options)
+        _ctx, _cpu, _to, _threads, gen_toks = _effective_limits(4096, 80, 20, None, 256)
+        mtoks = int(max_tokens or gen_toks)
+
+        out = LLM(
+            prompt,
+            max_tokens=mtoks,
+            temperature=0.35,
+            top_p=0.9,
+            repeat_penalty=1.1,
+            stop=[EOS_TOKEN, "<|assistant|>", "<|endoftext|>"]
+        )
+
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
+
+        txt = (out.get("choices") or [{}])[0].get("text", "")
+        return (txt or "").strip()
+    except TimeoutError as e:
+        _log(f"llama timeout: {e}")
+        return ""
+    except Exception as e:
+        _log(f"llama error: {e}")
+        return ""
+
+# ============================
+# Public: ensure_loaded
 # ============================
 def ensure_loaded(
     *,
@@ -416,14 +430,15 @@ def ensure_loaded(
     ctx_tokens: int,
     cpu_limit: int,
     hf_token: Optional[str],
-    base_url: str = ""  # kept for API compatibility; ignored
+    base_url: str = ""  # ignored; kept for API compatibility
 ) -> bool:
     """
-    Decide engine and load (local GGUF via llama-cpp). Respects EnviroGuard & options.json.
+    Load local GGUF via llama-cpp. EnviroGuard & options.json define limits.
+    No clamping on ctx — your value is used as-is.
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, DEFAULT_CTX
 
-    # Merge limits (options + env).
+    # Merge limits (EnviroGuard > options > defaults)
     ctx_eff, cpu_eff, _to, threads_eff, _gen = _effective_limits(
         default_ctx=ctx_tokens or 4096,
         default_cpu=cpu_limit or 80,
@@ -431,7 +446,7 @@ def ensure_loaded(
         default_threads=None,
         default_gen_tokens=256
     )
-    DEFAULT_CTX = max(1024, int(ctx_eff or 4096))
+    DEFAULT_CTX = int(ctx_eff)  # exact
 
     with _GenCritical():
         # Resolve URL/path/Token from options if not provided
@@ -465,124 +480,6 @@ def ensure_loaded(
         return bool(ok)
 
 # ============================
-# Prompt builders (Phi chat template)
-# ============================
-def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
-    sys_prompt = _load_system_prompt() or "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
-    if not allow_profanity:
-        sys_prompt += " Avoid profanity."
-    user = (
-        "Rewrite the text clearly. Keep short, readable sentences.\n"
-        f"Mood (subtle): {mood or 'neutral'}\n\n"
-        f"{text}"
-    )
-    return (
-        f"{BOS_TOKEN}\n"
-        "<|system|>\n" + sys_prompt + f"{EOS_TOKEN}\n"
-        "<|user|>\n"   + user       + f"{EOS_TOKEN}\n"
-        "<|assistant|>\n"
-    )
-
-def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    vibe_map = {
-        "dude": "laid-back, mellow, no jokes, chill confidence",
-        "chick": "sassy, clever, stylish",
-        "nerd": "precise, witty one-liners",
-        "rager": "short, profane bursts allowed",
-        "comedian": "only persona allowed to tell jokes",
-        "jarvis": "polished butler style",
-        "ops": "terse, incident commander tone",
-        "action": "stoic mission-brief style"
-    }
-    vibe = vibe_map.get((persona or "").lower(), "neutral, light")
-    guard = "" if allow_profanity else " Avoid profanity."
-    sys_prompt = (
-        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
-        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
-    )
-    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
-    return (
-        f"{BOS_TOKEN}\n"
-        "<|system|>\n" + sys_prompt + f"{EOS_TOKEN}\n"
-        "<|user|>\n"   + user       + f"{EOS_TOKEN}\n"
-        "<|assistant|>\n"
-    )
-
-# ============================
-# Riff cleaner
-# ============================
-_INSTRUX_PATTERNS = [
-    r'^\s*no\s+lists.*$',
-    r'.*context\s*\(for vibes only\).*',
-    r'^\s*subject\s*:.*$',
-    r'^\s*style\s*:.*$',
-    r'^\s*you\s+write\s+a\s+single.*$',
-    r'^\s*write\s+1.*lines?.*$',
-    r'^\s*avoid\s+profanity.*$',
-    r'^\s*<<\s*sys\s*>>.*$',
-    r'^\s*\[/?\s*inst\s*\]\s*$',
-    r'^\s*<\s*/?\s*s\s*>\s*$',
-]
-_INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
-
-def _clean_riff_lines(lines: List[str]) -> List[str]:
-    cleaned: List[str] = []
-    for ln in lines:
-        t = ln.strip()
-        if not t:
-            continue
-        skip = False
-        for rx in _INSTRUX_RX:
-            if rx.search(t):
-                skip = True
-                break
-        if skip:
-            continue
-        t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
-        t = t.replace("</s>", "").replace("<s>", "").strip()
-        if t:
-            cleaned.append(t)
-    return cleaned
-
-# ============================
-# Generation (llama-cpp only)
-# ============================
-def _llama_generate(prompt: str, timeout: int = 12, max_tokens: Optional[int] = None) -> str:
-    """Generate text via local llama-cpp (non-streaming)."""
-    try:
-        import signal
-        def _alarm_handler(signum, frame):
-            raise TimeoutError("gen timeout")
-        if hasattr(signal, "SIGALRM"):
-            signal.signal(signal.SIGALRM, _alarm_handler)
-            signal.alarm(max(1, int(timeout)))
-
-        # Pull llm_gen_tokens each call to respect dynamic changes
-        _ctx, _cpu, _to, _threads, gen_toks = _effective_limits(4096, 80, 20, None, 256)
-        mtoks = int(max_tokens or gen_toks)
-
-        out = LLM(
-            prompt,
-            max_tokens=mtoks,
-            temperature=0.35,
-            top_p=0.9,
-            repeat_penalty=1.1,
-            stop=[EOS_TOKEN, "<|assistant|>", "<|endoftext|>"]
-        )
-
-        if hasattr(signal, "SIGALRM"):
-            signal.alarm(0)
-
-        txt = (out.get("choices") or [{}])[0].get("text", "")
-        return (txt or "").strip()
-    except TimeoutError as e:
-        _log(f"llama timeout: {e}")
-        return ""
-    except Exception as e:
-        _log(f"llama error: {e}")
-        return ""
-
-# ============================
 # Public: rewrite
 # ============================
 def rewrite(
@@ -592,7 +489,7 @@ def rewrite(
     timeout: int = 12,
     cpu_limit: int = 80,
     models_priority: Optional[str] = None,
-    base_url: str = "",  # kept for API compatibility; ignored
+    base_url: str = "",  # ignored
     model_url: str = "",
     model_path: str = "",
     model_sha256: str = "",
@@ -605,7 +502,7 @@ def rewrite(
     """Best-effort rewrite. If LLM unavailable, returns input text."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH, DEFAULT_CTX
 
-    # Merge runtime limits
+    # Merge runtime limits (EnviroGuard-first)
     g_ctx, g_cpu, g_to, _threads, gen_toks = _effective_limits(ctx_tokens or 4096, cpu_limit or 80, timeout or 12, None, None)
 
     with _GenCritical(g_to):
@@ -667,13 +564,29 @@ def riff(
             return ""
 
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    lines = _clean_riff_lines(lines)
-
-    cleaned: List[str] = []
+    cleaned = []
+    _instrux = [
+        r'^\s*no\s+lists.*$',
+        r'.*context\s*\(for vibes only\).*',
+        r'^\s*subject\s*:.*$',
+        r'^\s*style\s*:.*$',
+        r'^\s*you\s+write\s+a\s+single.*$',
+        r'^\s*write\s+1.*lines?.*$',
+        r'^\s*avoid\s+profanity.*$',
+        r'^\s*<<\s*sys\s*>>.*$',
+        r'^\s*\[/?\s*inst\s*\]\s*$',
+        r'^\s*<\s*/?\s*s\s*>\s*$',
+    ]
+    _instrux_rx = [re.compile(p, re.I) for p in _instrux]
     for ln in lines:
-        ln = ln.lstrip("-•* ").strip()
-        if ln:
-            cleaned.append(ln)
+        t = ln.strip()
+        if not t: continue
+        skip = any(rx.search(t) for rx in _instrux_rx)
+        if skip: continue
+        t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
+        t = t.replace("</s>", "").replace("<s>", "").strip()
+        if t:
+            cleaned.append(t)
         if len(cleaned) >= 3:
             break
 
@@ -693,7 +606,7 @@ def persona_riff(
     timeout: int = 8,
     cpu_limit: int = 80,
     models_priority: Optional[List[str]] = None,
-    base_url: str = "",  # kept for API compatibility; ignored
+    base_url: str = "",  # ignored
     model_url: str = "",
     model_path: str = "",
     model_sha256: str = "",
@@ -723,7 +636,6 @@ def persona_riff(
             if not ok:
                 return []
 
-        # Tightened persona style map
         style_map = {
             "dude":      "laid-back, mellow, no jokes",
             "chick":     "sassy, clever, stylish",
@@ -750,9 +662,8 @@ def persona_riff(
 
         user = context.strip()
         prompt = (
-            f"{BOS_TOKEN}\n"
-            "<|system|>\n" + sys_prompt + f"{EOS_TOKEN}\n"
-            "<|user|>\n"   + user       + f"{EOS_TOKEN}\n"
+            "<|system|>\n" + sys_prompt + EOS_TOKEN + "\n"
+            "<|user|>\n"   + user       + EOS_TOKEN + "\n"
             "<|assistant|>\n"
         )
 
@@ -761,7 +672,6 @@ def persona_riff(
             return []
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-    lines = _clean_riff_lines(lines)
     cleaned: List[str] = []
     seen: set = set()
     for ln in lines:
@@ -796,8 +706,7 @@ if __name__ == "__main__":
         )
         print(f"ensure_loaded -> {ok} mode={LLM_MODE}")
         if ok:
-            bos, eos = get_chat_tokens()
-            print(f"BOS={bos} EOS={eos}")
+            print("chat tokens:", get_chat_tokens())
             txt = rewrite(
                 text="Status synchronized; elegance maintained.",
                 mood="jarvis",
