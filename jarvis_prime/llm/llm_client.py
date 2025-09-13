@@ -141,7 +141,7 @@ def _current_profile() -> Tuple[str, int, int, int]:
 
     profiles: Dict[str, Dict[str, Any]] = {}
     source = ""
-    enviroguard_active = False
+    enviroguard_active = False  # logging flag
 
     # 1) EnviroGuard (sovereign)
     eg = opts.get("llm_enviroguard_profiles")
@@ -212,7 +212,7 @@ def _current_profile() -> Tuple[str, int, int, int]:
     return prof_name, cpu_percent, ctx_tokens, timeout_seconds
 
 # ============================
-# CPU / Threads (derived from percent; EnviroGuard-first)
+# CPU / Threads
 # ============================
 def _parse_cpuset_list(s: str) -> int:
     total = 0
@@ -247,8 +247,7 @@ def _available_cpus() -> int:
             if len(raw) == 2:
                 quota, period = raw
                 if quota != "max":
-                    q = int(quota)
-                    p = int(period)
+                    q = int(quota); p = int(period)
                     if q > 0 and p > 0:
                         return max(1, q // p)
     except Exception:
@@ -273,25 +272,14 @@ def _available_cpus() -> int:
     return max(1, os.cpu_count() or 1)
 
 def _threads_from_cpu_limit(limit_pct: int) -> int:
-    """Map a CPU percentage to an integer thread count, respecting cgroups.
-       EnviroGuard stays sovereign for %, but we floor cores by llm_threads (if set)."""
     cores = _available_cpus()
-    # Floor the visible cores by llm_threads from options.json (if present)
-    try:
-        opts = _read_options()
-        user_floor = int(opts.get("llm_threads", 0) or 0)
-        if user_floor > 0:
-            cores = max(cores, user_floor)
-    except Exception:
-        user_floor = 0
-
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
     except Exception:
         pct = 100
-    threads = max(1, min(cores, int(math.ceil(cores * (pct / 100.0)))))
-    _log(f"cpu_limit={pct}% -> threads={threads} (avail_cpus={_available_cpus()}, floor_by_llm_threads={user_floor}, resolved_cores={cores})")
-    return threads
+    t = max(1, min(cores, int(math.ceil(cores * (pct / 100.0)))))
+    _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
+    return t
 
 # ============================
 # HTTP helpers (with HF auth)
@@ -466,7 +454,7 @@ def _ollama_ready(base_url: str, timeout: int = 2) -> bool:
     except Exception:
         return False
 
-def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20, max_tokens: int = 0, stops: Optional[List[str]] = None, *, temperature: float = 0.35) -> str:
+def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int = 20, max_tokens: int = 0, stops: Optional[List[str]] = None) -> str:
     try:
         url = base_url.rstrip("/") + "/api/generate"
         payload = {
@@ -474,7 +462,7 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": float(temperature),
+                "temperature": 0.3,
                 "top_p": 0.9,
                 "repeat_penalty": 1.1
             }
@@ -568,9 +556,8 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
     cleaned = []
     for ln in lines:
         ln = _strip_meta_markers(ln)
-        # strip bullets/numbering and outer quotes
-        ln = re.sub(r'^\s*(?:[-•*]|\d+[\)\].])\s*', '', ln)
         ln = ln.strip().strip('"').strip("'")
+        ln = re.sub(r'^\s*[-•*]\s*', '', ln)
         if ln:
             cleaned.append(ln)
     return cleaned
@@ -581,7 +568,15 @@ def _clean_riff_lines(lines: List[str]) -> List[str]:
 def _sigalrm_handler(signum, frame):
     raise TimeoutError("gen timeout")
 
-def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bool = False, *, temperature: float = 0.35) -> str:
+def _llama_generate(
+    prompt: str,
+    timeout: int,
+    max_tokens: int,
+    with_grammar: bool = False,
+    temperature: float = 0.35,
+    top_p: float = 0.9,
+    repeat_penalty: float = 1.1
+) -> str:
     try:
         if hasattr(signal, "SIGALRM"):
             signal.signal(signal.SIGALRM, _sigalrm_handler)
@@ -590,13 +585,14 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
         params = dict(
             prompt=prompt,
             max_tokens=max(1, int(max_tokens)),
-            temperature=float(temperature),
-            top_p=0.9,
-            repeat_penalty=1.1,
+            temperature=temperature,
+            top_p=top_p,
+            repeat_penalty=repeat_penalty,
             stop=_stops_for_model(),
         )
         params = _maybe_with_grammar(params, with_grammar)
 
+        _log(f"gen settings: temp={temperature} top_p={top_p} rp={repeat_penalty}")
         t0 = time.time()
         out = LLM(**params)
         ttft = time.time() - t0
@@ -614,16 +610,36 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_tokens: int, with_grammar_auto: bool=False, temperature: float = 0.35) -> str:
+def _do_generate(
+    prompt: str, *,
+    timeout: int,
+    base_url: str,
+    model_url: str,
+    model_name_hint: str,
+    max_tokens: int,
+    with_grammar_auto: bool = False,
+    temperature: float = 0.35,
+    top_p: float = 0.9,
+    repeat_penalty: float = 1.1
+) -> str:
     use_grammar = _should_use_grammar_auto() if with_grammar_auto else False
 
     if LLM_MODE == "ollama" and OLLAMA_URL:
         cand = (model_name_hint or "").strip()
         name = cand if (cand and "/" not in cand and not cand.endswith(".gguf")) else _model_name_from_url(model_url)
-        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model(), temperature=temperature)
+        # Ollama still uses its own options; we leave defaults there.
+        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model())
 
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, with_grammar=use_grammar, temperature=temperature)
+        return _llama_generate(
+            prompt,
+            timeout=max(4, int(timeout)),
+            max_tokens=max_tokens,
+            with_grammar=use_grammar,
+            temperature=temperature,
+            top_p=top_p,
+            repeat_penalty=repeat_penalty
+        )
 
     return ""
 
@@ -825,7 +841,18 @@ def rewrite(
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
         _log(f"rewrite: effective timeout={timeout}s")
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=256, with_grammar_auto=False, temperature=0.35)
+        out = _do_generate(
+            prompt,
+            timeout=timeout,
+            base_url=base_url,
+            model_url=model_url,
+            model_name_hint=model_path,
+            max_tokens=256,
+            with_grammar_auto=False,
+            temperature=0.35,
+            top_p=0.9,
+            repeat_penalty=1.1
+        )
         final = out if out else text
 
     final = _strip_meta_markers(final)
@@ -924,6 +951,8 @@ def persona_riff(
             persona_line,
             "Write up to {N} distinct one-liners. Each ≤ 140 chars. No bullets, numbering, lists, labels, JSON, or meta.",
         ]
+        if allow_profanity is False:
+            sys_parts.append("Avoid profanity.")
         if daypart:
             sys_parts.append(f"Daypart vibe (subtle): {daypart}.")
         if intensity:
@@ -947,6 +976,7 @@ def persona_riff(
             prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
         _log(f"persona_riff: effective timeout={timeout}s")
+        # Debug: show prompt token count
         try:
             n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
             _log(f"persona_riff: prompt_tokens={n_in}")
@@ -961,7 +991,9 @@ def persona_riff(
             model_name_hint=model_path,
             max_tokens=64,
             with_grammar_auto=False,
-            temperature=0.6,   # riffs only
+            temperature=0.72,
+            top_p=0.95,
+            repeat_penalty=1.1
         )
         if not raw:
             return []
