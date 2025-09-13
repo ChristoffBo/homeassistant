@@ -823,9 +823,9 @@ def _persona_descriptor(persona: str) -> str:
         "dude": "laid-back, mellow, calm confidence; avoids jokes.",
         "chick": "sassy, clever, stylish; crisp phrasing.",
         "nerd": "precise, witty, techy; low fluff.",
-        "rager": "short, intense bursts; may be edgy.",
+        "rager": "short, angry, intense bursts; may be edgy.",
         "comedian": "quippy and playful; jokes allowed.",
-        "jarvis": "polished, butler tone; concise.",
+        "jarvis": "polished, AI, butler tone; concise.",
         "ops": "terse, incident commander; direct.",
         "action": "stoic mission-brief style; clipped."
     }
