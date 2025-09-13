@@ -404,14 +404,27 @@ def _llama_generate(prompt: str, timeout: int = 12, max_tokens: Optional[int] = 
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=[EOS_TOKEN, "<|assistant|>", "<|endoftext|>"]
+            stop=[EOS_TOKEN, "<|endoftext|>"]
         )
 
         if hasattr(signal, "SIGALRM"):
             signal.alarm(0)
 
         txt = (out.get("choices") or [{}])[0].get("text", "")
-        return (txt or "").strip()
+        txt = (txt or "").strip()
+        if not txt:
+            # one quick retry with slightly higher temperature to avoid immediate stop
+            out = LLM(
+                prompt,
+                max_tokens=mtoks,
+                temperature=0.5,
+                top_p=0.9,
+                repeat_penalty=1.1,
+                stop=[EOS_TOKEN, "<|endoftext|>"]
+            )
+            txt = (out.get("choices") or [{}])[0].get("text", "")
+            txt = (txt or "").strip()
+        return txt
     except TimeoutError as e:
         _log(f"llama timeout: {e}")
         return ""
