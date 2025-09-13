@@ -530,11 +530,12 @@ def _strip_meta_markers(s: str) -> str:
     return out
 
 # ============================
-# Grammar for riffs (≤3 lines, ≤140 chars per line)
+# Grammar for riffs (≤3 lines, ≤140 chars per line) — FIXED
 # ============================
 _RIFF_GBNF = r"""
-root  ::= line ("\n" line){0,2}
-line  ::= ~"[^\\n]{1,140}"
+root  ::= line ( "\n" line ){0,2}
+line  ::= char{1,140}
+char  ::= [\x20-\x7E]
 """
 def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
     if not use_grammar:
@@ -544,11 +545,20 @@ def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
         if llama_cpp and hasattr(llama_cpp, "LlamaGrammar"):
             kwargs["grammar"] = llama_cpp.LlamaGrammar.from_string(_RIFF_GBNF)
         else:
-            # Fallback: older versions may accept raw string
-            kwargs["grammar"] = _RIFF_GBNF
+            _log("grammar: LlamaGrammar not available; skipping")
     except Exception as e:
-        _log(f"grammar setup failed: {e}")
+        _log(f"grammar setup failed; skipping: {e}")
     return kwargs
+
+def _clean_riff_lines(lines: List[str]) -> List[str]:
+    cleaned = []
+    for ln in lines:
+        ln = _strip_meta_markers(ln)
+        ln = ln.strip().strip('"').strip("'")
+        ln = re.sub(r'^\s*[-•*]\s*', '', ln)
+        if ln:
+            cleaned.append(ln)
+    return cleaned
 
 # ============================
 # Core generation (shared)
@@ -561,9 +571,6 @@ def _llama_generate(prompt: str, timeout: int, with_grammar: bool = False) -> st
             raise TimeoutError("gen timeout")
         if hasattr(signal, "SIGALRM"):
             signal.signal(signal.SIGALRM, _alarm_handler)
-            # Respect caller-supplied timeout strictly (Unix-only). Python docs: signal.alarm(seconds). 
-            # Availability: Unix. 
-            # Ref: https://docs.python.org/3/library/signal.html
             signal.alarm(max(1, int(timeout)))
 
         params = dict(
@@ -577,7 +584,7 @@ def _llama_generate(prompt: str, timeout: int, with_grammar: bool = False) -> st
         params = _maybe_with_grammar(params, with_grammar)
 
         t0 = time.time()
-        out = LLM(**params)  # llama-cpp-python __call__(...) supports grammar kwarg. See API ref.
+        out = LLM(**params)
         ttft = time.time() - t0
         _log(f"TTFT ~ {ttft:.2f}s")
 
@@ -932,25 +939,6 @@ def persona_riff(
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
     return cleaned
-
-# ============================
-# Riff line cleaner (utility used above)
-# ============================
-def _clean_riff_lines(lines: List[str]) -> List[str]:
-    out: List[str] = []
-    for ln in lines:
-        s = ln.strip()
-        if not s:
-            continue
-        s = _strip_meta_markers(s)
-        s = s.strip('`"\' ').strip()
-        # Drop leading persona labels / bullets
-        s = re.sub(r'^(?:[-•*]\s*|\w+\s*:\s*)', '', s).strip()
-        # Collapse whitespace
-        s = re.sub(r'\s+', ' ', s)
-        if s:
-            out.append(s)
-    return out
 
 # ============================
 # Quick self-test (optional)
