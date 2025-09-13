@@ -114,6 +114,42 @@ def _extract_subject_from_context(ctx: str) -> str:
     return re.sub(r"\s+", " ", subj)[:140]
 
 # ============================
+# Persona-token scrubbing (ADDITIVE)
+# ============================
+_PERSONA_TOKENS = ("dude","chick","nerd","rager","comedian","jarvis","ops","action","tappit","neutral")
+# Matches leading sequences like "dude. comedian. " at the start of a string
+_PERS_SEQ_RX = re.compile(r'^(?:\s*(?:' + "|".join(_PERSONA_TOKENS) + r')\.\s*)+', flags=re.I)
+
+def _scrub_persona_tokens(s: str) -> str:
+    """Remove persona name tokens when they are prefacing content (e.g., at start
+    or immediately after a colon), without touching legitimate words later."""
+    if not s:
+        return s
+    # 1) Remove any leading persona token sequence: "dude. comedian. "
+    s = _PERS_SEQ_RX.sub("", s).lstrip()
+
+    # 2) If there's a colon, scrub tokens that appear immediately after it
+    def _after_colon(m):
+        head = m.group(1)
+        tail = m.group(2)
+        tail = _PERS_SEQ_RX.sub("", tail).lstrip()
+        return f"{head}: {tail}"
+
+    s = re.sub(r'^(.*?):\s*(.*)$', lambda m: _after_colon(m), s, count=1)
+    return s.strip()
+
+def _sanitize_context_subject(ctx: str) -> str:
+    """Find 'Subject: ...' inside context and scrub persona tokens from the subject."""
+    if not ctx:
+        return ctx
+    m = re.search(r"(Subject:\s*)(.+)", ctx, flags=re.I)
+    if not m:
+        return ctx
+    prefix, raw = m.group(1), m.group(2)
+    cleaned = _scrub_persona_tokens(raw)
+    return ctx[:m.start(1)] + prefix + cleaned + ctx[m.end(2):]
+
+# ============================
 # Options helpers
 # ============================
 def _read_options() -> Dict[str, Any]:
@@ -634,6 +670,8 @@ def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
 def _clean_riff_lines(lines: List[str]) -> List[str]:
     cleaned = []
     for ln in lines:
+        # Scrub any leading persona tokens that might have leaked into lines
+        ln = _scrub_persona_tokens(ln)
         ln = _strip_meta_markers(ln)
         ln = ln.strip().strip('"').strip("'")
         ln = re.sub(r'^\s*[-•*]\s*', '', ln)
@@ -699,9 +737,11 @@ def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_pr
 
     subj = (subject or "Update")
     subj = re.sub(r"^\[(?:.+?)\]\s*", "", subj).strip()
+    # Scrub persona tokens from subject used in fallback
+    subj = _scrub_persona_tokens(subj)
 
     persona = (persona or "neutral").lower().strip()
-    def pick(n=1): 
+    def pick(n=1):
         return [rnd.choice(lex) for _ in range(n)]
 
     lines: List[str] = []
@@ -718,7 +758,8 @@ def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_pr
         elif persona == "comedian":
             line = f"{subj}: {a}. {b}. I’ll be here all week."
         elif persona == "jarvis":
-            line = f"{subj}: {a}. {b}. As you wish."
+            # Removed "As you wish." to avoid a fixed tag when fallback fires
+            line = f"{subj}: {a}. {b}."
         elif persona == "ops":
             line = f"{subj}: {a}. {b}. Incident noted."
         elif persona == "action":
@@ -1007,6 +1048,8 @@ def riff(
     model_path: str = "",
     allow_profanity: bool = False
 ) -> str:
+    # Scrub persona tokens from subject before building context
+    subject = _scrub_persona_tokens(subject or "")
     lines = persona_riff(
         persona=persona,
         context=f"Subject: {subject}",
@@ -1043,6 +1086,9 @@ def persona_riff(
             (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
             and (persona or "").lower().strip() == "rager"
         )
+
+    # Sanitize the subject within context
+    context = _sanitize_context_subject(context)
 
     opts = _read_options()
     llm_enabled = bool(opts.get("llm_enabled", True))
@@ -1201,7 +1247,7 @@ def persona_riff_ex(
     # Delegate to original function for actual generation/fallback
     lines = persona_riff(
         persona=persona,
-        context=context,
+        context=_sanitize_context_subject(context),  # ensure same sanitization path
         max_lines=max_lines,
         timeout=timeout,
         cpu_limit=cpu_limit,
