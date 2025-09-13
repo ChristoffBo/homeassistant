@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (EnviroGuard-first, lean riffs, Phi3-aware chat format)
+# Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi3-aware chat format)
 #
 # Public entry points:
 #   ensure_loaded(...)
@@ -141,9 +141,9 @@ def _current_profile() -> Tuple[str, int, int, int]:
 
     profiles: Dict[str, Dict[str, Any]] = {}
     source = ""
-    enviroguard_active = False  # <— we will log this explicitly
+    enviroguard_active = False
 
-    # 1) EnviroGuard (sovereign)
+    # 1) EnviroGuard sovereign
     eg = opts.get("llm_enviroguard_profiles")
     if isinstance(eg, str) and eg.strip():
         try:
@@ -207,13 +207,12 @@ def _current_profile() -> Tuple[str, int, int, int]:
     ctx_tokens = int(pdata.get("ctx_tokens", 4096))
     timeout_seconds = int(pdata.get("timeout_seconds", 25))
 
-    # Explicit flag
     _log(f"EnviroGuard active: {enviroguard_active}")
     _log(f"profile: src={source or 'defaults'} active='{prof_name}' cpu_percent={cpu_percent} ctx_tokens={ctx_tokens} timeout_seconds={timeout_seconds}")
     return prof_name, cpu_percent, ctx_tokens, timeout_seconds
 
 # ============================
-# CPU / Threads (derived from percent; EnviroGuard-first)
+# CPU / Threads / Affinity
 # ============================
 def _parse_cpuset_list(s: str) -> int:
     total = 0
@@ -273,13 +272,73 @@ def _available_cpus() -> int:
             pass
     return max(1, os.cpu_count() or 1)
 
+def _pin_affinity(n: int) -> List[int]:
+    """
+    Hard-cap scheduler to the first n CPUs from current affinity set.
+    Returns the list we pinned to.
+    """
+    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
+        return []
+    try:
+        current = sorted(list(os.sched_getaffinity(0)))
+        if n >= len(current):
+            # already pinned to <= n cores
+            _log(f"affinity: keeping existing CPUs {current}")
+            return current
+        target = set(current[:max(1, n)])
+        os.sched_setaffinity(0, target)
+        pinned = sorted(list(os.sched_getaffinity(0)))
+        _log(f"affinity: pinned to CPUs {pinned}")
+        return pinned
+    except Exception as e:
+        _log(f"affinity pin failed (continuing): {e}")
+        return []
+
 def _threads_from_cpu_limit(limit_pct: int) -> int:
     cores = _available_cpus()
+    opts = _read_options()
+
+    # Detect EnviroGuard active (sovereign)
+    eg = opts.get("llm_enviroguard_profiles")
+    eg_enabled = bool(opts.get("llm_enviroguard_enabled", True))
+    eg_active = False
+    if eg_enabled:
+        try:
+            if isinstance(eg, str) and eg.strip():
+                eg_active = isinstance(json.loads(eg), dict)
+            elif isinstance(eg, dict):
+                eg_active = True
+        except Exception:
+            eg_active = False
+
+    if eg_active:
+        # GOD: ignore llm_threads; round DOWN to avoid overshooting
+        try:
+            pct = max(1, min(100, int(limit_pct or 100)))
+        except Exception:
+            pct = 100
+        t = max(1, min(cores, int(math.floor(cores * (pct / 100.0)))))
+        if t < 1:
+            t = 1
+        _log(f"EnviroGuard GOD: cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
+        return t
+
+    # EnviroGuard OFF: allow explicit llm_threads override
+    try:
+        forced_threads = int(opts.get("llm_threads", 0) or 0)
+    except Exception:
+        forced_threads = 0
+    if forced_threads > 0:
+        t = max(1, min(cores, forced_threads))
+        _log(f"EnviroGuard OFF: threads override via llm_threads={forced_threads} -> using {t} (avail_cpus={cores})")
+        return t
+
+    # Fallback: derive from percent (round down)
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
     except Exception:
         pct = 100
-    t = max(1, min(cores, int(math.ceil(cores * (pct / 100.0)))))
+    t = max(1, min(cores, int(math.floor(cores * (pct / 100.0)))))
     _log(f"cpu_limit={pct}% -> threads={t} (avail_cpus={cores})")
     return t
 
@@ -359,7 +418,11 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
             return None
     if want_sha256:
         try:
-            got = hashlib.sha256(open(path, "rb").read()).hexdigest()
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            got = h.hexdigest()
             if got.lower() != want_sha256.lower():
                 _log(f"sha256 mismatch: got={got} want={want_sha256} (refusing to load)")
                 return None
@@ -415,12 +478,27 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         return False
     try:
         threads = _threads_from_cpu_limit(cpu_limit)
+
+        # HARD caps & pinning to prevent oversubscription
+        pinned = _pin_affinity(threads)  # may be [] if unsupported
         os.environ["OMP_NUM_THREADS"] = str(threads)
+        os.environ["OMP_DYNAMIC"] = "FALSE"
+        os.environ["OMP_PROC_BIND"] = "TRUE"
+        os.environ["OMP_PLACES"] = "cores"
         os.environ["LLAMA_THREADS"] = str(threads)
+        os.environ["GGML_NUM_THREADS"] = str(threads)
+        _log(f"thread env -> OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS')} "
+             f"OMP_DYNAMIC={os.environ.get('OMP_DYNAMIC')} "
+             f"OMP_PROC_BIND={os.environ.get('OMP_PROC_BIND')} "
+             f"OMP_PLACES={os.environ.get('OMP_PLACES')} "
+             f"GGML_NUM_THREADS={os.environ.get('GGML_NUM_THREADS')} "
+             f"affinity={'/'.join(map(str, pinned)) if pinned else 'unchanged'}")
+
         LLM = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=ctx_tokens,
             n_threads=threads,
+            n_threads_batch=threads,   # keep batch path aligned with main threads
             n_batch=128,
             n_ubatch=128
         )
@@ -524,7 +602,7 @@ def _strip_meta_markers(s: str) -> str:
     out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
     out = out.replace("<s>", "").replace("</s>", "")
     out = re.sub(
-        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
+        r'^\s*you\s+are\s+(?:a|the)?\s*rewriter\.?\s*$',
         '',
         out,
         flags=re.I | re.M
@@ -631,7 +709,7 @@ def ensure_loaded(
 ) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, _MODEL_NAME_HINT
 
-    # EnviroGuard-first profile
+    # EnviroGuard profile (GOD)
     prof_name, prof_cpu, prof_ctx, _ = _current_profile()
     ctx_tokens = prof_ctx
     cpu_limit = prof_cpu
@@ -938,7 +1016,6 @@ def persona_riff(
             prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
         _log(f"persona_riff: effective timeout={timeout}s")
-        # Debug: show prompt token count
         try:
             n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
             _log(f"persona_riff: prompt_tokens={n_in}")
@@ -951,7 +1028,7 @@ def persona_riff(
             base_url=base_url,
             model_url=model_url,
             model_name_hint=model_path,
-            max_tokens=64,
+            max_tokens=32,  # lean for latency
             with_grammar_auto=False
         )
         if not raw:
