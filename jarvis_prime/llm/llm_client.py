@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/llm_client.py
 #
-# Jarvis Prime — LLM client (FULL)
+# Jarvis Prime — LLM client (FULL, corrected)
 # - GGUF local loading via llama-cpp (if available)
 # - Optional Ollama HTTP generation (if base_url provided & reachable)
 # - Hugging Face downloads with Authorization header preserved across redirects
@@ -9,6 +9,11 @@
 # - Hard timeouts; best-effort, never crash callers
 # - Message checks (max lines / soft-length guard)
 # - Persona riffs (1–3 short lines)
+# - Honors EnviroGuard (ENV is first), then options.json profiles/flat, then defaults
+# - Deterministic threads (ENV/llm_threads/derived) and enforced n_threads
+# - Fast-path reuse: no forced reload if model already loaded
+# - Correct stop tokens for Phi-style chat templates
+# - Separate lock-wait vs generation budgets; fail-safe locking with clear logs
 #
 # Public entry points expected by the rest of Jarvis:
 #   ensure_loaded(...)
@@ -28,8 +33,8 @@ import random
 import urllib.request
 import urllib.error
 import http.client
-import re  # ADDITIVE: for riff post-cleaning
-import threading  # ADDITIVE: for concurrency lock
+import re
+import threading
 from typing import Optional, Dict, Any, Tuple, List
 
 # ============================
@@ -41,14 +46,18 @@ LOADED_MODEL_PATH = None
 OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
-SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
-SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
+SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"
+SYS_PROMPT = ""
 
-# ADDITIVE: global reentrant lock so multiple incoming messages don't collide
+# Global lock & owner diagnostics
 _GEN_LOCK = threading.RLock()
+_LOCK_OWNER = {"name": None, "started": 0.0, "op": ""}
+
+# One-time warmup flag
+_WARMED_UP = False
 
 def _lock_timeout() -> int:
-    """Optional env-configurable lock wait. Defaults to 10s."""
+    """Optional env-configurable default lock wait. Defaults to 10s."""
     try:
         v = int(os.getenv("LLM_LOCK_TIMEOUT_SECONDS", "300").strip())
         return max(1, min(300, v))
@@ -56,21 +65,40 @@ def _lock_timeout() -> int:
         return 10
 
 class _GenCritical:
-    """Context manager to serialize LLM load/generation sections without deadlocks."""
-    def __init__(self, timeout: Optional[int] = None):
-        self.timeout = max(1, int(timeout or _lock_timeout()))
+    """
+    Context manager to serialize LLM load/generation sections without deadlocks.
+    Returns True/False from __enter__. Call sites MUST check the value via 'as got'.
+    """
+    def __init__(self, timeout: Optional[int] = None, op: str = ""):
+        # allow 0 (fail-fast try-acquire)
+        self.timeout = max(0, int(timeout or _lock_timeout()))
         self.acquired = False
+        self.op = op or "gen"
+
     def __enter__(self):
-        # RLock in CPython doesn't support timed acquire prior to 3.12 via keyword; emulate
+        me = threading.current_thread().name
         end = time.time() + self.timeout
-        while time.time() < end:
-            if _GEN_LOCK.acquire(blocking=False):
-                self.acquired = True
-                return True
-            time.sleep(0.01)
-        return False
+        if self.timeout == 0:
+            self.acquired = _GEN_LOCK.acquire(blocking=False)
+        else:
+            while time.time() < end and not self.acquired:
+                self.acquired = _GEN_LOCK.acquire(blocking=False)
+                if not self.acquired:
+                    time.sleep(0.01)
+        if self.acquired:
+            _LOCK_OWNER.update({"name": me, "started": time.time(), "op": self.op})
+            _log(f"lock ACQUIRED by {me} op={self.op}")
+        else:
+            held = time.time() - (_LOCK_OWNER["started"] or time.time())
+            _log(f"lock BUSY (held {held:.2f}s) by {_LOCK_OWNER['name']} op={_LOCK_OWNER['op']}")
+        return self.acquired
+
     def __exit__(self, exc_type, exc, tb):
         if self.acquired:
+            me = threading.current_thread().name
+            dur = time.time() - _LOCK_OWNER["started"]
+            _log(f"lock RELEASE by {me} op={self.op} held={dur:.2f}s")
+            _LOCK_OWNER.update({"name": None, "started": 0.0, "op": ""})
             try:
                 _GEN_LOCK.release()
             except Exception:
@@ -83,7 +111,7 @@ def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
 
 # ============================
-# ADDITIVE: System prompt loader
+# System prompt loader
 # ============================
 def _load_system_prompt() -> str:
     try:
@@ -95,8 +123,16 @@ def _load_system_prompt() -> str:
     return ""
 
 # ============================
-# ADDITIVE: EnviroGuard env overrides
+# Options / EnviroGuard helpers
 # ============================
+def _read_options() -> Dict[str, Any]:
+    try:
+        with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        _log(f"options read failed ({OPTIONS_PATH}): {e}")
+        return {}
+
 def _int_env(name: str, default: Optional[int]) -> Optional[int]:
     try:
         v = os.getenv(name, "").strip()
@@ -108,28 +144,65 @@ def _int_env(name: str, default: Optional[int]) -> Optional[int]:
 
 def _enviroguard_limits(default_ctx: Optional[int],
                         default_cpu: Optional[int],
-                        default_timeout: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+                        default_timeout: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int], str]:
+    """
+    Apply ENV overrides (highest priority). If an ENV value is unset, fall back to the provided defaults.
+    Returns (ctx, cpu, timeout, src_label).
+    """
+    src = "defaults"
     ctx = _int_env("ENVGUARD_CTX_TOKENS", default_ctx)
     cpu = _int_env("ENVGUARD_CPU_PERCENT", default_cpu)
     to  = _int_env("ENVGUARD_TIMEOUT_SECONDS", default_timeout)
-    if ctx is not None:
+
+    if ctx is not None and ctx != default_ctx:
+        src = "ENV"
         try:
             ctx = max(256, int(ctx))
         except Exception:
             ctx = default_ctx
-    if cpu is not None:
+    if cpu is not None and cpu != default_cpu:
+        src = "ENV"
         try:
             cpu = min(100, max(1, int(cpu)))
         except Exception:
             cpu = default_cpu
-    if to is not None:
+    if to is not None and to != default_timeout:
+        src = "ENV"
         try:
             to = max(2, int(to))
         except Exception:
             to = default_timeout
-    if (ctx != default_ctx) or (cpu != default_cpu) or (to != default_timeout):
+
+    if src == "ENV":
         _log(f"EnviroGuard override -> ctx={ctx} cpu={cpu} timeout={to}")
-    return ctx, cpu, to
+
+    return ctx, cpu, to, src
+
+def _options_envguard_defaults(timeout_fallback: int, cpu_fallback: int, ctx_fallback: int) -> Tuple[int, int, int, str]:
+    """
+    Read /data/options.json to pull defaults from either:
+      1) EnviroGuard profile table: options['enviroguard_profiles'][options['enviroguard_profile']]
+      2) Flat keys: llm_timeout_seconds / llm_max_cpu_percent / llm_ctx_tokens
+      3) Fallback args
+    Returns: (timeout, cpu_percent, ctx_tokens, source_label)
+    """
+    try:
+        o = _read_options()
+        prof = (o.get("enviroguard_profile") or "").strip().lower()
+        table = o.get("enviroguard_profiles") or {}
+        if prof and isinstance(table, dict) and isinstance(table.get(prof), dict):
+            p = table[prof]
+            to  = int(p.get("timeout_seconds", timeout_fallback))
+            cpu = int(p.get("cpu_percent", cpu_fallback))
+            ctx = int(p.get("ctx_tokens", ctx_fallback))
+            return max(2,to), max(1,min(100,cpu)), max(256,ctx), f"options-profile:{prof}"
+
+        to  = int(o.get("llm_timeout_seconds", timeout_fallback))
+        cpu = int(o.get("llm_max_cpu_percent", cpu_fallback))
+        ctx = int(o.get("llm_ctx_tokens", ctx_fallback))
+        return max(2,to), max(1,min(100,cpu)), max(256,ctx), "options-flat"
+    except Exception:
+        return timeout_fallback, cpu_fallback, ctx_fallback, "fallback"
 
 # ============================
 # Small utils
@@ -236,82 +309,6 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
     return path
 
 # ============================
-# Options resolver (add-on config awareness)
-# ============================
-def _read_options() -> Dict[str, Any]:
-    try:
-        with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        _log(f"options read failed ({OPTIONS_PATH}): {e}")
-        return {}
-
-def _resolve_model_from_options(
-    model_url: str,
-    model_path: str,
-    hf_token: Optional[str]
-) -> Tuple[str, str, Optional[str]]:
-    """
-    If caller didn't pass model_url/path, derive them from /data/options.json.
-    Supports:
-      - llm_choice == "custom" -> llm_model_url/path
-      - llm_choice == "<name>" -> llm_<name>_url/path
-      - Fallback to first enabled of our known set, in llm_models_priority order
-    """
-    url = (model_url or "").strip()
-    path = (model_path or "").strip()
-    token = (hf_token or "").strip() or None
-
-    if url and path:
-        return url, path, token
-
-    opts = _read_options()
-    choice = (opts.get("llm_choice") or "").strip()
-    autodl = bool(opts.get("llm_autodownload", True))
-    if not token:
-        t = (opts.get("llm_hf_token") or "").strip()
-        token = t or None
-
-    cand: List[Tuple[str, str]] = []
-    if choice.lower() == "custom":
-        cand.append((
-            (opts.get("llm_model_url") or "").strip(),
-            (opts.get("llm_model_path") or "").strip()
-        ))
-    elif choice:
-        cand.append((
-            (opts.get(f"llm_{choice}_url") or "").strip(),
-            (opts.get(f"llm_{choice}_path") or "").strip()
-        ))
-
-    # Build order from priority string (if present), else default to include uncensored too
-    priority_raw = (opts.get("llm_models_priority") or "").strip()
-    if priority_raw:
-        names = [n.strip().lower() for n in priority_raw.split(",") if n.strip()]
-    else:
-        names = ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]
-
-    # Collect enabled candidates in order (with a safe tail)
-    seen = set()
-    for name in names + ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]:
-        key = name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        if opts.get(f"llm_{key}_enabled", False):
-            cand.append((
-                (opts.get(f"llm_{key}_url") or "").strip(),
-                (opts.get(f"llm_{key}_path") or "").strip()
-            ))
-
-    for u, p in cand:
-        if u and p:
-            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u)} path={os.path.basename(p)} autodownload={autodl}")
-            return u, p, token
-
-    return url, path, token
-
-# ============================
 # CPU / Threads (throttling)
 # ============================
 def _parse_cpuset_list(s: str) -> int:
@@ -372,13 +369,32 @@ def _available_cpus() -> int:
     return max(1, os.cpu_count() or 1)
 
 def _threads_from_cpu_limit(limit_pct: int) -> int:
-    """Map a CPU percentage to an integer thread count, respecting cgroup limits."""
+    """
+    Resolve threads with priority:
+      1) LLAMA_THREADS / OMP_NUM_THREADS env (explicit override)
+      2) options.json llm_threads
+      3) derive from cpu_limit and available cores
+    """
+    # 1) explicit env wins
     for env_var in ("LLAMA_THREADS", "OMP_NUM_THREADS"):
         v = os.getenv(env_var, "").strip()
-        if v.isdigit():
+        if v.isdigit() and int(v) > 0:
             t = max(1, int(v))
             _log(f"env override {env_var} -> threads={t}")
             return t
+
+    # 2) options.json
+    try:
+        o = _read_options()
+        t_opt = int(o.get("llm_threads", 0))
+        if t_opt > 0:
+            t = max(1, t_opt)
+            _log(f"options override llm_threads -> threads={t}")
+            return t
+    except Exception:
+        pass
+
+    # 3) derive from cpu_limit
     cores = _available_cpus()
     try:
         pct = max(1, min(100, int(limit_pct or 100)))
@@ -407,13 +423,15 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         return False
     try:
         threads = _threads_from_cpu_limit(cpu_limit)
-        os.environ.setdefault("OMP_NUM_THREADS", str(threads))
-        os.environ.setdefault("LLAMA_THREADS", str(threads))
-        # llama-cpp params verified in docs (n_ctx, n_threads)
+        # Enforce threads (avoid inherited stale env)
+        os.environ["OMP_NUM_THREADS"] = str(threads)
+        os.environ["LLAMA_THREADS"]   = str(threads)
+        # Construct llama with explicit n_threads and a reasonable n_batch
         LLM = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=ctx_tokens,
             n_threads=threads,
+            n_batch=128,
         )
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
@@ -496,9 +514,7 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
         return text[: max(0, max_chars - 1)].rstrip() + "…"
     return text
 
-# ============================
-# ADDITIVE: strip leaked meta tags from model output
-# ============================
+# Strip leaked markers / boilerplate
 _META_LINE_RX = re.compile(
     r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
     re.I | re.M
@@ -506,27 +522,93 @@ _META_LINE_RX = re.compile(
 def _strip_meta_markers(s: str) -> str:
     if not s:
         return s
-    # Drop pure marker lines
     out = _META_LINE_RX.sub("", s)
-    # Remove inline fragments
     out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
     out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
     out = out.replace("<s>", "").replace("</s>", "")
-    # 🔽 ADDITIVE: strip leaked "YOU ARE … REWRITER" echoes
-    out = re.sub(
-        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
-        '',
-        out,
-        flags=re.I | re.M
-    )
-    # Clean leftover quotes/backticks-only wrappers
+    out = re.sub(r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$', '', out, flags=re.I | re.M)
     out = out.strip().strip('`').strip().strip('"').strip("'").strip()
-    # Collapse extra blank lines
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
+
 # ============================
-# Ensure loaded
+# Ensure loaded (fast-path reuse, guarded switches)
 # ============================
+def _resolve_model_from_options(
+    model_url: str,
+    model_path: str,
+    hf_token: Optional[str]
+) -> Tuple[str, str, Optional[str]]:
+    """
+    If caller didn't pass model_url/path, derive them from /data/options.json.
+    Supports:
+      - llm_choice == "custom" -> llm_model_url/path
+      - llm_choice == "<name>" -> llm_<name>_url/path
+      - Fallback to first enabled of our known set, in llm_models_priority order
+    """
+    url = (model_url or "").strip()
+    path = (model_path or "").strip()
+    token = (hf_token or "").strip() or None
+
+    if url and path:
+        return url, path, token
+
+    opts = _read_options()
+    choice = (opts.get("llm_choice") or "").strip()
+    autodl = bool(opts.get("llm_autodownload", True))
+    if not token:
+        t = (opts.get("llm_hf_token") or "").strip()
+        token = t or None
+
+    cand: List[Tuple[str, str]] = []
+    if choice.lower() == "custom":
+        cand.append((
+            (opts.get("llm_model_url") or "").strip(),
+            (opts.get("llm_model_path") or "").strip()
+        ))
+    elif choice:
+        cand.append((
+            (opts.get(f"llm_{choice}_url") or "").strip(),
+            (opts.get(f"llm_{choice}_path") or "").strip()
+        ))
+
+    priority_raw = (opts.get("llm_models_priority") or "").strip()
+    if priority_raw:
+        names = [n.strip().lower() for n in priority_raw.split(",") if n.strip()]
+    else:
+        names = ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]
+
+    seen = set()
+    for name in names + ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if opts.get(f"llm_{key}_enabled", False):
+            cand.append((
+                (opts.get(f"llm_{key}_url") or "").strip(),
+                (opts.get(f"llm_{key}_path") or "").strip()
+            ))
+
+    for u, p in cand:
+        if u and p:
+            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u)} path={os.path.basename(p)} autodownload={autodl}")
+            return u, p, token
+
+    return url, path, token
+
+def _warmup_once():
+    global _WARMED_UP
+    if _WARMED_UP or LLM_MODE != "llama" or LLM is None:
+        return
+    try:
+        # very small prompt to touch paths / caches
+        _ = _llama_generate("<|user|>\n.\n<|end|>\n<|assistant|>\n", timeout=2)
+    except Exception:
+        pass
+    _WARMED_UP = True
+    _log("warmup complete")
+
 def ensure_loaded(
     *,
     model_url: str,
@@ -541,21 +623,47 @@ def ensure_loaded(
     Decide engine and load (or prepare) it.
     - If base_url provided and reachable: use Ollama mode (no local download needed here).
     - Else: local GGUF via llama-cpp, with optional HF download/check.
+    Fast-path reuse: if requested path matches LOADED_MODEL_PATH, do not reload.
     """
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
-    g_ctx, g_cpu, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
+    # Apply ENV overrides last (ENV is GOD)
+    g_ctx, g_cpu, _, _ = _enviroguard_limits(ctx_tokens, cpu_limit, None)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
-
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
-    # Serialized: avoid race while switching modes / loading models
-    with _GenCritical():
-        base_url = (base_url or "").strip()
+    # Resolve target URL/path/token before touching globals
+    tgt_url, tgt_path, tgt_token = _resolve_model_from_options(model_url, model_path, hf_token)
+    base_url = (base_url or "").strip()
+
+    # Fast-path for Ollama: already on same base_url and reachable
+    if base_url and (LLM_MODE == "ollama") and (OLLAMA_URL == base_url) and _ollama_ready(base_url):
+        _log(f"ensure_loaded: ollama already configured -> {base_url}")
+        return True
+
+    # Fast-path for local llama: same file already loaded
+    if (not base_url) and (LLM_MODE == "llama") and LOADED_MODEL_PATH and tgt_path:
+        try:
+            if os.path.abspath(LOADED_MODEL_PATH) == os.path.abspath(tgt_path):
+                DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
+                _log(f"ensure_loaded: already loaded -> {LOADED_MODEL_PATH} (ctx={DEFAULT_CTX})")
+                return True
+        except Exception:
+            pass
+
+    # Serialized loading/switching
+    with _GenCritical(op="load") as got:
+        if not got:
+            # If we couldn't acquire, but something is already loaded, consider it OK.
+            ok = bool(LLM_MODE in ("llama", "ollama") and (OLLAMA_URL or LOADED_MODEL_PATH))
+            _log(f"ensure_loaded: lock busy, returning {ok}")
+            return ok
+
         if base_url:
             OLLAMA_URL = base_url
             if _ollama_ready(base_url):
+                # Switch to Ollama
                 LLM_MODE = "ollama"
                 LLM = None
                 LOADED_MODEL_PATH = None
@@ -564,46 +672,31 @@ def ensure_loaded(
             else:
                 _log(f"Ollama not reachable at {base_url}; falling back to local mode")
 
-        LLM_MODE = "none"
-        OLLAMA_URL = ""
-        LLM = None
-        LOADED_MODEL_PATH = None
-
-        # Read options to check cleanup behavior and priority resolution
+        # Guarded cleanup-on-switch only if file differs
         opts = _read_options()
+        cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
+        if cleanup_on_disable and LOADED_MODEL_PATH and tgt_path:
+            try:
+                if os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(tgt_path):
+                    if os.path.exists(LOADED_MODEL_PATH):
+                        _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
+                        try:
+                            os.remove(LOADED_MODEL_PATH)
+                        except Exception as e:
+                            _log(f"cleanup_on_switch: remove failed: {e}")
+            except Exception as e:
+                _log(f"cleanup_on_switch: error: {e}")
 
-        # Resolve URL/path/Token from options if not provided
-        model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
-
-        # --- CLEANUP ON SWITCH ----------------------------------------------
-        try:
-            cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
-            if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
-                if os.path.exists(LOADED_MODEL_PATH):
-                    _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
-                    try:
-                        os.remove(LOADED_MODEL_PATH)
-                    except Exception as e:
-                        _log(f"cleanup_on_switch: remove failed: {e}")
-            if cleanup_on_disable and os.path.exists(model_path) and model_url:
-                url_base = os.path.basename(model_url)
-                file_base = os.path.basename(model_path)
-                if url_base and file_base and (os.path.splitext(file_base)[0] != os.path.splitext(url_base)[0]):
-                    _log(f"cleanup_on_switch: target path exists with different basename; removing {model_path} to force re-download")
-                    try:
-                        os.remove(model_path)
-                    except Exception as e:
-                        _log(f"cleanup_on_switch: remove target failed: {e}")
-        except Exception as e:
-            _log(f"cleanup_on_switch: error: {e}")
-        # --------------------------------------------------------------------
-
-        path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
+        # Prepare local model
+        path = _ensure_local_model(tgt_url, tgt_path, tgt_token, model_sha256 or "")
         if not path:
             _log("ensure_local_model failed")
             return False
 
+        # Load llama
         ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
+        if ok:
+            _warmup_once()
         return bool(ok)
 
 # ============================
@@ -642,46 +735,9 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
-# ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
-# ============================
-_INSTRUX_PATTERNS = [
-    r'^\s*tone\s*:.*$',            # <<< ADDED: remove "Tone: ..." lines
-    r'^\s*no\s+lists.*$',
-    r'.*context\s*\(for vibes only\).*',
-    r'^\s*subject\s*:.*$',
-    r'^\s*style\s*:.*$',
-    r'^\s*you\s+write\s+a\s+single.*$',
-    r'^\s*write\s+1.*lines?.*$',
-    r'^\s*avoid\s+profanity.*$',
-    r'^\s*<<\s*sys\s*>>.*$',
-    r'^\s*\[/?\s*inst\s*\]\s*$',
-    r'^\s*<\s*/?\s*s\s*>\s*$',
-]
-_INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
-
-def _clean_riff_lines(lines: List[str]) -> List[str]:
-    cleaned: List[str] = []
-    for ln in lines:
-        t = ln.strip()
-        if not t:
-            continue
-        skip = False
-        for rx in _INSTRUX_RX:
-            if rx.search(t):
-                skip = True
-                break
-        if skip:
-            continue
-        t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
-        t = t.replace("</s>", "").replace("<s>", "").strip()
-        if t:
-            cleaned.append(t)
-    return cleaned
-
-# ============================
 # Core generation (shared)
 # ============================
-def _llama_generate(prompt: str, timeout: int = 12) -> str:
+def _llama_generate(prompt: str, timeout: int = 12, max_tokens: int = 256) -> str:
     """Generate text via local llama-cpp (non-streaming)."""
     try:
         import signal
@@ -693,11 +749,11 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
 
         out = LLM(
             prompt,
-            max_tokens=256,
+            max_tokens=max_tokens,
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            # PATCH: include Phi-style stop tokens so chat template ends properly
+            # Phi-style stop tokens so chat template ends properly
             stop=["<|end|>", "<|endoftext|>", "</s>"]
         )
 
@@ -713,7 +769,7 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
         _log(f"llama error: {e}")
         return ""
 
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str) -> str:
+def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_tokens: int = 256) -> str:
     """Route to Ollama or llama-cpp, depending on LLM_MODE."""
     if LLM_MODE == "ollama" and OLLAMA_URL:
         name = ""
@@ -725,7 +781,7 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)))
 
     if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)))
+        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens)
 
     return ""
 
@@ -752,13 +808,23 @@ def rewrite(
     """Best-effort rewrite. If LLM unavailable, returns input text."""
     global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
+    # Defaults from options/profile; ENV overrides applied below
+    timeout, cpu_limit, ctx_tokens, src = _options_envguard_defaults(timeout, cpu_limit, ctx_tokens)
+    _log(f"rewrite: defaults from {src} -> ctx={ctx_tokens} cpu%={cpu_limit} timeout={timeout}")
+
+    g_ctx, g_cpu, g_to, gsrc = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
+    _log(f"rewrite: resolved -> ctx={ctx_tokens} cpu%={cpu_limit} timeout={timeout} (src={gsrc})")
 
-    # Serialize: acquire lock; if busy too long, fail soft by returning original text
-    with _GenCritical(timeout):
+    # Fail-fast or short wait for lock; give full timeout to generation
+    _lock_wait = min(8, max(2, timeout // 3))
+    with _GenCritical(_lock_wait, op="rewrite") as got:
+        if not got:
+            _log("rewrite: lock not acquired; returning original text")
+            return text
+
         if LLM_MODE == "none":
             ok = ensure_loaded(
                 model_url=model_url,
@@ -773,10 +839,10 @@ def rewrite(
                 return text
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=256)
         final = out if out else text
 
-    # ADD: strip any leaked meta tags/markers from the model output
+    # Clean leaked markers
     final = _strip_meta_markers(final)
 
     if max_lines:
@@ -801,32 +867,34 @@ def riff(
 ) -> str:
     """
     Generate 1–3 very short riff lines for the bottom of a card.
-    Returns empty string if engine unavailable.
+    Returns empty string if engine unavailable or busy.
     """
-    # Respect options.json llm_timeout_seconds if present
-    try:
-        _opts = _read_options()
-        opt_to = int(_opts.get("llm_timeout_seconds", timeout))
-        if opt_to > 0:
-            timeout = opt_to
-    except Exception:
-        pass
+    # Defaults from options/profile
+    timeout, cpu_limit_opt, ctx_opt, src = _options_envguard_defaults(timeout, 80, 2048)
+    _log(f"riff: defaults from {src} -> ctx={ctx_opt} cpu%={cpu_limit_opt} timeout={timeout}")
 
-    _, _, g_to = _enviroguard_limits(None, None, timeout)
+    # ENV may override timeout (keeps ENV as GOD)
+    _, _, g_to, gsrc = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
+    _log(f"riff: timeout resolved -> {timeout}s (src={gsrc})")
 
-    # Split lock wait vs generation budget to avoid starvation
+    # Split budgets
     _lock_wait = min(8, max(2, timeout // 3))
     _gen_to    = max(4, timeout)
+    _log(f"riff: budgets -> lock_wait={_lock_wait}s gen_timeout={_gen_to}s")
 
-    with _GenCritical(_lock_wait):
+    with _GenCritical(_lock_wait, op="riff") as got:
+        if not got:
+            _log("riff: lock not acquired; returning empty")
+            return ""
+
         if LLM_MODE == "none":
             ok = ensure_loaded(
                 model_url=model_url,
                 model_path=model_path,
                 model_sha256="",
-                ctx_tokens=2048,
-                cpu_limit=80,
+                ctx_tokens=ctx_opt,
+                cpu_limit=cpu_limit_opt,
                 hf_token=None,
                 base_url=base_url
             )
@@ -837,7 +905,7 @@ def riff(
             return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        out = _do_generate(prompt, timeout=_gen_to, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=_gen_to, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=96)
         if not out:
             return ""
 
@@ -885,25 +953,26 @@ def persona_riff(
             and (persona or "").lower().strip() == "rager"
         )
 
-    g_ctx, g_cpu, g_to = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
+    # Defaults from options/profile; ENV overrides applied below
+    timeout, cpu_limit, ctx_tokens, src = _options_envguard_defaults(timeout, cpu_limit, ctx_tokens)
+    _log(f"persona_riff: defaults from {src} -> ctx={ctx_tokens} cpu%={cpu_limit} timeout={timeout}")
+
+    g_ctx, g_cpu, g_to, gsrc = _enviroguard_limits(ctx_tokens, cpu_limit, timeout)
     ctx_tokens = g_ctx if g_ctx is not None else ctx_tokens
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
+    _log(f"persona_riff: resolved -> ctx={ctx_tokens} cpu%={cpu_limit} timeout={timeout} (src={gsrc})")
 
-    # Respect options.json llm_timeout_seconds if present
-    try:
-        _opts = _read_options()
-        opt_to = int(_opts.get("llm_timeout_seconds", timeout))
-        if opt_to > 0:
-            timeout = opt_to
-    except Exception:
-        pass
-
-    # Split lock wait vs generation budget
+    # Split budgets
     _lock_wait = min(8, max(2, timeout // 3))
     _gen_to    = max(4, timeout)
+    _log(f"persona_riff: budgets -> lock_wait={_lock_wait}s gen_timeout={_gen_to}s")
 
-    with _GenCritical(_lock_wait):
+    with _GenCritical(_lock_wait, op="persona") as got:
+        if not got:
+            _log("persona_riff: lock not acquired; returning []")
+            return []
+
         if LLM_MODE == "none":
             ok = ensure_loaded(
                 model_url=model_url,
@@ -932,7 +1001,6 @@ def persona_riff(
         except Exception:
             pass
 
-        # Tightened persona style map
         style_map = {
             "dude":      "laid-back, mellow, no jokes",
             "chick":     "sassy, clever, stylish",
@@ -961,19 +1029,48 @@ def persona_riff(
             sys_rules.append(f"Persona intensity (subtle): {intensity}.")
         sys_prompt = " ".join(sys_rules)
 
-        # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
         user = (
             f"{context.strip()}\n\n"
             f"Write up to {max_lines} short lines in the requested voice."
         )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-        raw = _do_generate(prompt, timeout=_gen_to, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        raw = _do_generate(prompt, timeout=_gen_to, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=96)
         if not raw:
             return []
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-    lines = _clean_riff_lines(lines)
+    # clean riff-like noise
+    _INSTRUX_PATTERNS = [
+        r'^\s*tone\s*:.*$',
+        r'^\s*no\s+lists.*$',
+        r'.*context\s*\(for vibes only\).*',
+        r'^\s*subject\s*:.*$',
+        r'^\s*style\s*:.*$',
+        r'^\s*you\s+write\s+a\s+single.*$',
+        r'^\s*write\s+1.*lines?.*$',
+        r'^\s*avoid\s+profanity.*$',
+        r'^\s*<<\s*sys\s*>>.*$',
+        r'^\s*\[/?\s*inst\s*\]\s*$',
+        r'^\s*<\s*/?\s*s\s*>\s*$',
+    ]
+    _INSTRUX_RX = [re.compile(p, re.I) for p in _INSTRUX_PATTERNS]
+
+    def _clean(lines: List[str]) -> List[str]:
+        out: List[str] = []
+        for ln in lines:
+            t = ln.strip()
+            if not t:
+                continue
+            if any(rx.search(t) for rx in _INSTRUX_RX):
+                continue
+            t = re.sub(r'\bcontext\s*:.*$', '', t, flags=re.I).strip()
+            t = t.replace("</s>", "").replace("<s>", "").strip()
+            if t:
+                out.append(t)
+        return out
+
+    lines = _clean(lines)
     cleaned: List[str] = []
     seen: set = set()
     for ln in lines:
