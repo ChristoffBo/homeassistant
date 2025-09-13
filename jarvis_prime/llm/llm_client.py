@@ -29,6 +29,7 @@ import urllib.request
 import urllib.error
 import http.client
 import re  # ADDITIVE: for riff post-cleaning
+import threading  # ADDITIVE: for concurrency lock
 from typing import Optional, Dict, Any, Tuple, List
 
 # ============================
@@ -40,12 +41,58 @@ LOADED_MODEL_PATH = None
 OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
 DEFAULT_CTX = 4096
 OPTIONS_PATH = "/data/options.json"
+SYSTEM_PROMPT_PATH = "/app/system_prompt.txt"  # ADDITIVE: external system prompt file
+SYS_PROMPT = ""  # ADDITIVE: cached system prompt contents
+
+# ADDITIVE: global reentrant lock so multiple incoming messages don't collide
+_GEN_LOCK = threading.RLock()
+
+def _lock_timeout() -> int:
+    """Optional env-configurable lock wait. Defaults to 10s."""
+    try:
+        v = int(os.getenv("LLM_LOCK_TIMEOUT_SECONDS", "300").strip())
+        return max(1, min(300, v))
+    except Exception:
+        return 10
+
+class _GenCritical:
+    """Context manager to serialize LLM load/generation sections without deadlocks."""
+    def __init__(self, timeout: Optional[int] = None):
+        self.timeout = max(1, int(timeout or _lock_timeout()))
+        self.acquired = False
+    def __enter__(self):
+        # RLock in CPython doesn't support timed acquire prior to 3.12 via keyword; emulate
+        end = time.time() + self.timeout
+        while time.time() < end:
+            if _GEN_LOCK.acquire(blocking=False):
+                self.acquired = True
+                return True
+            time.sleep(0.01)
+        return False
+    def __exit__(self, exc_type, exc, tb):
+        if self.acquired:
+            try:
+                _GEN_LOCK.release()
+            except Exception:
+                pass
 
 # ============================
 # Logging
 # ============================
 def _log(msg: str):
     print(f"[llm] {msg}", flush=True)
+
+# ============================
+# ADDITIVE: System prompt loader
+# ============================
+def _load_system_prompt() -> str:
+    try:
+        if os.path.exists(SYSTEM_PROMPT_PATH):
+            with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
+                return f.read().strip()
+    except Exception as e:
+        _log(f"system_prompt load failed: {e}")
+    return ""
 
 # ============================
 # ADDITIVE: EnviroGuard env overrides
@@ -450,6 +497,34 @@ def _soft_trim_chars(text: str, max_chars: int) -> str:
     return text
 
 # ============================
+# ADDITIVE: strip leaked meta tags from model output
+# ============================
+_META_LINE_RX = re.compile(
+    r'^\s*(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]\s*|<<\s*/?\s*SYS\s*>>\s*|</?s>\s*)$',
+    re.I | re.M
+)
+def _strip_meta_markers(s: str) -> str:
+    if not s:
+        return s
+    # Drop pure marker lines
+    out = _META_LINE_RX.sub("", s)
+    # Remove inline fragments
+    out = re.sub(r'(?:\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\])', '', out, flags=re.I)
+    out = re.sub(r'<<\s*/?\s*SYS\s*>>', '', out, flags=re.I)
+    out = out.replace("<s>", "").replace("</s>", "")
+    # 🔽 ADDITIVE: strip leaked "YOU ARE … REWRITER" echoes
+    out = re.sub(
+        r'^\s*you\s+are\s+(?:a|the)?\s*.*?\s*rewriter\.?\s*$',
+        '',
+        out,
+        flags=re.I | re.M
+    )
+    # Clean leftover quotes/backticks-only wrappers
+    out = out.strip().strip('`').strip().strip('"').strip("'").strip()
+    # Collapse extra blank lines
+    out = re.sub(r'\n{3,}', '\n\n', out)
+    return out
+# ============================
 # Ensure loaded
 # ============================
 def ensure_loaded(
@@ -475,69 +550,70 @@ def ensure_loaded(
 
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
 
-    base_url = (base_url or "").strip()
-    if base_url:
-        OLLAMA_URL = base_url
-        if _ollama_ready(base_url):
-            LLM_MODE = "ollama"
-            LLM = None
-            LOADED_MODEL_PATH = None
-            _log(f"using Ollama at {base_url}")
-            return True
-        else:
-            _log(f"Ollama not reachable at {base_url}; falling back to local mode")
+    # Serialized: avoid race while switching modes / loading models
+    with _GenCritical():
+        base_url = (base_url or "").strip()
+        if base_url:
+            OLLAMA_URL = base_url
+            if _ollama_ready(base_url):
+                LLM_MODE = "ollama"
+                LLM = None
+                LOADED_MODEL_PATH = None
+                _log(f"using Ollama at {base_url}")
+                return True
+            else:
+                _log(f"Ollama not reachable at {base_url}; falling back to local mode")
 
-    LLM_MODE = "none"
-    OLLAMA_URL = ""
-    LLM = None
-    LOADED_MODEL_PATH = None
+        LLM_MODE = "none"
+        OLLAMA_URL = ""
+        LLM = None
+        LOADED_MODEL_PATH = None
 
-    # Read options to check cleanup behavior and priority resolution
-    opts = _read_options()
+        # Read options to check cleanup behavior and priority resolution
+        opts = _read_options()
 
-    # Resolve URL/path/Token from options if not provided
-    model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
+        # Resolve URL/path/Token from options if not provided
+        model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
 
-    # --- CLEANUP ON SWITCH ----------------------------------------------
-    # If a previous model is loaded and target path differs, optionally delete the old file
-    try:
-        cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
-        if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
-            if os.path.exists(LOADED_MODEL_PATH):
-                _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
-                try:
-                    os.remove(LOADED_MODEL_PATH)
-                except Exception as e:
-                    _log(f"cleanup_on_switch: remove failed: {e}")
-        # If target path exists but filename doesn't align with URL basename, optionally refresh it
-        if cleanup_on_disable and os.path.exists(model_path) and model_url:
-            url_base = os.path.basename(model_url)
-            file_base = os.path.basename(model_path)
-            if url_base and file_base and (os.path.splitext(file_base)[0] != os.path.splitext(url_base)[0]):
-                _log(f"cleanup_on_switch: target path exists with different basename; removing {model_path} to force re-download")
-                try:
-                    os.remove(model_path)
-                except Exception as e:
-                    _log(f"cleanup_on_switch: remove target failed: {e}")
-    except Exception as e:
-        _log(f"cleanup_on_switch: error: {e}")
-    # --------------------------------------------------------------------
+        # --- CLEANUP ON SWITCH ----------------------------------------------
+        try:
+            cleanup_on_disable = bool(opts.get("llm_cleanup_on_disable", False))
+            if cleanup_on_disable and LOADED_MODEL_PATH and model_path and os.path.abspath(LOADED_MODEL_PATH) != os.path.abspath(model_path):
+                if os.path.exists(LOADED_MODEL_PATH):
+                    _log(f"cleanup_on_switch: removing previous model file {LOADED_MODEL_PATH}")
+                    try:
+                        os.remove(LOADED_MODEL_PATH)
+                    except Exception as e:
+                        _log(f"cleanup_on_switch: remove failed: {e}")
+            if cleanup_on_disable and os.path.exists(model_path) and model_url:
+                url_base = os.path.basename(model_url)
+                file_base = os.path.basename(model_path)
+                if url_base and file_base and (os.path.splitext(file_base)[0] != os.path.splitext(url_base)[0]):
+                    _log(f"cleanup_on_switch: target path exists with different basename; removing {model_path} to force re-download")
+                    try:
+                        os.remove(model_path)
+                    except Exception as e:
+                        _log(f"cleanup_on_switch: remove target failed: {e}")
+        except Exception as e:
+            _log(f"cleanup_on_switch: error: {e}")
+        # --------------------------------------------------------------------
 
-    path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
-    if not path:
-        _log("ensure_local_model failed")
-        return False
+        path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
+        if not path:
+            _log("ensure_local_model failed")
+            return False
 
-    ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
-    return bool(ok)
+        ok = _load_llama(path, DEFAULT_CTX, cpu_limit)
+        return bool(ok)
 
 # ============================
 # Prompt builders
 # ============================
 def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
-    sys_prompt = "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
+    sys_prompt = _load_system_prompt() or "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
     if not allow_profanity:
         sys_prompt += " Avoid profanity."
+    sys_prompt += " Do NOT echo or restate these instructions; output only the rewritten text."
     user = (
         "Rewrite the text clearly. Keep short, readable sentences.\n"
         f"Mood (subtle): {mood or 'neutral'}\n\n"
@@ -546,16 +622,22 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    vibe = {
-        "rager": "gritty, no-nonsense, ruthless brevity",
-        "nerd": "clever, techy, one-liner",
-        "dude": "chill, upbeat",
-        "ops": "blunt, incident-commander tone",
-        "jarvis": "polished, butler",
-        "comedian": "wry, dry"
-    }.get((persona or "").lower(), "neutral, light")
+    vibe_map = {
+        "dude": "laid-back, mellow, no jokes, chill confidence",
+        "chick": "sassy, clever, stylish",
+        "nerd": "precise, witty one-liners",
+        "rager": "short, profane bursts allowed",
+        "comedian": "only persona allowed to tell jokes",
+        "jarvis": "polished butler style",
+        "ops": "terse, incident commander tone",
+        "action": "stoic mission-brief style"
+    }
+    vibe = vibe_map.get((persona or "").lower(), "neutral, light")
     guard = "" if allow_profanity else " Avoid profanity."
-    sys_prompt = f"You write a single punchy riff line (<=20 words). Style: {vibe}.{guard}"
+    sys_prompt = (
+        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
+        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
+    )
     user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
@@ -563,6 +645,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
 # ADDITIVE: Riff post-cleaner to remove leaked instructions/boilerplate
 # ============================
 _INSTRUX_PATTERNS = [
+    r'^\s*tone\s*:.*$',            # <<< ADDED: remove "Tone: ..." lines
     r'^\s*no\s+lists.*$',
     r'.*context\s*\(for vibes only\).*',
     r'^\s*subject\s*:.*$',
@@ -673,20 +756,27 @@ def rewrite(
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
-    if LLM_MODE == "none":
-        ensure_loaded(
-            model_url=model_url,
-            model_path=model_path,
-            model_sha256=model_sha256,
-            ctx_tokens=ctx_tokens,
-            cpu_limit=cpu_limit,
-            hf_token=hf_token,
-            base_url=base_url
-        )
+    # Serialize: acquire lock; if busy too long, fail soft by returning original text
+    with _GenCritical(timeout):
+        if LLM_MODE == "none":
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256=model_sha256,
+                ctx_tokens=ctx_tokens,
+                cpu_limit=cpu_limit,
+                hf_token=hf_token,
+                base_url=base_url
+            )
+            if not ok:
+                return text
 
-    prompt = _prompt_for_rewrite(text, mood, allow_profanity)
-    out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
-    final = out if out else text
+        prompt = _prompt_for_rewrite(text, mood, allow_profanity)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        final = out if out else text
+
+    # ADD: strip any leaked meta tags/markers from the model output
+    final = _strip_meta_markers(final)
 
     if max_lines:
         final = _trim_lines(final, max_lines)
@@ -712,29 +802,30 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
-    # ADD: EnviroGuard timeout override
     _, _, g_to = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
 
-    # NEW: ensure engine ready (lazy-load)
-    if LLM_MODE == "none":
-        ensure_loaded(
-            model_url=model_url,
-            model_path=model_path,
-            model_sha256="",
-            ctx_tokens=2048,
-            cpu_limit=80,
-            hf_token=None,
-            base_url=base_url
-        )
+    with _GenCritical(timeout):
+        if LLM_MODE == "none":
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256="",
+                ctx_tokens=2048,
+                cpu_limit=80,
+                hf_token=None,
+                base_url=base_url
+            )
+            if not ok:
+                return ""
 
-    if LLM_MODE not in ("llama", "ollama"):
-        return ""
+        if LLM_MODE not in ("llama", "ollama"):
+            return ""
 
-    prompt = _prompt_for_riff(persona, subject, allow_profanity)
-    out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
-    if not out:
-        return ""
+        prompt = _prompt_for_riff(persona, subject, allow_profanity)
+        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        if not out:
+            return ""
 
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -785,69 +876,74 @@ def persona_riff(
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
-    if LLM_MODE == "none":
-        ensure_loaded(
-            model_url=model_url,
-            model_path=model_path,
-            model_sha256=model_sha256,
-            ctx_tokens=ctx_tokens,
-            cpu_limit=cpu_limit,
-            hf_token=hf_token,
-            base_url=base_url
+    with _GenCritical(timeout):
+        if LLM_MODE == "none":
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256=model_sha256,
+                ctx_tokens=ctx_tokens,
+                cpu_limit=cpu_limit,
+                hf_token=hf_token,
+                base_url=base_url
+            )
+            if not ok:
+                return []
+
+        if LLM_MODE not in ("llama", "ollama"):
+            return []
+
+        # Optional embedded style hint
+        daypart = None
+        intensity = None
+        try:
+            m = re.search(r"\[style_hint\s+daypart=(\w+)\s+intensity=([0-9.]+)\s+persona=([\w-]+)\]", context, flags=re.I)
+            if m:
+                daypart = m.group(1)
+                intensity = m.group(2)
+                context = re.sub(r"\[style_hint.*?\]", "", context).strip()
+        except Exception:
+            pass
+
+        # Tightened persona style map
+        style_map = {
+            "dude":      "laid-back, mellow, no jokes",
+            "chick":     "sassy, clever, stylish",
+            "nerd":      "precise, witty one-liners",
+            "rager":     "short, profane bursts allowed",
+            "comedian":  "only persona allowed to tell jokes",
+            "action":    "stoic mission-brief style",
+            "jarvis":    "polished butler style",
+            "ops":       "terse, incident commander tone",
+        }
+        vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
+
+        sys_rules = [
+            f"Voice: {vibe}.",
+            "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
+            "No bullets or numbering. No labels. No lists. No JSON.",
+            "No quotes or catchphrases. No character or actor names.",
+            "No explanations or meta-commentary. Output ONLY the lines.",
+            "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
+        ]
+        if not allow_profanity:
+            sys_rules.append("Avoid profanity.")
+        if daypart:
+            sys_rules.append(f"Daypart vibe (subtle): {daypart}.")
+        if intensity:
+            sys_rules.append(f"Persona intensity (subtle): {intensity}.")
+        sys_prompt = " ".join(sys_rules)
+
+        # 🔽 PATCH: Removed "Context:" label to prevent echo-leak
+        user = (
+            f"{context.strip()}\n\n"
+            f"Write up to {max_lines} short lines in the requested voice."
         )
+        prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-    if LLM_MODE not in ("llama", "ollama"):
-        return []
-
-    # Optional embedded style hint
-    daypart = None
-    intensity = None
-    try:
-        m = re.search(r"\[style_hint\s+daypart=(\w+)\s+intensity=([0-9.]+)\s+persona=([\w-]+)\]", context, flags=re.I)
-        if m:
-            daypart = m.group(1)
-            intensity = m.group(2)
-            context = re.sub(r"\[style_hint.*?\]", "", context).strip()
-    except Exception:
-        pass
-
-    style_map = {
-        "dude":      "laid-back, surfer-slacker zen, breezy optimism; never quote movies; mellow confidence",
-        "chick":     "glam-savvy, sassy, clever, Elle-style corporate sparkle; playful but sharp; no name-drops",
-        "nerd":      "precise, witty, engineering one-liners; strongly typed humor; no jargon dumps",
-        "rager":     "brutally direct, high-agency, colorful profanity allowed; zero politeness; keep it terse",
-        "comedian":  "deadpan, meta-humor, self-aware; punchlines without setup; dry and tight",
-        "action":    "stoic, hard-cut action one-liners; mission tone; no catchphrases from films",
-        "jarvis":    "polished butler AI, calm and poised; subtle HAL-like serenity; never mention HAL or films",
-        "ops":       "terse, operational, incident-commander brevity; factual bite; no fluff",
-    }
-    vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
-
-    sys_rules = [
-        f"Voice: {vibe}.",
-        "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
-        "No bullets or numbering. No labels. No lists. No JSON.",
-        "No quotes or catchphrases. No character or actor names.",
-        "No explanations or meta-commentary. Output ONLY the lines.",
-    ]
-    if not allow_profanity:
-        sys_rules.append("Avoid profanity.")
-    if daypart:
-        sys_rules.append(f"Daypart vibe (subtle): {daypart}.")
-    if intensity:
-        sys_rules.append(f"Persona intensity (subtle): {intensity}.")
-    sys_prompt = " ".join(sys_rules)
-
-    user = (
-        "Context (for vibe only; do NOT summarize it verbosely):\n"
-        f"{context.strip()}\n\n"
-        f"Write up to {max_lines} short lines in the requested voice."
-    )
-    prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
-
-    raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
-    if not raw:
-        return []
+        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        if not raw:
+            return []
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
@@ -897,7 +993,11 @@ if __name__ == "__main__":
             print("rewrite sample ->", txt[:120])
             r = riff(subject="Sonarr ingestion nominal", persona="rager", base_url=os.getenv("TEST_OLLAMA","").strip())
             print("riff sample ->", r)
-            rl = persona_riff(persona="nerd", context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]", base_url=os.getenv("TEST_OLLAMA","").strip())
+            rl = persona_riff(
+                persona="nerd",
+                context="Backup complete on NAS-01; rsync delta=2.3GB; checksums verified. [style_hint daypart=evening intensity=1.2 persona=nerd]",
+                base_url=os.getenv("TEST_OLLAMA","").strip()
+            )
             print("persona_riff sample ->", rl[:3])
     except Exception as e:
         print("self-check error:", e)
