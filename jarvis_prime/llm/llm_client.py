@@ -540,15 +540,20 @@ def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
     if not use_grammar:
         return kwargs
     try:
-        kwargs["grammar"] = _RIFF_GBNF
-    except Exception:
-        pass
+        llama_cpp = _try_import_llama_cpp()
+        if llama_cpp and hasattr(llama_cpp, "LlamaGrammar"):
+            kwargs["grammar"] = llama_cpp.LlamaGrammar.from_string(_RIFF_GBNF)
+        else:
+            # Fallback: older versions may accept raw string
+            kwargs["grammar"] = _RIFF_GBNF
+    except Exception as e:
+        _log(f"grammar setup failed: {e}")
     return kwargs
 
 # ============================
 # Core generation (shared)
 # ============================
-def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) -> str:
+def _llama_generate(prompt: str, timeout: int, with_grammar: bool = False) -> str:
     """Generate text via local llama-cpp (non-streaming)."""
     try:
         import signal
@@ -556,6 +561,9 @@ def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) 
             raise TimeoutError("gen timeout")
         if hasattr(signal, "SIGALRM"):
             signal.signal(signal.SIGALRM, _alarm_handler)
+            # Respect caller-supplied timeout strictly (Unix-only). Python docs: signal.alarm(seconds). 
+            # Availability: Unix. 
+            # Ref: https://docs.python.org/3/library/signal.html
             signal.alarm(max(1, int(timeout)))
 
         params = dict(
@@ -569,7 +577,7 @@ def _llama_generate(prompt: str, timeout: int = 12, with_grammar: bool = False) 
         params = _maybe_with_grammar(params, with_grammar)
 
         t0 = time.time()
-        out = LLM(**params)
+        out = LLM(**params)  # llama-cpp-python __call__(...) supports grammar kwarg. See API ref.
         ttft = time.time() - t0
         _log(f"TTFT ~ {ttft:.2f}s")
 
@@ -924,6 +932,25 @@ def persona_riff(
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
     return cleaned
+
+# ============================
+# Riff line cleaner (utility used above)
+# ============================
+def _clean_riff_lines(lines: List[str]) -> List[str]:
+    out: List[str] = []
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            continue
+        s = _strip_meta_markers(s)
+        s = s.strip('`"\' ').strip()
+        # Drop leading persona labels / bullets
+        s = re.sub(r'^(?:[-•*]\s*|\w+\s*:\s*)', '', s).strip()
+        # Collapse whitespace
+        s = re.sub(r'\s+', ' ', s)
+        if s:
+            out.append(s)
+    return out
 
 # ============================
 # Quick self-test (optional)
