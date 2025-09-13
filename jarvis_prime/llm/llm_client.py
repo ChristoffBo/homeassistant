@@ -697,7 +697,8 @@ def _llama_generate(prompt: str, timeout: int = 12) -> str:
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=["</s>"]
+            # PATCH: include Phi-style stop tokens so chat template ends properly
+            stop=["<|end|>", "<|endoftext|>", "</s>"]
         )
 
         if hasattr(signal, "SIGALRM"):
@@ -802,10 +803,23 @@ def riff(
     Generate 1–3 very short riff lines for the bottom of a card.
     Returns empty string if engine unavailable.
     """
+    # Respect options.json llm_timeout_seconds if present
+    try:
+        _opts = _read_options()
+        opt_to = int(_opts.get("llm_timeout_seconds", timeout))
+        if opt_to > 0:
+            timeout = opt_to
+    except Exception:
+        pass
+
     _, _, g_to = _enviroguard_limits(None, None, timeout)
     timeout = g_to if g_to is not None else timeout
 
-    with _GenCritical(timeout):
+    # Split lock wait vs generation budget to avoid starvation
+    _lock_wait = min(8, max(2, timeout // 3))
+    _gen_to    = max(4, timeout)
+
+    with _GenCritical(_lock_wait):
         if LLM_MODE == "none":
             ok = ensure_loaded(
                 model_url=model_url,
@@ -823,7 +837,7 @@ def riff(
             return ""
 
         prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        out = _do_generate(prompt, timeout=_gen_to, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         if not out:
             return ""
 
@@ -876,7 +890,20 @@ def persona_riff(
     cpu_limit  = g_cpu if g_cpu is not None else cpu_limit
     timeout    = g_to  if g_to  is not None else timeout
 
-    with _GenCritical(timeout):
+    # Respect options.json llm_timeout_seconds if present
+    try:
+        _opts = _read_options()
+        opt_to = int(_opts.get("llm_timeout_seconds", timeout))
+        if opt_to > 0:
+            timeout = opt_to
+    except Exception:
+        pass
+
+    # Split lock wait vs generation budget
+    _lock_wait = min(8, max(2, timeout // 3))
+    _gen_to    = max(4, timeout)
+
+    with _GenCritical(_lock_wait):
         if LLM_MODE == "none":
             ok = ensure_loaded(
                 model_url=model_url,
@@ -941,7 +968,7 @@ def persona_riff(
         )
         prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-        raw = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path)
+        raw = _do_generate(prompt, timeout=_gen_to, base_url=base_url, model_url=model_url, model_name_hint=model_path)
         if not raw:
             return []
 
