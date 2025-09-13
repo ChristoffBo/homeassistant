@@ -322,7 +322,7 @@ def _resolve_model_from_options(
 
     for u, p in cand:
         if u and p:
-            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u)} path={os.path.basename(p)} autodownload={autodl}")
+            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path={os.path.basename(p)} autodownload={autodl}")
             return u, p, token
 
     return url, path, token
@@ -724,24 +724,31 @@ def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
     )
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    vibe_map = {
-        "dude": "laid-back, mellow, no jokes, chill confidence",
-        "chick": "sassy, clever, stylish",
-        "nerd": "precise, witty one-liners",
-        "rager": "short, profane bursts allowed",
-        "comedian": "only persona allowed to tell jokes",
-        "jarvis": "polished butler style",
-        "ops": "terse, incident commander tone",
-        "action": "stoic mission-brief style"
+def _persona_descriptor(persona: str) -> str:
+    p = (persona or "").strip().lower()
+    mapping = {
+        "dude": "laid-back, mellow, calm confidence; avoids jokes.",
+        "chick": "sassy, clever, stylish; crisp phrasing.",
+        "nerd": "precise, witty, techy; low fluff.",
+        "rager": "short, intense bursts; may be edgy.",
+        "comedian": "quippy and playful; jokes allowed.",
+        "jarvis": "polished, butler tone; concise.",
+        "ops": "terse, incident commander; direct.",
+        "action": "stoic mission-brief style; clipped."
     }
-    vibe = vibe_map.get((persona or "").lower(), "neutral, light")
+    return mapping.get(p, "neutral, subtle tone.")
+
+def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
+    base_sys = _load_system_prompt() or ""
+    persona_line = f"Persona style: { _persona_descriptor(persona) }"
     guard = "" if allow_profanity else " Avoid profanity."
-    sys_prompt = (
-        f"You write 1–3 punchy riff lines (<=20 words). Style: {vibe}.{guard} "
-        "Do NOT tell jokes unless persona=comedian. Do NOT drift into another persona’s style."
+    riff_rules = (
+        "Write 1–3 punchy one-liners (<=20 words each)."
+        " Keep them distinct. No bullets or numbers. No meta-commentary."
+        " Output ONLY the lines."
     )
-    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines. No emojis unless they fit."
+    sys_prompt = ("\n\n".join([s for s in [base_sys, persona_line, riff_rules + guard] if s])).strip()
+    user = f"Subject: {subject or 'Status update'}\nWrite 1 to 3 short lines."
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
 # ============================
@@ -812,50 +819,20 @@ def riff(
     allow_profanity: bool = False
 ) -> str:
     """
-    Generate 1–3 very short riff lines for the bottom of a card.
+    Alias to persona_riff for persona-consistent riffs.
     Returns empty string if engine unavailable.
     """
-    # Pull from config profile (ignore the 8s default arg)
-    _, prof_cpu, prof_ctx, prof_timeout = _current_profile()
-    timeout = prof_timeout
-    cpu_limit = prof_cpu
-    ctx_tokens = min(prof_ctx, 2048)  # riffs are short; no need for huge ctx
-
-    with _GenCritical(timeout):
-        if LLM_MODE == "none":
-            ok = ensure_loaded(
-                model_url=model_url,
-                model_path=model_path,
-                model_sha256="",
-                ctx_tokens=ctx_tokens,
-                cpu_limit=cpu_limit,
-                hf_token=None,
-                base_url=base_url
-            )
-            if not ok:
-                return ""
-
-        if LLM_MODE not in ("llama", "ollama"):
-            return ""
-
-        prompt = _prompt_for_riff(persona, subject, allow_profanity)
-        _log(f"riff: effective timeout={timeout}s")
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=64, with_grammar_auto=True)
-        if not out:
-            return ""
-
-    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    lines = _clean_riff_lines(lines)
-
-    cleaned: List[str] = []
-    for ln in lines:
-        ln = ln.lstrip("-•* ").strip()
-        if ln:
-            cleaned.append(ln)
-        if len(cleaned) >= 3:
-            break
-
-    joined = "\n".join(cleaned[:3]) if cleaned else ""
+    lines = persona_riff(
+        persona=persona,
+        context=f"Subject: {subject}",
+        max_lines=3,
+        timeout=timeout,
+        base_url=base_url,
+        model_url=model_url,
+        model_path=model_path,
+        allow_profanity=allow_profanity
+    )
+    joined = "\n".join(lines[:3]) if lines else ""
     if len(joined) > 120:
         joined = joined[:119].rstrip() + "…"
     return joined
@@ -920,20 +897,11 @@ def persona_riff(
         except Exception:
             pass
 
-        style_map = {
-            "dude":      "laid-back, mellow, no jokes",
-            "chick":     "sassy, clever, stylish",
-            "nerd":      "precise, witty one-liners",
-            "rager":     "short, profane bursts allowed",
-            "comedian":  "only persona allowed to tell jokes",
-            "action":    "stoic mission-brief style",
-            "jarvis":    "polished butler style",
-            "ops":       "terse, incident commander tone",
-        }
-        vibe = style_map.get((persona or "").lower().strip(), "neutral, keep it short")
-
-        sys_rules = [
-            f"Voice: {vibe}.",
+        base_sys = _load_system_prompt() or ""
+        persona_line = f"Persona style: { _persona_descriptor(persona) }"
+        sys_parts = [
+            base_sys,
+            persona_line,
             "Write up to {N} distinct one-liners. Each ≤ 140 chars.",
             "No bullets or numbering. No labels. No lists. No JSON.",
             "No quotes or catchphrases. No character or actor names.",
@@ -941,12 +909,12 @@ def persona_riff(
             "Do NOT tell jokes unless persona = comedian. Do NOT drift into another persona’s style.",
         ]
         if not allow_profanity:
-            sys_rules.append("Avoid profanity.")
+            sys_parts.append("Avoid profanity.")
         if daypart:
-            sys_rules.append(f"Daypart vibe (subtle): {daypart}.")
+            sys_parts.append(f"Daypart vibe (subtle): {daypart}.")
         if intensity:
-            sys_rules.append(f"Persona intensity (subtle): {intensity}.")
-        sys_prompt = " ".join(sys_rules)
+            sys_parts.append(f"Persona intensity (subtle): {intensity}.")
+        sys_prompt = " ".join([s for s in sys_parts if s]).strip()
 
         user = (
             f"{context.strip()}\n\n"
