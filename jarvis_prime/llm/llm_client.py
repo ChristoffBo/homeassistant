@@ -567,7 +567,7 @@ def _llama_generate(prompt: str, timeout: int = 12, max_tokens: Optional[int] = 
             temperature=0.35,
             top_p=0.9,
             repeat_penalty=1.1,
-            stop=[EOS_TOKEN, "<|assistant|>"]
+            stop=[EOS_TOKEN, "<|assistant|>", "<|endoftext|>"]
         )
 
         if hasattr(signal, "SIGALRM"):
