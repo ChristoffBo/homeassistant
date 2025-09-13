@@ -658,8 +658,8 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
             prompt=prompt,
             max_tokens=max(1, int(max_tokens)),
             temperature=0.75,
-            top_p=0.9,
-            repeat_penalty=1.1,
+            top_p=0.95,
+            repeat_penalty=1.10,
             stop=_stops_for_model(),
         )
         params = _maybe_with_grammar(params, with_grammar)
@@ -823,10 +823,10 @@ def _persona_descriptor(persona: str) -> str:
         "dude": "laid-back, mellow, calm confidence; avoids jokes.",
         "chick": "sassy, clever, stylish; crisp phrasing.",
         "nerd": "precise, witty, techy; low fluff.",
-        "rager": "short, angry, intense bursts; may be edgy.",
+        "rager": "angry, intense bursts; may be edgy.",
         "comedian": "quippy and playful; jokes allowed.",
-        "jarvis": "polished, AI, butler tone; concise.",
-        "ops": "terse, incident commander; direct.",
+        "jarvis": "polished, butler tone; concise.",
+        "ops": "ai, incident commander; direct.",
         "action": "stoic mission-brief style; clipped."
     }
     return mapping.get(p, "neutral, subtle tone.")
