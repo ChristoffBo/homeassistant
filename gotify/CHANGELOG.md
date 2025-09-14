@@ -1,3 +1,7 @@
+## 2.7.2 (2025-09-14 04:00:45)
+- Update from 2.6.3 to 2.7.2
+- Docker Image: [gotify/server:2.7.2](https://hub.docker.com/r/gotify/server/tags)
+
 ## 2.6.3
 - Updated from unknown to 2.6.3
 - Docker: [gotify/server:latest](gotify/pkgs/container/server:latest/tags)
