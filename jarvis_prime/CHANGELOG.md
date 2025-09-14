@@ -1,3 +1,7 @@
+## latest (2025-09-14 21:00:00)
+Riffs no use less CPU alot less.
+Fallsback to Lexicon riffs if it fails.
+Top messages from persona is now Lexicon Only.
 ## latest (2025-09-12 22:00:00)
 Bumped llama-cpp-python==0.2.90 to 0.3.16
 ## latest (2025-09-10 08:00:00)
