@@ -95,12 +95,6 @@ def _extract_riff_training_block(full_text: str) -> str:
     """
     return ""
 
-# NEW: subject extractor
-def _extract_subject_from_context(ctx: str) -> str:
-    m = re.search(r"Subject:\s*(.+)", ctx, flags=re.I)
-    subj = (m.group(1) if m else ctx or "").strip()
-    return re.sub(r"\s+", " ", subj)[:140]
-
 # ============================
 # Persona-token scrubbing
 # ============================
@@ -127,15 +121,41 @@ def _scrub_persona_tokens(s: str) -> str:
     cur = re.sub(r"\s{2,}", " ", cur).strip()
     return cur
 
+# ----------------------------
+# NEW: transport tag stripper
+# ----------------------------
+_TRANSPORT_TAG_RX = re.compile(
+    r'^\s*(?:\[(?:smtp|proxy|http|https|gotify|webhook|apprise|ntfy|email|mailer|forward|poster)\]\s*)+',
+    flags=re.I
+)
+def _strip_transport_tags(s: str) -> str:
+    if not s:
+        return s
+    prev = None
+    cur = s
+    while prev != cur:
+        prev = cur
+        cur = _TRANSPORT_TAG_RX.sub("", cur).lstrip()
+    cur = re.sub(r'^\s*\[(?:smtp|proxy|http|https|gotify|webhook|apprise|ntfy|email|mailer|forward|poster)\]\s*$',
+                 '', cur, flags=re.I|re.M)
+    return cur
+
+# NEW: subject extractor
+def _extract_subject_from_context(ctx: str) -> str:
+    m = re.search(r"Subject:\s*(.+)", ctx, flags=re.I)
+    subj = (m.group(1) if m else ctx or "").strip()
+    subj = _strip_transport_tags(subj)
+    return re.sub(r"\s+", " ", subj)[:140]
+
 def _sanitize_context_subject(ctx: str) -> str:
-    """Find 'Subject: ...' inside context and scrub persona tokens from the subject."""
+    """Find 'Subject: ...' inside context and scrub persona tokens and transport tags from the subject."""
     if not ctx:
         return ctx
     m = re.search(r"(Subject:\s*)(.+)", ctx, flags=re.I)
     if not m:
         return ctx
     prefix, raw = m.group(1), m.group(2)
-    cleaned = _scrub_persona_tokens(raw)
+    cleaned = _strip_transport_tags(_scrub_persona_tokens(raw))
     return ctx[:m.start(1)] + prefix + cleaned + ctx[m.end(2):]
 
 # ============================
@@ -673,6 +693,7 @@ def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
 def _clean_riff_lines(lines: List[str]) -> List[str]:
     cleaned = []
     for ln in lines:
+        ln = _strip_transport_tags(ln)
         ln = _scrub_persona_tokens(ln)
         ln = _strip_meta_markers(ln)
         ln = ln.strip().strip('"').strip("'")
@@ -774,7 +795,7 @@ def _lexi_compose_line(subject: str, allow_profanity: bool) -> str:
 
 def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_profanity: bool) -> List[str]:
     # Subject-aware, phrase-based Lexi fallback (fast, deterministic-ish)
-    subj = _scrub_persona_tokens(subject or "Update").strip()
+    subj = _strip_transport_tags(_scrub_persona_tokens(subject or "Update")).strip()
     lines: List[str] = []
     used: set[str] = set()
     for _ in range(max(1, int(max_lines or 3))):
@@ -1051,8 +1072,8 @@ def riff(
     model_path: str = "",
     allow_profanity: bool = False
 ) -> str:
-    # Scrub persona tokens from subject before building context
-    subject = _scrub_persona_tokens(subject or "")
+    # Scrub persona tokens and transport tags from subject before building context
+    subject = _strip_transport_tags(_scrub_persona_tokens(subject or ""))
     lines = persona_riff(
         persona=persona,
         context=f"Subject: {subject}",
