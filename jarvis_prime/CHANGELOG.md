@@ -1,5 +1,5 @@
 ## latest (2025-09-14 21:00:00)
-Riffs no use less CPU alot less.
+Riffs now use less CPU alot less.
 Fallsback to Lexicon riffs if it fails.
 Top messages from persona is now Lexicon Only.
 ## latest (2025-09-12 22:00:00)
