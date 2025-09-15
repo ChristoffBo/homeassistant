@@ -104,13 +104,16 @@ async def api_create_message(request: web.Request):
     mid = storage.save_message(title, body, source, priority, extras)  # type: ignore
     _broadcast("created", id=int(mid))
 
-    # ---- NEW: forward to HA notify if enabled ----
+    # ---- NEW: forward to Home Assistant notify if enabled ----
     try:
         opts_path = Path("/data/options.json")
         if opts_path.exists():
             with opts_path.open() as f:
                 options = json.load(f)
-            if options.get("ha_notify_service"):
+            if options.get("push_ha_enabled") and options.get("push_ha_service"):
+                # helper expects 'ha_notify_service', map from our toggle name
+                options = dict(options)  # shallow copy
+                options["ha_notify_service"] = options["push_ha_service"]
                 push_to_ha_notify(title, body, options)
     except Exception as e:
         print(f"[ha_notify] Error while forwarding: {e}")
