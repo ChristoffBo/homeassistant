@@ -7,26 +7,32 @@
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
-  "ingress": true,
-  "ingress_port": 0,
+  "ingress": false,
   "panel_icon": "mdi:lan",
   "ports": {
     "8000/tcp": 8000
   },
   "ports_description": {
-    "8000/tcp": "WebUI (disable if using Ingress)"
-  },
-  "map": ["config:rw"],
-  "options": {
-    "PUID": 1000,
-    "PGID": 1000,
-    "TZ": "Africa/Johannesburg",
-    "DB_PASS": "librenms"
+    "8000/tcp": "Web UI (http://HA-IP:8000)"
   },
   "schema": {
     "PUID": "int",
     "PGID": "int",
     "TZ": "str",
-    "DB_PASS": "str"
+    "DB_HOST": "str",
+    "DB_PORT": "int",
+    "DB_NAME": "str",
+    "DB_USER": "str",
+    "DB_PASSWORD": "str"
+  },
+  "options": {
+    "PUID": 1000,
+    "PGID": 1000,
+    "TZ": "Africa/Johannesburg",
+    "DB_HOST": "core-mariadb",
+    "DB_PORT": 3306,
+    "DB_NAME": "librenms",
+    "DB_USER": "librenms",
+    "DB_PASSWORD": "changeme"
   }
 }
