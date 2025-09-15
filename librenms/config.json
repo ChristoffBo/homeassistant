@@ -28,6 +28,5 @@
     "PGID": "int",
     "TZ": "str",
     "DB_PASS": "str"
-  },
-  "image": "lscr.io/linuxserver/librenms"
+  }
 }
