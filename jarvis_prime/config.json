@@ -153,7 +153,7 @@
     "llm_phi35_q5_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q5_K_M.gguf",
     "llm_phi35_q5_path": "/share/jarvis_prime/models/Phi-3.5-mini-instruct-q5.gguf",
     "llm_phi35_q5_uncensored_enabled": false,
-    "llm_phi35_q5_uncensored_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-uncensored-Q5_K_M.gguf",
+    "llm_phi35_q5_uncensored_url": "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
     "llm_phi35_q5_uncensored_path": "/share/jarvis_prime/models/Phi-3.5-mini-uncensored-q5.gguf",
     "llm_enviroguard_enabled": true,
     "llm_enviroguard_poll_minutes": 30,
