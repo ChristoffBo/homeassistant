@@ -22,9 +22,8 @@
 #   - LLM_PERSONA_LINES_MAX: int, default 3
 #   - LLM_MODELS_PRIORITY, LLM_OLLAMA_BASE_URL / OLLAMA_BASE_URL, LLM_MODEL_URL, LLM_MODEL_PATH
 #   - BEAUTIFY_LLM_ENABLED: "true"/"false" gates llm_quips()
-#
 import random, os, importlib, re, time
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 # ----------------------------------------------------------------------------
 # Transport / source tag scrubber
@@ -166,7 +165,7 @@ def _apply_daypart_flavor_inline(persona: str, text: str) -> str:
     flavor = table.get(dp, {}).get(persona, "")
     if not flavor:
         return text
-    # Inserter: if placeholder {time} exists, replace, else append softly
+    # Inserter: if placeholder {time} exists, replace, else return unchanged (we keep headers tight)
     if "{time}" in text:
         return text.replace("{time}", flavor)
     return text
@@ -244,12 +243,12 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
         "dude": "Laid-back slacker-zen; mellow, cheerful, kind. Keep it short, breezy, and confident.",
         "chick":"Glamorous couture sass; bubbly but razor-sharp. Supportive, witty, stylish, high standards.",
         "nerd":"Precise, pedantic, dry wit; obsessed with correctness, determinism, graphs, and tests.",
-        "rager":"Intense, profane, street-tough cadence. Blunt, kinetic, zero patience for bullshit.",
+        "rager":"Intense, profane, street-tough cadence. Blunt, kinetic, zero patience for nonsense.",
         "comedian":"Deadpan spoof meets irreverent meta—fourth-wall pokes, concise and witty.",
-        "action":"Terse macho one-liners; tactical, explosive, sardonic; mission-focused and decisive.",
-        "jarvis":"Polished valet AI with calm, clinical machine logic. Courteous, anticipatory, slightly eerie.",
+        "action":"Terse macho one-liners; tactical, sardonic; mission-focused and decisive.",
+        "jarvis":"Polished valet AI with calm, clinical machine logic. Courteous, anticipatory.",
         "ops":"Neutral SRE acks; laconic, minimal flourish.",
-        "tappit": "South African street/bru/lekker slang; cheeky but clear; no rev-rev filler."
+        "tappit": "South African bru/lekker slang; cheeky but clear; no filler.",
     }.get(key, "Short, clean, persona-true one-liners.")
     style_hint = f"daypart={_daypart()}, intensity={_intensity():.2f}, persona={key}"
     # Primary persona_riff
@@ -322,7 +321,7 @@ _PERSONA_BANK_KEY = {
     "nerd": "line",
 }
 
-# Lexicons: concise but rich; rager/tappit expanded; others solid coverage
+# Lexicons: all ≥ ~50, meaningful and template-friendly
 _LEX: Dict[str, Dict[str, List[str]]] = {
     "ops": {
         "ack": [
@@ -345,7 +344,17 @@ _LEX: Dict[str, Dict[str, List[str]]] = {
             "failover rehearsal passed; perimeter calm","cache generous; etiquette maintained","encryption verified; perimeter secure",
             "uptime curated; boredom exemplary","trace polished; journals logged","alerts domesticated; only signal remains",
             "confidence exceeds risk; proceed","maintenance passed unnoticed; records immaculate","graceful nudge applied; daemon compliant",
-            "quiet mitigation; impact nil","indexes tidy; archives in order"
+            "quiet mitigation; impact nil","indexes tidy; archives in order","change window honored; optics clean",
+            "handover elegant; notes precise","backpressure civilized; queues courteous","fail-safe primed; decorum intact",
+            "replicas attentive; quorum polite","rate limits gentlemanly; costs discreet","noise quarantined; signal escorted",
+            "cadence even; posture composed","rollouts courteous; guardrails present","backfills mannered; histories neat",
+            "concurrency tamed; threads well-behaved","latency chauffeured; jitter brief","budget respected; refinement visible",
+            "orchestration poised; choreography exact","secrets rotated; memories short","observability curated; dashboards dapper",
+            "incidents domesticated; pages rare","degradations declined; polish ascendant","resilience rehearsed; etiquette immaculate",
+            "audit trails luminous; paperwork minimal","artifacts dusted; indexes fragrant","drift corrected; symmetry restored",
+            "telemetry monogrammed; graphs tailored","uptime framed; silence intentional","handoff seamless; provenance clear",
+            "compliance effortless; posture impeccable","cache refreshed; manners intact","locks courteous; contention modest",
+            "footprint light; impact negligible","availability tailored; elegance constant"
         ]
     },
     "nerd": {
@@ -355,7 +364,18 @@ _LEX: Dict[str, Dict[str, List[str]]] = {
             "graph confirms; model agrees","SLA satisfied; telemetry coherent","unit tests pass; coverage sane",
             "retry with jitter; backpressure OK","NTP aligned; time monotonic","GC pauses low; alloc rate steady",
             "argmin reached; variance small","latency within CI; budgets safe","tail risk negligible; outliers trimmed",
-            "refactor proven; complexity down","DRY upheld; duplication removed","entropy reduced; order restored"
+            "refactor proven; complexity down","DRY upheld; duplication removed","entropy reduced; order restored",
+            "cache locality improved; misses down","branch prediction friendly; stalls rare","O(n) achieved; constants trimmed",
+            "deadlocks absent; liveness holds","heap pressure stable; fragmentation low","index selectivity high; scans minimal",
+            "AP chose availability; consistency eventual","CAP respected; trade-offs explicit","Amdahl smiles; parallelism sane",
+            "cold starts amortized; warm paths preferred","hash distribution uniform; collisions rare",
+            "cardinality understood; histograms honest","idempotence intact; retries cheap","time-series compact; deltas tidy",
+            "throughput linear; headroom visible","latency histogram civilized; tails cut","variance explained; R² smug",
+            "feature flags gated; blast radius tiny","circuit closed; fallback asleep","read-after-write coherent enough",
+            "bounded queues; fair scheduling","causal order preserved; replays exact","roll-forward safe; rollbacks rehearsed",
+            "mutexes minimal; contention mapped","allocations pooled; GC naps","vectorized path wins; scalar retires",
+            "cache warm; TLB polite","TLS fast; handshakes trimmed","telemetry cardinality bounded; cost sane",
+            "SLO met; error budget plush","kanban flow; WIP low","postmortem short; learnings long"
         ]
     },
     "action": {
@@ -363,7 +383,19 @@ _LEX: Dict[str, Dict[str, List[str]]] = {
             "targets green; advance approved","threat neutralized; perimeter holds","payload verified; proceed",
             "rollback vector armed; safety on","triage fast; stabilize faster","deploy quiet; results loud",
             "guard the SLO; hold the line","extract successful; area safe","scope trimmed; blast radius minimal",
-            "contact light; switch traffic","mission first; ego last","abort gracefully; re-attack smarter"
+            "contact light; switch traffic","mission first; ego last","abort gracefully; re-attack smarter",
+            "eyes up; logs live","stack locked; breach denied","move silent; ship violent",
+            "path clear; burn down","patch hot; risk cold","cutover clean; chatter zero",
+            "tempo high; friction low","signal up; noise down","defuse page; secure core",
+            "map terrain; flank failure","pin the root; pull the weed","toggle flag; steer fate",
+            "breach sealed; assets safe","hit window; exit crisp","ops steady; hands calm",
+            "lean scope; lethal focus","pressure on; panic off","hold discipline; win uptime",
+            "smoke tested; doors open","grid stable; threat boxed","air cover ready; roll",
+            "recon done; execute clean","no drama; just shipping","armor up; regressions down",
+            "route traffic; trace truth","calm voice; sharp actions","contain blast; save face",
+            "clear runway; punch it","patch discipline; posture strong","reload services; hold axis",
+            "compartmentalize risk; breathe","hand-off tight; mission intact","drill paid off; ops sings",
+            "suppress alarms; track targets","eyes on gauges; trust plan","exfil logs; lock vault"
         ]
     },
     "comedian": {
@@ -372,26 +404,64 @@ _LEX: Dict[str, Dict[str, List[str]]] = {
             "plot twist: stable; credits roll quietly","laugh track muted; uptime refuses drama","peak normal; show cancelled",
             "retro skipped; nothing exploded","applause optional; graphs yawn","jokes aside; it actually works",
             "deadpan OK; try not to faint","boring graphs win; sequels delayed","we did it; Jenkins takes the bow",
-            "thrilling news: nothing is wrong","latency on time; comedy off","confetti in staging; not here"
+            "thrilling news: nothing is wrong","latency on time; comedy off","confetti in staging; not here",
+            "no cliffhangers; just commits","punchline withheld; service delivered","pilot renewed; drama not",
+            "laughs in monotony; cries in errors","green bars—audience left early","credits rolled; pager slept",
+            "build so dull it’s beautiful","the bug cancelled itself","SRE: the silent comedians",
+            "silence is my laugh track","our outage arc was cut","spoiler: it’s fine","bloopers only in dev",
+            "slapstick-free deploy","stand-up for uptime","bananas not on the floor","cue cards say ‘boring’",
+            "clowns off-duty; graphs beige","insert laugh; remove alert","sitcom rerun: stability",
+            "punch-up cancelled; prod safe","tight five on reliability","heckler muted; 200 OK",
+            "open mic closed; SLA met","callback landed; queues drained","slow clap saved for later",
+            "kill the laugh track; keep the SLO","bit killed; bug too","props to caching; no acting",
+            "crowd left; uptime stayed","one-liners only; zero fires","low effort; high effect",
+            "final joke: nothing broke"
         ]
     },
     "dude": {
         "line": [
             "verified; keep it mellow","queues breathe; vibes stable","roll with it; no drama",
             "green checks; take it easy","cache hits high; chill intact","latency surfed; tide calm",
-            "nap secured; alerts low","ride the wave; ship small","be water; flow steady"
+            "nap secured; alerts low","ride the wave; ship small","be water; flow steady",
+            "friction low; sandals on","pager quiet; hammock loud","steady flow; no whitecaps",
+            "easy does it; deploy smooth","logs zen; noise gone","coffee warm; ops cool",
+            "cruise control; hands light","steady stoke; bugs smoked","float mode; errors sunk",
+            "cool breeze; hotfix cold","vibes aligned; graphs kind","mellow merge; drama nil",
+            "calm seas; green buoys","flow state; stress late","good karma; clean schema",
+            "no sweat; just set","lazy river; quick commits","keep it loose; checks tight",
+            "low tide errors; high tide wins","sand between toes; not gears","latency chilled; surf up",
+            "cozy cache; sunny CI","flip-flop deploys; barefoot ops","chill pipeline; brisk results",
+            "dawn patrol; build glassy","easy paddle; quick ride","stoked on SLOs; mellow on egos",
+            "zen master of retries","soft landings; soft pretzels","keep rolling; keep cool",
+            "laid back; locked in","margarita metrics; salt rim","vibe check: all green",
+            "fog lifts; logs clear","waves small; smiles big","ship tiny; sleep heavy",
+            "go with the flow; glow","drama-free zone; zone in","light breeze; heavy uptime",
+            "good juju; clean deploy"
         ]
     },
     "chick": {
         "line": [
             "QA-clean; runway-ready","zero-downtime; she’s grace","polish applied; ship with shine",
             "alerts commitment-ready; logs tasteful","secure defaults; couture correct","green across; camera-ready",
-            "perf smooth; silk finish","refactor = self-care; release worthy","gatekept prod; VIPs only"
+            "perf smooth; silk finish","refactor = self-care; release worthy","gatekept prod; VIPs only",
+            "makeup on; bugs off","latency sleek; heels higher","wardrobe change; no costume drama",
+            "hair did; graphs did too","lip gloss popping; errors dropping","fit checked; build checked",
+            "playlist vibing; deploy sliding","eyeliner sharp; cuts cleaner","couture cache; chic checks",
+            "uptime glows; pager dozes","staging flirted; prod committed","heels steady; metrics petty",
+            "smudge-proof SLA; kiss-proof deploy","catwalk to prod; trip-free","couture config; zero cringe",
+            "silk rollback; velvet rollout","accessories minimal; impact maximal","bottled polish; uncorked ship",
+            "pearls on; rough edges off","seamless seams; spotless logs","mascara dry; code crisp",
+            "mirror checks; alert checks","velvet ropes; tight scopes","dewy graphs; matte risks",
+            "clean palette; clean pipeline","gold hoops; zero loops","high gloss; low noise",
+            "tucked edges; tight cadence","sleek silhouette; slim latencies","shine on; bugs gone",
+            "dramatic liner; calm deploy","mood board says ‘ship’","fit for prod; fit for print",
+            "couture cadence; error-free","capsule release; timeless","no smears; no smolders",
+            "tasteful trims; tasteful logs","glam yes; outages no","cat-eye sharp; rollback soft",
+            "silhouette strong; incidents weak"
         ]
     },
     "rager": {
         "rage": [
-            # Purposeful fury; each line communicates state or action
             "kill the flake; ship the fix","stop the damn noise; own the pager","sorted; now piss off",
             "you mother fucker you; done","fuckin’ prick; fix merged","piece of shit; rollback clean",
             "asshole alert; silenced","dumb fuck bug; dead","fuck face error; crushed",
@@ -400,16 +470,36 @@ _LEX: Dict[str, Dict[str, List[str]]] = {
             "talk less; ship more","root cause or bust; do it now","ffs patch; deploy hot",
             "own it; stop guessing","pager sings; you dance","green or gone; pick",
             "no more cowboy deploys; grow up","fix the root; not my mood","stop click-opsing prod; read the runbook",
-            "feature flag it; or I flag you","silence the alert; or I silence your access"
+            "feature flag it; or I flag you","silence the alert; or I silence your access",
+            "cut the crap; merge clean","ship or shut it","slam the gate; hold the line",
+            "stop the thrash; pick a plan","quit hand-waving; bring data","patch the leak; not the story",
+            "burn the flake; freeze the scope","no tourists in prod; badge up","alerts are rent; pay them",
+            "shock the cache; cool the heat","tighten blast radius; grow spine","ship small; swear less",
+            "argue later; page now","we fix fast; we don’t whine","dogpile the root; starve the noise",
+            "no mystery meat; label it","switch traffic; stop panic","own the rollback; own the win",
+            "push the patch; pull the risk","turn off hero mode; turn on discipline","ban chaos; invite repeatability",
+            "your excuse crashed; mine shipped","risk is loud; rigor is louder","hold the standard; hold your tongue"
         ]
     },
     "tappit": {
         "line": [
-            # SA slang; no "rev-rev" filler
             "sorted bru; lekker clean","sharp-sharp; no kak","howzit bru; all green",
             "pipeline smooth; keep it tidy","idling lekker; don’t stall","give it horns; not drama",
             "latency chilled; budgets safe","jol still smooth; nothing dodgy","no kak here; bru it’s mint",
-            "solid like a boerie roll; carry on","lekker tidy; keep the wheels straight","netjies man; pipeline in gear"
+            "solid like a boerie roll; carry on","lekker tidy; keep the wheels straight","netjies man; pipeline in gear",
+            "all gees; no grease","voetsek to noise; keep signal","shaya small; ship neat",
+            "graphs skoon; vibes dop","moer-alert quiet; ops calm","lekker pull; clean push",
+            "bakkie packed; no rattles","boet, stable; jy weet","tjop done; salad cool",
+            "line lekker; queue short","no jang; just jol","bundu bash bugs; leave prod",
+            "braai smoke off; alarms off","gear engaged; no clutch slip","no nonsense; just lekker",
+            "SLA gesort; pager slaap","moenie stress; alles fine","tjoepstil errors; groot smile",
+            "boerie budget; chips cheap","kan nie kla; graphs mooi","kiff ship; safe trip",
+            "don’t kak around; release","dop cold; deploy cooler","bakkie clean; cargo safe",
+            "lines netjies; ops strak","tune the cache; drop the kak","skrik vir niks; just ship",
+            "keep it local; no kak","bru, green; laat dit gaan","lekker graphs; jol on",
+            "skoon merge; stout bugs out","dop die logs; dance the deploy","bietsie latency; baie chill",
+            "laaitie queues; oubaas uptime","groot jol; klein change","mooi man; klaar gestuur",
+            "braai later; ship nou"
         ]
     }
 }
@@ -425,7 +515,7 @@ _TEMPLATES: Dict[str, List[str]] = {
     "nerd": [
         "{subj}: {a}; {b}.",
         "{subj}: formally {a}, technically {b}.",
-        "{subj}: {a} — Q.E.D.; {b}.",
+        "{subj}: {a} — {time}; {b}.",
         "{subj}: {a}; invariants hold; {b}."
     ],
     "jarvis": [
@@ -438,7 +528,7 @@ _TEMPLATES: Dict[str, List[str]] = {
         "{subj}: {a}. {b}.",
         "{subj} — {a}, {b}.",
         "{subj}? {a}. {b}.",
-        "{subj}: {a}. {b}. Jesus."
+        "{subj}: {a}. {b}."
     ],
     "tappit": [
         "{subj}: {a}. {b}.",
@@ -488,7 +578,7 @@ def _bank_for(persona: str) -> List[str]:
 def _templates_for(persona: str) -> List[str]:
     return _TEMPLATES.get(persona, _TEMPLATES.get("default", []))
 
-def _choose_two(bank: List[str]) -> (str, str):
+def _choose_two(bank: List[str]) -> Tuple[str, str]:
     if len(bank) < 2:
         return (bank[0] if bank else "ok", "noted")
     a = random.choice(bank)
@@ -529,7 +619,6 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subje
         base = _apply_daypart_flavor_inline(persona, base)
         line = base
         if key_phrase:
-            # append a short factual clause
             if not line.endswith("."):
                 line += "."
             line += f" {key_phrase.lower()}."
