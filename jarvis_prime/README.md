@@ -3,7 +3,7 @@
 Jarvis Prime is your standalone Notification Orchestrator and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality.
 
 Features
-• Standalone Notification Orchestrator and Server.
+• Standalone Notification Orchestrator and Server.  
 • Optional review via Gotify or ntfy apps (push notifications, history, filters)  
 • Beautify Engine (LLM + formatting pipeline) normalizes events into Jarvis Cards  
 • SMTP Intake: drop-in Mailrise replacement, accepts LAN-only emails with any auth  
@@ -75,12 +75,15 @@ Intake Setup Details
 • Notifications will appear in the ntfy app subscribed to topic "jarvis".  
 
 EnviroGuard (Optional)  
-• Jarvis monitors outside temperature via Open-Meteo.  
-• Profiles auto-shift between HOT, NORMAL, BOOST to throttle LLM CPU use.  
-• Enable in /data/options.json:  
+• Jarvis monitors temperature and dynamically adjusts LLM profiles.  
+• Two modes are supported:  
+  1. **Open-Meteo API** → uses outside temperature based on configured lat/lon.  
+  2. **Home Assistant sensors** → reads local temperature from any HA entity (e.g., `sensor.living_room_temperature`). Configure entity IDs in `/data/options.json`.  
+• Example config with HA sensors:  
   {  
     "llm_enviroguard_enabled": true,  
-    "llm_enviroguard_poll_minutes": 30,  
+    "llm_enviroguard_use_homeassistant": true,  
+    "llm_enviroguard_sensors": ["sensor.living_room_temperature","sensor.server_rack_temp"],  
     "llm_enviroguard_hot_c": 30,  
     "llm_enviroguard_cold_c": 10,  
     "llm_enviroguard_profiles": {  
@@ -98,6 +101,31 @@ LLM Defaults
 • Riff lines: 30 tokens (≈20 words, punchy)  
 • Rewrite lines: 50 tokens (≈35 words, clear)  
 • Persona riffs: 100 tokens (≈70 words, multi-line personality quips)  
+
+Recommended LLMs  
+Jarvis Prime is tuned for **Phi family models**. Use GGUF quantized builds with llama.cpp or ollama.  
+
+1. **Phi-3 Mini (3.8B)**  
+• Fast, light, excellent for rewrites and riffs.  
+• Best option for Intel N100, N5105, or similar CPUs.  
+• Download: https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf  
+
+2. **Phi-3.5 Mini (3.8B)**  
+• Improved reasoning and stability over Phi-3.  
+• Runs fine on mid-range CPUs (i7, Ryzen) at Q4_K_M or Q5_K_M.  
+• Download: https://huggingface.co/microsoft/Phi-3.5-mini-instruct-gguf  
+
+3. **Phi-4 (14B)**  
+• Strongest reasoning, natural phrasing.  
+• Heavy — requires desktop-grade CPU or GPU offload.  
+• Good for users who want maximum polish in rewrites.  
+• Download: https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf  
+
+Performance Guide  
+• Intel N100: Phi-3 Q4 ~8–12 tok/s, Phi-3.5 Q4 ~6–10 tok/s.  
+• i7 desktop: Phi-3.5 Q4 ~15 tok/s, Phi-4 Q4 ~6–8 tok/s.  
+• With GPU offload: Phi-4 Q5 can reach ~20–30 tok/s.  
+• Recommended default: Phi-3 Mini (Q4) for balance of speed and polish.  
 
 Web UI Access  
 • Ingress via Home Assistant → Add-on → Jarvis Prime → OPEN WEB UI.  
