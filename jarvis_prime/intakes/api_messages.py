@@ -53,7 +53,7 @@ async def _sse(request: web.Request):
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
     try:
-        await resp.write(b": hello\n\n")
+        await resp.write(b": hello\\n\\n")
     except Exception:
         pass
     try:
@@ -61,7 +61,7 @@ async def _sse(request: web.Request):
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             try:
-                await resp.write(b"data: " + payload + b"\n\n")
+                await resp.write(b"data: " + payload + b"\\n\\n")
             except (ConnectionResetError, RuntimeError, BrokenPipeError):
                 break
     except asyncio.CancelledError:
@@ -87,9 +87,6 @@ def _broadcast(event: str, **kw):
 def _json(data, status=200):
     return web.Response(text=json.dumps(data, ensure_ascii=False), status=status, content_type="application/json")
 
-# ---- HA notify helper ----
-from ha_notify import push_to_ha_notify
-
 # ---- API ----
 async def api_create_message(request: web.Request):
     try:
@@ -103,21 +100,6 @@ async def api_create_message(request: web.Request):
     extras = data.get("extras") or {}
     mid = storage.save_message(title, body, source, priority, extras)  # type: ignore
     _broadcast("created", id=int(mid))
-
-    # ---- NEW: forward to Home Assistant notify if enabled ----
-    try:
-        opts_path = Path("/data/options.json")
-        if opts_path.exists():
-            with opts_path.open() as f:
-                options = json.load(f)
-            if options.get("push_ha_enabled") and options.get("push_ha_service"):
-                # helper expects 'ha_notify_service', map from our toggle name
-                options = dict(options)  # shallow copy
-                options["ha_notify_service"] = options["push_ha_service"]
-                push_to_ha_notify(title, body, options)
-    except Exception as e:
-        print(f"[ha_notify] Error while forwarding: {e}")
-
     return _json({"id": int(mid)})
 
 async def api_list_messages(request: web.Request):
