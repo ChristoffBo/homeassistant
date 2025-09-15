@@ -50,7 +50,6 @@ COPY /modules/digest.py /app/digest.py
 COPY /modules/uptimekuma.py /app/uptimekuma.py
 COPY /modules/aliases.py /app/aliases.py
 COPY /personality/personality.py /app/personality.py
-COPY /personality/personality_tappit.py /app/personality_tappit.py
 COPY /intakes/smtp_server.py /app/smtp_server.py
 COPY /intakes/proxy.py /app/proxy.py
 COPY /modules/beautify.py /app/beautify.py
