@@ -52,6 +52,7 @@ COPY /modules/aliases.py /app/aliases.py
 COPY /personality/personality.py /app/personality.py
 COPY /intakes/smtp_server.py /app/smtp_server.py
 COPY /intakes/proxy.py /app/proxy.py
+COPY /intakes/ha_notify.py /app/ha_notify.py
 COPY /modules/beautify.py /app/beautify.py
 COPY /modules/enviroguard.py /app/enviroguard.py
 
