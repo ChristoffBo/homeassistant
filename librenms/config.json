@@ -1,6 +1,6 @@
 {
   "name": "LibreNMS",
-  "version": "1.0.0",
+  "version": "25.8.0",
   "slug": "librenms",
   "description": "Self-hosted network monitoring and alerting system",
   "url": "https://www.librenms.org/",
