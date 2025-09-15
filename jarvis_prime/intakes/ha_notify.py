@@ -1,47 +1,46 @@
 #!/usr/bin/env python3
-# /app/ha_notify.py
-#
-# Helper for forwarding Jarvis messages into Home Assistant notify.*
-# Uses the same ha_url and ha_token already in options.json.
-# Controlled via "ha_notify_service" key in options.json.
+"""
+ha_notify.py — forward Jarvis Prime messages into Home Assistant's notify service.
 
-import requests
+Reads HA URL + token + service name from /data/options.json
+"""
+
+import aiohttp
+import asyncio
 import json
+from pathlib import Path
 
-def push_to_ha_notify(title: str, message: str, options: dict) -> bool:
-    """
-    Push a Jarvis message into Home Assistant mobile_app notify service.
-
-    Args:
-        title (str): Notification title
-        message (str): Notification body
-        options (dict): Loaded config (must include ha_url, ha_token, ha_notify_service)
-
-    Returns:
-        bool: True if sent successfully, False otherwise
-    """
-    ha_url = options.get("ha_url")
+async def _async_push(title: str, body: str, options: dict):
+    ha_url = options.get("ha_url", "http://supervisor/core/api")
     ha_token = options.get("ha_token")
     ha_service = options.get("ha_notify_service")
 
-    if not ha_url or not ha_token or not ha_service:
-        print("[ha_notify] Skipped (missing ha_url, ha_token, or ha_notify_service in config).")
-        return False
+    if not ha_token or not ha_service:
+        print("[ha_notify] Missing ha_token or ha_notify_service in options.json")
+        return
 
-    url = f"{ha_url}/api/services/{ha_service}"
-    headers = {
-        "Authorization": f"Bearer {ha_token}",
-        "Content-Type": "application/json"
-    }
-    payload = {"title": title, "message": message}
+    url = f"{ha_url}/services/{ha_service.replace('.', '/')}"
+    payload = {"title": title, "message": body}
+    headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
 
     try:
-        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=5)
-        if r.status_code != 200:
-            print(f"[ha_notify] Failed {r.status_code}: {r.text}")
-            return False
-        print(f"[ha_notify] Sent to {ha_service}: {title} -> {message}")
-        return True
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload, timeout=10) as r:
+                if r.status != 200:
+                    text = await r.text()
+                    print(f"[ha_notify] Failed {r.status}: {text}")
+                else:
+                    print(f"[ha_notify] Sent to {ha_service}: {title}")
     except Exception as e:
-        print(f"[ha_notify] Error: {e}")
-        return False
+        print(f"[ha_notify] Exception: {e}")
+
+def push_to_ha_notify(title: str, body: str, options: dict):
+    """Public entry — safe to call from sync code"""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(_async_push(title, body, options))
+        else:
+            loop.run_until_complete(_async_push(title, body, options))
+    except RuntimeError:
+        asyncio.run(_async_push(title, body, options))
