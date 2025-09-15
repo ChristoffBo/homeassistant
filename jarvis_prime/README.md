@@ -3,7 +3,7 @@
 Jarvis Prime is your standalone Notification Orchestrator and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality.
 
 Features
-• Standalone Notification Orchestrator and Server (no Gotify required)  
+• Standalone Notification Orchestrator and Server.
 • Optional review via Gotify or ntfy apps (push notifications, history, filters)  
 • Beautify Engine (LLM + formatting pipeline) normalizes events into Jarvis Cards  
 • SMTP Intake: drop-in Mailrise replacement, accepts LAN-only emails with any auth  
