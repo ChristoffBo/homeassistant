@@ -1,3 +1,6 @@
+
+## latest (2025-09-16 21:00:00)
+Added CTX overflow protection for riffs and Rewrites
 ## latest (2025-09-14 21:00:00)
 Riffs now use less CPU alot less.
 Fallsback to Lexicon riffs if it fails.
