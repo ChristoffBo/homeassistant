@@ -645,6 +645,19 @@ def _trim_to_sentence_140(s: str) -> str:
         return t[:cut+1]
     return t
 
+# ---- ctx overflow helpers (additive) ---------------------------------------
+def _estimate_tokens(text: str) -> int:
+    # Heuristic backstop if tokenizer isn't available
+    return max(1, len(text) // 4)
+
+def _would_overflow(n_in: int, n_predict: int, max_ctx: int, reserve: int = 256) -> bool:
+    """
+    True if (prompt tokens + planned output) won't fit in ctx.
+    Reserve leaves headroom for BOS, stops, system bits, etc.
+    """
+    budget = max_ctx - max(64, reserve)
+    return (n_in + max(0, n_predict)) > max(1, budget)
+
 # ============================
 # Strip leaked meta tags
 # ============================
@@ -1179,6 +1192,12 @@ def persona_riff(
             _log(f"persona_riff: prompt_tokens={n_in}")
         except Exception as e:
             _log(f"persona_riff: tokenize debug skipped: {e}")
+            n_in = _estimate_tokens(prompt)
+
+        # NEW: hard guard — if this prompt would exceed ctx, go straight to Lexi
+        if _would_overflow(n_in, 32, ctx_tokens, reserve=256):
+            _log(f"persona_riff: ctx precheck overflow (prompt={n_in}, out=32, ctx={ctx_tokens}) → Lexi")
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
 
         raw = _do_generate(
             prompt,
