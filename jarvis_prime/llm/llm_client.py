@@ -506,7 +506,7 @@ def _is_phi3_family() -> bool:
 def _stops_for_model() -> List[str]:
     if _is_phi3_family():
         return ["<|end|>", "<|endoftext|>"]
-    return ["</s>", "[/INST]"]
+    return ["</s]", "[/INST]"]
 
 def _should_use_grammar_auto() -> bool:
     if _is_phi3_family():
@@ -645,15 +645,15 @@ def _trim_to_sentence_140(s: str) -> str:
         return t[:cut+1]
     return t
 
-# ---- ctx overflow helpers (additive) ---------------------------------------
+# ===== NEW: token/overflow helpers ==========================================
 def _estimate_tokens(text: str) -> int:
-    # Heuristic backstop if tokenizer isn't available
+    # Heuristic if tokenizer is unavailable
     return max(1, len(text) // 4)
 
 def _would_overflow(n_in: int, n_predict: int, max_ctx: int, reserve: int = 256) -> bool:
     """
-    True if (prompt tokens + planned output) won't fit in ctx.
-    Reserve leaves headroom for BOS, stops, system bits, etc.
+    True if (prompt tokens + planned output) exceeds context capacity.
+    'reserve' leaves space for BOS/EOS/stop/system bits to avoid edge crashes.
     """
     budget = max_ctx - max(64, reserve)
     return (n_in + max(0, n_predict)) > max(1, budget)
@@ -1065,6 +1065,19 @@ def rewrite(
 
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
         _log(f"rewrite: effective timeout={timeout}s")
+
+        # NEW: overflow precheck for rewrite (predict up to 256)
+        try:
+            n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
+            _log(f"rewrite: prompt_tokens={n_in}")
+        except Exception as e:
+            _log(f"rewrite: tokenize debug skipped: {e}")
+            n_in = _estimate_tokens(prompt)
+
+        if _would_overflow(n_in, 256, ctx_tokens, reserve=256):
+            _log(f"rewrite: ctx precheck overflow (prompt={n_in}, out=256, ctx={ctx_tokens}) → return original text")
+            return text  # safest fallback for rewrites
+
         out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=256, with_grammar_auto=False)
         final = out if out else text
 
@@ -1194,7 +1207,7 @@ def persona_riff(
             _log(f"persona_riff: tokenize debug skipped: {e}")
             n_in = _estimate_tokens(prompt)
 
-        # NEW: hard guard — if this prompt would exceed ctx, go straight to Lexi
+        # NEW: overflow precheck for riffs (predict up to 32)
         if _would_overflow(n_in, 32, ctx_tokens, reserve=256):
             _log(f"persona_riff: ctx precheck overflow (prompt={n_in}, out=32, ctx={ctx_tokens}) → Lexi")
             return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
