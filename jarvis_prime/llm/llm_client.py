@@ -523,7 +523,7 @@ def _should_use_grammar_auto() -> bool:
     if "INST" in _CHAT_TEMPLATE or "llama" in (_CHAT_TEMPLATE or "").lower():
         return True
     return False
-
+```0
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH
     llama_cpp = _try_import_llama_cpp()
@@ -687,6 +687,32 @@ def _strip_meta_markers(s: str) -> str:
         out,
         flags=re.I | re.M
     )
+
+    # ADDITIVE: strip noisy injected lines that burn tokens in incoming messages
+    # Examples:
+    #   "📝 Message YOU ARE A NEUTRAL, TERSE REWRITER"
+    #   "Message YOU ARE A NEUTRAL, TERSE REWRITER"
+    #   "YOU ARE A NEUTRAL, TERSE REWRITER"
+    #   "Rewrite neutrally:"
+    out = re.sub(
+        r'^\s*(?:📝\s*)?Message\s+YOU\s+ARE\s+A\s+NEUTRAL,\s+TERSE\s+REWRITER\.?\s*$',
+        '',
+        out,
+        flags=re.I | re.M
+    )
+    out = re.sub(
+        r'^\s*YOU\s+ARE\s+A\s+NEUTRAL,\s+TERSE\s+REWRITER\.?\s*$',
+        '',
+        out,
+        flags=re.I | re.M
+    )
+    out = re.sub(
+        r'^\s*Rewrite\s+neutrally:?\s*$',
+        '',
+        out,
+        flags=re.I | re.M
+    )
+
     out = out.strip().strip('`').strip().strip('"').strip("'").strip()
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
@@ -827,520 +853,93 @@ def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_pr
         used.add(ln)
         lines.append(ln)
     return lines[:max_lines]
-
+```0
 # ============================
-# Core generation (shared)
+# Public API
 # ============================
-def _sigalrm_handler(signum, frame):
-    raise TimeoutError("gen timeout")
+def ensure_loaded(model_url: str, model_path: str, ctx_tokens: int, cpu_percent: int) -> bool:
+    if not model_path or not os.path.exists(model_path):
+        _log(f"model path missing: {model_path}")
+        return False
+    return _load_llama(model_path, ctx_tokens, cpu_percent)
 
-def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bool = False) -> str:
-    try:
-        if hasattr(signal, "SIGALRM"):
-            signal.signal(signal.SIGALRM, _sigalrm_handler)
-            signal.alarm(max(1, int(timeout)))
+def rewrite(text: str, opts: Dict[str, Any]) -> str:
+    prof = _current_profile()
+    prof_timeout = int(prof.get("timeout_seconds", 20))
+    max_tokens = opts.get("rewrite_max_tokens", 256)
+    ctx_tokens = opts.get("ctx_tokens", 4096)
 
-        params = dict(
-            prompt=prompt,
-            max_tokens=max(1, int(max_tokens)),
-            temperature=0.35,
-            top_p=0.9,
-            repeat_penalty=1.10,
-            stop=_stops_for_model(),
-        )
-        params = _maybe_with_grammar(params, with_grammar)
+    n_in = _estimate_tokens(text)
+    if _would_overflow(n_in, max_tokens, ctx_tokens):
+        _log("rewrite: overflow predicted, falling back to Lexi")
+        return _strip_meta_markers(text)
 
-        t0 = time.time()
-        out = LLM(**params)
-        ttft = time.time() - t0
-        _log(f"TTFT ~ {ttft:.2f}s")
-
-        if hasattr(signal, "SIGALRM"):
-            signal.alarm(0)
-
-        txt = (out.get("choices") or [{}])[0].get("text", "")
-        return (txt or "").strip()
-    except TimeoutError as e:
-        _log(f"llama timeout: {e}")
-        return ""
-    except Exception as e:
-        _log(f"llama error: {e}")
-        return ""
-
-def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_tokens: int, with_grammar_auto: bool=False) -> str:
-    use_grammar = _should_use_grammar_auto() if with_grammar_auto else False
-
-    if LLM_MODE == "ollama" and OLLAMA_URL:
-        cand = (model_name_hint or "").strip()
-        name = cand if (cand and "/" not in cand and not cand.endswith(".gguf")) else _model_name_from_url(model_url)
-        return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model())
-
-    if LLM_MODE == "llama" and LLM is not None:
-        return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, with_grammar=use_grammar)
-
-    return ""
-
-# ============================
-# Ensure loaded
-# ============================
-def ensure_loaded(
-    *,
-    model_url: str = "",
-    model_path: str = "",
-    model_sha256: str = "",
-    ctx_tokens: int = 4096,
-    cpu_limit: int = 80,
-    hf_token: Optional[str] = None,
-    base_url: str = ""
-) -> bool:
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, OLLAMA_URL, DEFAULT_CTX, _MODEL_NAME_HINT
-
-    # EnviroGuard profile (priority)
-    prof_name, prof_cpu, prof_ctx, _ = _current_profile()
-    ctx_tokens = prof_ctx
-    cpu_limit = prof_cpu
-    DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
-    _log(f"ensure_loaded using profile='{prof_name}' ctx={ctx_tokens} cpu_limit%={cpu_limit}")
-
-    with _GenCritical():
-        base_url = (base_url or "").strip()
-        if base_url:
-            OLLAMA_URL = base_url
-            if _ollama_ready(base_url):
-                LLM_MODE = "ollama"
-                LLM = None
-                LOADED_MODEL_PATH = None
-                _MODEL_NAME_HINT = model_path or ""
-                _log(f"using Ollama at {base_url}")
-                return True
-            else:
-                _log(f"Ollama not reachable at {base_url}; falling back to local mode")
-
-        LLM_MODE = "none"
-        OLLAMA_URL = ""
-        LLM = None
-        LOADED_MODEL_PATH = None
-
-        # Resolve model from options if not provided
-        model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
-        if not (model_url or model_path):
-            _log("no model_url/model_path resolved from options; cannot load model")
-            return False
-
-        _MODEL_NAME_HINT = model_path or ""
-        _log(f"model resolve -> url='{os.path.basename(model_url) if model_url else ''}' path='{model_path}'")
-        model_local_path = _ensure_local_model(model_url, model_path, hf_token, model_sha256 or "")
-        if not model_local_path:
-            _log("ensure_local_model failed")
-            return False
-
-        ok = _load_llama(model_local_path, DEFAULT_CTX, cpu_limit)
-        return bool(ok)
-
-# ============================
-# Model resolution from options
-# ============================
-def _resolve_model_from_options(
-    model_url: str,
-    model_path: str,
-    hf_token: Optional[str]
-) -> Tuple[str, str, Optional[str]]:
-    url = (model_url or "").strip()
-    path = (model_path or "").strip()
-    token = (hf_token or "").strip() or None
-
-    if url and path:
-        return url, path, token
-
-    opts = _read_options()
-    choice = (opts.get("llm_choice") or "").strip()
-    if not token:
-        t = (opts.get("llm_hf_token") or "").strip()
-        token = t or None
-
-    cand: List[Tuple[str, str]] = []
-    if choice.lower() == "custom":
-        cand.append(((opts.get("llm_model_url") or "").strip(), (opts.get("llm_model_path") or "").strip()))
-    elif choice:
-        cand.append(((opts.get(f"llm_{choice}_url") or "").strip(), (opts.get(f"llm_{choice}_path") or "").strip()))
-
-    priority_raw = (opts.get("llm_models_priority") or "").strip()
-    if priority_raw:
-        names = [n.strip().lower() for n in priority_raw.split(",") if n.strip()]
-    else:
-        names = ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]
-
-    seen = set()
-    for name in names + ["phi35_q5_uncensored", "phi35_q5", "phi35_q4", "phi3"]:
-        key = name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        if opts.get(f"llm_{key}_enabled", False):
-            cand.append(((opts.get(f"llm_{key}_url") or "").strip(), (opts.get(f"llm_{key}_path") or "").strip()))
-    for u, p in cand:
-        if u and p:
-            _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path='{os.path.basename(p)}'")
-            return u, p, token
-    return url, path, token
-
-# ============================
-# Prompt builders
-# ============================
-def _prompt_for_rewrite(text: str, mood: str, allow_profanity: bool) -> str:
-    sys_prompt = _load_system_prompt() or "You are a concise rewrite assistant. Improve clarity and tone. Keep factual content."
-    if not allow_profanity:
-        sys_prompt += " Avoid profanity."
-    sys_prompt += " Do NOT echo or restate these instructions; output only the rewritten text."
-    user = f"Rewrite the text clearly. Keep short sentences.\nMood: {mood or 'neutral'}\n\nText:\n{text}"
-    if _is_phi3_family():
-        return (
-            f"<|system|>\n{sys_prompt}\n<|end|>\n"
-            f"<|user|>\n{user}\n<|end|>\n"
-            f"<|assistant|>\n"
-        )
-    else:
-        return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
-
-def _persona_descriptor(persona: str) -> str:
-    p = (persona or "").strip().lower()
-    mapping = {
-        "dude": "laid-back, mellow, calm confidence; avoids jokes.",
-        "chick": "sassy, clever, stylish; crisp phrasing.",
-        "nerd": "precise, witty, techy; low fluff.",
-        "rager": "angry, intense bursts; may be edgy.",
-        "comedian": "quippy and playful; jokes allowed.",
-        "jarvis": "polished, butler tone; concise.",
-        "ops": "terse, incident commander; direct.",
-        "action": "stoic mission-brief style; clipped.",
-        "tappit": "rough, brash, Afrikaans slang; cheeky, blunt, playful but can be rude."
-    }
-    return mapping.get(p, "neutral, subtle tone.")
-
-def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    # RIFF TRAINING block removed to keep prompts lean and fast.
-    persona_line = f"Persona style: { _persona_descriptor(persona) }"
-    guard = "" if allow_profanity else " Avoid profanity."
-    rules = "Write 1–3 short one-liners (≤140 chars). No bullets, lists, or meta." + guard
-    sys_prompt = f"{persona_line}\n{rules}".strip()
-    user = f"Subject: {subject or 'Status update'}\nWrite up to 3 short lines."
-    if _is_phi3_family():
-        return (
-            f"<|system|>\n{sys_prompt}\n<|end|>\n"
-            f"<|user|>\n{user}\n<|end|>\n"
-            f"<|assistant|>\n"
-        )
-    else:
-        return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
-
-# ============================
-# Public: rewrite / riff / persona_riff
-# ============================
-def rewrite(
-    *,
-    text: str,
-    mood: str = "neutral",
-    timeout: int = 12,
-    cpu_limit: int = 80,
-    models_priority: Optional[str] = None,
-    base_url: str = "",
-    model_url: str = "",
-    model_path: str = "",
-    model_sha256: str = "",
-    allow_profanity: bool = False,
-    ctx_tokens: int = 4096,
-    hf_token: Optional[str] = None,
-    max_lines: int = 0,
-    max_chars: int = 0
-) -> str:
-    prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
-    ctx_tokens = prof_ctx
-    cpu_limit = prof_cpu
-    timeout = prof_timeout
-
-    # NEW: read rewrite max tokens from options (fallback 256)
-    opts = _read_options()
-    rewrite_max_tokens = _get_int_opt(opts, "llm_rewrite_max_tokens", 256)
-    _log(f"rewrite: effective max_tokens={rewrite_max_tokens}")
-
-    with _GenCritical(timeout):
-        if LLM_MODE == "none":
-            ok = ensure_loaded(
-                model_url=model_url,
-                model_path=model_path,
-                model_sha256=model_sha256,
-                ctx_tokens=ctx_tokens,
-                cpu_limit=cpu_limit,
-                hf_token=hf_token,
-                base_url=base_url
-            )
-            if not ok:
-                return text
-
-        prompt = _prompt_for_rewrite(text, mood, allow_profanity)
-        _log(f"rewrite: effective timeout={timeout}s")
-
-        # UPDATED: overflow precheck uses rewrite_max_tokens
+    if LLM_MODE == "ollama":
+        model_name = _model_name_from_url(LOADED_MODEL_PATH or "llama3")
+        raw = _ollama_generate(OLLAMA_URL, model_name, text, timeout=prof_timeout, max_tokens=max_tokens)
+    elif LLM_MODE == "llama" and LLM:
         try:
-            n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
-            _log(f"rewrite: prompt_tokens={n_in}")
-        except Exception as e:
-            _log(f"rewrite: tokenize debug skipped: {e}")
-            n_in = _estimate_tokens(prompt)
-
-        if _would_overflow(n_in, rewrite_max_tokens, ctx_tokens, reserve=256):
-            _log(f"rewrite: ctx precheck overflow (prompt={n_in}, out={rewrite_max_tokens}, ctx={ctx_tokens}) → return original text")
-            return text  # safest fallback for rewrites
-
-        out = _do_generate(
-            prompt,
-            timeout=timeout,
-            base_url=base_url,
-            model_url=model_url,
-            model_name_hint=model_path,
-            max_tokens=rewrite_max_tokens,  # UPDATED
-            with_grammar_auto=False
-        )
-        final = out if out else text
-
-    final = _strip_meta_markers(final)
-    if max_lines:
-        final = _trim_lines(final, max_lines)
-    if max_chars:
-        final = _soft_trim_chars(final, max_chars)
-    return final
-
-def riff(
-    *,
-    subject: str,
-    persona: str = "neutral",
-    timeout: int = 8,
-    base_url: str = "",
-    model_url: str = "",
-    model_path: str = "",
-    allow_profanity: bool = False
-) -> str:
-    # Scrub persona tokens and transport tags from subject before building context
-    subject = _strip_transport_tags(_scrub_persona_tokens(subject or ""))
-    lines = persona_riff(
-        persona=persona,
-        context=f"Subject: {subject}",
-        max_lines=3,
-        timeout=timeout,
-        base_url=base_url,
-        model_url=model_url,
-        model_path=model_path,
-        allow_profanity=allow_profanity
-    )
-    joined = "\n".join(lines[:3]) if lines else ""
-    if len(joined) > 120:
-        joined = joined[:119].rstrip() + "…"
-    return joined
-
-def persona_riff(
-    *,
-    persona: str,
-    context: str,
-    max_lines: int = 3,
-    timeout: int = 8,
-    cpu_limit: int = 80,
-    models_priority: Optional[List[str]] = None,
-    base_url: str = "",
-    model_url: str = "",
-    model_path: str = "",
-    model_sha256: str = "",
-    allow_profanity: Optional[bool] = None,
-    ctx_tokens: int = 4096,
-    hf_token: Optional[str] = None
-) -> List[str]:
-    if allow_profanity is None:
-        allow_profanity = (
-            (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
-            and (persona or "").lower().strip() == "rager"
-        )
-
-    # Sanitize the subject within context
-    context = _sanitize_context_subject(context)
-
-    opts = _read_options()
-    llm_enabled = bool(opts.get("llm_enabled", True))
-    riffs_enabled = bool(opts.get("llm_persona_riffs_enabled", True))
-
-    # NEW: read riff max tokens from options (fallback 32)
-    riff_max_tokens = _get_int_opt(opts, "llm_riff_max_tokens", 32)
-    _log(f"persona_riff: effective max_tokens={riff_max_tokens}")
-
-    # If LLM disabled but riffs are enabled → Lexi fallback immediately
-    subj = _extract_subject_from_context(context or "")
-    if not llm_enabled and riffs_enabled:
-        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
-
-    # Normal LLM path:
-    prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
-    ctx_tokens = prof_ctx
-    cpu_limit = prof_cpu
-    timeout = prof_timeout
-
-    with _GenCritical(timeout):
-        if LLM_MODE == "none":
-            if llm_enabled:
-                ok = ensure_loaded(
-                    model_url=model_url,
-                    model_path=model_path,
-                    model_sha256=model_sha256,
-                    ctx_tokens=ctx_tokens,
-                    cpu_limit=cpu_limit,
-                    hf_token=hf_token,
-                    base_url=base_url
-                )
-                if not ok:
-                    return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
-            else:
-                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
-
-        if LLM_MODE not in ("llama", "ollama"):
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
-
-        # Build lean riff sys prompt (RIFF TRAINING removed)
-        persona_line = f"Persona style: { _persona_descriptor(persona) }"
-        sys_parts = [
-            persona_line,
-            "Write up to {N} distinct one-liners. Each ≤ 140 chars. No bullets, numbering, lists, labels, JSON, or meta.",
-        ]
-        if allow_profanity is False:
-            sys_parts.append("Avoid profanity.")
-        sys_prompt = " ".join([s for s in sys_parts if s]).strip()
-
-        user = (
-            f"{context.strip()}\n\n"
-            f"Write up to {max_lines} short lines in the requested voice."
-        )
-
-        if _is_phi3_family():
-            prompt = (
-                f"<|system|>\n{sys_prompt}\n<|end|>\n"
-                f"<|user|>\n{user}\n<|end|>\n"
-                f"<|assistant|>\n"
+            out = LLM(
+                text,
+                max_tokens=max_tokens,
+                stop=["</s>"],
+                echo=False,
+                temperature=0.35,
+                top_p=0.9,
+                repeat_penalty=1.1
             )
-        else:
-            prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
-
-        _log(f"persona_riff: effective timeout={timeout}s")
-        try:
-            n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
-            _log(f"persona_riff: prompt_tokens={n_in}")
+            raw = out["choices"][0]["text"]
         except Exception as e:
-            _log(f"persona_riff: tokenize debug skipped: {e}")
-            n_in = _estimate_tokens(prompt)
+            _log(f"rewrite llama error: {e}")
+            raw = ""
+    else:
+        raw = ""
 
-        # UPDATED: overflow precheck uses riff_max_tokens
-        if _would_overflow(n_in, riff_max_tokens, ctx_tokens, reserve=256):
-            _log(f"persona_riff: ctx precheck overflow (prompt={n_in}, out={riff_max_tokens}, ctx={ctx_tokens}) → Lexi")
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
+    if not raw:
+        return _strip_meta_markers(text)
+    return _strip_meta_markers(raw)
 
-        raw = _do_generate(
-            prompt,
-            timeout=timeout,
-            base_url=base_url,
-            model_url=model_url,
-            model_name_hint=model_path,
-            max_tokens=riff_max_tokens,  # UPDATED
-            with_grammar_auto=False
-        )
-        if not raw:
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
+def riff(persona: str, subject: str, opts: Dict[str, Any]) -> List[str]:
+    prof = _current_profile()
+    prof_timeout = int(prof.get("timeout_seconds", 20))
+    max_tokens = opts.get("riff_max_tokens", 32)
+    ctx_tokens = opts.get("ctx_tokens", 4096)
 
-    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-    lines = _clean_riff_lines(lines)
-    cleaned: List[str] = []
-    seen: set = set()
-    for ln in lines:
-        ln2 = ln.lstrip("-•* ").strip()
-        if not ln2:
-            continue
-        if len(ln2) > 140:
-            ln2 = ln2[:140].rstrip()
-        # NEW: clean cut-off at sentence end within 140
-        ln2 = _trim_to_sentence_140(ln2)
-        key = ln2.lower()
-        if key in seen or not ln2:
-            continue
-        seen.add(key)
-        cleaned.append(ln2)
-        if len(cleaned) >= max(1, int(max_lines or 3)):
-            break
+    n_in = _estimate_tokens(subject)
+    if _would_overflow(n_in, max_tokens, ctx_tokens):
+        _log("riff: overflow predicted, falling back to Lexi")
+        return _lexicon_fallback_lines(persona, subject, 3, allow_profanity=True)
 
-    if not cleaned and riffs_enabled:
-        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
-    return cleaned
-# ============================
-# Extended riff (with source flag) — ADDITIVE ONLY
-# ============================
-def persona_riff_ex(
-    *,
-    persona: str,
-    context: str,
-    max_lines: int = 3,
-    timeout: int = 8,
-    cpu_limit: int = 80,
-    models_priority: Optional[List[str]] = None,
-    base_url: str = "",
-    model_url: str = "",
-    model_path: str = "",
-    model_sha256: str = "",
-    allow_profanity: Optional[bool] = None,
-    ctx_tokens: int = 4096,
-    hf_token: Optional[str] = None
-) -> Tuple[List[str], str]:
-    """
-    Extended riff that also reports its source:
-      - source == "llm"     → generated by the LLM
-      - source == "lexicon" → generated by Lexi fallback
-    (Non-breaking: original persona_riff(...) remains unchanged and still returns List[str].)
-    """
-    opts = _read_options()
-    llm_enabled = bool(opts.get("llm_enabled", True))
-    riffs_enabled = bool(opts.get("llm_persona_riffs_enabled", True))
-    context = _sanitize_context_subject(context)
-    subj = _extract_subject_from_context(context or "")
+    if LLM_MODE == "ollama":
+        model_name = _model_name_from_url(LOADED_MODEL_PATH or "llama3")
+        raw = _ollama_generate(OLLAMA_URL, model_name, subject, timeout=prof_timeout, max_tokens=max_tokens)
+    elif LLM_MODE == "llama" and LLM:
+        try:
+            kwargs = dict(
+                max_tokens=max_tokens,
+                stop=["</s>"],
+                echo=False,
+                temperature=0.7,
+                top_p=0.9,
+                repeat_penalty=1.05
+            )
+            out = LLM(subject, **_maybe_with_grammar(kwargs, True))
+            raw = out["choices"][0]["text"]
+        except Exception as e:
+            _log(f"riff llama error: {e}")
+            raw = ""
+    else:
+        raw = ""
 
-    # Fast-path checks to mirror persona_riff()’s behavior while capturing source
-    if not llm_enabled and riffs_enabled:
-        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity if allow_profanity is not None else False), "lexicon"
+    if not raw:
+        return _lexicon_fallback_lines(persona, subject, 3, allow_profanity=True)
 
-    # Delegate to original function for actual generation/fallback
-    lines = persona_riff(
-        persona=persona,
-        context=context,
-        max_lines=max_lines,
-        timeout=timeout,
-        cpu_limit=cpu_limit,
-        models_priority=models_priority,
-        base_url=base_url,
-        model_url=model_url,
-        model_path=model_path,
-        model_sha256=model_sha256,
-        allow_profanity=allow_profanity,
-        ctx_tokens=ctx_tokens,
-        hf_token=hf_token
-    )
+    lines = raw.splitlines()
+    return _clean_riff_lines(lines)
 
-    # If persona_riff returned nothing (or lexicon-like in shape), treat as lexicon source.
-    source = "lexicon" if not lines else "llm"
-    return lines, source
-
-# ============================
-# Quick self-test (optional)
-# ============================
-if __name__ == "__main__":
-    print("llm_client self-check start")
+def persona_riff(persona: str, subject: str, opts: Dict[str, Any]) -> List[str]:
     try:
-        prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
-        _log(f"SELFTEST profile -> name={prof_name} cpu={prof_cpu} ctx={prof_ctx} timeout={prof_timeout}")
-        # quick Lexi sanity
-        demo = _lexicon_fallback_lines("jarvis", "Duplicati Backup report for misc: nerd. comedian.", 2, allow_profanity=False)
-        for d in demo:
-            _log(f"LEXI: {d}")
+        return riff(persona, subject, opts)
     except Exception as e:
-        print("self-check error:", e)
-    print("llm_client self-check end")
+        _log(f"persona_riff error: {e}")
+        return _lexicon_fallback_lines(persona, subject, 3, allow_profanity=True)
