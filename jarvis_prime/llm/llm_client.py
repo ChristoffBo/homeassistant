@@ -169,6 +169,15 @@ def _read_options() -> Dict[str, Any]:
         _log(f"options read failed ({OPTIONS_PATH}): {e}")
         return {}
 
+def _get_int_opt(opts: Dict[str, Any], key: str, default: int) -> int:
+    try:
+        return int(opts.get(key, default))
+    except Exception:
+        return default
+
+# ============================
+# Profile resolution (EnviroGuard-first)
+# ============================
 def _current_profile() -> Tuple[str, int, int, int]:
     """
     Resolve active profile (EnviroGuard-first) and return:
@@ -506,7 +515,7 @@ def _is_phi3_family() -> bool:
 def _stops_for_model() -> List[str]:
     if _is_phi3_family():
         return ["<|end|>", "<|endoftext|>"]
-    return ["</s]", "[/INST]"]
+    return ["</s>", "[/INST]"]
 
 def _should_use_grammar_auto() -> bool:
     if _is_phi3_family():
@@ -1049,6 +1058,11 @@ def rewrite(
     cpu_limit = prof_cpu
     timeout = prof_timeout
 
+    # NEW: read rewrite max tokens from options (fallback 256)
+    opts = _read_options()
+    rewrite_max_tokens = _get_int_opt(opts, "llm_rewrite_max_tokens", 256)
+    _log(f"rewrite: effective max_tokens={rewrite_max_tokens}")
+
     with _GenCritical(timeout):
         if LLM_MODE == "none":
             ok = ensure_loaded(
@@ -1066,7 +1080,7 @@ def rewrite(
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
         _log(f"rewrite: effective timeout={timeout}s")
 
-        # NEW: overflow precheck for rewrite (predict up to 256)
+        # UPDATED: overflow precheck uses rewrite_max_tokens
         try:
             n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
             _log(f"rewrite: prompt_tokens={n_in}")
@@ -1074,11 +1088,19 @@ def rewrite(
             _log(f"rewrite: tokenize debug skipped: {e}")
             n_in = _estimate_tokens(prompt)
 
-        if _would_overflow(n_in, 256, ctx_tokens, reserve=256):
-            _log(f"rewrite: ctx precheck overflow (prompt={n_in}, out=256, ctx={ctx_tokens}) → return original text")
+        if _would_overflow(n_in, rewrite_max_tokens, ctx_tokens, reserve=256):
+            _log(f"rewrite: ctx precheck overflow (prompt={n_in}, out={rewrite_max_tokens}, ctx={ctx_tokens}) → return original text")
             return text  # safest fallback for rewrites
 
-        out = _do_generate(prompt, timeout=timeout, base_url=base_url, model_url=model_url, model_name_hint=model_path, max_tokens=256, with_grammar_auto=False)
+        out = _do_generate(
+            prompt,
+            timeout=timeout,
+            base_url=base_url,
+            model_url=model_url,
+            model_name_hint=model_path,
+            max_tokens=rewrite_max_tokens,  # UPDATED
+            with_grammar_auto=False
+        )
         final = out if out else text
 
     final = _strip_meta_markers(final)
@@ -1144,6 +1166,10 @@ def persona_riff(
     llm_enabled = bool(opts.get("llm_enabled", True))
     riffs_enabled = bool(opts.get("llm_persona_riffs_enabled", True))
 
+    # NEW: read riff max tokens from options (fallback 32)
+    riff_max_tokens = _get_int_opt(opts, "llm_riff_max_tokens", 32)
+    _log(f"persona_riff: effective max_tokens={riff_max_tokens}")
+
     # If LLM disabled but riffs are enabled → Lexi fallback immediately
     subj = _extract_subject_from_context(context or "")
     if not llm_enabled and riffs_enabled:
@@ -1207,9 +1233,9 @@ def persona_riff(
             _log(f"persona_riff: tokenize debug skipped: {e}")
             n_in = _estimate_tokens(prompt)
 
-        # NEW: overflow precheck for riffs (predict up to 32)
-        if _would_overflow(n_in, 32, ctx_tokens, reserve=256):
-            _log(f"persona_riff: ctx precheck overflow (prompt={n_in}, out=32, ctx={ctx_tokens}) → Lexi")
+        # UPDATED: overflow precheck uses riff_max_tokens
+        if _would_overflow(n_in, riff_max_tokens, ctx_tokens, reserve=256):
+            _log(f"persona_riff: ctx precheck overflow (prompt={n_in}, out={riff_max_tokens}, ctx={ctx_tokens}) → Lexi")
             return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
 
         raw = _do_generate(
@@ -1218,7 +1244,7 @@ def persona_riff(
             base_url=base_url,
             model_url=model_url,
             model_name_hint=model_path,
-            max_tokens=32,  # lean for latency
+            max_tokens=riff_max_tokens,  # UPDATED
             with_grammar_auto=False
         )
         if not raw:
@@ -1247,7 +1273,6 @@ def persona_riff(
     if not cleaned and riffs_enabled:
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
     return cleaned
-
 # ============================
 # Extended riff (with source flag) — ADDITIVE ONLY
 # ============================
