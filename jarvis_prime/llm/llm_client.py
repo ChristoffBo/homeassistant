@@ -687,6 +687,10 @@ def _strip_meta_markers(s: str) -> str:
         out,
         flags=re.I | re.M
     )
+    # NEW: strip leaked rewrite markers
+    out = re.sub(r'^\s*message you are a neutral, terse rewriter.*$', '', out, flags=re.I | re.M)
+    out = re.sub(r'^\s*rewrite neutrally:.*$', '', out, flags=re.I | re.M)
+
     out = out.strip().strip('`').strip().strip('"').strip("'").strip()
     out = re.sub(r'\n{3,}', '\n\n', out)
     return out
