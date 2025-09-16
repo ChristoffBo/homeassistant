@@ -482,6 +482,7 @@ def _ensure_local_model(model_url: str, model_path: str, token: Optional[str], w
         except Exception as e:
             _log(f"sha256 check failed (continuing without): {e}")
     return path
+
 # ============================
 # llama-cpp path (local GGUF)
 # ============================
@@ -1031,6 +1032,7 @@ def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
         )
     else:
         return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
+
 # ============================
 # Public: rewrite / riff / persona_riff
 # ============================
@@ -1342,4 +1344,3 @@ if __name__ == "__main__":
     except Exception as e:
         print("self-check error:", e)
     print("llm_client self-check end")
-```0
