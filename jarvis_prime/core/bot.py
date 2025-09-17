@@ -76,13 +76,13 @@ try:
     storage.init_db()
 except Exception as _e:
     storage = None
-    print(f"[bot] ?? storage init failed: {_e}")
+    print(f"[bot] ⚠️ storage init failed: {_e}")
 
 # ============================
 # Basic env
 # ============================
 BOT_NAME  = os.getenv("BOT_NAME", "Jarvis Prime")
-BOT_ICON  = os.getenv("BOT_ICON", "??")
+BOT_ICON  = os.getenv("BOT_ICON", "🧠")
 # Output (Gotify used as one of many outputs; not hardwired as the only intake)
 GOTIFY_URL   = os.getenv("GOTIFY_URL", "").rstrip("/")
 CLIENT_TOKEN = os.getenv("GOTIFY_CLIENT_TOKEN", "")
@@ -425,7 +425,7 @@ def _persona_line(quip_text: str) -> str:
     quip_text = (quip_text or "").strip().replace("\n", " ")
     if len(quip_text) > 140:
         quip_text = quip_text[:137] + "..."
-    return f"?? {who} says: {quip_text}" if quip_text else f"?? {who} says:"
+    return f"💬 {who} says: {quip_text}" if quip_text else f"💬 {who} says:"
 
 def send_message(title, message, priority=5, extras=None, decorate=True):
     orig_title = title
@@ -551,8 +551,8 @@ def _purge_after(msg_id: int):
 
 def _footer(used_llm: bool, used_beautify: bool) -> str:
     tags = []
-    if used_llm: tags.append("Neural Core ?")
-    if used_beautify: tags.append("Aesthetic Engine ?")
+    if used_llm: tags.append("Neural Core ✓")
+    if used_beautify: tags.append("Aesthetic Engine ✓")
     if not tags: tags.append("Relay Path")
     return "— " + " · ".join(tags)
 
@@ -618,7 +618,7 @@ def _env_status_line() -> str:
     """Builds a single-line EnviroGuard status for the boot card."""
     try:
         if not bool(merged.get("llm_enviroguard_enabled", False)):
-            return "??? EnviroGuard — OFF"
+            return "🌡️ EnviroGuard — OFF"
         prof = ""
         temp_s = ""
         if _enviroguard:
@@ -636,29 +636,29 @@ def _env_status_line() -> str:
                         temp_s = f", {float(t):.1f} °C"
                 except Exception:
                     temp_s = ""
-        return f"??? EnviroGuard — ACTIVE" + (f" (profile={prof}{temp_s})" if prof else "")
+        return f"🌡️ EnviroGuard — ACTIVE" + (f" (profile={prof}{temp_s})" if prof else "")
     except Exception:
-        return "??? EnviroGuard — ACTIVE"
+        return "🌡️ EnviroGuard — ACTIVE"
 
 def post_startup_card():
     lines = [
-        "?? Prime Neural Boot",
-        f"??? Engine: Neural Core — {'ONLINE' if merged.get('llm_enabled') else 'OFFLINE'}",
-        f"?? LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
-        f"??? Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
+        "🧬 Prime Neural Boot",
+        f"🛰️ Engine: Neural Core — {'ONLINE' if merged.get('llm_enabled') else 'OFFLINE'}",
+        f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
+        f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
         "",
         "Modules:",
-        f"?? Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
-        f"?? Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
-        f"??? Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
-        f"?? Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"?? Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
-        f"?? Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
-        f"?? SMTP Intake — {'ACTIVE' if (SMTP_ENABLED and INGEST_SMTP_ENABLED) else 'OFF'}",
-        f"?? Proxy Intake — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
-        f"?? DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
-        f"?? Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
-        f"?? Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
+        f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
+        f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
+        f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
+        f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
+        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
+        f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
+        f"✉️ SMTP Intake — {'ACTIVE' if (SMTP_ENABLED and INGEST_SMTP_ENABLED) else 'OFF'}",
+        f"🔀 Proxy Intake — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
+        f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
+        f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
+        f"📮 Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
         _env_status_line(),
         "",
         f"LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
@@ -671,7 +671,7 @@ def _try_call(module, fn_name, *args, **kwargs):
         if module and hasattr(module, fn_name):
             return getattr(module, fn_name)(*args, **kwargs)
     except Exception as e:
-        return f"?? {fn_name} failed: {e}", None
+        return f"⚠️ {fn_name} failed: {e}", None
     return None, None
 
 def _handle_command(ncmd: str) -> bool:
@@ -714,7 +714,7 @@ def _handle_command(ncmd: str) -> bool:
                     except Exception:
                         applied = False
             if applied:
-                send_message("EnviroGuard", f"Manual override ? profile **{want.upper()}**{info_line}", priority=4, decorate=False)
+                send_message("EnviroGuard", f"Manual override → profile **{want.upper()}**{info_line}", priority=4, decorate=False)
             else:
                 send_message("EnviroGuard", f"Unknown or unsupported profile '{want}'. Try: auto, or consult enviroguard profiles.", priority=3, decorate=False)
             return True
@@ -766,7 +766,7 @@ def _handle_command(ncmd: str) -> bool:
                 text = m_weather.handle_weather_command("weather")
                 if isinstance(text, tuple): text = text[0]
             except Exception as e:
-                text = f"?? Weather failed: {e}"
+                text = f"⚠️ Weather failed: {e}"
         send_message("Weather", text or "No data.")
         return True
 
@@ -777,7 +777,7 @@ def _handle_command(ncmd: str) -> bool:
                 text = m_weather.handle_weather_command("forecast")
                 if isinstance(text, tuple): text = text[0]
             except Exception as e:
-                text = f"?? Forecast failed: {e}"
+                text = f"⚠️ Forecast failed: {e}"
         send_message("Forecast", text or "No data.")
         return True
 
@@ -786,7 +786,7 @@ def _handle_command(ncmd: str) -> bool:
             try:
                 msg, _ = m_chat.handle_chat_command("joke")
             except Exception as e:
-                msg = f"?? Chat error: {e}"
+                msg = f"⚠️ Chat error: {e}"
         else:
             msg = "Chat engine unavailable."
         # keep title "Joke"; bypass handled automatically by title-based logic
@@ -1020,7 +1020,7 @@ async def _joke_scheduler_loop():
                 try:
                     msg, _ = m_chat.handle_chat_command("joke")
                 except Exception as e:
-                    msg = f"?? Chat error: {e}"
+                    msg = f"⚠️ Chat error: {e}"
                 send_message("Joke", msg or "No joke available right now.")
                 _last_joke_ts = now
                 _joke_daily_count += 1
@@ -1052,7 +1052,7 @@ async def _heartbeat_scheduler_loop():
                 return (hm >= start) or (hm <= end)
 
             if (now - last_sent) >= interval_s and _within_window(hm, start_hm, end_hm):
-                title, msg = ("Heartbeat", "Still alive ?")
+                title, msg = ("Heartbeat", "Still alive ✅")
                 if _heartbeat and hasattr(_heartbeat, "build_heartbeat"):
                     try:
                         title, msg = _heartbeat.build_heartbeat(merged)
