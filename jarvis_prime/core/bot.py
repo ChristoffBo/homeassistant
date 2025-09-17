@@ -100,7 +100,7 @@ CHAT_ENABLED_ENV   = os.getenv("chat_enabled", "false").lower() in ("1","true","
 DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1","true","yes")
 TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
 KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","true","yes")
-SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower() in ("1","true","yes")
+SMTP_ENABLED       = os.getenv("smtp_enabled", "false").lower" in ("1","true","yes")
 PROXY_ENABLED_ENV  = os.getenv("proxy_enabled", "false").lower() in ("1","true","yes")
 
 # Ingest toggles (which intakes to listen to)
@@ -1182,7 +1182,7 @@ async def _run_forever():
     asyncio.create_task(_digest_scheduler_loop())
     asyncio.create_task(listen_gotify())
     asyncio.create_task(_apprise_watchdog())
-    asyncio.create_task(_joke_scheduler_loop())       # <— NEW
+    # asyncio.create_task(_joke_scheduler_loop())    # ← removed to prevent duplicate posts
     asyncio.create_task(_heartbeat_scheduler_loop())  # <— NEW
 
     # EnviroGuard background — externalized module
