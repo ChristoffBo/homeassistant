@@ -1182,7 +1182,7 @@ async def _run_forever():
     asyncio.create_task(_digest_scheduler_loop())
     asyncio.create_task(listen_gotify())
     asyncio.create_task(_apprise_watchdog())
-  # asyncio.create_task(_joke_scheduler_loop())       # <— NEW
+    asyncio.create_task(_joke_scheduler_loop())       # <— NEW
     asyncio.create_task(_heartbeat_scheduler_loop())  # <— NEW
 
     # EnviroGuard background — externalized module
