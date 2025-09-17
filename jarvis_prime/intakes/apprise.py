@@ -195,7 +195,7 @@ def _emit_to_jarvis(msg: Dict[str, Any]) -> None:
             "source": "apprise",
             "id": ""
         },
-        timeout=5
+        timeout=20
     )
     r.raise_for_status()
 
