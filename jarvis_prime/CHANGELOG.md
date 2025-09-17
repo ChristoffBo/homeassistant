@@ -1,4 +1,7 @@
 
+## latest (2025-09-17 12:00:00)
+Hopefully fixed the Multiple Jokes bug.
+Extended the Apprise Timeout, so connection test shold now work.
 ## latest (2025-09-16 21:00:00)
 Added CTX overflow protection for riffs and Rewrites
 ## latest (2025-09-14 21:00:00)
