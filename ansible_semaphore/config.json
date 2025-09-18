@@ -2,23 +2,13 @@
   "name": "Ansible Semaphore",
   "version": "v2.16.31",
   "slug": "ansible_semaphore",
-  "description": "Semaphore UI inside Home Assistant.",
-  "arch": [
-    "aarch64",
-    "amd64",
-    "armv7"
-  ],
+  "description": "Semaphore UI inside Home Assistant (official upstream image).",
+  "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
-  "init": false,
-  "host_network": false,
   "ingress": false,
   "ingress_port": 8055,
-  "ingress_stream": false,
-  "panel_admin": false,
-  "map": [
-    "share:rw"
-  ],
+  "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
   "ports": {
     "8055/tcp": 8055
@@ -27,20 +17,26 @@
     "8055/tcp": "Semaphore Web UI"
   },
   "webui": "http://[HOST]:[PORT:8055]",
-  "environment": {
-    "SEMAPHORE_PORT": "8055",
-    "SEMAPHORE_DB_DIALECT": "bolt",
-    "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/database.boltdb",
-    "SEMAPHORE_TMP_PATH": "/tmp/semaphore",
-    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-    "SEMAPHORE_ADMIN": "admin",
-    "SEMAPHORE_ADMIN_NAME": "Admin",
-    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
-    "SEMAPHORE_ADMIN_PASSWORD": "ChangeMe!123",
-    "SEMAPHORE_COOKIE_HASH": "9c3b2f0b7d4f4e4ea1f8d8d2c5e6a1b2",
-    "SEMAPHORE_COOKIE_ENCRYPTION": "b1f2c3d4e5f6a7b89c0d1e2f3a4b5c6d",
-    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": "d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1"
+  "options": {
+    "semaphore_port": 8055,
+    "semaphore_db_dialect": "sqlite",
+    "semaphore_db_host": "/share/ansible_semaphore/semaphore.db",
+    "semaphore_tmp_path": "/tmp/semaphore",
+    "semaphore_playbook_path": "/share/ansible_semaphore/playbooks",
+    "semaphore_admin": "admin",
+    "semaphore_admin_name": "Admin",
+    "semaphore_admin_email": "admin@example.com",
+    "semaphore_admin_password": "ChangeMe!123"
   },
-  "options": {},
-  "schema": {}
+  "schema": {
+    "semaphore_port": "int",
+    "semaphore_db_dialect": "str",
+    "semaphore_db_host": "str",
+    "semaphore_tmp_path": "str",
+    "semaphore_playbook_path": "str",
+    "semaphore_admin": "str",
+    "semaphore_admin_name": "str",
+    "semaphore_admin_email": "str",
+    "semaphore_admin_password": "str"
+  }
 }
