@@ -7,13 +7,7 @@
   "startup": "services",
   "boot": "auto",
   "init": false,
-  "host_network": false,
   "ingress": false,
-  "ingress_port": 8055,
-  "ingress_stream": false,
-  "panel_admin": false,
-  "map": ["share:rw"],
-  "image": "semaphoreui/semaphore",
   "ports": {
     "8055/tcp": 8055
   },
@@ -21,6 +15,7 @@
     "8055/tcp": "Semaphore Web UI"
   },
   "webui": "http://[HOST]:[PORT:8055]",
+  "map": ["share:rw"],
   "options": {
     "semaphore_port": "8055",
     "semaphore_db_dialect": "sqlite",
