@@ -1,79 +1,28 @@
-#!/usr/bin/env bash
-set -euo pipefail
-log() { echo "[semaphore-addon] $*"; }
+#!/bin/sh
+set -e
 
-CONFIG_PATH="/data/options.json"
-CONF_PATH="/etc/semaphore/config.json"
+echo "[semaphore-addon] Writing Semaphore config → /etc/semaphore/config.json"
 
-# ─────────────────────────────────────────────
-# Ensure jq is installed (official image has it, but just in case)
-if ! command -v jq >/dev/null 2>&1; then
-  log "jq missing, please add it to your Dockerfile (apt-get install -y jq)."
-  exit 1
-fi
-
-# ─────────────────────────────────────────────
-# Read options from /data/options.json
-PORT="$(jq -r .semaphore_port "$CONFIG_PATH")"
-DB_DIALECT="$(jq -r .semaphore_db_dialect "$CONFIG_PATH")"
-DB_FILE="$(jq -r .semaphore_db_host "$CONFIG_PATH")"
-TMP_PATH="$(jq -r .semaphore_tmp_path "$CONFIG_PATH")"
-PLAYBOOK_PATH="$(jq -r .semaphore_playbook_path "$CONFIG_PATH")"
-
-ADMIN_LOGIN="$(jq -r .semaphore_admin "$CONFIG_PATH")"
-ADMIN_NAME="$(jq -r .semaphore_admin_name "$CONFIG_PATH")"
-ADMIN_EMAIL="$(jq -r .semaphore_admin_email "$CONFIG_PATH")"
-ADMIN_PASSWORD="$(jq -r .semaphore_admin_password "$CONFIG_PATH")"
-
-COOKIE_HASH="$(jq -r .semaphore_cookie_hash "$CONFIG_PATH")"
-COOKIE_ENCRYPTION="$(jq -r .semaphore_cookie_encryption "$CONFIG_PATH")"
-ACCESS_KEY_ENCRYPTION="$(jq -r .semaphore_access_key_encryption "$CONFIG_PATH")"
-
-# ─────────────────────────────────────────────
-# Prepare dirs
-mkdir -p "$(dirname "$CONF_PATH")" "$(dirname "$DB_FILE")" "$TMP_PATH" "$PLAYBOOK_PATH"
-
-# ─────────────────────────────────────────────
-# Generate config.json
-log "Writing Semaphore config → $CONF_PATH"
-cat > "$CONF_PATH" <<JSON
+cat >/etc/semaphore/config.json <<EOF
 {
-  "$DB_DIALECT": {
-    "file": "$DB_FILE"
+  "sqlite": {
+    "file": "${SEMAPHORE_DB_HOST:-/share/ansible_semaphore/semaphore.db}"
   },
-  "tmp_path": "$TMP_PATH",
-  "cookie_hash": "$COOKIE_HASH",
-  "cookie_encryption": "$COOKIE_ENCRYPTION",
-  "access_key_encryption": "$ACCESS_KEY_ENCRYPTION",
+  "tmp_path": "${SEMAPHORE_TMP_PATH:-/tmp/semaphore}",
+  "cookie_hash": "${SEMAPHORE_COOKIE_HASH}",
+  "cookie_encryption": "${SEMAPHORE_COOKIE_ENCRYPTION}",
+  "access_key_encryption": "${SEMAPHORE_ACCESS_KEY_ENCRYPTION}",
   "web_host": "0.0.0.0",
-  "web_port": "$PORT",
+  "web_port": "${SEMAPHORE_PORT:-8055}",
   "web_root": "",
-  "playbook_path": "$PLAYBOOK_PATH",
+  "playbook_path": "${SEMAPHORE_PLAYBOOK_PATH:-/share/ansible_semaphore/playbooks}",
   "non_auth": false
 }
-JSON
+EOF
 
-cat "$CONF_PATH"
+echo "[semaphore-addon] Ensuring data paths..."
+mkdir -p /share/ansible_semaphore/playbooks
+touch /share/ansible_semaphore/semaphore.db
 
-# ─────────────────────────────────────────────
-# Ensure admin user
-log "Ensuring admin user exists (or resetting password)..."
-if ! semaphore user change-by-login \
-  --login "$ADMIN_LOGIN" \
-  --password "$ADMIN_PASSWORD" \
-  --config "$CONF_PATH"; then
-  semaphore user add \
-    --admin \
-    --login "$ADMIN_LOGIN" \
-    --email "$ADMIN_EMAIL" \
-    --name  "$ADMIN_NAME" \
-    --password "$ADMIN_PASSWORD" \
-    --config "$CONF_PATH"
-fi
-
-log "Admin ready: $ADMIN_LOGIN"
-
-# ─────────────────────────────────────────────
-# Start server
-log "Starting Semaphore on :$PORT using $DB_DIALECT @ $DB_FILE"
-exec semaphore server --config "$CONF_PATH"
+echo "[semaphore-addon] Starting Semaphore..."
+exec /usr/local/bin/semaphore server --config /etc/semaphore/config.json
