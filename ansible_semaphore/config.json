@@ -10,7 +10,7 @@
   ],
   "startup": "services",
   "boot": "auto",
-  "init": false,
+  "init": true,
   "host_network": false,
   "ingress": false,
   "ingress_port": 8055,
@@ -27,20 +27,6 @@
     "8055/tcp": "Semaphore Web UI"
   },
   "webui": "http://[HOST]:[PORT:8055]",
-  "environment": {
-    "SEMAPHORE_PORT": "{options.semaphore_port}",
-    "SEMAPHORE_DB_DIALECT": "{options.semaphore_db_dialect}",
-    "SEMAPHORE_DB_HOST": "{options.semaphore_db_host}",
-    "SEMAPHORE_TMP_PATH": "{options.semaphore_tmp_path}",
-    "SEMAPHORE_PLAYBOOK_PATH": "{options.semaphore_playbook_path}",
-    "SEMAPHORE_ADMIN": "{options.semaphore_admin}",
-    "SEMAPHORE_ADMIN_NAME": "{options.semaphore_admin_name}",
-    "SEMAPHORE_ADMIN_EMAIL": "{options.semaphore_admin_email}",
-    "SEMAPHORE_ADMIN_PASSWORD": "{options.semaphore_admin_password}",
-    "SEMAPHORE_COOKIE_HASH": "{options.semaphore_cookie_hash}",
-    "SEMAPHORE_COOKIE_ENCRYPTION": "{options.semaphore_cookie_encryption}",
-    "SEMAPHORE_ACCESS_KEY_ENCRYPTION": "{options.semaphore_access_key_encryption}"
-  },
   "options": {
     "semaphore_port": "8055",
     "semaphore_db_dialect": "sqlite",
