@@ -4,21 +4,22 @@ set -euo pipefail
 
 log() { echo "[semaphore-addon] $*"; }
 
-# ─────────────────────────────────────────────
-# Ensure bashio exists
+# ────────────────────────────────
+# bashio check (HA base image)
 if ! command -v bashio >/dev/null 2>&1; then
-  log "bashio not found; this must be a HA add-on base image. Exiting."
+  log "bashio not found; exiting."
   exit 1
 fi
 
-# ─────────────────────────────────────────────
-# Best-effort package refresh on boot (won't fail if offline)
+# ────────────────────────────────
+# Optional apt update (safe)
 if command -v apt-get >/dev/null 2>&1; then
-  (apt-get update || true) && (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
+  (apt-get update || true) && \
+  (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
 fi
 
-# ─────────────────────────────────────────────
-# Read options from /data/options.json
+# ────────────────────────────────
+# Load options from /data/options.json
 PORT="$(bashio::config 'semaphore_port')"
 DB_DIALECT="$(bashio::config 'semaphore_db_dialect')"
 DB_HOST="$(bashio::config 'semaphore_db_host')"
@@ -36,22 +37,17 @@ ACCESS_KEY_ENCRYPTION="$(bashio::config 'semaphore_access_key_encryption')"
 
 CONF_PATH="/etc/semaphore/config.json"
 
-# ─────────────────────────────────────────────
-# Basic checks
-: "${DB_DIALECT:?db_dialect missing in options}"
-: "${DB_HOST:?db_host missing in options}"
-: "${PORT:?port missing in options}"
+# ────────────────────────────────
+# Ensure paths exist
+mkdir -p "$(dirname "${CONF_PATH}")" \
+         "$(dirname "${DB_HOST}")" \
+         "${TMP_PATH}" \
+         "${PLAYBOOK_PATH}"
 
-# ─────────────────────────────────────────────
-# Ensure required dirs exist
-mkdir -p "$(dirname "${CONF_PATH}")"
-mkdir -p "${TMP_PATH}"
-mkdir -p "${PLAYBOOK_PATH}"
-mkdir -p "$(dirname "${DB_HOST}")"
+# ────────────────────────────────
+# Write config.json dynamically
+log "Writing Semaphore config (${DB_DIALECT}) -> ${CONF_PATH}"
 
-# ─────────────────────────────────────────────
-# Generate config.json dynamically
-log "Writing Semaphore config: ${CONF_PATH}"
 cat > "${CONF_PATH}" <<JSON
 {
   "${DB_DIALECT}": {
@@ -69,9 +65,12 @@ cat > "${CONF_PATH}" <<JSON
 }
 JSON
 
-# ─────────────────────────────────────────────
+log "Final config.json:"
+cat "${CONF_PATH}"
+
+# ────────────────────────────────
 # Ensure admin user
-log "Ensuring admin user exists (or resetting password)..."
+log "Ensuring admin user exists..."
 if ! semaphore user change-by-login \
   --login "${ADMIN_LOGIN}" \
   --password "${ADMIN_PASSWORD}" \
@@ -86,7 +85,7 @@ if ! semaphore user change-by-login \
 fi
 log "Admin ready: ${ADMIN_LOGIN}"
 
-# ─────────────────────────────────────────────
+# ────────────────────────────────
 # Start Semaphore
-log "Starting Semaphore on :${PORT} (DB: ${DB_DIALECT} @ ${DB_HOST})"
+log "Starting Semaphore on :${PORT} (dialect=${DB_DIALECT})"
 exec semaphore server --config "${CONF_PATH}"
