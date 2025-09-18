@@ -2,70 +2,75 @@
 # shellcheck shell=bash
 set -euo pipefail
 
-# Log helper
 log() { echo "[semaphore-addon] $*"; }
 
-# Wait for /data/options.json (bashio) to be ready
+# ─────────────────────────────────────────────
+# Ensure bashio exists
 if ! command -v bashio >/dev/null 2>&1; then
   log "bashio not found; this must be a HA add-on base image. Exiting."
   exit 1
 fi
 
+# ─────────────────────────────────────────────
 # Best-effort package refresh on boot (won't fail if offline)
 if command -v apt-get >/dev/null 2>&1; then
   (apt-get update || true) && (DEBIAN_FRONTEND=noninteractive apt-get -y upgrade || true)
 fi
 
-# Read options
-ADMIN_LOGIN="$(bashio::config 'admin_login')"
-ADMIN_EMAIL="$(bashio::config 'admin_email')"
-ADMIN_NAME="$(bashio::config 'admin_name')"
-ADMIN_PASSWORD="$(bashio::config 'admin_password')"
-CONF_PATH="$(bashio::config 'config_path')"
-DATA_DIR="$(bashio::config 'data_dir')"
-PORT="$(bashio::config 'port')"
+# ─────────────────────────────────────────────
+# Read options from /data/options.json
+PORT="$(bashio::config 'semaphore_port')"
+DB_DIALECT="$(bashio::config 'semaphore_db_dialect')"
+DB_HOST="$(bashio::config 'semaphore_db_host')"
+TMP_PATH="$(bashio::config 'semaphore_tmp_path')"
+PLAYBOOK_PATH="$(bashio::config 'semaphore_playbook_path')"
 
-# Basic sanity
-: "${ADMIN_LOGIN:?admin_login missing in options}"
-: "${ADMIN_PASSWORD:?admin_password missing in options}"
-: "${CONF_PATH:?config_path missing in options}"
-: "${DATA_DIR:?data_dir missing in options}"
+ADMIN_LOGIN="$(bashio::config 'semaphore_admin')"
+ADMIN_NAME="$(bashio::config 'semaphore_admin_name')"
+ADMIN_EMAIL="$(bashio::config 'semaphore_admin_email')"
+ADMIN_PASSWORD="$(bashio::config 'semaphore_admin_password')"
+
+COOKIE_HASH="$(bashio::config 'semaphore_cookie_hash')"
+COOKIE_ENCRYPTION="$(bashio::config 'semaphore_cookie_encryption')"
+ACCESS_KEY_ENCRYPTION="$(bashio::config 'semaphore_access_key_encryption')"
+
+CONF_PATH="/etc/semaphore/config.json"
+
+# ─────────────────────────────────────────────
+# Basic checks
+: "${DB_DIALECT:?db_dialect missing in options}"
+: "${DB_HOST:?db_host missing in options}"
 : "${PORT:?port missing in options}"
 
-# Ensure data dir exists and is writable
-mkdir -p "${DATA_DIR}"
-chown -R root:root "${DATA_DIR}" || true
+# ─────────────────────────────────────────────
+# Ensure required dirs exist
+mkdir -p "$(dirname "${CONF_PATH}")"
+mkdir -p "${TMP_PATH}"
+mkdir -p "${PLAYBOOK_PATH}"
+mkdir -p "$(dirname "${DB_HOST}")"
 
-# Show current config path
-log "Config: ${CONF_PATH}"
-log "Data  : ${DATA_DIR}"
-log "Port  : ${PORT}"
-
-# Ensure a minimal config exists if one isn't provided (BoltDB with HTTP on :3000)
-if [ ! -s "${CONF_PATH}" ]; then
-  log "No config file found; generating minimal BoltDB config."
-  mkdir -p "$(dirname "${CONF_PATH}")"
-  cat > "${CONF_PATH}" <<'JSON'
+# ─────────────────────────────────────────────
+# Generate config.json dynamically
+log "Writing Semaphore config: ${CONF_PATH}"
+cat > "${CONF_PATH}" <<JSON
 {
-  "bolt": {
-    "file": "/var/lib/semaphore/database.boltdb"
+  "${DB_DIALECT}": {
+    "file": "${DB_HOST}"
   },
-  "tmp_path": "/tmp/semaphore",
-  "cookie_hash": "change-me-cookie-hash",
-  "cookie_encryption": "change-me-cookie-key",
-  "access_key_encryption": "change-me-access-key",
+  "tmp_path": "${TMP_PATH}",
+  "cookie_hash": "${COOKIE_HASH}",
+  "cookie_encryption": "${COOKIE_ENCRYPTION}",
+  "access_key_encryption": "${ACCESS_KEY_ENCRYPTION}",
   "web_host": "0.0.0.0",
-  "web_port": "8055",
+  "web_port": "${PORT}",
   "web_root": "",
+  "playbook_path": "${PLAYBOOK_PATH}",
   "non_auth": false
 }
 JSON
-fi
 
-# Make sure DB parent exists
-mkdir -p /var/lib/semaphore
-
-# Auto-provision / reset admin user from options
+# ─────────────────────────────────────────────
+# Ensure admin user
 log "Ensuring admin user exists (or resetting password)..."
 if ! semaphore user change-by-login \
   --login "${ADMIN_LOGIN}" \
@@ -81,8 +86,7 @@ if ! semaphore user change-by-login \
 fi
 log "Admin ready: ${ADMIN_LOGIN}"
 
-# Start server on configured port (override if needed)
-export SEMAPHORE_PORT="${PORT}"
-export SEMAPHORE_WEB_ROOT=""
-log "Starting Semaphore on :${PORT}"
+# ─────────────────────────────────────────────
+# Start Semaphore
+log "Starting Semaphore on :${PORT} (DB: ${DB_DIALECT} @ ${DB_HOST})"
 exec semaphore server --config "${CONF_PATH}"
