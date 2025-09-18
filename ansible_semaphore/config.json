@@ -11,7 +11,7 @@
   "ingress": false,
   "ingress_port": 8055,
   "map": ["share:rw"],
-  "image": "semaphoreui/semaphore",
+  "image": "local/ansible_semaphore",
   "ports": {
     "8055/tcp": 8055
   },
