@@ -6,8 +6,6 @@
   "arch": ["aarch64", "amd64", "armv7"],
   "startup": "services",
   "boot": "auto",
-  "ingress": false,
-  "ingress_port": 8055,
   "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
   "ports": {
@@ -17,26 +15,17 @@
     "8055/tcp": "Semaphore Web UI"
   },
   "webui": "http://[HOST]:[PORT:8055]",
-  "options": {
-    "semaphore_port": 8055,
-    "semaphore_db_dialect": "sqlite",
-    "semaphore_db_host": "/share/ansible_semaphore/semaphore.db",
-    "semaphore_tmp_path": "/tmp/semaphore",
-    "semaphore_playbook_path": "/share/ansible_semaphore/playbooks",
-    "semaphore_admin": "admin",
-    "semaphore_admin_name": "Admin",
-    "semaphore_admin_email": "admin@example.com",
-    "semaphore_admin_password": "ChangeMe!123"
+  "environment": {
+    "SEMAPHORE_PORT": "8055",
+    "SEMAPHORE_DB_DIALECT": "sqlite",
+    "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/semaphore.db",
+    "SEMAPHORE_TMP_PATH": "/tmp/semaphore",
+    "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
+    "SEMAPHORE_ADMIN": "admin",
+    "SEMAPHORE_ADMIN_NAME": "Admin",
+    "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
+    "SEMAPHORE_ADMIN_PASSWORD": "ChangeMe!123"
   },
-  "schema": {
-    "semaphore_port": "int",
-    "semaphore_db_dialect": "str",
-    "semaphore_db_host": "str",
-    "semaphore_tmp_path": "str",
-    "semaphore_playbook_path": "str",
-    "semaphore_admin": "str",
-    "semaphore_admin_name": "str",
-    "semaphore_admin_email": "str",
-    "semaphore_admin_password": "str"
-  }
+  "options": {},
+  "schema": {}
 }
