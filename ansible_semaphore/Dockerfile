@@ -1,14 +1,15 @@
 # Home Assistant add-on for Ansible Semaphore (official upstream image)
 FROM semaphoreui/semaphore:latest
 
-# Ensure we can write to /share
+# Run as root so we can write to /share
 USER root
 
-# Wrapper entrypoint
+# Add wrapper entrypoint
 COPY run.sh /usr/local/bin/run.sh
+RUN chmod +x /usr/local/bin/run.sh
 
-# Convenience; persistence is via /share at runtime
+# Set working dir to your HA share path
 WORKDIR /share/ansible_semaphore
 
-# Start wrapper
-CMD ["/bin/sh", "/usr/local/bin/run.sh"]
+# Force start via wrapper (no upstream auto-setup)
+ENTRYPOINT ["/usr/local/bin/run.sh"]
