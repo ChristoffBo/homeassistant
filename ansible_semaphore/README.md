@@ -2,7 +2,7 @@
 
 This add-on runs the official Semaphore Docker image inside Home Assistant.  
 It exposes the web UI on port **8055** (no ingress).  
-It uses **BoltDB** stored under `/share/ansible_semaphore`.  
+It uses **Sqlite** stored under `/share/ansible_semaphore`.  
 It auto-creates the **admin user** on first boot.
 
 ---
@@ -24,7 +24,7 @@ Running Semaphore in **Home Assistant** makes sense because both are automation 
 ---
 
 ## Paths
-- **Database**: `/share/ansible_semaphore/database.boltdb`  
+- **Database**: `/share/ansible_semaphore/semaphore.db`  
 - **Playbooks**: `/share/ansible_semaphore/playbooks`  
 - **Keys**: `/share/ansible_semaphore/keys`  
 - **Logs**: `/share/ansible_semaphore/logs`  
@@ -39,7 +39,7 @@ Create them **once** before first boot:
 
 ```bash
 mkdir -p /share/ansible_semaphore/{playbooks,keys,logs,tmp}
-touch /share/ansible_semaphore/database.boltdb
+touch /share/ansible_semaphore/semaphore.db
 chmod -R 0777 /share/ansible_semaphore
 ```
 
