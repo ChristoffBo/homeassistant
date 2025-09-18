@@ -10,8 +10,6 @@
   "host_network": false,
   "ingress": false,
   "ingress_port": 8055,
-  "ingress_stream": false,
-  "panel_admin": false,
   "map": ["share:rw"],
   "image": "semaphoreui/semaphore",
   "ports": {
