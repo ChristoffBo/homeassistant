@@ -7,16 +7,10 @@
   "startup": "services",
   "boot": "auto",
   "init": false,
-  "arch": [
-    "amd64",
-    "aarch64",
-    "armv7"
-  ],
+  "arch": ["amd64", "aarch64", "armv7"],
   "stage": "stable",
   "panel_icon": "mdi:robot",
-  "map": [
-    "share:rw"
-  ],
+  "map": ["share:rw"],
   "ports": {
     "2525/tcp": 2525,
     "2580/tcp": 2580,
@@ -24,16 +18,21 @@
     "2590/tcp": 2590,
     "2591/tcp": 2591
   },
+
   "options": {
     "bot_name": "Jarvis Prime",
     "bot_icon": "🧠",
     "jarvis_app_name": "Jarvis",
+
     "beautify_enabled": true,
     "beautify_inline_images": true,
     "silent_repost": true,
+
     "greeting_enabled": true,
     "greeting_times": "{\"morning\":\"06:00\",\"afternoon\":\"12:00\",\"evening\":\"18:00\",\"late_night\":\"22:30\",\"early_morning\":\"03:00\"}",
+
     "chat_enabled": true,
+
     "personality_enabled": true,
     "personality_persistent": true,
     "personality_family_friendly": true,
@@ -50,6 +49,7 @@
     "enable_action": false,
     "enable_jarvis": false,
     "enable_ops": false,
+
     "weather_enabled": true,
     "weather_lat": -26.2041,
     "weather_lon": 28.0473,
@@ -57,20 +57,26 @@
     "weather_time": "07:00",
     "weather_show_indoor": true,
     "weather_indoor_sensor_entity": "sensor.indoor_temperature",
+
     "digest_enabled": true,
     "digest_time": "08:00",
+
     "ai_checkins_enabled": true,
     "cache_refresh_minutes": 60,
+
     "heartbeat_enabled": true,
     "heartbeat_interval_minutes": 120,
     "heartbeat_start": "06:00",
     "heartbeat_end": "20:00",
+
     "retention_days": 30,
     "retention_hours": 24,
     "auto_purge_policy": "off",
+
     "gotify_url": "http://10.0.0.99:8091",
     "gotify_client_token": "CNjt8J7BVCh9Dl9",
     "gotify_app_token": "AkeVa3RG6AzKEm6",
+
     "ntfy_url": "http://10.0.0.99:8080",
     "ntfy_topic": "jarvis",
     "ntfy_user": "",
@@ -78,12 +84,14 @@
     "ntfy_token": "",
     "push_gotify_enabled": true,
     "push_ntfy_enabled": false,
+
     "push_smtp_enabled": false,
     "push_smtp_host": "smtp.gmail.com",
     "push_smtp_port": 587,
     "push_smtp_user": "",
     "push_smtp_pass": "",
     "push_smtp_to": "",
+
     "ingest_gotify_enabled": true,
     "ingest_ntfy_enabled": false,
     "ingest_smtp_enabled": true,
@@ -93,6 +101,7 @@
     "intake_apprise_accept_any_key": true,
     "intake_apprise_allowed_keys": "",
     "intake_apprise_port": 2591,
+
     "smtp_enabled": true,
     "smtp_bind": "0.0.0.0",
     "smtp_port": 2525,
@@ -103,30 +112,38 @@
     "smtp_allow_html": true,
     "smtp_priority_default": 5,
     "smtp_priority_map": "{ \"high\": 7, \"urgent\": 8, \"critical\": 9, \"low\": 3, \"normal\": 5 }",
+
     "proxy_enabled": true,
     "proxy_bind": "0.0.0.0",
     "proxy_port": 2580,
     "proxy_gotify_url": "http://10.0.0.99:8091",
     "proxy_ntfy_url": "http://10.0.0.99:8080",
+
     "webhook_enabled": true,
     "webhook_bind": "0.0.0.0",
     "webhook_port": 2590,
     "webhook_token": "",
+
     "radarr_enabled": true,
     "radarr_url": "http://10.0.0.240:7878",
     "radarr_api_key": "219aa62b6d5745c7a3b483c0ead746c0",
+
     "sonarr_enabled": true,
     "sonarr_url": "http://10.0.0.240:8989",
     "sonarr_api_key": "9ed05072ce2841ec9de2ce7c191dcaa3",
+
     "technitium_enabled": true,
     "technitium_url": "http://10.0.0.100:5380",
     "technitium_api_key": "eb60893ba673b6a44d7eb203ddbc2215067883e3a65ac4fc049b71dfae3b9e8a",
     "technitium_user": "admin",
     "technitium_pass": "admin",
+
     "uptimekuma_enabled": true,
     "uptimekuma_url": "http://10.0.0.99:3001",
     "uptimekuma_api_key": "uk2_1w672vOa6MPVybKDrMkeeCcHZmBnpLUXIxglqOmS",
     "uptimekuma_status_slug": "",
+
+    /* ---------------------- LLM: global ---------------------- */
     "llm_enabled": true,
     "llm_persona_riffs_enabled": true,
     "llm_rewrite_enabled": false,
@@ -145,18 +162,43 @@
     "llm_autodownload": true,
     "llm_hf_token": "",
     "llm_threads": 3,
-    "llm_phi3_enabled": true,
-    "llm_phi3_url": "https://huggingface.co/bartowski/Phi-3-mini-4k-instruct-GGUF/resolve/main/Phi-3-mini-4k-instruct-Q4_K_M.gguf",
-    "llm_phi3_path": "/share/jarvis_prime/models/Phi-3-mini-4k-instruct-q4.gguf",
+
+    /* ---------------------- Phi-4 mini instruct ---------------------- */
+    "llm_phi4_q4_enabled": false,
+    "llm_phi4_q4_url": "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
+    "llm_phi4_q4_path": "/share/jarvis_prime/models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
+
+    "llm_phi4_q5_enabled": false,
+    "llm_phi4_q5_url": "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q5_K_M.gguf",
+    "llm_phi4_q5_path": "/share/jarvis_prime/models/microsoft_Phi-4-mini-instruct-Q5_K_M.gguf",
+
+    "llm_phi4_q6_enabled": false,
+    "llm_phi4_q6_url": "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q6_K_L.gguf",
+    "llm_phi4_q6_path": "/share/jarvis_prime/models/microsoft_Phi-4-mini-instruct-Q6_K_L.gguf",
+
+    "llm_phi4_q8_enabled": false,
+    "llm_phi4_q8_url": "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q8_0.gguf",
+    "llm_phi4_q8_path": "/share/jarvis_prime/models/microsoft_Phi-4-mini-instruct-Q8_0.gguf",
+
+    /* ---------------------- Phi-3.5 mini instruct ---------------------- */
     "llm_phi35_q4_enabled": false,
     "llm_phi35_q4_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
     "llm_phi35_q4_path": "/share/jarvis_prime/models/Phi-3.5-mini-instruct-q4.gguf",
+
     "llm_phi35_q5_enabled": true,
     "llm_phi35_q5_url": "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q5_K_M.gguf",
     "llm_phi35_q5_path": "/share/jarvis_prime/models/Phi-3.5-mini-instruct-q5.gguf",
+
     "llm_phi35_q5_uncensored_enabled": false,
     "llm_phi35_q5_uncensored_url": "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
     "llm_phi35_q5_uncensored_path": "/share/jarvis_prime/models/Phi-3.5-mini-uncensored-q5.gguf",
+
+    /* ---------------------- Phi-3 mini instruct ---------------------- */
+    "llm_phi3_enabled": true,
+    "llm_phi3_url": "https://huggingface.co/bartowski/Phi-3-mini-4k-instruct-GGUF/resolve/main/Phi-3-mini-4k-instruct-Q4_K_M.gguf",
+    "llm_phi3_path": "/share/jarvis_prime/models/Phi-3-mini-4k-instruct-q4.gguf",
+
+    /* ---------------------- EnviroGuard ---------------------- */
     "llm_enviroguard_enabled": true,
     "llm_enviroguard_poll_minutes": 30,
     "llm_enviroguard_max_stale_minutes": 120,
@@ -172,16 +214,21 @@
     "llm_enviroguard_normal_c": 22,
     "llm_enviroguard_boost_c": 16
   },
+
   "schema": {
     "bot_name": "str",
     "bot_icon": "str",
     "jarvis_app_name": "str",
+
     "beautify_enabled": "bool",
     "beautify_inline_images": "bool",
     "silent_repost": "bool",
+
     "greeting_enabled": "bool",
     "greeting_times": "str",
+
     "chat_enabled": "bool",
+
     "personality_enabled": "bool",
     "personality_persistent": "bool",
     "personality_family_friendly": "bool",
@@ -198,6 +245,7 @@
     "enable_action": "bool",
     "enable_jarvis": "bool",
     "enable_ops": "bool",
+
     "weather_enabled": "bool",
     "weather_lat": "float",
     "weather_lon": "float",
@@ -205,20 +253,26 @@
     "weather_time": "str",
     "weather_show_indoor": "bool",
     "weather_indoor_sensor_entity": "str",
+
     "digest_enabled": "bool",
     "digest_time": "str",
+
     "ai_checkins_enabled": "bool",
     "cache_refresh_minutes": "int(1,)",
+
     "heartbeat_enabled": "bool",
     "heartbeat_interval_minutes": "int(1,)",
     "heartbeat_start": "str",
     "heartbeat_end": "str",
+
     "retention_days": "int(1,)",
     "retention_hours": "int(1,)",
     "auto_purge_policy": "str",
+
     "gotify_url": "str",
     "gotify_client_token": "str",
     "gotify_app_token": "str",
+
     "ntfy_url": "str",
     "ntfy_topic": "str",
     "ntfy_user": "str",
@@ -226,12 +280,14 @@
     "ntfy_token": "str",
     "push_gotify_enabled": "bool",
     "push_ntfy_enabled": "bool",
+
     "push_smtp_enabled": "bool",
     "push_smtp_host": "str",
     "push_smtp_port": "int(1,)",
     "push_smtp_user": "str",
     "push_smtp_pass": "str",
     "push_smtp_to": "str",
+
     "ingest_gotify_enabled": "bool",
     "ingest_ntfy_enabled": "bool",
     "ingest_smtp_enabled": "bool",
@@ -241,6 +297,7 @@
     "intake_apprise_accept_any_key": "bool",
     "intake_apprise_allowed_keys": "str",
     "intake_apprise_port": "int(1,)",
+
     "smtp_enabled": "bool",
     "smtp_bind": "str",
     "smtp_port": "int(1,)",
@@ -251,30 +308,38 @@
     "smtp_allow_html": "bool",
     "smtp_priority_default": "int",
     "smtp_priority_map": "str",
+
     "proxy_enabled": "bool",
     "proxy_bind": "str",
     "proxy_port": "int(1,)",
     "proxy_gotify_url": "str",
     "proxy_ntfy_url": "str",
+
     "webhook_enabled": "bool",
     "webhook_bind": "str",
     "webhook_port": "int(1,)",
     "webhook_token": "str",
+
     "radarr_enabled": "bool",
     "radarr_url": "str",
     "radarr_api_key": "str",
+
     "sonarr_enabled": "bool",
     "sonarr_url": "str",
     "sonarr_api_key": "str",
+
     "technitium_enabled": "bool",
     "technitium_url": "str",
     "technitium_api_key": "str",
     "technitium_user": "str",
     "technitium_pass": "str",
+
     "uptimekuma_enabled": "bool",
     "uptimekuma_url": "str",
     "uptimekuma_api_key": "str",
     "uptimekuma_status_slug": "str",
+
+    /* -------- LLM: global -------- */
     "llm_enabled": "bool",
     "llm_persona_riffs_enabled": "bool",
     "llm_rewrite_enabled": "bool",
@@ -293,9 +358,22 @@
     "llm_autodownload": "bool",
     "llm_hf_token": "str",
     "llm_threads": "int(1,)",
-    "llm_phi3_enabled": "bool",
-    "llm_phi3_url": "str",
-    "llm_phi3_path": "str",
+
+    /* -------- Phi-4 mini instruct -------- */
+    "llm_phi4_q4_enabled": "bool",
+    "llm_phi4_q4_url": "str",
+    "llm_phi4_q4_path": "str",
+    "llm_phi4_q5_enabled": "bool",
+    "llm_phi4_q5_url": "str",
+    "llm_phi4_q5_path": "str",
+    "llm_phi4_q6_enabled": "bool",
+    "llm_phi4_q6_url": "str",
+    "llm_phi4_q6_path": "str",
+    "llm_phi4_q8_enabled": "bool",
+    "llm_phi4_q8_url": "str",
+    "llm_phi4_q8_path": "str",
+
+    /* -------- Phi-3.5 mini instruct -------- */
     "llm_phi35_q4_enabled": "bool",
     "llm_phi35_q4_url": "str",
     "llm_phi35_q4_path": "str",
@@ -305,6 +383,13 @@
     "llm_phi35_q5_uncensored_enabled": "bool",
     "llm_phi35_q5_uncensored_url": "str",
     "llm_phi35_q5_uncensored_path": "str",
+
+    /* -------- Phi-3 mini instruct -------- */
+    "llm_phi3_enabled": "bool",
+    "llm_phi3_url": "str",
+    "llm_phi3_path": "str",
+
+    /* -------- EnviroGuard -------- */
     "llm_enviroguard_enabled": "bool",
     "llm_enviroguard_poll_minutes": "int(1,)",
     "llm_enviroguard_max_stale_minutes": "int(1,)",
@@ -320,6 +405,7 @@
     "llm_enviroguard_normal_c": "int",
     "llm_enviroguard_boost_c": "int"
   },
+
   "ingress": true,
   "ingress_port": 2581,
   "host_network": true,
