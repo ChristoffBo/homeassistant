@@ -26,7 +26,12 @@ DEFAULTS = {
     "chat_history_turns_max": 5,
     "chat_max_total_tokens": 1200,         # from chatbot_max_total_tokens
     "chat_reply_max_new_tokens": 256,      # from chatbot_reply_max_new_tokens
-    "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
+    # Identity & tone are locked here so it answers "Jarvis" to "what's your name?"
+    "chat_system_prompt": (
+        "You are Jarvis Prime, also called Jarvis. You are a concise, helpful homelab assistant. "
+        "If asked your name, answer 'Jarvis'. Be direct, no banners or status headers. "
+        "Answer in plain sentences, not lists, unless the user asks for a list."
+    ),
     "chat_model": "",                      # optional override hint for Ollama name or gguf filename base
 }
 
@@ -49,7 +54,11 @@ def _load_options() -> dict:
 
     # Optional extras if you ever add them:
     if isinstance(raw.get("chat_system_prompt"), str) and raw.get("chat_system_prompt", "").strip():
-        out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
+        # Append identity guard additively so existing user prompt still respected.
+        base = raw["chat_system_prompt"].strip()
+        if "Jarvis" not in base:
+            base += " Also: your name is Jarvis; if asked 'what is your name', answer 'Jarvis'."
+        out["chat_system_prompt"] = base
 
     if isinstance(raw.get("chat_model"), str):
         out["chat_model"] = raw.get("chat_model", "").strip()
@@ -201,6 +210,24 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     body = "\n".join(convo)
     return f"<s>[INST] <<SYS>>{sys_text}<</SYS>>\n{body} [/INST]"
 
+# Quick test for "bad first line" (banner / fluff / emoji header)
+_BAD_HEAD_RX = re.compile(
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:\-].*|^[A-Z][A-Za-z\s]{1,40}[:—-]\s*$',
+    re.IGNORECASE
+)
+
+def _looks_like_banner(line: str) -> bool:
+    if not line: return False
+    s = line.strip()
+    if not s: return False
+    if _BAD_HEAD_RX.match(s): return True
+    if len(s.split()) <= 6 and any(x in s for x in ("🚨","💥","🛰️","📊","✨","⚠️","✅")):
+        return True
+    # very short, title-case-ish, ending with punctuation
+    if 2 <= len(s.split()) <= 6 and s[0].isupper() and s[-1] in ".:—-":
+        return True
+    return False
+
 def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "") -> str:
     if not _is_ready():
         raise RuntimeError("llm_client not available")
@@ -210,16 +237,30 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
 
     prompt = _build_prompt_from_msgs(msgs)
 
-    # Use the llm_client’s internal generate path so stops/temps match your model
-    out = _LLM._do_generate(
-        prompt,
-        timeout=20,  # actual timeout gets profiled in llm_client anyway
-        base_url="",           # resolved by ensure_loaded if Ollama is set in options
-        model_url="",          # resolved from options
-        model_name_hint=model_hint or "",
-        max_tokens=int(max_new_tokens),
-        with_grammar_auto=False
-    )
+    # Try up to 3 attempts if the model returns empty or banner-only noise
+    attempts = 0
+    out = ""
+    while attempts < 3:
+        attempts += 1
+        raw = _LLM._do_generate(
+            prompt,
+            timeout=20,  # actual timeout gets profiled in llm_client anyway
+            base_url="",           # resolved by ensure_loaded if Ollama is set in options
+            model_url="",          # resolved from options
+            model_name_hint=model_hint or "",
+            max_tokens=int(max_new_tokens),
+            with_grammar_auto=False
+        ) or ""
+        cleaned = _clean_reply(raw)
+        if cleaned and cleaned != "(no reply)":
+            # Also guard against outputs that are only a banner line
+            head = cleaned.splitlines()[0] if cleaned.splitlines() else cleaned
+            if not _looks_like_banner(head):
+                out = cleaned
+                break
+        # tiny backoff before retry
+        time.sleep(0.05 * attempts)
+
     return out or ""
 
 # ----------------------------
@@ -233,17 +274,23 @@ _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
 # Kill 1-line “banner” like:  Update — … 🚨 / 💥 / 🛰️ etc.
 _BANNER_RX = re.compile(
-    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:\-].*(?:🚨|💥|🛰️|📊|✨|⚠️|✅)?\s*$',
     re.IGNORECASE
 )
 
 def _clean_reply(text: str) -> str:
     if not text:
         return text
-    # Split & drop a leading banner-ish line
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    if lines and (_BANNER_RX.match(lines[0]) or len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️"))):
-        lines = lines[1:]
+
+    # Split & drop empty lines first
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+
+    # Stronger: nuke leading banner/meta lines until a normal sentence is found
+    while lines and (
+        _BANNER_RX.match(lines[0])                         # "Update — …"
+        or _looks_like_banner(lines[0])                    # short/emoji header
+    ):
+        lines.pop(0)
 
     out = "\n".join(lines).strip()
 
