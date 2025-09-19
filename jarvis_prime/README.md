@@ -1,11 +1,12 @@
 # 🧩 Jarvis Prime — Home Assistant Add-on
 
-Jarvis Prime is your standalone Notification Orchestrator and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality.
+Jarvis Prime is your standalone Notification Orchestrator, Chat Assistant, and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality. In addition, Jarvis now includes a dedicated Chat Lane — ask questions or request explanations, and Jarvis will reply instantly using the local LLM. Chatting does not replace riffs; it gives you direct Q&A on demand.
 
 Features
-• Standalone Notification Orchestrator and Server.  
+• Standalone Notification Orchestrator and Chat Assistant  
 • Optional review via Gotify or ntfy apps (push notifications, history, filters)  
 • Beautify Engine (LLM + formatting pipeline) normalizes events into Jarvis Cards  
+• Chat Lane: send a Gotify/ntfy message with title “chat” and text = your question, Jarvis responds with direct answer (no riff preambles)  
 • SMTP Intake: drop-in Mailrise replacement, accepts LAN-only emails with any auth  
 • HTTP Proxy Intake: accepts Gotify/ntfy POSTs and beautifies them  
 • Webhook Intake: accepts plain text or JSON from scripts, GitHub, health checks, etc.  
@@ -34,103 +35,68 @@ Supported Sources
 • Apprise → POSTs from any Apprise client  
 • Plain text → Beautified into sleek cards  
 
+Chat Lane Setup
+• Enabled by default with key “chatbot_enabled”: true in options.json  
+• To trigger chat: send Gotify or ntfy notification with title = “chat” or “talk” and body = your question  
+• Jarvis responds with direct Q&A, stripped of riff banners and policies  
+• History preserved per source (up to N turns, configurable)  
+• All parameters configurable in options.json  
+
+Chat Lane Config (options.json example)
+{  
+  "chatbot_enabled": true,  
+  "chatbot_history_turns": 3,  
+  "chatbot_max_total_tokens": 1200,  
+  "chatbot_reply_max_new_tokens": 256,  
+  "chat_system_prompt": "You are Jarvis Prime (call-sign Jarvis), the user’s homelab assistant. Always answer as Jarvis.",  
+  "chat_model": ""  
+}  
+
+Chat Lane Options Explained
+• chatbot_enabled → true/false toggle for chat function  
+• chatbot_history_turns → number of turns to keep in memory (default 3)  
+• chatbot_max_total_tokens → global budget for context + reply (safe 512–2000)  
+• chatbot_reply_max_new_tokens → max length of new answer (default 256, longer = smarter but slower)  
+• chat_system_prompt → customize Jarvis’s identity and tone  
+• chat_model → optional override if multiple local models are available  
+
 Intake Setup Details
+1. SMTP Intake (Mailrise replacement) → configure apps to send SMTP to Jarvis  
+2. Webhook Intake → POST text or JSON to http://10.0.0.100:2590/webhook  
+3. Apprise Intake → POST to http://10.0.0.100:2591/intake/apprise/notify?token=yourtoken  
+4. Gotify Intake (proxy) → forward messages via Gotify app token  
+5. ntfy Intake (proxy) → subscribe to topic and push text  
 
-1. SMTP Intake (Mailrise replacement)  
-• Start Jarvis Prime and note the SMTP port (default 2525).  
-• In your app (Duplicati, Proxmox, etc.), set SMTP server to 10.0.0.100 and port 2525.  
-• Authentication: any username/password (ignored).  
-• Subject = Jarvis Card title, body = Card body.  
-• Example: configure Duplicati → Notifications → SMTP → server=10.0.0.100, port=2525.  
+EnviroGuard (Optional)
+Jarvis monitors temperature and dynamically adjusts LLM profiles. Supports Open-Meteo API or Home Assistant sensors. Example profiles: hot, normal, boost with CPU %, ctx tokens, timeouts. Jarvis announces state changes: “Ambient 31.2 °C → profile HOT (CPU=50%, ctx=1024, to=12s)”
 
-2. Webhook Intake  
-• URL: http://10.0.0.100:2590/webhook  
-• Accepts plain text or JSON.  
-• Example plain text:  
-  curl -X POST http://10.0.0.100:2590/webhook -H "Content-Type: text/plain" -d 'Backup finished'  
-• Example JSON:  
-  curl -X POST http://10.0.0.100:2590/webhook -H "Content-Type: application/json" -d '{"title":"Backup Complete","message":"Node 1 finished","priority":7}'  
-• Step: Add this URL to any app that can POST webhook notifications (e.g., Uptime Kuma).  
-
-3. Apprise Intake  
-• URL: http://10.0.0.100:2591/intake/apprise/notify?token=YOUR_LONG_TOKEN  
-• Step 1: Generate a long random token (any string).  
-• Step 2: Place token into /data/options.json under "apprise_token".  
-• Step 3: From any host with Apprise installed, run:  
-  curl -X POST "http://10.0.0.100:2591/intake/apprise/notify?token=yourtoken" -H "Content-Type: application/json" -d '{"title":"Apprise Test","body":"Hello","type":"info"}'  
-
-4. Gotify Intake (proxy)  
-• Step 1: Install Gotify server (docker gotify/server) and open its Web UI.  
-• Step 2: Login → Settings → Applications → Add Application → Give a name → Create.  
-• Step 3: Copy the application token shown.  
-• Step 4: Test with:  
-  curl -X POST "http://10.0.0.100:2580/message?token=YOUR_GOTIFY_APP_TOKEN" -H "Content-Type: application/json" -d '{"title":"Gotify Direct","message":"Hello from Gotify","priority":5}'  
-• In mobile Gotify app: Settings → Add server → URL=http://10.0.0.100:2580 → Token=paste.  
-
-5. ntfy Intake (proxy)  
-• Step 1: Install ntfy app from Play Store or App Store.  
-• Step 2: In the app, add a subscription topic: "jarvis".  
-• Step 3: Test with:  
-  curl -X POST "http://10.0.0.100:2580/jarvis" -H "Content-Type: text/plain" -d 'Hello from ntfy direct push'  
-• Notifications will appear in the ntfy app subscribed to topic "jarvis".  
-
-EnviroGuard (Optional)  
-• Jarvis monitors temperature and dynamically adjusts LLM profiles.  
-• Two modes are supported:  
-  1. **Open-Meteo API** → uses outside temperature based on configured lat/lon.  
-  2. **Home Assistant sensors** → reads local temperature from any HA entity (e.g., `sensor.living_room_temperature`). Configure entity IDs in `/data/options.json`.  
-• Example config with HA sensors:  
-  {  
-    "llm_enviroguard_enabled": true,  
-    "llm_enviroguard_use_homeassistant": true,  
-    "llm_enviroguard_sensors": ["sensor.living_room_temperature","sensor.server_rack_temp"],  
-    "llm_enviroguard_hot_c": 30,  
-    "llm_enviroguard_cold_c": 10,  
-    "llm_enviroguard_profiles": {  
-      "manual": { "cpu_percent": 80, "ctx_tokens": 2048, "timeout_seconds": 15 },  
-      "hot":    { "cpu_percent": 50, "ctx_tokens": 1024, "timeout_seconds": 12 },  
-      "normal": { "cpu_percent": 80, "ctx_tokens": 2048, "timeout_seconds": 15 },  
-      "boost":  { "cpu_percent": 90, "ctx_tokens": 4096, "timeout_seconds": 20 }  
-    }  
-  }  
-• Jarvis announces state changes: “Ambient 31.2 °C → profile HOT (CPU=50%, ctx=1024, to=12s)”  
-
-LLM Defaults  
+LLM Defaults
 • Context tokens: 2048 (~1500 words memory)  
 • Generation tokens: 150 (~110 words rewrite/riff)  
-• Riff lines: 30 tokens (≈20 words, punchy)  
-• Rewrite lines: 50 tokens (≈35 words, clear)  
-• Persona riffs: 100 tokens (≈70 words, multi-line personality quips)  
+• Riff lines: 30 tokens (~20 words, punchy)  
+• Rewrite lines: 50 tokens (~35 words, clear)  
+• Persona riffs: 100 tokens (~70 words, multi-line personality quips)  
+• Chat Lane replies: default 256 tokens, configurable  
 
-Recommended LLMs  
-Jarvis Prime is tuned for **Phi family models**. Use GGUF quantized builds with llama.cpp or ollama.  
+Recommended LLMs
+Jarvis Prime is tuned for Phi family models (GGUF via llama.cpp or ollama). Phi-3 Mini (light, fast), Phi-3.5 Mini (improved reasoning), Phi-4 (best phrasing, heavier). Download from Hugging Face.  
 
-1. **Phi-3 Mini (3.8B)**  
-• Fast, light, excellent for rewrites and riffs.  
-• Best option for Intel N100, N5105, or similar CPUs.  
-• Download: https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf  
+Performance Guide
+• Intel N100: Phi-3 Q4 ~8–12 tok/s, Phi-3.5 Q4 ~6–10 tok/s  
+• i7 desktop: Phi-3.5 Q4 ~15 tok/s, Phi-4 Q4 ~6–8 tok/s  
+• With GPU offload: Phi-4 Q5 ~20–30 tok/s  
+• Recommended default: Phi-3 Mini Q4  
 
-2. **Phi-3.5 Mini (3.8B)**  
-• Improved reasoning and stability over Phi-3.  
-• Runs fine on mid-range CPUs (i7, Ryzen) at Q4_K_M or Q5_K_M.  
-• Download: https://huggingface.co/microsoft/Phi-3.5-mini-instruct-gguf  
+Web UI Access
+Ingress via Home Assistant or direct browser at http://10.0.0.100:PORT. Inbox shows beautified cards with filters, retention, purge, and live updates.  
 
-3. **Phi-4 (14B)**  
-• Strongest reasoning, natural phrasing.  
-• Heavy — requires desktop-grade CPU or GPU offload.  
-• Good for users who want maximum polish in rewrites.  
-• Download: https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf  
+Chat Lane Usage Example
+Send via Gotify or ntfy:  
+Title: chat  
+Message: When was Windows 11 released?  
 
-Performance Guide  
-• Intel N100: Phi-3 Q4 ~8–12 tok/s, Phi-3.5 Q4 ~6–10 tok/s.  
-• i7 desktop: Phi-3.5 Q4 ~15 tok/s, Phi-4 Q4 ~6–8 tok/s.  
-• With GPU offload: Phi-4 Q5 can reach ~20–30 tok/s.  
-• Recommended default: Phi-3 Mini (Q4) for balance of speed and polish.  
+Jarvis will respond instantly with something like:  
+“Windows 11 was officially released to the general public on October 5, 2021.”  
 
-Web UI Access  
-• Ingress via Home Assistant → Add-on → Jarvis Prime → OPEN WEB UI.  
-• Or direct browser: http://10.0.0.100:PORT (Ingress base path is auto-handled).  
-• Inbox view shows beautified cards with filters, retention, purge, and live updates.  
-
-Self-Hosting Statement  
-Jarvis Prime is fully self-contained. Gotify or ntfy are optional — use them only if you want mobile push with history. The add-on runs standalone with its own intakes, Beautify Engine, personas, and dark-mode UI.
+Self-Hosting Statement
+Jarvis Prime is fully self-contained. Gotify or ntfy are optional — use them only if you want mobile push with history. The add-on runs standalone with its own intakes, Beautify Engine, personas, Chat Lane, and dark-mode UI.
