@@ -14,7 +14,7 @@
 # - Persona-free enforcement (we never inject persona text)
 # - Banner/transport/persona/meta scrub with safe fallback
 # - One-shot retry with small backoff for transient LLM errors
-# - Safe fallback reply if model returns blank/garbage
+# - Safe fallback reply only if model returns truly blank (no override of short answers)
 # - Continuity bias: prefer to keep most-recent user turn
 
 import os
@@ -274,16 +274,13 @@ def _clean_reply(text: str) -> str:
 
 def _safe_reply(raw: str, user_msg: str) -> str:
     """
-    Never go silent: if the model returns blank/junk, produce a minimal,
-    persona-free echo so the lane stays alive.
+    Never go silent: if the model returns truly blank after cleaning, produce a minimal,
+    persona-free echo. Do NOT override short but valid answers.
     """
     out = _clean_reply(raw or "")
     if not out.strip():
         snippet = (user_msg[:120] + "...") if len(user_msg) > 120 else user_msg
         return f"(fallback) Got your message: {snippet}"
-    # If suspiciously short (1–2 words), nudge for clarity
-    if len(out.split()) < 3:
-        return out + " (please expand)"
     return out
 
 # ----------------------------
@@ -440,8 +437,6 @@ def _chatmemory_trim_by_tokens(self,
 
     hist_copy = history[:]
 
-    # Prefer to keep the last *user* turn even if we must drop the paired assistant
-    # (helps continuity when the previous assistant message was long)
     def build_msgs(hist_pairs: List[Tuple[str,str]], utext: str) -> List[Tuple[str,str]]:
         msgs: List[Tuple[str,str]] = [("system", sys_prompt)]
         for u, a in hist_pairs:
@@ -455,7 +450,6 @@ def _chatmemory_trim_by_tokens(self,
     # Trim older turns first (FIFO)
     i = 0
     while tokens_of_messages(msgs) > limit and len(hist_copy) > 0:
-        # If more than one pair exists, pop from the front
         popped = hist_copy.pop(0)
         removed.append(popped)
         msgs = build_msgs(hist_copy, new_user)
@@ -622,3 +616,4 @@ if _FASTAPI_OK:
 if __name__ == "__main__" and _FASTAPI_OK:
     import uvicorn
     uvicorn.run("chatbot:app", host="0.0.0.0", port=8189, reload=False)
+```0
