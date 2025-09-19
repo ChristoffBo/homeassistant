@@ -26,7 +26,12 @@ DEFAULTS = {
     "chat_history_turns_max": 5,
     "chat_max_total_tokens": 1200,         # from chatbot_max_total_tokens
     "chat_reply_max_new_tokens": 256,      # from chatbot_reply_max_new_tokens
-    "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
+    # Stronger identity so it knows it's Jarvis
+    "chat_system_prompt": (
+        "You are Jarvis Prime (call-sign \"Jarvis\"), the user's homelab assistant. "
+        "Always refer to yourself as Jarvis. Be accurate, concise, and practical. "
+        "Cite nothing, avoid preambles, and answer directly unless asked for detail."
+    ),
     "chat_model": "",                      # optional override hint for Ollama name or gguf filename base
 }
 
@@ -154,10 +159,6 @@ async def _bg_gc_loop():
 # LLM bridge (reuse llm_client)
 # ----------------------------
 
-# We deliberately use your llm_client internals so we don't have to change that file.
-# - ensure_loaded(..) to pick profile/model
-# - _is_phi3_family() to choose chat template
-# - _do_generate(..) to actually run (Ollama or llama_cpp) with stops, temps, etc.
 try:
     import llm_client as _LLM
 except Exception as _e:
@@ -174,24 +175,21 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
         # Phi-style chat template
         buf: List[str] = []
-        # Expect first to be system; if multiple systems exist, join them.
         sys_chunks = [c for (r, c) in msgs if r == "system"]
-        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
+        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are Jarvis, a helpful assistant."
         buf.append(f"<|system|>\n{sys_text}\n<|end|>")
         for r, c in msgs:
             if r == "user":
                 buf.append(f"<|user|>\n{c}\n<|end|>")
             elif r == "assistant":
                 buf.append(f"<|assistant|>\n{c}\n<|end|>")
-        # Generation should start at assistant:
         buf.append("<|assistant|>\n")
         return "\n".join(buf)
 
     # Fallback: Llama [INST] format
     sys_chunks = [c for (r, c) in msgs if r == "system"]
-    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
+    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are Jarvis, a helpful assistant."
     convo: List[str] = []
-    # Pack user/assistant pairs into a single INST block to keep it simple
     for r, c in msgs:
         if r == "user":
             convo.append(f"User: {c}")
@@ -226,28 +224,45 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
 # Output cleaner (strip riff headers / meta)
 # ----------------------------
 
-# Borrow llm_client’s scrubbing helpers if present
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
-# Kill 1-line “banner” like:  Update — … 🚨 / 💥 / 🛰️ etc.
+# Aggressive banner/preamble detection
 _BANNER_RX = re.compile(
-    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
+    r'^\s*(?:update|status|incident|digest|note|report|summary)\s*[:—\-–]\s*.+$',
     re.IGNORECASE
 )
+_EMOJI_HINT_RX = re.compile(r'[🚨💥🛰️🔥⚠️✨⭐️]')
+
+def _looks_like_banner(s: str) -> bool:
+    if not s:
+        return False
+    t = s.strip()
+    if _BANNER_RX.match(t):
+        return True
+    # Heuristics: short, “slogan-y” line with 2+ semicolons or incident-ish emoji
+    if len(t) <= 160 and (t.count(';') >= 2 or _EMOJI_HINT_RX.search(t)):
+        return True
+    return False
 
 def _clean_reply(text: str) -> str:
     if not text:
         return text
-    # Split & drop a leading banner-ish line
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    if lines and (_BANNER_RX.match(lines[0]) or len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️"))):
+
+    # Normalize and split; drop leading blanks
+    raw_lines = text.splitlines()
+    while raw_lines and not raw_lines[0].strip():
+        raw_lines.pop(0)
+    lines = [ln.rstrip() for ln in raw_lines]
+
+    # Drop one leading banner-ish line
+    if lines and _looks_like_banner(lines[0]):
         lines = lines[1:]
 
     out = "\n".join(lines).strip()
 
-    # Strip transport tags / persona tokens / meta markers if those helpers exist
+    # Strip transport tags / persona tokens / meta markers if the helpers exist
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
@@ -434,3 +449,4 @@ if _FASTAPI_OK:
 if __name__ == "__main__" and _FASTAPI_OK:
     import uvicorn
     uvicorn.run("chatbot:app", host="0.0.0.0", port=8189, reload=False)
+```0
