@@ -7,6 +7,7 @@
 # - Exposes handle_message(source, text) for bot.py handoff
 # - Optional HTTP/WS API via FastAPI if installed
 
+import os
 import json
 import time
 import asyncio
@@ -28,6 +29,8 @@ DEFAULTS = {
     # Persona-free by default; set chat_system_prompt in options if you want one.
     "chat_system_prompt": "",
     "chat_model": "",
+    # NEW: per-call LLM timeout (seconds)
+    "chat_timeout_seconds": 35,
 }
 
 def _load_options_raw() -> dict:
@@ -45,6 +48,7 @@ def _load_options() -> dict:
     out["chat_history_turns"] = int(raw.get("chatbot_history_turns", raw.get("chat_history_turns", 3)))
     out["chat_max_total_tokens"] = int(raw.get("chatbot_max_total_tokens", raw.get("chat_max_total_tokens", 1200)))
     out["chat_reply_max_new_tokens"] = int(raw.get("chatbot_reply_max_new_tokens", raw.get("chat_reply_max_new_tokens", 256)))
+    out["chat_timeout_seconds"] = int(raw.get("chatbot_timeout_seconds", raw.get("chat_timeout_seconds", 35)))
 
     if isinstance(raw.get("chat_system_prompt"), str):
         out["chat_system_prompt"] = raw.get("chat_system_prompt", "").strip()
@@ -129,6 +133,17 @@ def _ensure_ready():
     _LLM.ensure_loaded()
 
 # ----------------------------
+# Debug helper
+# ----------------------------
+
+def _dbg(msg: str):
+    if os.environ.get("CHATBOT_DEBUG", ""):
+        try:
+            print(f"[chatbot] {msg}", flush=True)
+        except Exception:
+            pass
+
+# ----------------------------
 # Prompt building (persona-free unless options provide text)
 # ----------------------------
 
@@ -140,7 +155,6 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     # Detect Phi-style support
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
         buf: List[str] = []
-        # Keep system messages if provided; otherwise omit system entirely
         sys_chunks = [c for (r, c) in msgs if r == "system" and c.strip()]
         if sys_chunks:
             buf.append(f"<|system|>\n{'\n\n'.join(sys_chunks)}\n<|end|>")
@@ -185,6 +199,14 @@ def _strip_leading_banner(text: str) -> str:
 # ----------------------------
 # Token-safe trimming
 # ----------------------------
+
+def tokens_of_messages(msgs: List[Tuple[str, str]]) -> int:
+    total = 0
+    for role, content in msgs:
+        total += 4
+        total += TOKENIZER.count(role) + TOKENIZER.count(content)
+    total += 2
+    return total
 
 def _truncate_to_fit_user(sys_prompt: str, new_user: str, max_tokens: int) -> str:
     msgs = ([("system", sys_prompt)] if sys_prompt else []) + [("user", new_user)]
@@ -237,36 +259,40 @@ def _trim_to_budget(history: List[Tuple[str,str]], sys_prompt: str, new_user: st
     return msgs
 
 # ----------------------------
-# Generation with robust retries and smart fallback
+# Generation with robust retries and proper timeout & stop tokens
 # ----------------------------
 
-def _gen_once(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str) -> str:
+def _gen_once(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str, timeout_s: int) -> str:
     _ensure_ready()
     prompt = _build_prompt_from_msgs(msgs)
+    _dbg(f"gen start: budget={max_new_tokens}, timeout={timeout_s}s, model_hint={model_hint}")
     out = _LLM._do_generate(
         prompt,
-        timeout=20,
+        timeout=int(timeout_s),
         base_url="",
         model_url="",
         model_name_hint=model_hint or "",
         max_tokens=int(max_new_tokens),
-        with_grammar_auto=False
+        with_grammar_auto=False,
+        stop=["<|end|>"],  # CRITICAL for Phi chat templates
     )
-    return (out or "").strip()
+    txt = (out or "").strip()
+    _dbg(f"gen done: len={len(txt)}")
+    return txt
 
-def _generate_reply(msgs: List[Tuple[str, str]], reply_budget: int, model_hint: str) -> str:
+def _generate_reply(msgs: List[Tuple[str, str]], reply_budget: int, model_hint: str, timeout_s: int) -> str:
     budgets = [reply_budget, max(128, reply_budget // 2), 64]
     for b in budgets:
         try:
-            raw = _gen_once(msgs, b, model_hint=model_hint)
+            raw = _gen_once(msgs, b, model_hint=model_hint, timeout_s=timeout_s)
             out = _strip_leading_banner(raw)
             if out:
                 return out
-        except Exception:
+        except Exception as e:
+            _dbg(f"gen error on budget={b}: {e}")
             time.sleep(0.12)
             continue
-    # Final guaranteed fallback (no echo)
-    return "I couldn’t get a response from the model just now. Please try again or rephrase the question."
+    return "I couldn’t get a response from the model in time. Please try again or rephrase the question."
 
 # ----------------------------
 # Main handler
@@ -292,13 +318,14 @@ def handle_message(source: str, text: str) -> str:
     sys_prompt = OPTS.get("chat_system_prompt", "").strip()
     max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
     reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
+    timeout_s = int(OPTS.get("chat_timeout_seconds", DEFAULTS["chat_timeout_seconds"]))
     model_hint = OPTS.get("chat_model", "")
 
     history = MEM.get_context(chat_id)
     msgs = _trim_to_budget(history, sys_prompt, user_msg, max_total, reply_budget)
 
     try:
-        answer = _generate_reply(msgs, reply_budget, model_hint)
+        answer = _generate_reply(msgs, reply_budget, model_hint, timeout_s)
     except Exception as e:
         answer = f"LLM error: {e}"
 
