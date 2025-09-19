@@ -47,9 +47,8 @@ def _load_options() -> dict:
     out["chat_reply_max_new_tokens"] = int(raw.get("chatbot_reply_max_new_tokens", raw.get("chat_reply_max_new_tokens", 256)))
 
     # Optional extras if you ever add them:
-    if isinstance(raw.get("chat_system_prompt"), str) and raw["chat_system_prompt"].strip():
+    if isinstance(raw.get("chat_system_prompt"), str) and raw.get("chat_system_prompt", "").strip():
         out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
-
     if isinstance(raw.get("chat_model"), str):
         out["chat_model"] = raw.get("chat_model", "").strip()
 
@@ -151,7 +150,7 @@ async def _bg_gc_loop():
         MEM.GC()
 
 # ----------------------------
-# LLM adapter (robust multi-shape)
+# LLM adapter (wired to your llm_client API)
 # ----------------------------
 
 def _call_llm_adapter(
@@ -161,109 +160,50 @@ def _call_llm_adapter(
     max_new_tokens: int,
 ) -> str:
     """
-    Extremely defensive adapter: tries many llm_client surfaces and unwraps
-    common return structures into a plain string.
+    Your llm_client exposes: persona_riff(...), riff(...), rewrite(...)
+    We try them in that order to produce a concise reply for 'chat'.
+    No changes are made to llm_client.py.
     """
     try:
         import llm_client
     except Exception as e:
         raise RuntimeError(f"llm_client not available: {e}")
 
-    def _stringize(x) -> str:
+    # 1) Try persona_riff in the Jarvis voice, using Subject for context
+    if hasattr(llm_client, "persona_riff"):
         try:
-            if x is None:
-                return ""
-            if isinstance(x, str):
-                return x
-            if isinstance(x, dict):
-                for k in ("text", "reply", "content", "message", "output"):
-                    if isinstance(x.get(k), str):
-                        return x[k]
-                if isinstance(x.get("choices"), list) and x["choices"]:
-                    ch = x["choices"][0]
-                    if isinstance(ch, dict):
-                        if isinstance(ch.get("text"), str):
-                            return ch["text"]
-                        if isinstance(ch.get("message"), dict):
-                            return ch["message"].get("content", "")
-                return json.dumps(x, ensure_ascii=False)
-            for attr in ("text", "reply", "content", "message", "output"):
-                if hasattr(x, attr) and isinstance(getattr(x, attr), str):
-                    return getattr(x, attr)
+            lines = llm_client.persona_riff(
+                persona="jarvis",
+                context=f"Subject: {prompt}",
+                max_lines=3,
+                timeout=8
+            )
+            if isinstance(lines, list) and lines:
+                return "\n".join(lines[:3]).strip()
+        except Exception as e:
+            # fall through to other methods
+            pass
+
+    # 2) Try riff(subject=..., persona="jarvis")
+    if hasattr(llm_client, "riff"):
+        try:
+            txt = llm_client.riff(subject=prompt, persona="jarvis", timeout=8)
+            if isinstance(txt, str) and txt.strip():
+                return txt.strip()
         except Exception:
             pass
-        return str(x)
 
-    # OpenAI-style messages
-    as_dict_msgs = [{"role": r, "content": c} for (r, c) in msgs]
-
-    # Preferred names first
-    try:
-        if hasattr(llm_client, "generate_reply"):
-            return _stringize(llm_client.generate_reply(
-                messages=as_dict_msgs, model=(model or None), max_new_tokens=max_new_tokens
-            ))
-    except Exception:
-        pass
-    try:
-        if hasattr(llm_client, "generate_chat"):
-            history_pairs = []
-            tmp_u = None
-            for r, c in msgs:
-                if r == "user":
-                    tmp_u = c
-                elif r == "assistant" and tmp_u is not None:
-                    history_pairs.append((tmp_u, c))
-                    tmp_u = None
-            return _stringize(llm_client.generate_chat(
-                prompt=prompt, history=history_pairs, model=(model or None), max_new_tokens=max_new_tokens
-            ))
-    except Exception:
-        pass
-    try:
-        if hasattr(llm_client, "riff_once"):
-            return _stringize(llm_client.riff_once(context=prompt, timeout_s=20))
-    except Exception:
-        pass
-
-    # Other common function names / signatures
-    candidates = [
-        ("reply",    dict(prompt=prompt, messages=as_dict_msgs, model=model, max_new_tokens=max_new_tokens)),
-        ("chat",     dict(prompt=prompt, messages=as_dict_msgs, model=model, max_new_tokens=max_new_tokens)),
-        ("ask",      dict(prompt=prompt, model=model, max_new_tokens=max_new_tokens)),
-        ("complete", dict(prompt=prompt, model=model, max_new_tokens=max_new_tokens)),
-        ("generate", dict(prompt=prompt, model=model, max_new_tokens=max_new_tokens)),
-        ("infer",    dict(prompt=prompt, model=model, max_new_tokens=max_new_tokens)),
-        ("run",      dict(prompt=prompt)),
-        ("call",     dict(prompt=prompt)),
-        ("text",     dict(prompt=prompt)),
-    ]
-    for name, kwargs in candidates:
+    # 3) Last resort: rewrite the user's message into a concise statement
+    if hasattr(llm_client, "rewrite"):
         try:
-            if hasattr(llm_client, name):
-                fn = getattr(llm_client, name)
-                try:
-                    return _stringize(fn(**{k: v for k, v in kwargs.items() if v not in (None, "", 0)}))
-                except TypeError:
-                    return _stringize(fn(prompt))
+            txt = llm_client.rewrite(text=prompt, mood="neutral", timeout=12)
+            if isinstance(txt, str) and txt.strip():
+                return txt.strip()
         except Exception:
-            continue
+            pass
 
-    # Class-based clients (e.g., llm_client.Client().chat(...))
-    try:
-        if hasattr(llm_client, "Client"):
-            cli = llm_client.Client()
-            for name in ("chat", "reply", "generate", "complete", "ask"):
-                if hasattr(cli, name):
-                    meth = getattr(cli, name)
-                    try:
-                        return _stringize(meth(prompt=prompt, model=(model or None), max_new_tokens=max_new_tokens))
-                    except TypeError:
-                        return _stringize(meth(prompt))
-    except Exception:
-        pass
-
-    raise RuntimeError("No supported llm_client function found (tried generate_reply/generate_chat/riff_once + reply/chat/ask/complete/generate/infer/run/call/text and Client.*).")
+    # Nothing workable
+    raise RuntimeError("No supported llm_client function found (expected persona_riff / riff / rewrite).")
 
 # ----------------------------
 # Handoff used by /app/bot.py
