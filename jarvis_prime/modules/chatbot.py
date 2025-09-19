@@ -78,8 +78,7 @@ class _Tokenizer:
                 return len(self._enc.encode(text))
             except Exception:
                 pass
-        # Fallback heuristic: ~4 chars ≈ 1 token (widely cited rule of thumb)
-        # This stays conservative to avoid overruns.
+        # Fallback heuristic: ~4 chars ≈ 1 token
         return max(1, (len(text) + 3) // 4)
 
 TOKENIZER = _Tokenizer()
@@ -352,7 +351,6 @@ async def ws_endpoint(ws: WebSocket, chat_id: str = Query("default")):
             })
 
     except WebSocketDisconnect:
-        # client dropped; nothing to do
         return
     except Exception as e:
         try:
@@ -361,54 +359,56 @@ async def ws_endpoint(ws: WebSocket, chat_id: str = Query("default")):
             await ws.close()
 
 # ----------------------------
-# ADDITIVE: bot.py handoff helper
+# ADDITIVE: simple shim for bot.py handoff
 # ----------------------------
 
-def handle_message(source: str, text: str) -> Optional[str]:
+def handle_message(source: str, text: str) -> str:
     """
-    Lightweight helper so bot.py can hand off Gotify/ntfy 'chat'/'talk' posts:
-      reply = chatbot.handle_message(source='gotify', text='...')
-
-    Returns the assistant reply string (or an error string) so bot.py
-    can push it back out via send_message(...).
+    Minimal adapter so bot.py can call:
+        reply = chatbot.handle_message(source="gotify", text="Hello")
+    Respects chat_enabled, uses ring-memory per source as chat_id.
     """
     try:
         if not OPTS.get("chat_enabled", True):
-            return "Chat is disabled in options.json"
-
-        user_msg = (text or "").strip()
-        if not user_msg:
             return ""
+    except Exception:
+        pass
 
-        # Re-load options opportunistically in case toggles changed at runtime
+    chat_id = (source or "default").strip() or "default"
+    user_msg = (text or "").strip()
+    if not user_msg:
+        return ""
+
+    # Re-read options opportunistically (cheap and keeps it fresh if options.json changed)
+    try:
         global OPTS
         OPTS = _load_options()
         MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
+    except Exception:
+        pass
 
-        sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
-        max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
-        reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-        model = OPTS.get("chat_model", "")
+    sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+    max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
+    reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
+    model = OPTS.get("chat_model", "")
 
-        # Build messages and trim under budget; use a stable chat_id for handoffs
-        chat_id = "gotify" if (source or "").strip() else "default"
-        msgs = MEM.trim_by_tokens(
-            chat_id=chat_id,
-            new_user=user_msg,
-            sys_prompt=sys_prompt,
-            max_total_tokens=max_total,
-            reply_budget=reply_budget,
-        )
+    msgs = MEM.trim_by_tokens(
+        chat_id=chat_id,
+        new_user=user_msg,
+        sys_prompt=sys_prompt,
+        max_total_tokens=max_total,
+        reply_budget=reply_budget,
+    )
 
+    try:
         answer = _call_llm_adapter(
             prompt=user_msg,
             msgs=msgs,
             model=model,
             max_new_tokens=reply_budget,
         )
-
-        MEM.append_turn(chat_id, user_msg, answer)
-        return answer
-
     except Exception as e:
-        return f"⚠️ LLM error: {e}"
+        return f"LLM error: {e}"
+
+    MEM.append_turn(chat_id, user_msg, answer)
+    return answer
