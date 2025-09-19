@@ -12,6 +12,7 @@
 # - Rebuild deques when chat_history_turns changes
 # - Rolling summary of trimmed history (persona-free)
 # - Persona-free enforcement (we never inject persona text)
+# - Banner/transport/persona/meta scrub with safe fallback
 # - One-shot retry with small backoff for transient LLM errors
 # - Safe fallback reply if model returns blank/garbage
 # - Continuity bias: prefer to keep most-recent user turn
@@ -222,7 +223,7 @@ def _gen_once(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str 
 
 def _gen_with_retry(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "", summary_note: str = "") -> str:
     """
-    One-shot retry with small backoff for transient LLM errors/timeouts.
+    One-shot retry with small backoff for transient errors/timeouts.
     """
     try:
         return _gen_once(msgs, max_new_tokens, model_hint=model_hint, summary_note=summary_note)
@@ -235,19 +236,52 @@ def _gen_with_retry(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint
             raise e2
 
 # ----------------------------
-# Safe fallback (no cleaner)
+# Output cleaner (strip riff headers / meta)
 # ----------------------------
+
+_BANNER_RX = re.compile(
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
+    re.IGNORECASE
+)
+
+def _clean_reply(text: str) -> str:
+    if not text:
+        return text
+    raw = text
+
+    lines = [ln.rstrip() for ln in raw.splitlines()]
+    # Drop 1-line banner if present
+    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️")))):
+        lines = lines[1:]
+    out = "\n".join(lines).strip()
+
+    # Optional scrubs from llm_client; if they blank it out, fallback
+    if _strip_trans:
+        out = _strip_trans(out)
+    if _scrub_pers:
+        out = _scrub_pers(out)
+    if _scrub_meta:
+        out = _scrub_meta(out)
+
+    # Remove common apology/policy preambles; collapse blank lines
+    out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
+    out = re.sub(r'\n{3,}', '\n\n', out).strip()
+
+    if not out:
+        out = "\n".join([ln for ln in raw.splitlines() if not _BANNER_RX.match(ln)]).strip()
+
+    return out or "(no reply)"
 
 def _safe_reply(raw: str, user_msg: str) -> str:
     """
-    Never go silent: if the model returns blank, produce a minimal echo.
-    No cleaning of content; return the model output as-is when present.
+    Never go silent: if the model returns blank/junk, produce a minimal,
+    persona-free echo so the lane stays alive.
     """
-    out = (raw or "").strip()
-    if not out:
+    out = _clean_reply(raw or "")
+    if not out.strip():
         snippet = (user_msg[:120] + "...") if len(user_msg) > 120 else user_msg
         return f"(fallback) Got your message: {snippet}"
-    # Optional: keep this nudge if the model outputs a 1–2 word reply.
+    # If suspiciously short (1–2 words), nudge for clarity
     if len(out.split()) < 3:
         return out + " (please expand)"
     return out
@@ -588,4 +622,3 @@ if _FASTAPI_OK:
 if __name__ == "__main__" and _FASTAPI_OK:
     import uvicorn
     uvicorn.run("chatbot:app", host="0.0.0.0", port=8189, reload=False)
-```0
