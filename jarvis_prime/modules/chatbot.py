@@ -176,7 +176,7 @@ try:
 except Exception as _e:
     _LLM = None
 
-# Borrow llm_client’s scrubbing helpers if present (will be refreshed if we lazy-import later)
+# Borrow llm_client’s scrubbers (refreshed if we lazy-import later)
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
@@ -209,7 +209,6 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     native chat format (Phi3-style if detected; otherwise Llama INST style).
     """
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
-        # Phi-style chat template
         buf: List[str] = []
         sys_chunks = [c for (r, c) in msgs if r == "system"]
         sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
@@ -242,20 +241,17 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
     if not _is_ready():
         raise RuntimeError("llm_client not available")
 
-    # Ensure a model is ready using your EnviroGuard profile settings
     _LLM.ensure_loaded()
-
     prompt = _build_prompt_from_msgs(msgs)
 
-    # Try up to 3 normal attempts
     attempts = 0
     while attempts < 3:
         attempts += 1
         raw = _LLM._do_generate(
             prompt,
-            timeout=45,  # a bit more headroom
-            base_url="",           # resolved by ensure_loaded if Ollama is set in options
-            model_url="",          # resolved from options
+            timeout=45,
+            base_url="",
+            model_url="",
             model_name_hint=model_hint or "",
             max_tokens=int(max_new_tokens),
             with_grammar_auto=False
@@ -267,7 +263,7 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
                 return cleaned
         time.sleep(0.05 * attempts)
 
-    # ---- Last-chance salvage path: ask plainly with only the last user turn ----
+    # ---- Last-chance salvage path ----
     last_user = ""
     for r, c in reversed(msgs):
         if r == "user":
@@ -306,25 +302,55 @@ _BANNER_RX = re.compile(
     re.IGNORECASE
 )
 
+# ADDITIVE: broaden banner/meta detection
+_META_RX = re.compile(
+    r'''(?ix)
+    ^\s*
+    (?:                             # common meta starters
+       sys(?:tem)?|meta|note|status|update|digest|report|telemetry|summary
+    )
+    \s*[:\-–—]\s
+    |
+    ^\s*\[[A-Z][A-Z0-9_ -]{1,20}\]\s*  # e.g. [INFO], [DEBUG], [OK]
+    ''',
+)
+
+# ADDITIVE: heuristic for terse status blurbs
+def _looks_like_meta_blurb(line: str) -> bool:
+    if not line:
+        return False
+    if line.count(";") >= 2 or "—" in line:
+        if len(line) <= 200:
+            return True
+    if re.search(r'\b(rate\s*limit|costs?|cadence|concurrency|threads?|rollback|confidence)\b', line, re.I):
+        return True
+    if re.search(r'[🪄✨✅⚠️🔧🛰️]$', line):
+        return True
+    return False
+
 def _looks_like_banner(line: str) -> bool:
     if not line:
         return False
     if _BANNER_RX.match(line):
         return True
+    if _META_RX.match(line):
+        return True
     if len(line) <= 6 and any(e in line for e in ("🚨","💥","🛰️","⚠️","🔥","✅","✨")):
         return True
     if re.match(r'^\s*updat[e]?\s*[—:\-–—]\s', line, re.I):
         return True
+    if _looks_like_meta_blurb(line):
+        return True
     return False
 
+# ADDITIVE: strip ALL consecutive banner/meta lines at top
 def _clean_reply(text: str) -> str:
-    # Borrow llm_client scrubbers if available (they may be refreshed after lazy import)
     global _scrub_meta, _scrub_pers, _strip_trans
     if not text:
         return text
     lines = [ln.rstrip() for ln in text.splitlines()]
-    if lines and _looks_like_banner(lines[0]):
-        lines = lines[1:]
+    while lines and _looks_like_banner(lines[0]):
+        lines.pop(0)
     out = "\n".join(lines).strip()
     if _strip_trans:
         out = _strip_trans(out)
