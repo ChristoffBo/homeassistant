@@ -71,6 +71,13 @@ def _load_options() -> dict:
 OPTS = _load_options()
 
 # ----------------------------
+# ADDITIVE: tiny logger (stdout), toggle with JARVIS_CHATBOT_DEBUG=1
+# ----------------------------
+def _log(msg: str) -> None:
+    if os.environ.get("JARVIS_CHATBOT_DEBUG", "0") == "1":
+        print(f"[chatbot] {msg}", flush=True)
+
+# ----------------------------
 # Token estimation (tiktoken optional)
 # ----------------------------
 
@@ -87,6 +94,7 @@ class _Tokenizer:
         if self._enc:
             try: return len(self._enc.encode(text))
             except Exception: pass
+        # rough fallback
         return max(1, (len(text) + 3) // 4)
 
 TOKENIZER = _Tokenizer()
@@ -163,17 +171,37 @@ async def _bg_gc_loop():
 # LLM bridge (reuse llm_client)
 # ----------------------------
 
-# We deliberately use your llm_client internals so we don't have to change that file.
-# - ensure_loaded(..) to pick profile/model
-# - _is_phi3_family() to choose chat template
-# - _do_generate(..) to actually run (Ollama or llama_cpp) with stops, temps, etc.
 try:
     import llm_client as _LLM
 except Exception as _e:
     _LLM = None
 
+# Borrow llm_client’s scrubbing helpers if present (will be refreshed if we lazy-import later)
+_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
+_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
+_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
+
+# ADDITIVE: resilient, lazy import of llm_client if initial import failed
+def _try_import_llm_client() -> bool:
+    global _LLM, _scrub_meta, _scrub_pers, _strip_trans
+    if _LLM is not None:
+        return True
+    try:
+        import importlib
+        _LLM = importlib.import_module("llm_client")
+        _scrub_meta = getattr(_LLM, "_strip_meta_markers", None)
+        _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None)
+        _strip_trans = getattr(_LLM, "_strip_transport_tags", None)
+        _log("llm_client imported lazily")
+        return True
+    except Exception as e:
+        _log(f"llm_client import failed: {e}")
+        return False
+
 def _is_ready() -> bool:
-    return _LLM is not None
+    if _LLM is not None:
+        return True
+    return _try_import_llm_client()
 
 def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     """
@@ -183,7 +211,6 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
         # Phi-style chat template
         buf: List[str] = []
-        # Expect first to be system; if multiple systems exist, join them.
         sys_chunks = [c for (r, c) in msgs if r == "system"]
         sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
         buf.append(f"<|system|>\n{sys_text}\n<|end|>")
@@ -192,7 +219,6 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
                 buf.append(f"<|user|>\n{c}\n<|end|>")
             elif r == "assistant":
                 buf.append(f"<|assistant|>\n{c}\n<|end|>")
-        # Generation should start at assistant:
         buf.append("<|assistant|>\n")
         return "\n".join(buf)
 
@@ -200,7 +226,6 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     sys_chunks = [c for (r, c) in msgs if r == "system"]
     sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
     convo: List[str] = []
-    # Pack user/assistant pairs into a single INST block to keep it simple
     for r, c in msgs:
         if r == "user":
             convo.append(f"User: {c}")
@@ -237,7 +262,6 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
         ) or ""
         cleaned = _clean_reply(raw)
         if cleaned and cleaned != "(no reply)":
-            # if first line still smells like a banner, try again
             first = cleaned.splitlines()[0] if '\n' in cleaned else cleaned
             if not _looks_like_banner(first):
                 return cleaned
@@ -277,12 +301,6 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
 # Output cleaner (strip riff headers / meta)
 # ----------------------------
 
-# Borrow llm_client’s scrubbing helpers if present
-_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
-_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
-_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
-
-# Expanded banner killer
 _BANNER_RX = re.compile(
     r'^\s*(?:update|status|incident|digest|note|report|telemetry)\s*[—:\-]\s.*?(?:[🚨💥🛰️🔥⚠️⭐✨✅❗️❗️]|\s*)\s*$',
     re.IGNORECASE
@@ -293,32 +311,28 @@ def _looks_like_banner(line: str) -> bool:
         return False
     if _BANNER_RX.match(line):
         return True
-    # very short emoji/emoji+word stubs
     if len(line) <= 6 and any(e in line for e in ("🚨","💥","🛰️","⚠️","🔥","✅","✨")):
         return True
-    # “Update — …” variants with different dashes/spaces
     if re.match(r'^\s*updat[e]?\s*[—:\-–—]\s', line, re.I):
         return True
     return False
 
 def _clean_reply(text: str) -> str:
+    # Borrow llm_client scrubbers if available (they may be refreshed after lazy import)
+    global _scrub_meta, _scrub_pers, _strip_trans
     if not text:
         return text
     lines = [ln.rstrip() for ln in text.splitlines()]
-    # drop a single leading banner-ish line
     if lines and _looks_like_banner(lines[0]):
         lines = lines[1:]
     out = "\n".join(lines).strip()
-    # Strip transport/persona/meta if helpers exist
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
         out = _scrub_pers(out)
     if _scrub_meta:
         out = _scrub_meta(out)
-    # Nuke policy-ish boilerplate openers
     out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
-    # Collapse excessive blank lines
     out = re.sub(r'\n{3,}', '\n\n', out).strip()
     return out
 
@@ -328,23 +342,25 @@ def _clean_reply(text: str) -> str:
 
 def handle_message(source: str, text: str) -> str:
     """Used by bot.py when a Gotify/ntfy title is 'chat' or 'talk'."""
-    # live-refresh options so toggles apply without rebuild
+    _log(f"handle_message enter source={source!r}, text_len={len(text or '')}")
+
     global OPTS
     try:
         OPTS = _load_options()
         MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
-    except Exception:
-        pass
+    except Exception as e:
+        _log(f"options reload error: {e}")
 
     if not OPTS.get("chat_enabled", True):
+        _log("chat disabled via options")
         return ""  # chatbot disabled; do nothing
 
     chat_id = (source or "default").strip() or "default"
     user_msg = (text or "").strip()
     if not user_msg:
+        _log("empty user message")
         return ""
 
-    # Additive: enforce Jarvis identity if none provided
     sys_prompt = (OPTS.get("chat_system_prompt") or _JARVIS_SYS_PROMPT).strip()
     max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
     reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
@@ -368,9 +384,11 @@ def handle_message(source: str, text: str) -> str:
         if not answer:
             answer = "(no reply)"
     except Exception as e:
+        _log(f"_gen_reply error: {e}")
         return f"LLM error: {e}"
 
     MEM.append_turn(chat_id, user_msg, answer)
+    _log("handle_message exit ok")
     return answer
 
 # ----------------------------
@@ -495,4 +513,3 @@ if _FASTAPI_OK:
 if __name__ == "__main__" and _FASTAPI_OK:
     import uvicorn
     uvicorn.run("chatbot:app", host="0.0.0.0", port=8189, reload=False)
-```0
