@@ -1,131 +1,123 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime — ultra-minimal chat lane (sync, no persona, no banners)
-# - Uses llm_client.ensure_loaded() + _do_generate(...)
-# - Reads chatbot_* from /data/options.json
-# - Exposes handle_message(source, text) -> str
-# - Short rolling history per source
+# Jarvis Prime – Chat lane service (clean chat, no riff banners)
+# - Uses the same llm_client pipeline as riff/rewrite
+# - Reads chatbot_* options from /data/options.json
+# - Exposes handle_message(source, text) for bot.py handoff
+# - Keeps short conversation history (if enabled)
+# - Optional HTTP API if FastAPI is installed
 
-import json
 import os
+import json
+import asyncio
+from typing import Dict, List, Any
 from collections import deque
-from typing import Dict, Deque, List, Any
 
-import llm_client  # your existing client
+# ----------------------------
+# Config loader
+# ----------------------------
 
 OPTIONS_PATH = "/data/options.json"
+DEFAULTS = {
+    "chatbot_enabled": True,
+    "chatbot_history_turns": 3,
+    "chatbot_max_total_tokens": 2048,
+    "chatbot_reply_max_new_tokens": 256,
+}
 
-# -------- options ----------
-def _opts() -> Dict[str, Any]:
+def load_options() -> Dict[str, Any]:
     try:
-        with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(OPTIONS_PATH, "r") as f:
+            cfg = json.load(f)
+            return {**DEFAULTS, **cfg.get("options", {})}
     except Exception:
-        return {}
+        return DEFAULTS.copy()
 
-def _get(opts: Dict[str, Any], key: str, default):
-    return opts.get(key, default)
+OPTIONS = load_options()
 
-# -------- history ----------
-_HISTORY: Dict[str, Deque[Dict[str, str]]] = {}
+# ----------------------------
+# History buffer
+# ----------------------------
 
-def _hist_for(source: str, max_turns: int) -> Deque[Dict[str, str]]:
-    dq = _HISTORY.get(source)
-    if dq is None or dq.maxlen != max_turns:
-        dq = deque(maxlen=max_turns)
-        _HISTORY[source] = dq
-    return dq
+_history: Dict[str, deque] = {}
 
-# -------- prompt build -----
-def _build_prompt(system_prompt: str, history: List[Dict[str, str]], user_msg: str) -> str:
-    # Use Phi3-style if available, else Llama INST
-    if llm_client._is_phi3_family():
-        parts = []
-        if system_prompt:
-            parts.append(f"<|system|>\n{system_prompt}\n<|end|>")
-        for t in history:
-            parts.append(f"<|user|>\n{t['user']}\n<|end|>")
-            parts.append(f"<|assistant|>\n{t['bot']}\n<|end|>")
-        parts.append(f"<|user|>\n{user_msg}\n<|end|>\n<|assistant|>")
-        return "\n".join(parts)
+def get_history(src: str) -> deque:
+    if src not in _history:
+        _history[src] = deque(maxlen=OPTIONS["chatbot_history_turns"])
+    return _history[src]
 
-    # Llama [INST] fallback
-    sys = f"<<SYS>>{system_prompt}<</SYS>>" if system_prompt else ""
-    conv = []
-    for t in history:
-        conv.append(f"[INST] {t['user']} [/INST] {t['bot']}")
-    conv.append(f"[INST] {user_msg} [/INST]")
-    return f"<s>{sys}\n" + "\n".join(conv)
+# ----------------------------
+# Core LLM call
+# ----------------------------
 
-# -------- public API --------
+try:
+    from llm_client import generate_reply
+except ImportError:
+    # Minimal fallback if llm_client missing
+    def generate_reply(prompt: str, max_tokens: int = 128, timeout: int = 30) -> str:
+        return f"(llm_client not found) {prompt[:100]}..."
+
+def _build_prompt(history: deque, user_text: str) -> List[Dict[str, str]]:
+    """Builds chat messages list for llama.cpp chat template."""
+    msgs = []
+    for role, content in history:
+        msgs.append({"role": role, "content": content})
+    msgs.append({"role": "user", "content": user_text})
+    return msgs
+
 def handle_message(source: str, text: str) -> str:
     """
-    Synchronous entrypoint used by bot.py.
-    Always ensures the model is loaded. Never returns empty.
+    Sync entrypoint for bot.py.
+    Calls llm_client.generate_reply with user + history.
     """
-    src = (source or "default").strip() or "default"
-    user_msg = (text or "").strip()
-    if not user_msg:
+    if not OPTIONS.get("chatbot_enabled", True):
         return ""
 
-    opts = _opts()
+    hist = get_history(source)
+    msgs = _build_prompt(hist, text)
 
-    # Allow either key (some configs used chat_enabled earlier)
-    chatbot_enabled = bool(
-        opts.get("chatbot_enabled", opts.get("chat_enabled", True))
-    )
-    if not chatbot_enabled:
-        return ""
+    # Serialize messages into a simple prompt
+    prompt = ""
+    for m in msgs:
+        prompt += f"{m['role'].upper()}: {m['content']}\n"
+    prompt += "ASSISTANT:"
 
-    max_turns = int(opts.get("chatbot_history_turns", 3) or 3)
-    max_turns = max(1, min(max_turns, int(opts.get("chatbot_history_turns_max", 5) or 5)))
-    reply_tokens = int(opts.get("chatbot_reply_max_new_tokens", 256) or 256)
-
-    system_prompt = (
-        opts.get("chatbot_system_prompt")
-        or "You are Jarvis Prime, a concise, helpful assistant. No persona riffs, no emoji banners."
-    )
-
-    # Ensure model is ready (cheap if already loaded)
-    loaded = llm_client.ensure_loaded()
-    if not loaded:
-        return "(error) LLM not loaded — check model path/permissions/options.json"
-
-    hist = _hist_for(src, max_turns=max_turns)
-    prompt = _build_prompt(system_prompt, list(hist), user_msg)
-
-    # Basic console logging to see what’s happening
     try:
-        print(f"[chatbot] src={src} hist={len(hist)} reply_tokens={reply_tokens}", flush=True)
-        out = llm_client._do_generate(
+        out = generate_reply(
             prompt,
-            timeout=20,
-            base_url="",
-            model_url="",
-            model_name_hint="",
-            max_tokens=reply_tokens,
-            with_grammar_auto=False,
+            max_tokens=OPTIONS.get("chatbot_reply_max_new_tokens", 256),
+            timeout=OPTIONS.get("llm_timeout_seconds", 60),
         )
     except Exception as e:
-        out = f"(error) {e}"
+        return f"(chatbot error: {e})"
 
-    reply = (out or "").strip()
-    if not reply:
-        reply = f"(fallback) I received: {user_msg[:140]}"
+    # update history
+    hist.append(("user", text))
+    hist.append(("assistant", out.strip()))
 
-    hist.append({"user": user_msg, "bot": reply})
-    return reply
+    return out.strip()
 
-# -------- quick local test ----
-if __name__ == "__main__":
-    print("Chatbot self-test. Type Ctrl+C to quit.")
-    try:
-        while True:
-            q = input("You: ").strip()
-            if not q:
-                continue
-            a = handle_message("console", q)
-            print("Bot:", a)
-    except KeyboardInterrupt:
-        pass
+# ----------------------------
+# Optional HTTP API
+# ----------------------------
+
+try:
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    import uvicorn
+
+    app = FastAPI()
+
+    @app.post("/chat")
+    async def chat_ep(body: Dict[str, Any]):
+        msg = body.get("text", "")
+        out = handle_message("http", msg)
+        return JSONResponse({"reply": out})
+
+    if __name__ == "__main__":
+        uvicorn.run(app, host="0.0.0.0", port=8099)
+
+except ImportError:
+    if __name__ == "__main__":
+        print("FastAPI not installed; chatbot HTTP API disabled")
