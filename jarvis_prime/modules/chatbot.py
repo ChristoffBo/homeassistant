@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime – Chat lane service (clean Q&A, no riff, no persona)
+# Jarvis Prime – Chat lane service (clean Q&A, no riff banners, persona-free)
 # - Reads chatbot_* options from /data/options.json
 # - Uses llm_client.py to generate answers
 # - Exposes handle_message(source, text) for bot.py handoff
 # - Optional HTTP/WS API via FastAPI if installed
 
-import os
 import json
 import time
 import asyncio
@@ -26,7 +25,8 @@ DEFAULTS = {
     "chat_history_turns_max": 5,
     "chat_max_total_tokens": 1200,
     "chat_reply_max_new_tokens": 256,
-    "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
+    # Persona-free by default; set chat_system_prompt in options if you want one.
+    "chat_system_prompt": "",
     "chat_model": "",
 }
 
@@ -46,27 +46,26 @@ def _load_options() -> dict:
     out["chat_max_total_tokens"] = int(raw.get("chatbot_max_total_tokens", raw.get("chat_max_total_tokens", 1200)))
     out["chat_reply_max_new_tokens"] = int(raw.get("chatbot_reply_max_new_tokens", raw.get("chat_reply_max_new_tokens", 256)))
 
-    if isinstance(raw.get("chat_system_prompt"), str) and raw["chat_system_prompt"].strip():
-        out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
+    if isinstance(raw.get("chat_system_prompt"), str):
+        out["chat_system_prompt"] = raw.get("chat_system_prompt", "").strip()
 
     if isinstance(raw.get("chat_model"), str):
         out["chat_model"] = raw.get("chat_model", "").strip()
 
-    # cap
     out["chat_history_turns"] = max(1, min(out["chat_history_turns"], DEFAULTS["chat_history_turns_max"]))
     return out
 
 OPTS = _load_options()
 
 # ----------------------------
-# Token estimation (simple)
+# Token estimation (simple heuristic)
 # ----------------------------
 
 class _Tokenizer:
     def count(self, text: str) -> int:
         if not text:
             return 0
-        return max(1, (len(text) + 3) // 4)  # heuristic ~4 chars/token
+        return max(1, (len(text) + 3) // 4)  # ~4 chars/token
 
 TOKENIZER = _Tokenizer()
 
@@ -129,10 +128,22 @@ def _ensure_ready():
         raise RuntimeError("llm_client not available")
     _LLM.ensure_loaded()
 
-def _build_prompt(msgs: List[Tuple[str, str]], sys_prompt: str) -> str:
-    # Build a simple conversation block
+# ----------------------------
+# Prompt building (persona-free unless options provide text)
+# ----------------------------
+
+def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
+    """
+    Convert (role, content) messages into a single prompt using the model's
+    native chat format (Phi-style if detected; otherwise Llama [INST]).
+    """
+    # Detect Phi-style support
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
-        buf: List[str] = [f"<|system|>\n{sys_prompt}\n<|end|>"]
+        buf: List[str] = []
+        # Keep system messages if provided; otherwise omit system entirely
+        sys_chunks = [c for (r, c) in msgs if r == "system" and c.strip()]
+        if sys_chunks:
+            buf.append(f"<|system|>\n{'\n\n'.join(sys_chunks)}\n<|end|>")
         for r, c in msgs:
             if r == "user":
                 buf.append(f"<|user|>\n{c}\n<|end|>")
@@ -141,49 +152,121 @@ def _build_prompt(msgs: List[Tuple[str, str]], sys_prompt: str) -> str:
         buf.append("<|assistant|>\n")
         return "\n".join(buf)
 
-    convo = []
+    # Fallback: Llama [INST] format
+    sys_chunks = [c for (r, c) in msgs if r == "system" and c.strip()]
+    sys_text = f"<<SYS>>{'\n\n'.join(sys_chunks)}<</SYS>>\n" if sys_chunks else ""
+    convo: List[str] = []
     for r, c in msgs:
         if r == "user":
             convo.append(f"User: {c}")
         elif r == "assistant":
             convo.append(f"Assistant: {c}")
     convo.append("Assistant:")
-    return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n" + "\n".join(convo) + " [/INST]"
+    body = "\n".join(convo)
+    return f"<s>[INST] {sys_text}{body} [/INST]"
 
-def _gen_reply(msgs: List[Tuple[str, str]], sys_prompt: str, max_new_tokens: int, model_hint: str) -> str:
+# ----------------------------
+# Minimal banner stripper (first line only). No other cleaning.
+# ----------------------------
+
+_BANNER_RX = re.compile(
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
+    re.IGNORECASE
+)
+
+def _strip_leading_banner(text: str) -> str:
+    if not text:
+        return text
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨", "💥", "🛰️")))):
+        return "\n".join(lines[1:]).strip()
+    return "\n".join(lines).strip()
+
+# ----------------------------
+# Token-safe trimming
+# ----------------------------
+
+def _truncate_to_fit_user(sys_prompt: str, new_user: str, max_tokens: int) -> str:
+    msgs = ([("system", sys_prompt)] if sys_prompt else []) + [("user", new_user)]
+    if tokens_of_messages(msgs) <= max_tokens:
+        return new_user
+    lo, hi = 0, len(new_user)
+    best = ""
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = new_user[-mid:] if mid > 0 else ""
+        msgs2 = ([("system", sys_prompt)] if sys_prompt else []) + [("user", candidate)]
+        if tokens_of_messages(msgs2) <= max_tokens:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best if best else new_user[: max(0, len(new_user)//4)]
+
+def _trim_to_budget(history: List[Tuple[str,str]], sys_prompt: str, new_user: str,
+                    max_total_tokens: int, reply_budget: int) -> List[Tuple[str,str]]:
+    limit = max(256, max_total_tokens - reply_budget)
+    def pack(hist_pairs, utext):
+        msgs: List[Tuple[str,str]] = []
+        if sys_prompt:
+            msgs.append(("system", sys_prompt))
+        for u, a in hist_pairs:
+            msgs.append(("user", u))
+            msgs.append(("assistant", a))
+        msgs.append(("user", utext))
+        return msgs
+
+    hist_copy = history[:]
+    msgs = pack(hist_copy, new_user)
+    guard = 0
+    while tokens_of_messages(msgs) > limit and hist_copy:
+        hist_copy.pop(0)          # drop oldest pair
+        msgs = pack(hist_copy, new_user)
+        guard += 1
+        if guard > 512:
+            break
+
+    if tokens_of_messages(msgs) > limit:
+        trimmed_user = _truncate_to_fit_user(sys_prompt, new_user, limit - 16)
+        msgs = pack(hist_copy, trimmed_user)
+
+    if tokens_of_messages(msgs) > limit:
+        trimmed_user = _truncate_to_fit_user(sys_prompt, new_user, limit - 16)
+        msgs = ([("system", sys_prompt)] if sys_prompt else []) + [("user", trimmed_user)]
+
+    return msgs
+
+# ----------------------------
+# Generation with robust retries and smart fallback
+# ----------------------------
+
+def _gen_once(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str) -> str:
     _ensure_ready()
-    prompt = _build_prompt(msgs, sys_prompt)
+    prompt = _build_prompt_from_msgs(msgs)
     out = _LLM._do_generate(
         prompt,
         timeout=20,
         base_url="",
         model_url="",
         model_name_hint=model_hint or "",
-        max_tokens=max_new_tokens,
+        max_tokens=int(max_new_tokens),
         with_grammar_auto=False
     )
-    return out or ""
+    return (out or "").strip()
 
-# ----------------------------
-# Cleaning
-# ----------------------------
-
-_BANNER_RX = re.compile(r'^\s*(update|status|incident|digest|note)\s*[:—-].*$', re.I)
-
-def _clean_reply(text: str, user_msg: str) -> str:
-    if not text:
-        return f"(fallback) Got your message: {user_msg}"
-
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    if lines and _BANNER_RX.match(lines[0]):
-        lines = lines[1:]
-    out = "\n".join(lines).strip()
-
-    if not out:
-        return f"(fallback) Got your message: {user_msg}"
-    if len(out.split()) < 3:
-        return out + " (please expand)"
-    return out
+def _generate_reply(msgs: List[Tuple[str, str]], reply_budget: int, model_hint: str) -> str:
+    budgets = [reply_budget, max(128, reply_budget // 2), 64]
+    for b in budgets:
+        try:
+            raw = _gen_once(msgs, b, model_hint=model_hint)
+            out = _strip_leading_banner(raw)
+            if out:
+                return out
+        except Exception:
+            time.sleep(0.12)
+            continue
+    # Final guaranteed fallback (no echo)
+    return "I couldn’t get a response from the model just now. Please try again or rephrase the question."
 
 # ----------------------------
 # Main handler
@@ -191,8 +274,12 @@ def _clean_reply(text: str, user_msg: str) -> str:
 
 def handle_message(source: str, text: str) -> str:
     global OPTS
-    OPTS = _load_options()
-    MEM.set_max_turns(OPTS["chat_history_turns"])
+    # live refresh options & memory maxlen
+    try:
+        OPTS = _load_options()
+        MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
+    except Exception:
+        pass
 
     if not OPTS.get("chat_enabled", True):
         return ""
@@ -202,20 +289,16 @@ def handle_message(source: str, text: str) -> str:
     if not user_msg:
         return ""
 
-    sys_prompt = OPTS["chat_system_prompt"]
-    reply_budget = OPTS["chat_reply_max_new_tokens"]
-    model_hint = OPTS["chat_model"]
+    sys_prompt = OPTS.get("chat_system_prompt", "").strip()
+    max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
+    reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
+    model_hint = OPTS.get("chat_model", "")
 
     history = MEM.get_context(chat_id)
-    msgs: List[Tuple[str, str]] = [("system", sys_prompt)]
-    for u, a in history:
-        msgs.append(("user", u))
-        msgs.append(("assistant", a))
-    msgs.append(("user", user_msg))
+    msgs = _trim_to_budget(history, sys_prompt, user_msg, max_total, reply_budget)
 
     try:
-        raw = _gen_reply(msgs, sys_prompt, reply_budget, model_hint)
-        answer = _clean_reply(raw, user_msg)
+        answer = _generate_reply(msgs, reply_budget, model_hint)
     except Exception as e:
         answer = f"LLM error: {e}"
 
@@ -256,7 +339,6 @@ if _FASTAPI_OK:
     async def chat_endpoint(payload: ChatIn, request: Request):
         if not OPTS.get("chat_enabled", True):
             raise HTTPException(status_code=403, detail="Chat disabled")
-
         reply = handle_message(payload.chat_id, payload.message)
         return ChatOut(
             chat_id=payload.chat_id,
