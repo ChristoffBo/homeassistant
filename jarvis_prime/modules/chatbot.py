@@ -109,32 +109,11 @@ class ChatMemory:
         return list(self.turns[chat_id])
 
     def set_max_turns(self, n: int):
-        self.max_turns_default = n  # new deques get new maxlen
-
-    def trim_by_tokens(
-        self,
-        chat_id: str,
-        new_user: str,
-        sys_prompt: str,
-        max_total_tokens: int,
-        reply_budget: int,
-    ) -> List[Tuple[str, str]]:
-        history = self.get_context(chat_id)
-        msgs: List[Tuple[str, str]] = [("system", sys_prompt)]
-        for u, a in history:
-            msgs.append(("user", u))
-            msgs.append(("assistant", a))
-        msgs.append(("user", new_user))
-
-        limit = max(256, max_total_tokens - reply_budget)
-        while tokens_of_messages(msgs) > limit and len(history) > 0:
-            history.pop(0)
-            msgs = [("system", sys_prompt)]
-            for u, a in history:
-                msgs.append(("user", u))
-                msgs.append(("assistant", a))
-            msgs.append(("user", new_user))
-        return msgs
+        # Rebuild all existing deques to the new maxlen (was: only new deques got it)
+        self.max_turns_default = max(1, int(n))
+        for cid, old in list(self.turns.items()):
+            newdq: Deque[Tuple[str, str]] = deque(old, maxlen=self.max_turns_default)
+            self.turns[cid] = newdq
 
     def GC(self, idle_seconds: int = 6 * 3600):
         now = time.time()
@@ -154,10 +133,6 @@ async def _bg_gc_loop():
 # LLM bridge (reuse llm_client)
 # ----------------------------
 
-# We deliberately use your llm_client internals so we don't have to change that file.
-# - ensure_loaded(..) to pick profile/model
-# - _is_phi3_family() to choose chat template
-# - _do_generate(..) to actually run (Ollama or llama_cpp) with stops, temps, etc.
 try:
     import llm_client as _LLM
 except Exception as _e:
@@ -172,9 +147,7 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     native chat format (Phi3-style if detected; otherwise Llama INST style).
     """
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
-        # Phi-style chat template
         buf: List[str] = []
-        # Expect first to be system; if multiple systems exist, join them.
         sys_chunks = [c for (r, c) in msgs if r == "system"]
         sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
         buf.append(f"<|system|>\n{sys_text}\n<|end|>")
@@ -183,7 +156,6 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
                 buf.append(f"<|user|>\n{c}\n<|end|>")
             elif r == "assistant":
                 buf.append(f"<|assistant|>\n{c}\n<|end|>")
-        # Generation should start at assistant:
         buf.append("<|assistant|>\n")
         return "\n".join(buf)
 
@@ -191,7 +163,6 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     sys_chunks = [c for (r, c) in msgs if r == "system"]
     sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
     convo: List[str] = []
-    # Pack user/assistant pairs into a single INST block to keep it simple
     for r, c in msgs:
         if r == "user":
             convo.append(f"User: {c}")
@@ -205,16 +176,14 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
     if not _is_ready():
         raise RuntimeError("llm_client not available")
 
-    # Ensure a model is ready using your EnviroGuard profile settings
     _LLM.ensure_loaded()
 
     prompt = _build_prompt_from_msgs(msgs)
 
-    # Use the llm_client’s internal generate path so stops/temps match your model
     out = _LLM._do_generate(
         prompt,
-        timeout=20,  # actual timeout gets profiled in llm_client anyway
-        base_url="",           # resolved by ensure_loaded if Ollama is set in options
+        timeout=20,            # EnviroGuard/llm_client may adjust internally
+        base_url="",           # resolved by ensure_loaded if Ollama is set
         model_url="",          # resolved from options
         model_name_hint=model_hint or "",
         max_tokens=int(max_new_tokens),
@@ -226,12 +195,10 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
 # Output cleaner (strip riff headers / meta)
 # ----------------------------
 
-# Borrow llm_client’s scrubbing helpers if present
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
-# Kill 1-line “banner” like:  Update — … 🚨 / 💥 / 🛰️ etc.
 _BANNER_RX = re.compile(
     r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
     re.IGNORECASE
@@ -240,14 +207,14 @@ _BANNER_RX = re.compile(
 def _clean_reply(text: str) -> str:
     if not text:
         return text
-    # Split & drop a leading banner-ish line
-    lines = [ln.rstrip() for ln in text.splitlines()]
-    if lines and (_BANNER_RX.match(lines[0]) or len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️"))):
+    raw = text
+
+    lines = [ln.rstrip() for ln in raw.splitlines()]
+    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️")))):
         lines = lines[1:]
 
     out = "\n".join(lines).strip()
 
-    # Strip transport tags / persona tokens / meta markers if those helpers exist
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
@@ -255,12 +222,34 @@ def _clean_reply(text: str) -> str:
     if _scrub_meta:
         out = _scrub_meta(out)
 
-    # Extra: nuke accidental policy preambles like “I regret to inform…guidelines…”
     out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
-
-    # Collapse excessive blank lines
     out = re.sub(r'\n{3,}', '\n\n', out).strip()
-    return out
+
+    if not out:
+        out = "\n".join([ln for ln in raw.splitlines() if not _BANNER_RX.match(ln)]).strip()
+
+    return out or "(no reply)"
+
+# ----------------------------
+# Helpers for token-safe trimming
+# ----------------------------
+
+def _truncate_to_fit_user(sys_prompt: str, new_user: str, max_tokens: int) -> str:
+    msgs = [("system", sys_prompt), ("user", new_user)]
+    if tokens_of_messages(msgs) <= max_tokens:
+        return new_user
+    lo, hi = 0, len(new_user)
+    best = ""
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = new_user[-mid:] if mid > 0 else ""
+        msgs2 = [("system", sys_prompt), ("user", candidate)]
+        if tokens_of_messages(msgs2) <= max_tokens:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best if best else new_user[: max(0, len(new_user)//4)]
 
 # ----------------------------
 # Handoff used by /app/bot.py
@@ -268,7 +257,6 @@ def _clean_reply(text: str) -> str:
 
 def handle_message(source: str, text: str) -> str:
     """Used by bot.py when a Gotify/ntfy title is 'chat' or 'talk'."""
-    # live-refresh options so toggles apply without rebuild
     global OPTS
     try:
         OPTS = _load_options()
@@ -304,13 +292,51 @@ def handle_message(source: str, text: str) -> str:
             model_hint=model_hint
         )
         answer = _clean_reply(raw)
-        if not answer:
+        if not answer.strip():
             answer = "(no reply)"
     except Exception as e:
         return f"LLM error: {e}"
 
     MEM.append_turn(chat_id, user_msg, answer)
     return answer
+
+# Inject methods on class after definition (to keep layout tidy)
+def _chatmemory_trim_by_tokens(self,
+    chat_id: str,
+    new_user: str,
+    sys_prompt: str,
+    max_total_tokens: int,
+    reply_budget: int,
+) -> List[Tuple[str, str]]:
+    history = self.get_context(chat_id)
+    limit = max(256, max_total_tokens - reply_budget)
+
+    def build_msgs(hist: List[Tuple[str,str]], utext: str) -> List[Tuple[str,str]]:
+        msgs: List[Tuple[str,str]] = [("system", sys_prompt)]
+        for u, a in hist:
+            msgs.append(("user", u))
+            msgs.append(("assistant", a))
+        msgs.append(("user", utext))
+        return msgs
+
+    msgs = build_msgs(history, new_user)
+
+    while tokens_of_messages(msgs) > limit and len(history) > 0:
+        history.pop(0)
+        msgs = build_msgs(history, new_user)
+
+    if tokens_of_messages(msgs) > limit:
+        trimmed_user = _truncate_to_fit_user(sys_prompt, new_user, limit - 16)
+        msgs = build_msgs(history, trimmed_user)
+
+    if tokens_of_messages(msgs) > limit:
+        trimmed_user = _truncate_to_fit_user(sys_prompt, new_user, limit - 16)
+        msgs = [("system", sys_prompt), ("user", trimmed_user)]
+
+    return msgs
+
+# Bind the method
+setattr(ChatMemory, "trim_by_tokens", _chatmemory_trim_by_tokens)
 
 # ----------------------------
 # Optional HTTP/WS API (only if FastAPI installed)
@@ -371,6 +397,8 @@ if _FASTAPI_OK:
         try:
             raw = _gen_reply(msgs, reply_budget, model_hint=model_hint)
             answer = _clean_reply(raw)
+            if not answer.strip():
+                answer = "(no reply)"
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"LLM error: {e}")
 
@@ -411,6 +439,8 @@ if _FASTAPI_OK:
                 try:
                     raw = _gen_reply(msgs, reply_budget, model_hint=model_hint)
                     answer = _clean_reply(raw)
+                    if not answer.strip():
+                        answer = "(no reply)"
                 except Exception as e:
                     await ws.send_json({"error": f"LLM error: {e}"})
                     continue
