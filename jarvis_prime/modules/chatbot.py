@@ -7,17 +7,14 @@
 # - Exposes handle_message(source, text) for bot.py handoff
 # - Optional HTTP/WS API if FastAPI is installed
 #
-# Additive upgrades in this version:
-# - Strong token-safe trimming that never returns empty
-# - Rebuild deques when chat_history_turns changes
-# - Rolling summary of trimmed history (persona-free)
-# - Persona-free enforcement (we never inject persona text)
-# - Banner/transport/persona/meta scrub with safe fallback
-# - One-shot retry with small backoff for transient LLM errors
-# - Safe fallback reply if model returns blank/garbage
-# - Continuity bias: prefer to keep most-recent user turn
+# Design goals in this rewrite:
+# - Persona-free by default (no system text unless you set one in options.json)
+# - Never go silent: multi-attempt generation with guaranteed fallback
+# - Minimal banner stripping only (no aggressive cleaners)
+# - Token-safe history trimming that always fits the budget
+# - Rolling summary of trimmed turns (optional, persona-free)
+# - Live options refresh; deque maxlen honored on-the-fly
 
-import os
 import json
 import time
 import asyncio
@@ -36,7 +33,8 @@ DEFAULTS = {
     "chat_history_turns_max": 5,
     "chat_max_total_tokens": 1200,         # from chatbot_max_total_tokens
     "chat_reply_max_new_tokens": 256,      # from chatbot_reply_max_new_tokens
-    "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
+    # Persona-free by default. If you want a system prompt, set "chat_system_prompt" in options.json.
+    "chat_system_prompt": "",
     "chat_model": "",                      # optional override hint for Ollama name or gguf filename base
 }
 
@@ -57,9 +55,9 @@ def _load_options() -> dict:
     out["chat_max_total_tokens"] = int(raw.get("chatbot_max_total_tokens", raw.get("chat_max_total_tokens", 1200)))
     out["chat_reply_max_new_tokens"] = int(raw.get("chatbot_reply_max_new_tokens", raw.get("chat_reply_max_new_tokens", 256)))
 
-    # Optional extras if you ever add them:
-    if isinstance(raw.get("chat_system_prompt"), str) and raw.get("chat_system_prompt", "").strip():
-        out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
+    # Optional extras (only honor if explicitly provided; keep persona-free default)
+    if isinstance(raw.get("chat_system_prompt"), str):
+        out["chat_system_prompt"] = raw.get("chat_system_prompt", "").strip()
 
     if isinstance(raw.get("chat_model"), str):
         out["chat_model"] = raw.get("chat_model", "").strip()
@@ -88,7 +86,7 @@ class _Tokenizer:
         if self._enc:
             try: return len(self._enc.encode(text))
             except Exception: pass
-        # heuristic ~4 chars/token
+        # conservative heuristic ~4 chars/token
         return max(1, (len(text) + 3) // 4)
 
 TOKENIZER = _Tokenizer()
@@ -112,11 +110,6 @@ except Exception:
 
 def _is_ready() -> bool:
     return _LLM is not None
-
-# Optional helpers from llm_client (persona/meta/transport scrubbers)
-_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
-_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
-_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
 def _ensure_ready():
     if not _is_ready():
@@ -171,23 +164,26 @@ async def _bg_gc_loop():
         MEM.GC()
 
 # ----------------------------
-# Prompt building
+# Prompt building (persona-free)
 # ----------------------------
 
 def _build_prompt_from_msgs(msgs: List[Tuple[str, str]], summary_note: str = "") -> str:
     """
-    Convert (role, content) messages into a single prompt using the model's
-    native chat format (Phi-style if detected; otherwise Llama INST style).
-    We prepend a compact, persona-free 'Context Summary' if provided.
+    Convert (role, content) messages into a single string using the model's
+    native chat format (Phi-style if detected; otherwise Llama INST format).
+    Persona-free unless a system prompt is provided in options.json.
     """
+    # System text: include only if explicitly provided (keeps persona-free default)
     sys_chunks = [c for (r, c) in msgs if r == "system"]
-    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
+    sys_text = "\n\n".join([c for c in sys_chunks if c.strip()]) if sys_chunks else ""
     if summary_note:
-        sys_text = f"{sys_text}\n\n[Context Summary]\n{summary_note}"
+        sys_text = (sys_text + ("\n\n" if sys_text else "")) + "[Context Summary]\n" + summary_note
 
+    # Phi-style?
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
         buf: List[str] = []
-        buf.append(f"<|system|>\n{sys_text}\n<|end|>")
+        if sys_text:
+            buf.append(f"<|system|>\n{sys_text.strip()}\n<|end|>")
         for r, c in msgs:
             if r == "user":
                 buf.append(f"<|user|>\n{c}\n<|end|>")
@@ -197,6 +193,7 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]], summary_note: str = "")
         return "\n".join(buf)
 
     # Fallback: Llama [INST] format
+    header = f"<<SYS>>{sys_text}<</SYS>>\n" if sys_text else ""
     convo: List[str] = []
     for r, c in msgs:
         if r == "user":
@@ -205,93 +202,71 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]], summary_note: str = "")
             convo.append(f"Assistant: {c}")
     convo.append("Assistant:")
     body = "\n".join(convo)
-    return f"<s>[INST] <<SYS>>{sys_text}<</SYS>>\n{body} [/INST]"
+    return f"<s>[INST] {header}{body} [/INST]"
 
-def _gen_once(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "", summary_note: str = "") -> str:
+# ----------------------------
+# Tiny banner killer (only first line), no other cleaning
+# ----------------------------
+
+_BANNER_RX = re.compile(
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*?(?:🚨|💥|🛰️)?\s*$',
+    re.IGNORECASE
+)
+
+def _strip_leading_banner(text: str) -> str:
+    if not text:
+        return text
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️")))):
+        return "\n".join(lines[1:]).strip()
+    return "\n".join(lines).strip()
+
+# ----------------------------
+# Generation with robust retries
+# ----------------------------
+
+def _gen_once(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str, summary_note: str) -> str:
     _ensure_ready()
     prompt = _build_prompt_from_msgs(msgs, summary_note=summary_note)
     out = _LLM._do_generate(
         prompt,
-        timeout=20,            # EnviroGuard/llm_client may adjust internally
+        timeout=20,            # llm_client may profile/override internally
         base_url="",           # resolved by ensure_loaded if Ollama is set
         model_url="",          # resolved from options
         model_name_hint=model_hint or "",
         max_tokens=int(max_new_tokens),
         with_grammar_auto=False
     )
-    return out or ""
+    return (out or "").strip()
 
-def _gen_with_retry(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "", summary_note: str = "") -> str:
+def _generate_reply(msgs: List[Tuple[str, str]], reply_budget: int, model_hint: str, summary_note: str, user_msg: str) -> str:
     """
-    One-shot retry with small backoff for transient errors/timeouts.
+    Try up to 3 passes with shrinking budgets. Always return a non-empty string
+    (falls back to a minimal echo).
     """
-    try:
-        return _gen_once(msgs, max_new_tokens, model_hint=model_hint, summary_note=summary_note)
-    except Exception:
-        # tiny backoff
+    budgets = [reply_budget, max(96, reply_budget // 2), 64]
+    for i, b in enumerate(budgets):
         try:
-            time.sleep(0.15)
-            return _gen_once(msgs, max(max_new_tokens // 2, 64), model_hint=model_hint, summary_note=summary_note)
-        except Exception as e2:
-            raise e2
+            raw = _gen_once(msgs, b, model_hint=model_hint, summary_note=summary_note)
+            stripped = _strip_leading_banner(raw)
+            if stripped:
+                return stripped
+        except Exception:
+            # brief backoff; move to next attempt
+            time.sleep(0.12)
+            continue
 
-# ----------------------------
-# Output cleaner (strip riff headers / meta)
-# ----------------------------
-
-_BANNER_RX = re.compile(
-    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
-    re.IGNORECASE
-)
-
-def _clean_reply(text: str) -> str:
-    if not text:
-        return text
-    raw = text
-
-    lines = [ln.rstrip() for ln in raw.splitlines()]
-    # Drop 1-line banner if present
-    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️")))):
-        lines = lines[1:]
-    out = "\n".join(lines).strip()
-
-    # Optional scrubs from llm_client; if they blank it out, fallback
-    if _strip_trans:
-        out = _strip_trans(out)
-    if _scrub_pers:
-        out = _scrub_pers(out)
-    if _scrub_meta:
-        out = _scrub_meta(out)
-
-    # Remove common apology/policy preambles; collapse blank lines
-    out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
-    out = re.sub(r'\n{3,}', '\n\n', out).strip()
-
-    if not out:
-        out = "\n".join([ln for ln in raw.splitlines() if not _BANNER_RX.match(ln)]).strip()
-
-    return out or "(no reply)"
-
-def _safe_reply(raw: str, user_msg: str) -> str:
-    """
-    Never go silent: if the model returns blank/junk, produce a minimal,
-    persona-free echo so the lane stays alive.
-    """
-    out = _clean_reply(raw or "")
-    if not out.strip():
-        snippet = (user_msg[:120] + "...") if len(user_msg) > 120 else user_msg
-        return f"(fallback) Got your message: {snippet}"
-    # If suspiciously short (1–2 words), nudge for clarity
-    if len(out.split()) < 3:
-        return out + " (please expand)"
-    return out
+    # Final guaranteed fallback
+    snippet = (user_msg[:120] + "...") if len(user_msg) > 120 else user_msg
+    return f"(fallback) Got your message: {snippet}"
 
 # ----------------------------
 # Helpers for token-safe trimming
 # ----------------------------
 
 def _truncate_to_fit_user(sys_prompt: str, new_user: str, max_tokens: int) -> str:
-    msgs = [("system", sys_prompt), ("user", new_user)]
+    msgs = [("system", sys_prompt)] if sys_prompt else []
+    msgs.append(("user", new_user))
     if tokens_of_messages(msgs) <= max_tokens:
         return new_user
     lo, hi = 0, len(new_user)
@@ -299,7 +274,7 @@ def _truncate_to_fit_user(sys_prompt: str, new_user: str, max_tokens: int) -> st
     while lo <= hi:
         mid = (lo + hi) // 2
         candidate = new_user[-mid:] if mid > 0 else ""
-        msgs2 = [("system", sys_prompt), ("user", candidate)]
+        msgs2 = ([("system", sys_prompt)] if sys_prompt else []) + [("user", candidate)]
         if tokens_of_messages(msgs2) <= max_tokens:
             best = candidate
             lo = mid + 1
@@ -333,7 +308,7 @@ def _summarize_removed_turns(removed: List[Tuple[str, str]]) -> str:
 
     prompt = (
         "Summarize the following chat snippets into 3–6 short factual bullet points. "
-        "Keep it persona-free, no emojis, no fluff. Capture constraints, preferences, entities, and any unresolved question.\n\n"
+        "Keep it persona-free, no emojis, no fluff. Capture constraints, preferences, entities, and unresolved questions.\n\n"
         f"{transcript}\n\n"
         "Bullets:"
     )
@@ -376,7 +351,7 @@ def handle_message(source: str, text: str) -> str:
     if not user_msg:
         return ""
 
-    sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+    sys_prompt = OPTS.get("chat_system_prompt", "").strip()  # persona-free default
     max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
     reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
     model_hint = OPTS.get("chat_model", "")
@@ -395,7 +370,6 @@ def handle_message(source: str, text: str) -> str:
         add = _summarize_removed_turns(removed)
         if add:
             combined = (prev + ("\n" if prev else "") + add).strip()
-            # keep the rolling summary compact
             if len(combined.splitlines()) > 20:
                 combined = "\n".join(combined.splitlines()[-20:])
             MEM.set_summary(chat_id, combined)
@@ -403,13 +377,13 @@ def handle_message(source: str, text: str) -> str:
     summary_note = MEM.get_summary(chat_id)
 
     try:
-        raw = _gen_with_retry(
+        answer = _generate_reply(
             msgs=msgs,
-            max_new_tokens=reply_budget,
+            reply_budget=reply_budget,
             model_hint=model_hint,
-            summary_note=summary_note
+            summary_note=summary_note,
+            user_msg=user_msg
         )
-        answer = _safe_reply(raw, user_msg)
     except Exception as e:
         return f"LLM error: {e}"
 
@@ -417,7 +391,7 @@ def handle_message(source: str, text: str) -> str:
     return answer
 
 # ----------------------------
-# Inject enhanced trim_by_tokens onto ChatMemory (additive)
+# Inject enhanced trim_by_tokens onto ChatMemory
 # ----------------------------
 
 def _chatmemory_trim_by_tokens(self,
@@ -430,9 +404,9 @@ def _chatmemory_trim_by_tokens(self,
 ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
     """
     Build messages within token budget, trimming oldest turns first.
-    Guarantees at least: system + (trimmed if needed) latest user.
+    Guarantees at least: (optional system) + (trimmed if needed) latest user.
     Returns (msgs, removed_turns) if return_removed=True, else (msgs, []).
-    Continuity bias: try to preserve the most recent user turn.
+    Continuity bias: keep the most recent user turn where possible.
     """
     history = self.get_context(chat_id)
     removed: List[Tuple[str, str]] = []
@@ -440,10 +414,10 @@ def _chatmemory_trim_by_tokens(self,
 
     hist_copy = history[:]
 
-    # Prefer to keep the last *user* turn even if we must drop the paired assistant
-    # (helps continuity when the previous assistant message was long)
-    def build_msgs(hist_pairs: List[Tuple[str,str]], utext: str) -> List[Tuple[str,str]]:
-        msgs: List[Tuple[str,str]] = [("system", sys_prompt)]
+    def build_msgs(hist_pairs: List[Tuple[str, str]], utext: str) -> List[Tuple[str, str]]:
+        msgs: List[Tuple[str, str]] = []
+        if sys_prompt:
+            msgs.append(("system", sys_prompt))
         for u, a in hist_pairs:
             msgs.append(("user", u))
             msgs.append(("assistant", a))
@@ -453,14 +427,13 @@ def _chatmemory_trim_by_tokens(self,
     msgs = build_msgs(hist_copy, new_user)
 
     # Trim older turns first (FIFO)
-    i = 0
+    guard = 0
     while tokens_of_messages(msgs) > limit and len(hist_copy) > 0:
-        # If more than one pair exists, pop from the front
         popped = hist_copy.pop(0)
         removed.append(popped)
         msgs = build_msgs(hist_copy, new_user)
-        i += 1
-        if i > 512:  # safety
+        guard += 1
+        if guard > 512:
             break
 
     # If still too large, trim the *new user* message
@@ -471,11 +444,12 @@ def _chatmemory_trim_by_tokens(self,
     # Final hard stop: if still large, drop history entirely and keep trimmed user only
     if tokens_of_messages(msgs) > limit:
         trimmed_user = _truncate_to_fit_user(sys_prompt, new_user, limit - 16)
-        msgs = [("system", sys_prompt), ("user", trimmed_user)]
+        msgs = [("system", sys_prompt)] if sys_prompt else []
+        msgs.append(("user", trimmed_user))
 
     return (msgs, removed) if return_removed else (msgs, [])
 
-# Bind the method (additive)
+# Bind the method
 setattr(ChatMemory, "trim_by_tokens", _chatmemory_trim_by_tokens)
 
 # ----------------------------
@@ -521,7 +495,7 @@ if _FASTAPI_OK:
         if not user_msg:
             raise HTTPException(status_code=400, detail="Empty message")
 
-        sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+        sys_prompt = OPTS.get("chat_system_prompt", "").strip()
         max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
         reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
         model_hint = payload.model or OPTS.get("chat_model", "")
@@ -546,8 +520,13 @@ if _FASTAPI_OK:
         summary_note = MEM.get_summary(chat_id)
 
         try:
-            raw = _gen_with_retry(msgs, reply_budget, model_hint=model_hint, summary_note=summary_note)
-            answer = _safe_reply(raw, user_msg)
+            answer = _generate_reply(
+                msgs=msgs,
+                reply_budget=reply_budget,
+                model_hint=model_hint,
+                summary_note=summary_note,
+                user_msg=user_msg
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"LLM error: {e}")
 
@@ -572,7 +551,7 @@ if _FASTAPI_OK:
                     await ws.send_json({"error": "empty message"})
                     continue
 
-                sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+                sys_prompt = OPTS.get("chat_system_prompt", "").strip()
                 max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
                 reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
                 model_hint = OPTS.get("chat_model", "")
@@ -597,8 +576,13 @@ if _FASTAPI_OK:
                 summary_note = MEM.get_summary(chat_id)
 
                 try:
-                    raw = _gen_with_retry(msgs, reply_budget, model_hint=model_hint, summary_note=summary_note)
-                    answer = _safe_reply(raw, user_msg)
+                    answer = _generate_reply(
+                        msgs=msgs,
+                        reply_budget=reply_budget,
+                        model_hint=model_hint,
+                        summary_note=summary_note,
+                        user_msg=user_msg
+                    )
                 except Exception as e:
                     await ws.send_json({"error": f"LLM error: {e}"})
                     continue
