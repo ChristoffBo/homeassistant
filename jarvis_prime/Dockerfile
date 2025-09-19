@@ -54,6 +54,8 @@ COPY /intakes/smtp_server.py /app/smtp_server.py
 COPY /intakes/proxy.py /app/proxy.py
 COPY /modules/beautify.py /app/beautify.py
 COPY /modules/enviroguard.py /app/enviroguard.py
+COPY /modules/chatbot.py /app/chatbot.py
+
 
 # LLM + memory
 COPY /llm/llm_client.py /app/llm_client.py
