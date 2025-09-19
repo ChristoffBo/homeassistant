@@ -16,6 +16,15 @@ from typing import Deque, Dict, List, Optional, Tuple
 from collections import deque, defaultdict
 
 # ----------------------------
+# Additive: fixed identity system prompt
+# ----------------------------
+_JARVIS_SYS_PROMPT = (
+    "You are Jarvis Prime (Jarvis), a concise homelab assistant. "
+    "Answer directly in clear sentences. No banners, no status headers, "
+    "no preambles, no apologies, no policy talk. If asked your name, say Jarvis."
+)
+
+# ----------------------------
 # Config (reads chatbot_* keys)
 # ----------------------------
 
@@ -26,12 +35,7 @@ DEFAULTS = {
     "chat_history_turns_max": 5,
     "chat_max_total_tokens": 1200,         # from chatbot_max_total_tokens
     "chat_reply_max_new_tokens": 256,      # from chatbot_reply_max_new_tokens
-    # Identity & tone are locked here so it answers "Jarvis" to "what's your name?"
-    "chat_system_prompt": (
-        "You are Jarvis Prime, also called Jarvis. You are a concise, helpful homelab assistant. "
-        "If asked your name, answer 'Jarvis'. Be direct, no banners or status headers. "
-        "Answer in plain sentences, not lists, unless the user asks for a list."
-    ),
+    "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
     "chat_model": "",                      # optional override hint for Ollama name or gguf filename base
 }
 
@@ -54,11 +58,7 @@ def _load_options() -> dict:
 
     # Optional extras if you ever add them:
     if isinstance(raw.get("chat_system_prompt"), str) and raw.get("chat_system_prompt", "").strip():
-        # Append identity guard additively so existing user prompt still respected.
-        base = raw["chat_system_prompt"].strip()
-        if "Jarvis" not in base:
-            base += " Also: your name is Jarvis; if asked 'what is your name', answer 'Jarvis'."
-        out["chat_system_prompt"] = base
+        out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
 
     if isinstance(raw.get("chat_model"), str):
         out["chat_model"] = raw.get("chat_model", "").strip()
@@ -185,7 +185,7 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
         buf: List[str] = []
         # Expect first to be system; if multiple systems exist, join them.
         sys_chunks = [c for (r, c) in msgs if r == "system"]
-        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
+        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
         buf.append(f"<|system|>\n{sys_text}\n<|end|>")
         for r, c in msgs:
             if r == "user":
@@ -198,7 +198,7 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
 
     # Fallback: Llama [INST] format
     sys_chunks = [c for (r, c) in msgs if r == "system"]
-    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
+    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
     convo: List[str] = []
     # Pack user/assistant pairs into a single INST block to keep it simple
     for r, c in msgs:
@@ -210,24 +210,9 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     body = "\n".join(convo)
     return f"<s>[INST] <<SYS>>{sys_text}<</SYS>>\n{body} [/INST]"
 
-# Quick test for "bad first line" (banner / fluff / emoji header)
-_BAD_HEAD_RX = re.compile(
-    r'^\s*(?:update|status|incident|digest|note)\s*[—:\-].*|^[A-Z][A-Za-z\s]{1,40}[:—-]\s*$',
-    re.IGNORECASE
-)
-
-def _looks_like_banner(line: str) -> bool:
-    if not line: return False
-    s = line.strip()
-    if not s: return False
-    if _BAD_HEAD_RX.match(s): return True
-    if len(s.split()) <= 6 and any(x in s for x in ("🚨","💥","🛰️","📊","✨","⚠️","✅")):
-        return True
-    # very short, title-case-ish, ending with punctuation
-    if 2 <= len(s.split()) <= 6 and s[0].isupper() and s[-1] in ".:—-":
-        return True
-    return False
-
+# ----------------------------
+# Additive: robust generator with retries + salvage
+# ----------------------------
 def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "") -> str:
     if not _is_ready():
         raise RuntimeError("llm_client not available")
@@ -237,14 +222,13 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
 
     prompt = _build_prompt_from_msgs(msgs)
 
-    # Try up to 3 attempts if the model returns empty or banner-only noise
+    # Try up to 3 normal attempts
     attempts = 0
-    out = ""
     while attempts < 3:
         attempts += 1
         raw = _LLM._do_generate(
             prompt,
-            timeout=20,  # actual timeout gets profiled in llm_client anyway
+            timeout=45,  # a bit more headroom
             base_url="",           # resolved by ensure_loaded if Ollama is set in options
             model_url="",          # resolved from options
             model_name_hint=model_hint or "",
@@ -253,15 +237,41 @@ def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str
         ) or ""
         cleaned = _clean_reply(raw)
         if cleaned and cleaned != "(no reply)":
-            # Also guard against outputs that are only a banner line
-            head = cleaned.splitlines()[0] if cleaned.splitlines() else cleaned
-            if not _looks_like_banner(head):
-                out = cleaned
-                break
-        # tiny backoff before retry
+            # if first line still smells like a banner, try again
+            first = cleaned.splitlines()[0] if '\n' in cleaned else cleaned
+            if not _looks_like_banner(first):
+                return cleaned
         time.sleep(0.05 * attempts)
 
-    return out or ""
+    # ---- Last-chance salvage path: ask plainly with only the last user turn ----
+    last_user = ""
+    for r, c in reversed(msgs):
+        if r == "user":
+            last_user = c.strip()
+            break
+    if not last_user:
+        return ""
+
+    sys_chunks = [c for (r, c) in msgs if r == "system"]
+    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
+
+    salvage_msgs = [
+        ("system", sys_text),
+        ("user", f"{last_user}\n\nAnswer directly in 1–3 short paragraphs. No banners or headings.")
+    ]
+    salvage_prompt = _build_prompt_from_msgs(salvage_msgs)
+
+    raw = _LLM._do_generate(
+        salvage_prompt,
+        timeout=45,
+        base_url="",
+        model_url="",
+        model_name_hint=model_hint or "",
+        max_tokens=int(max_new_tokens),
+        with_grammar_auto=False
+    ) or ""
+    cleaned = _clean_reply(raw)
+    return cleaned or raw or ""
 
 # ----------------------------
 # Output cleaner (strip riff headers / meta)
@@ -272,39 +282,42 @@ _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
-# Kill 1-line “banner” like:  Update — … 🚨 / 💥 / 🛰️ etc.
+# Expanded banner killer
 _BANNER_RX = re.compile(
-    r'^\s*(?:update|status|incident|digest|note)\s*[—:\-].*(?:🚨|💥|🛰️|📊|✨|⚠️|✅)?\s*$',
+    r'^\s*(?:update|status|incident|digest|note|report|telemetry)\s*[—:\-]\s.*?(?:[🚨💥🛰️🔥⚠️⭐✨✅❗️❗️]|\s*)\s*$',
     re.IGNORECASE
 )
+
+def _looks_like_banner(line: str) -> bool:
+    if not line:
+        return False
+    if _BANNER_RX.match(line):
+        return True
+    # very short emoji/emoji+word stubs
+    if len(line) <= 6 and any(e in line for e in ("🚨","💥","🛰️","⚠️","🔥","✅","✨")):
+        return True
+    # “Update — …” variants with different dashes/spaces
+    if re.match(r'^\s*updat[e]?\s*[—:\-–—]\s', line, re.I):
+        return True
+    return False
 
 def _clean_reply(text: str) -> str:
     if not text:
         return text
-
-    # Split & drop empty lines first
-    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
-
-    # Stronger: nuke leading banner/meta lines until a normal sentence is found
-    while lines and (
-        _BANNER_RX.match(lines[0])                         # "Update — …"
-        or _looks_like_banner(lines[0])                    # short/emoji header
-    ):
-        lines.pop(0)
-
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    # drop a single leading banner-ish line
+    if lines and _looks_like_banner(lines[0]):
+        lines = lines[1:]
     out = "\n".join(lines).strip()
-
-    # Strip transport tags / persona tokens / meta markers if those helpers exist
+    # Strip transport/persona/meta if helpers exist
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
         out = _scrub_pers(out)
     if _scrub_meta:
         out = _scrub_meta(out)
-
-    # Extra: nuke accidental policy preambles like “I regret to inform…guidelines…”
+    # Nuke policy-ish boilerplate openers
     out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
-
     # Collapse excessive blank lines
     out = re.sub(r'\n{3,}', '\n\n', out).strip()
     return out
@@ -331,7 +344,8 @@ def handle_message(source: str, text: str) -> str:
     if not user_msg:
         return ""
 
-    sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+    # Additive: enforce Jarvis identity if none provided
+    sys_prompt = (OPTS.get("chat_system_prompt") or _JARVIS_SYS_PROMPT).strip()
     max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
     reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
     model_hint = OPTS.get("chat_model", "")
@@ -402,7 +416,7 @@ if _FASTAPI_OK:
         if not user_msg:
             raise HTTPException(status_code=400, detail="Empty message")
 
-        sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+        sys_prompt = (OPTS.get("chat_system_prompt") or _JARVIS_SYS_PROMPT).strip()
         max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
         reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
         model_hint = payload.model or OPTS.get("chat_model", "")
@@ -442,7 +456,7 @@ if _FASTAPI_OK:
                     await ws.send_json({"error": "empty message"})
                     continue
 
-                sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+                sys_prompt = (OPTS.get("chat_system_prompt") or _JARVIS_SYS_PROMPT).strip()
                 max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
                 reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
                 model_hint = OPTS.get("chat_model", "")
@@ -481,3 +495,4 @@ if _FASTAPI_OK:
 if __name__ == "__main__" and _FASTAPI_OK:
     import uvicorn
     uvicorn.run("chatbot:app", host="0.0.0.0", port=8189, reload=False)
+```0
