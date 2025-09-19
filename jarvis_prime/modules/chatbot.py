@@ -359,3 +359,56 @@ async def ws_endpoint(ws: WebSocket, chat_id: str = Query("default")):
             await ws.send_json({"error": f"server error: {e}"})
         finally:
             await ws.close()
+
+# ----------------------------
+# ADDITIVE: bot.py handoff helper
+# ----------------------------
+
+def handle_message(source: str, text: str) -> Optional[str]:
+    """
+    Lightweight helper so bot.py can hand off Gotify/ntfy 'chat'/'talk' posts:
+      reply = chatbot.handle_message(source='gotify', text='...')
+
+    Returns the assistant reply string (or an error string) so bot.py
+    can push it back out via send_message(...).
+    """
+    try:
+        if not OPTS.get("chat_enabled", True):
+            return "Chat is disabled in options.json"
+
+        user_msg = (text or "").strip()
+        if not user_msg:
+            return ""
+
+        # Re-load options opportunistically in case toggles changed at runtime
+        global OPTS
+        OPTS = _load_options()
+        MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
+
+        sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+        max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
+        reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
+        model = OPTS.get("chat_model", "")
+
+        # Build messages and trim under budget; use a stable chat_id for handoffs
+        chat_id = "gotify" if (source or "").strip() else "default"
+        msgs = MEM.trim_by_tokens(
+            chat_id=chat_id,
+            new_user=user_msg,
+            sys_prompt=sys_prompt,
+            max_total_tokens=max_total,
+            reply_budget=reply_budget,
+        )
+
+        answer = _call_llm_adapter(
+            prompt=user_msg,
+            msgs=msgs,
+            model=model,
+            max_new_tokens=reply_budget,
+        )
+
+        MEM.append_turn(chat_id, user_msg, answer)
+        return answer
+
+    except Exception as e:
+        return f"⚠️ LLM error: {e}"
