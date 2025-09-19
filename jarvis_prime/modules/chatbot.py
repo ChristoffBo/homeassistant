@@ -8,8 +8,7 @@
 # - WS:    /ws?chat_id=...  (bi-directional)
 # - Reuses existing llm_client if available via thin adapter
 #
-# Start: uvicorn chatbot:app --host 0.0.0.0 --port 8189
-# (Ingress handled by HA; direct port is optional)
+# Start (optional): uvicorn chatbot:app --host 0.0.0.0 --port 8189
 
 import os
 import json
@@ -19,7 +18,6 @@ from typing import Deque, Dict, List, Optional, Tuple
 from collections import deque, defaultdict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Query
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 # ----------------------------
@@ -28,30 +26,70 @@ from pydantic import BaseModel, Field
 
 OPTIONS_PATH = "/data/options.json"   # HA add-on options (mounted persistent)
 DEFAULTS = {
-    "chat_enabled": True,
-    "chat_history_turns": 3,          # keep last N user+assistant exchanges
-    "chat_history_turns_max": 5,      # upper guard if user sets >5
-    "chat_max_total_tokens": 1200,    # total approx context budget (prompt+history+sys)
-    "chat_reply_max_new_tokens": 256, # assistant generation cap
+    "chat_enabled": True,               # master switch
+    "chat_history_turns": 3,            # keep last N user+assistant exchanges
+    "chat_history_turns_max": 5,        # hard upper guard
+    "chat_max_total_tokens": 1200,      # total approx context budget (prompt+history+sys)
+    "chat_reply_max_new_tokens": 256,   # assistant generation cap
     "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
-    # Optional model routing knobs (if your llm_client supports them)
-    "chat_model": "",
+    "chat_model": "",                   # optional model hint to llm_client
 }
+
+def _merge_chatbot_aliases(opts: dict) -> dict:
+    """
+    Your add-on config.json exposes chatbot_* keys.
+    This maps them to the chat_* keys this module uses internally.
+    """
+    out = dict(opts)
+    # enable/disable
+    if "chatbot_enabled" in opts:
+        out["chat_enabled"] = bool(opts.get("chatbot_enabled"))
+    # sizing
+    if "chatbot_history_turns" in opts:
+        out["chat_history_turns"] = int(opts.get("chatbot_history_turns", 3))
+    if "chatbot_max_total_tokens" in opts:
+        out["chat_max_total_tokens"] = int(opts.get("chatbot_max_total_tokens", 1200))
+    if "chatbot_reply_max_new_tokens" in opts:
+        out["chat_reply_max_new_tokens"] = int(opts.get("chatbot_reply_max_new_tokens", 256))
+    # (optional) allow a system prompt override via llm_system_prompt if present
+    sp = (opts.get("chat_system_prompt") or opts.get("llm_system_prompt") or "").strip()
+    if sp:
+        out["chat_system_prompt"] = sp
+    # (optional) a model hint if the add-on exposes one
+    if "chat_model" in opts:
+        out["chat_model"] = str(opts.get("chat_model") or "")
+    return out
 
 def _load_options() -> dict:
     try:
         with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
-            opts = json.load(f)
-        # merge defaults (flat)
-        out = DEFAULTS.copy()
-        out.update({k: v for k, v in opts.items() if k in DEFAULTS})
-        # enforce hard caps
-        n = int(out.get("chat_history_turns", 3))
-        n = max(1, min(n, int(out.get("chat_history_turns_max", 5))))
-        out["chat_history_turns"] = n
-        return out
+            raw = json.load(f)
     except Exception:
-        return DEFAULTS.copy()
+        raw = {}
+
+    # Merge defaults (flat), then map chatbot_* -> chat_* so your config drives behavior.
+    out = DEFAULTS.copy()
+    out.update(_merge_chatbot_aliases(raw))
+
+    # enforce hard caps
+    try:
+        n = int(out.get("chat_history_turns", 3))
+        nmax = int(out.get("chat_history_turns_max", 5))
+        out["chat_history_turns"] = max(1, min(n, nmax))
+    except Exception:
+        out["chat_history_turns"] = 3
+
+    # sane floors
+    try:
+        out["chat_max_total_tokens"] = max(256, int(out.get("chat_max_total_tokens", 1200)))
+    except Exception:
+        out["chat_max_total_tokens"] = 1200
+    try:
+        out["chat_reply_max_new_tokens"] = max(8, int(out.get("chat_reply_max_new_tokens", 256)))
+    except Exception:
+        out["chat_reply_max_new_tokens"] = 256
+
+    return out
 
 OPTS = _load_options()
 
@@ -65,7 +103,6 @@ class _Tokenizer:
         self._enc = None
         try:
             import tiktoken  # type: ignore
-            # Use a common encoding; you can change to your model’s specific one.
             self._enc = tiktoken.get_encoding("cl100k_base")
         except Exception:
             self._enc = None
@@ -89,11 +126,9 @@ def tokens_of_messages(msgs: List[Tuple[str, str]]) -> int:
     """
     total = 0
     for role, content in msgs:
-        # small constant per-message overhead
-        total += 4
+        total += 4  # small per-message overhead
         total += TOKENIZER.count(role) + TOKENIZER.count(content)
-    # closing priming
-    total += 2
+    total += 2  # closing priming
     return total
 
 # ----------------------------
@@ -120,7 +155,6 @@ class ChatMemory:
         return list(self.turns[chat_id])
 
     def set_max_turns(self, n: int):
-        # Adjust future deques; existing will naturally trim on append.
         self.max_turns_default = n
 
     def trim_by_tokens(
@@ -136,29 +170,23 @@ class ChatMemory:
         fits under (max_total_tokens - reply_budget).
         """
         history = self.get_context(chat_id)
-        # Flatten into chat schema [(role, text)...]
         msgs: List[Tuple[str, str]] = [("system", sys_prompt)]
         for u, a in history:
             msgs.append(("user", u))
             msgs.append(("assistant", a))
         msgs.append(("user", new_user))
 
-        # Hard cap for total context
         limit = max(256, max_total_tokens - reply_budget)
         while tokens_of_messages(msgs) > limit and len(history) > 0:
-            # Drop the oldest turn (user, assistant) pair
-            history.pop(0)
-            # rebuild msgs
+            history.pop(0)  # drop oldest turn
             msgs = [("system", sys_prompt)]
             for u, a in history:
                 msgs.append(("user", u))
                 msgs.append(("assistant", a))
             msgs.append(("user", new_user))
-
         return msgs
 
     def GC(self, idle_seconds: int = 6 * 3600):
-        """Best-effort TTL GC to prevent unbounded growth over long uptime."""
         now = time.time()
         drop: List[str] = []
         for cid, ts in self.last_seen.items():
@@ -189,17 +217,14 @@ def _call_llm_adapter(
     Tries to call your existing /app/llm_client.py code. Two common patterns:
       - llm_client.generate_chat(prompt, history=[...], model="...", max_new_tokens=...)
       - llm_client.generate_reply(messages=[{"role":..., "content":...}, ...], model="...", max_new_tokens=...)
-    Adjust to your actual function names if they differ.
     """
     try:
-        import llm_client  # your existing module
+        import llm_client
     except Exception as e:
         raise RuntimeError(f"llm_client not available: {e}")
 
-    # Convert to a common messages format if needed
     as_dict_msgs = [{"role": r, "content": c} for (r, c) in msgs]
 
-    # Try common entry points in order:
     if hasattr(llm_client, "generate_reply"):
         return llm_client.generate_reply(
             messages=as_dict_msgs,
@@ -207,10 +232,7 @@ def _call_llm_adapter(
             max_new_tokens=max_new_tokens,
         )
     if hasattr(llm_client, "generate_chat"):
-        # Some clients take (prompt, history) style
-        user_only = [c for (r, c) in msgs if r == "user"]
         history_pairs = []
-        # simple pair extraction: zip previous user/assistant
         tmp_u = None
         for r, c in msgs:
             if r == "user":
@@ -225,7 +247,6 @@ def _call_llm_adapter(
             max_new_tokens=max_new_tokens,
         )
 
-    # If your client exposes a different function, wire it here:
     raise RuntimeError("No supported llm_client function found (expected generate_reply or generate_chat).")
 
 # ----------------------------
@@ -247,7 +268,6 @@ class ChatOut(BaseModel):
 
 @app.on_event("startup")
 async def _startup():
-    # Re-load options at boot (just once)
     global OPTS
     OPTS = _load_options()
     MEM.set_max_turns(OPTS["chat_history_turns"])
@@ -256,10 +276,10 @@ async def _startup():
 @app.post("/chat", response_model=ChatOut)
 async def chat_endpoint(payload: ChatIn, request: Request):
     if not OPTS.get("chat_enabled", True):
-        raise HTTPException(status_code=403, detail="Chat is disabled in options.json")
+        raise HTTPException(status_code=403, detail="Chat is disabled by options.json (chatbot_enabled=False)")
 
-    chat_id = payload.chat_id.strip() or "default"
-    user_msg = payload.message.strip()
+    chat_id = (payload.chat_id or "default").strip() or "default"
+    user_msg = (payload.message or "").strip()
     if not user_msg:
         raise HTTPException(status_code=400, detail="Empty message")
 
@@ -268,7 +288,6 @@ async def chat_endpoint(payload: ChatIn, request: Request):
     reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
     model = payload.model or OPTS.get("chat_model", "")
 
-    # Build trimmed messages under budget
     msgs = MEM.trim_by_tokens(
         chat_id=chat_id,
         new_user=user_msg,
@@ -277,7 +296,6 @@ async def chat_endpoint(payload: ChatIn, request: Request):
         reply_budget=reply_budget,
     )
 
-    # Generate
     try:
         answer = _call_llm_adapter(
             prompt=user_msg,
@@ -286,10 +304,8 @@ async def chat_endpoint(payload: ChatIn, request: Request):
             max_new_tokens=reply_budget,
         )
     except Exception as e:
-        # Return error as message (so client can see the reason)
         raise HTTPException(status_code=500, detail=f"LLM error: {e}")
 
-    # Save turn (bounded deque handles max turns)
     MEM.append_turn(chat_id, user_msg, answer)
 
     return ChatOut(
@@ -306,7 +322,7 @@ async def chat_endpoint(payload: ChatIn, request: Request):
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, chat_id: str = Query("default")):
     if not OPTS.get("chat_enabled", True):
-        await ws.close(code=4403)  # policy violation/forbidden
+        await ws.close(code=4403)
         return
 
     await ws.accept()
@@ -366,9 +382,13 @@ def handle_message(source: str, text: str) -> str:
     """
     Minimal adapter so bot.py can call:
         reply = chatbot.handle_message(source="gotify", text="Hello")
-    Respects chat_enabled, uses ring-memory per source as chat_id.
+    Respects chatbot_enabled (mapped to chat_enabled), uses ring-memory per source as chat_id.
     """
     try:
+        # refresh options opportunistically (cheap)
+        global OPTS
+        OPTS = _load_options()
+        MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
         if not OPTS.get("chat_enabled", True):
             return ""
     except Exception:
@@ -379,18 +399,10 @@ def handle_message(source: str, text: str) -> str:
     if not user_msg:
         return ""
 
-    # Re-read options opportunistically (cheap and keeps it fresh if options.json changed)
-    try:
-        global OPTS
-        OPTS = _load_options()
-        MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
-    except Exception:
-        pass
-
-    sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
-    max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
-    reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-    model = OPTS.get("chat_model", "")
+    sys_prompt  = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
+    max_total   = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
+    reply_budget= int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
+    model       = OPTS.get("chat_model", "")
 
     msgs = MEM.trim_by_tokens(
         chat_id=chat_id,
