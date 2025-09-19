@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime – Chat lane service (concise, riff-free answers)
+# Jarvis Prime – Chat lane service (clean chat, no riff banners)
+# - Uses your existing llm_client.py (no changes needed there)
 # - Reads chatbot_* options from /data/options.json
 # - Exposes handle_message(source, text) for bot.py handoff
 # - Optional HTTP/WS API if FastAPI is installed
-# - Post-processing removes riff/status headers and trims verbosity
 
 import os
 import json
 import time
-import re
 import asyncio
+import re
 from typing import Deque, Dict, List, Optional, Tuple
 from collections import deque, defaultdict
 
@@ -26,11 +26,8 @@ DEFAULTS = {
     "chat_history_turns_max": 5,
     "chat_max_total_tokens": 1200,         # from chatbot_max_total_tokens
     "chat_reply_max_new_tokens": 256,      # from chatbot_reply_max_new_tokens
-    "chat_system_prompt": "You are Jarvis Prime. Answer directly and concisely. Put the result first; add one short reason if helpful.",
-    "chat_model": "",
-    # NEW knobs (optional, safe if absent)
-    "chat_rewrite_enabled": True,          # run llm_client.rewrite on rambly answers
-    "chat_rewrite_mood": "neutral",
+    "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
+    "chat_model": "",                      # optional override hint for Ollama name or gguf filename base
 }
 
 def _load_options_raw() -> dict:
@@ -51,15 +48,11 @@ def _load_options() -> dict:
     out["chat_reply_max_new_tokens"] = int(raw.get("chatbot_reply_max_new_tokens", raw.get("chat_reply_max_new_tokens", 256)))
 
     # Optional extras if you ever add them:
-    if isinstance(raw.get("chat_system_prompt"), str) and raw["chat_system_prompt"].strip():
+    if isinstance(raw.get("chat_system_prompt"), str) and raw.get("chat_system_prompt", "").strip():
         out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
+
     if isinstance(raw.get("chat_model"), str):
         out["chat_model"] = raw.get("chat_model", "").strip()
-
-    # Soft feature flags (safe if missing)
-    out["chat_rewrite_enabled"] = bool(raw.get("chat_rewrite_enabled", DEFAULTS["chat_rewrite_enabled"]))
-    if isinstance(raw.get("chat_rewrite_mood"), str) and raw["chat_rewrite_mood"].strip():
-        out["chat_rewrite_mood"] = raw["chat_rewrite_mood"].strip()
 
     # Enforce caps
     n = max(1, min(out["chat_history_turns"], DEFAULTS["chat_history_turns_max"]))
@@ -116,7 +109,7 @@ class ChatMemory:
         return list(self.turns[chat_id])
 
     def set_max_turns(self, n: int):
-        self.max_turns_default = n
+        self.max_turns_default = n  # new deques get new maxlen
 
     def trim_by_tokens(
         self,
@@ -158,135 +151,116 @@ async def _bg_gc_loop():
         MEM.GC()
 
 # ----------------------------
-# Answer post-processing
+# LLM bridge (reuse llm_client)
 # ----------------------------
 
-# Reuse scrubbers (local copies so we don't touch llm_client.py)
-_PERSONA_TOKENS = ("dude","chick","nerd","rager","comedian","jarvis","ops","action","tappit","neutral")
-_PERS_LEAD_SEQ_RX = re.compile(r'^(?:\s*(?:' + "|".join(_PERSONA_TOKENS) + r')\.\s*)+', flags=re.I)
-_TRANSPORT_TAG_RX = re.compile(r'^\s*\[(smtp|proxy|http|https|gotify|webhook|apprise|ntfy|email|mailer|forward|poster)\]\s*', re.I)
-_META_LINE_RX = re.compile(r'^\s*(\[/?(?:SYSTEM|INPUT|OUTPUT|INST)\]|<<\s*/?\s*SYS\s*>>|</?s>)\s*$', re.I)
-_RIFF_LEAD_RX = re.compile(r'^\s*(update|status|heads?[-\s]?up|alert|incident|note)\b[^\n]*$', re.I)
-_LEXI_RX = re.compile(r'\bLexi\.\s*$', re.I)
-_EMOJI_BANNER_RX = re.compile(r'^[\s\W]{0,6}[\u2600-\u27BF\U0001F300-\U0001FAFF].{0,8}$')
+# We deliberately use your llm_client internals so we don't have to change that file.
+# - ensure_loaded(..) to pick profile/model
+# - _is_phi3_family() to choose chat template
+# - _do_generate(..) to actually run (Ollama or llama_cpp) with stops, temps, etc.
+try:
+    import llm_client as _LLM
+except Exception as _e:
+    _LLM = None
 
-_BOILERPLATE_RX = re.compile(
-    r'\b(as of my last update|i am unable to|i regret to inform you|as an ai|i cannot assist with)\b',
-    re.I
+def _is_ready() -> bool:
+    return _LLM is not None
+
+def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
+    """
+    Convert (role, content) messages into a single prompt using the model's
+    native chat format (Phi3-style if detected; otherwise Llama INST style).
+    """
+    if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
+        # Phi-style chat template
+        buf: List[str] = []
+        # Expect first to be system; if multiple systems exist, join them.
+        sys_chunks = [c for (r, c) in msgs if r == "system"]
+        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
+        buf.append(f"<|system|>\n{sys_text}\n<|end|>")
+        for r, c in msgs:
+            if r == "user":
+                buf.append(f"<|user|>\n{c}\n<|end|>")
+            elif r == "assistant":
+                buf.append(f"<|assistant|>\n{c}\n<|end|>")
+        # Generation should start at assistant:
+        buf.append("<|assistant|>\n")
+        return "\n".join(buf)
+
+    # Fallback: Llama [INST] format
+    sys_chunks = [c for (r, c) in msgs if r == "system"]
+    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
+    convo: List[str] = []
+    # Pack user/assistant pairs into a single INST block to keep it simple
+    for r, c in msgs:
+        if r == "user":
+            convo.append(f"User: {c}")
+        elif r == "assistant":
+            convo.append(f"Assistant: {c}")
+    convo.append("Assistant:")
+    body = "\n".join(convo)
+    return f"<s>[INST] <<SYS>>{sys_text}<</SYS>>\n{body} [/INST]"
+
+def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "") -> str:
+    if not _is_ready():
+        raise RuntimeError("llm_client not available")
+
+    # Ensure a model is ready using your EnviroGuard profile settings
+    _LLM.ensure_loaded()
+
+    prompt = _build_prompt_from_msgs(msgs)
+
+    # Use the llm_client’s internal generate path so stops/temps match your model
+    out = _LLM._do_generate(
+        prompt,
+        timeout=20,  # actual timeout gets profiled in llm_client anyway
+        base_url="",           # resolved by ensure_loaded if Ollama is set in options
+        model_url="",          # resolved from options
+        model_name_hint=model_hint or "",
+        max_tokens=int(max_new_tokens),
+        with_grammar_auto=False
+    )
+    return out or ""
+
+# ----------------------------
+# Output cleaner (strip riff headers / meta)
+# ----------------------------
+
+# Borrow llm_client’s scrubbing helpers if present
+_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
+_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
+_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
+
+# Kill 1-line “banner” like:  Update — … 🚨 / 💥 / 🛰️ etc.
+_BANNER_RX = re.compile(
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
+    re.IGNORECASE
 )
 
-def _strip_noise_lines(text: str) -> str:
+def _clean_reply(text: str) -> str:
     if not text:
-        return ""
+        return text
+    # Split & drop a leading banner-ish line
     lines = [ln.rstrip() for ln in text.splitlines()]
-    cleaned = []
-    for i, ln in enumerate(lines):
-        if not ln.strip():
-            # collapse later
-            cleaned.append(ln)
-            continue
-        if _TRANSPORT_TAG_RX.match(ln):    # [smtp]/[proxy] etc
-            continue
-        if _META_LINE_RX.match(ln):        # [SYSTEM] etc
-            continue
-        if _PERS_LEAD_SEQ_RX.match(ln):    # "jarvis. jarvis."
-            continue
-        if _RIFF_LEAD_RX.match(ln):        # "Update — …"
-            continue
-        if _LEXI_RX.search(ln):            # ends with "Lexi."
-            continue
-        if _EMOJI_BANNER_RX.match(ln):     # banner line full of emoji
-            continue
-        cleaned.append(ln)
-    # collapse excess blank lines
-    out = re.sub(r'\n{3,}', '\n\n', "\n".join(cleaned)).strip()
+    if lines and (_BANNER_RX.match(lines[0]) or len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️"))):
+        lines = lines[1:]
+
+    out = "\n".join(lines).strip()
+
+    # Strip transport tags / persona tokens / meta markers if those helpers exist
+    if _strip_trans:
+        out = _strip_trans(out)
+    if _scrub_pers:
+        out = _scrub_pers(out)
+    if _scrub_meta:
+        out = _scrub_meta(out)
+
+    # Extra: nuke accidental policy preambles like “I regret to inform…guidelines…”
+    out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
+
+    # Collapse excessive blank lines
+    out = re.sub(r'\n{3,}', '\n\n', out).strip()
     return out
-
-def _first_sentences(s: str, max_sents: int = 3) -> str:
-    # grab up to N sentences, preferring short/direct ones
-    parts = re.split(r'(?<=[.!?])\s+', s.strip())
-    out = []
-    for p in parts:
-        if not p:
-            continue
-        out.append(p.strip())
-        if len(out) >= max_sents:
-            break
-    return " ".join(out).strip()
-
-def _polish_answer(raw: str, user_msg: str) -> str:
-    s = (raw or "").strip().strip('`').strip()
-    s = _strip_noise_lines(s)
-
-    # remove boilerplate fillers
-    s = _BOILERPLATE_RX.sub("", s)
-    s = re.sub(r'\s{2,}', ' ', s).strip()
-
-    # If multi-paragraph, prefer the first *content* paragraph (often the real answer)
-    paras = [p.strip() for p in re.split(r'\n\s*\n', s) if p.strip()]
-    if paras:
-        s = paras[0]
-
-    # Cap length to keep it sharp
-    s = _first_sentences(s, max_sents=3)
-    s = s[:700].rstrip()
-
-    # Make sure we didn’t end up empty
-    if not s:
-        s = raw.strip()
-
-    return s
-
-# ----------------------------
-# LLM adapter (supports many shapes)
-# ----------------------------
-
-def _call_llm_adapter(
-    prompt: str,
-    msgs: List[Tuple[str, str]],
-    model: str,
-    max_new_tokens: int,
-) -> str:
-    try:
-        import llm_client
-    except Exception as e:
-        raise RuntimeError(f"llm_client not available: {e}")
-
-    as_dict_msgs = [{"role": r, "content": c} for (r, c) in msgs]
-
-    if hasattr(llm_client, "generate_reply"):
-        return llm_client.generate_reply(
-            messages=as_dict_msgs,
-            model=model or None,
-            max_new_tokens=max_new_tokens,
-        )
-
-    if hasattr(llm_client, "generate_chat"):
-        history_pairs = []
-        tmp_u = None
-        for r, c in msgs:
-            if r == "user": tmp_u = c
-            elif r == "assistant" and tmp_u is not None:
-                history_pairs.append((tmp_u, c))
-                tmp_u = None
-        return llm_client.generate_chat(
-            prompt=prompt,
-            history=history_pairs,
-            model=model or None,
-            max_new_tokens=max_new_tokens,
-        )
-
-    if hasattr(llm_client, "riff_once"):
-        return llm_client.riff_once(context=prompt, timeout_s=20) or ""
-
-    # LAST-RESORT: some builds only expose rewrite()/persona_riff(). Try rewrite(prompt)
-    if hasattr(llm_client, "rewrite"):
-        try:
-            return llm_client.rewrite(text=prompt, mood="neutral", max_lines=0, max_chars=0)
-        except Exception:
-            pass
-
-    raise RuntimeError("No supported llm_client function found (expected generate_reply / generate_chat / riff_once).")
 
 # ----------------------------
 # Handoff used by /app/bot.py
@@ -294,6 +268,7 @@ def _call_llm_adapter(
 
 def handle_message(source: str, text: str) -> str:
     """Used by bot.py when a Gotify/ntfy title is 'chat' or 'talk'."""
+    # live-refresh options so toggles apply without rebuild
     global OPTS
     try:
         OPTS = _load_options()
@@ -312,7 +287,7 @@ def handle_message(source: str, text: str) -> str:
     sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
     max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
     reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-    model = OPTS.get("chat_model", "")
+    model_hint = OPTS.get("chat_model", "")
 
     msgs = MEM.trim_by_tokens(
         chat_id=chat_id,
@@ -323,36 +298,16 @@ def handle_message(source: str, text: str) -> str:
     )
 
     try:
-        raw = _call_llm_adapter(
-            prompt=user_msg,
+        raw = _gen_reply(
             msgs=msgs,
-            model=model,
             max_new_tokens=reply_budget,
+            model_hint=model_hint
         )
+        answer = _clean_reply(raw)
+        if not answer:
+            answer = "(no reply)"
     except Exception as e:
         return f"LLM error: {e}"
-
-    # Clean & sharpen
-    answer = _polish_answer(raw, user_msg)
-
-    # Optional rewrite polish via llm_client.rewrite if answer still looks messy
-    if OPTS.get("chat_rewrite_enabled", True):
-        try:
-            # heuristic: if it's long or still has boilerplate keywords, run a quick rewrite
-            needs = (len(answer) > 420) or bool(_BOILERPLATE_RX.search(answer))
-            if needs:
-                import llm_client
-                refined = llm_client.rewrite(
-                    text=answer,
-                    mood=OPTS.get("chat_rewrite_mood", "neutral"),
-                    max_lines=0,
-                    max_chars=600
-                )
-                refined = _polish_answer(refined, user_msg)
-                if refined:
-                    answer = refined
-        except Exception:
-            pass
 
     MEM.append_turn(chat_id, user_msg, answer)
     return answer
@@ -375,7 +330,7 @@ if _FASTAPI_OK:
     class ChatIn(BaseModel):
         chat_id: str = Field(..., description="Stable ID per chat session")
         message: str = Field(..., description="User input")
-        model: Optional[str] = Field(None, description="Override model (optional)")
+        model: Optional[str] = Field(None, description="Override model hint (optional)")
 
     class ChatOut(BaseModel):
         chat_id: str
@@ -395,15 +350,15 @@ if _FASTAPI_OK:
         if not OPTS.get("chat_enabled", True):
             raise HTTPException(status_code=403, detail="Chat is disabled in options.json")
 
-        chat_id = payload.chat_id.strip() or "default"
-        user_msg = payload.message.strip()
+        chat_id = (payload.chat_id or "default").strip() or "default"
+        user_msg = (payload.message or "").strip()
         if not user_msg:
             raise HTTPException(status_code=400, detail="Empty message")
 
         sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
         max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
         reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-        model = payload.model or OPTS.get("chat_model", "")
+        model_hint = payload.model or OPTS.get("chat_model", "")
 
         msgs = MEM.trim_by_tokens(
             chat_id=chat_id,
@@ -414,28 +369,10 @@ if _FASTAPI_OK:
         )
 
         try:
-            raw = _call_llm_adapter(user_msg, msgs, model, reply_budget)
+            raw = _gen_reply(msgs, reply_budget, model_hint=model_hint)
+            answer = _clean_reply(raw)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"LLM error: {e}")
-
-        answer = _polish_answer(raw, user_msg)
-
-        if OPTS.get("chat_rewrite_enabled", True):
-            try:
-                import llm_client
-                needs = (len(answer) > 420) or bool(_BOILERPLATE_RX.search(answer))
-                if needs:
-                    refined = llm_client.rewrite(
-                        text=answer,
-                        mood=OPTS.get("chat_rewrite_mood", "neutral"),
-                        max_lines=0,
-                        max_chars=600
-                    )
-                    refined = _polish_answer(refined, user_msg)
-                    if refined:
-                        answer = refined
-            except Exception:
-                pass
 
         MEM.append_turn(chat_id, user_msg, answer)
         return ChatOut(
@@ -461,7 +398,7 @@ if _FASTAPI_OK:
                 sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
                 max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
                 reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-                model = OPTS.get("chat_model", "")
+                model_hint = OPTS.get("chat_model", "")
 
                 msgs = MEM.trim_by_tokens(
                     chat_id=chat_id,
@@ -472,29 +409,11 @@ if _FASTAPI_OK:
                 )
 
                 try:
-                    raw = _call_llm_adapter(user_msg, msgs, model, reply_budget)
+                    raw = _gen_reply(msgs, reply_budget, model_hint=model_hint)
+                    answer = _clean_reply(raw)
                 except Exception as e:
                     await ws.send_json({"error": f"LLM error: {e}"})
                     continue
-
-                answer = _polish_answer(raw, user_msg)
-
-                if OPTS.get("chat_rewrite_enabled", True):
-                    try:
-                        import llm_client
-                        needs = (len(answer) > 420) or bool(_BOILERPLATE_RX.search(answer))
-                        if needs:
-                            refined = llm_client.rewrite(
-                                text=answer,
-                                mood=OPTS.get("chat_rewrite_mood", "neutral"),
-                                max_lines=0,
-                                max_chars=600
-                            )
-                            refined = _polish_answer(refined, user_msg)
-                            if refined:
-                                answer = refined
-                    except Exception:
-                        pass
 
                 MEM.append_turn(chat_id, user_msg, answer)
                 await ws.send_json({
@@ -511,7 +430,7 @@ if _FASTAPI_OK:
             finally:
                 await ws.close()
 
-# If you ever want to run the API directly (only when FastAPI is present):
+# Run API directly if FastAPI available
 if __name__ == "__main__" and _FASTAPI_OK:
     import uvicorn
     uvicorn.run("chatbot:app", host="0.0.0.0", port=8189, reload=False)
