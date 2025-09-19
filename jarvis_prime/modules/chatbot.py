@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime – Chat lane (clean Q&A, no riffs/persona)
-# - Reads chatbot_* from /data/options.json (+ llm_timeout_seconds)
-# - Uses llm_client._do_generate (only), with optional _ensure_loaded if present
-# - Exposes handle_message(source, text) for bot.py
-# - Optional FastAPI/WS if installed
+# Jarvis Prime – Chat lane (robust import, Q&A first)
+# - Forces llm_client load from /app/llm_client.py to avoid wrong module on sys.path
+# - Uses _do_generate when available (normal chat)
+# - Graceful fallbacks: persona_riff → simple echo so it never goes silent
+# - No edits needed in llm_client.py
 
 import os
 import json
 import time
 import asyncio
 import re
+import importlib.util
 from collections import deque, defaultdict
 from typing import Deque, Dict, List, Optional, Tuple
 
 # ----------------------------
-# Config
+# Options
 # ----------------------------
 
 OPTIONS_PATH = "/data/options.json"
@@ -41,19 +42,16 @@ def _load_options_raw() -> dict:
 def _load_options() -> dict:
     raw = _load_options_raw()
     out = DEFAULTS.copy()
-
-    # accept old/new keys
+    # old/new keys
     out["chat_enabled"] = bool(raw.get("chatbot_enabled", raw.get("chat_enabled", True)))
     out["chat_history_turns"] = int(raw.get("chatbot_history_turns", raw.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
     out["chat_max_total_tokens"] = int(raw.get("chatbot_max_total_tokens", raw.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"])))
     out["chat_reply_max_new_tokens"] = int(raw.get("chatbot_reply_max_new_tokens", raw.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"])))
     out["llm_timeout_seconds"] = int(raw.get("llm_timeout_seconds", DEFAULTS["llm_timeout_seconds"]))
-
     if isinstance(raw.get("chat_system_prompt"), str) and raw["chat_system_prompt"].strip():
         out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
     if isinstance(raw.get("chat_model"), str):
         out["chat_model"] = raw.get("chat_model", "").strip()
-
     # caps
     out["chat_history_turns"] = max(1, min(out["chat_history_turns"], DEFAULTS["chat_history_turns_max"]))
     out["chat_reply_max_new_tokens"] = max(32, min(out["chat_reply_max_new_tokens"], 1024))
@@ -63,14 +61,14 @@ def _load_options() -> dict:
 OPTS = _load_options()
 
 # ----------------------------
-# Token estimation (lightweight)
+# Token estimator (~4 chars/token)
 # ----------------------------
 
 class _Tokenizer:
     def __init__(self):
         self._enc = None
         try:
-            import tiktoken
+            import tiktoken  # optional
             self._enc = tiktoken.get_encoding("cl100k_base")
         except Exception:
             self._enc = None
@@ -82,7 +80,7 @@ class _Tokenizer:
                 return len(self._enc.encode(text))
             except Exception:
                 pass
-        return max(1, (len(text) + 3) // 4)  # ~4 chars/token
+        return max(1, (len(text) + 3) // 4)
 
 TOKENIZER = _Tokenizer()
 
@@ -105,8 +103,7 @@ class ChatMemory:
         self.last_seen: Dict[str, float] = {}
 
     def append_turn(self, chat_id: str, user_msg: str, assistant_msg: str):
-        dq = self.turns[chat_id]
-        dq.append((user_msg, assistant_msg))
+        self.turns[chat_id].append((user_msg, assistant_msg))
         self.last_seen[chat_id] = time.time()
 
     def get_context(self, chat_id: str) -> List[Tuple[str, str]]:
@@ -133,19 +130,37 @@ async def _bg_gc_loop():
         MEM.GC()
 
 # ----------------------------
-# LLM bridge
+# Force-load llm_client from /app
 # ----------------------------
 
-try:
-    import llm_client as _LLM
-except Exception:
-    _LLM = None
+def _load_llm_client():
+    path = "/app/llm_client.py"
+    mod = None
+    if os.path.exists(path):
+        try:
+            spec = importlib.util.spec_from_file_location("llm_client_forced", path)
+            mod = importlib.util.module_from_spec(spec)  # type: ignore
+            assert spec and spec.loader
+            spec.loader.exec_module(mod)  # type: ignore
+            return mod
+        except Exception:
+            pass
+    # fallback to normal import if file load failed
+    try:
+        import llm_client as fallback  # type: ignore
+        return fallback
+    except Exception:
+        return None
+
+_LLM = _load_llm_client()
+
+# Optional helpers if present
+_is_phi3 = getattr(_LLM, "_is_phi3_family", None) if _LLM else None
+_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
+_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
+_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 
 def _ensure_ready_soft():
-    """
-    Call llm_client.ensure_loaded() only if present.
-    Never raise if it's missing; some builds omit it.
-    """
     if not _LLM:
         raise RuntimeError("llm_client not importable")
     fn = getattr(_LLM, "ensure_loaded", None)
@@ -153,14 +168,11 @@ def _ensure_ready_soft():
         try:
             fn()
         except Exception:
-            # soft-fail; generation will still be tried
-            pass
+            pass  # soft-fail
 
-# optional scrubbers if present
-_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
-_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
-_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
-_is_phi3 = getattr(_LLM, "_is_phi3_family", None) if _LLM else None
+# ----------------------------
+# Prompt build
+# ----------------------------
 
 def _build_prompt(msgs: List[Tuple[str, str]], sys_prompt: str) -> str:
     if callable(_is_phi3) and _is_phi3():
@@ -181,33 +193,44 @@ def _build_prompt(msgs: List[Tuple[str, str]], sys_prompt: str) -> str:
     convo.append("Assistant:")
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n" + "\n".join(convo) + " [/INST]"
 
-def _gen_reply_once(prompt: str, timeout_s: int, max_new_tokens: int, model_hint: str) -> str:
-    if not _LLM or not hasattr(_LLM, "_do_generate"):
-        raise RuntimeError("llm_client._do_generate not available")
-    _ensure_ready_soft()
-    out = _LLM._do_generate(
-        prompt,
-        timeout=int(max(4, timeout_s)),
-        base_url="",
-        model_url="",
-        model_name_hint=model_hint or "",
-        max_tokens=int(max_new_tokens),
-        with_grammar_auto=False
-    )
-    return out or ""
+# ----------------------------
+# Generation with fallbacks
+# ----------------------------
 
-def _gen_reply_with_retry(prompt: str, timeout_s: int, max_new_tokens: int, model_hint: str) -> str:
-    txt = _gen_reply_once(prompt, timeout_s, max_new_tokens, model_hint)
+def _gen_qna(prompt: str, timeout_s: int, max_new_tokens: int, model_hint: str) -> str:
+    _ensure_ready_soft()
+    do_gen = getattr(_LLM, "_do_generate", None)
+    if callable(do_gen):
+        out = do_gen(
+            prompt,
+            timeout=int(max(4, timeout_s)),
+            base_url="",
+            model_url="",
+            model_name_hint=model_hint or "",
+            max_tokens=int(max_new_tokens),
+            with_grammar_auto=False
+        )
+        return out or ""
+    # Fallback: try persona_riff for *some* response
+    persona_riff = getattr(_LLM, "persona_riff", None)
+    if callable(persona_riff):
+        lines = persona_riff(persona="jarvis", context="Subject: chat reply to user question", max_lines=2, timeout=min(8, timeout_s))
+        if isinstance(lines, list) and lines:
+            return "\n".join(lines)
+    return ""
+
+def _gen_with_retry(prompt: str, timeout_s: int, max_new_tokens: int, model_hint: str) -> str:
+    txt = _gen_qna(prompt, timeout_s, max_new_tokens, model_hint)
     if txt.strip():
         return txt
     try:
         time.sleep(0.15)
     except Exception:
         pass
-    return _gen_reply_once(prompt, max(4, timeout_s // 2), max(64, max_new_tokens // 2), model_hint)
+    return _gen_qna(prompt, max(4, timeout_s // 2), max(64, max_new_tokens // 2), model_hint)
 
 # ----------------------------
-# Cleaning / fallback
+# Cleaning / fallback text
 # ----------------------------
 
 _BANNER_RX = re.compile(r'^\s*(update|status|incident|digest|note)\s*[:—-].*$', re.I)
@@ -215,9 +238,8 @@ _BANNER_RX = re.compile(r'^\s*(update|status|incident|digest|note)\s*[:—-].*$'
 def _clean_reply(text: str) -> str:
     if not text:
         return ""
-    raw = text
-    lines = [ln.rstrip() for ln in raw.splitlines()]
-    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨", "💥", "🛰️")))):
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️")))):
         lines = lines[1:]
     out = "\n".join(lines).strip()
     if _strip_trans:
@@ -239,7 +261,7 @@ def _safe_reply(raw: str, user_msg: str) -> str:
     return out
 
 # ----------------------------
-# Budgeted history
+# History budget
 # ----------------------------
 
 def _trim_history_to_budget(sys_prompt: str, history: List[Tuple[str, str]], new_user: str, max_total_tokens: int, reply_budget: int) -> List[Tuple[str, str]]:
@@ -247,8 +269,7 @@ def _trim_history_to_budget(sys_prompt: str, history: List[Tuple[str, str]], new
     def build(hist_pairs: List[Tuple[str,str]], utext: str) -> List[Tuple[str,str]]:
         msgs: List[Tuple[str,str]] = [("system", sys_prompt)]
         for u, a in hist_pairs:
-            msgs.append(("user", u))
-            msgs.append(("assistant", a))
+            msgs.append(("user", u)); msgs.append(("assistant", a))
         msgs.append(("user", utext))
         return msgs
 
@@ -262,16 +283,13 @@ def _trim_history_to_budget(sys_prompt: str, history: List[Tuple[str, str]], new
         guard += 1
 
     if tokens_of_messages(msgs) > limit:
-        # binary trim the tail of user text
-        lo, hi = 0, len(new_user)
-        best = ""
+        lo, hi = 0, len(new_user); best = ""
         while lo <= hi:
             mid = (lo + hi) // 2
             cand = new_user[-mid:] if mid > 0 else ""
             test = build(hist_copy, cand)
             if tokens_of_messages(test) <= limit:
-                best = cand
-                lo = mid + 1
+                best = cand; lo = mid + 1
             else:
                 hi = mid - 1
         msgs = build(hist_copy, best)
@@ -282,7 +300,7 @@ def _trim_history_to_budget(sys_prompt: str, history: List[Tuple[str, str]], new
     return msgs
 
 # ----------------------------
-# Main handler (sync)
+# Main handler
 # ----------------------------
 
 def handle_message(source: str, text: str) -> str:
@@ -309,7 +327,7 @@ def handle_message(source: str, text: str) -> str:
     prompt = _build_prompt(msgs, sys_prompt)
 
     try:
-        raw = _gen_reply_with_retry(prompt, gen_timeout, reply_budget, model_hint)
+        raw = _gen_with_retry(prompt, gen_timeout, reply_budget, model_hint)
         answer = _safe_reply(raw, user_msg)
     except Exception as e:
         answer = f"LLM error: {e}"
@@ -318,7 +336,7 @@ def handle_message(source: str, text: str) -> str:
     return answer
 
 # ----------------------------
-# Optional HTTP/WS API
+# Optional HTTP/WS
 # ----------------------------
 
 _FASTAPI_OK = False
@@ -374,15 +392,13 @@ if _FASTAPI_OK:
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket, chat_id: str = Query("default")):
         if not OPTS.get("chat_enabled", True):
-            await ws.close(code=4403)
-            return
+            await ws.close(code=4403); return
         await ws.accept()
         try:
             while True:
                 user_msg = (await ws.receive_text() or "").strip()
                 if not user_msg:
-                    await ws.send_json({"error": "empty"})
-                    continue
+                    await ws.send_json({"error": "empty"}); continue
                 sys_prompt = OPTS["chat_system_prompt"]
                 reply_budget = int(OPTS["chat_reply_max_new_tokens"])
                 max_total = int(OPTS["chat_max_total_tokens"])
@@ -399,8 +415,7 @@ if _FASTAPI_OK:
         except WebSocketDisconnect:
             return
         except Exception as e:
-            await ws.send_json({"error": str(e)})
-            await ws.close()
+            await ws.send_json({"error": str(e)}); await ws.close()
 
 if __name__ == "__main__" and _FASTAPI_OK:
     import uvicorn
