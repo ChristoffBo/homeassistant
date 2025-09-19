@@ -1,154 +1,145 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime – Chat lane service (clean Q&A, no riff banners, no persona)
-# - Uses llm_client.py for model loading and generation
-# - Reads chat_* options from /data/options.json
-# - Exposes handle_message(source, text) for bot.py handoff
-# - Optional HTTP/WS API if FastAPI is installed
-# - Includes handle_message_sync() for synchronous bot.py usage
+# Jarvis Prime – Chat lane service (clean chat, no riff banners, no persona)
+# - Uses llm_client.py for generation
+# - Reads chatbot_* options from /data/options.json
+# - Exposes handle_message(source, text) as sync for bot.py
+# - Optional HTTP API if FastAPI is installed
 
 import os
 import json
+import time
 import asyncio
-from typing import Dict, Any
+import re
+from typing import Dict, Any, List
+from collections import deque
 
-import llm_client as llm
+import llm_client
+
+# ----------------------------
+# Config (reads chatbot_* keys)
+# ----------------------------
 
 OPTIONS_PATH = "/data/options.json"
 DEFAULTS = {
-    "chat_enabled": True,
-    "chat_history_turns": 3,
-    "chat_history_turns_max": 5,
-    "chat_max_total_tokens": 1200,
-    "chat_reply_max_new_tokens": 256,
-    "chat_system_prompt": "You are Jarvis. Answer clearly and factually.",
+    "chatbot_enabled": True,
+    "chatbot_history_turns": 3,
+    "chatbot_history_turns_max": 5,
+    "chatbot_max_total_tokens": 1200,
+    "chatbot_reply_max_new_tokens": 256,
+    "chatbot_system_prompt": "You are Jarvis Prime, a helpful and knowledgeable assistant. "
+                             "Answer clearly and concisely without persona riffs or extra banners."
 }
-
-# ============================
-# Helpers
-# ============================
 
 def _read_options() -> Dict[str, Any]:
     try:
         with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            opts = json.load(f)
+            return opts
     except Exception:
         return {}
 
-def _opt(key: str):
-    opts = _read_options()
-    return opts.get(key, DEFAULTS.get(key))
+def _get_opt(opts: Dict[str, Any], key: str, default: Any) -> Any:
+    return opts.get(key, DEFAULTS.get(key, default))
 
-# ============================
-# Prompt builder (no persona)
-# ============================
+# ----------------------------
+# Chat state
+# ----------------------------
 
-def _prompt_for_chat(history, user_msg, sys_prompt: str) -> str:
+_HISTORY: Dict[str, deque] = {}
+
+def _get_history(source: str, max_turns: int) -> deque:
+    if source not in _HISTORY:
+        _HISTORY[source] = deque(maxlen=max_turns)
+    return _HISTORY[source]
+
+# ----------------------------
+# Prompt building
+# ----------------------------
+
+def _build_prompt(system_prompt: str, history: List[Dict[str, str]], user_msg: str) -> str:
     """
-    Builds a plain assistant prompt with short history (no persona/riff).
-    Phi-family uses <|system|>, others use [INST].
+    Build chat-style prompt for Phi-family GGUF models.
     """
-    if not sys_prompt:
-        sys_prompt = DEFAULTS["chat_system_prompt"]
-
-    history_lines = []
-    for role, text in history:
-        if llm._is_phi3_family():
-            if role == "user":
-                history_lines.append(f"<|user|>\n{text}\n<|end|>")
-            else:
-                history_lines.append(f"<|assistant|>\n{text}\n<|end|>")
-        else:
-            history_lines.append(f"{role.upper()}: {text}")
-
-    if llm._is_phi3_family():
-        return (
-            f"<|system|>\n{sys_prompt}\n<|end|>\n"
-            + "\n".join(history_lines)
-            + f"\n<|user|>\n{user_msg}\n<|end|>\n<|assistant|>\n"
-        )
+    parts = []
+    if llm_client._is_phi3_family():
+        if system_prompt:
+            parts.append(f"<|system|>\n{system_prompt}\n<|end|>")
+        for turn in history:
+            parts.append(f"<|user|>\n{turn['user']}\n<|end|>")
+            parts.append(f"<|assistant|>\n{turn['bot']}\n<|end|>")
+        parts.append(f"<|user|>\n{user_msg}\n<|end|>\n<|assistant|>")
+        return "\n".join(parts)
     else:
-        return (
-            f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n"
-            + "\n".join(history_lines)
-            + f"\n{user_msg} [/INST]"
-        )
+        sys = f"<<SYS>>{system_prompt}<</SYS>>" if system_prompt else ""
+        conv = []
+        for turn in history:
+            conv.append(f"[INST] {turn['user']} [/INST] {turn['bot']}")
+        conv.append(f"[INST] {user_msg} [/INST]")
+        return f"<s>{sys}\n" + "\n".join(conv)
 
-# ============================
-# Core entry point
-# ============================
+# ----------------------------
+# Async core function
+# ----------------------------
 
-async def handle_message(source: str, text: str) -> str:
-    if not _opt("chat_enabled"):
+async def handle_message_async(source: str, text: str) -> str:
+    opts = _read_options()
+    if not _get_opt(opts, "chatbot_enabled", True):
         return ""
 
-    # Ensure model loaded
-    ok = llm.ensure_loaded()
-    if not ok:
-        return "(chatbot) model not loaded"
-
-    sys_prompt = str(_opt("chat_system_prompt") or DEFAULTS["chat_system_prompt"])
-    history_turns = min(int(_opt("chat_history_turns") or 3), int(_opt("chat_history_turns_max") or 5))
-    reply_max_new_tokens = int(_opt("chat_reply_max_new_tokens") or 256)
-    max_total_tokens = int(_opt("chat_max_total_tokens") or 1200)
-
-    if not hasattr(handle_message, "_history"):
-        handle_message._history = []  # [(role, text), ...]
-
-    history = handle_message._history[-history_turns:]
-
-    prompt = _prompt_for_chat(history, text, sys_prompt)
-
-    # Token check
-    try:
-        n_in = len(llm.LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
-    except Exception:
-        n_in = len(prompt) // 4
-
-    if llm._would_overflow(n_in, reply_max_new_tokens, llm.DEFAULT_CTX, reserve=256):
-        return "(chatbot) prompt too long"
-
-    out = llm._do_generate(
-        prompt,
-        timeout=20,
-        base_url="",
-        model_url="",
-        model_name_hint="",
-        max_tokens=reply_max_new_tokens,
-        with_grammar_auto=False
+    history_turns = min(
+        int(_get_opt(opts, "chatbot_history_turns", 3)),
+        int(_get_opt(opts, "chatbot_history_turns_max", 5))
     )
-    reply = out.strip() if out else "(no reply)"
+    max_total_tokens = int(_get_opt(opts, "chatbot_max_total_tokens", 1200))
+    reply_max_tokens = int(_get_opt(opts, "chatbot_reply_max_new_tokens", 256))
+    system_prompt = _get_opt(opts, "chatbot_system_prompt", DEFAULTS["chatbot_system_prompt"])
 
-    history.append(("user", text))
-    history.append(("assistant", reply))
-    handle_message._history = history[-history_turns:]
+    hist = _get_history(source, history_turns)
+    prompt = _build_prompt(system_prompt, list(hist), text)
 
+    try:
+        out = llm_client._do_generate(
+            prompt,
+            timeout=20,
+            base_url="",
+            model_url="",
+            model_path="",
+            model_name_hint="",
+            max_tokens=reply_max_tokens,
+            with_grammar_auto=False
+        )
+    except Exception as e:
+        out = f"(error: {e})"
+
+    reply = (out or "").strip()
+    if reply:
+        hist.append({"user": text, "bot": reply})
     return reply
 
-# ============================
-# Sync wrapper for bot.py
-# ============================
+# ----------------------------
+# Sync wrapper (alias for bot.py)
+# ----------------------------
 
-def handle_message_sync(source: str, text: str) -> str:
+def handle_message(source: str, text: str) -> str:
     """
-    Synchronous wrapper so bot.py can call without 'await'.
+    Sync wrapper so bot.py can call handle_message(...) directly.
     """
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # Nested loop case
             import nest_asyncio
             nest_asyncio.apply()
-            return loop.run_until_complete(handle_message(source, text))
+            return loop.run_until_complete(handle_message_async(source, text))
         else:
-            return loop.run_until_complete(handle_message(source, text))
+            return loop.run_until_complete(handle_message_async(source, text))
     except RuntimeError:
-        return asyncio.run(handle_message(source, text))
+        return asyncio.run(handle_message_async(source, text))
 
-# ============================
+# ----------------------------
 # Optional HTTP API
-# ============================
+# ----------------------------
 
 try:
     from fastapi import FastAPI
@@ -160,7 +151,7 @@ try:
     @app.post("/chat")
     async def chat_ep(body: Dict[str, Any]):
         msg = body.get("text", "")
-        out = await handle_message("http", msg)
+        out = await handle_message_async("http", msg)
         return JSONResponse({"reply": out})
 
     if __name__ == "__main__":
