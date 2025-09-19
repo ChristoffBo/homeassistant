@@ -6,10 +6,10 @@
 # - Reads chat_* options from /data/options.json
 # - Exposes handle_message(source, text) for bot.py handoff
 # - Optional HTTP/WS API if FastAPI is installed
+# - Includes handle_message_sync() for synchronous bot.py usage
 
 import os
 import json
-import time
 import asyncio
 from typing import Dict, Any
 
@@ -52,7 +52,6 @@ def _prompt_for_chat(history, user_msg, sys_prompt: str) -> str:
     if not sys_prompt:
         sys_prompt = DEFAULTS["chat_system_prompt"]
 
-    # Build history
     history_lines = []
     for role, text in history:
         if llm._is_phi3_family():
@@ -84,7 +83,7 @@ async def handle_message(source: str, text: str) -> str:
     if not _opt("chat_enabled"):
         return ""
 
-    # Ensure model loaded (delegates to llm_client, uses options.json)
+    # Ensure model loaded
     ok = llm.ensure_loaded()
     if not ok:
         return "(chatbot) model not loaded"
@@ -94,16 +93,14 @@ async def handle_message(source: str, text: str) -> str:
     reply_max_new_tokens = int(_opt("chat_reply_max_new_tokens") or 256)
     max_total_tokens = int(_opt("chat_max_total_tokens") or 1200)
 
-    # Maintain in-memory rolling history
     if not hasattr(handle_message, "_history"):
         handle_message._history = []  # [(role, text), ...]
 
     history = handle_message._history[-history_turns:]
 
-    # Build prompt
     prompt = _prompt_for_chat(history, text, sys_prompt)
 
-    # Token count + overflow guard
+    # Token check
     try:
         n_in = len(llm.LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
     except Exception:
@@ -112,7 +109,6 @@ async def handle_message(source: str, text: str) -> str:
     if llm._would_overflow(n_in, reply_max_new_tokens, llm.DEFAULT_CTX, reserve=256):
         return "(chatbot) prompt too long"
 
-    # Generate reply
     out = llm._do_generate(
         prompt,
         timeout=20,
@@ -124,12 +120,31 @@ async def handle_message(source: str, text: str) -> str:
     )
     reply = out.strip() if out else "(no reply)"
 
-    # Update history
     history.append(("user", text))
     history.append(("assistant", reply))
     handle_message._history = history[-history_turns:]
 
     return reply
+
+# ============================
+# Sync wrapper for bot.py
+# ============================
+
+def handle_message_sync(source: str, text: str) -> str:
+    """
+    Synchronous wrapper so bot.py can call without 'await'.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Nested loop case
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(handle_message(source, text))
+        else:
+            return loop.run_until_complete(handle_message(source, text))
+    except RuntimeError:
+        return asyncio.run(handle_message(source, text))
 
 # ============================
 # Optional HTTP API
