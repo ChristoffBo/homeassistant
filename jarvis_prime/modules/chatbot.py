@@ -16,15 +16,6 @@ from typing import Deque, Dict, List, Optional, Tuple
 from collections import deque, defaultdict
 
 # ----------------------------
-# Additive: fixed identity system prompt
-# ----------------------------
-_JARVIS_SYS_PROMPT = (
-    "You are Jarvis Prime (Jarvis), a concise homelab assistant. "
-    "Answer directly in clear sentences. No banners, no status headers, "
-    "no preambles, no apologies, no policy talk. If asked your name, say Jarvis."
-)
-
-# ----------------------------
 # Config (reads chatbot_* keys)
 # ----------------------------
 
@@ -71,13 +62,6 @@ def _load_options() -> dict:
 OPTS = _load_options()
 
 # ----------------------------
-# ADDITIVE: tiny logger (stdout), toggle with JARVIS_CHATBOT_DEBUG=1
-# ----------------------------
-def _log(msg: str) -> None:
-    if os.environ.get("JARVIS_CHATBOT_DEBUG", "0") == "1":
-        print(f"[chatbot] {msg}", flush=True)
-
-# ----------------------------
 # Token estimation (tiktoken optional)
 # ----------------------------
 
@@ -94,7 +78,6 @@ class _Tokenizer:
         if self._enc:
             try: return len(self._enc.encode(text))
             except Exception: pass
-        # rough fallback
         return max(1, (len(text) + 3) // 4)
 
 TOKENIZER = _Tokenizer()
@@ -171,37 +154,17 @@ async def _bg_gc_loop():
 # LLM bridge (reuse llm_client)
 # ----------------------------
 
+# We deliberately use your llm_client internals so we don't have to change that file.
+# - ensure_loaded(..) to pick profile/model
+# - _is_phi3_family() to choose chat template
+# - _do_generate(..) to actually run (Ollama or llama_cpp) with stops, temps, etc.
 try:
     import llm_client as _LLM
 except Exception as _e:
     _LLM = None
 
-# Borrow llm_client’s scrubbers (refreshed if we lazy-import later)
-_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
-_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
-_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
-
-# ADDITIVE: resilient, lazy import of llm_client if initial import failed
-def _try_import_llm_client() -> bool:
-    global _LLM, _scrub_meta, _scrub_pers, _strip_trans
-    if _LLM is not None:
-        return True
-    try:
-        import importlib
-        _LLM = importlib.import_module("llm_client")
-        _scrub_meta = getattr(_LLM, "_strip_meta_markers", None)
-        _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None)
-        _strip_trans = getattr(_LLM, "_strip_transport_tags", None)
-        _log("llm_client imported lazily")
-        return True
-    except Exception as e:
-        _log(f"llm_client import failed: {e}")
-        return False
-
 def _is_ready() -> bool:
-    if _LLM is not None:
-        return True
-    return _try_import_llm_client()
+    return _LLM is not None
 
 def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     """
@@ -209,22 +172,26 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     native chat format (Phi3-style if detected; otherwise Llama INST style).
     """
     if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
+        # Phi-style chat template
         buf: List[str] = []
+        # Expect first to be system; if multiple systems exist, join them.
         sys_chunks = [c for (r, c) in msgs if r == "system"]
-        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
+        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
         buf.append(f"<|system|>\n{sys_text}\n<|end|>")
         for r, c in msgs:
             if r == "user":
                 buf.append(f"<|user|>\n{c}\n<|end|>")
             elif r == "assistant":
                 buf.append(f"<|assistant|>\n{c}\n<|end|>")
+        # Generation should start at assistant:
         buf.append("<|assistant|>\n")
         return "\n".join(buf)
 
     # Fallback: Llama [INST] format
     sys_chunks = [c for (r, c) in msgs if r == "system"]
-    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
+    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
     convo: List[str] = []
+    # Pack user/assistant pairs into a single INST block to keep it simple
     for r, c in msgs:
         if r == "user":
             convo.append(f"User: {c}")
@@ -234,131 +201,64 @@ def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
     body = "\n".join(convo)
     return f"<s>[INST] <<SYS>>{sys_text}<</SYS>>\n{body} [/INST]"
 
-# ----------------------------
-# Additive: robust generator with retries + salvage
-# ----------------------------
 def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "") -> str:
     if not _is_ready():
         raise RuntimeError("llm_client not available")
 
+    # Ensure a model is ready using your EnviroGuard profile settings
     _LLM.ensure_loaded()
+
     prompt = _build_prompt_from_msgs(msgs)
 
-    attempts = 0
-    while attempts < 3:
-        attempts += 1
-        raw = _LLM._do_generate(
-            prompt,
-            timeout=45,
-            base_url="",
-            model_url="",
-            model_name_hint=model_hint or "",
-            max_tokens=int(max_new_tokens),
-            with_grammar_auto=False
-        ) or ""
-        cleaned = _clean_reply(raw)
-        if cleaned and cleaned != "(no reply)":
-            first = cleaned.splitlines()[0] if '\n' in cleaned else cleaned
-            if not _looks_like_banner(first):
-                return cleaned
-        time.sleep(0.05 * attempts)
-
-    # ---- Last-chance salvage path ----
-    last_user = ""
-    for r, c in reversed(msgs):
-        if r == "user":
-            last_user = c.strip()
-            break
-    if not last_user:
-        return ""
-
-    sys_chunks = [c for (r, c) in msgs if r == "system"]
-    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else _JARVIS_SYS_PROMPT
-
-    salvage_msgs = [
-        ("system", sys_text),
-        ("user", f"{last_user}\n\nAnswer directly in 1–3 short paragraphs. No banners or headings.")
-    ]
-    salvage_prompt = _build_prompt_from_msgs(salvage_msgs)
-
-    raw = _LLM._do_generate(
-        salvage_prompt,
-        timeout=45,
-        base_url="",
-        model_url="",
+    # Use the llm_client’s internal generate path so stops/temps match your model
+    out = _LLM._do_generate(
+        prompt,
+        timeout=20,  # actual timeout gets profiled in llm_client anyway
+        base_url="",           # resolved by ensure_loaded if Ollama is set in options
+        model_url="",          # resolved from options
         model_name_hint=model_hint or "",
         max_tokens=int(max_new_tokens),
         with_grammar_auto=False
-    ) or ""
-    cleaned = _clean_reply(raw)
-    return cleaned or raw or ""
+    )
+    return out or ""
 
 # ----------------------------
 # Output cleaner (strip riff headers / meta)
 # ----------------------------
 
+# Borrow llm_client’s scrubbing helpers if present
+_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
+_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
+_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
+
+# Kill 1-line “banner” like:  Update — … 🚨 / 💥 / 🛰️ etc.
 _BANNER_RX = re.compile(
-    r'^\s*(?:update|status|incident|digest|note|report|telemetry)\s*[—:\-]\s.*?(?:[🚨💥🛰️🔥⚠️⭐✨✅❗️❗️]|\s*)\s*$',
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
     re.IGNORECASE
 )
 
-# ADDITIVE: broaden banner/meta detection
-_META_RX = re.compile(
-    r'''(?ix)
-    ^\s*
-    (?:                             # common meta starters
-       sys(?:tem)?|meta|note|status|update|digest|report|telemetry|summary
-    )
-    \s*[:\-–—]\s
-    |
-    ^\s*\[[A-Z][A-Z0-9_ -]{1,20}\]\s*  # e.g. [INFO], [DEBUG], [OK]
-    ''',
-)
-
-# ADDITIVE: heuristic for terse status blurbs
-def _looks_like_meta_blurb(line: str) -> bool:
-    if not line:
-        return False
-    if line.count(";") >= 2 or "—" in line:
-        if len(line) <= 200:
-            return True
-    if re.search(r'\b(rate\s*limit|costs?|cadence|concurrency|threads?|rollback|confidence)\b', line, re.I):
-        return True
-    if re.search(r'[🪄✨✅⚠️🔧🛰️]$', line):
-        return True
-    return False
-
-def _looks_like_banner(line: str) -> bool:
-    if not line:
-        return False
-    if _BANNER_RX.match(line):
-        return True
-    if _META_RX.match(line):
-        return True
-    if len(line) <= 6 and any(e in line for e in ("🚨","💥","🛰️","⚠️","🔥","✅","✨")):
-        return True
-    if re.match(r'^\s*updat[e]?\s*[—:\-–—]\s', line, re.I):
-        return True
-    if _looks_like_meta_blurb(line):
-        return True
-    return False
-
-# ADDITIVE: strip ALL consecutive banner/meta lines at top
 def _clean_reply(text: str) -> str:
-    global _scrub_meta, _scrub_pers, _strip_trans
     if not text:
         return text
+    # Split & drop a leading banner-ish line
     lines = [ln.rstrip() for ln in text.splitlines()]
-    while lines and _looks_like_banner(lines[0]):
-        lines.pop(0)
+    if lines and (_BANNER_RX.match(lines[0]) or len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️"))):
+        lines = lines[1:]
+
     out = "\n".join(lines).strip()
+
+    # Strip transport tags / persona tokens / meta markers if those helpers exist
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
         out = _scrub_pers(out)
     if _scrub_meta:
         out = _scrub_meta(out)
+
+    # Extra: nuke accidental policy preambles like “I regret to inform…guidelines…”
     out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
+
+    # Collapse excessive blank lines
     out = re.sub(r'\n{3,}', '\n\n', out).strip()
     return out
 
@@ -368,26 +268,23 @@ def _clean_reply(text: str) -> str:
 
 def handle_message(source: str, text: str) -> str:
     """Used by bot.py when a Gotify/ntfy title is 'chat' or 'talk'."""
-    _log(f"handle_message enter source={source!r}, text_len={len(text or '')}")
-
+    # live-refresh options so toggles apply without rebuild
     global OPTS
     try:
         OPTS = _load_options()
         MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
-    except Exception as e:
-        _log(f"options reload error: {e}")
+    except Exception:
+        pass
 
     if not OPTS.get("chat_enabled", True):
-        _log("chat disabled via options")
         return ""  # chatbot disabled; do nothing
 
     chat_id = (source or "default").strip() or "default"
     user_msg = (text or "").strip()
     if not user_msg:
-        _log("empty user message")
         return ""
 
-    sys_prompt = (OPTS.get("chat_system_prompt") or _JARVIS_SYS_PROMPT).strip()
+    sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
     max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
     reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
     model_hint = OPTS.get("chat_model", "")
@@ -410,11 +307,9 @@ def handle_message(source: str, text: str) -> str:
         if not answer:
             answer = "(no reply)"
     except Exception as e:
-        _log(f"_gen_reply error: {e}")
         return f"LLM error: {e}"
 
     MEM.append_turn(chat_id, user_msg, answer)
-    _log("handle_message exit ok")
     return answer
 
 # ----------------------------
@@ -460,7 +355,7 @@ if _FASTAPI_OK:
         if not user_msg:
             raise HTTPException(status_code=400, detail="Empty message")
 
-        sys_prompt = (OPTS.get("chat_system_prompt") or _JARVIS_SYS_PROMPT).strip()
+        sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
         max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
         reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
         model_hint = payload.model or OPTS.get("chat_model", "")
@@ -500,7 +395,7 @@ if _FASTAPI_OK:
                     await ws.send_json({"error": "empty message"})
                     continue
 
-                sys_prompt = (OPTS.get("chat_system_prompt") or _JARVIS_SYS_PROMPT).strip()
+                sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
                 max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
                 reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
                 model_hint = OPTS.get("chat_model", "")
