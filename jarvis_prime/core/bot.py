@@ -97,8 +97,6 @@ RADARR_ENABLED     = os.getenv("radarr_enabled", "false").lower() in ("1","true"
 SONARR_ENABLED     = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
 WEATHER_ENABLED    = os.getenv("weather_enabled", "false").lower() in ("1","true","yes")
 CHAT_ENABLED_ENV   = os.getenv("chat_enabled", "false").lower() in ("1","true","yes")
-# ADD: separate chatbot enable (distinct from chat_enabled)
-CHATBOT_ENABLED_ENV = os.getenv("chatbot_enabled", "false").lower() in ("1","true","yes")
 DIGEST_ENABLED_ENV = os.getenv("digest_enabled", "false").lower() in ("1","true","yes")
 TECHNITIUM_ENABLED = os.getenv("technitium_enabled", "false").lower() in ("1","true","yes")
 KUMA_ENABLED       = os.getenv("uptimekuma_enabled", "false").lower() in ("1","true","yes")
@@ -132,8 +130,6 @@ BEAUTIFY_LLM_ENABLED_ENV = os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() in 
 PROXY_ENABLED = PROXY_ENABLED_ENV
 CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
 DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
-# initialize chatbot file flag default (may be overridden during merged load)
-CHATBOT_ENABLED_FILE = CHATBOT_ENABLED_ENV
 # ============================
 # Load /data/options.json (overrides) + /data/config.json (fallback)
 # ============================
@@ -159,9 +155,6 @@ try:
     PROXY_ENABLED   = bool(merged.get("proxy_enabled", PROXY_ENABLED_ENV))
     CHAT_ENABLED_FILE   = bool(merged.get("chat_enabled", CHAT_ENABLED_ENV))
     DIGEST_ENABLED_FILE = bool(merged.get("digest_enabled", DIGEST_ENABLED_ENV))
-
-    # chatbot toggle (separate from chat_enabled)
-    CHATBOT_ENABLED_FILE = bool(merged.get("chatbot_enabled", CHATBOT_ENABLED_ENV))
 
     # Ingest toggles from config file if present
     INGEST_GOTIFY_ENABLED  = bool(merged.get("ingest_gotify_enabled", INGEST_GOTIFY_ENABLED))
@@ -201,7 +194,6 @@ except Exception:
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
-    CHATBOT_ENABLED_FILE = CHATBOT_ENABLED_ENV
 # ============================
 # Load optional modules
 # ============================
@@ -222,8 +214,6 @@ _personality = _load_module("personality", "/app/personality.py")
 _pstate = _load_module("personality_state", "/app/personality_state.py")
 _beautify = _load_module("beautify", "/app/beautify.py")
 _llm = _load_module("llm_client", "/app/llm_client.py")
-# load local chatbot integration (optional)
-_chatbot = _load_module("chatbot", "/app/chatbot.py")
 _heartbeat = _load_module("heartbeat", "/app/heartbeat.py")  # <— NEW: wire heartbeat
 _enviroguard = _load_module("enviroguard", "/app/enviroguard.py")  # <— NEW: external EnviroGuard
 
@@ -663,7 +653,6 @@ def post_startup_card():
         f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
         f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
         f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
-        f"🤖 Chatbot — {'ACTIVE' if bool(merged.get('chatbot_enabled', False)) or bool(CHATBOT_ENABLED_FILE) else 'OFF'}",
         f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
         f"✉️ SMTP Intake — {'ACTIVE' if (SMTP_ENABLED and INGEST_SMTP_ENABLED) else 'OFF'}",
         f"🔀 Proxy Intake — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
@@ -744,13 +733,7 @@ def _handle_command(ncmd: str) -> bool:
     except Exception: pass
 
     if ncmd in ("help", "commands"):
-        send_message(
-            "Help",
-            "dns | kuma | weather | forecast | digest | joke | chat\n"
-            "ARR: upcoming movies/series, counts, longest ...\n"
-            "Env: env <hot|normal|cold|boost|auto>\n"
-            "Chat: send a Gotify/ntfy message with title 'chat' or 'talk' to handoff to the chatbot.",
-        )
+        send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...\nEnv: env <hot|normal|cold|boost|auto>",)
         return True
 
     if ncmd in ("digest", "daily digest", "summary"):
@@ -897,34 +880,6 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
                 body  = body.replace(phrase, "", 1).strip()
     except Exception as e:
         print(f"[bot] wakeword switch failed: {e}")
-    # --- end additive ---
-
-    # --- ADDITIVE: chatbot wakeword handling ---
-    try:
-        # use merged config flag or file-level fallback
-        if bool(merged.get("chatbot_enabled", False)) or bool(CHATBOT_ENABLED_FILE):
-            # Accept Gotify/emit posts whose title is exactly "chat" or "talk" (case-insensitive)
-            if (title or "").strip().lower() in ("chat", "talk"):
-                if _chatbot and hasattr(_chatbot, "handle_message"):
-                    # try preferred signature handle_message(source=str, text=str)
-                    try:
-                        reply = _chatbot.handle_message(source=source, text=body)
-                    except TypeError:
-                        # older handler signature fallback: handle_message(source_label, text)
-                        try:
-                            reply = _chatbot.handle_message(source, body)
-                        except Exception:
-                            reply = None
-                    except Exception:
-                        reply = None
-
-                    if reply:
-                        # Post reply back without persona decoration
-                        send_message("Chat", str(reply), priority=priority, decorate=False)
-                # stop further processing for pure chatbot handoffs
-                return
-    except Exception as e:
-        print(f"[bot] chatbot handoff failed: {e}")
     # --- end additive ---
 
     ncmd = normalize_cmd(extract_command_from(title, body))
