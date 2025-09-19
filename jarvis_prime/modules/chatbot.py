@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime – Chat lane service (clean Q&A, no riff, no persona)
-# - Reads chatbot_* options from /data/options.json (+ llm_timeout_seconds)
-# - Uses llm_client.py to generate answers (only _do_generate, unchanged)
-# - Exposes handle_message(source, text) for bot.py handoff
-# - Optional HTTP/WS API via FastAPI if installed
-#
-# Additive fixes:
-# - Token-budgeted history trim (drops oldest pairs first)
-# - One-shot retry with shorter timeout & fewer tokens
-# - Uses llm_timeout_seconds from options.json when present
-# - Safer cleaning; never returns empty
+# Jarvis Prime – Chat lane (clean Q&A, no riffs/persona)
+# - Reads chatbot_* from /data/options.json (+ llm_timeout_seconds)
+# - Uses llm_client._do_generate (only), with optional _ensure_loaded if present
+# - Exposes handle_message(source, text) for bot.py
+# - Optional FastAPI/WS if installed
 
 import os
 import json
@@ -34,7 +28,7 @@ DEFAULTS = {
     "chat_reply_max_new_tokens": 256,
     "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
     "chat_model": "",
-    "llm_timeout_seconds": 20,   # additive: default if not in options.json
+    "llm_timeout_seconds": 20,
 }
 
 def _load_options_raw() -> dict:
@@ -48,7 +42,7 @@ def _load_options() -> dict:
     raw = _load_options_raw()
     out = DEFAULTS.copy()
 
-    # map old chatbot_* keys if present
+    # accept old/new keys
     out["chat_enabled"] = bool(raw.get("chatbot_enabled", raw.get("chat_enabled", True)))
     out["chat_history_turns"] = int(raw.get("chatbot_history_turns", raw.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
     out["chat_max_total_tokens"] = int(raw.get("chatbot_max_total_tokens", raw.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"])))
@@ -62,23 +56,21 @@ def _load_options() -> dict:
 
     # caps
     out["chat_history_turns"] = max(1, min(out["chat_history_turns"], DEFAULTS["chat_history_turns_max"]))
-    # reply cap reasonable floor/ceiling
     out["chat_reply_max_new_tokens"] = max(32, min(out["chat_reply_max_new_tokens"], 1024))
-    # total cap floor
     out["chat_max_total_tokens"] = max(256, out["chat_max_total_tokens"])
     return out
 
 OPTS = _load_options()
 
 # ----------------------------
-# Token estimation (simple)
+# Token estimation (lightweight)
 # ----------------------------
 
 class _Tokenizer:
     def __init__(self):
         self._enc = None
         try:
-            import tiktoken  # optional
+            import tiktoken
             self._enc = tiktoken.get_encoding("cl100k_base")
         except Exception:
             self._enc = None
@@ -90,8 +82,7 @@ class _Tokenizer:
                 return len(self._enc.encode(text))
             except Exception:
                 pass
-        # heuristic ~4 chars/token
-        return max(1, (len(text) + 3) // 4)
+        return max(1, (len(text) + 3) // 4)  # ~4 chars/token
 
 TOKENIZER = _Tokenizer()
 
@@ -150,19 +141,28 @@ try:
 except Exception:
     _LLM = None
 
-def _ensure_ready():
+def _ensure_ready_soft():
+    """
+    Call llm_client.ensure_loaded() only if present.
+    Never raise if it's missing; some builds omit it.
+    """
     if not _LLM:
-        raise RuntimeError("llm_client not available")
-    _LLM.ensure_loaded()
+        raise RuntimeError("llm_client not importable")
+    fn = getattr(_LLM, "ensure_loaded", None)
+    if callable(fn):
+        try:
+            fn()
+        except Exception:
+            # soft-fail; generation will still be tried
+            pass
 
-# optional scrubbers if present in llm_client (no-ops if missing)
+# optional scrubbers if present
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _is_phi3 = getattr(_LLM, "_is_phi3_family", None) if _LLM else None
 
 def _build_prompt(msgs: List[Tuple[str, str]], sys_prompt: str) -> str:
-    # Phi-style if supported
     if callable(_is_phi3) and _is_phi3():
         buf: List[str] = [f"<|system|>\n{sys_prompt}\n<|end|>"]
         for r, c in msgs:
@@ -172,7 +172,6 @@ def _build_prompt(msgs: List[Tuple[str, str]], sys_prompt: str) -> str:
                 buf.append(f"<|assistant|>\n{c}\n<|end|>")
         buf.append("<|assistant|>\n")
         return "\n".join(buf)
-    # Llama INST fallback
     convo = []
     for r, c in msgs:
         if r == "user":
@@ -183,7 +182,9 @@ def _build_prompt(msgs: List[Tuple[str, str]], sys_prompt: str) -> str:
     return f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n" + "\n".join(convo) + " [/INST]"
 
 def _gen_reply_once(prompt: str, timeout_s: int, max_new_tokens: int, model_hint: str) -> str:
-    _ensure_ready()
+    if not _LLM or not hasattr(_LLM, "_do_generate"):
+        raise RuntimeError("llm_client._do_generate not available")
+    _ensure_ready_soft()
     out = _LLM._do_generate(
         prompt,
         timeout=int(max(4, timeout_s)),
@@ -196,11 +197,9 @@ def _gen_reply_once(prompt: str, timeout_s: int, max_new_tokens: int, model_hint
     return out or ""
 
 def _gen_reply_with_retry(prompt: str, timeout_s: int, max_new_tokens: int, model_hint: str) -> str:
-    # first attempt
     txt = _gen_reply_once(prompt, timeout_s, max_new_tokens, model_hint)
     if txt.strip():
         return txt
-    # quick backoff retry: shorter timeout, fewer tokens
     try:
         time.sleep(0.15)
     except Exception:
@@ -208,7 +207,7 @@ def _gen_reply_with_retry(prompt: str, timeout_s: int, max_new_tokens: int, mode
     return _gen_reply_once(prompt, max(4, timeout_s // 2), max(64, max_new_tokens // 2), model_hint)
 
 # ----------------------------
-# Cleaning
+# Cleaning / fallback
 # ----------------------------
 
 _BANNER_RX = re.compile(r'^\s*(update|status|incident|digest|note)\s*[:—-].*$', re.I)
@@ -217,22 +216,16 @@ def _clean_reply(text: str) -> str:
     if not text:
         return ""
     raw = text
-
-    # drop 1st-line banners like "Update: ..."
     lines = [ln.rstrip() for ln in raw.splitlines()]
     if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨", "💥", "🛰️")))):
         lines = lines[1:]
     out = "\n".join(lines).strip()
-
-    # optional scrubbers if available
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
         out = _scrub_pers(out)
     if _scrub_meta:
         out = _scrub_meta(out)
-
-    # collapse blank lines, keep something
     out = re.sub(r'\n{3,}', '\n\n', out).strip()
     return out
 
@@ -246,14 +239,10 @@ def _safe_reply(raw: str, user_msg: str) -> str:
     return out
 
 # ----------------------------
-# History trim to fit token budget
+# Budgeted history
 # ----------------------------
 
 def _trim_history_to_budget(sys_prompt: str, history: List[Tuple[str, str]], new_user: str, max_total_tokens: int, reply_budget: int) -> List[Tuple[str, str]]:
-    """
-    Keep: system + (some) history + new user, within (max_total_tokens - reply_budget).
-    Drops oldest pairs first. Final guarantee: system + new user.
-    """
     limit = max(256, max_total_tokens - max(64, reply_budget))
     def build(hist_pairs: List[Tuple[str,str]], utext: str) -> List[Tuple[str,str]]:
         msgs: List[Tuple[str,str]] = [("system", sys_prompt)]
@@ -266,16 +255,14 @@ def _trim_history_to_budget(sys_prompt: str, history: List[Tuple[str, str]], new
     hist_copy = history[:]
     msgs = build(hist_copy, new_user)
 
-    # drop oldest until it fits
     guard = 0
     while tokens_of_messages(msgs) > limit and hist_copy and guard < 256:
         hist_copy.pop(0)
         msgs = build(hist_copy, new_user)
         guard += 1
 
-    # if still too large, truncate user tail
     if tokens_of_messages(msgs) > limit:
-        # binary chop new_user tail to fit roughly
+        # binary trim the tail of user text
         lo, hi = 0, len(new_user)
         best = ""
         while lo <= hi:
@@ -289,21 +276,16 @@ def _trim_history_to_budget(sys_prompt: str, history: List[Tuple[str, str]], new
                 hi = mid - 1
         msgs = build(hist_copy, best)
 
-    # last resort: system + (possibly empty) user
     if tokens_of_messages(msgs) > limit:
-        # keep only system + tail slice of new user
         tail = new_user[-max(8, len(new_user)//4):]
         msgs = [("system", sys_prompt), ("user", tail)]
     return msgs
 
 # ----------------------------
-# Main handler
+# Main handler (sync)
 # ----------------------------
 
 def handle_message(source: str, text: str) -> str:
-    """
-    NOTE: keep this synchronous (bot.py expects a plain return, not coroutine)
-    """
     global OPTS
     OPTS = _load_options()
     MEM.set_max_turns(OPTS["chat_history_turns"])
@@ -375,7 +357,6 @@ if _FASTAPI_OK:
         if not msg:
             raise HTTPException(status_code=400, detail="Empty message")
 
-        # build msgs here too so approx_context_tokens reflects actual prompt
         sys_prompt = OPTS["chat_system_prompt"]
         reply_budget = int(OPTS["chat_reply_max_new_tokens"])
         max_total = int(OPTS["chat_max_total_tokens"])
@@ -402,7 +383,6 @@ if _FASTAPI_OK:
                 if not user_msg:
                     await ws.send_json({"error": "empty"})
                     continue
-                # compute approx tokens like REST
                 sys_prompt = OPTS["chat_system_prompt"]
                 reply_budget = int(OPTS["chat_reply_max_new_tokens"])
                 max_total = int(OPTS["chat_max_total_tokens"])
