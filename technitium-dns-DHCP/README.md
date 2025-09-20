@@ -1,25 +1,34 @@
-# 🧩 Technitium DNS Home Assistant Add-on
+# 🧩 Technitium DNS Add-on
 
-Self-hosted DNS server powered by Technitium. Offers DNS-over-HTTPS, DNS-over-TLS, logging, and blocklist support.
+Self-hosted, open-source DNS server based on the official **technitium/dns-server** image. Offers authoritative & recursive DNS, encrypted DNS protocols, blocklists, logging, and a full web UI, all managed locally with no external accounts required.  
 
-✅ Uses the official Docker image: technitium/dns-server  
-✅ Works offline once started  
-✅ Full Web UI on configurable port  
-✅ Persistent storage enabled  
-✅ All settings exposed in options.json  
-✅ No build needed
+✅ Features  
+• Recursive & authoritative DNS server — serve zones locally *and* resolve external domains. 0  
+• Support for DNS-over-HTTPS, DNS-over-TLS, DNS-over-QUIC protocols for privacy & security. 1  
+• Blocklists: block ads, malware etc via block list URLs, with automatic updates. 2  
+• Advanced caching: serve stale entries, prefetching, persistent cache on disk. 3  
+• DNSSEC validation & signing for enhanced security. 4  
+• Web console & HTTP API; full UI for managing zones, forwarders, security settings, logging. 5  
+• IPv6 support, proxy support (HTTP/SOCKS5), and multiple platform support including Docker. 6  
 
-📁 Files:  
-- /data/options.json — stores add-on settings  
-- /config — persistent volume for DNS data
+📁 Key paths  
+• /data/options.json — add-on settings/configuration  
+• /config — persistent volume for Technitium DNS data (zones, logs, cache)  
 
-⚙️ Configuration:  
-{ "port": 5380 }
+⚙️ Configuration example (flat JSON)  
+{"port":5380,"data_dir":"/config/technitium-dns"}  
 
-🧪 Options:  
-  port — sets the Technitium web interface port (default: 5380)
+🧪 Options  
+• port — port for the web UI / web console (default: 5380)  
+• data_dir — where DNS server stores its data (zones/logs/cache) — default is under /config; ensure proper persistence  
 
-🌍 Web UI access:  
-Accessible at `http://<your-ip>:<port>` (e.g., `http://192.168.1.10:5380`)
+🌍 Web UI access  
+• Browse to `http://<your-host-ip>:<port>`  
+• The web console allows full control: zones, forwarders, security, blocklists, logs  
 
-🧠 Fully self-hosted. No external account required.
+🧠 Notes  
+• Uses the official Technitium DNS Server image: technitium/dns-server 7  
+• Supports out-of-the-box functionality — minimal setup needed  
+• If you change the port or data_dir, apply and restart the add-on  
+• Best to avoid using remote/NFS paths without ensuring file locking & performance  
+• All settings exposed via options.json and via the web API/console
