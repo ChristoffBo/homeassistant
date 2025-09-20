@@ -1,3 +1,7 @@
+## v2.7.6-ls321 (2025-09-20 04:01:39)
+- Update from v2.7.6-ls320 to v2.7.6-ls321
+- Docker Image: [linuxserver/heimdall:v2.7.6-ls321](https://fleet.linuxserver.io/image?name=)
+
 ## v2.7.6-ls320 (2025-09-15 19:27:20)
 - Update from v2.7.5-ls320 to v2.7.6-ls320
 - Docker Image: [linuxserver/heimdall:v2.7.6-ls320](https://fleet.linuxserver.io/image?name=)
