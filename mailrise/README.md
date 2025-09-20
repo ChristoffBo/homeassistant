@@ -1,35 +1,28 @@
-# 📧 Mailrise Home Assistant Add-on
+# 🧩 Mailrise — Home Assistant Add-on
 
-This Home Assistant add-on runs Mailrise — a bridge that turns email (SMTP) into rich push notifications using Apprise.
+Run Mailrise inside Home Assistant to bridge email (SMTP) into rich push notifications using Apprise. Accepts plain emails and delivers them to Gotify, Discord, Telegram, Slack, ntfy, Pushover, and many more services.
 
-🔗 Docker image used: [yoryan/mailrise](https://hub.docker.com/r/yoryan/mailrise)
+✅ Uses the official Docker image: yoryan/mailrise  
+✅ Converts SMTP email into Apprise push notifications  
+✅ Supports multiple Apprise profiles  
+✅ Persistent configuration across restarts  
+✅ All settings exposed in options.json  
+✅ Fully self-hosted — no external account required  
 
----
+📁 Files:  
+/data/options.json — stores add-on settings  
+/config — persistent Mailrise data  
 
-## ✅ Features
+⚙️ Configuration: {"port": 8025, "profiles": {"gotify": "gotify://192.168.1.100/ABC123"}}  
 
-- Sends notifications via email (SMTP)
-- Works with Apprise-compatible services (Gotify, Discord, Telegram, etc.)
-- Easily configured through Home Assistant UI
+🧪 Options:  
+port — SMTP port Mailrise listens on (default: 8025)  
+profiles — Apprise notification profiles with service URLs  
 
----
+🌍 Web UI access:  
+No UI — Mailrise runs headless. Configure via options.json.  
+Send email to Mailrise SMTP port, it will forward to configured Apprise profiles.  
 
-## 🛠️ Installation
+🧠 Fully self-hosted. Works with any service that can send email.  
 
-1. In Home Assistant, go to **Settings → Add-ons → Add-on Store**
-2. Click **⋮ → Repositories**
-3. Add:
-4. Search for **Mailrise** and install it
-
----
-
-## ⚙️ Configuration Example
-
-In the add-on **Configuration tab**:
-
-```ini
-[email]
-port = 8025
-
-[profile:gotify]
-urls = gotify://192.168.1.100/ABC123
+🧾 Logs will show incoming SMTP connections and Apprise forwards.
