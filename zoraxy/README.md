@@ -1,28 +1,29 @@
-# Home assistant add-on: Zoraxy
+# 🧩 Zoraxy — Home Assistant Add-on
 
+Run Zoraxy inside Home Assistant — a general-purpose HTTP reverse proxy & forwarding tool (written in Go). Ideal for managing multiple web services, SSL certificates, access control, and more from a homelab.
 
-## About
+✅ Uses the official Docker image: tobychui/zoraxy (or zoraxydocker/zoraxy) 0  
+✅ Reverse proxy with HTTP/2, virtual directories, alias hostnames 1  
+✅ Automatic WebSocket proxying (no manual setup) 2  
+✅ TLS/SSL with ACME support, SNI & Let’s Encrypt integration 3  
+✅ Blacklist/whitelist support (IP, CIDR, wildcard) 4  
+✅ Stream proxy (TCP & UDP) plus utilities & monitoring tools like web SSH, uptime monitor, etc. 5  
+✅ Fully self-hosted. No external account required.  
 
-This addon is based on the [docker image](https://github.com/tobychui/zoraxy).
+📁 Files:  
+/data/options.json — stores add-on settings  
+/config/zoraxy — persistent web proxy configuration, certificates, rules, logs  
 
-## Installation
+⚙️ Configuration: {"port":8000, "args":"-noauth=false"}  
 
-The installation of this add-on is pretty straightforward and not different in
-comparison to installing any other Hass.io add-on.
+🧪 Options:  
+port — web UI / management port (default: 8000)  
+args — extra startup args (e.g. “-noauth=false”, TLS/ACME settings etc.)  
 
-1. [Add my Hass.io add-ons repository][repository] to your Hass.io instance.
-1. Install this add-on.
-1. Click the `Save` button to store your configuration.
-1. Make the directory /share/metube to store your downloaded files
-1. Start the add-on.
-1. Check the logs of the add-on to see if everything went well.
-1. Open WebUI should work via ingress or <your-ip>:port.
+🌍 Web UI access:  
+Accessible via Home Assistant Ingress or direct at `http://<your-ip>:<port>`  
+Manage hosts, SSL/TLS, alias names, redirects, stream proxies etc via the UI  
 
-## Configuration
+🧠 Fully self-hosted. Designed for homelabs & small clusters.  
 
-```
-port : 8000 #port you want to run on.
-```
-
-Webui can be found at `<your-ip>:port`.
-
+🧾 Logs will show proxy routing, SSL certificate issuance, access control decisions, and connection info.
