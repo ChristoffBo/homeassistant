@@ -58,10 +58,10 @@ HA_INDOOR_ENTITY = (
 ).strip()
 
 # -----------------------------
-# Solar thresholds & helpers
+# Solar thresholds & helpers (radiation-first, cloudcover fallback)
 # -----------------------------
-RADIATION_LOW  = 10.0
-RADIATION_HIGH = 20.0
+RADIATION_LOW  = 10.0  # MJ/m²/day
+RADIATION_HIGH = 20.0  # MJ/m²/day
 SOLAR_THRESHOLDS = {"high_max_cloud": 30, "med_max_cloud": 70}
 
 def _solar_class_from_radiation(mj_per_m2: float) -> str:
@@ -87,10 +87,13 @@ def _solar_class_from_cloudcover(pct: float) -> str:
     return "LOW"
 
 def _solar_compact_label(rad: Optional[float], cloud_pct: Optional[float]) -> str:
-    """Return '⚡ HIGH|MED|LOW' or '⚡ —' (no units)."""
+    """Return '⚡ HIGH|MED|LOW' or '⚡ Night' if no sun, else '⚡ —'."""
     try:
         if rad is not None:
-            return f"⚡ {_solar_class_from_radiation(float(rad))}"
+            v = float(rad)
+            if v <= 0:
+                return "⚡ Night"
+            return f"⚡ {_solar_class_from_radiation(v)}"
     except Exception:
         pass
     try:
@@ -101,7 +104,7 @@ def _solar_compact_label(rad: Optional[float], cloud_pct: Optional[float]) -> st
     return "⚡ —"
 
 def _solar_line_from_values(label: str, *, rad: Optional[float], cloud_pct: Optional[float]) -> str:
-    """(Still used for detailed lines if needed elsewhere.)"""
+    # (kept for any detailed lines you might want later)
     try:
         if rad is not None:
             v = float(rad)
@@ -117,7 +120,7 @@ def _solar_line_from_values(label: str, *, rad: Optional[float], cloud_pct: Opti
     return _kv(label, "—")
 
 # -----------------------------
-# Helpers
+# HTTP / JSON helper
 # -----------------------------
 def _get_json(url):
     try:
@@ -127,6 +130,9 @@ def _get_json(url):
     except Exception as e:
         return {"error": str(e)}
 
+# -----------------------------
+# Icons & commentary
+# -----------------------------
 def _icon_for_code(code, big=False):
     mapping = {
         0: "☀️" if big else "☀",
@@ -183,7 +189,7 @@ def _kv(label, value):
     return f"    {label}: {value}"
 
 # -----------------------------
-# HA indoor temperature fetch (for display only)
+# Home Assistant: optional indoor temperature (display only)
 # -----------------------------
 def _ha_get_state(entity_id: str) -> Optional[Dict[str, Any]]:
     if not (HA_ENABLED and HA_BASE_URL and HA_TOKEN and entity_id):
@@ -236,7 +242,6 @@ def _today_str() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 def _notify_inbox(title: str, message: str, tag: str) -> bool:
-    """Always append to a local inbox file as a fallback."""
     try:
         path = "/data/inbox.ndjson"
         rec = {
@@ -278,11 +283,6 @@ def _notify_ntfy(title: str, message: str) -> bool:
         return False
 
 def _notify_smtp(title: str, message: str) -> bool:
-    """
-    Optional: uses environment variables if your SMTP notifier wrapper is present.
-    If your stack exposes an HTTP bridge, set SMTP_BRIDGE_URL to POST {'subject','body'}.
-    Otherwise, this quietly skips.
-    """
     bridge = os.getenv("SMTP_BRIDGE_URL")
     if not bridge:
         return False
@@ -293,14 +293,9 @@ def _notify_smtp(title: str, message: str) -> bool:
         return False
 
 def _notify_bus(title: str, message: str, tag: str) -> bool:
-    """
-    Send via enabled outputs: Gotify, ntfy, SMTP, and always Inbox fallback.
-    Returns True if at least one external channel (Gotify/ntfy/SMTP) succeeded.
-    """
     sent_any = False
     try:
-        # If your runtime provides a native notifier, use it first.
-        # Optional import: jarvis_notify.send(title=..., body=..., priority="max", tags=[...])
+        # If your runtime exposes a native notifier, use it too.
         try:
             from jarvis_notify import send as jarvis_send  # type: ignore
             jarvis_send(title=title, body=message, priority="max", tags=["weather", "alert", tag])
@@ -312,15 +307,10 @@ def _notify_bus(title: str, message: str, tag: str) -> bool:
         if _notify_ntfy(title, message):   sent_any = True
         if _notify_smtp(title, message):   sent_any = True
     finally:
-        # Always write to Inbox file as a durable fallback (doesn't affect return)
-        _notify_inbox(title, message, tag)
+        _notify_inbox(title, message, tag)  # always persist locally
     return sent_any
 
 def _notify_once_daily(tag: str, title: str, message: str) -> bool:
-    """
-    At most one high-priority alert per calendar day per tag.
-    Writes to Inbox in all cases; tries enabled external outputs.
-    """
     cache = _read_alerts_cache()
     key = f"{_today_str()}:{tag}"
     if cache.get(key):
@@ -394,7 +384,13 @@ def current_weather():
     if indoor_c is not None: lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
     lines.append(_kv("🌬 Wind", f"{wind} km/h"))
 
-    fc_url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=cloudcover,shortwave_radiation_sum,precipitation_probability_max,weathercode&timezone=auto"
+    # Today’s daily values for solar/rain/hail/thunder checks
+    fc_url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&daily=cloudcover,shortwave_radiation_sum,precipitation_probability_max,weathercode"
+        f"&timezone=auto"
+    )
     fc = _get_json(fc_url)
     daily_fc = (fc or {}).get("daily") or {}
     cloud_today = (daily_fc.get("cloudcover") or [None])[0]
@@ -402,12 +398,15 @@ def current_weather():
     prob_today  = (daily_fc.get("precipitation_probability_max") or [None])[0]
     code_today  = (daily_fc.get("weathercode") or [None])[0]
 
-    # Compact Solar label in header
+    # Compact Solar label (HIGH/MED/LOW or Night)
     lines.append(_kv("⚡ Solar (today)", _solar_compact_label(rad_today, cloud_today)[2:]))
 
+    # Chance of rain (show only if > 0%)
     if isinstance(prob_today, (int, float)) and prob_today > 0:
         label = "☔ Chance of rain" if prob_today < 60 else "⚠️ High chance of rain"
         lines.append(_kv(label, f"{prob_today}%"))
+
+    # Hail/severe-storm note (show only if risky codes)
     if code_today in (95,96,99):
         lines.append("⚠️ Severe storm risk — hail possible.")
 
@@ -429,14 +428,20 @@ def current_weather():
     return "\n".join(lines), None
 
 # -----------------------------
-# Forecast (always Today; header uses compact solar label; bullets compact)
+# Forecast (always Today; header uses compact solar; bullets are HIGH/MED/LOW)
 # -----------------------------
 def forecast_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=temperature_2m_max,temperature_2m_min,weathercode,cloudcover,shortwave_radiation_sum,precipitation_probability_max&timezone=auto&temperature_unit=celsius"
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&daily=temperature_2m_max,temperature_2m_min,weathercode,cloudcover,shortwave_radiation_sum,precipitation_probability_max"
+        f"&timezone=auto&temperature_unit=celsius"
+    )
     data = _get_json(url)
-    if "error" in data: return f"⚠️ Weather API error: {data['error']}", None
+    if "error" in data:
+        return f"⚠️ Weather API error: {data['error']}", None
 
     daily = data.get("daily", {})
     times = daily.get("time", []) or []
@@ -477,7 +482,7 @@ def forecast_weather():
     if code0 in (95,96,99):
         lines.append("⚠️ Severe storm risk — hail possible.")
 
-    # Optional: trigger alerts from forecast view too (idempotent via cache)
+    # Optional: also trigger alerts from forecast view (idempotent via cache)
     heavy_rain0 = isinstance(prob0, (int, float)) and prob0 >= 70
     thunder0 = code0 in (95, 96, 99)
     hail0 = code0 in (96, 99)
@@ -491,7 +496,7 @@ def forecast_weather():
         _notify_once_daily("heavy_rain", f"🌧 Heavy rain risk — {CITY}",
                            f"High chance of rain today ({int(prob0)}%). Watch for flooding.")
 
-    # 7-day list (solar shown as HIGH/MED/LOW only)
+    # 7-day list (solar shown as HIGH/MED/LOW only; hide rain% if 0)
     lines.append("")
     lines.append(f"📅 7-Day Outlook — {CITY}")
     for i in range(0, min(7, len(times))):
@@ -504,9 +509,10 @@ def forecast_weather():
         rad = rads[i] if i < len(rads) else None
         prob = probs[i] if i < len(probs) else None
 
-        solar_str = _solar_compact_label(rad, cloud)[2:]  # drop leading '⚡ '
+        solar_str = _solar_compact_label(rad, cloud)[2:]  # drop '⚡ '
         rain_str = f" · ☔ {prob}%" if isinstance(prob, (int, float)) and prob > 0 else ""
         prefix = "• Today" if i == 0 else f"• {date}"
+
         lines.append(f"{prefix} — {tmin}°C to {tmax}°C {icon}  ·  ⚡ {solar_str}{rain_str}")
         if code in (95,96,99):
             lines.append("    ⚠️ Severe storm risk — hail possible.")
