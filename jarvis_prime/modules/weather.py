@@ -324,10 +324,7 @@ def _notify_once_daily(tag: str, title: str, message: str) -> bool:
 # Small helpers
 # -----------------------------
 def _is_local_night(ts: Optional[str]) -> bool:
-    """
-    Heuristic: if the local 'As of' hour is before 06 or after/equal 18,
-    treat as night. ts is like 'YYYY-MM-DDTHH:MM' from Open-Meteo (timezone=auto).
-    """
+    """Heuristic: if local 'As of' hour <06 or >=18 treat as night."""
     if not ts or "T" not in ts:
         return False
     try:
@@ -337,7 +334,7 @@ def _is_local_night(ts: Optional[str]) -> bool:
         return False
 
 # -----------------------------
-# ADDITIVE: lightweight probe for controllers (EnviroGuard, etc.)
+# ADDITIVE: lightweight probe for controllers
 # -----------------------------
 def get_current_snapshot() -> Dict[str, Any]:
     if not ENABLED:
@@ -414,15 +411,15 @@ def current_weather():
     if indoor_c is not None: lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
     lines.append(_kv("🌬 Wind", f"{wind} km/h"))
 
-    # Today's daily values
+    # Today's daily values (NOTE: cloudcover_mean)
     params_day = {
         "latitude": LAT, "longitude": LON,
-        "daily": "cloudcover,shortwave_radiation_sum,precipitation_probability_max,weathercode",
+        "daily": "cloudcover_mean,shortwave_radiation_sum,precipitation_probability_max,weathercode",
         "timezone": "auto",
     }
     fc = _get_json(OPEN_METEO, params_day)
     daily_fc = (fc or {}).get("daily") or {}
-    cloud_today = (daily_fc.get("cloudcover") or [None])[0]
+    cloud_today = (daily_fc.get("cloudcover_mean") or [None])[0]
     rad_today   = (daily_fc.get("shortwave_radiation_sum") or [None])[0]
     prob_today  = (daily_fc.get("precipitation_probability_max") or [None])[0]
     code_today  = (daily_fc.get("weathercode") or [None])[0]
@@ -466,16 +463,15 @@ def forecast_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
 
-    # ✅ Params-based URL prevents duplicate fields (fixes the 400)
+    # Params-based URL; uses cloudcover_mean (fixes 400)
     params = {
         "latitude": LAT, "longitude": LON,
-        "daily": "temperature_2m_max,temperature_2m_min,weathercode,cloudcover,shortwave_radiation_sum,precipitation_probability_max",
+        "daily": "temperature_2m_max,temperature_2m_min,weathercode,cloudcover_mean,shortwave_radiation_sum,precipitation_probability_max",
         "timezone": "auto",
         "temperature_unit": "celsius",
     }
     data = _get_json(OPEN_METEO, params)
     if "error" in data:
-        # cleaner error (no full URL dump)
         return f"⚠️ Weather API error: {data['error']}", None
 
     daily = data.get("daily", {})
@@ -483,7 +479,7 @@ def forecast_weather():
     tmins = daily.get("temperature_2m_min", []) or []
     tmaxs = daily.get("temperature_2m_max", []) or []
     codes = daily.get("weathercode", []) or []
-    clouds = daily.get("cloudcover", []) or []
+    clouds = daily.get("cloudcover_mean", []) or []
     rads   = daily.get("shortwave_radiation_sum", []) or []
     probs  = daily.get("precipitation_probability_max", []) or []
 
@@ -531,7 +527,7 @@ def forecast_weather():
         _notify_once_daily("heavy_rain", f"🌧 Heavy rain risk — {CITY}",
                            f"High chance of rain today ({int(prob0)}%). Watch for flooding.")
 
-    # 7-day list (solar shown as HIGH/MED/LOW only; hide rain% if 0)
+    # 7-day list (solar: HIGH/MED/LOW; hide rain% if 0)
     lines.append("")
     lines.append(f"📅 7-Day Outlook — {CITY}")
     for i in range(0, min(7, len(times))):
@@ -544,7 +540,7 @@ def forecast_weather():
         rad = rads[i] if i < len(rads) else None
         prob = probs[i] if i < len(probs) else None
 
-        solar_str = _solar_compact_label(rad, cloud)[2:]  # drop '⚡ '
+        solar_str = _solar_compact_label(rad, cloud)[2:]
         rain_str = f" · ☔ {prob}%" if isinstance(prob, (int, float)) and prob > 0 else ""
         prefix = "• Today" if i == 0 else f"• {date}"
 
