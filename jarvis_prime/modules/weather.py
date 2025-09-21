@@ -104,7 +104,6 @@ def _solar_compact_label(rad: Optional[float], cloud_pct: Optional[float]) -> st
     return "⚡ —"
 
 def _solar_line_from_values(label: str, *, rad: Optional[float], cloud_pct: Optional[float]) -> str:
-    # (kept for any detailed lines you might want later)
     try:
         if rad is not None:
             v = float(rad)
@@ -120,11 +119,13 @@ def _solar_line_from_values(label: str, *, rad: Optional[float], cloud_pct: Opti
     return _kv(label, "—")
 
 # -----------------------------
-# HTTP / JSON helper
+# HTTP helpers (params-based to avoid bad URLs)
 # -----------------------------
-def _get_json(url):
+OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
+
+def _get_json(url: str, params: Optional[Dict[str, Any]] = None):
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -295,7 +296,6 @@ def _notify_smtp(title: str, message: str) -> bool:
 def _notify_bus(title: str, message: str, tag: str) -> bool:
     sent_any = False
     try:
-        # If your runtime exposes a native notifier, use it too.
         try:
             from jarvis_notify import send as jarvis_send  # type: ignore
             jarvis_send(title=title, body=message, priority="max", tags=["weather", "alert", tag])
@@ -321,6 +321,22 @@ def _notify_once_daily(tag: str, title: str, message: str) -> bool:
     return True
 
 # -----------------------------
+# Small helpers
+# -----------------------------
+def _is_local_night(ts: Optional[str]) -> bool:
+    """
+    Heuristic: if the local 'As of' hour is before 06 or after/equal 18,
+    treat as night. ts is like 'YYYY-MM-DDTHH:MM' from Open-Meteo (timezone=auto).
+    """
+    if not ts or "T" not in ts:
+        return False
+    try:
+        hh = int(ts.split("T", 1)[1][0:2])
+        return (hh < 6) or (hh >= 18)
+    except Exception:
+        return False
+
+# -----------------------------
 # ADDITIVE: lightweight probe for controllers (EnviroGuard, etc.)
 # -----------------------------
 def get_current_snapshot() -> Dict[str, Any]:
@@ -329,8 +345,12 @@ def get_current_snapshot() -> Dict[str, Any]:
             "enabled": False, "city": CITY, "temp_c": None, "code": None,
             "time": None, "lat": LAT, "lon": LON, "source": "open-meteo"
         }
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true&temperature_unit=celsius&windspeed_unit=kmh"
-    data = _get_json(url)
+    params = {
+        "latitude": LAT, "longitude": LON,
+        "current_weather": True,
+        "temperature_unit": "celsius", "windspeed_unit": "kmh",
+    }
+    data = _get_json(OPEN_METEO, params)
     cw = (data or {}).get("current_weather", {}) if isinstance(data, dict) else {}
     temp = cw.get("temperature", None)
     code = cw.get("weathercode", None)
@@ -347,8 +367,12 @@ def get_current_snapshot() -> Dict[str, Any]:
 def get_today_peak_c():
     if not ENABLED:
         return None
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=temperature_2m_max&timezone=auto&temperature_unit=celsius"
-    data = _get_json(url)
+    params = {
+        "latitude": LAT, "longitude": LON,
+        "daily": "temperature_2m_max",
+        "timezone": "auto", "temperature_unit": "celsius",
+    }
+    data = _get_json(OPEN_METEO, params)
     daily = (data or {}).get("daily", {}) if isinstance(data, dict) else {}
     arr = daily.get("temperature_2m_max") or []
     if not arr:
@@ -364,8 +388,14 @@ def get_today_peak_c():
 def current_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true&temperature_unit=celsius&windspeed_unit=kmh"
-    data = _get_json(url)
+
+    # current snapshot
+    params_now = {
+        "latitude": LAT, "longitude": LON,
+        "current_weather": True,
+        "temperature_unit": "celsius", "windspeed_unit": "kmh",
+    }
+    data = _get_json(OPEN_METEO, params_now)
     if "error" in data: return f"⚠️ Weather API error: {data['error']}", None
     cw = data.get("current_weather", {})
     if not cw: return "⚠️ No current weather data returned", None
@@ -384,14 +414,13 @@ def current_weather():
     if indoor_c is not None: lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
     lines.append(_kv("🌬 Wind", f"{wind} km/h"))
 
-    # Today’s daily values for solar/rain/hail/thunder checks
-    fc_url = (
-        f"https://api.open-meteo.com/v1/forecast?"
-        f"latitude={LAT}&longitude={LON}"
-        f"&daily=cloudcover,shortwave_radiation_sum,precipitation_probability_max,weathercode"
-        f"&timezone=auto"
-    )
-    fc = _get_json(fc_url)
+    # Today's daily values
+    params_day = {
+        "latitude": LAT, "longitude": LON,
+        "daily": "cloudcover,shortwave_radiation_sum,precipitation_probability_max,weathercode",
+        "timezone": "auto",
+    }
+    fc = _get_json(OPEN_METEO, params_day)
     daily_fc = (fc or {}).get("daily") or {}
     cloud_today = (daily_fc.get("cloudcover") or [None])[0]
     rad_today   = (daily_fc.get("shortwave_radiation_sum") or [None])[0]
@@ -399,7 +428,10 @@ def current_weather():
     code_today  = (daily_fc.get("weathercode") or [None])[0]
 
     # Compact Solar label (HIGH/MED/LOW or Night)
-    lines.append(_kv("⚡ Solar (today)", _solar_compact_label(rad_today, cloud_today)[2:]))
+    solar_label = _solar_compact_label(rad_today, cloud_today)
+    if solar_label == "⚡ —" and _is_local_night(ts):
+        solar_label = "⚡ Night"
+    lines.append(_kv("⚡ Solar (today)", solar_label[2:]))
 
     # Chance of rain (show only if > 0%)
     if isinstance(prob_today, (int, float)) and prob_today > 0:
@@ -412,8 +444,8 @@ def current_weather():
 
     # ---- High-priority alerts (once per day via notify bus) ----
     heavy_rain = isinstance(prob_today, (int, float)) and prob_today >= 70
-    thunder = code_today in (95, 96, 99)     # thunderstorm (incl hail)
-    hail = code_today in (96, 99)            # explicit hail codes
+    thunder = code_today in (95, 96, 99)
+    hail = code_today in (96, 99)
 
     if thunder:
         _notify_once_daily("thunder", f"⛈ Thunderstorm risk — {CITY}",
@@ -428,22 +460,22 @@ def current_weather():
     return "\n".join(lines), None
 
 # -----------------------------
-# Forecast (always Today; header uses compact solar; bullets are HIGH/MED/LOW)
+# Forecast (header uses compact solar; bullets are HIGH/MED/LOW)
 # -----------------------------
 def forecast_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
 
-    # ✅ FIXED: no duplicate fields in &daily=...
-    url = (
-        f"https://api.open-meteo.com/v1/forecast?"
-        f"latitude={LAT}&longitude={LON}"
-        f"&daily=temperature_2m_max,temperature_2m_min,weathercode,cloudcover,shortwave_radiation_sum,precipitation_probability_max"
-        f"&timezone=auto&temperature_unit=celsius"
-    )
-
-    data = _get_json(url)
+    # ✅ Params-based URL prevents duplicate fields (fixes the 400)
+    params = {
+        "latitude": LAT, "longitude": LON,
+        "daily": "temperature_2m_max,temperature_2m_min,weathercode,cloudcover,shortwave_radiation_sum,precipitation_probability_max",
+        "timezone": "auto",
+        "temperature_unit": "celsius",
+    }
+    data = _get_json(OPEN_METEO, params)
     if "error" in data:
+        # cleaner error (no full URL dump)
         return f"⚠️ Weather API error: {data['error']}", None
 
     daily = data.get("daily", {})
