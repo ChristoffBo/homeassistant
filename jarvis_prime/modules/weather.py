@@ -344,7 +344,7 @@ def get_current_snapshot() -> Dict[str, Any]:
         "time": ts, "lat": LAT, "lon": LON, "source": "open-meteo"
     }
 
-def get_today_peak_c() -> Optional[float]:
+def get_today_peak_c():
     if not ENABLED:
         return None
     url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&daily=temperature_2m_max&timezone=auto&temperature_unit=celsius"
@@ -433,12 +433,15 @@ def current_weather():
 def forecast_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
+
+    # ✅ FIXED: no duplicate fields in &daily=...
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={LAT}&longitude={LON}"
         f"&daily=temperature_2m_max,temperature_2m_min,weathercode,cloudcover,shortwave_radiation_sum,precipitation_probability_max"
         f"&timezone=auto&temperature_unit=celsius"
     )
+
     data = _get_json(url)
     if "error" in data:
         return f"⚠️ Weather API error: {data['error']}", None
