@@ -95,9 +95,17 @@ def _solar_class_from_cloudcover(pct: float) -> str:
 
 def _solar_line_from_values(label: str, *, rad: Optional[float], cloud_pct: Optional[float]) -> str:
     if rad is not None:
-        return _kv(label, f"{_solar_class_from_radiation(rad)} ⚡ ({rad:.1f} MJ/m²)")
+        try:
+            v = float(rad)
+            return _kv(label, f"{_solar_class_from_radiation(v)} ⚡ ({v:.1f} MJ/m²)")
+        except Exception:
+            pass
     if cloud_pct is not None:
-        return _kv(label, f"{_solar_class_from_cloudcover(cloud_pct)} ⚡ (cloud {cloud_pct:.0f}%)")
+        try:
+            c = float(cloud_pct)
+            return _kv(label, f"{_solar_class_from_cloudcover(c)} ⚡ (cloud {c:.0f}%)")
+        except Exception:
+            pass
     return _kv(label, "—")
 
 # -----------------------------
@@ -314,7 +322,7 @@ def get_today_peak_c() -> Optional[float]:
         return None
 
 # -----------------------------
-# Current Weather
+# Current Weather (temp command shows today's solar/rain/hail too)
 # -----------------------------
 def current_weather():
     if not ENABLED:
@@ -334,13 +342,11 @@ def current_weather():
 
     temp = cw.get("temperature", "?")
     wind = cw.get("windspeed", "?")
-    code = cw.get("weathercode", -1)
-    icon_big = _icon_for_code(code, big=True)
+    code_now = cw.get("weathercode", -1)
+    icon_big = _icon_for_code(code_now, big=True)
 
-    # Optional: Home Assistant indoor temperature
     indoor_c = _get_ha_indoor_temp_c()
 
-    # Sleek aligned block
     lines = []
     lines.append(f"{icon_big} Current Weather — {CITY}")
     lines.append(_kv("🌡 Outdoor", f"{temp}°C"))
@@ -351,28 +357,32 @@ def current_weather():
     if ts:
         lines.append(_kv("🕒 As of", ts))
 
-    # ADDITIVE: same-day solar & rain chance (radiation first, then cloudcover)
+    # Today's solar/rain/hail (radiation first, fallback to cloudcover)
     fc_url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={LAT}&longitude={LON}"
-        f"&daily=cloudcover,shortwave_radiation_sum,precipitation_probability_max&timezone=auto"
+        f"&daily=cloudcover,shortwave_radiation_sum,precipitation_probability_max,weathercode"
+        f"&timezone=auto"
     )
     fc = _get_json(fc_url)
     daily_fc = (fc or {}).get("daily") or {}
     cloud_today = (daily_fc.get("cloudcover") or [None])[0]
     rad_today   = (daily_fc.get("shortwave_radiation_sum") or [None])[0]
     prob_today  = (daily_fc.get("precipitation_probability_max") or [None])[0]
+    code_today  = (daily_fc.get("weathercode") or [None])[0]
+
     lines.append(_solar_line_from_values("⚡ Solar (today)", rad=rad_today, cloud_pct=cloud_today))
-    if prob_today and prob_today > 0:
+    if isinstance(prob_today, (int, float)) and prob_today > 0:
         label = "☔ Chance of rain" if prob_today < 60 else "⚠️ High chance of rain"
         lines.append(_kv(label, f"{prob_today}%"))
-    if code in (95,96,99):
+    # Hail risk for the day
+    if code_today in (95, 96, 99):
         lines.append("⚠️ Severe storm risk — hail possible.")
 
     return "\n".join(lines), None
 
 # -----------------------------
-# Forecast (7 days, sleek aligned list — no tables)
+# Forecast (always starts at Today; bullets show only HIGH/MED/LOW)
 # -----------------------------
 def forecast_weather():
     if not ENABLED:
@@ -399,16 +409,19 @@ def forecast_weather():
     if not times:
         return "⚠️ No forecast data returned", None
 
-    # Today (index 0)
-    tmin0 = tmins[0] if len(tmins) > 0 else "?"
-    tmax0 = tmaxs[0] if len(tmaxs) > 0 else "?"
-    code0 = codes[0] if len(codes) > 0 else -1
-    cloud0 = clouds[0] if len(clouds) > 0 else None
-    rad0 = rads[0] if len(rads) > 0 else None
-    prob0 = probs[0] if len(probs) > 0 else None
+    # Always start at Today
+    start_idx = 0
+
+    # Header block (Today)
+    idx = start_idx
+    tmin0 = tmins[idx] if len(tmins) > idx else "?"
+    tmax0 = tmaxs[idx] if len(tmaxs) > idx else "?"
+    code0 = codes[idx] if len(codes) > idx else -1
+    cloud0 = clouds[idx] if len(clouds) > idx else None
+    rad0 = rads[idx] if len(rads) > idx else None
+    prob0 = probs[idx] if len(probs) > idx else None
     icon0_big = _icon_for_code(code0, big=True)
 
-    # Optional: Home Assistant indoor temperature (include alongside today's range)
     indoor_c = _get_ha_indoor_temp_c()
 
     lines = []
@@ -416,24 +429,23 @@ def forecast_weather():
     lines.append(_kv("Range", f"{tmin0}°C – {tmax0}°C"))
     if indoor_c is not None:
         lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
-    # cast tmax0 to float for commentary if possible
     try:
         tmax0_f = float(tmax0)
     except Exception:
         tmax0_f = None
     lines.append(_kv("Outlook", _commentary(tmax0_f, code0)))
-    # ADD: Solar, Rain chance, Hail notice
+    # Detailed solar for the header is kept (can remove if you want)
     lines.append(_solar_line_from_values("⚡ Solar", rad=rad0, cloud_pct=cloud0))
-    if prob0 and prob0 > 0:
+    if isinstance(prob0, (int, float)) and prob0 > 0:
         label = "☔ Chance of rain" if prob0 < 60 else "⚠️ High chance of rain"
         lines.append(_kv(label, f"{prob0}%"))
     if code0 in (95,96,99):
         lines.append("⚠️ Severe storm risk — hail possible.")
 
-    # Next days
+    # 7-day list starting at Today (only HIGH/MED/LOW for solar)
     lines.append("")
     lines.append(f"📅 7-Day Outlook — {CITY}")
-    for i in range(0, min(7, len(times))):
+    for i in range(start_idx, min(start_idx + 7, len(times))):
         date = times[i]
         tmin = tmins[i] if i < len(tmins) else "?"
         tmax = tmaxs[i] if i < len(tmaxs) else "?"
@@ -443,6 +455,7 @@ def forecast_weather():
         rad = rads[i] if i < len(rads) else None
         prob = probs[i] if i < len(probs) else None
 
+        # Only show HIGH/MED/LOW (no units)
         if rad is not None:
             solar_str = f"⚡ {_solar_class_from_radiation(rad)}"
         elif cloud is not None:
@@ -450,8 +463,9 @@ def forecast_weather():
         else:
             solar_str = "⚡ —"
 
-        rain_str = f" · ☔ {prob}%" if prob and prob > 0 else ""
+        rain_str = f" · ☔ {prob}%" if isinstance(prob, (int, float)) and prob > 0 else ""
         prefix = "• Today" if i == 0 else f"• {date}"
+
         lines.append(f"{prefix} — {tmin}°C to {tmax}°C {icon}  ·  {solar_str}{rain_str}")
         if code in (95,96,99):
             lines.append("    ⚠️ Severe storm risk — hail possible.")
@@ -467,7 +481,6 @@ def handle_weather_command(command: str):
         return forecast_weather()
     if any(word in cmd for word in ["weather", "temperature", "temp", "now", "today"]):
         return current_weather()
-    # ADDITIVE: allow 'solar' keyword to show forecast with solar classes
     if "solar" in cmd:
         return forecast_weather()
     return "⚠️ Unknown weather command", None
