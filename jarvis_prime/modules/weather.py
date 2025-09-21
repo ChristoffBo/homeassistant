@@ -63,6 +63,44 @@ HA_INDOOR_ENTITY = (
 ).strip()
 
 # -----------------------------
+# ADDITIVE: Solar thresholds & helpers (radiation-first, cloudcover fallback)
+# -----------------------------
+# Radiation thresholds (no new settings; keep it simple)
+RADIATION_LOW  = 10.0  # MJ/m²/day
+RADIATION_HIGH = 20.0  # MJ/m²/day
+# Cloud-cover thresholds for fallback
+SOLAR_THRESHOLDS = {"high_max_cloud": 30, "med_max_cloud": 70}
+
+def _solar_class_from_radiation(mj_per_m2: float) -> str:
+    try:
+        v = float(mj_per_m2)
+    except Exception:
+        return "UNKNOWN"
+    if v > RADIATION_HIGH:
+        return "HIGH"
+    if v >= RADIATION_LOW:
+        return "MED"
+    return "LOW"
+
+def _solar_class_from_cloudcover(pct: float) -> str:
+    try:
+        p = float(pct)
+    except Exception:
+        return "UNKNOWN"
+    if p < SOLAR_THRESHOLDS["high_max_cloud"]:
+        return "HIGH"
+    if p <= SOLAR_THRESHOLDS["med_max_cloud"]:
+        return "MED"
+    return "LOW"
+
+def _solar_line_from_values(label: str, *, rad: Optional[float], cloud_pct: Optional[float]) -> str:
+    if rad is not None:
+        return _kv(label, f"{_solar_class_from_radiation(rad)} ⚡ ({rad:.1f} MJ/m²)")
+    if cloud_pct is not None:
+        return _kv(label, f"{_solar_class_from_cloudcover(cloud_pct)} ⚡ (cloud {cloud_pct:.0f}%)")
+    return _kv(label, "—")
+
+# -----------------------------
 # Helpers
 # -----------------------------
 def _get_json(url):
@@ -312,6 +350,25 @@ def current_weather():
     ts = cw.get("time")
     if ts:
         lines.append(_kv("🕒 As of", ts))
+
+    # ADDITIVE: same-day solar & rain chance (radiation first, then cloudcover)
+    fc_url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&daily=cloudcover,shortwave_radiation_sum,precipitation_probability_max&timezone=auto"
+    )
+    fc = _get_json(fc_url)
+    daily_fc = (fc or {}).get("daily") or {}
+    cloud_today = (daily_fc.get("cloudcover") or [None])[0]
+    rad_today   = (daily_fc.get("shortwave_radiation_sum") or [None])[0]
+    prob_today  = (daily_fc.get("precipitation_probability_max") or [None])[0]
+    lines.append(_solar_line_from_values("⚡ Solar (today)", rad=rad_today, cloud_pct=cloud_today))
+    if prob_today and prob_today > 0:
+        label = "☔ Chance of rain" if prob_today < 60 else "⚠️ High chance of rain"
+        lines.append(_kv(label, f"{prob_today}%"))
+    if code in (95,96,99):
+        lines.append("⚠️ Severe storm risk — hail possible.")
+
     return "\n".join(lines), None
 
 # -----------------------------
@@ -323,7 +380,7 @@ def forecast_weather():
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={LAT}&longitude={LON}"
-        f"&daily=temperature_2m_max,temperature_2m_min,weathercode"
+        f"&daily=temperature_2m_max,temperature_2m_min,weathercode,cloudcover,shortwave_radiation_sum,precipitation_probability_max"
         f"&timezone=auto&temperature_unit=celsius"
     )
     data = _get_json(url)
@@ -335,6 +392,9 @@ def forecast_weather():
     tmins = daily.get("temperature_2m_min", []) or []
     tmaxs = daily.get("temperature_2m_max", []) or []
     codes = daily.get("weathercode", []) or []
+    clouds = daily.get("cloudcover", []) or []
+    rads   = daily.get("shortwave_radiation_sum", []) or []
+    probs  = daily.get("precipitation_probability_max", []) or []
 
     if not times:
         return "⚠️ No forecast data returned", None
@@ -343,6 +403,9 @@ def forecast_weather():
     tmin0 = tmins[0] if len(tmins) > 0 else "?"
     tmax0 = tmaxs[0] if len(tmaxs) > 0 else "?"
     code0 = codes[0] if len(codes) > 0 else -1
+    cloud0 = clouds[0] if len(clouds) > 0 else None
+    rad0 = rads[0] if len(rads) > 0 else None
+    prob0 = probs[0] if len(probs) > 0 else None
     icon0_big = _icon_for_code(code0, big=True)
 
     # Optional: Home Assistant indoor temperature (include alongside today's range)
@@ -359,6 +422,13 @@ def forecast_weather():
     except Exception:
         tmax0_f = None
     lines.append(_kv("Outlook", _commentary(tmax0_f, code0)))
+    # ADD: Solar, Rain chance, Hail notice
+    lines.append(_solar_line_from_values("⚡ Solar", rad=rad0, cloud_pct=cloud0))
+    if prob0 and prob0 > 0:
+        label = "☔ Chance of rain" if prob0 < 60 else "⚠️ High chance of rain"
+        lines.append(_kv(label, f"{prob0}%"))
+    if code0 in (95,96,99):
+        lines.append("⚠️ Severe storm risk — hail possible.")
 
     # Next days
     lines.append("")
@@ -369,8 +439,22 @@ def forecast_weather():
         tmax = tmaxs[i] if i < len(tmaxs) else "?"
         code = codes[i] if i < len(codes) else -1
         icon = _icon_for_code(code, big=False)
+        cloud = clouds[i] if i < len(clouds) else None
+        rad = rads[i] if i < len(rads) else None
+        prob = probs[i] if i < len(probs) else None
+
+        if rad is not None:
+            solar_str = f"⚡ {_solar_class_from_radiation(rad)}"
+        elif cloud is not None:
+            solar_str = f"⚡ {_solar_class_from_cloudcover(cloud)}"
+        else:
+            solar_str = "⚡ —"
+
+        rain_str = f" · ☔ {prob}%" if prob and prob > 0 else ""
         prefix = "• Today" if i == 0 else f"• {date}"
-        lines.append(f"{prefix} — {tmin}°C to {tmax}°C {icon}")
+        lines.append(f"{prefix} — {tmin}°C to {tmax}°C {icon}  ·  {solar_str}{rain_str}")
+        if code in (95,96,99):
+            lines.append("    ⚠️ Severe storm risk — hail possible.")
 
     return "\n".join(lines), None
 
@@ -383,4 +467,7 @@ def handle_weather_command(command: str):
         return forecast_weather()
     if any(word in cmd for word in ["weather", "temperature", "temp", "now", "today"]):
         return current_weather()
+    # ADDITIVE: allow 'solar' keyword to show forecast with solar classes
+    if "solar" in cmd:
+        return forecast_weather()
     return "⚠️ Unknown weather command", None
