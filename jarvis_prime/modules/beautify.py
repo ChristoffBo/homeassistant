@@ -12,7 +12,7 @@ KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+)$', re.M)
 
 # timestamps and types
 TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
-DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-{1,2}]|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
+DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
 TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
 
 # Strict IPv4: each octet 0-255
@@ -262,7 +262,6 @@ def _detect_type(title: str, body: str) -> str:
     if "speedtest" in tb: return "SpeedTest"
     if "apt" in tb or "dpkg" in tb: return "APT Update"
     if "watchtower" in tb: return "Watchtower"
-    if "qnap" in tb or "qts" in tb: return "QNAP"
     if "sonarr" in tb: return "Sonarr"
     if "radarr" in tb: return "Radarr"
     if _looks_json(body): return "JSON"
@@ -427,7 +426,7 @@ def _global_riff_hint(extras_in: Optional[Dict[str, Any]], source_hint: Optional
     src = (source_hint or "").strip().lower()
     auto_sources = {
         "smtp","proxy","webhook","webhooks","apprise","gotify","ntfy",
-        "sonarr","radarr","watchtower","speedtest","apt","syslog","qnap"
+        "sonarr","radarr","watchtower","speedtest","apt","syslog"
     }
     if src in auto_sources:
         return True
@@ -457,7 +456,7 @@ def _beautify_is_disabled() -> bool:
     return False
 
 # ============================
-# Watchtower-aware summarizer (LESS AGGRESSIVE)
+# Watchtower-aware summarizer
 # ============================
 _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
@@ -476,43 +475,22 @@ def _watchtower_host_from_title(title: str) -> Optional[str]:
         return m.group(1).strip()
     return None
 
-def _opt_int(name: str, default: int) -> int:
-    opt = _read_options()
-    try:
-        return int(opt.get(name, default))
-    except Exception:
-        return default
-
-def _opt_bool(name: str, default: bool) -> bool:
-    opt = _read_options()
-    try:
-        v = str(opt.get(name, default)).strip().lower()
-        return v in ("1","true","yes","on")
-    except Exception:
-        return default
-
 def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, Dict[str, Any]]:
     lines = (body or "").splitlines()
-    updated: List[Tuple[str, str, str, str]] = []
-    raw_kept: List[str] = []
+    updated: List[Tuple[str, str, str]] = []
     for ln in lines:
         if _WT_FRESH_RX.search(ln):
             continue
-        matched = False
         for rx in _WT_UPDATED_RXES:
             m = rx.match(ln)
             if m:
                 name = (m.groupdict().get("name") or "").strip()
                 img  = (m.groupdict().get("img") or "").strip()
-                old  = (m.groupdict().get("old") or "").strip()
                 new  = (m.groupdict().get("new") or "").strip()
                 if not img:
                     img = name
-                updated.append((name, img, old, new))
-                matched = True
+                updated.append((name, img, new))
                 break
-        if not matched:
-            raw_kept.append(ln)
 
     host = _watchtower_host_from_title(title) or "unknown"
     meta: Dict[str, Any] = {"watchtower::host": host, "watchtower::updated_count": len(updated)}
@@ -525,88 +503,9 @@ def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, 
         updated = updated[:limit]
         meta["watchtower::truncated"] = True
 
-    bullets = "\n".join([
-        f"• `{name}` → `{img}`\n   old: `{old}` → new: `{new}`"
-        for name, img, old, new in updated
-    ])
-    md_lines = [f"**Host:** `{host}`", "", f"**Updated ({len(updated)}):**", bullets]
-
-    # Optional raw tail
-    raw_tail_n = _opt_int("watchtower_raw_tail_lines", 0)
-    if raw_tail_n > 0 and raw_kept:
-        tail = "\n".join(raw_kept[-raw_tail_n:]).strip()
-        if tail:
-            md_lines += ["", "<details><summary>Raw</summary>", "", "```", tail, "```", "</details>"]
-
-    return "\n".join(md_lines), meta
-
-# ============================
-# QNAP summarizer (LESS AGGRESSIVE)
-# ============================
-_QNAP_DISK_RX = re.compile(r'\b(?:disk|drive)\s*(\d+)\b', re.I)
-_QNAP_VOL_RX  = re.compile(r'\bvol(?:ume)?\s*([A-Za-z0-9_-]+)', re.I)
-
-def _summarize_qnap(title: str, body: str, limit_kv: int = 20) -> Tuple[str, Dict[str, Any]]:
-    """
-    Keep the headline, extract useful key:value pairs, and optionally append a raw tail.
-    """
-    lines = [ln for ln in (body or "").splitlines() if ln.strip()]
-    kvs: List[str] = []
-    others: List[str] = []
-
-    disk = None
-    vol  = None
-
-    # First pass: collect KV and try to detect disk/volume
-    for ln in lines:
-        m = KV_RE.match(ln.strip())
-        if m:
-            k, v = m.group(1).strip(), m.group(2).strip()
-            if k.lower() not in {"title","message","topic","tags","priority"}:
-                kvs.append((k, v))
-        else:
-            others.append(ln)
-
-        if disk is None:
-            dm = _QNAP_DISK_RX.search(ln)
-            if dm:
-                disk = dm.group(1)
-        if vol is None:
-            vm = _QNAP_VOL_RX.search(ln)
-            if vm:
-                vol = vm.group(1)
-
-    # Build tidy bullets (cap to avoid spam)
-    bullets = []
-    header_bits = []
-    if disk: header_bits.append(f"Disk `{disk}`")
-    if vol:  header_bits.append(f"Vol `{vol}`")
-
-    if header_bits:
-        bullets.append(f"- **Scope:** " + ", ".join(header_bits))
-
-    for i, (k, v) in enumerate(kvs[:max(1, limit_kv)]):
-        bullets.append(f"- **{k}:** {v}")
-
-    # If no KV at all, fall back to generic bullets from remaining lines
-    if not kvs and others:
-        for ln in others[:10]:
-            bullets.append(f"- {ln.strip()}")
-
-    md_lines = []
-    md_lines.append("**QNAP Alert:**")
-    if bullets:
-        md_lines += bullets
-
-    # Optional raw tail
-    raw_tail_n = _opt_int("qnap_raw_tail_lines", 0)
-    if raw_tail_n > 0 and lines:
-        tail = "\n".join(lines[-raw_tail_n:]).strip()
-        if tail:
-            md_lines += ["", "<details><summary>Raw</summary>", "", "```", tail, "```", "</details>"]
-
-    meta: Dict[str, Any] = {"qnap::kv_count": len(kvs), "qnap::has_disk": bool(disk), "qnap::has_vol": bool(vol)}
-    return "\n".join(md_lines), meta
+    bullets = "\n".join([f"• `{name}` → `{img}` @ `{new}`" for name, img, new in updated])
+    md = f"**Host:** `{host}`\n\n**Updated ({len(updated)}):**\n{bullets}"
+    return md, meta
 
 # -------- querystring detection & body cleanup helpers --------
 _QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
@@ -729,8 +628,6 @@ def _builtin_icon_map() -> Dict[str,str]:
         "gotify": f"{base}/bell.png",
         "ntfy": f"{base}/bell.png",
         "proxy": f"{base}/reverse-proxy.png",
-        "qnap": f"{base}/nas.png",
-        "unraid": f"{base}/unraid.png",
     }
 
 def _icon_from_env(keyword: str) -> Optional[str]:
@@ -756,7 +653,7 @@ def _poster_fallback(title: str, body: str) -> Optional[str]:
                 "qbittorrent","transmission","jellyfin","plex","emby",
                 "sabnzbd","overseerr","gluetun","pihole","unifi","portainer",
                 "watchtower","docker","homeassistant","speedtest","apt",
-                "smtp","apprise","gotify","ntfy","proxy","qnap","unraid"]
+                "smtp","apprise","gotify","ntfy","proxy"]
     text = f"{title} {body}".lower()
     opt_map = _icon_map_from_options()
     builtin = _builtin_icon_map()
@@ -1029,58 +926,6 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
                 extras["client::notification"] = {"bigImageUrl": poster}
                 lines += ["", f"![poster]({poster})"]
                 text = "\n".join(lines).strip()
-        return text, extras
-
-    # ===== QNAP special-case =====
-    if kind == "QNAP":
-        lines: List[str] = []
-        lines += _header("QNAP", badge)
-
-        eff_persona = _effective_persona(persona)
-        if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
-            pol = _persona_overlay_line(eff_persona)
-            if pol: lines += [pol]
-
-        qnap_md, qnap_meta = _summarize_qnap(title, body_wo_imgs)
-        lines += ["", qnap_md]
-
-        riff_hint = _global_riff_hint(extras_in, source_hint)
-        riffs: List[str] = []
-        if riff_hint and _llm_riffs_enabled() and eff_persona:
-            ctx = _scrub_meta(body_wo_imgs)
-            if clean_subject:
-                ctx = (ctx + "\n\nSubject: " + clean_subject).strip()
-            riffs = _persona_llm_riffs(ctx, eff_persona)
-
-        real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
-        real_riffs = [ r for r in real_riffs if r ]
-        if real_riffs:
-            lines += ["", f"🧠 {eff_persona} riff"]
-            for r in real_riffs:
-                lines.append("> " + r)
-
-        text = "\n".join(lines).strip()
-        text = _linewise_dedup_markdown(text, protect_message=True)
-        text = _fold_repeats(text)
-        max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
-        text = _safe_truncate(text, max_len=max_len)
-
-        extras: Dict[str, Any] = {
-            "client::display": {"contentType": "text/markdown"},
-            "client::title": _build_client_title(clean_subject or "QNAP Alert"),
-            "jarvis::beautified": True,
-            "jarvis::allImageUrls": [],
-            "jarvis::llm_riff_lines": len(real_riffs or []),
-        }
-        poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
-        if poster:
-            extras["jarvis::allImageUrls"] = [poster]
-            extras["client::notification"] = {"bigImageUrl": poster}
-            lines += ["", f"![poster]({poster})"]
-            text = "\n".join(lines).strip()
-
-        if isinstance(extras_in, dict):
-            extras.update(extras_in)
         return text, extras
 
     # ===== Standard path (Message-only layout) =====
