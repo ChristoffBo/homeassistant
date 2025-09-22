@@ -33,6 +33,9 @@ RUN pip3 install --no-cache-dir --break-system-packages --upgrade numpy \
  && pip3 install --no-cache-dir --break-system-packages --no-binary=:all: \
       "llama-cpp-python==0.3.16"
 
+# EXTRA: duckduckgo-search (for chatbot web search)
+RUN pip3 install --no-cache-dir --break-system-packages duckduckgo-search requests
+
 # ----------------------------
 # App content
 # ----------------------------
