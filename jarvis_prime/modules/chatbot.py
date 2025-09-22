@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
 # /app/chat.py
 #
-# Jarvis Prime — Chat + Web (explicit) helper
+# Jarvis Prime — Chat + Web helper
 # - Default: offline chat via llm_client.chat_generate (pure chat, no persona banners)
-# - Explicit web mode: only when the prompt clearly asks to search/browse the internet
-#   (keywords like: search, look up, lookup, web, internet, online, browse/browsing, news, latest, updates, breaking,
-#    google it, google for me, search the internet, web search, check internet, check web)
+# - Web mode: only when the prompt clearly asks to search/browse the internet
+#   (keywords like: google it, google for me, search the internet, web search, internet search, check internet, check web)
 # - Summarizes web snippets into a short paragraph, then lists sources
-# - Falls back to offline LLM when search fails or times out
+# - Falls back to offline LLM when search fails
+# - If both fail → "I don't know."
 
 from __future__ import annotations
 
-import os
 import re
-import json
-import time
 import html
-import traceback
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 
 # ============================
 # LLM bridge
@@ -31,9 +27,6 @@ def _llm_ready() -> bool:
     return _LLM is not None and hasattr(_LLM, "chat_generate")
 
 def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
-    """
-    Minimal 1-turn chat: defers system prompt to llm_client (uses /app/system_prompt.txt if present).
-    """
     if not _llm_ready():
         return ""
     try:
@@ -46,9 +39,6 @@ def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
         return ""
 
 def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320) -> str:
-    """
-    Ask the local LLM to synthesize a concise answer from web notes/snippets.
-    """
     if not _llm_ready():
         return ""
     sys_prompt = (
@@ -83,27 +73,16 @@ def _clean_text(s: str) -> str:
     return out.strip()
 
 # ============================
-# Web triggers (explicit)
+# Web triggers (explicit only)
 # ============================
 _WEB_TRIGGERS = [
-    r"\bsearch\b",
-    r"\blook\s*up\b",
-    r"\blookup\b",
-    r"\bgoogle\s*it\b",
+    r"\bgoogle\s+it\b",
     r"\bgoogle\s+for\s+me\b",
     r"\bsearch\s+the\s+internet\b",
     r"\binternet\s+search\b",
     r"\bweb\s+search\b",
-    r"\bcheck\s+(the\s+)?internet\b",
-    r"\bcheck\s+(the\s+)?web\b",
-    r"\bon\s+the\s+web\b",
-    r"\binternet\b",
-    r"\bonline\b",
-    r"\bbrowse|browsing\b",
-    r"\bnews\b",
-    r"\blatest\b",
-    r"\bupdates?\b",
-    r"\bbreaking\b",
+    r"\bcheck\s+internet\b",
+    r"\bcheck\s+web\b",
 ]
 
 def _should_use_web(q: str) -> bool:
@@ -111,7 +90,7 @@ def _should_use_web(q: str) -> bool:
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
 
 # ============================
-# DuckDuckGo search (best-effort)
+# DuckDuckGo search
 # ============================
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[str, str]]:
     try:
@@ -131,7 +110,7 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[s
     except Exception:
         return []
 
-def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 8) -> List[Dict[str, str]]:
+def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str, str]]:
     import requests
     try:
         url = "https://api.duckduckgo.com/"
@@ -156,28 +135,25 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 8) -> 
         if title and url:
             results.append({"title": title, "url": url, "snippet": snippet})
 
-    abs_text = data.get("AbstractText") or ""
-    abs_url = data.get("AbstractURL") or ""
-    abs_src = data.get("AbstractSource") or ""
-    if abs_text and abs_url:
-        _push(f"{abs_src}: {abs_text[:60]}…" if abs_src else "DuckDuckGo Abstract", abs_url, abs_text)
+    if data.get("AbstractText") and data.get("AbstractURL"):
+        _push("DuckDuckGo Abstract", data["AbstractURL"], data["AbstractText"])
 
     for it in (data.get("Results") or []):
-        _push(it.get("Text") or it.get("FirstURL") or "", it.get("FirstURL") or "", it.get("Text") or "")
+        _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
 
     for it in (data.get("RelatedTopics") or []):
-        if "Topics" in it and isinstance(it["Topics"], list):
-            for t in it["Topics"]:
-                _push(t.get("Text") or t.get("FirstURL") or "", t.get("FirstURL") or "", t.get("Text") or "")
-        else:
-            _push(it.get("Text") or it.get("FirstURL") or "", it.get("FirstURL") or "", it.get("Text") or "")
+        if isinstance(it, dict):
+            if "Topics" in it:
+                for t in it["Topics"]:
+                    _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
+            else:
+                _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
 
     seen = set()
-    deduped: List[Dict[str, str]] = []
+    deduped = []
     for r in results:
-        key = r["url"]
-        if key and key not in seen:
-            seen.add(key)
+        if r["url"] not in seen:
+            seen.add(r["url"])
             deduped.append(r)
         if len(deduped) >= max_results:
             break
@@ -193,7 +169,7 @@ def _duckduckgo_search(query: str, max_results: int = 6) -> List[Dict[str, str]]
 # Web answer renderer
 # ============================
 def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
-    lines: List[str] = []
+    lines = []
     if summary.strip():
         lines.append(summary.strip())
     if sources:
@@ -208,14 +184,12 @@ def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
     for h in hits[:6]:
         t = html.unescape((h.get("title") or "").strip())
         s = html.unescape((h.get("snippet") or "").strip())
-        u = (h.get("url") or "").strip()
         if t or s:
-            note = f"- {t} — {s}".strip(" —")
-            notes.append(note)
+            notes.append(f"- {t} — {s}")
     return "\n".join(notes)
 
 # ============================
-# Public API
+# Main handler
 # ============================
 def handle(user_text: str) -> str:
     q = (user_text or "").strip()
@@ -224,37 +198,34 @@ def handle(user_text: str) -> str:
 
     try:
         if _should_use_web(q):
-            try:
-                hits = _duckduckgo_search(q, max_results=6)
-            except Exception:
-                hits = []
-
+            hits = _duckduckgo_search(q, max_results=6)
             if hits:
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
                 if not summary:
                     h0 = hits[0]
-                    summary = (h0.get("snippet") or h0.get("title") or "Here are some sources I found.")
-                sources = [((h.get("title") or h.get("url") or "").strip(), (h.get("url") or "").strip()) for h in hits]
-                sources = [(t, u) for (t, u) in sources if u]
+                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
+                sources = [((h.get("title") or h.get("url") or "").strip(), (h.get("url") or "").strip()) for h in hits if h.get("url")]
                 return _render_web_answer(_clean_text(summary), sources)
 
+            # fallback to offline LLM if search yields nothing
             offline = _chat_offline_singleturn(q, max_new_tokens=240)
-            return (_clean_text(offline) + "\n\n(offline answer)") if offline.strip() else "I don't know."
+            return _clean_text(offline) or "I don't know."
 
+        # Default offline mode
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         return _clean_text(ans) or "I don't know."
     except Exception:
-        try:
-            fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-            return _clean_text(fallback) or "I don't know."
-        except Exception:
-            return "I don't know."
+        fallback = _chat_offline_singleturn(q, max_new_tokens=240)
+        return _clean_text(fallback) or "I don't know."
 
 def chat(text: str) -> str:
     return handle(text)
 
+# ============================
+# CLI quick test
+# ============================
 if __name__ == "__main__":
     import sys
-    ask = " ".join(sys.argv[1:]).strip() or "search the internet latest SpaceX launch"
+    ask = " ".join(sys.argv[1:]).strip() or "web search latest SpaceX Starship update"
     print(handle(ask))
