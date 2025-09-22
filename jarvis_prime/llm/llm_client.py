@@ -1340,6 +1340,115 @@ def persona_riff_ex(
     return lines, source
 
 # ============================
+# Pure Chat (no riff/persona, no extra config)
+# ============================
+def chat_generate(
+    *,
+    messages: List[Dict[str, str]],
+    system_prompt: str = "",
+    max_new_tokens: int = 384,
+    timeout: Optional[int] = None,
+    base_url: str = "",
+    model_url: str = "",
+    model_path: str = "",
+    model_sha256: str = "",
+    hf_token: Optional[str] = None
+) -> str:
+    """
+    Minimal chat:
+      - Uses same profile (ctx/tokens/timeout/cpu) as rewrite/riff
+      - No riff/persona/Lexi involved
+      - No separate config keys; if llm_enabled is false, returns ""
+    messages: list of {"role":"system"/"user"/"assistant","content": "..."}
+    """
+    opts = _read_options()
+    if not bool(opts.get("llm_enabled", True)):
+        return ""
+
+    if not messages or not isinstance(messages, list):
+        return ""
+
+    # Ensure last turn is from user with text
+    last = messages[-1]
+    if (last.get("role") or "").lower() != "user" or not (last.get("content") or "").strip():
+        return ""
+
+    # Profile: inherit ctx/timeout/cpu
+    prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
+    ctx_tokens = prof_ctx
+    eff_timeout = timeout if timeout is not None else prof_timeout
+
+    # Simple Phi vs. fallback prompt builder
+    def _build_prompt(msgs: List[Dict[str, str]], sys_prompt: str) -> str:
+        sys_txt = (sys_prompt or _load_system_prompt() or "You are a helpful assistant.").strip()
+        if _is_phi3_family():
+            parts = []
+            if sys_txt:
+                parts.append(f"<|system|>\n{sys_txt}\n<|end|>")
+            for m in msgs:
+                role = (m.get("role") or "").lower()
+                content = (m.get("content") or "").strip()
+                if not content:
+                    continue
+                if role == "user":
+                    parts.append(f"<|user|>\n{content}\n<|end|>")
+                elif role == "assistant":
+                    parts.append(f"<|assistant|>\n{content}\n<|end|>")
+            parts.append("<|assistant|>\n")
+            return "\n".join(parts)
+        else:
+            convo = []
+            if sys_txt:
+                convo.append(f"<<SYS>>{sys_txt}<</SYS>>")
+            for m in msgs:
+                role = (m.get("role") or "").lower()
+                content = (m.get("content") or "").strip()
+                if not content:
+                    continue
+                if role == "user":
+                    convo.append(f"[USER]\n{content}")
+                elif role == "assistant":
+                    convo.append(f"[ASSISTANT]\n{content}")
+            return "<s>[INST] " + "\n".join(convo + ["[/INST]"]) + "\n[ASSISTANT]\n"
+
+    with _GenCritical(eff_timeout):
+        if LLM_MODE == "none":
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256=model_sha256,
+                ctx_tokens=ctx_tokens,
+                cpu_limit=prof_cpu,
+                hf_token=hf_token,
+                base_url=base_url
+            )
+            if not ok:
+                return ""
+
+        prompt = _build_prompt(messages, system_prompt)
+
+        # Overflow check
+        try:
+            n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
+        except Exception:
+            n_in = _estimate_tokens(prompt)
+        if _would_overflow(n_in, max_new_tokens, ctx_tokens, reserve=256):
+            _log("chat_generate: ctx overflow → refuse generation")
+            return ""
+
+        out = _do_generate(
+            prompt,
+            timeout=max(4, int(eff_timeout)),
+            base_url=base_url,
+            model_url=model_url,
+            model_name_hint=model_path,
+            max_tokens=max_new_tokens,
+            with_grammar_auto=False
+        )
+
+    return _strip_meta_markers(out or "").strip()
+
+# ============================
 # Quick self-test (optional)
 # ============================
 if __name__ == "__main__":
