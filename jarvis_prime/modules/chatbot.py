@@ -5,10 +5,11 @@
 # - Default: offline LLM chat via llm_client.chat_generate
 # - Web mode if wake words are present OR offline LLM fails
 # - Filters: English-only, block junk/low-signal domains, require keyword overlap
-# - Fallback order: DuckDuckGo lib → DuckDuckGo API → Wikipedia → offline LLM
+# - Ranking: authority + keyword overlap + recency
+# - Fallbacks: summarizer fallback + direct snippet mode
 
-import os, re, json, html, requests
-from typing import Dict, List, Tuple, Optional
+import os, re, json, html, requests, datetime
+from typing import Dict, List, Tuple
 from urllib.parse import quote as _urlquote
 
 # ----------------------------
@@ -59,7 +60,7 @@ _AUTHORITY_DOMAINS = [
     # Entertainment/media
     "imdb.com", "rottentomatoes.com", "metacritic.com",
     # Sports
-    "espn.com", "fifa.com", "nba.com", "nfl.com", "olympics.com",
+    "espn.com", "fifa.com", "nba.com", "nfl.com", "olympics.com", "formula1.com",
     # Programming / tech
     "github.com", "gitlab.com", "stackoverflow.com", "superuser.com",
     "serverfault.com", "unix.stackexchange.com", "askubuntu.com", "archlinux.org", "kernel.org",
@@ -119,6 +120,8 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str) -> bool:
         return True
     return False
 
+_CURRENT_YEAR = datetime.datetime.utcnow().year
+
 def _rank_hits(q: str, hits: List[Dict[str,str]]) -> List[Dict[str,str]]:
     scored = []
     for h in hits:
@@ -129,15 +132,31 @@ def _rank_hits(q: str, hits: List[Dict[str,str]]) -> List[Dict[str,str]]:
             continue
         if _is_junk_result(title, snip, url, q):
             continue
+
         score = 0
         if _is_authority(url):
             score += 5
         if "reddit.com" in url or "github.com" in url:
             score += 3
         score += min(len(snip)//120, 3)
+
+        # Keyword overlap
         overlap_bonus = len(set(_tokenize(q)) & set(_tokenize(title + " " + snip)))
         score += min(overlap_bonus, 4)
+
+        # Recency boost
+        years = re.findall(r"\b(20[0-9]{2})\b", title + " " + snip)
+        if years:
+            newest = max(int(y) for y in years)
+            if newest >= _CURRENT_YEAR:
+                score += 4
+            elif newest == _CURRENT_YEAR - 1:
+                score += 2
+            elif newest < _CURRENT_YEAR - 5:
+                score -= 2
+
         scored.append((score, h))
+
     scored.sort(key=lambda x: x[0], reverse=True)
     return [h for _, h in scored]
 
@@ -154,6 +173,9 @@ _WEB_TRIGGERS = [
 def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
+
+# Fact-style queries (trigger direct snippet mode)
+_FACT_QUERY_RE = re.compile(r"\b(last|when|date|year|who|winner|won|result)\b", re.I)
 
 # ----------------------------
 # Web search backends
@@ -281,9 +303,18 @@ def handle_message(source: str, text: str) -> str:
         if _should_use_web(q) or offline_unknown:
             hits = _web_search(q, max_results=6)
             if hits:
+                # Direct snippet mode for fact-style queries
+                if _FACT_QUERY_RE.search(q):
+                    snippets = []
+                    for h in hits[:3]:
+                        snippets.append(f"{h.get('title')} — {h.get('snippet')}")
+                    sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
+                    return _render_web_answer("\n".join(snippets), sources)
+                # Summarizer mode
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-                if not summary:
+                if not summary or summary.lower() in {"i am unsure", "i don't know"}:
+                    # Fallback: use first snippet
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
@@ -321,5 +352,5 @@ def _clean_text(s: str) -> str:
 
 if __name__ == "__main__":
     import sys
-    ask = " ".join(sys.argv[1:]).strip() or "What is the last movie Tom Cruise starred in? Google it"
+    ask = " ".join(sys.argv[1:]).strip() or "What is the last race Max Verstappen won? Google it"
     print(handle_message("cli", ask))
