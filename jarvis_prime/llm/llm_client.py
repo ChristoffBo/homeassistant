@@ -26,6 +26,14 @@ import signal
 from typing import Optional, Dict, Any, Tuple, List
 from collections import deque
 
+# ---- RAG (optional) ----
+try:
+    from rag import inject_context  # /app/rag.py
+except Exception:
+    def inject_context(user_msg: str, top_k: int = 5) -> str:
+        return "(RAG unavailable)"
+# ------------------------
+
 # ============================
 # Globals
 # ============================
@@ -591,7 +599,7 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
     try:
         url = base_url.rstrip("/") + "/api/generate"
         payload = {
-            "model": model_name,
+            "model": model,
             "prompt": prompt,
             "stream": False,
             "options": {
@@ -692,7 +700,7 @@ def _strip_meta_markers(s: str) -> str:
     out = re.sub(r'^\s*message you are a neutral, terse rewriter.*$', '', out, flags=re.I | re.M)
     out = re.sub(r'^\s*rewrite neutrally:.*$', '', out, flags=re.I | re.M)
     out = re.sub(r'(?mi)^[^\w\n]*message\b.*\byou\s+are\b.*\bneutral\b.*\bterse\b.*\brewriter\b.*$', '', out)
-    out = re.sub(r'(?mi)^\s*rewrite\s+neutrally\s*:.*$', '', out)
+    out = re.sub(r'(?mi)^\s*rewrite\s+neutrally\s*:.*$', '', out, flags=re.I | re.M)
 # Extra safety: catch leaks anywhere in the string
     out = re.sub(r'you\s+are\s+a?\s*neutral.*?terse\s*rewriter\.?', '', out, flags=re.I | re.M)
     out = re.sub(r'message\s+you\s+are\s+a?\s*neutral.*?terse\s*rewriter\.?', '', out, flags=re.I | re.M)
@@ -713,8 +721,8 @@ def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
     if not use_grammar:
         return kwargs
     try:
-        llama_cpp = _try_import_llama_cpp()
-        if llama_cpp and hasattr(llama_cpp, "LlamaGrammar"):
+        import llama_cpp  # lazy import
+        if hasattr(llama_cpp, "LlamaGrammar"):
             kwargs["grammar"] = llama_cpp.LlamaGrammar.from_string(_RIFF_GBNF)
         else:
             _log("grammar: LlamaGrammar not available; skipping")
@@ -762,7 +770,6 @@ def _lexi_phrase_banks(allow_profanity: bool) -> Dict[str, List[str]]:
         "beep boop paperwork", "robots hate dust", "bits behaving", "sleep is for disks",
         "coffee-fueled checksum", "backups doing backups"
     ]
-    # profanity banks could be added later; keep branch for policy
     if not allow_profanity:
         pass
     return {"ack": ack, "status": status, "action": action, "humor": humor}
@@ -826,7 +833,6 @@ def _lexi_compose_line(subject: str, allow_profanity: bool) -> str:
     return line
 
 def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_profanity: bool) -> List[str]:
-    # Subject-aware, phrase-based Lexi fallback (fast, deterministic-ish)
     subj = _strip_transport_tags(_scrub_persona_tokens(subject or "Update")).strip()
     lines: List[str] = []
     used: set[str] = set()
@@ -837,6 +843,32 @@ def _lexicon_fallback_lines(persona: str, subject: str, max_lines: int, allow_pr
         used.add(ln)
         lines.append(ln)
     return lines[:max_lines]
+
+# ============================
+# RAG prompt helper
+# ============================
+def _build_prompt_with_rag_messages(messages: List[Dict[str, str]], system_preamble: str = "") -> Tuple[List[Dict[str, str]], str]:
+    """
+    Returns (messages_with_context, system_prompt_with_context).
+    Injects a small 'Context' block from RAG (top-5 facts) without touching the rest.
+    """
+    last_user = ""
+    for m in reversed(messages or []):
+        if (m.get("role") or "").lower() == "user" and (m.get("content") or "").strip():
+            last_user = m["content"].strip()
+            break
+
+    ctx = inject_context(last_user, top_k=5) if last_user else inject_context("", top_k=5)
+    sys_line = (
+        "Prefer the supplied facts over stale memory. "
+        "If facts include times, mention freshness. "
+        "Do not invent entities not present in Context."
+    )
+    sys_prompt = (system_preamble or "").strip()
+    sys_prompt = (sys_prompt + ("\n\n" if sys_prompt else "")) + sys_line
+    sys_prompt += f"\n\nContext:\n{ctx}" if ctx else "\n\nContext:\n(none)"
+
+    return messages, sys_prompt
 
 # ============================
 # Core generation (shared)
@@ -1028,7 +1060,6 @@ def _persona_descriptor(persona: str) -> str:
     return mapping.get(p, "neutral, subtle tone.")
 
 def _prompt_for_riff(persona: str, subject: str, allow_profanity: bool) -> str:
-    # RIFF TRAINING block removed to keep prompts lean and fast.
     persona_line = f"Persona style: { _persona_descriptor(persona) }"
     guard = "" if allow_profanity else " Avoid profanity."
     rules = "Write 1–3 short one-liners (≤140 chars). No bullets, lists, or meta." + guard
@@ -1068,7 +1099,6 @@ def rewrite(
     cpu_limit = prof_cpu
     timeout = prof_timeout
 
-    # NEW: read rewrite max tokens from options (fallback 256)
     opts = _read_options()
     rewrite_max_tokens = _get_int_opt(opts, "llm_rewrite_max_tokens", 256)
     _log(f"rewrite: effective max_tokens={rewrite_max_tokens}")
@@ -1090,7 +1120,6 @@ def rewrite(
         prompt = _prompt_for_rewrite(text, mood, allow_profanity)
         _log(f"rewrite: effective timeout={timeout}s")
 
-        # UPDATED: overflow precheck uses rewrite_max_tokens
         try:
             n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
             _log(f"rewrite: prompt_tokens={n_in}")
@@ -1100,7 +1129,7 @@ def rewrite(
 
         if _would_overflow(n_in, rewrite_max_tokens, ctx_tokens, reserve=256):
             _log(f"rewrite: ctx precheck overflow (prompt={n_in}, out={rewrite_max_tokens}, ctx={ctx_tokens}) → return original text")
-            return text  # safest fallback for rewrites
+            return text
 
         out = _do_generate(
             prompt,
@@ -1108,7 +1137,7 @@ def rewrite(
             base_url=base_url,
             model_url=model_url,
             model_name_hint=model_path,
-            max_tokens=rewrite_max_tokens,  # UPDATED
+            max_tokens=rewrite_max_tokens,
             with_grammar_auto=False
         )
         final = out if out else text
@@ -1130,7 +1159,6 @@ def riff(
     model_path: str = "",
     allow_profanity: bool = False
 ) -> str:
-    # Scrub persona tokens and transport tags from subject before building context
     subject = _strip_transport_tags(_scrub_persona_tokens(subject or ""))
     lines = persona_riff(
         persona=persona,
@@ -1169,23 +1197,19 @@ def persona_riff(
             and (persona or "").lower().strip() == "rager"
         )
 
-    # Sanitize the subject within context
     context = _sanitize_context_subject(context)
 
     opts = _read_options()
     llm_enabled = bool(opts.get("llm_enabled", True))
     riffs_enabled = bool(opts.get("llm_persona_riffs_enabled", True))
 
-    # NEW: read riff max tokens from options (fallback 32)
     riff_max_tokens = _get_int_opt(opts, "llm_riff_max_tokens", 32)
     _log(f"persona_riff: effective max_tokens={riff_max_tokens}")
 
-    # If LLM disabled but riffs are enabled → Lexi fallback immediately
     subj = _extract_subject_from_context(context or "")
     if not llm_enabled and riffs_enabled:
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
-    # Normal LLM path:
     prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
     ctx_tokens = prof_ctx
     cpu_limit = prof_cpu
@@ -1211,7 +1235,6 @@ def persona_riff(
         if LLM_MODE not in ("llama", "ollama"):
             return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
 
-        # Build lean riff sys prompt (RIFF TRAINING removed)
         persona_line = f"Persona style: { _persona_descriptor(persona) }"
         sys_parts = [
             persona_line,
@@ -1243,7 +1266,6 @@ def persona_riff(
             _log(f"persona_riff: tokenize debug skipped: {e}")
             n_in = _estimate_tokens(prompt)
 
-        # UPDATED: overflow precheck uses riff_max_tokens
         if _would_overflow(n_in, riff_max_tokens, ctx_tokens, reserve=256):
             _log(f"persona_riff: ctx precheck overflow (prompt={n_in}, out={riff_max_tokens}, ctx={ctx_tokens}) → Lexi")
             return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
@@ -1254,7 +1276,7 @@ def persona_riff(
             base_url=base_url,
             model_url=model_url,
             model_name_hint=model_path,
-            max_tokens=riff_max_tokens,  # UPDATED
+            max_tokens=riff_max_tokens,
             with_grammar_auto=False
         )
         if not raw:
@@ -1270,7 +1292,6 @@ def persona_riff(
             continue
         if len(ln2) > 140:
             ln2 = ln2[:140].rstrip()
-        # NEW: clean cut-off at sentence end within 140
         ln2 = _trim_to_sentence_140(ln2)
         key = ln2.lower()
         if key in seen or not ln2:
@@ -1283,6 +1304,7 @@ def persona_riff(
     if not cleaned and riffs_enabled:
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
     return cleaned
+
 # ============================
 # Extended riff (with source flag) — ADDITIVE ONLY
 # ============================
@@ -1314,11 +1336,9 @@ def persona_riff_ex(
     context = _sanitize_context_subject(context)
     subj = _extract_subject_from_context(context or "")
 
-    # Fast-path checks to mirror persona_riff()’s behavior while capturing source
     if not llm_enabled and riffs_enabled:
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity if allow_profanity is not None else False), "lexicon"
 
-    # Delegate to original function for actual generation/fallback
     lines = persona_riff(
         persona=persona,
         context=context,
@@ -1334,13 +1354,11 @@ def persona_riff_ex(
         ctx_tokens=ctx_tokens,
         hf_token=hf_token
     )
-
-    # If persona_riff returned nothing (or lexicon-like in shape), treat as lexicon source.
     source = "lexicon" if not lines else "llm"
     return lines, source
 
 # ============================
-# Pure Chat (no riff/persona, no extra config)
+# Pure Chat (no riff/persona, now RAG-aware)
 # ============================
 def chat_generate(
     *,
@@ -1357,9 +1375,8 @@ def chat_generate(
     """
     Minimal chat:
       - Uses same profile (ctx/tokens/timeout/cpu) as rewrite/riff
-      - No riff/persona/Lexi involved
+      - Adds a small RAG 'Context' block to the system prompt (top-5 facts)
       - No separate config keys; if llm_enabled is false, returns ""
-    messages: list of {"role":"system"/"user"/"assistant","content": "..."}
     """
     opts = _read_options()
     if not bool(opts.get("llm_enabled", True)):
@@ -1368,17 +1385,14 @@ def chat_generate(
     if not messages or not isinstance(messages, list):
         return ""
 
-    # Ensure last turn is from user with text
     last = messages[-1]
     if (last.get("role") or "").lower() != "user" or not (last.get("content") or "").strip():
         return ""
 
-    # Profile: inherit ctx/timeout/cpu
     prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
     ctx_tokens = prof_ctx
     eff_timeout = timeout if timeout is not None else prof_timeout
 
-    # Simple Phi vs. fallback prompt builder
     def _build_prompt(msgs: List[Dict[str, str]], sys_prompt: str) -> str:
         sys_txt = (sys_prompt or _load_system_prompt() or "You are a helpful assistant.").strip()
         if _is_phi3_family():
@@ -1425,9 +1439,11 @@ def chat_generate(
             if not ok:
                 return ""
 
+        # >>> RAG injection: add a tiny Context block to the system prompt
+        messages, system_prompt = _build_prompt_with_rag_messages(messages, system_preamble=system_prompt)
+
         prompt = _build_prompt(messages, system_prompt)
 
-        # Overflow check
         try:
             n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
         except Exception:
@@ -1456,7 +1472,6 @@ if __name__ == "__main__":
     try:
         prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
         _log(f"SELFTEST profile -> name={prof_name} cpu={prof_cpu} ctx={prof_ctx} timeout={prof_timeout}")
-        # quick Lexi sanity
         demo = _lexicon_fallback_lines("jarvis", "Duplicati Backup report for misc: nerd. comedian.", 2, allow_profanity=False)
         for d in demo:
             _log(f"LEXI: {d}")
