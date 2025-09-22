@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime – Chat lane service (clean chat, no riff banners)
-# - Uses your existing llm_client.py (no changes needed there)
-# - Reads chatbot_* options from /data/options.json
+# Jarvis Prime – Chat lane service (clean chat, no riff banners, no extra config)
+# - Uses llm_client.chat_generate (pure chat; respects llm_enabled, EnviroGuard)
+# - No chatbot_* keys in options.json; calling this is the “switch”
 # - Exposes handle_message(source, text) for bot.py handoff
 # - Optional HTTP/WS API if FastAPI is installed
 
@@ -16,48 +16,11 @@ from typing import Deque, Dict, List, Optional, Tuple
 from collections import deque, defaultdict
 
 # ----------------------------
-# Config (reads chatbot_* keys)
+# Zero-config constants (no chatbot_* in options.json)
 # ----------------------------
-OPTIONS_PATH = "/data/options.json"
-DEFAULTS = {
-    "chat_enabled": True,                  # derived from chatbot_enabled
-    "chat_history_turns": 3,               # from chatbot_history_turns
-    "chat_history_turns_max": 5,
-    "chat_max_total_tokens": 1200,         # from chatbot_max_total_tokens
-    "chat_reply_max_new_tokens": 256,      # from chatbot_reply_max_new_tokens
-    "chat_system_prompt": "You are Jarvis Prime, a concise homelab assistant.",
-    "chat_model": "",                      # optional override hint for Ollama name or gguf filename base
-}
-
-def _load_options_raw() -> dict:
-    try:
-        with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def _load_options() -> dict:
-    raw = _load_options_raw()
-    out = DEFAULTS.copy()
-
-    # Map schema (chatbot_*) → internal (chat_*)
-    out["chat_enabled"] = bool(raw.get("chatbot_enabled", raw.get("chat_enabled", True)))
-    out["chat_history_turns"] = int(raw.get("chatbot_history_turns", raw.get("chat_history_turns", 3)))
-    out["chat_max_total_tokens"] = int(raw.get("chatbot_max_total_tokens", raw.get("chat_max_total_tokens", 1200)))
-    out["chat_reply_max_new_tokens"] = int(raw.get("chatbot_reply_max_new_tokens", raw.get("chat_reply_max_new_tokens", 256)))
-
-    if isinstance(raw.get("chat_system_prompt"), str) and raw.get("chat_system_prompt", "").strip():
-        out["chat_system_prompt"] = raw["chat_system_prompt"].strip()
-
-    if isinstance(raw.get("chat_model"), str):
-        out["chat_model"] = raw.get("chat_model", "").strip()
-
-    # Enforce caps
-    n = max(1, min(out["chat_history_turns"], DEFAULTS["chat_history_turns_max"]))
-    out["chat_history_turns"] = n
-    return out
-
-OPTS = _load_options()
+HISTORY_TURNS = 3               # keep last N (user,assistant) pairs in memory
+MAX_TOTAL_TOKENS = 1200         # rough budget for system+history+new user (excludes reply budget)
+REPLY_MAX_NEW_TOKENS = 256      # max tokens to generate for the reply
 
 # ----------------------------
 # Token estimation (tiktoken optional)
@@ -86,7 +49,7 @@ TOKENIZER = _Tokenizer()
 def tokens_of_messages(msgs: List[Tuple[str, str]]) -> int:
     total = 0
     for role, content in msgs:
-        total += 4
+        total += 4  # rough per-message overhead
         total += TOKENIZER.count(role) + TOKENIZER.count(content)
         total += 2
     return total
@@ -120,7 +83,9 @@ class ChatMemory:
         reply_budget: int,
     ) -> List[Tuple[str, str]]:
         history = self.get_context(chat_id)
-        msgs: List[Tuple[str, str]] = [("system", sys_prompt)]
+        msgs: List[Tuple[str, str]] = []
+        if sys_prompt:
+            msgs.append(("system", sys_prompt))
         for u, a in history:
             msgs.append(("user", u))
             msgs.append(("assistant", a))
@@ -129,7 +94,9 @@ class ChatMemory:
         limit = max(256, max_total_tokens - reply_budget)
         while tokens_of_messages(msgs) > limit and len(history) > 0:
             history.pop(0)
-            msgs = [("system", sys_prompt)]
+            msgs = []
+            if sys_prompt:
+                msgs.append(("system", sys_prompt))
             for u, a in history:
                 msgs.append(("user", u))
                 msgs.append(("assistant", a))
@@ -143,7 +110,7 @@ class ChatMemory:
             self.turns.pop(cid, None)
             self.last_seen.pop(cid, None)
 
-MEM = ChatMemory(max_turns=OPTS["chat_history_turns"])
+MEM = ChatMemory(max_turns=HISTORY_TURNS)
 
 async def _bg_gc_loop():
     while True:
@@ -151,7 +118,7 @@ async def _bg_gc_loop():
         MEM.GC()
 
 # ----------------------------
-# LLM bridge (reuse llm_client)
+# LLM bridge (reuse llm_client.chat_generate)
 # ----------------------------
 try:
     import llm_client as _LLM
@@ -159,51 +126,13 @@ except Exception:
     _LLM = None
 
 def _is_ready() -> bool:
-    return _LLM is not None
+    return _LLM is not None and hasattr(_LLM, "chat_generate")
 
-def _build_prompt_from_msgs(msgs: List[Tuple[str, str]]) -> str:
-    if getattr(_LLM, "_is_phi3_family", None) and _LLM._is_phi3_family():
-        # Phi-style
-        buf: List[str] = []
-        sys_chunks = [c for (r, c) in msgs if r == "system"]
-        sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
-        buf.append(f"<|system|>\n{sys_text}\n<|end|>")
-        for r, c in msgs:
-            if r == "user":
-                buf.append(f"<|user|>\n{c}\n<|end|>")
-            elif r == "assistant":
-                buf.append(f"<|assistant|>\n{c}\n<|end|>")
-        buf.append("<|assistant|>\n")
-        return "\n".join(buf)
-
-    # Fallback: Llama [INST] style
-    sys_chunks = [c for (r, c) in msgs if r == "system"]
-    sys_text = "\n\n".join(sys_chunks).strip() if sys_chunks else "You are a helpful assistant."
-    convo: List[str] = []
-    for r, c in msgs:
-        if r == "user":
-            convo.append(f"User: {c}")
-        elif r == "assistant":
-            convo.append(f"Assistant: {c}")
-    convo.append("Assistant:")
-    body = "\n".join(convo)
-    return f"<s>[INST] <<SYS>>{sys_text}<</SYS>>\n{body} [/INST]"
-
-def _gen_reply(msgs: List[Tuple[str, str]], max_new_tokens: int, model_hint: str = "") -> str:
+def _gen_reply(messages_list: List[Dict[str, str]], max_new_tokens: int) -> str:
     if not _is_ready():
-        raise RuntimeError("llm_client not available")
-    _LLM.ensure_loaded()
-    prompt = _build_prompt_from_msgs(msgs)
-    out = _LLM._do_generate(
-        prompt,
-        timeout=20,
-        base_url="",
-        model_url="",
-        model_name_hint=model_hint or "",
-        max_tokens=int(max_new_tokens),
-        with_grammar_auto=False
-    )
-    return out or ""
+        raise RuntimeError("llm_client.chat_generate not available")
+    # Pure chat path; leave system_prompt empty → llm_client loads /app/system_prompt.txt internally if present
+    return _LLM.chat_generate(messages=messages_list, system_prompt="", max_new_tokens=max_new_tokens) or ""
 
 # ----------------------------
 # Output cleaner
@@ -238,37 +167,30 @@ def _clean_reply(text: str) -> str:
 # Handoff for bot.py
 # ----------------------------
 def handle_message(source: str, text: str) -> str:
-    global OPTS
-    try:
-        OPTS = _load_options()
-        MEM.set_max_turns(int(OPTS.get("chat_history_turns", DEFAULTS["chat_history_turns"])))
-    except Exception:
-        pass
-
-    if not OPTS.get("chat_enabled", True):
-        return ""
+    # No chat_enabled flag — calling this is the “switch”.
+    # If LLM is disabled or not loaded, llm_client.chat_generate returns "".
+    MEM.set_max_turns(HISTORY_TURNS)
 
     chat_id = (source or "default").strip() or "default"
     user_msg = (text or "").strip()
     if not user_msg:
         return ""
 
-    sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
-    max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
-    reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-    model_hint = OPTS.get("chat_model", "")
-
-    msgs = MEM.trim_by_tokens(
+    # We defer system prompt to llm_client (system_prompt="") so it uses /app/system_prompt.txt
+    msgs_tuples = MEM.trim_by_tokens(
         chat_id=chat_id,
         new_user=user_msg,
-        sys_prompt=sys_prompt,
-        max_total_tokens=max_total,
-        reply_budget=reply_budget,
+        sys_prompt="",
+        max_total_tokens=MAX_TOTAL_TOKENS,
+        reply_budget=REPLY_MAX_NEW_TOKENS,
     )
 
+    # Convert to structured chat format
+    messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
+
     try:
-        raw = _gen_reply(msgs, reply_budget, model_hint=model_hint)
-        answer = _clean_reply(raw) or "(no reply)"
+        raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
+        answer = _clean_reply(raw) or ""
     except Exception as e:
         return f"LLM error: {e}"
 
@@ -292,7 +214,6 @@ if _FASTAPI_OK:
     class ChatIn(BaseModel):
         chat_id: str
         message: str
-        model: Optional[str] = None
 
     class ChatOut(BaseModel):
         chat_id: str
@@ -302,42 +223,40 @@ if _FASTAPI_OK:
 
     @app.on_event("startup")
     async def _startup():
-        global OPTS
-        OPTS = _load_options()
-        MEM.set_max_turns(OPTS["chat_history_turns"])
         asyncio.create_task(_bg_gc_loop())
 
     @app.post("/chat", response_model=ChatOut)
     async def chat_endpoint(payload: ChatIn, request: Request):
-        if not OPTS.get("chat_enabled", True):
-            raise HTTPException(status_code=403, detail="Chat is disabled in options.json")
         chat_id = (payload.chat_id or "default").strip() or "default"
         user_msg = (payload.message or "").strip()
         if not user_msg:
             raise HTTPException(status_code=400, detail="Empty message")
-        sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
-        max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
-        reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-        model_hint = payload.model or OPTS.get("chat_model", "")
-        msgs = MEM.trim_by_tokens(chat_id, user_msg, sys_prompt, max_total, reply_budget)
+
+        msgs_tuples = MEM.trim_by_tokens(
+            chat_id=chat_id,
+            new_user=user_msg,
+            sys_prompt="",
+            max_total_tokens=MAX_TOTAL_TOKENS,
+            reply_budget=REPLY_MAX_NEW_TOKENS,
+        )
+        messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
+
         try:
-            raw = _gen_reply(msgs, reply_budget, model_hint=model_hint)
+            raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
             answer = _clean_reply(raw)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"LLM error: {e}")
+
         MEM.append_turn(chat_id, user_msg, answer)
         return ChatOut(
             chat_id=chat_id,
             reply=answer,
             used_history_turns=len(MEM.get_context(chat_id)),
-            approx_context_tokens=tokens_of_messages(msgs),
+            approx_context_tokens=tokens_of_messages(msgs_tuples),
         )
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket, chat_id: str = Query("default")):
-        if not OPTS.get("chat_enabled", True):
-            await ws.close(code=4403)
-            return
         await ws.accept()
         try:
             while True:
@@ -345,23 +264,29 @@ if _FASTAPI_OK:
                 if not user_msg:
                     await ws.send_json({"error": "empty message"})
                     continue
-                sys_prompt = OPTS.get("chat_system_prompt", DEFAULTS["chat_system_prompt"])
-                max_total = int(OPTS.get("chat_max_total_tokens", DEFAULTS["chat_max_total_tokens"]))
-                reply_budget = int(OPTS.get("chat_reply_max_new_tokens", DEFAULTS["chat_reply_max_new_tokens"]))
-                model_hint = OPTS.get("chat_model", "")
-                msgs = MEM.trim_by_tokens(chat_id, user_msg, sys_prompt, max_total, reply_budget)
+
+                msgs_tuples = MEM.trim_by_tokens(
+                    chat_id=chat_id,
+                    new_user=user_msg,
+                    sys_prompt="",
+                    max_total_tokens=MAX_TOTAL_TOKENS,
+                    reply_budget=REPLY_MAX_NEW_TOKENS,
+                )
+                messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
+
                 try:
-                    raw = _gen_reply(msgs, reply_budget, model_hint=model_hint)
+                    raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
                     answer = _clean_reply(raw)
                 except Exception as e:
                     await ws.send_json({"error": f"LLM error: {e}"})
                     continue
+
                 MEM.append_turn(chat_id, user_msg, answer)
                 await ws.send_json({
                     "chat_id": chat_id,
                     "reply": answer,
                     "used_history_turns": len(MEM.get_context(chat_id)),
-                    "approx_context_tokens": tokens_of_messages(msgs),
+                    "approx_context_tokens": tokens_of_messages(msgs_tuples),
                 })
         except WebSocketDisconnect:
             return
