@@ -246,34 +246,44 @@ def handle(user_text: str) -> str:
     if not q:
         return ""
 
-    # Decide path
-    if _should_use_web(q):
+    # Safety net: never hard-fail with silence
+    try:
+        # Decide path
+        if _should_use_web(q):
+            try:
+                hits = _duckduckgo_search(q, max_results=6)
+            except Exception:
+                hits = []
+
+            if hits:
+                notes = _build_notes_from_hits(hits)
+                # Try to synthesize with LLM; if that fails, use the best snippet/title
+                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
+                if not summary:
+                    # crude fallback: first snippet/title stitched
+                    h0 = hits[0]
+                    t0 = (h0.get("title") or "").strip()
+                    s0 = (h0.get("snippet") or "").strip()
+                    summary = (s0 or t0 or "Here are some sources I found.")
+                # FIX: proper list comprehension for sources
+                sources = [((h.get("title") or h.get("url") or "").strip(), (h.get("url") or "").strip()) for h in hits]
+                sources = [(t, u) for (t, u) in sources if u]
+                return _render_web_answer(_clean_text(summary), sources)
+
+            # No hits → graceful fallback offline (mark as offline answer)
+            offline = _chat_offline_singleturn(q, max_new_tokens=240)
+            return (_clean_text(offline) + "\n\n(offline answer)") if offline.strip() else "(no reply)"
+
+        # Offline default
+        ans = _chat_offline_singleturn(q, max_new_tokens=256)
+        return _clean_text(ans) or "(no reply)"
+    except Exception:
+        # Absolute last-resort guard
         try:
-            hits = _duckduckgo_search(q, max_results=6)
+            fallback = _chat_offline_singleturn(q, max_new_tokens=240)
+            return _clean_text(fallback) or "(no reply)"
         except Exception:
-            hits = []
-
-        if hits:
-            notes = _build_notes_from_hits(hits)
-            # Try to synthesize with LLM; if that fails, use the best snippet/title
-            summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-            if not summary:
-                # crude fallback: first snippet/title stitched
-                h0 = hits[0]
-                t0 = (h0.get("title") or "").strip()
-                s0 = (h0.get("snippet") or "").strip()
-                summary = (s0 or t0 or "Here are some sources I found.")
-            sources = [(h.get("title") or h.get("url") or "").strip(), (h.get("url") or "").strip()] for h in hits
-            sources = [(t, u) for (t, u) in sources if u]
-            return _render_web_answer(_clean_text(summary), sources)
-
-        # No hits → graceful fallback offline (mark as offline answer)
-        offline = _chat_offline_singleturn(q, max_new_tokens=240)
-        return (_clean_text(offline) + "\n\n(offline answer)") if offline.strip() else "(no reply)"
-
-    # Offline default
-    ans = _chat_offline_singleturn(q, max_new_tokens=256)
-    return _clean_text(ans) or "(no reply)"
+            return "(no reply)"
 
 # Convenience alias used by older callers
 def chat(text: str) -> str:
