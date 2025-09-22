@@ -1,5 +1,6 @@
 ## latest (2025-09-22 12:00:00)
 Finally Added Chat, if llm is enabled chat is enabled. Wake word Talk or Chat.
+In Chat if you ask him to goolge it, it wil :)
 ## latest (2025-09-22 12:00:00)
 Updated the Weather Integration, now pulls from 3 API's should be more accurate.
 ## latest (2025-09-17 12:00:00)
