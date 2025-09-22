@@ -192,7 +192,22 @@ def handle_message(source: str, text: str) -> str:
         raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
         answer = _clean_reply(raw) or ""
     except Exception as e:
+        # Reset context if generation fails
+        if _LLM and hasattr(_LLM, "reset_context"):
+            try:
+                _LLM.reset_context()
+            except Exception:
+                pass
         return f"LLM error: {e}"
+
+    if not answer:
+        # Reset context if we got no reply at all
+        if _LLM and hasattr(_LLM, "reset_context"):
+            try:
+                _LLM.reset_context()
+            except Exception:
+                pass
+        answer = "(no reply)"
 
     MEM.append_turn(chat_id, user_msg, answer)
     return answer
@@ -245,7 +260,21 @@ if _FASTAPI_OK:
             raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
             answer = _clean_reply(raw)
         except Exception as e:
+            # Reset context here too
+            if _LLM and hasattr(_LLM, "reset_context"):
+                try:
+                    _LLM.reset_context()
+                except Exception:
+                    pass
             raise HTTPException(status_code=500, detail=f"LLM error: {e}")
+
+        if not answer:
+            if _LLM and hasattr(_LLM, "reset_context"):
+                try:
+                    _LLM.reset_context()
+                except Exception:
+                    pass
+            answer = "(no reply)"
 
         MEM.append_turn(chat_id, user_msg, answer)
         return ChatOut(
@@ -278,8 +307,22 @@ if _FASTAPI_OK:
                     raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
                     answer = _clean_reply(raw)
                 except Exception as e:
+                    # Reset context on failure
+                    if _LLM and hasattr(_LLM, "reset_context"):
+                        try:
+                            _LLM.reset_context()
+                        except Exception:
+                            pass
                     await ws.send_json({"error": f"LLM error: {e}"})
                     continue
+
+                if not answer:
+                    if _LLM and hasattr(_LLM, "reset_context"):
+                        try:
+                            _LLM.reset_context()
+                        except Exception:
+                            pass
+                    answer = "(no reply)"
 
                 MEM.append_turn(chat_id, user_msg, answer)
                 await ws.send_json({
