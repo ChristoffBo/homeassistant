@@ -1,6 +1,6 @@
 # 🧩 Jarvis Prime — Home Assistant Add-on
 
-Jarvis Prime is your standalone Notification Orchestrator and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality.
+Jarvis Prime is your standalone Notification Orchestrator and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality. Jarvis now also includes a Chat lane: a pure chat channel into your local LLM (no riffs, no personas) that works alongside notifications when the LLM is enabled.
 
 Features
 • Standalone Notification Orchestrator and Server.  
@@ -18,6 +18,7 @@ Features
 • Multiple selectable personas: The Dude, Chick, Nerd, Rager, Comedian, Action, Ops  
 • EnviroGuard: adaptive LLM throttle adjusts CPU use based on ambient temperature  
 • Purge & Retention: configurable lifecycle for old messages  
+• Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled  
 
 Supported Sources
 • Radarr / Sonarr → Posters, runtime, SxxEyy, quality, size  
@@ -33,6 +34,7 @@ Supported Sources
 • Webhooks → Generic POSTs  
 • Apprise → POSTs from any Apprise client  
 • Plain text → Beautified into sleek cards  
+• Chat → Direct LLM conversation (prefix with “chat …” or “talk …” in Gotify/ntfy or use Web UI chat tab)  
 
 Intake Setup Details
 
@@ -74,11 +76,20 @@ Intake Setup Details
   curl -X POST "http://10.0.0.100:2580/jarvis" -H "Content-Type: text/plain" -d 'Hello from ntfy direct push'  
 • Notifications will appear in the ntfy app subscribed to topic "jarvis".  
 
+6. Chat Intake (Gotify/ntfy or Web UI)  
+• Works automatically when LLM is enabled in Jarvis.  
+• Prefix your message with "chat" or "talk" (case-insensitive).  
+• Example with Gotify:  
+  curl -X POST "http://10.0.0.100:2580/message?token=YOUR_GOTIFY_APP_TOKEN" -H "Content-Type: application/json" -d '{"title":"chat","message":"What is the difference between an i7 and i9 processor?"}'  
+• Example with ntfy:  
+  curl -X POST "http://10.0.0.100:2580/jarvis" -H "Content-Type: text/plain" -d 'chat Explain the plot of Interstellar'  
+• Example in Web UI: open the Chat tab and type directly.  
+
 EnviroGuard (Optional)  
 • Jarvis monitors temperature and dynamically adjusts LLM profiles.  
 • Two modes are supported:  
-  1. **Open-Meteo API** → uses outside temperature based on configured lat/lon.  
-  2. **Home Assistant sensors** → reads local temperature from any HA entity (e.g., `sensor.living_room_temperature`). Configure entity IDs in `/data/options.json`.  
+  1. Open-Meteo API → uses outside temperature based on configured lat/lon.  
+  2. Home Assistant sensors → reads local temperature from any HA entity (e.g., sensor.living_room_temperature). Configure entity IDs in /data/options.json.  
 • Example config with HA sensors:  
   {  
     "llm_enviroguard_enabled": true,  
@@ -103,19 +114,19 @@ LLM Defaults
 • Persona riffs: 100 tokens (≈70 words, multi-line personality quips)  
 
 Recommended LLMs  
-Jarvis Prime is tuned for **Phi family models**. Use GGUF quantized builds with llama.cpp or ollama.  
+Jarvis Prime is tuned for Phi family models. Use GGUF quantized builds with llama.cpp or ollama.  
 
-1. **Phi-3 Mini (3.8B)**  
+1. Phi-3 Mini (3.8B)  
 • Fast, light, excellent for rewrites and riffs.  
 • Best option for Intel N100, N5105, or similar CPUs.  
 • Download: https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf  
 
-2. **Phi-3.5 Mini (3.8B)**  
+2. Phi-3.5 Mini (3.8B)  
 • Improved reasoning and stability over Phi-3.  
 • Runs fine on mid-range CPUs (i7, Ryzen) at Q4_K_M or Q5_K_M.  
 • Download: https://huggingface.co/microsoft/Phi-3.5-mini-instruct-gguf  
 
-3. **Phi-4 (14B)**  
+3. Phi-4 (14B)  
 • Strongest reasoning, natural phrasing.  
 • Heavy — requires desktop-grade CPU or GPU offload.  
 • Good for users who want maximum polish in rewrites.  
@@ -131,6 +142,7 @@ Web UI Access
 • Ingress via Home Assistant → Add-on → Jarvis Prime → OPEN WEB UI.  
 • Or direct browser: http://10.0.0.100:PORT (Ingress base path is auto-handled).  
 • Inbox view shows beautified cards with filters, retention, purge, and live updates.  
+• Chat lane tab allows pure conversation with your LLM. If LLM is disabled, chat remains off automatically.  
 
 Self-Hosting Statement  
-Jarvis Prime is fully self-contained. Gotify or ntfy are optional — use them only if you want mobile push with history. The add-on runs standalone with its own intakes, Beautify Engine, personas, and dark-mode UI.
+Jarvis Prime is fully self-contained. Gotify or ntfy are optional — use them only if you want mobile push with history. The add-on runs standalone with its own intakes, Beautify Engine, personas, Chat lane, and dark-mode UI.
