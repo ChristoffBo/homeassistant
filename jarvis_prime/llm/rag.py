@@ -4,10 +4,10 @@
 # RAG fetcher for Home Assistant
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 #   using existing keys: llm_enviroguard_ha_base_url, llm_enviroguard_ha_token
-# - Focuses on lights, switches, sensors, binary_sensors, person
+# - Focuses on lights, switches, sensors, binary_sensors, person, device_tracker
 # - Boosts SolarAssistant, Sonoff, Zigbee, MQTT, Radarr, Sonarr entities
-# - Summarizes facts into /tmp/rag_facts.json (ephemeral)
-# - Provides inject_context(user_msg, top_k=5) for the LLM
+# - Summarizes facts into /data/rag_facts.json
+# - Provides inject_context(user_msg, top_k=5) for the LLM (synonym-aware)
 #
 # Safe: read-only, never calls HA /api/services
 
@@ -24,13 +24,13 @@ import urllib.request
 # Config / Paths
 # -----------------------------
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
-FACTS_PATH    = "/tmp/rag_facts.json"  # non-persistent; cleared on container restart
+FACTS_PATH    = "/data/rag_facts.json"
 
-# Include these domains (added "person" so we can answer "Where is Christoff?")
-INCLUDE_DOMAINS = {"light", "switch", "sensor", "binary_sensor", "person"}
+# Include these domains
+INCLUDE_DOMAINS = {"light", "switch", "sensor", "binary_sensor", "person", "device_tracker"}
 
 # Keywords to boost (Solar, Sonoff, Zigbee, MQTT, Radarr, Sonarr)
-SOLAR_KEYWORDS   = {"solar", "solar_assistant", "pv", "inverter", "soc", "battery", "grid", "load", "consumption"}
+SOLAR_KEYWORDS   = {"solar", "solar_assistant", "pv", "inverter", "soc", "battery_soc", "battery", "grid", "load", "generation", "import", "export"}
 SONOFF_KEYWORDS  = {"sonoff"}
 ZIGBEE_KEYWORDS  = {"zigbee", "zigbee2mqtt", "z2m", "zha"}
 MQTT_KEYWORDS    = {"mqtt"}
@@ -50,6 +50,18 @@ DEVICE_CLASS_PRIORITY = {
     "humidity": 2,
     "power": 3,
     "energy": 3
+}
+
+# Query synonyms to make matching robust (SOC, PV, load, grid, etc.)
+QUERY_SYNONYMS = {
+    "soc": ["soc", "state_of_charge", "battery_soc", "battery"],
+    "solar": ["solar", "pv", "generation", "inverter", "array"],
+    "pv": ["pv", "solar"],
+    "load": ["load", "power", "w", "kw", "consumption"],
+    "grid": ["grid", "import", "export"],
+    "battery": ["battery", "soc", "charge"],
+    "where": ["where", "location", "zone", "home", "work", "present"],
+    # add more as needed
 }
 
 REFRESH_INTERVAL_SEC = 15 * 60  # 15 minutes
@@ -96,6 +108,41 @@ def _upper_if_onoff(s: str) -> str:
 def _tok(s: str) -> List[str]:
     return re.findall(r"[A-Za-z0-9_]+", s.lower() if s else "")
 
+def _expand_query_tokens(tokens: List[str]) -> List[str]:
+    expanded = []
+    for t in tokens:
+        expanded.extend(QUERY_SYNONYMS.get(t, [t]))
+    # dedupe in-order
+    out = []
+    seen = set()
+    for x in expanded:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+def _short_iso(ts: str) -> str:
+    return ts.replace("T"," ").split(".")[0].replace("Z","") if ts else ""
+
+def _fmt_num(state: str, unit: str) -> str:
+    try:
+        v = float(state)
+        if abs(v) < 0.005:
+            v = 0.0
+        s = f"{v:.2f}".rstrip("0").rstrip(".")
+        return f"{s} {unit}".strip()
+    except Exception:
+        return f"{state} {unit}".strip() if unit else state
+
+def _safe_zone_from_tracker(state: str, attrs: Dict[str, Any]) -> str:
+    # Prefer zone name if available; avoid raw lat/lon in summaries.
+    zone = attrs.get("zone")
+    if zone:
+        return zone
+    if isinstance(state, str) and state.lower() in ("home", "not_home"):
+        return "Home" if state.lower() == "home" else "Away"
+    return state
+
 # -----------------------------
 # Fetch + summarize
 # -----------------------------
@@ -131,30 +178,48 @@ def _fetch_ha_states(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
             unit  = str(attrs.get("unit_of_measurement", "") or "")
             last_changed = str(item.get("last_changed", "") or "")
 
+            # Domain-specific normalization
+            if domain == "device_tracker":
+                state = _safe_zone_from_tracker(state, attrs)
+
             # Build summary
+            show_state = _upper_if_onoff(state) if state else ""
+            if unit and state not in ("on", "off", "open", "closed"):
+                show_state = _fmt_num(state, unit)
+
             summary = f"{name}"
             if device_class:
                 summary += f" ({device_class})"
-            if state:
-                summary += f": {_upper_if_onoff(state)}"
-            if unit and state not in ("on", "off", "open", "closed"):
-                summary += f" {unit}"
-            # Person: add "as of" to give recency without exposing GPS
-            if domain == "person" and last_changed:
-                summary += f" (as of {last_changed})"
+            if show_state:
+                summary += f": {show_state}"
 
-            # Base score + keyword/device_class boosts
+            recent = _short_iso(last_changed)
+            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
+                summary += f" (as of {recent})"
+
+            # --- Scoring ---
             score = 1
             toks = _tok(entity_id) + _tok(name) + _tok(device_class)
-            if any(k in toks for k in SOLAR_KEYWORDS):   score += 5
+
+            # Strong solar prioritization
+            if any(k in toks for k in SOLAR_KEYWORDS):
+                score += 6
+            if "solar_assistant" in "_".join(toks) or "solarassistant" in "_".join(toks):
+                score += 3
+
+            # Existing boosts
             if any(k in toks for k in SONOFF_KEYWORDS):  score += 3
             if any(k in toks for k in ZIGBEE_KEYWORDS):  score += 2
             if any(k in toks for k in MQTT_KEYWORDS):    score += 2
             if any(k in toks for k in RADARR_KEYWORDS):  score += 3
             if any(k in toks for k in SONARR_KEYWORDS):  score += 3
             score += DEVICE_CLASS_PRIORITY.get(device_class, 0)
-            if domain == "person":
-                score += 4  # make person entities easy to retrieve for "Where is X?"
+            if domain in ("person","device_tracker"):
+                score += 5  # phones/people are highly relevant
+
+            # de-boost spammy radio stats
+            if entity_id.endswith(("_linkquality","_rssi","_lqi")):
+                score -= 2
 
             facts.append({
                 "entity_id": entity_id,
@@ -202,14 +267,19 @@ def get_facts(force_refresh: bool = False) -> List[Dict[str, Any]]:
     return load_cached()
 
 def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
-    """Return top-k matching facts for user_msg"""
-    toks = _tok(user_msg)
+    """Return top-k matching facts for user_msg (synonym aware)"""
+    q_toks_raw = _tok(user_msg)
+    q_toks = set(_expand_query_tokens(q_toks_raw))
     facts = get_facts()
     scored: List[Tuple[int, str]] = []
     for f in facts:
         score = f.get("score", 1)
-        if toks:
-            if any(t in _tok(f.get("summary", "")) for t in toks):
+        if q_toks:
+            f_toks = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
+            if q_toks & f_toks:
+                score += 3
+            if ({"solar","pv","inverter","soc","battery"}.intersection(q_toks)
+                and any(k in f_toks for k in SOLAR_KEYWORDS)):
                 score += 2
         scored.append((score, f.get("summary", "")))
     top = sorted(scored, key=lambda x: x[0], reverse=True)[:top_k]
