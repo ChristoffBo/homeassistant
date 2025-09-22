@@ -6,7 +6,7 @@
 #   using existing keys: llm_enviroguard_ha_base_url, llm_enviroguard_ha_token
 # - Focuses on lights, switches, sensors, binary_sensors, person
 # - Boosts SolarAssistant, Sonoff, Zigbee, MQTT, Radarr, Sonarr entities
-# - Summarizes facts into /data/rag_facts.json
+# - Summarizes facts into /tmp/rag_facts.json (ephemeral)
 # - Provides inject_context(user_msg, top_k=5) for the LLM
 #
 # Safe: read-only, never calls HA /api/services
@@ -24,7 +24,7 @@ import urllib.request
 # Config / Paths
 # -----------------------------
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
-FACTS_PATH    = "/data/rag_facts.json"
+FACTS_PATH    = "/tmp/rag_facts.json"  # non-persistent; cleared on container restart
 
 # Include these domains (added "person" so we can answer "Where is Christoff?")
 INCLUDE_DOMAINS = {"light", "switch", "sensor", "binary_sensor", "person"}
