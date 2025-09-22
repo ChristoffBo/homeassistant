@@ -58,7 +58,7 @@ HA_INDOOR_ENTITY = (
 ).strip()
 
 # -----------------------------
-# Solar thresholds & helpers (radiation-first, cloudcover fallback)
+# Solar thresholds & helpers
 # -----------------------------
 RADIATION_LOW  = 10.0  # MJ/m²/day
 RADIATION_HIGH = 20.0  # MJ/m²/day
@@ -87,7 +87,6 @@ def _solar_class_from_cloudcover(pct: float) -> str:
     return "LOW"
 
 def _solar_compact_label(rad: Optional[float], cloud_pct: Optional[float]) -> str:
-    """Return '⚡ HIGH|MED|LOW' or '⚡ Night' if no sun, else '⚡ —'."""
     try:
         if rad is not None:
             v = float(rad)
@@ -119,18 +118,71 @@ def _solar_line_from_values(label: str, *, rad: Optional[float], cloud_pct: Opti
     return _kv(label, "—")
 
 # -----------------------------
-# HTTP helpers (params-based to avoid bad URLs)
+# HTTP helpers
 # -----------------------------
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
 
-def _get_json(url: str, params: Optional[Dict[str, Any]] = None):
+def _get_json(url: str, params: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None):
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, headers=headers, timeout=10)
         r.raise_for_status()
         return r.json()
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        return {}
 
+# -----------------------------
+# Secondary free sources + blending
+# -----------------------------
+def _get_metno_daily(lat: float, lon: float) -> Dict[str, Optional[float]]:
+    try:
+        url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat}&lon={lon}"
+        headers = {"User-Agent": "JarvisPrime/1.0"}
+        data = _get_json(url, headers=headers)
+        ts = (data.get("properties", {}) or {}).get("timeseries", [])[:24]
+        temps, pops = [], []
+        for p in ts:
+            inst = (p.get("data", {}).get("instant", {}).get("details", {}) or {})
+            if "air_temperature" in inst:
+                temps.append(float(inst["air_temperature"]))
+            for nxt in ("next_1_hours", "next_6_hours"):
+                d = (p.get("data", {}).get(nxt, {}).get("details", {}) or {})
+                if "probability_of_precipitation" in d:
+                    pops.append(float(d["probability_of_precipitation"]))
+        return {
+            "tmax": max(temps) if temps else None,
+            "tmin": min(temps) if temps else None,
+            "pop": max(pops) if pops else None,
+        }
+    except Exception:
+        return {}
+
+def _get_openmeteo_model(lat: float, lon: float, model: str) -> Dict[str, Optional[float]]:
+    try:
+        params = {
+            "latitude": lat, "longitude": lon,
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "timezone": "auto", "temperature_unit": "celsius",
+            "models": model
+        }
+        data = _get_json(OPEN_METEO, params)
+        d = data.get("daily", {}) if data else {}
+        return {
+            "tmax": (d.get("temperature_2m_max") or [None])[0],
+            "tmin": (d.get("temperature_2m_min") or [None])[0],
+            "pop": (d.get("precipitation_probability_max") or [None])[0],
+        }
+    except Exception:
+        return {}
+
+def _blend_vals(vals, mode="median") -> Optional[float]:
+    nums = [float(x) for x in vals if isinstance(x, (int, float))]
+    if not nums: return None
+    if mode == "max": return max(nums)
+    if mode == "min": return min(nums)
+    nums.sort()
+    n = len(nums)
+    mid = n // 2
+    return nums[mid] if n % 2 else (nums[mid-1] + nums[mid]) / 2.0
 # -----------------------------
 # Icons & commentary
 # -----------------------------
@@ -190,7 +242,7 @@ def _kv(label, value):
     return f"    {label}: {value}"
 
 # -----------------------------
-# Home Assistant: optional indoor temperature (display only)
+# Home Assistant: optional indoor temperature
 # -----------------------------
 def _ha_get_state(entity_id: str) -> Optional[Dict[str, Any]]:
     if not (HA_ENABLED and HA_BASE_URL and HA_TOKEN and entity_id):
@@ -221,7 +273,7 @@ def _get_ha_indoor_temp_c() -> Optional[float]:
     return None
 
 # -----------------------------
-# One-time daily alert cache + notify bus (Inbox/Gotify/ntfy/SMTP)
+# One-time daily alert cache + notify bus
 # -----------------------------
 ALERTS_PATH = "/data/jarvis_alerts.json"
 
@@ -255,7 +307,6 @@ def _notify_inbox(title: str, message: str, tag: str) -> bool:
         return True
     except Exception:
         return False
-
 def _notify_gotify(title: str, message: str) -> bool:
     url = os.getenv("GOTIFY_URL")
     token = os.getenv("GOTIFY_TOKEN")
@@ -378,7 +429,6 @@ def get_today_peak_c():
         return float(arr[0])
     except Exception:
         return None
-
 # -----------------------------
 # Current Weather (temp command shows today's solar/rain/hail too)
 # -----------------------------
@@ -386,16 +436,16 @@ def current_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
 
-    # current snapshot
+    # current snapshot (Open-Meteo)
     params_now = {
         "latitude": LAT, "longitude": LON,
         "current_weather": True,
         "temperature_unit": "celsius", "windspeed_unit": "kmh",
     }
-    data = _get_json(OPEN_METEO, params_now)
-    if "error" in data: return f"⚠️ Weather API error: {data['error']}", None
-    cw = data.get("current_weather", {})
-    if not cw: return "⚠️ No current weather data returned", None
+    data_now = _get_json(OPEN_METEO, params_now) or {}
+    cw = data_now.get("current_weather", {}) if isinstance(data_now, dict) else {}
+    if not cw:
+        return "⚠️ No current weather data returned", None
 
     temp = cw.get("temperature", "?")
     wind = cw.get("windspeed", "?")
@@ -411,18 +461,31 @@ def current_weather():
     if indoor_c is not None: lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
     lines.append(_kv("🌬 Wind", f"{wind} km/h"))
 
-    # Today's daily values (NOTE: cloudcover_mean)
+    # Today's daily values (Open-Meteo primary) — add tmax for blending
     params_day = {
         "latitude": LAT, "longitude": LON,
-        "daily": "cloudcover_mean,shortwave_radiation_sum,precipitation_probability_max,weathercode",
+        "daily": "cloudcover_mean,shortwave_radiation_sum,precipitation_probability_max,weathercode,temperature_2m_max",
         "timezone": "auto",
+        "temperature_unit": "celsius",
     }
-    fc = _get_json(OPEN_METEO, params_day)
-    daily_fc = (fc or {}).get("daily") or {}
+    fc = _get_json(OPEN_METEO, params_day) or {}
+    daily_fc = (fc.get("daily") or {}) if isinstance(fc, dict) else {}
     cloud_today = (daily_fc.get("cloudcover_mean") or [None])[0]
     rad_today   = (daily_fc.get("shortwave_radiation_sum") or [None])[0]
     prob_today  = (daily_fc.get("precipitation_probability_max") or [None])[0]
     code_today  = (daily_fc.get("weathercode") or [None])[0]
+    tmax_today  = (daily_fc.get("temperature_2m_max") or [None])[0]
+    try:
+        tmax_today = float(tmax_today) if tmax_today is not None else None
+    except Exception:
+        tmax_today = None
+
+    # ---- mini-ensemble blending (silent fail) ----
+    met = _get_metno_daily(LAT, LON)                         # MET Norway (no key)
+    gfs = _get_openmeteo_daily_model(LAT, LON, model="gfs")  # Open-Meteo pinned model
+
+    blended_tmax = _blend_vals([tmax_today, met.get("tmax"), gfs.get("tmax")], mode="median")
+    blended_pop  = _blend_vals([prob_today, met.get("pop"),  gfs.get("pop")],  mode="max")
 
     # Compact Solar label (HIGH/MED/LOW or Night)
     solar_label = _solar_compact_label(rad_today, cloud_today)
@@ -430,17 +493,18 @@ def current_weather():
         solar_label = "⚡ Night"
     lines.append(_kv("⚡ Solar (today)", solar_label[2:]))
 
-    # Chance of rain (show only if > 0%)
-    if isinstance(prob_today, (int, float)) and prob_today > 0:
-        label = "☔ Chance of rain" if prob_today < 60 else "⚠️ High chance of rain"
-        lines.append(_kv(label, f"{prob_today}%"))
+    # Chance of rain — use blended if available
+    final_pop = blended_pop if isinstance(blended_pop, (int, float)) else prob_today
+    if isinstance(final_pop, (int, float)) and final_pop > 0:
+        label = "☔ Chance of rain" if final_pop < 60 else "⚠️ High chance of rain"
+        lines.append(_kv(label, f"{int(round(final_pop))}%"))
 
     # Hail/severe-storm note (show only if risky codes)
     if code_today in (95,96,99):
         lines.append("⚠️ Severe storm risk — hail possible.")
 
     # ---- High-priority alerts (once per day via notify bus) ----
-    heavy_rain = isinstance(prob_today, (int, float)) and prob_today >= 70
+    heavy_rain = isinstance(final_pop, (int, float)) and final_pop >= 70
     thunder = code_today in (95, 96, 99)
     hail = code_today in (96, 99)
 
@@ -452,10 +516,14 @@ def current_weather():
                            "Hail possible today. Move vehicles under cover.")
     elif heavy_rain:
         _notify_once_daily("heavy_rain", f"🌧 Heavy rain risk — {CITY}",
-                           f"High chance of rain today ({int(prob_today)}%). Watch for flooding.")
+                           f"High chance of rain today ({int(final_pop)}%). Watch for flooding.")
+
+    # Replace/ensure the outlook commentary uses blended tmax if available
+    comment_temp = blended_tmax if isinstance(blended_tmax, (int, float)) else tmax_today
+    if comment_temp is not None:
+        lines.append(_kv("Outlook", _commentary(comment_temp, code_today)))
 
     return "\n".join(lines), None
-
 # -----------------------------
 # Forecast (header uses compact solar; bullets are HIGH/MED/LOW)
 # -----------------------------
@@ -463,7 +531,7 @@ def forecast_weather():
     if not ENABLED:
         return "⚠️ Weather module not enabled", None
 
-    # Params-based URL; uses cloudcover_mean (fixes 400)
+    # Primary: Open-Meteo daily; silent fail already handled by _get_json
     params = {
         "latitude": LAT, "longitude": LON,
         "daily": "temperature_2m_max,temperature_2m_min,weathercode,cloudcover_mean,shortwave_radiation_sum,precipitation_probability_max",
@@ -471,10 +539,10 @@ def forecast_weather():
         "temperature_unit": "celsius",
     }
     data = _get_json(OPEN_METEO, params)
-    if "error" in data:
-        return f"⚠️ Weather API error: {data['error']}", None
+    if not isinstance(data, dict) or "daily" not in data:
+        return "⚠️ No forecast data returned", None
 
-    daily = data.get("daily", {})
+    daily = data["daily"]
     times = daily.get("time", []) or []
     tmins = daily.get("temperature_2m_min", []) or []
     tmaxs = daily.get("temperature_2m_max", []) or []
@@ -505,16 +573,26 @@ def forecast_weather():
         tmax0_f = float(tmax0)
     except Exception:
         tmax0_f = None
-    lines.append(_kv("Outlook", _commentary(tmax0_f, code0)))
+
+    # Blend today's commentary temp and rain chance with extra sources (silent fail)
+    met_today = _get_metno_daily(LAT, LON)
+    gfs_today = _get_openmeteo_daily_model(LAT, LON, model="gfs")
+    blended_tmax0 = _blend_vals([tmax0_f, met_today.get("tmax"), gfs_today.get("tmax")], mode="median")
+    blended_prob0 = _blend_vals([prob0,  met_today.get("pop"),  gfs_today.get("pop")],  mode="max")
+
+    lines.append(_kv("Outlook", _commentary(blended_tmax0 if blended_tmax0 is not None else tmax0_f, code0)))
     lines.append(_kv("⚡ Solar", _solar_compact_label(rad0, cloud0)[2:]))
-    if isinstance(prob0, (int, float)) and prob0 > 0:
+    if isinstance(blended_prob0, (int, float)) and blended_prob0 > 0:
+        label = "☔ Chance of rain" if blended_prob0 < 60 else "⚠️ High chance of rain"
+        lines.append(_kv(label, f"{int(round(blended_prob0))}%"))
+    elif isinstance(prob0, (int, float)) and prob0 > 0:
         label = "☔ Chance of rain" if prob0 < 60 else "⚠️ High chance of rain"
         lines.append(_kv(label, f"{prob0}%"))
     if code0 in (95,96,99):
         lines.append("⚠️ Severe storm risk — hail possible.")
 
     # Optional: also trigger alerts from forecast view (idempotent via cache)
-    heavy_rain0 = isinstance(prob0, (int, float)) and prob0 >= 70
+    heavy_rain0 = isinstance(blended_prob0, (int, float)) and blended_prob0 >= 70
     thunder0 = code0 in (95, 96, 99)
     hail0 = code0 in (96, 99)
     if thunder0:
@@ -525,7 +603,7 @@ def forecast_weather():
                            "Hail possible today. Move vehicles under cover.")
     elif heavy_rain0:
         _notify_once_daily("heavy_rain", f"🌧 Heavy rain risk — {CITY}",
-                           f"High chance of rain today ({int(prob0)}%). Watch for flooding.")
+                           f"High chance of rain today ({int(blended_prob0)}%). Watch for flooding.")
 
     # 7-day list (solar: HIGH/MED/LOW; hide rain% if 0)
     lines.append("")
@@ -540,8 +618,12 @@ def forecast_weather():
         rad = rads[i] if i < len(rads) else None
         prob = probs[i] if i < len(probs) else None
 
+        # For "today" line, keep using blended probability; other days leave as Open-Meteo
+        if i == 0 and isinstance(blended_prob0, (int, float)):
+            prob = blended_prob0
+
         solar_str = _solar_compact_label(rad, cloud)[2:]
-        rain_str = f" · ☔ {prob}%" if isinstance(prob, (int, float)) and prob > 0 else ""
+        rain_str = f" · ☔ {int(round(prob))}%" if isinstance(prob, (int, float)) and prob > 0 else ""
         prefix = "• Today" if i == 0 else f"• {date}"
 
         lines.append(f"{prefix} — {tmin}°C to {tmax}°C {icon}  ·  ⚡ {solar_str}{rain_str}")
@@ -562,3 +644,6 @@ def handle_weather_command(command: str):
     if "solar" in cmd:
         return forecast_weather()
     return "⚠️ Unknown weather command", None
+
+
+
