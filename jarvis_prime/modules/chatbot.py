@@ -1,231 +1,344 @@
 #!/usr/bin/env python3
-# /app/chat.py
+# /app/chatbot.py
 #
-# Jarvis Prime — Chat + Web helper
-# - Default: offline chat via llm_client.chat_generate (pure chat, no persona banners)
-# - Web mode: only when the prompt clearly asks to search/browse the internet
-#   (keywords like: google it, google for me, search the internet, web search, internet search, check internet, check web)
-# - Summarizes web snippets into a short paragraph, then lists sources
-# - Falls back to offline LLM when search fails
-# - If both fail → "I don't know."
+# Jarvis Prime – Chat lane service (clean chat, no riff banners, no extra config)
+# - Uses llm_client.chat_generate (pure chat; respects llm_enabled, EnviroGuard)
+# - No chatbot_* keys in options.json; calling this is the “switch”
+# - Exposes handle_message(source, text) for bot.py handoff
+# - Optional HTTP/WS API if FastAPI is installed
 
-from __future__ import annotations
-
+import os
+import json
+import time
+import asyncio
 import re
-import html
-from typing import Dict, List, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
+from collections import deque, defaultdict
 
-# ============================
-# LLM bridge
-# ============================
+# ----------------------------
+# Zero-config constants (no chatbot_* in options.json)
+# ----------------------------
+HISTORY_TURNS = 3               # keep last N (user,assistant) pairs in memory
+MAX_TOTAL_TOKENS = 1200         # rough budget for system+history+new user (excludes reply budget)
+REPLY_MAX_NEW_TOKENS = 256      # max tokens to generate for the reply
+
+# ----------------------------
+# Token estimation (tiktoken optional)
+# ----------------------------
+class _Tokenizer:
+    def __init__(self):
+        self._enc = None
+        try:
+            import tiktoken  # type: ignore
+            self._enc = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            self._enc = None
+
+    def count(self, text: str) -> int:
+        if not text:
+            return 0
+        if self._enc:
+            try:
+                return len(self._enc.encode(text))
+            except Exception:
+                pass
+        return max(1, (len(text) + 3) // 4)
+
+TOKENIZER = _Tokenizer()
+
+def tokens_of_messages(msgs: List[Tuple[str, str]]) -> int:
+    total = 0
+    for role, content in msgs:
+        total += 4  # rough per-message overhead
+        total += TOKENIZER.count(role) + TOKENIZER.count(content)
+        total += 2
+    return total
+
+# ----------------------------
+# Minimal in-memory chat store
+# ----------------------------
+class ChatMemory:
+    def __init__(self, max_turns: int):
+        self.max_turns_default = max_turns
+        self.turns: Dict[str, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=self.max_turns_default))
+        self.last_seen: Dict[str, float] = {}
+
+    def append_turn(self, chat_id: str, user_msg: str, assistant_msg: str):
+        dq = self.turns[chat_id]
+        dq.append((user_msg, assistant_msg))
+        self.last_seen[chat_id] = time.time()
+
+    def get_context(self, chat_id: str) -> List[Tuple[str, str]]:
+        return list(self.turns[chat_id])
+
+    def set_max_turns(self, n: int):
+        self.max_turns_default = n  # new deques get new maxlen
+
+    def trim_by_tokens(
+        self,
+        chat_id: str,
+        new_user: str,
+        sys_prompt: str,
+        max_total_tokens: int,
+        reply_budget: int,
+    ) -> List[Tuple[str, str]]:
+        history = self.get_context(chat_id)
+        msgs: List[Tuple[str, str]] = []
+        if sys_prompt:
+            msgs.append(("system", sys_prompt))
+        for u, a in history:
+            msgs.append(("user", u))
+            msgs.append(("assistant", a))
+        msgs.append(("user", new_user))
+
+        limit = max(256, max_total_tokens - reply_budget)
+        while tokens_of_messages(msgs) > limit and len(history) > 0:
+            history.pop(0)
+            msgs = []
+            if sys_prompt:
+                msgs.append(("system", sys_prompt))
+            for u, a in history:
+                msgs.append(("user", u))
+                msgs.append(("assistant", a))
+            msgs.append(("user", new_user))
+        return msgs
+
+    def GC(self, idle_seconds: int = 6 * 3600):
+        now = time.time()
+        drop = [cid for cid, ts in self.last_seen.items() if (now - ts) > idle_seconds]
+        for cid in drop:
+            self.turns.pop(cid, None)
+            self.last_seen.pop(cid, None)
+
+MEM = ChatMemory(max_turns=HISTORY_TURNS)
+
+async def _bg_gc_loop():
+    while True:
+        await asyncio.sleep(1800)
+        MEM.GC()
+
+# ----------------------------
+# LLM bridge (reuse llm_client.chat_generate)
+# ----------------------------
 try:
     import llm_client as _LLM
 except Exception:
     _LLM = None
 
-def _llm_ready() -> bool:
+def _is_ready() -> bool:
     return _LLM is not None and hasattr(_LLM, "chat_generate")
 
-def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
-    if not _llm_ready():
-        return ""
-    try:
-        return _LLM.chat_generate(
-            messages=[{"role": "user", "content": user_msg}],
-            system_prompt="",
-            max_new_tokens=max_new_tokens,
-        ) or ""
-    except Exception:
-        return ""
+def _gen_reply(messages_list: List[Dict[str, str]], max_new_tokens: int) -> str:
+    if not _is_ready():
+        raise RuntimeError("llm_client.chat_generate not available")
+    # Pure chat path; leave system_prompt empty → llm_client loads /app/system_prompt.txt internally if present
+    return _LLM.chat_generate(messages=messages_list, system_prompt="", max_new_tokens=max_new_tokens) or ""
 
-def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320) -> str:
-    if not _llm_ready():
-        return ""
-    sys_prompt = (
-        "You are a concise synthesizer. Using only the provided bullet notes, write a clear 4–6 sentence answer. "
-        "Prefer concrete facts & dates. Do not include URLs in the body. If info is conflicting, note it briefly."
-    )
-    msgs = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": f"Question: {question.strip()}\n\nNotes:\n{notes.strip()}\n\nWrite the answer now."},
-    ]
-    try:
-        return _LLM.chat_generate(messages=msgs, system_prompt="", max_new_tokens=max_new_tokens) or ""
-    except Exception:
-        return ""
-
-# Shared cleaners from llm_client if available
+# ----------------------------
+# Output cleaner
+# ----------------------------
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
-def _clean_text(s: str) -> str:
-    if not s:
-        return s
-    out = s.replace("\r", "").strip()
+_BANNER_RX = re.compile(
+    r'^\s*(?:update|status|incident|digest|note)\s*[—:-].*(?:🚨|💥|🛰️)?\s*$',
+    re.IGNORECASE
+)
+
+def _clean_reply(text: str) -> str:
+    if not text:
+        return text
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    if lines and (_BANNER_RX.match(lines[0]) or (len(lines[0]) <= 4 and any(x in lines[0] for x in ("🚨","💥","🛰️")))):
+        lines = lines[1:]
+    out = "\n".join(lines).strip()
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
         out = _scrub_pers(out)
     if _scrub_meta:
         out = _scrub_meta(out)
-    out = re.sub(r"\n{3,}", "\n\n", out)
-    return out.strip()
+    out = re.sub(r'(?is)^\s*i\s+regret\s+to\s+inform\s+you.*?(?:but|however)\s*,?\s*', '', out).strip()
+    out = re.sub(r'\n{3,}', '\n\n', out).strip()
+    return out
 
-# ============================
-# Web triggers (explicit only)
-# ============================
-_WEB_TRIGGERS = [
-    r"\bgoogle\s+it\b",
-    r"\bgoogle\s+for\s+me\b",
-    r"\bsearch\s+the\s+internet\b",
-    r"\binternet\s+search\b",
-    r"\bweb\s+search\b",
-    r"\bcheck\s+internet\b",
-    r"\bcheck\s+web\b",
-]
+# ----------------------------
+# Handoff for bot.py
+# ----------------------------
+def handle_message(source: str, text: str) -> str:
+    # No chat_enabled flag — calling this is the “switch”.
+    # If LLM is disabled or not loaded, llm_client.chat_generate returns "".
+    MEM.set_max_turns(HISTORY_TURNS)
 
-def _should_use_web(q: str) -> bool:
-    ql = (q or "").lower()
-    return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
-
-# ============================
-# DuckDuckGo search
-# ============================
-def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[str, str]]:
-    try:
-        from duckduckgo_search import DDGS  # type: ignore
-    except Exception:
-        return []
-    try:
-        out: List[Dict[str, str]] = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                title = (r.get("title") or "").strip()
-                url = (r.get("href") or "").strip()
-                snippet = (r.get("body") or "").strip()
-                if title and url:
-                    out.append({"title": title, "url": url, "snippet": snippet})
-        return out
-    except Exception:
-        return []
-
-def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str, str]]:
-    import requests
-    try:
-        url = "https://api.duckduckgo.com/"
-        params = {
-            "q": query,
-            "format": "json",
-            "no_redirect": "1",
-            "no_html": "1",
-            "skip_disambig": "0",
-        }
-        r = requests.get(url, params=params, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-    except Exception:
-        return []
-    results: List[Dict[str, str]] = []
-
-    def _push(title: str, url: str, snippet: str):
-        title = (title or "").strip()
-        url = (url or "").strip()
-        snippet = (snippet or "").strip()
-        if title and url:
-            results.append({"title": title, "url": url, "snippet": snippet})
-
-    if data.get("AbstractText") and data.get("AbstractURL"):
-        _push("DuckDuckGo Abstract", data["AbstractURL"], data["AbstractText"])
-
-    for it in (data.get("Results") or []):
-        _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-
-    for it in (data.get("RelatedTopics") or []):
-        if isinstance(it, dict):
-            if "Topics" in it:
-                for t in it["Topics"]:
-                    _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
-            else:
-                _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-
-    seen = set()
-    deduped = []
-    for r in results:
-        if r["url"] not in seen:
-            seen.add(r["url"])
-            deduped.append(r)
-        if len(deduped) >= max_results:
-            break
-    return deduped
-
-def _duckduckgo_search(query: str, max_results: int = 6) -> List[Dict[str, str]]:
-    hits = _search_with_duckduckgo_lib(query, max_results=max_results)
-    if hits:
-        return hits
-    return _search_with_ddg_api(query, max_results=max_results)
-
-# ============================
-# Web answer renderer
-# ============================
-def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
-    lines = []
-    if summary.strip():
-        lines.append(summary.strip())
-    if sources:
-        lines.append("\nSources:")
-        for title, url in sources[:5]:
-            t = title.strip() or url.strip()
-            lines.append(f"• {t} — {url}")
-    return "\n".join(lines).strip()
-
-def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
-    notes = []
-    for h in hits[:6]:
-        t = html.unescape((h.get("title") or "").strip())
-        s = html.unescape((h.get("snippet") or "").strip())
-        if t or s:
-            notes.append(f"- {t} — {s}")
-    return "\n".join(notes)
-
-# ============================
-# Main handler
-# ============================
-def handle(user_text: str) -> str:
-    q = (user_text or "").strip()
-    if not q:
+    chat_id = (source or "default").strip() or "default"
+    user_msg = (text or "").strip()
+    if not user_msg:
         return ""
 
+    # We defer system prompt to llm_client (system_prompt="") so it uses /app/system_prompt.txt
+    msgs_tuples = MEM.trim_by_tokens(
+        chat_id=chat_id,
+        new_user=user_msg,
+        sys_prompt="",
+        max_total_tokens=MAX_TOTAL_TOKENS,
+        reply_budget=REPLY_MAX_NEW_TOKENS,
+    )
+
+    # Convert to structured chat format
+    messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
+
     try:
-        if _should_use_web(q):
-            hits = _duckduckgo_search(q, max_results=6)
-            if hits:
-                notes = _build_notes_from_hits(hits)
-                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-                if not summary:
-                    h0 = hits[0]
-                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
-                sources = [((h.get("title") or h.get("url") or "").strip(), (h.get("url") or "").strip()) for h in hits if h.get("url")]
-                return _render_web_answer(_clean_text(summary), sources)
+        raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
+        answer = _clean_reply(raw) or ""
+    except Exception as e:
+        # Reset context if generation fails
+        if _LLM and hasattr(_LLM, "reset_context"):
+            try:
+                _LLM.reset_context()
+            except Exception:
+                pass
+        return f"LLM error: {e}"
 
-            # fallback to offline LLM if search yields nothing
-            offline = _chat_offline_singleturn(q, max_new_tokens=240)
-            return _clean_text(offline) or "I don't know."
+    if not answer:
+        # Reset context if we got no reply at all
+        if _LLM and hasattr(_LLM, "reset_context"):
+            try:
+                _LLM.reset_context()
+            except Exception:
+                pass
+        answer = "(no reply)"
 
-        # Default offline mode
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
-        return _clean_text(ans) or "I don't know."
-    except Exception:
-        fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-        return _clean_text(fallback) or "I don't know."
+    MEM.append_turn(chat_id, user_msg, answer)
+    return answer
 
-def chat(text: str) -> str:
-    return handle(text)
+# ----------------------------
+# Optional FastAPI API
+# ----------------------------
+_FASTAPI_OK = False
+try:
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Query
+    from pydantic import BaseModel, Field
+    _FASTAPI_OK = True
+except Exception:
+    pass
 
-# ============================
-# CLI quick test
-# ============================
-if __name__ == "__main__":
-    import sys
-    ask = " ".join(sys.argv[1:]).strip() or "web search latest SpaceX Starship update"
-    print(handle(ask))
+if _FASTAPI_OK:
+    app = FastAPI(title="Jarvis Prime – Chat Lane")
+
+    class ChatIn(BaseModel):
+        chat_id: str
+        message: str
+
+    class ChatOut(BaseModel):
+        chat_id: str
+        reply: str
+        used_history_turns: int
+        approx_context_tokens: int
+
+    @app.on_event("startup")
+    async def _startup():
+        asyncio.create_task(_bg_gc_loop())
+
+    @app.post("/chat", response_model=ChatOut)
+    async def chat_endpoint(payload: ChatIn, request: Request):
+        chat_id = (payload.chat_id or "default").strip() or "default"
+        user_msg = (payload.message or "").strip()
+        if not user_msg:
+            raise HTTPException(status_code=400, detail="Empty message")
+
+        msgs_tuples = MEM.trim_by_tokens(
+            chat_id=chat_id,
+            new_user=user_msg,
+            sys_prompt="",
+            max_total_tokens=MAX_TOTAL_TOKENS,
+            reply_budget=REPLY_MAX_NEW_TOKENS,
+        )
+        messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
+
+        try:
+            raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
+            answer = _clean_reply(raw)
+        except Exception as e:
+            # Reset context here too
+            if _LLM and hasattr(_LLM, "reset_context"):
+                try:
+                    _LLM.reset_context()
+                except Exception:
+                    pass
+            raise HTTPException(status_code=500, detail=f"LLM error: {e}")
+
+        if not answer:
+            if _LLM and hasattr(_LLM, "reset_context"):
+                try:
+                    _LLM.reset_context()
+                except Exception:
+                    pass
+            answer = "(no reply)"
+
+        MEM.append_turn(chat_id, user_msg, answer)
+        return ChatOut(
+            chat_id=chat_id,
+            reply=answer,
+            used_history_turns=len(MEM.get_context(chat_id)),
+            approx_context_tokens=tokens_of_messages(msgs_tuples),
+        )
+
+    @app.websocket("/ws")
+    async def ws_endpoint(ws: WebSocket, chat_id: str = Query("default")):
+        await ws.accept()
+        try:
+            while True:
+                user_msg = (await ws.receive_text() or "").strip()
+                if not user_msg:
+                    await ws.send_json({"error": "empty message"})
+                    continue
+
+                msgs_tuples = MEM.trim_by_tokens(
+                    chat_id=chat_id,
+                    new_user=user_msg,
+                    sys_prompt="",
+                    max_total_tokens=MAX_TOTAL_TOKENS,
+                    reply_budget=REPLY_MAX_NEW_TOKENS,
+                )
+                messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
+
+                try:
+                    raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
+                    answer = _clean_reply(raw)
+                except Exception as e:
+                    # Reset context on failure
+                    if _LLM and hasattr(_LLM, "reset_context"):
+                        try:
+                            _LLM.reset_context()
+                        except Exception:
+                            pass
+                    await ws.send_json({"error": f"LLM error: {e}"})
+                    continue
+
+                if not answer:
+                    if _LLM and hasattr(_LLM, "reset_context"):
+                        try:
+                            _LLM.reset_context()
+                        except Exception:
+                            pass
+                    answer = "(no reply)"
+
+                MEM.append_turn(chat_id, user_msg, answer)
+                await ws.send_json({
+                    "chat_id": chat_id,
+                    "reply": answer,
+                    "used_history_turns": len(MEM.get_context(chat_id)),
+                    "approx_context_tokens": tokens_of_messages(msgs_tuples),
+                })
+        except WebSocketDisconnect:
+            return
+        except Exception as e:
+            try:
+                await ws.send_json({"error": f"server error: {e}"})
+            finally:
+                await ws.close()
+
+if __name__ == "__main__" and _FASTAPI_OK:
+    import uvicorn
+    uvicorn.run("chatbot:app", host="0.0.0.0", port=8189, reload=False)
