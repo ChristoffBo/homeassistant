@@ -60,6 +60,7 @@ COPY /llm/llm_client.py /app/llm_client.py
 COPY /llm/llm_memory.py /app/llm_memory.py
 COPY /personality/personality_state.py /app/personality_state.py
 COPY /memory/system_prompt.txt /app/system_prompt.txt
+COPY /modules/chatbot.py /app/chatbot.py
 
 # Inbox server + UI + storage + fan-out clients
 COPY /intakes/api_messages.py /app/api_messages.py
