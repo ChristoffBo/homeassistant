@@ -1,4 +1,5 @@
-
+## latest (2025-09-22 12:00:00)
+Updated the Weather Integration, no pulls from 3 API's should be more accurate.
 ## latest (2025-09-17 12:00:00)
 Hopefully fixed the Multiple Jokes bug.
 Extended the Apprise Timeout, so connection test shold now work.
