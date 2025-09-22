@@ -4,12 +4,22 @@
 # Jarvis Prime – Chat lane service (chat + optional web fallback)
 # - Default: offline LLM chat via llm_client.chat_generate
 # - Web mode if wake words are present OR offline LLM fails
+# - Topic aware routing:
+#     * entertainment: IMDb/Wikipedia/RT/Metacritic; Reddit only from vetted movie subs
+#     * tech/dev: GitHub + Reddit tech subs
+#     * sports: ESPN/FIFA/NBA/NFL/Formula1
+#     * general: Wikipedia/Britannica/Biography/History
 # - Filters: English-only, block junk/low-signal domains, require keyword overlap
-# - Fallback order: DuckDuckGo lib → DuckDuckGo API → Wikipedia → Reddit → GitHub → offline LLM
+# - Ranking: authority + keyword overlap + recency (year hints)
+# - Fallbacks: summarizer fallback + direct snippet mode for fact queries
+# - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted), GitHub (when relevant)
+# - Free, no-register APIs only
 
-import os, re, json, time, html, requests, traceback
+import os, re, json, time, html, requests, datetime, traceback
 from typing import Dict, List, Tuple, Optional
 from urllib.parse import quote as _urlquote
+
+DEBUG = bool(os.environ.get("JARVIS_DEBUG"))
 
 # ----------------------------
 # LLM bridge
@@ -51,27 +61,65 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
         return ""
 
 # ----------------------------
+# Topic detection
+# ----------------------------
+_TECH_KEYS = re.compile(r"\b(api|bug|error|exception|stacktrace|repo|github|docker|k8s|kubernetes|linux|debian|ubuntu|arch|kernel|python|node|golang|go|java|c\+\+|rust|mysql|postgres|sql|ssh|tls|ssl|dns|vpn|proxmox|homeassistant|zimaos|opnsense)\b", re.I)
+_ENT_KEYS  = re.compile(r"\b(movie|film|actor|actress|imdb|rotten|metacritic|trailer|box office|release|cast|director)\b", re.I)
+_SPORT_KEYS = re.compile(r"\b(f1|formula 1|grand prix|premier league|nba|nfl|fifa|world cup|uefa|olympics|tennis|atp|wta|golf|pga)\b", re.I)
+
+def _detect_intent(q: str) -> str:
+    ql = (q or "").lower()
+    if _TECH_KEYS.search(ql):
+        return "tech"
+    if _SPORT_KEYS.search(ql):
+        return "sports"
+    if _ENT_KEYS.search(ql) or re.search(r"\b(last|latest)\b.*\b(movie|film)\b", ql):
+        return "entertainment"
+    # simple name + movie/film heuristic
+    if re.search(r"\b(movie|film)\b", ql):
+        return "entertainment"
+    return "general"
+
+# ----------------------------
 # Helpers & filters
 # ----------------------------
-_AUTHORITY_DOMAINS = [
-    "wikipedia.org", "britannica.com", "biography.com",
-    "graceland.com", "history.com", "smithsonianmag.com",
-    "espn.com", "f1.com", "formula1.com"
+# Authority domains by vertical
+_AUTHORITY_COMMON = [
+    "wikipedia.org", "britannica.com", "biography.com", "history.com"
 ]
+_AUTHORITY_ENT = [
+    "imdb.com", "rottentomatoes.com", "metacritic.com", "boxofficemojo.com"
+]
+_AUTHORITY_SPORTS = [
+    "espn.com", "fifa.com", "nba.com", "nfl.com", "olympics.com", "formula1.com"
+]
+_AUTHORITY_TECH = [
+    "github.com", "gitlab.com", "stackoverflow.com", "superuser.com", "serverfault.com",
+    "unix.stackexchange.com", "askubuntu.com", "archlinux.org", "kernel.org",
+    "docs.python.org", "nodejs.org", "golang.org", "learn.microsoft.com",
+    "answers.microsoft.com", "support.microsoft.com", "man7.org", "linux.org"
+]
+# Reddit allow/block for subs
+_REDDIT_ALLOW_ENT = {"movies","TrueFilm","MovieDetails","tipofmytongue","criterion","oscarrace"}
+_REDDIT_ALLOW_TECH = {"learnpython","python","programming","sysadmin","devops","linux","selfhosted","homelab","docker","kubernetes","opensource","techsupport","homeassistant","homeautomation"}
+_REDDIT_BLOCK_GLOBAL = {"DigitalCodeSELL","giftcardexchange","buildapcsales","hardwareswap","FreeKarma4U","PornhubComments","memes"}
+
 _DENY_DOMAINS = [
-    "fightercontrol.co.uk", "pinterest.", "quora.com", "tumblr.com",
-    "vk.com", "weibo.", "zhihu.com", "baidu.com",
-    "4chan", "8kun", "/forum", "forum.", "boards.",
+    "zhihu.com", "baidu.com", "pinterest.", "quora.com", "tumblr.com",
+    "vk.com", "weibo.", "4chan", "8kun", "/forum", "forum.", "boards.",
+    "linktr.ee", "tiktok.com", "facebook.com"
 ]
 
 def _tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
 
 def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> bool:
+    # require at least two overlapping meaningful tokens
     qk = set(_tokenize(q))
     tk = set(_tokenize((title or "") + " " + (snippet or "")))
     stop = {"where","what","who","when","which","the","and","for","with","from","into",
-            "about","this","that","your","you","are","was","were","have","has","had"}
+            "about","this","that","your","you","are","was","were","have","has","had",
+            "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
 
@@ -86,79 +134,140 @@ def _is_deny_domain(url: str) -> bool:
     test = d + url.lower()
     return any(bad in test for bad in _DENY_DOMAINS)
 
-def _is_authority(url: str) -> bool:
+def _is_authority(url: str, vertical: str) -> bool:
     d = _domain_of(url)
-    return any(d.endswith(ad) for ad in _AUTHORITY_DOMAINS)
+    pool = set(_AUTHORITY_COMMON)
+    if vertical == "entertainment":
+        pool.update(_AUTHORITY_ENT)
+    elif vertical == "sports":
+        pool.update(_AUTHORITY_SPORTS)
+    elif vertical == "tech":
+        pool.update(_AUTHORITY_TECH)
+    return any(d.endswith(ad) for ad in pool)
 
-def _is_junk_result(title: str, snippet: str, url: str, q: str) -> bool:
+def _is_english_text(text: str, max_ratio: float = 0.2) -> bool:
+    if not text:
+        return True
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    return (non_ascii / max(1, len(text))) <= max_ratio
+
+def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -> bool:
     if not title and not snippet:
         return True
     if _is_deny_domain(url):
         return True
     text = (title or "") + " " + (snippet or "")
-    non_ascii = sum(1 for ch in text if ord(ch) > 127)
-    if non_ascii / max(1, len(text)) > 0.3:
+    if not _is_english_text(text, max_ratio=0.2):
         return True
     if not _keyword_overlap(q, title, snippet, min_hits=2):
         return True
+
+    # extra: filter obvious commerce / code-selling spam
+    if re.search(r"\b(price|$[0-9]|venmo|cashapp|zelle|paypal|gift\s*card|code[s]?)\b", text, re.I):
+        return True
+
+    # entertainment: prefer movie info, not reseller lists
+    if vertical == "entertainment":
+        # If domain is reddit and not in allowed movie subs, drop.
+        if "reddit.com" in url.lower():
+            if not re.search(r"/r/([A-Za-z0-9_]+)/", url):
+                return True
+            sub = re.findall(r"/r/([A-Za-z0-9_]+)/", url)[0]
+            if sub in _REDDIT_BLOCK_GLOBAL or sub not in _REDDIT_ALLOW_ENT:
+                return True
+
+    # tech: allow only tech subs for reddit
+    if vertical == "tech":
+        if "reddit.com" in url.lower():
+            if not re.search(r"/r/([A-Za-z0-9_]+)/", url):
+                return True
+            sub = re.findall(r"/r/([A-Za-z0-9_]+)/", url)[0]
+            if sub in _REDDIT_BLOCK_GLOBAL or (sub not in _REDDIT_ALLOW_TECH and sub not in _REDDIT_ALLOW_ENT):
+                return True
+
+    # sports: avoid reddit unless broadly relevant (e.g., r/formula1)
+    if vertical == "sports":
+        if "reddit.com" in url.lower():
+            if not re.search(r"/r/([A-Za-z0-9_]+)/", url):
+                return True
+            sub = re.findall(r"/r/([A-Za-z0-9_]+)/", url)[0].lower()
+            if sub not in {"formula1","soccer","nba","nfl","cricket","tennis","motorsports"}:
+                return True
+
     return False
 
-def _rank_hits(q: str, hits: List[Dict[str,str]]) -> List[Dict[str,str]]:
+_CURRENT_YEAR = datetime.datetime.utcnow().year
+
+def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
     scored = []
-    now = time.time()
     for h in hits:
         url = (h.get("url") or "")
         title = (h.get("title") or "")
         snip = (h.get("snippet") or "")
         if not url:
             continue
-        if _is_junk_result(title, snip, url, q):
+        if _is_junk_result(title, snip, url, q, vertical):
             continue
+
         score = 0
-        if _is_authority(url):
-            score += 5
+        if _is_authority(url, vertical):
+            score += 6
+        # Small bias for Reddit/GitHub only for relevant verticals
+        u = url.lower()
+        if vertical in ("tech",) and ("github.com" in u or "reddit.com" in u):
+            score += 3
+        if vertical in ("entertainment",) and ("imdb.com" in u or "rottentomatoes.com" in u or "metacritic.com" in u):
+            score += 4
+        if vertical in ("sports",) and ("espn.com" in u or "formula1.com" in u or "fifa.com" in u):
+            score += 4
+
+        # Snippet richness
         score += min(len(snip)//120, 3)
+
+        # Keyword overlap
         overlap_bonus = len(set(_tokenize(q)) & set(_tokenize(title + " " + snip)))
         score += min(overlap_bonus, 4)
-        # recency boost if ISO-like date in snippet
-        m = re.search(r"(20\d{2})", snip)
-        if m:
-            yr = int(m.group(1))
-            age = max(0, 2025 - yr)
-            score += max(0, 3 - age)
-        scored.append((score, h))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [h for _, h in scored]
 
-def _build_better_query(raw_q: str) -> str:
-    q = (raw_q or "").strip()
-    if re.search(r"\b(elvis)\b", q, re.I) and re.search(r"\bfamily|parents|children|wife|where\b", q, re.I):
-        return ("Elvis Presley family members residence relatives Lisa Marie Presley Priscilla Presley "
-                "site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:graceland.com")
-    return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com"
+        # Recency: boost 2025/2024, penalize very old
+        years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + " " + (snip or ""))
+        if years:
+            newest = max(int(y) for y in years)
+            if newest >= _CURRENT_YEAR:
+                score += 5
+            elif newest == _CURRENT_YEAR - 1:
+                score += 3
+            elif newest < _CURRENT_YEAR - 5:
+                score -= 2
+
+        scored.append((score, h))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    ranked = [h for _, h in scored]
+    if DEBUG:
+        print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
+    return ranked
 
 # ----------------------------
 # Triggers
 # ----------------------------
 _WEB_TRIGGERS = [
-    r"\bgoogle\s+it\b",
-    r"\bgoogle\s+for\s+me\b",
-    r"\bsearch\s+the\s+internet\b",
-    r"\bsearch\s+the\s+web\b",
-    r"\bweb\s+search\b",
-    r"\binternet\s+search\b",
-    r"\bcheck\s+internet\b",
-    r"\bcheck\s+web\b",
+    r"\bgoogle\s+it\b", r"\bgoogle\s+for\s+me\b",
+    r"\bsearch\s+the\s+internet\b", r"\bsearch\s+the\s+web\b",
+    r"\bweb\s+search\b", r"\binternet\s+search\b",
+    r"\bcheck\s+internet\b", r"\bcheck\s+web\b",
 ]
 
 def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
 
+# Fact-style queries (trigger direct snippet mode)
+_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release)\b", re.I)
+
 # ----------------------------
-# Web search backends
+# Web search backends (FREE, no keys)
 # ----------------------------
-def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[str, str]]:
+def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
     try:
         from duckduckgo_search import DDGS  # type: ignore
     except Exception:
@@ -166,62 +275,59 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[s
     try:
         out: List[Dict[str, str]] = []
         with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results, region="wt-wt", safesearch="Moderate"):
+            for r in ddgs.text(query, max_results=max_results, region=region, safesearch="Moderate"):
                 title = (r.get("title") or "").strip()
                 url = (r.get("href") or "").strip()
                 snippet = (r.get("body") or "").strip()
                 if title and url:
                     out.append({"title": title, "url": url, "snippet": snippet})
+        if DEBUG:
+            print("DDG_LIB_HITS", len(out))
         return out
-    except Exception:
+    except Exception as e:
+        if DEBUG:
+            print("DDG_LIB_ERR", repr(e))
         return []
 
-def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str, str]]:
+def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         url = "https://api.duckduckgo.com/"
-        params = {
-            "q": query,
-            "format": "json",
-            "no_redirect": "1",
-            "no_html": "1",
-            "skip_disambig": "0",
-            "kl": "us-en",
-        }
+        params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1", "skip_disambig": "0", "kl": "us-en"}
         r = requests.get(url, params=params, timeout=timeout)
         r.raise_for_status()
         data = r.json()
-    except Exception:
+    except Exception as e:
+        if DEBUG:
+            print("DDG_API_ERR", repr(e))
         return []
     results: List[Dict[str, str]] = []
-
     def _push(title: str, url: str, snippet: str):
         if title and url:
             results.append({"title": title, "url": url, "snippet": snippet})
-
     if data.get("AbstractText") and data.get("AbstractURL"):
         _push(data.get("AbstractSource") or "DuckDuckGo Abstract", data.get("AbstractURL"), data.get("AbstractText"))
-
     for it in (data.get("Results") or []):
         _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-
     for it in (data.get("RelatedTopics") or []):
         if "Topics" in it:
             for t in it["Topics"]:
                 _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
         else:
             _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-
+    # de-dupe
     deduped, seen = [], set()
     for r in results:
-        url = r.get("url") or ""
-        if url and url not in seen:
-            seen.add(url)
+        u = r.get("url") or ""
+        if u and u not in seen:
+            seen.add(u)
             deduped.append(r)
         if len(deduped) >= max_results:
             break
+    if DEBUG:
+        print("DDG_API_HITS", len(deduped))
     return deduped
 
-def _search_with_wikipedia(query: str, timeout: int = 5) -> List[Dict[str, str]]:
+def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
         r = requests.get(api, timeout=timeout, headers={"accept": "application/json"})
@@ -232,69 +338,110 @@ def _search_with_wikipedia(query: str, timeout: int = 5) -> List[Dict[str, str]]
             url = data.get("content_urls", {}).get("desktop", {}).get("page") or ""
             if title and url and desc:
                 return [{"title": title, "url": url, "snippet": desc}]
-    except Exception:
+    except Exception as e:
+        if DEBUG:
+            print("WIKI_ERR", repr(e))
         return []
     return []
 
-def _search_with_reddit(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str,str]]:
+def _search_with_reddit(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
     try:
         url = "https://www.reddit.com/search.json"
-        headers = {"User-Agent": "JarvisPrimeBot/0.1"}
-        r = requests.get(url, params={"q": query, "limit": max_results}, headers=headers, timeout=timeout)
+        headers = {"User-Agent": "JarvisPrimeBot/1.0"}
+        r = requests.get(url, params={"q": query, "limit": str(limit), "sort": "relevance"}, headers=headers, timeout=timeout)
         r.raise_for_status()
         data = r.json()
         hits: List[Dict[str,str]] = []
         for child in data.get("data", {}).get("children", []):
-            post = child.get("data", {})
-            title = post.get("title") or ""
-            snippet = post.get("selftext") or ""
-            url = "https://www.reddit.com" + post.get("permalink", "")
+            d = child.get("data", {})
+            sub = (d.get("subreddit") or "").strip()
+            title = d.get("title") or ""
+            snippet = d.get("selftext") or ""
+            url = "https://www.reddit.com" + d.get("permalink", "")
             if title and url:
-                hits.append({"title": title, "url": url, "snippet": snippet})
+                hits.append({"title": f"Reddit/r/{sub}: {title}", "url": url, "snippet": snippet})
+        if DEBUG:
+            print("REDDIT_RAW_HITS", len(hits))
         return hits
-    except Exception:
+    except Exception as e:
+        if DEBUG:
+            print("REDDIT_ERR", repr(e))
         return []
 
-def _search_with_github(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str,str]]:
+def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
+    hits = []
     try:
-        url = "https://api.github.com/search/repositories"
-        headers = {"Accept": "application/vnd.github+json", "User-Agent": "JarvisPrimeBot/0.1"}
-        r = requests.get(url, params={"q": query, "per_page": max_results}, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-        hits: List[Dict[str,str]] = []
-        for item in data.get("items", []):
-            title = item.get("full_name") or ""
-            snippet = item.get("description") or ""
-            url = item.get("html_url") or ""
-            if title and url:
-                hits.append({"title": title, "url": url, "snippet": snippet})
-        return hits
-    except Exception:
-        return []
+        repo_url = f"https://api.github.com/search/repositories?q={_urlquote(query)}&per_page={limit}"
+        r = requests.get(repo_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
+        if r.status_code == 200:
+            data = r.json()
+            for item in data.get("items", []):
+                hits.append({"title": f"GitHub Repo: {item.get('full_name')}", "url": item.get("html_url"), "snippet": item.get("description") or ""})
+    except Exception as e:
+        if DEBUG:
+            print("GITHUB_REPO_ERR", repr(e))
+    try:
+        issues_url = f"https://api.github.com/search/issues?q={_urlquote(query)}&per_page={limit}"
+        r = requests.get(issues_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
+        if r.status_code == 200:
+            data = r.json()
+            for item in data.get("items", []):
+                hits.append({"title": f"GitHub Issue: {item.get('title')}", "url": item.get("html_url"), "snippet": (item.get("body") or "")[:300]})
+    except Exception as e:
+        if DEBUG:
+            print("GITHUB_ISSUE_ERR", repr(e))
+    if DEBUG:
+        print("GITHUB_RAW_HITS", len(hits))
+    return hits
 
-def _web_search(query: str, max_results: int = 6) -> List[Dict[str, str]]:
-    q2 = _build_better_query(query)
+# ----------------------------
+# Query shaping by vertical (keeps free APIs)
+# ----------------------------
+def _build_query_by_vertical(q: str, vertical: str) -> str:
+    if vertical == "entertainment":
+        # bias to IMDb/RT/Metacritic/Wiki
+        return f"{q} site:imdb.com OR site:rottentomatoes.com OR site:metacritic.com OR site:wikipedia.org"
+    if vertical == "sports":
+        return f"{q} site:espn.com OR site:formula1.com OR site:fifa.com OR site:wikipedia.org"
+    if vertical == "tech":
+        return f"{q} site:learn.microsoft.com OR site:stackoverflow.com OR site:unix.stackexchange.com OR site:github.com OR site:wikipedia.org"
+    # general
+    return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:history.com"
+
+# ----------------------------
+# Web search orchestration
+# ----------------------------
+def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
+    vertical = _detect_intent(query)
+    shaped = _build_query_by_vertical(query, vertical)
+
     hits: List[Dict[str,str]] = []
-
-    # Step 1: DuckDuckGo library
-    hits.extend(_search_with_duckduckgo_lib(q2, max_results=max_results*2))
-
-    # Step 2: DuckDuckGo API
+    # DuckDuckGo lib then API
+    hits.extend(_search_with_duckduckgo_lib(shaped, max_results=max_results*2))
     if not hits:
-        hits.extend(_search_with_ddg_api(q2, max_results=max_results*2))
-
-    # Step 3: Wikipedia
+        hits.extend(_search_with_ddg_api(shaped, max_results=max_results*2))
+    # Wikipedia fallback adds at least one authoritative summary
     if not hits:
         hits.extend(_search_with_wikipedia(query))
 
-    # Step 4: Reddit
-    hits.extend(_search_with_reddit(query, max_results=max_results))
+    # Reddit/GitHub inclusion depends on vertical
+    if vertical in ("tech",):
+        hits.extend(_search_with_reddit(query, limit=6))
+        hits.extend(_search_with_github(query, limit=6))
+    elif vertical in ("entertainment",):
+        # still pull Reddit, but ranking will reject non-vetted subs
+        hits.extend(_search_with_reddit(query, limit=6))
+    elif vertical in ("sports",):
+        # modest Reddit pull; ranking will allow only sports subs
+        hits.extend(_search_with_reddit(query, limit=6))
+    else:
+        # general: small Reddit pull
+        hits.extend(_search_with_reddit(query, limit=4))
 
-    # Step 5: GitHub
-    hits.extend(_search_with_github(query, max_results=max_results))
+    if DEBUG:
+        print("RAW_HITS_TOTAL", len(hits))
 
-    ranked = _rank_hits(query, hits)
+    ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
 
 # ----------------------------
@@ -333,34 +480,52 @@ def handle_message(source: str, text: str) -> str:
     q = (text or "").strip()
     if not q:
         return ""
-
     try:
-        # Step 1: offline first
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
-
         offline_unknown = (not clean_ans) or (clean_ans.strip().lower() in {
-            "i don't know.", "i dont know", "(no reply)", "i don't know", "unknown", "no idea"
+            "i don't know.", "i dont know", "(no reply)", "unknown", "no idea", "i'm not sure", "i am unsure"
         })
 
-        # Step 2: web if triggered OR offline was unknown
+        # Use web if wake words present or offline unknown
         if _should_use_web(q) or offline_unknown:
-            hits = _web_search(q, max_results=6)
+            hits = _web_search(q, max_results=8)
+            if DEBUG:
+                print("POST_FILTER_HITS", len(hits))
+
             if hits:
+                # Direct snippet mode for fact-style queries
+                if _FACT_QUERY_RE.search(q):
+                    # Present top 2–3 snippets (already ranked)
+                    snippets = []
+                    for h in hits[:3]:
+                        title = h.get('title') or ''
+                        snip  = h.get('snippet') or ''
+                        if title and snip:
+                            snippets.append(f"{title} — {snip}")
+                        else:
+                            snippets.append(title or snip)
+                    sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
+                    return _render_web_answer("\n".join(snippets), sources)
+
+                # Summarizer mode
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-                if not summary:
+                if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
+                    # Fallback: use first good snippet
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                 return _render_web_answer(_clean_text(summary), sources)
 
-        # Step 3: if we had a decent offline answer, return it; else final offline retry
+        # If we had a decent offline answer, return it; else final offline retry
         if clean_ans and not offline_unknown:
             return clean_ans
         fallback = _chat_offline_singleturn(q, max_new_tokens=240)
         return _clean_text(fallback) or "I don't know."
-    except Exception:
+    except Exception as e:
+        if DEBUG:
+            traceback.print_exc()
         try:
             fallback = _chat_offline_singleturn(q, max_new_tokens=240)
             return _clean_text(fallback) or "I don't know."
@@ -389,5 +554,5 @@ def _clean_text(s: str) -> str:
 
 if __name__ == "__main__":
     import sys
-    ask = " ".join(sys.argv[1:]).strip() or "When was Windows 11 released? Google it"
+    ask = " ".join(sys.argv[1:]).strip() or "When was the last Robin Hood movie released? Google it"
     print(handle_message("cli", ask))
