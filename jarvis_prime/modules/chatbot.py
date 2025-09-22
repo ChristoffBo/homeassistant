@@ -4,27 +4,30 @@
 # Jarvis Prime – Chat lane service (chat + optional web fallback)
 # - Default: offline LLM chat via llm_client.chat_generate
 # - Web mode if wake words are present OR offline LLM fails
-# - Filters: block junk/low-signal domains, but don't over-filter
-# - Search order: DuckDuckGo lib (SERP) → DuckDuckGo Instant Answer → Wikipedia (opensearch → summary) → offline
-#
-# Notes:
-# - Set {"chat_debug": true} in /data/options.json to include brief diagnostics in the final answer.
-# - Triggers: “google it”, “search web”, “search internet”, “internet search”, “check web/internet”.
+# - Strategy: RAW DDGS → RAW Instant Answer → Wikipedia (opensearch→summary) → light enrichment
+# - Debug: set {"chat_debug": true, "raw_debug": true} in /data/options.json to see internals/URLs
 
 import os, re, json, time, html, requests, traceback
 from typing import Dict, List, Tuple, Optional
 from urllib.parse import quote as _urlquote
 
 # ----------------------------
-# Options (debug toggle)
+# Options (debug toggles)
 # ----------------------------
 CHAT_DEBUG = False
+RAW_DEBUG = False
 try:
     with open("/data/options.json", "r") as _f:
         _opts = json.load(_f)
         CHAT_DEBUG = bool(_opts.get("chat_debug", False))
+        RAW_DEBUG = bool(_opts.get("raw_debug", False))
 except Exception:
-    CHAT_DEBUG = False
+    pass
+
+_HTTP_HEADERS = {
+    "accept": "application/json, text/plain, */*",
+    "user-agent": "JarvisPrime/1.0 (+bot)"
+}
 
 # ----------------------------
 # LLM bridge
@@ -66,110 +69,46 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
         return ""
 
 # ----------------------------
-# Helpers & filters
+# Helpers (very light filtering; heavy filters removed)
 # ----------------------------
-# Looser filters (stop killing valid answers):
-_AUTHORITY_DOMAINS = [
-    "wikipedia.org", "britannica.com", "biography.com",
-    "graceland.com", "history.com", "smithsonianmag.com",
-    "imdb.com", "rottentomatoes.com", "wwe.com",
-]
-_DENY_DOMAINS = [
-    "pinterest.", "tumblr.com",
-    "vk.com", "weibo.", "zhihu.com", "baidu.com",
-    "4chan", "8kun",
-]
-
-def _tokenize(text: str) -> List[str]:
-    return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
-
-def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 1) -> bool:
-    # Reduced to 1 to avoid over-filtering
-    qk = set(_tokenize(q))
-    tk = set(_tokenize((title or "") + " " + (snippet or "")))
-    stop = {"where","what","who","when","which","the","and","for","with","from","into",
-            "about","this","that","your","you","are","was","were","have","has","had"}
-    qk = {w for w in qk if w not in stop}
-    return len(qk & tk) >= min_hits
-
 def _domain_of(url: str) -> str:
     try:
         return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
     except Exception:
         return ""
 
-def _is_deny_domain(url: str) -> bool:
-    d = _domain_of(url)
-    test = d + url.lower()
-    return any(bad in test for bad in _DENY_DOMAINS)
-
-def _is_authority(url: str) -> bool:
-    d = _domain_of(url)
-    return any(d.endswith(ad) for ad in _AUTHORITY_DOMAINS)
-
-def _is_junk_result(title: str, snippet: str, url: str, q: str) -> bool:
-    if not title and not snippet:
-        return True
-    if _is_deny_domain(url):
-        return True
-    text = (title or "") + " " + (snippet or "")
-    non_ascii = sum(1 for ch in text if ord(ch) > 127)
-    if non_ascii / max(1, len(text)) > 0.5:  # relaxed
-        return True
-    if not _keyword_overlap(q, title, snippet, min_hits=1):  # relaxed
-        return True
-    return False
-
-def _rank_hits(q: str, hits: List[Dict[str,str]]) -> List[Dict[str,str]]:
-    scored = []
+def _rank_hits_passthrough(hits: List[Dict[str,str]]) -> List[Dict[str,str]]:
+    # Keep it simple to prove the pipeline works first.
+    out = []
+    seen = set()
     for h in hits:
-        url = (h.get("url") or "")
-        title = (h.get("title") or "")
-        snip = (h.get("snippet") or "")
-        if not url:
+        url = (h.get("url") or "").strip()
+        if not url or not url.startswith("http") or url in seen:
             continue
-        if _is_junk_result(title, snip, url, q):
-            continue
-        score = 0
-        if _is_authority(url):
-            score += 5
-        score += min(len((snip or ""))//120, 3)
-        overlap_bonus = len(set(_tokenize(q)) & set(_tokenize((title or "") + " " + (snip or ""))))
-        score += min(overlap_bonus, 4)
-        scored.append((score, h))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [h for _, h in scored]
+        seen.add(url)
+        title = (h.get("title") or "").strip()
+        snip = (h.get("snippet") or "").strip()
+        out.append({"title": title, "url": url, "snippet": snip})
+        if len(out) >= 10:
+            break
+    return out
 
 def _smart_title_candidate(raw_q: str) -> str:
-    # Build a likely page title from the query even if user typed all-lowercase.
-    # Take a few non-stopword tokens and Title Case them.
     stop = {"what","who","when","where","which","is","was","the","a","an","in","on","of","to","it","for","and"}
     toks = [t for t in re.findall(r"[a-zA-Z0-9']+", raw_q) if t.lower() not in stop]
     if not toks:
         return raw_q.strip().title()
-    # Prefer sequences that look like names (2-3 tokens)
     cand = " ".join(toks[:3]).strip()
     return cand.title()
 
 def _build_better_query(raw_q: str) -> str:
     q = (raw_q or "").strip()
-
-    # Movie "last/most recent" pattern – bias to IMDb/Wikipedia/RottenTomatoes
+    # Minimal enrichment only; we do NOT force site: by default anymore.
     if re.search(r"\blast\b|\bmost\s+recent\b", q, re.I) and re.search(r"\btom\s+cruise\b", q, re.I):
-        return ("Tom Cruise filmography latest movie release date "
-                "site:imdb.com OR site:wikipedia.org OR site:rottentomatoes.com")
-
-    # Family/biography pattern (e.g., Elvis family)
-    if re.search(r"\belvis\b", q, re.I) and re.search(r"\bfamily|parents|children|wife|where\b", q, re.I):
-        return ("Elvis Presley family members residence relatives Lisa Marie Presley Priscilla Presley "
-                "site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:graceland.com")
-
-    # Sports/career “retire/retirement” pattern (e.g., The Undertaker)
+        return "Tom Cruise latest movie filmography release date"
     if re.search(r"\bretire|retirement\b", q, re.I):
-        return f"{q} site:wikipedia.org OR site:britannica.com OR site:history.com OR site:wwe.com"
-
-    # Generic fallback
-    return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com"
+        return f"{q} career timeline date"
+    return q
 
 # ----------------------------
 # Triggers
@@ -186,26 +125,28 @@ _WEB_TRIGGERS = [
 ]
 
 def _should_use_web(q: str) -> bool:
-    ql = re.sub(r"[.!?]+$", "", (q or "").lower()).strip()
+    # Strip punctuation so "Google it." still matches
+    ql = re.sub(r"[^\w\s]", " ", (q or "").lower())
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
 
 # ----------------------------
-# Web search backends
+# Web search backends (raw-first)
 # ----------------------------
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[str, str]]:
     try:
         from duckduckgo_search import DDGS  # type: ignore
     except Exception as e:
+        if CHAT_DEBUG:
+            print(f"[ddgs-import-error] {e}", flush=True)
         return []
-
     try:
         out: List[Dict[str, str]] = []
         with DDGS() as ddgs:
             for r in ddgs.text(
                 query,
-                region="wt-wt",          # world/English
-                safesearch="Moderate",   # "Off" | "Moderate" | "Strict"
-                timelimit=None,          # "d","w","m","y" or None
+                region="wt-wt",
+                safesearch="Moderate",
+                timelimit=None,
                 max_results=max_results
             ):
                 title = (r.get("title") or "").strip()
@@ -213,8 +154,12 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[s
                 snippet = (r.get("body") or "").strip()
                 if title and url:
                     out.append({"title": title, "url": url, "snippet": snippet})
+        if CHAT_DEBUG:
+            print(f"[ddgs] query={query!r} results={len(out)}", flush=True)
         return out
     except Exception as e:
+        if CHAT_DEBUG:
+            print(f"[ddgs-runtime-error] {type(e).__name__}: {e}", flush=True)
         return []
 
 def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str, str]]:
@@ -228,10 +173,12 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> 
             "skip_disambig": "0",
             "kl": "us-en",
         }
-        r = requests.get(url, params=params, timeout=timeout)
+        r = requests.get(url, params=params, timeout=timeout, headers=_HTTP_HEADERS, proxies={})
         r.raise_for_status()
         data = r.json()
-    except Exception:
+    except Exception as e:
+        if CHAT_DEBUG:
+            print(f"[instant-answer-error] {type(e).__name__}: {e}", flush=True)
         return []
     results: List[Dict[str, str]] = []
 
@@ -241,10 +188,8 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> 
 
     if data.get("AbstractText") and data.get("AbstractURL"):
         _push(data.get("AbstractSource") or "DuckDuckGo Abstract", data.get("AbstractURL"), data.get("AbstractText"))
-
     for it in (data.get("Results") or []):
         _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-
     for it in (data.get("RelatedTopics") or []):
         if "Topics" in it:
             for t in it["Topics"]:
@@ -252,42 +197,29 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> 
         else:
             _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
 
-    # Soft dedupe
-    deduped, seen = [], set()
-    for r in results:
-        url = r.get("url") or ""
-        if url and url not in seen:
-            seen.add(url)
-            deduped.append(r)
-        if len(deduped) >= max_results:
-            break
-    return deduped
+    if CHAT_DEBUG:
+        print(f"[instant-answer] query={query!r} results={len(results)}", flush=True)
+    return results[:max_results]
 
 def _wiki_opensearch(title: str, timeout: int = 5) -> Optional[str]:
-    # Use MediaWiki opensearch to find the canonical page title from a messy query
     try:
         api = "https://en.wikipedia.org/w/api.php"
-        params = {
-            "action": "opensearch",
-            "search": title,
-            "limit": "5",
-            "namespace": "0",
-            "format": "json",
-        }
-        r = requests.get(api, params=params, timeout=timeout)
+        params = {"action": "opensearch", "search": title, "limit": "5", "namespace": "0", "format": "json"}
+        r = requests.get(api, params=params, timeout=timeout, headers=_HTTP_HEADERS, proxies={})
         r.raise_for_status()
         data = r.json()
         if isinstance(data, list) and len(data) >= 2 and data[1]:
-            # Return the first suggested title
             return str(data[1][0])
-    except Exception:
+    except Exception as e:
+        if CHAT_DEBUG:
+            print(f"[wiki-opensearch-error] {type(e).__name__}: {e}", flush=True)
         return None
     return None
 
 def _search_with_wikipedia_summary(title: str, timeout: int = 5) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(title)
-        r = requests.get(api, timeout=timeout, headers={"accept": "application/json"})
+        r = requests.get(api, timeout=timeout, headers=_HTTP_HEADERS, proxies={})
         if r.status_code == 200:
             data = r.json()
             page_title = data.get("title") or title
@@ -295,51 +227,78 @@ def _search_with_wikipedia_summary(title: str, timeout: int = 5) -> List[Dict[st
             url = data.get("content_urls", {}).get("desktop", {}).get("page") or ""
             if page_title and url and desc:
                 return [{"title": page_title, "url": url, "snippet": desc}]
-    except Exception:
+    except Exception as e:
+        if CHAT_DEBUG:
+            print(f"[wiki-summary-error] {type(e).__name__}: {e}", flush=True)
         return []
     return []
 
 def _search_with_wikipedia(query: str, timeout: int = 5) -> List[Dict[str, str]]:
-    # Robust fallback: try a smart-cased candidate → opensearch → summary
     cand = _smart_title_candidate(query)
     title = _wiki_opensearch(cand, timeout=timeout) or cand
     res = _search_with_wikipedia_summary(title, timeout=timeout)
     if res:
+        if CHAT_DEBUG:
+            print(f"[wiki] title={title!r} results=1", flush=True)
         return res
     # try raw query too
-    return _search_with_wikipedia_summary(query, timeout=timeout)
+    res = _search_with_wikipedia_summary(query, timeout=timeout)
+    if CHAT_DEBUG:
+        print(f"[wiki] title={query!r} results={len(res)}", flush=True)
+    return res
 
 def _web_search(query: str, max_results: int = 6) -> List[Dict[str, str]]:
+    # 1) RAW query via DDGS
+    hits = _search_with_duckduckgo_lib(query, max_results=max_results)
+    if hits:
+        return hits
+    # 2) RAW query via Instant Answer
+    hits = _search_with_ddg_api(query, max_results=max_results)
+    if hits:
+        return hits
+    # 3) Wikipedia robust fallback
+    wk = _search_with_wikipedia(query)
+    if wk:
+        return wk
+    # 4) LAST: mild enrichment
     q2 = _build_better_query(query)
-    hits = _search_with_duckduckgo_lib(q2, max_results=max_results*2)
-    if not hits:
-        hits = _search_with_ddg_api(q2, max_results=max_results*2)
-    ranked = _rank_hits(query, hits) if hits else []
-    if ranked:
-        return ranked[:max_results]
-    return _search_with_wikipedia(query)
+    hits = _search_with_duckduckgo_lib(q2, max_results=max_results)
+    if hits:
+        return hits
+    hits = _search_with_ddg_api(q2, max_results=max_results)
+    return hits
 
 # ----------------------------
 # Render
 # ----------------------------
-def _render_web_answer(summary: str, sources: List[Tuple[str, str]], debug_lines: Optional[List[str]] = None) -> str:
+def _render_web_answer(summary: str, sources: List[Tuple[str, str]], raw_hits: Optional[List[Dict[str,str]]] = None, debug_lines: Optional[List[str]] = None) -> str:
     lines: List[str] = []
     if summary.strip():
         lines.append(summary.strip())
+
+    # Gentle source formatting
     if sources:
         dedup, seen = [], set()
         for title, url in sources:
-            if not url or url in seen or _is_deny_domain(url):
+            if not url or url in seen:
                 continue
             seen.add(url)
             dedup.append((title, url))
         if dedup:
             lines.append("\nSources:")
             for title, url in dedup[:5]:
-                lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
+                dom = _domain_of(url)
+                lines.append(f"• {title.strip() or dom} — {url.strip()}")
+
+    if RAW_DEBUG and raw_hits:
+        lines.append("\n[raw_top_urls]")
+        for h in raw_hits[:5]:
+            lines.append(f"- {h.get('title') or _domain_of(h.get('url') or '')} :: {h.get('url')}")
+
     if CHAT_DEBUG and debug_lines:
         lines.append("\n[debug]")
-        lines.extend(f"- {d}" for d in debug_lines[:6])
+        lines.extend(f"- {d}" for d in debug_lines[:8])
+
     return "\n".join(lines).strip()
 
 def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
@@ -373,11 +332,12 @@ def handle_message(source: str, text: str) -> str:
 
         # Step 2: web if triggered OR offline was unknown
         if _should_use_web(q) or offline_unknown:
-            hits = _web_search(q, max_results=6)
+            raw_hits = _web_search(q, max_results=6)
             if CHAT_DEBUG:
-                dbg.append(f"hits={len(hits)}")
+                dbg.append(f"raw_hits={len(raw_hits)}")
 
-            if hits:
+            if raw_hits:
+                hits = _rank_hits_passthrough(raw_hits)
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip() if _llm_ready() else ""
                 if CHAT_DEBUG:
@@ -386,19 +346,11 @@ def handle_message(source: str, text: str) -> str:
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                rendered = _render_web_answer(_clean_text(summary), sources, dbg)
+                rendered = _render_web_answer(_clean_text(summary), sources, raw_hits=raw_hits, debug_lines=dbg)
                 return rendered or (hits[0].get("snippet") or hits[0].get("title") or "No useful info.")
 
-            # last-ditch: try robust Wikipedia route directly on the raw query
-            w = _search_with_wikipedia(q)
-            if CHAT_DEBUG:
-                dbg.append(f"wiki_direct={len(w)}")
-            if w:
-                s = w[0].get("snippet") or w[0].get("title") or "No summary available."
-                u = w[0].get("url") or ""
-                return _render_web_answer(_clean_text(s), [("Wikipedia", u)], dbg) or s
-
-            return _render_web_answer("No reliable sources found.", [], dbg)
+            # If truly nothing, say so with debug context if enabled
+            return _render_web_answer("No results returned from any backend.", [], raw_hits=None, debug_lines=dbg)
 
         # Step 3: if we had a decent offline answer, return it; else final offline retry
         if clean_ans and not offline_unknown:
@@ -410,14 +362,14 @@ def handle_message(source: str, text: str) -> str:
             dbg.append(f"exception={type(e).__name__}: {e}")
         try:
             fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-            return _render_web_answer(_clean_text(fallback) or "I don't know.", [], dbg)
+            return _render_web_answer(_clean_text(fallback) or "I don't know.", [], raw_hits=None, debug_lines=dbg)
         except Exception as e2:
             if CHAT_DEBUG:
                 dbg.append(f"fallback_exception={type(e2).__name__}: {e2}")
-            return _render_web_answer("I don't know.", [], dbg)
+            return _render_web_answer("I don't know.", [], raw_hits=None, debug_lines=dbg)
 
 # ----------------------------
-# Shared cleaners (duplicated at end to avoid reference issues)
+# Shared cleaners (at end)
 # ----------------------------
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
