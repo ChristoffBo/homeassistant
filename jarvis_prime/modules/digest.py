@@ -73,17 +73,62 @@ def _series_today(opts: Dict[str,Any]) -> str:
     return ""
 
 def _weather_today(opts: Dict[str,Any]) -> str:
-    if not _weather or not opts.get("weather_enabled"): return ""
+    if not _weather or not opts.get("weather_enabled"):
+        return ""
     try:
-        if hasattr(_weather, "handle_weather_command"):
+        # Prefer a dedicated summary if the weather module provides one
+        txt = ""
+        if hasattr(_weather, "get_current_summary"):
+            maybe = _weather.get_current_summary()
+            if isinstance(maybe, dict):
+                # Convert simple dict summaries to a single line
+                order = ["location","as_of","outdoor","indoor","wind","solar","chance_of_rain","outlook"]
+                parts = []
+                for k in order:
+                    v = maybe.get(k)
+                    if v:
+                        parts.append(str(v))
+                return " | ".join(parts)
+            elif isinstance(maybe, str):
+                txt = maybe
+
+        if not txt and hasattr(_weather, "handle_weather_command"):
+            # Fallback: ask the module for the full weather text
             resp = _weather.handle_weather_command("weather")
-            txt = resp[0] if isinstance(resp, tuple) else resp
-            txt = txt or ""
-            lines = [l.strip() for l in txt.splitlines() if l.strip()]
-            return " | ".join(lines[:2])
+            txt = resp[0] if isinstance(resp, tuple) else resp or ""
+
+        lines = [l.strip() for l in (txt or "").splitlines() if l.strip()]
+        if not lines:
+            return ""
+
+        # Try to keep a short header like "Current Weather — <place>"
+        header = next((l for l in lines[:3] if "Current Weather" in l), None)
+
+        # Pick key metric lines by keywords / emoji seen in your full weather push
+        wanted_keys = (
+            "Outdoor", "Indoor", "Wind", "Solar", "Chance of rain", "Outlook",
+            "Humidity", "Pressure", "Feels like"
+        )
+        wanted_emojis_starts = ("🌡", "🏠", "🌬", "💨", "⚡", "☔", "🌧", "🌤", "🌥", "☀")
+
+        metrics: List[str] = []
+        for l in lines:
+            if any(k in l for k in wanted_keys) or l.startswith(wanted_emojis_starts):
+                metrics.append(l)
+
+        # Build a concise single-line summary
+        parts: List[str] = []
+        if header:
+            parts.append(header)
+        parts.extend(metrics[:6])  # keep it tight
+
+        if not parts:
+            # Last resort: don’t truncate to 2 lines anymore—take up to 6 lines
+            parts = lines[:6]
+
+        return " | ".join(parts)
     except Exception:
-        pass
-    return ""
+        return ""
 
 def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
     title = f"📰 Daily Digest — {datetime.now().strftime('%a %d %b %Y')}"
