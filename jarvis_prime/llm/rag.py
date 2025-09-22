@@ -4,8 +4,8 @@
 # RAG fetcher for Home Assistant
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 #   using existing keys: llm_enviroguard_ha_base_url, llm_enviroguard_ha_token
-# - Focuses on lights, switches, sensors, binary_sensors
-# - Boosts SolarAssistant, Sonoff, Zigbee, MQTT entities
+# - Focuses on lights, switches, sensors, binary_sensors, person
+# - Boosts SolarAssistant, Sonoff, Zigbee, MQTT, Radarr, Sonarr entities
 # - Summarizes facts into /data/rag_facts.json
 # - Provides inject_context(user_msg, top_k=5) for the LLM
 #
@@ -16,7 +16,7 @@ import re
 import json
 import time
 import threading
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import urllib.request
 
@@ -26,13 +26,16 @@ import urllib.request
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 FACTS_PATH    = "/data/rag_facts.json"
 
-INCLUDE_DOMAINS = {"light", "switch", "sensor", "binary_sensor"}
+# Include these domains (added "person" so we can answer "Where is Christoff?")
+INCLUDE_DOMAINS = {"light", "switch", "sensor", "binary_sensor", "person"}
 
-# Keywords to boost (Solar, Sonoff, Zigbee, MQTT)
-SOLAR_KEYWORDS  = {"solar", "solar_assistant", "pv", "inverter", "soc", "battery", "grid", "load"}
-SONOFF_KEYWORDS = {"sonoff"}
-ZIGBEE_KEYWORDS = {"zigbee", "zigbee2mqtt", "z2m", "zha"}
-MQTT_KEYWORDS   = {"mqtt"}
+# Keywords to boost (Solar, Sonoff, Zigbee, MQTT, Radarr, Sonarr)
+SOLAR_KEYWORDS   = {"solar", "solar_assistant", "pv", "inverter", "soc", "battery", "grid", "load", "consumption"}
+SONOFF_KEYWORDS  = {"sonoff"}
+ZIGBEE_KEYWORDS  = {"zigbee", "zigbee2mqtt", "z2m", "zha"}
+MQTT_KEYWORDS    = {"mqtt"}
+RADARR_KEYWORDS  = {"radarr"}
+SONARR_KEYWORDS  = {"sonarr"}
 
 # Device-class priority boosts
 DEVICE_CLASS_PRIORITY = {
@@ -126,7 +129,9 @@ def _fetch_ha_states(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
             name = str(attrs.get("friendly_name", entity_id))
             state = str(item.get("state", ""))
             unit  = str(attrs.get("unit_of_measurement", "") or "")
+            last_changed = str(item.get("last_changed", "") or "")
 
+            # Build summary
             summary = f"{name}"
             if device_class:
                 summary += f" ({device_class})"
@@ -134,14 +139,22 @@ def _fetch_ha_states(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
                 summary += f": {_upper_if_onoff(state)}"
             if unit and state not in ("on", "off", "open", "closed"):
                 summary += f" {unit}"
+            # Person: add "as of" to give recency without exposing GPS
+            if domain == "person" and last_changed:
+                summary += f" (as of {last_changed})"
 
+            # Base score + keyword/device_class boosts
             score = 1
             toks = _tok(entity_id) + _tok(name) + _tok(device_class)
-            if any(k in toks for k in SOLAR_KEYWORDS):  score += 5
-            if any(k in toks for k in SONOFF_KEYWORDS): score += 3
-            if any(k in toks for k in ZIGBEE_KEYWORDS): score += 2
-            if any(k in toks for k in MQTT_KEYWORDS):   score += 2
+            if any(k in toks for k in SOLAR_KEYWORDS):   score += 5
+            if any(k in toks for k in SONOFF_KEYWORDS):  score += 3
+            if any(k in toks for k in ZIGBEE_KEYWORDS):  score += 2
+            if any(k in toks for k in MQTT_KEYWORDS):    score += 2
+            if any(k in toks for k in RADARR_KEYWORDS):  score += 3
+            if any(k in toks for k in SONARR_KEYWORDS):  score += 3
             score += DEVICE_CLASS_PRIORITY.get(device_class, 0)
+            if domain == "person":
+                score += 4  # make person entities easy to retrieve for "Where is X?"
 
             facts.append({
                 "entity_id": entity_id,
@@ -150,6 +163,7 @@ def _fetch_ha_states(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "friendly_name": name,
                 "state": state,
                 "unit": unit,
+                "last_changed": last_changed,
                 "summary": summary,
                 "score": score
             })
