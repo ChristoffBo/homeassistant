@@ -5,15 +5,16 @@
 # - Default: offline LLM chat via llm_client.chat_generate
 # - Web mode if wake words are present OR offline LLM fails
 # - Topic aware routing:
-#     * entertainment: IMDb/Wikipedia/RT/Metacritic (Reddit only vetted movie subs, and NOT for fact queries)
+#     * entertainment: IMDb/Wikipedia/RT/Metacritic (Reddit only vetted movie subs, not for fact queries)
 #     * tech/dev: GitHub + StackExchange + Reddit tech subs
 #     * sports: F1/ESPN/FIFA official; Reddit excluded for fact queries
 #     * general: Wikipedia/Britannica/Biography/History
 # - Filters: English-only, block junk/low-signal domains, require keyword overlap
 # - Ranking: authority + keyword overlap + strong recency for facts
 # - Fallbacks: summarizer fallback + direct snippet mode for fact queries
-# - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted by vertical), GitHub (tech)
+# - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted), GitHub (tech)
 # - Free, no-register APIs only
+# - Human behavior heuristics: prefer clear facts, recency, multiple perspectives, avoid spammy/repetitive sources
 
 import os, re, json, time, html, requests, datetime, traceback
 from typing import Dict, List, Tuple, Optional
@@ -49,7 +50,8 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
         return ""
     sys_prompt = (
         "You are a concise synthesizer. Using only the provided bullet notes, write a clear 4–6 sentence answer. "
-        "Prefer concrete facts & dates. Do not include URLs in the body. If info is conflicting, note it briefly."
+        "Prefer concrete facts & dates. Avoid speculation. If info is conflicting, note it briefly. "
+        "Rank recent and authoritative sources higher. Respond like a human researcher would: factual, relevant, helpful."
     )
     msgs = [
         {"role": "system", "content": sys_prompt},
@@ -160,11 +162,9 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
     if not _keyword_overlap(q, title, snippet, min_hits=2):
         return True
 
-    # kill commerce / resale / code-list spam
     if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|$[0-9])\b", text, re.I):
         return True
 
-    # community-source gating
     if "reddit.com" in url.lower():
         m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
         sub = (m.group(1).lower() if m else "")
@@ -227,7 +227,6 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
     if DEBUG:
         print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
     return ranked
-
 # ----------------------------
 # Triggers
 # ----------------------------
@@ -419,7 +418,6 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
 
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
-
 # ----------------------------
 # Render
 # ----------------------------
