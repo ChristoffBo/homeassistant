@@ -5,14 +5,14 @@
 # - Default: offline LLM chat via llm_client.chat_generate
 # - Web mode if wake words are present OR offline LLM fails
 # - Topic aware routing:
-#     * entertainment: IMDb/Wikipedia/RT/Metacritic; Reddit only from vetted movie subs
-#     * tech/dev: GitHub + Reddit tech subs
-#     * sports: ESPN/FIFA/NBA/NFL/Formula1
+#     * entertainment: IMDb/Wikipedia/RT/Metacritic (Reddit only vetted movie subs, and NOT for fact queries)
+#     * tech/dev: GitHub + StackExchange + Reddit tech subs
+#     * sports: F1/ESPN/FIFA official; Reddit excluded for fact queries
 #     * general: Wikipedia/Britannica/Biography/History
 # - Filters: English-only, block junk/low-signal domains, require keyword overlap
-# - Ranking: authority + keyword overlap + recency (year hints)
+# - Ranking: authority + keyword overlap + strong recency for facts
 # - Fallbacks: summarizer fallback + direct snippet mode for fact queries
-# - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted), GitHub (when relevant)
+# - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted by vertical), GitHub (tech)
 # - Free, no-register APIs only
 
 import os, re, json, time, html, requests, datetime, traceback
@@ -75,7 +75,6 @@ def _detect_intent(q: str) -> str:
         return "sports"
     if _ENT_KEYS.search(ql) or re.search(r"\b(last|latest)\b.*\b(movie|film)\b", ql):
         return "entertainment"
-    # simple name + movie/film heuristic
     if re.search(r"\b(movie|film)\b", ql):
         return "entertainment"
     return "general"
@@ -83,7 +82,6 @@ def _detect_intent(q: str) -> str:
 # ----------------------------
 # Helpers & filters
 # ----------------------------
-# Authority domains by vertical
 _AUTHORITY_COMMON = [
     "wikipedia.org", "britannica.com", "biography.com", "history.com"
 ]
@@ -91,30 +89,30 @@ _AUTHORITY_ENT = [
     "imdb.com", "rottentomatoes.com", "metacritic.com", "boxofficemojo.com"
 ]
 _AUTHORITY_SPORTS = [
-    "espn.com", "fifa.com", "nba.com", "nfl.com", "olympics.com", "formula1.com"
+    "espn.com", "fifa.com", "nba.com", "nfl.com", "olympics.com", "formula1.com",
+    "autosport.com", "motorsport.com", "the-race.com"
 ]
 _AUTHORITY_TECH = [
     "github.com", "gitlab.com", "stackoverflow.com", "superuser.com", "serverfault.com",
     "unix.stackexchange.com", "askubuntu.com", "archlinux.org", "kernel.org",
-    "docs.python.org", "nodejs.org", "golang.org", "learn.microsoft.com",
-    "answers.microsoft.com", "support.microsoft.com", "man7.org", "linux.org"
+    "docs.python.org", "nodejs.org", "golang.org",
+    "learn.microsoft.com", "answers.microsoft.com", "support.microsoft.com",
+    "man7.org", "linux.org"
 ]
-# Reddit allow/block for subs
+
 _REDDIT_ALLOW_ENT = {"movies","TrueFilm","MovieDetails","tipofmytongue","criterion","oscarrace"}
 _REDDIT_ALLOW_TECH = {"learnpython","python","programming","sysadmin","devops","linux","selfhosted","homelab","docker","kubernetes","opensource","techsupport","homeassistant","homeautomation"}
-_REDDIT_BLOCK_GLOBAL = {"DigitalCodeSELL","giftcardexchange","buildapcsales","hardwareswap","FreeKarma4U","PornhubComments","memes"}
 
 _DENY_DOMAINS = [
-    "zhihu.com", "baidu.com", "pinterest.", "quora.com", "tumblr.com",
-    "vk.com", "weibo.", "4chan", "8kun", "/forum", "forum.", "boards.",
-    "linktr.ee", "tiktok.com", "facebook.com"
+    "zhihu.com","baidu.com","pinterest.","quora.com","tumblr.com",
+    "vk.com","weibo.","4chan","8kun","/forum","forum.","boards.",
+    "linktr.ee","tiktok.com","facebook.com","notebooklm.google.com"
 ]
 
 def _tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
 
 def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> bool:
-    # require at least two overlapping meaningful tokens
     qk = set(_tokenize(q))
     tk = set(_tokenize((title or "") + " " + (snippet or "")))
     stop = {"where","what","who","when","which","the","and","for","with","from","into",
@@ -162,36 +160,22 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
     if not _keyword_overlap(q, title, snippet, min_hits=2):
         return True
 
-    # extra: filter obvious commerce / code-selling spam
-    if re.search(r"\b(price|$[0-9]|venmo|cashapp|zelle|paypal|gift\s*card|code[s]?)\b", text, re.I):
+    # kill commerce / resale / code-list spam
+    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|$[0-9])\b", text, re.I):
         return True
 
-    # entertainment: prefer movie info, not reseller lists
-    if vertical == "entertainment":
-        # If domain is reddit and not in allowed movie subs, drop.
-        if "reddit.com" in url.lower():
-            if not re.search(r"/r/([A-Za-z0-9_]+)/", url):
+    # community-source gating
+    if "reddit.com" in url.lower():
+        m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
+        sub = (m.group(1).lower() if m else "")
+        if vertical == "entertainment":
+            if sub not in {s.lower() for s in _REDDIT_ALLOW_ENT}:
                 return True
-            sub = re.findall(r"/r/([A-Za-z0-9_]+)/", url)[0]
-            if sub in _REDDIT_BLOCK_GLOBAL or sub not in _REDDIT_ALLOW_ENT:
+        elif vertical == "tech":
+            if sub not in {s.lower() for s in _REDDIT_ALLOW_TECH}:
                 return True
-
-    # tech: allow only tech subs for reddit
-    if vertical == "tech":
-        if "reddit.com" in url.lower():
-            if not re.search(r"/r/([A-Za-z0-9_]+)/", url):
-                return True
-            sub = re.findall(r"/r/([A-Za-z0-9_]+)/", url)[0]
-            if sub in _REDDIT_BLOCK_GLOBAL or (sub not in _REDDIT_ALLOW_TECH and sub not in _REDDIT_ALLOW_ENT):
-                return True
-
-    # sports: avoid reddit unless broadly relevant (e.g., r/formula1)
-    if vertical == "sports":
-        if "reddit.com" in url.lower():
-            if not re.search(r"/r/([A-Za-z0-9_]+)/", url):
-                return True
-            sub = re.findall(r"/r/([A-Za-z0-9_]+)/", url)[0].lower()
-            if sub not in {"formula1","soccer","nba","nfl","cricket","tennis","motorsports"}:
+        elif vertical == "sports":
+            if sub not in {"formula1","motorsports"}:
                 return True
 
     return False
@@ -200,6 +184,7 @@ _CURRENT_YEAR = datetime.datetime.utcnow().year
 
 def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
     scored = []
+    facty = bool(_FACT_QUERY_RE.search(q))
     for h in hits:
         url = (h.get("url") or "")
         title = (h.get("title") or "")
@@ -211,33 +196,29 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
 
         score = 0
         if _is_authority(url, vertical):
-            score += 6
-        # Small bias for Reddit/GitHub only for relevant verticals
+            score += 8 if facty else 6
+
         u = url.lower()
-        if vertical in ("tech",) and ("github.com" in u or "reddit.com" in u):
+        if vertical == "tech" and ("github.com" in u or "stackoverflow.com" in u):
             score += 3
-        if vertical in ("entertainment",) and ("imdb.com" in u or "rottentomatoes.com" in u or "metacritic.com" in u):
-            score += 4
-        if vertical in ("sports",) and ("espn.com" in u or "formula1.com" in u or "fifa.com" in u):
-            score += 4
+        if vertical == "entertainment" and ("imdb.com" in u or "rottentomatoes.com" in u or "metacritic.com" in u):
+            score += 5 if facty else 3
+        if vertical == "sports" and ("formula1.com" in u or "espn.com" in u):
+            score += 5 if facty else 3
 
-        # Snippet richness
         score += min(len(snip)//120, 3)
-
-        # Keyword overlap
         overlap_bonus = len(set(_tokenize(q)) & set(_tokenize(title + " " + snip)))
         score += min(overlap_bonus, 4)
 
-        # Recency: boost 2025/2024, penalize very old
         years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + " " + (snip or ""))
         if years:
             newest = max(int(y) for y in years)
             if newest >= _CURRENT_YEAR:
-                score += 5
+                score += 6 if facty else 4
             elif newest == _CURRENT_YEAR - 1:
-                score += 3
+                score += 4 if facty else 2
             elif newest < _CURRENT_YEAR - 5:
-                score -= 2
+                score -= 3
 
         scored.append((score, h))
 
@@ -262,7 +243,7 @@ def _should_use_web(q: str) -> bool:
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
 
 # Fact-style queries (trigger direct snippet mode)
-_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release)\b", re.I)
+_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent)\b", re.I)
 
 # ----------------------------
 # Web search backends (FREE, no keys)
@@ -314,7 +295,6 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
                 _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
         else:
             _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-    # de-dupe
     deduped, seen = [], set()
     for r in results:
         u = r.get("url") or ""
@@ -359,7 +339,7 @@ def _search_with_reddit(query: str, limit: int = 6, timeout: int = 6) -> List[Di
             snippet = d.get("selftext") or ""
             url = "https://www.reddit.com" + d.get("permalink", "")
             if title and url:
-                hits.append({"title": f"Reddit/r/{sub}: {title}", "url": url, "snippet": snippet})
+                hits.append({"title": f"Reddit/r/{sub}: {title}", "url": url, "snippet": snippet[:300]})
         if DEBUG:
             print("REDDIT_RAW_HITS", len(hits))
         return hits
@@ -376,7 +356,7 @@ def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Di
         if r.status_code == 200:
             data = r.json()
             for item in data.get("items", []):
-                hits.append({"title": f"GitHub Repo: {item.get('full_name')}", "url": item.get("html_url"), "snippet": item.get("description") or ""})
+                hits.append({"title": f"GitHub Repo: {item.get('full_name')}", "url": item.get("html_url"), "snippet": (item.get("description") or "")[:300]})
     except Exception as e:
         if DEBUG:
             print("GITHUB_REPO_ERR", repr(e))
@@ -395,17 +375,15 @@ def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Di
     return hits
 
 # ----------------------------
-# Query shaping by vertical (keeps free APIs)
+# Query shaping by vertical
 # ----------------------------
 def _build_query_by_vertical(q: str, vertical: str) -> str:
     if vertical == "entertainment":
-        # bias to IMDb/RT/Metacritic/Wiki
         return f"{q} site:imdb.com OR site:rottentomatoes.com OR site:metacritic.com OR site:wikipedia.org"
     if vertical == "sports":
-        return f"{q} site:espn.com OR site:formula1.com OR site:fifa.com OR site:wikipedia.org"
+        return f"{q} site:formula1.com OR site:espn.com OR site:fifa.com OR site:wikipedia.org OR site:autosport.com OR site:motorsport.com OR site:the-race.com"
     if vertical == "tech":
         return f"{q} site:learn.microsoft.com OR site:stackoverflow.com OR site:unix.stackexchange.com OR site:github.com OR site:wikipedia.org"
-    # general
     return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:history.com"
 
 # ----------------------------
@@ -416,30 +394,28 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     shaped = _build_query_by_vertical(query, vertical)
 
     hits: List[Dict[str,str]] = []
-    # DuckDuckGo lib then API
     hits.extend(_search_with_duckduckgo_lib(shaped, max_results=max_results*2))
     if not hits:
         hits.extend(_search_with_ddg_api(shaped, max_results=max_results*2))
-    # Wikipedia fallback adds at least one authoritative summary
     if not hits:
         hits.extend(_search_with_wikipedia(query))
 
-    # Reddit/GitHub inclusion depends on vertical
-    if vertical in ("tech",):
+    facty = bool(_FACT_QUERY_RE.search(query))
+    if vertical == "tech":
         hits.extend(_search_with_reddit(query, limit=6))
         hits.extend(_search_with_github(query, limit=6))
-    elif vertical in ("entertainment",):
-        # still pull Reddit, but ranking will reject non-vetted subs
-        hits.extend(_search_with_reddit(query, limit=6))
-    elif vertical in ("sports",):
-        # modest Reddit pull; ranking will allow only sports subs
-        hits.extend(_search_with_reddit(query, limit=6))
+    elif vertical == "entertainment":
+        if not facty:
+            hits.extend(_search_with_reddit(query, limit=4))
+    elif vertical == "sports":
+        if not facty:
+            hits.extend(_search_with_reddit(query, limit=4))
     else:
-        # general: small Reddit pull
-        hits.extend(_search_with_reddit(query, limit=4))
+        if not facty:
+            hits.extend(_search_with_reddit(query, limit=3))
 
     if DEBUG:
-        print("RAW_HITS_TOTAL", len(hits))
+        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical, "FACTY", facty)
 
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
@@ -487,16 +463,14 @@ def handle_message(source: str, text: str) -> str:
             "i don't know.", "i dont know", "(no reply)", "unknown", "no idea", "i'm not sure", "i am unsure"
         })
 
-        # Use web if wake words present or offline unknown
         if _should_use_web(q) or offline_unknown:
             hits = _web_search(q, max_results=8)
             if DEBUG:
                 print("POST_FILTER_HITS", len(hits))
 
             if hits:
-                # Direct snippet mode for fact-style queries
+                # direct snippets for facty prompts
                 if _FACT_QUERY_RE.search(q):
-                    # Present top 2–3 snippets (already ranked)
                     snippets = []
                     for h in hits[:3]:
                         title = h.get('title') or ''
@@ -508,17 +482,15 @@ def handle_message(source: str, text: str) -> str:
                     sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                     return _render_web_answer("\n".join(snippets), sources)
 
-                # Summarizer mode
+                # synthesizer for non-fact questions
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
                 if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
-                    # Fallback: use first good snippet
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                 return _render_web_answer(_clean_text(summary), sources)
 
-        # If we had a decent offline answer, return it; else final offline retry
         if clean_ans and not offline_unknown:
             return clean_ans
         fallback = _chat_offline_singleturn(q, max_new_tokens=240)
