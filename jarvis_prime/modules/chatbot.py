@@ -222,11 +222,13 @@ def handle_message(source: str, text: str) -> str:
         # Step 1: offline first
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
-        if clean_ans and clean_ans.lower() not in ("i don't know.", "i dont know", "(no reply)"):
-            return clean_ans
 
-        # Step 2: explicit triggers OR offline failure
-        if _should_use_web(q) or not clean_ans:
+        offline_unknown = (not clean_ans) or (clean_ans.strip().lower() in {
+            "i don't know.", "i dont know", "(no reply)", "i don't know", "unknown", "no idea"
+        })
+
+        # Step 2: web if triggered OR offline was unknown
+        if _should_use_web(q) or offline_unknown:
             hits = _web_search(q, max_results=6)
             if hits:
                 notes = _build_notes_from_hits(hits)
@@ -237,7 +239,9 @@ def handle_message(source: str, text: str) -> str:
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                 return _render_web_answer(_clean_text(summary), sources)
 
-        # Step 3: final offline fallback
+        # Step 3: if we had a decent offline answer, return it; else final offline retry
+        if clean_ans and not offline_unknown:
+            return clean_ans
         fallback = _chat_offline_singleturn(q, max_new_tokens=240)
         return _clean_text(fallback) or "I don't know."
     except Exception:
