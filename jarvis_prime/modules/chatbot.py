@@ -124,9 +124,18 @@ def _rank_hits(q: str, hits: List[Dict[str,str]]) -> List[Dict[str,str]]:
 
 def _build_better_query(raw_q: str) -> str:
     q = (raw_q or "").strip()
-    if re.search(r"\b(elvis)\b", q, re.I) and re.search(r"\bfamily|parents|children|wife|where\b", q, re.I):
+
+    # Movie "last/most recent" pattern – bias to IMDb/Wikipedia/RottenTomatoes
+    if re.search(r"\blast\b|\bmost\s+recent\b", q, re.I) and re.search(r"\btom\s+cruise\b", q, re.I):
+        return ("Tom Cruise filmography latest movie release date "
+                "site:imdb.com OR site:wikipedia.org OR site:rottentomatoes.com")
+
+    # Family/biography pattern (e.g., Elvis family)
+    if re.search(r"\belvis\b", q, re.I) and re.search(r"\bfamily|parents|children|wife|where\b", q, re.I):
         return ("Elvis Presley family members residence relatives Lisa Marie Presley Priscilla Presley "
                 "site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:graceland.com")
+
+    # Generic fallback
     return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com"
 
 # ----------------------------
@@ -144,7 +153,7 @@ _WEB_TRIGGERS = [
 ]
 
 def _should_use_web(q: str) -> bool:
-    ql = (q or "").lower()
+    ql = re.sub(r"[.!?]+$", "", (q or "").lower()).strip()
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
 
 # ----------------------------
@@ -158,7 +167,13 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[s
     try:
         out: List[Dict[str, str]] = []
         with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results, region="wt-wt", safesearch="Moderate"):
+            for r in ddgs.text(
+                query,
+                region="wt-wt",          # world/English
+                safesearch="Moderate",   # "Off" | "Moderate" | "Strict"
+                timelimit=None,          # "d","w","m","y" or None
+                max_results=max_results
+            ):
                 title = (r.get("title") or "").strip()
                 url = (r.get("href") or "").strip()
                 snippet = (r.get("body") or "").strip()
@@ -291,12 +306,22 @@ def handle_message(source: str, text: str) -> str:
             hits = _web_search(q, max_results=6)
             if hits:
                 notes = _build_notes_from_hits(hits)
-                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
+                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip() if _llm_ready() else ""
                 if not summary:
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                return _render_web_answer(_clean_text(summary), sources)
+                rendered = _render_web_answer(_clean_text(summary), sources)
+                return rendered or (hits[0].get("snippet") or hits[0].get("title") or "No useful info.")
+            # last-ditch: try a proper-noun Wikipedia summary
+            m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b", q)
+            subj = m.group(1) if m else q
+            w = _search_with_wikipedia(subj)
+            if w:
+                s = w[0].get("snippet") or w[0].get("title") or "No summary available."
+                u = w[0].get("url") or ""
+                return _render_web_answer(_clean_text(s), [("Wikipedia", u)]) or s
+            return "No reliable sources found."
 
         # Step 3: if we had a decent offline answer, return it; else final offline retry
         if clean_ans and not offline_unknown:
@@ -332,5 +357,5 @@ def _clean_text(s: str) -> str:
 
 if __name__ == "__main__":
     import sys
-    ask = " ".join(sys.argv[1:]).strip() or "Where is Elvis Presley family? Google it"
+    ask = " ".join(sys.argv[1:]).strip() or "What is the last movie Tom Cruise was in? Google it."
     print(handle_message("cli", ask))
