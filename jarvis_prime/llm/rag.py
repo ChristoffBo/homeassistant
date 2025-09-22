@@ -12,7 +12,7 @@
 # Output:
 # /data/rag_facts.json → facts used by chatbot & notify
 
-import os, json, sqlite3, re, time
+import os, json, sqlite3, re
 from datetime import datetime
 
 DB_PATHS = [
@@ -90,6 +90,12 @@ def collect_facts(limit_per_entity: int = 5):
         if state in ("unknown", "unavailable", None, ""):
             continue
 
+        # parse attributes JSON
+        try:
+            attr = json.loads(attrs) if attrs else {}
+        except Exception:
+            attr = {}
+
         # base fact
         fact = {
             "entity_id": eid,
@@ -100,15 +106,9 @@ def collect_facts(limit_per_entity: int = 5):
             "source": "ha",
         }
 
-        # parse attributes JSON
-        try:
-            attr = json.loads(attrs) if attrs else {}
-        except Exception:
-            attr = {}
-
         # include selected attributes
-        for k in ["unit_of_measurement", "battery_level", "voltage", "current", "power",
-                  "temperature", "humidity", "linkquality", "lqi", "rssi"]:
+        for k in ["unit_of_measurement", "battery_level", "voltage", "current",
+                  "power", "temperature", "humidity", "linkquality", "lqi", "rssi"]:
             if k in attr:
                 fact[k] = attr[k]
 
@@ -129,6 +129,27 @@ def collect_facts(limit_per_entity: int = 5):
             fact["score"] += 2
             fact["source"] = "person"
 
+        # build summary for LLM context
+        summary_parts = [fact["name"]]
+        if "state" in fact and fact["state"] not in (None, "", "on", "off"):
+            summary_parts.append(str(fact["state"]))
+        if "unit_of_measurement" in fact:
+            summary_parts.append(fact["unit_of_measurement"])
+        if "battery_level" in fact:
+            summary_parts.append(f"Battery {fact['battery_level']}%")
+        if "temperature" in fact:
+            summary_parts.append(f"T={fact['temperature']}°C")
+        if "humidity" in fact:
+            summary_parts.append(f"H={fact['humidity']}%")
+        if "linkquality" in fact:
+            summary_parts.append(f"LQ={fact['linkquality']}")
+        if "rssi" in fact:
+            summary_parts.append(f"RSSI={fact['rssi']}")
+        if "lqi" in fact:
+            summary_parts.append(f"LQI={fact['lqi']}")
+
+        fact["summary"] = " ".join(map(str, summary_parts))
+
         facts.append(fact)
 
     # sort by score and recency
@@ -148,6 +169,7 @@ def collect_facts(limit_per_entity: int = 5):
         "generated_at": now,
         "facts": pruned,
         "count": len(pruned),
+        "note": "These are live context facts from your Home Assistant setup. Use them when answering questions about the home environment.",
     }
 
     with open(OUTPUT_PATH, "w") as f:
