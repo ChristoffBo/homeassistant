@@ -3,7 +3,7 @@
 #
 # Jarvis Prime – Chat lane service (chat + optional web fallback)
 # - Default: offline LLM chat via llm_client.chat_generate
-# - Web mode only if wake words are present OR offline LLM fails
+# - Web mode if wake words are present OR offline LLM fails
 # - Filters: English-only, block zhihu/baidu, skip non-ASCII heavy snippets
 # - Fallback order: DuckDuckGo lib → DuckDuckGo API → Wikipedia → offline LLM
 
@@ -89,10 +89,8 @@ def _should_use_web(q: str) -> bool:
 # Filters
 # ----------------------------
 def _is_junk_result(title: str, snippet: str, url: str) -> bool:
-    # Block zhihu/baidu outright
     if any(bad in url.lower() for bad in ["zhihu.com", "baidu.com"]):
         return True
-    # Skip if too much non-ASCII (Chinese/Japanese/Korean/etc.)
     text = (title or "") + " " + (snippet or "")
     if not text:
         return True
@@ -102,7 +100,7 @@ def _is_junk_result(title: str, snippet: str, url: str) -> bool:
     return False
 
 # ----------------------------
-# DuckDuckGo search
+# Web search fallbacks
 # ----------------------------
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[str, str]]:
     try:
@@ -122,7 +120,7 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6) -> List[Dict[s
     except Exception:
         return []
 
-def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 8) -> List[Dict[str, str]]:
+def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str, str]]:
     try:
         url = "https://api.duckduckgo.com/"
         params = {
@@ -157,8 +155,7 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 8) -> 
         else:
             _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
 
-    deduped = []
-    seen = set()
+    deduped, seen = [], set()
     for r in results:
         if r["url"] not in seen:
             seen.add(r["url"])
@@ -167,7 +164,7 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 8) -> 
             break
     return deduped
 
-def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
+def _search_with_wikipedia(query: str, timeout: int = 5) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + requests.utils.quote(query)
         r = requests.get(api, timeout=timeout, headers={"accept": "application/json"})
@@ -204,7 +201,7 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
             lines.append(f"• {title.strip()} — {url.strip()}")
     return "\n".join(lines).strip()
 
-def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
+def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
     notes = []
     for h in hits[:6]:
         t = html.unescape((h.get("title") or "").strip())
@@ -222,7 +219,14 @@ def handle_message(source: str, text: str) -> str:
         return ""
 
     try:
-        if _should_use_web(q):
+        # Step 1: offline first
+        ans = _chat_offline_singleturn(q, max_new_tokens=256)
+        clean_ans = _clean_text(ans)
+        if clean_ans and clean_ans.lower() not in ("i don't know.", "i dont know", "(no reply)"):
+            return clean_ans
+
+        # Step 2: explicit triggers OR offline failure
+        if _should_use_web(q) or not clean_ans:
             hits = _web_search(q, max_results=6)
             if hits:
                 notes = _build_notes_from_hits(hits)
@@ -232,13 +236,10 @@ def handle_message(source: str, text: str) -> str:
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                 return _render_web_answer(_clean_text(summary), sources)
-            # If web fails, let LLM still attempt
-            offline = _chat_offline_singleturn(q, max_new_tokens=240)
-            return _clean_text(offline) or "I don't know."
 
-        # Normal offline chat
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
-        return _clean_text(ans) or "I don't know."
+        # Step 3: final offline fallback
+        fallback = _chat_offline_singleturn(q, max_new_tokens=240)
+        return _clean_text(fallback) or "I don't know."
     except Exception:
         try:
             fallback = _chat_offline_singleturn(q, max_new_tokens=240)
