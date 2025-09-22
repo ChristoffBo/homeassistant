@@ -6,12 +6,16 @@
 # - No chatbot_* keys in options.json; calling this is the “switch”
 # - Exposes handle_message(source, text) for bot.py handoff
 # - Optional HTTP/WS API if FastAPI is installed
+# - Extended: explicit web search triggers (google it, search the internet, etc.)
+#   with multi-fallbacks (duckduckgo lib → DDG API → Wikipedia → offline LLM)
 
 import os
 import json
 import time
 import asyncio
 import re
+import html
+import requests
 from typing import Deque, Dict, List, Optional, Tuple
 from collections import deque, defaultdict
 
@@ -131,7 +135,6 @@ def _is_ready() -> bool:
 def _gen_reply(messages_list: List[Dict[str, str]], max_new_tokens: int) -> str:
     if not _is_ready():
         raise RuntimeError("llm_client.chat_generate not available")
-    # Pure chat path; leave system_prompt empty → llm_client loads /app/system_prompt.txt internally if present
     return _LLM.chat_generate(messages=messages_list, system_prompt="", max_new_tokens=max_new_tokens) or ""
 
 # ----------------------------
@@ -164,19 +167,130 @@ def _clean_reply(text: str) -> str:
     return out
 
 # ----------------------------
+# Web search helpers
+# ----------------------------
+_WEB_TRIGGERS = [
+    r"\bgoogle\s+it\b",
+    r"\bgoogle\s+for\s+me\b",
+    r"\bsearch\s+the\s+internet\b",
+    r"\bweb\s+search\b",
+    r"\bcheck\s+internet\b",
+    r"\bcheck\s+web\b",
+]
+
+def _should_use_web(q: str) -> bool:
+    ql = (q or "").lower()
+    return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
+
+def _search_duckduckgo_lib(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str, str]]:
+    try:
+        from duckduckgo_search import DDGS
+    except Exception:
+        return []
+    try:
+        out: List[Dict[str, str]] = []
+        with DDGS(timeout=timeout) as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                title = (r.get("title") or "").strip()
+                url = (r.get("href") or "").strip()
+                snippet = (r.get("body") or "").strip()
+                if title and url:
+                    out.append({"title": title, "url": url, "snippet": snippet})
+        return out
+    except Exception:
+        return []
+
+def _search_ddg_api(query: str, max_results: int = 6, timeout: int = 5) -> List[Dict[str, str]]:
+    try:
+        url = "https://api.duckduckgo.com/"
+        params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1"}
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return []
+    out: List[Dict[str,str]] = []
+    if data.get("AbstractText") and data.get("AbstractURL"):
+        out.append({"title": "DuckDuckGo Abstract", "url": data["AbstractURL"], "snippet": data["AbstractText"]})
+    for it in data.get("RelatedTopics", []):
+        if isinstance(it, dict) and it.get("FirstURL"):
+            out.append({"title": it.get("Text",""), "url": it["FirstURL"], "snippet": it.get("Text","")})
+    return out[:max_results]
+
+def _search_wikipedia(query: str, timeout: int = 5) -> List[Dict[str,str]]:
+    try:
+        r = requests.get(
+            "https://en.wikipedia.org/api/rest_v1/page/summary/" + requests.utils.quote(query),
+            timeout=timeout
+        )
+        r.raise_for_status()
+        data = r.json()
+        if "extract" in data and "content_urls" in data and "desktop" in data["content_urls"]:
+            return [{
+                "title": data.get("title","Wikipedia"),
+                "url": data["content_urls"]["desktop"]["page"],
+                "snippet": data.get("extract","")
+            }]
+    except Exception:
+        return []
+    return []
+
+def _try_web_search(query: str) -> List[Dict[str,str]]:
+    hits = _search_duckduckgo_lib(query)
+    if hits: return hits
+    hits = _search_ddg_api(query)
+    if hits: return hits
+    hits = _search_wikipedia(query)
+    if hits: return hits
+    return []
+
+def _render_web_answer(question: str, hits: List[Dict[str,str]]) -> str:
+    if not hits:
+        return "(no web results)"
+    notes = [f"- {h['title']} — {h['snippet']}" for h in hits if h.get("title") or h.get("snippet")]
+    sys_prompt = (
+        "You are a concise synthesizer. Using only the provided notes, write a clear factual answer. "
+        "Do not include URLs in the body. End with 'Sources:' list."
+    )
+    msgs = [
+        {"role":"system","content":sys_prompt},
+        {"role":"user","content":f"Question: {question}\n\nNotes:\n" + "\n".join(notes)}
+    ]
+    summary = ""
+    if _is_ready():
+        try:
+            summary = _LLM.chat_generate(messages=msgs, system_prompt="", max_new_tokens=300) or ""
+        except Exception:
+            summary = ""
+    if not summary:
+        summary = hits[0].get("snippet") or hits[0].get("title") or "Here are some sources."
+    links = "\n".join([f"• {h['title']} — {h['url']}" for h in hits if h.get("url")])
+    return summary.strip() + "\n\nSources:\n" + links
+
+# ----------------------------
 # Handoff for bot.py
 # ----------------------------
 def handle_message(source: str, text: str) -> str:
-    # No chat_enabled flag — calling this is the “switch”.
-    # If LLM is disabled or not loaded, llm_client.chat_generate returns "".
     MEM.set_max_turns(HISTORY_TURNS)
-
     chat_id = (source or "default").strip() or "default"
     user_msg = (text or "").strip()
     if not user_msg:
         return ""
 
-    # We defer system prompt to llm_client (system_prompt="") so it uses /app/system_prompt.txt
+    # Web path
+    if _should_use_web(user_msg):
+        hits = _try_web_search(user_msg)
+        if hits:
+            return _render_web_answer(user_msg, hits)
+        # If web fails, fall back to offline LLM
+        try:
+            msgs = [{"role":"user","content":user_msg}]
+            raw = _gen_reply(msgs, REPLY_MAX_NEW_TOKENS)
+            return _clean_reply(raw) or "I don't know."
+        except Exception:
+            return "I don't know."
+
+    # Offline default
     msgs_tuples = MEM.trim_by_tokens(
         chat_id=chat_id,
         new_user=user_msg,
@@ -184,30 +298,22 @@ def handle_message(source: str, text: str) -> str:
         max_total_tokens=MAX_TOTAL_TOKENS,
         reply_budget=REPLY_MAX_NEW_TOKENS,
     )
-
-    # Convert to structured chat format
     messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
 
     try:
         raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
         answer = _clean_reply(raw) or ""
     except Exception as e:
-        # Reset context if generation fails
         if _LLM and hasattr(_LLM, "reset_context"):
-            try:
-                _LLM.reset_context()
-            except Exception:
-                pass
+            try: _LLM.reset_context()
+            except Exception: pass
         return f"LLM error: {e}"
 
     if not answer:
-        # Reset context if we got no reply at all
         if _LLM and hasattr(_LLM, "reset_context"):
-            try:
-                _LLM.reset_context()
-            except Exception:
-                pass
-        answer = "(no reply)"
+            try: _LLM.reset_context()
+            except Exception: pass
+        answer = "I don't know."
 
     MEM.append_turn(chat_id, user_msg, answer)
     return answer
@@ -218,7 +324,7 @@ def handle_message(source: str, text: str) -> str:
 _FASTAPI_OK = False
 try:
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Query
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel
     _FASTAPI_OK = True
 except Exception:
     pass
@@ -242,46 +348,12 @@ if _FASTAPI_OK:
 
     @app.post("/chat", response_model=ChatOut)
     async def chat_endpoint(payload: ChatIn, request: Request):
-        chat_id = (payload.chat_id or "default").strip() or "default"
-        user_msg = (payload.message or "").strip()
-        if not user_msg:
-            raise HTTPException(status_code=400, detail="Empty message")
-
-        msgs_tuples = MEM.trim_by_tokens(
-            chat_id=chat_id,
-            new_user=user_msg,
-            sys_prompt="",
-            max_total_tokens=MAX_TOTAL_TOKENS,
-            reply_budget=REPLY_MAX_NEW_TOKENS,
-        )
-        messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
-
-        try:
-            raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
-            answer = _clean_reply(raw)
-        except Exception as e:
-            # Reset context here too
-            if _LLM and hasattr(_LLM, "reset_context"):
-                try:
-                    _LLM.reset_context()
-                except Exception:
-                    pass
-            raise HTTPException(status_code=500, detail=f"LLM error: {e}")
-
-        if not answer:
-            if _LLM and hasattr(_LLM, "reset_context"):
-                try:
-                    _LLM.reset_context()
-                except Exception:
-                    pass
-            answer = "(no reply)"
-
-        MEM.append_turn(chat_id, user_msg, answer)
+        reply = handle_message(payload.chat_id, payload.message)
         return ChatOut(
-            chat_id=chat_id,
-            reply=answer,
-            used_history_turns=len(MEM.get_context(chat_id)),
-            approx_context_tokens=tokens_of_messages(msgs_tuples),
+            chat_id=payload.chat_id,
+            reply=reply,
+            used_history_turns=len(MEM.get_context(payload.chat_id)),
+            approx_context_tokens=0,
         )
 
     @app.websocket("/ws")
@@ -289,47 +361,13 @@ if _FASTAPI_OK:
         await ws.accept()
         try:
             while True:
-                user_msg = (await ws.receive_text() or "").strip()
-                if not user_msg:
-                    await ws.send_json({"error": "empty message"})
-                    continue
-
-                msgs_tuples = MEM.trim_by_tokens(
-                    chat_id=chat_id,
-                    new_user=user_msg,
-                    sys_prompt="",
-                    max_total_tokens=MAX_TOTAL_TOKENS,
-                    reply_budget=REPLY_MAX_NEW_TOKENS,
-                )
-                messages_list: List[Dict[str, str]] = [{"role": r, "content": c} for (r, c) in msgs_tuples]
-
-                try:
-                    raw = _gen_reply(messages_list, REPLY_MAX_NEW_TOKENS)
-                    answer = _clean_reply(raw)
-                except Exception as e:
-                    # Reset context on failure
-                    if _LLM and hasattr(_LLM, "reset_context"):
-                        try:
-                            _LLM.reset_context()
-                        except Exception:
-                            pass
-                    await ws.send_json({"error": f"LLM error: {e}"})
-                    continue
-
-                if not answer:
-                    if _LLM and hasattr(_LLM, "reset_context"):
-                        try:
-                            _LLM.reset_context()
-                        except Exception:
-                            pass
-                    answer = "(no reply)"
-
-                MEM.append_turn(chat_id, user_msg, answer)
+                msg = (await ws.receive_text() or "").strip()
+                reply = handle_message(chat_id, msg)
                 await ws.send_json({
                     "chat_id": chat_id,
-                    "reply": answer,
+                    "reply": reply,
                     "used_history_turns": len(MEM.get_context(chat_id)),
-                    "approx_context_tokens": tokens_of_messages(msgs_tuples),
+                    "approx_context_tokens": 0,
                 })
         except WebSocketDisconnect:
             return
