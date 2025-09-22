@@ -408,7 +408,7 @@ atexit.register(stop_sidecars)
 jarvis_app_id = None
 
 # --- ADDITIVE: bypass list + helper for chat.py payloads ---
-_CHAT_BYPASS_TITLES = {"Joke", "Quip", "Weird Fact"}
+_CHAT_BYPASS_TITLES = {"Joke", "Quip", "Weird Fact", "Chat"}  # <— added "Chat" so chat replies are clean
 def _should_bypass_decor(title: str, extras=None) -> bool:
     try:
         if title in _CHAT_BYPASS_TITLES:
@@ -731,6 +731,13 @@ def _handle_command(ncmd: str) -> bool:
     except Exception: pass
     try: m_chat = __import__("chat")
     except Exception: pass
+    # --- ADDITIVE: fallback to 'chatbot' module if 'chat' not present ---
+    if not m_chat:
+        try:
+            m_chat = __import__("chatbot")
+        except Exception:
+            m_chat = None
+    # --- end additive ---
 
     if ncmd in ("help", "commands"):
         send_message("Help", "dns | kuma | weather | forecast | digest | joke\nARR: upcoming movies/series, counts, longest ...\nEnv: env <hot|normal|cold|boost|auto>",)
@@ -839,6 +846,74 @@ def _seen_recent(title: str, body: str, source: str, orig_id: Optional[str]) -> 
     _recent_hashes[h] = time.time() + _RECENT_TTL
     return False
 
+# --- ADDITIVE: Chat/Talk wakeword routing (case-insensitive, works in title or body) ---
+_CHAT_TALK_RX = re.compile(r'^\s*(chat|talk)\b[:\-]?\s*(.*)$', re.IGNORECASE | re.DOTALL)
+
+def _extract_chat_query(title: str, body: str) -> Optional[str]:
+    """
+    Try to extract a freeform chat query from either title or body using the
+    Chat/Talk wakewords. Returns the first non-empty match remainder.
+    """
+    cands = [(title or "").strip(), (body or "").strip(), f"{(title or '').strip()} {(body or '').strip()}".strip()]
+    for txt in cands:
+        if not txt:
+            continue
+        m = _CHAT_TALK_RX.match(txt)
+        if m:
+            remainder = (m.group(2) or "").strip()
+            if remainder:
+                return remainder
+    return None
+
+def _route_chat_freeform(source: str, query: str) -> bool:
+    """
+    Send a chat reply using available chat module(s). Prefers chatbot.handle_message(source, text).
+    Falls back to chat.handle_chat_command(...) variants if needed.
+    """
+    # Try both module names without removing existing import logic
+    m_chat = None
+    try:
+        m_chat = __import__("chatbot")
+    except Exception:
+        try:
+            m_chat = __import__("chat")
+        except Exception:
+            m_chat = None
+
+    if not m_chat:
+        send_message("Chat", "Chat engine unavailable.", extras={"bypass_beautify": True})
+        return True
+
+    reply = ""
+    err = None
+    try:
+        if hasattr(m_chat, "handle_message"):
+            # preferred path (chatbot.py)
+            reply = m_chat.handle_message(source or "intake", query or "")
+        elif hasattr(m_chat, "handle_chat_command"):
+            # try common shapes
+            try:
+                reply, _ = m_chat.handle_chat_command(query or "")
+            except TypeError:
+                try:
+                    reply, _ = m_chat.handle_chat_command("ask", query or "")
+                except Exception as e2:
+                    err = e2
+        else:
+            err = RuntimeError("No supported chat entrypoint")
+    except Exception as e:
+        err = e
+
+    if err:
+        send_message("Chat", f"⚠️ Chat error: {err}", extras={"bypass_beautify": True})
+        return True
+
+    reply = (reply or "").strip() or "(no reply)"
+    # Bypass beautifier + persona header for clean chat
+    send_message("Chat", reply, extras={"bypass_beautify": True})
+    return True
+# --- end additive ---
+
 def _process_incoming(title: str, body: str, source: str = "intake", original_id: Optional[str] = None, priority: int = 5):
     if _seen_recent(title or "", body or "", source, original_id or ""):
         return
@@ -880,6 +955,22 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
                 body  = body.replace(phrase, "", 1).strip()
     except Exception as e:
         print(f"[bot] wakeword switch failed: {e}")
+    # --- end additive ---
+
+    # --- ADDITIVE: Chat/Talk wakewords routed BEFORE command parsing ---
+    try:
+        chat_query = _extract_chat_query(title, body)
+        if chat_query and bool(merged.get("chat_enabled", CHAT_ENABLED_FILE)):
+            handled = _route_chat_freeform(source, chat_query)
+            try:
+                if source == "gotify" and original_id:
+                    _purge_after(int(original_id))
+            except Exception:
+                pass
+            if handled:
+                return
+    except Exception as e:
+        print(f"[bot] chat/talk routing error: {e}")
     # --- end additive ---
 
     ncmd = normalize_cmd(extract_command_from(title, body))
