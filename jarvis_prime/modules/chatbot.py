@@ -61,13 +61,6 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
         return _LLM.chat_generate(messages=msgs, system_prompt="", max_new_tokens=max_new_tokens) or ""
     except Exception:
         return ""
-# ----------------------------
-# RAG bridge
-# ----------------------------
-try:
-    import rag
-except Exception:
-    rag = None
 
 # ----------------------------
 # Topic detection
