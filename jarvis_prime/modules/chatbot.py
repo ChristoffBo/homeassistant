@@ -16,12 +16,18 @@
 # - Free, no-register APIs only
 # - Human behavior heuristics: prefer clear facts, recency, multiple perspectives, avoid spammy/repetitive sources
 
-import os, re, json, time, html, requests, datetime, traceback
+import os, re, json, time, html, requests, datetime, traceback, threading
 from typing import Dict, List, Tuple, Optional
 from urllib.parse import quote as _urlquote
-import rag
+from functools import lru_cache
 
+# ----------------------------
+# Config / globals
+# ----------------------------
 DEBUG = bool(os.environ.get("JARVIS_DEBUG"))
+CIRCUIT_BREAKERS: Dict[str, float] = {}
+CB_TIMEOUT = 120  # seconds to mute a backend after repeated failure
+MAX_PARALLEL_TIMEOUT = 3
 
 # ----------------------------
 # LLM bridge
@@ -111,6 +117,7 @@ _DENY_DOMAINS = [
     "vk.com","weibo.","4chan","8kun","/forum","forum.","boards.",
     "linktr.ee","tiktok.com","facebook.com","notebooklm.google.com"
 ]
+
 def _tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
 
@@ -161,10 +168,8 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
         return True
     if not _keyword_overlap(q, title, snippet, min_hits=2):
         return True
-    # Kill commerce / resale / code-list spam
     if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|$[0-9])\b", text, re.I):
         return True
-    # Community-source gating
     if "reddit.com" in url.lower():
         m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
         sub = (m.group(1).lower() if m else "")
@@ -180,7 +185,6 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
     return False
 
 _CURRENT_YEAR = datetime.datetime.utcnow().year
-
 def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
     scored = []
     facty = bool(_FACT_QUERY_RE.search(q))
@@ -238,13 +242,25 @@ def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
 
-# Fact-style queries (trigger direct snippet mode)
+# Fact-style queries
 _FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent)\b", re.I)
+
+# ----------------------------
+# Circuit breaker helpers
+# ----------------------------
+def _cb_fail(backend: str):
+    CIRCUIT_BREAKERS[backend] = time.time()
+
+def _cb_open(backend: str) -> bool:
+    if backend not in CIRCUIT_BREAKERS:
+        return False
+    return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
 
 # ----------------------------
 # Web search backoffs & backends (FREE, no keys)
 # ----------------------------
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
+    if _cb_open("ddg_lib"): return []
     try:
         from duckduckgo_search import DDGS  # type: ignore
     except Exception:
@@ -264,10 +280,13 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
             print("DDG_LIB_HITS", len(out), "Q:", query, "T:", round(time.time()-t0,3))
         return out
     except Exception as e:
+        _cb_fail("ddg_lib")
         if DEBUG:
             print("DDG_LIB_ERR", repr(e))
         return []
+
 def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
+    if _cb_open("ddg_api"): return []
     try:
         url = "https://api.duckduckgo.com/"
         params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1", "skip_disambig": "0", "kl": "us-en"}
@@ -276,6 +295,7 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
         r.raise_for_status()
         data = r.json()
     except Exception as e:
+        _cb_fail("ddg_api")
         if DEBUG:
             print("DDG_API_ERR", repr(e), "Q:", query)
         return []
@@ -304,7 +324,6 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
     if DEBUG:
         print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
     return deduped
-
 def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
@@ -469,7 +488,7 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     # Gather with tough fallbacks
     hits = _try_all_backoffs(query, shaped, vertical, max_results)
 
-    # Add vertical extras (same as before)
+    # Add vertical extras
     facty = bool(_FACT_QUERY_RE.search(query))
     if vertical == "tech":
         hits.extend(_search_with_reddit(query, limit=6))
@@ -522,23 +541,32 @@ def handle_message(source: str, text: str) -> str:
     q = (text or "").strip()
     if not q:
         return ""
-
-    # 🔹 Inject Home Assistant RAG context
-    try:
-        import rag
-        context_block = rag.inject_context(q, top_k=6)
-        if context_block:
-            q = f"{q}\n\nContext:\n{context_block}"
-    except Exception:
-        if DEBUG: print("RAG_INJECT_FAIL")
-
     try:
         if DEBUG: print("IN_MSG:", q)
+
+        # ---- RAG first (local HA context) ----
+        try:
+            from rag import inject_context
+            rag_block = inject_context(q, top_k=5)
+        except Exception:
+            rag_block = ""
+        if rag_block:
+            ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
+            clean_ans = _clean_text(ans)
+            if clean_ans:
+                if DEBUG: print("RAG_HIT")
+                return clean_ans
+
+        # ---- Cache check ----
+        if q in _CACHE:
+            if DEBUG: print("CACHE_HIT")
+            return _CACHE[q]
+
+        # ---- Offline LLM attempt ----
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
         if DEBUG: print("OFFLINE_ANS:", repr(clean_ans))
 
-        # offline-unknown markers + force-web phrases
         offline_unknown_markers = {
             "i don't know.", "i dont know", "(no reply)", "unknown", "no idea",
             "i'm not sure", "i am unsure"
@@ -561,6 +589,7 @@ def handle_message(source: str, text: str) -> str:
                     if DEBUG: print("FORCE_WEB_DUE_TO_OFFLINE_TEXT")
                     break
 
+        # ---- Web search trigger ----
         if _should_use_web(q) or offline_unknown:
             if DEBUG: print("WEB_MODE_TRIGGERED")
             hits = _web_search(q, max_results=8)
@@ -569,7 +598,7 @@ def handle_message(source: str, text: str) -> str:
                 if not hits: print("NO_HITS_AFTER_ALL_BACKOFFS")
 
             if hits:
-                # direct snippets for facty prompts
+                # Facty = snippets
                 if _FACT_QUERY_RE.search(q):
                     snippets = []
                     for h in hits[:3]:
@@ -580,27 +609,40 @@ def handle_message(source: str, text: str) -> str:
                         else:
                             snippets.append(title or snip)
                     sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                    return _render_web_answer("\n".join(snippets), sources)
+                    out = _render_web_answer("\n".join(snippets), sources)
+                    _CACHE[q] = out
+                    return out
 
-                # synthesizer for non-fact questions
+                # Non-facty = summarizer
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
                 if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                return _render_web_answer(_clean_text(summary), sources)
+                out = _render_web_answer(_clean_text(summary), sources)
+                _CACHE[q] = out
+                return out
 
+        # ---- Return offline if valid ----
         if clean_ans and not offline_unknown:
+            _CACHE[q] = clean_ans
             return clean_ans
+
+        # ---- Final offline fallback ----
         fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-        return _clean_text(fallback) or "I don't know."
+        out = _clean_text(fallback) or "I don't know."
+        _CACHE[q] = out
+        return out
+
     except Exception as e:
         if DEBUG:
             traceback.print_exc()
         try:
             fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-            return _clean_text(fallback) or "I don't know."
+            out = _clean_text(fallback) or "I don't know."
+            _CACHE[q] = out
+            return out
         except Exception:
             return "I don't know."
 
