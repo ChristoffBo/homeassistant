@@ -19,6 +19,7 @@
 import os, re, json, time, html, requests, datetime, traceback
 from typing import Dict, List, Tuple, Optional
 from urllib.parse import quote as _urlquote
+import rag
 
 DEBUG = bool(os.environ.get("JARVIS_DEBUG"))
 
@@ -110,7 +111,6 @@ _DENY_DOMAINS = [
     "vk.com","weibo.","4chan","8kun","/forum","forum.","boards.",
     "linktr.ee","tiktok.com","facebook.com","notebooklm.google.com"
 ]
-
 def _tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
 
@@ -267,7 +267,6 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
         if DEBUG:
             print("DDG_LIB_ERR", repr(e))
         return []
-
 def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         url = "https://api.duckduckgo.com/"
@@ -487,7 +486,6 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
 
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
-
 # ----------------------------
 # Render
 # ----------------------------
@@ -524,6 +522,16 @@ def handle_message(source: str, text: str) -> str:
     q = (text or "").strip()
     if not q:
         return ""
+
+    # 🔹 Inject Home Assistant RAG context
+    try:
+        import rag
+        context_block = rag.inject_context(q, top_k=6)
+        if context_block:
+            q = f"{q}\n\nContext:\n{context_block}"
+    except Exception:
+        if DEBUG: print("RAG_INJECT_FAIL")
+
     try:
         if DEBUG: print("IN_MSG:", q)
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
