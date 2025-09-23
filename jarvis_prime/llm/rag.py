@@ -20,8 +20,8 @@ PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]   # only this one now
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
-# Which domains we keep
-INCLUDE_DOMAINS = {"light","switch","sensor","binary_sensor","person","device_tracker"}
+# Include ALL domains (set to a set to limit)
+INCLUDE_DOMAINS = None  # None => include all domains
 
 # Keywords/integrations commonly seen
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
@@ -88,7 +88,8 @@ def _short_iso(ts: str) -> str:
 def _fmt_num(state: str, unit: str) -> str:
     try:
         v=float(state)
-        if abs(v)<0.005: v=0.0
+        if abs(v)<0.005:
+            v=0.0
         s=f"{v:.2f}".rstrip("0").rstrip(".")
         return f"{s} {unit}".strip()
     except Exception:
@@ -176,8 +177,6 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if "energy.storage" not in cats:
             cats.add("device.battery")
 
-    # Zigbee/MQTT/Sonoff integrations (helpful hints) — not used for routing, but kept
-    # if you want to use them later.
     return cats
 
 # ----------------- fetch + summarize -----------------
@@ -199,7 +198,8 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             eid = str(item.get("entity_id") or "")
             if not eid: continue
             domain = eid.split(".",1)[0] if "." in eid else ""
-            if domain not in INCLUDE_DOMAINS: continue
+            if INCLUDE_DOMAINS and (domain not in INCLUDE_DOMAINS):
+                continue
 
             attrs = item.get("attributes") or {}
             device_class = str(attrs.get("device_class","")).lower()
@@ -208,19 +208,11 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             unit  = str(attrs.get("unit_of_measurement","") or "")
             last_changed = str(item.get("last_changed","") or "")
 
-            if state in ("","unknown","unavailable"):
-                continue  # keep filter; Axpert SOC normally reports a numeric %
+            is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
 
             # Domain-specific normalization
-            if domain == "device_tracker":
-                # prefer zone-like names; avoid raw GPS
-                zone = attrs.get("zone")
-                if zone:
-                    state = zone
-                else:
-                    ls = (state or "").lower()
-                    if ls in ("home","not_home"):
-                        state = "Home" if ls=="home" else "Away"
+            if domain == "device_tracker" and not is_unknown:
+                state = _safe_zone_from_tracker(state, attrs)
 
             # displayable state
             show_state = state.upper() if state in ("on","off","open","closed") else state
@@ -250,6 +242,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
             if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
+            if is_unknown: score -= 3  # keep but de-boost unknown/unavailable
 
             # Categories
             cats = _infer_categories(eid, name, attrs, domain, device_class)
@@ -271,13 +264,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     return facts
 
 # ----------------- IO + cache -----------------
-
-def _write_json_atomic(path: str, obj: dict):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp,"w",encoding="utf-8") as f:
-        json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
-    os.replace(tmp,path)
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
     """Fetch states and write rag_facts.json to primary + fallback."""
@@ -356,16 +342,24 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         # energy-ish tokens get a small bump
         if q & SOLAR_KEYWORDS: s += 2
 
-        # STRONG bump for SOC-like sensors so Axpert SOC rises to top
+        # STRONG bump for SOC-like sensors so ESS SOC rises to top
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
-            s += 8
+            s += 12
 
         # category routing: big boost if categories match intent
         if want_cats and (cats & want_cats):
             s += 15
 
-        # if user implies solar/ESS but this looks like a random device battery, push it down
-        if want_cats and "energy.storage" in want_cats and "device.battery" in cats and "energy.storage" not in cats:
+        # Ultra preference for storage when user intent is SOC/battery/solar
+        if want_cats & {"energy.storage"} and "energy.storage" in cats:
+            s += 20
+
+        # Push down device batteries if asking about ESS
+        if want_cats & {"energy.storage"} and "device.battery" in cats and "energy.storage" not in cats:
+            s -= 12
+
+        # Push down forecasts if asking specifically for SOC
+        if want_cats & {"energy.storage"} and ("forecast" in ft or "estimated" in ft):
             s -= 10
 
         scored.append((s, f.get("summary","")))
