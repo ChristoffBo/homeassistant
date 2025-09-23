@@ -39,13 +39,13 @@ DEVICE_CLASS_PRIORITY = {
 
 # Query synonyms (intent signals)
 QUERY_SYNONYMS = {
-    "soc":["soc","state_of_charge","battery_soc","battery"],
-    "solar":["solar","pv","generation","inverter","array","ess"],
-    "pv":["pv","solar"],
-    "load":["load","power","w","kw","consumption"],
-    "grid":["grid","import","export"],
-    "battery":["battery","soc","charge"],
-    "where":["where","location","zone","home","work","present"],
+    "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
+    "solar": ["solar","pv","generation","inverter","array","ess"],
+    "pv": ["pv","solar"],
+    "load": ["load","power","w","kw","consumption"],
+    "grid": ["grid","import","export"],
+    "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
+    "where": ["where","location","zone","home","work","present"],
 }
 
 # Intent → categories we prefer
@@ -145,7 +145,6 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     toks = set(_tok(eid) + _tok(name) + _tok(device_class))
     manf = str(attrs.get("manufacturer","") or attrs.get("vendor","") or "").lower()
     model= str(attrs.get("model","") or "").lower()
-    integration = str(attrs.get("attribution","") or "").lower()
 
     # People/locations
     if domain in ("person","device_tracker"):
@@ -155,14 +154,14 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if any(k in toks for k in ("pv","inverter","ess","solar","solar_assistant","solarassistant")) \
        or any(k in manf for k in ("solar","solarassistant")) \
        or any(k in model for k in ("inverter","bms","battery")) \
-       or "solar assistant" in name.lower():
+       or "solar assistant" in (" ".join(_tok(name))):
         cats.add("energy")
         # refine
         if any(k in toks for k in ("pv","solar")):
             cats.add("energy.pv")
         if any(k in toks for k in ("inverter","ess")) or "inverter" in model:
             cats.add("energy.inverter")
-        if any(k in toks for k in ("soc","battery_soc","battery")) or "bms" in model:
+        if any(k in toks for k in ("soc","battery_soc","battery","state_of_charge","battery_state_of_charge")) or "bms" in model:
             cats.add("energy.storage")
 
     # Grid/load
@@ -177,27 +176,9 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if "energy.storage" not in cats:
             cats.add("device.battery")
 
-    # Zigbee/MQTT/Sonoff integrations (helpful hints)
-    if any(k in toks for k in ZIGBEE_KEYWORDS): cats.add("zigbee")
-    if any(k in toks for k in SONOFF_KEYWORDS): cats.add("sonoff")
-    if any(k in toks for k in MQTT_KEYWORDS):   cats.add("mqtt")
-
+    # Zigbee/MQTT/Sonoff integrations (helpful hints) — not used for routing, but kept
+    # if you want to use them later.
     return cats
-
-def _intent_categories(q_tokens: Set[str]) -> Set[str]:
-    """Map query tokens to preferred categories."""
-    out:set[str] = set()
-    for key, cats in INTENT_CATEGORY_MAP.items():
-        if key in q_tokens:
-            out.update(cats)
-    # Heuristic: if query mentions any solar keywords, prefer energy.storage too
-    if q_tokens & {"solar","pv","inverter","ess","soc","battery"}:
-        out.update({"energy","energy.storage","energy.pv","energy.inverter"})
-    if "grid" in q_tokens:
-        out.update({"energy.grid"})
-    if "load" in q_tokens:
-        out.update({"energy.load"})
-    return out
 
 # ----------------- fetch + summarize -----------------
 
@@ -217,7 +198,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         try:
             eid = str(item.get("entity_id") or "")
             if not eid: continue
-            domain = _domain_of(eid)
+            domain = eid.split(".",1)[0] if "." in eid else ""
             if domain not in INCLUDE_DOMAINS: continue
 
             attrs = item.get("attributes") or {}
@@ -227,18 +208,37 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             unit  = str(attrs.get("unit_of_measurement","") or "")
             last_changed = str(item.get("last_changed","") or "")
 
-            if state in ("","unknown","unavailable"): continue
-            if domain == "device_tracker":
-                state = _safe_zone_from_tracker(state, attrs)
+            if state in ("","unknown","unavailable"):
+                continue  # keep filter; Axpert SOC normally reports a numeric %
 
-            show_state = _upper_if_onoff(state) if state else ""
+            # Domain-specific normalization
+            if domain == "device_tracker":
+                # prefer zone-like names; avoid raw GPS
+                zone = attrs.get("zone")
+                if zone:
+                    state = zone
+                else:
+                    ls = (state or "").lower()
+                    if ls in ("home","not_home"):
+                        state = "Home" if ls=="home" else "Away"
+
+            # displayable state
+            show_state = state.upper() if state in ("on","off","open","closed") else state
             if unit and state not in ("on","off","open","closed"):
-                show_state = _fmt_num(state, unit)
+                try:
+                    v = float(state)
+                    if abs(v) < 0.005: v = 0.0
+                    s = f"{v:.2f}".rstrip("0").rstrip(".")
+                    show_state = f"{s} {unit}".strip()
+                except Exception:
+                    show_state = f"{state} {unit}".strip()
 
             summary = name
-            if device_class: summary += f" ({device_class})"
-            if show_state:   summary += f": {show_state}"
-            recent = _short_iso(last_changed)
+            if device_class:
+                summary += f" ({device_class})"
+            if show_state:
+                summary += f": {show_state}"
+            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
@@ -247,11 +247,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
             if "solar_assistant" in "_".join(toks) or "solarassistant" in "_".join(toks): score+=3
-            if any(k in toks for k in SONOFF_KEYWORDS): score+=3
-            if any(k in toks for k in ZIGBEE_KEYWORDS): score+=2
-            if any(k in toks for k in MQTT_KEYWORDS):   score+=2
-            if any(k in toks for k in RADARR_KEYWORDS): score+=3
-            if any(k in toks for k in SONARR_KEYWORDS): score+=3
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
             if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
@@ -276,6 +271,13 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     return facts
 
 # ----------------- IO + cache -----------------
+
+def _write_json_atomic(path: str, obj: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp,"w",encoding="utf-8") as f:
+        json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp,path)
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
     """Fetch states and write rag_facts.json to primary + fallback."""
@@ -322,13 +324,25 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
 
 # ----------------- query → context -----------------
 
+def _intent_categories(q_tokens: Set[str]) -> Set[str]:
+    out:set[str] = set()
+    for key, cats in INTENT_CATEGORY_MAP.items():
+        if key in q_tokens:
+            out.update(cats)
+    if q_tokens & {"solar","pv","inverter","ess","soc","battery"}:
+        out.update({"energy","energy.storage","energy.pv","energy.inverter"})
+    if "grid" in q_tokens:
+        out.update({"energy.grid"})
+    if "load" in q_tokens:
+        out.update({"energy.load"})
+    return out
+
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     """Return top-k matching fact summaries (synonym-aware, category-aware)."""
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # Figure out what categories the user likely wants
     want_cats = _intent_categories(q)
 
     scored=[]
@@ -342,6 +356,10 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         # energy-ish tokens get a small bump
         if q & SOLAR_KEYWORDS: s += 2
 
+        # STRONG bump for SOC-like sensors so Axpert SOC rises to top
+        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
+            s += 8
+
         # category routing: big boost if categories match intent
         if want_cats and (cats & want_cats):
             s += 15
@@ -351,8 +369,6 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             s -= 10
 
         scored.append((s, f.get("summary","")))
-
-    # Sort and pick top-k
     top=sorted(scored,key=lambda x:x[0],reverse=True)[:top_k]
 
     # Debug: show matches in logs (no config toggles)
