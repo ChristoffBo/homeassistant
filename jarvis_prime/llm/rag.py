@@ -21,7 +21,7 @@ FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
 # Include ALL domains
-INCLUDE_DOMAINS = None  # None => include all domains
+INCLUDE_DOMAINS = None
 
 # Keywords/integrations commonly seen
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
@@ -45,20 +45,23 @@ QUERY_SYNONYMS = {
     "load": ["load","power","w","kw","consumption"],
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
-    # location-style queries
-    "where": ["where","location","zone","home","work","present","presence","is"],
+    "where": ["where","location","zone","home","work","present"],
 }
 
 # Intent → categories
 INTENT_CATEGORY_MAP = {
-    "solar":   {"energy.storage","energy.pv","energy.inverter"},
-    "pv":      {"energy.pv","energy.inverter","energy.storage"},
-    "soc":     {"energy.storage"},
+    "solar": {"energy.storage","energy.pv","energy.inverter"},
+    "pv":    {"energy.pv","energy.inverter","energy.storage"},
+    "soc":   {"energy.storage"},
     "battery": {"energy.storage"},
-    "grid":    {"energy.grid"},
-    "load":    {"energy.load"},
-    # NEW: treat "where" queries as person/location intent
-    "where":   {"person"},
+    "grid":  {"energy.grid"},
+    "load":  {"energy.load"},
+}
+
+# SOC hint tokens (helps us spot real ESS SOC vs phone/sensor batteries)
+SOC_HINT_TOKENS = {
+    "soc","state_of_charge","battery_state_of_charge","battery_soc",
+    "charge_percentage","soc_percentage","soc_percent"
 }
 
 REFRESH_INTERVAL_SEC = 15*60
@@ -126,11 +129,9 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     manf = str(attrs.get("manufacturer","") or attrs.get("vendor","") or "").lower()
     model= str(attrs.get("model","") or "").lower()
 
-    # People/locations
     if domain in ("person","device_tracker"):
         cats.add("person")
 
-    # Energy related
     if any(k in toks for k in ("pv","inverter","ess","solar","solar_assistant","solarassistant")) \
        or any(k in manf for k in ("solar","solarassistant")) \
        or any(k in model for k in ("inverter","bms","battery")) \
@@ -143,13 +144,11 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if any(k in toks for k in ("soc","battery_soc","battery","state_of_charge","battery_state_of_charge")) or "bms" in model:
             cats.add("energy.storage")
 
-    # Grid/load
     if any(k in toks for k in ("grid","import","export")):
         cats.update({"energy","energy.grid"})
     if any(k in toks for k in ("load","consumption")):
         cats.update({"energy","energy.load"})
 
-    # Generic device batteries (sensors/phones/etc.)
     if device_class == "battery" or "battery" in toks:
         if "energy.storage" not in cats:
             cats.add("device.battery")
@@ -255,7 +254,7 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
     print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
     return facts
 
-def load_cached() -> List[Dict:str]:
+def load_cached() -> List[Dict[str,Any]]:
     try:
         for d in PRIMARY_DIRS:
             p=os.path.join(d,BASENAME)
@@ -294,6 +293,33 @@ def _dynamic_top_k(cfg: Dict[str,Any]) -> int:
     facts = est_tokens // 20            # ~20 tokens per fact
     return max(100, min(facts, 250))    # clamp 100–250
 
+def _is_ess_soc_fact(f: dict) -> bool:
+    """True if this fact looks like ESS SOC (not just any battery)."""
+    cats = set(f.get("cats", []))
+    if "energy.storage" not in cats:
+        return False
+    ft = set(_tok(f.get("summary","")) + _tok(f.get("entity_id","")))
+    if SOC_HINT_TOKENS & ft:
+        return True
+    if "%" in f.get("summary",""):
+        return True
+    return False
+
+def _pick_best_ess_soc(facts: List[dict]) -> dict | None:
+    """Pick the best ESS SOC candidate across all facts."""
+    candidates = []
+    for f in facts:
+        if _is_ess_soc_fact(f):
+            s = int(f.get("score", 1))
+            ts = (f.get("last_changed") or "").replace("Z","").replace("T"," ").split(".")[0]
+            if ts:
+                s += 1
+            candidates.append((s, f))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
 def inject_context(user_msg: str) -> str:
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
@@ -302,59 +328,66 @@ def inject_context(user_msg: str) -> str:
     facts = get_facts()
 
     want_cats = _intent_categories(q)
-
-    # detect location-style ask (helps even if user didn't use exact word 'where')
-    is_where_like = bool(q & {"where","location","zone","home","work","present","presence","is"})
-
     scored=[]
     for f in facts:
         s = int(f.get("score",1))
         ft=set(_tok(f.get("summary","")) + _tok(f.get("entity_id","")))
         cats=set(f.get("cats",[]))
 
-        # token match
         if q and (q & ft): s += 3
-
-        # energy-ish bump
         if q & SOLAR_KEYWORDS: s += 2
 
-        # SOC bump (ESS % sensors bubble up)
-        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
-            s += 12
+        # STRONG bump for ESS SOC
+        if (SOC_HINT_TOKENS & ft) and ("energy.storage" in cats):
+            s += 16
 
         # category routing
         if want_cats and (cats & want_cats):
             s += 15
 
-        # extra preference for storage if asking soc/battery/solar
-        if (want_cats & {"energy.storage"}) and ("energy.storage" in cats):
+        if want_cats & {"energy.storage"} and "energy.storage" in cats:
             s += 20
 
-        # push down device batteries vs ESS
-        if (want_cats & {"energy.storage"}) and ("device.battery" in cats) and ("energy.storage" not in cats):
+        # demote device batteries for soc/ess queries
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           ("device.battery" in cats) and ("energy.storage" not in cats):
+            s -= 18
+
+        # demote forecasts for soc intent
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           (("forecast" in ft) or ("estimated" in ft)):
             s -= 12
 
-        # push down forecasts for SOC asks
-        if (want_cats & {"energy.storage"}) and ("forecast" in ft or "estimated" in ft):
-            s -= 10
+        scored.append((s, f.get("summary",""), f))
 
-        # NEW: location-style queries → prefer person/device_tracker
-        if is_where_like and ("person" in cats):
-            s += 25
+    # Sort and pick top-k
+    top_scored = sorted(scored, key=lambda x:x[0], reverse=True)[:top_k]
 
-        scored.append((s, f.get("summary","")))
+    # SOC FALLBACK
+    want_soc_intent = ("soc" in q) or (want_cats & {"energy.storage"})
+    if want_soc_intent:
+        has_ess_soc_in_top = any(_is_ess_soc_fact(f) for _, _, f in top_scored)
+        if not has_ess_soc_in_top:
+            best_soc = _pick_best_ess_soc(facts)
+            if best_soc:
+                if len(top_scored) >= top_k:
+                    top_scored[-1] = (999999, best_soc.get("summary",""), best_soc)
+                else:
+                    top_scored.append((999999, best_soc.get("summary",""), best_soc))
+                top_scored = sorted(top_scored, key=lambda x:x[0], reverse=True)
 
-    top=sorted(scored,key=lambda x:x[0],reverse=True)[:top_k]
+    # Final join
+    top = [t[1] for t in top_scored if t[1]]
 
     try:
-        print(f"[RAG] inject_context: top_k={top_k} | q={sorted(q)} | want_cats={sorted(list(want_cats))} | where_like={is_where_like} | facts={len(facts)} | matched={len([t for t in top if t[1]])}")
-        for i, (_, line) in enumerate(top[:3], 1):
+        print(f"[RAG] inject_context: q={sorted(q)} | want_cats={sorted(list(want_cats))} | facts={len(facts)} | top_k={top_k} | matched={len(top)}")
+        for i, line in enumerate(top[:3], 1):
             if line:
                 print(f"[RAG] ctx[{i}]: {line}")
     except Exception:
         pass
 
-    return "\n".join([t[1] for t in top if t[1]])
+    return "\n".join(top)
 
 # ----------------- main -----------------
 
