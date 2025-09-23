@@ -10,7 +10,7 @@
 # - Phones & persons (Sam’s phone, etc.)
 #
 # Output:
-# /data/rag_facts.json → facts used by chatbot & notify
+# /share/jarvis_prime/memory/rag_facts.json → facts used by chatbot & notify
 
 import os, json, sqlite3, re
 from datetime import datetime
@@ -20,7 +20,9 @@ DB_PATHS = [
     "/data/home-assistant_v2.db",
 ]
 
-OUTPUT_PATH = "/data/rag_facts.json"
+# --- new persistent path in /share ---
+OUTPUT_PATH = "/share/jarvis_prime/memory/rag_facts.json"
+os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
 # --- Keyword groups for boosting ---
 SOLAR_KEYWORDS   = {"axpert", "inverter", "pv", "grid", "battery"}
@@ -36,7 +38,6 @@ NAME_MAP = {
     "sonoff-snzb-02d": "Living Room Temp",
 }
 
-# --- Helper: normalize entity_id to human-readable name ---
 def normalize_name(eid: str) -> str:
     eid = eid.lower().replace("_", " ")
     for k, v in NAME_MAP.items():
@@ -46,7 +47,6 @@ def normalize_name(eid: str) -> str:
         eid = eid.split(".", 1)[1]
     return eid.strip()
 
-# --- Helper: extract numeric value if possible ---
 def extract_value(state: str):
     try:
         if state is None:
@@ -57,19 +57,15 @@ def extract_value(state: str):
     except Exception:
         return state
 
-# --- Connect to HA DB ---
 def get_connection():
     for path in DB_PATHS:
         if os.path.exists(path):
             return sqlite3.connect(path)
     raise FileNotFoundError("No home-assistant_v2.db found")
 
-# --- Main collector ---
 def collect_facts(limit_per_entity: int = 5):
     conn = get_connection()
     cur = conn.cursor()
-
-    # fetch last states for each entity
     cur.execute("""
         SELECT entity_id, state, attributes, last_updated
         FROM states
@@ -85,18 +81,13 @@ def collect_facts(limit_per_entity: int = 5):
 
     for eid, state, attrs, last_upd in rows:
         eid_l = eid.lower()
-
-        # skip unknown/unavailable
         if state in ("unknown", "unavailable", None, ""):
             continue
-
-        # parse attributes JSON
         try:
             attr = json.loads(attrs) if attrs else {}
         except Exception:
             attr = {}
 
-        # base fact
         fact = {
             "entity_id": eid,
             "name": normalize_name(eid),
@@ -106,70 +97,55 @@ def collect_facts(limit_per_entity: int = 5):
             "source": "ha",
         }
 
-        # include selected attributes
         for k in ["unit_of_measurement", "battery_level", "voltage", "current",
                   "power", "temperature", "humidity", "linkquality", "lqi", "rssi"]:
             if k in attr:
                 fact[k] = attr[k]
 
-        # scoring boosts
         if any(k in eid_l for k in SOLAR_KEYWORDS):
-            fact["score"] += 5
-            fact["source"] = "solar"
+            fact["score"] += 5; fact["source"] = "solar"
         if any(k in eid_l for k in ZIGBEE_KEYWORDS):
-            fact["score"] += 3
-            fact["source"] = "zigbee"
+            fact["score"] += 3; fact["source"] = "zigbee"
         if any(k in eid_l for k in TASMOTA_KEYWORDS):
-            fact["score"] += 2
-            fact["source"] = "tasmota"
+            fact["score"] += 2; fact["source"] = "tasmota"
         if any(k in eid_l for k in PHONE_KEYWORDS) or "device_tracker" in eid_l:
-            fact["score"] += 2
-            fact["source"] = "phone"
+            fact["score"] += 2; fact["source"] = "phone"
         if any(k in eid_l for k in PERSON_KEYWORDS):
-            fact["score"] += 2
-            fact["source"] = "person"
+            fact["score"] += 2; fact["source"] = "person"
 
-        # build summary for LLM context
-        summary_parts = [fact["name"]]
+        parts = [fact["name"]]
         if "state" in fact and fact["state"] not in (None, "", "on", "off"):
-            summary_parts.append(str(fact["state"]))
+            parts.append(str(fact["state"]))
         if "unit_of_measurement" in fact:
-            summary_parts.append(fact["unit_of_measurement"])
+            parts.append(fact["unit_of_measurement"])
         if "battery_level" in fact:
-            summary_parts.append(f"Battery {fact['battery_level']}%")
+            parts.append(f"Battery {fact['battery_level']}%")
         if "temperature" in fact:
-            summary_parts.append(f"T={fact['temperature']}°C")
+            parts.append(f"T={fact['temperature']}°C")
         if "humidity" in fact:
-            summary_parts.append(f"H={fact['humidity']}%")
+            parts.append(f"H={fact['humidity']}%")
         if "linkquality" in fact:
-            summary_parts.append(f"LQ={fact['linkquality']}")
+            parts.append(f"LQ={fact['linkquality']}")
         if "rssi" in fact:
-            summary_parts.append(f"RSSI={fact['rssi']}")
+            parts.append(f"RSSI={fact['rssi']}")
         if "lqi" in fact:
-            summary_parts.append(f"LQI={fact['lqi']}")
-
-        fact["summary"] = " ".join(map(str, summary_parts))
+            parts.append(f"LQI={fact['lqi']}")
+        fact["summary"] = " ".join(map(str, parts))
 
         facts.append(fact)
 
-    # sort by score and recency
     facts.sort(key=lambda x: (x["score"], x["last_updated"]), reverse=True)
-
-    # optional: trim per entity
-    pruned = []
-    seen = {}
+    pruned, seen = [], {}
     for f in facts:
         eid = f["entity_id"]
         seen.setdefault(eid, 0)
         if seen[eid] < limit_per_entity:
-            pruned.append(f)
-            seen[eid] += 1
+            pruned.append(f); seen[eid] += 1
 
     result = {
         "generated_at": now,
         "facts": pruned,
         "count": len(pruned),
-        "note": "These are live context facts from your Home Assistant setup. Use them when answering questions about the home environment.",
     }
 
     with open(OUTPUT_PATH, "w") as f:
