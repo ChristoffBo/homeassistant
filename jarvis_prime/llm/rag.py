@@ -109,6 +109,15 @@ def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     if ls in ("home","not_home"): return "Home" if ls=="home" else "Away"
     return state
 
+# NEW: identify solar battery facts
+def _is_solar_battery(eid: str, name: str, attrs: Dict[str, Any]) -> bool:
+    t = "_".join(_tok(eid) + _tok(name))
+    if any(k in t for k in ("solar_assistant","solarassistant","inverter","pv","ess","battery_soc","soc")):
+        return True
+    manf = str(attrs.get("manufacturer","") or attrs.get("vendor","") or "").lower()
+    model = str(attrs.get("model","")).lower()
+    return any(x in manf for x in ("solar","solarassistant")) or any(x in model for x in ("inverter","bms","battery"))
+
 def _write_json_atomic(path: str, obj: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -157,6 +166,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
+            # --- Scoring ---
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
@@ -169,6 +179,10 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
             if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
+
+            # NEW: strong positive for solar battery SOC entities
+            if _is_solar_battery(eid, name, attrs):
+                score += 20
 
             facts.append({
                 "entity_id": eid,
@@ -227,7 +241,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
         return refresh_and_cache()
     facts = load_cached()
-    # NEW: avoid “stuck empty” cache
+    # avoid “stuck empty” cache
     if not facts:
         return refresh_and_cache()
     return facts
@@ -237,13 +251,25 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q=set(_expand_query_tokens(_tok(user_msg)))
     facts=get_facts()
     scored=[]
+    solar_query = bool({"solar","pv","inverter","soc","battery"} & q)
     for f in facts:
         s=f.get("score",1)
         if q:
             ft=set(_tok(f.get("summary","")) + _tok(f.get("entity_id","")))
             if q & ft: s+=3
-            if ({"solar","pv","inverter","soc","battery"} & q) and any(k in ft for k in SOLAR_KEYWORDS):
+            if solar_query and any(k in ft for k in SOLAR_KEYWORDS):
                 s+=2
+            # NEW: if user implies solar SOC, prefer solar battery; de-boost device batteries
+            if solar_query:
+                eid = (f.get("entity_id","") or "").lower()
+                name = (f.get("friendly_name","") or "").lower()
+                key = eid + "_" + name
+                if any(k in key for k in ("solar_assistant","solarassistant","inverter","pv","ess","battery_soc","soc")):
+                    s += 15
+                if any(k in key for k in ("snzb","phone","iphone","ipad","watch","tablet")):
+                    s -= 10
+                if f.get("device_class","") == "battery" and not any(k in key for k in ("solar_assistant","solarassistant","inverter","pv","ess","battery_soc","soc")):
+                    s -= 6
         scored.append((s,f.get("summary","")))
     top=sorted(scored,key=lambda x:x[0],reverse=True)[:top_k]
 
