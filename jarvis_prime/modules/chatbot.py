@@ -30,15 +30,48 @@ try:
 except Exception:
     _LLM = None
 
+# ----------------------------
+# RAG bridge
+# ----------------------------
+try:
+    import rag
+except Exception:
+    rag = None
+
 def _llm_ready() -> bool:
     return _LLM is not None and hasattr(_LLM, "chat_generate")
+
+def _get_rag_context(max_fraction: float = 0.02) -> str:
+    """
+    Pull facts from rag.py. Limit token count dynamically based on LLM ctx.
+    max_fraction: fraction of ctx tokens to allocate to facts.
+    """
+    if not rag:
+        return ""
+    try:
+        ctx = 4096
+        try:
+            ctx = int(os.environ.get("LLM_CTX", "4096"))
+        except Exception:
+            pass
+        max_tokens = max(200, int(ctx * max_fraction))
+        facts = rag.load_facts(limit=max_tokens)
+        return "\n".join(f"- {f}" for f in facts)
+    except Exception as e:
+        if DEBUG: print("RAG_LOAD_ERR", e)
+        return ""
 
 def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
     if not _llm_ready():
         return ""
     try:
+        rag_notes = _get_rag_context()
+        sys_prompt = ""
+        if rag_notes:
+            sys_prompt = f"Here are current home system facts you can rely on:\n{rag_notes}\n\n"
         return _LLM.chat_generate(
-            messages=[{"role": "user", "content": user_msg}],
+            messages=[{"role": "system", "content": sys_prompt},
+                      {"role": "user", "content": user_msg}],
             system_prompt="",
             max_new_tokens=max_new_tokens,
         ) or ""
@@ -53,6 +86,9 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
         "Prefer concrete facts & dates. Avoid speculation. If info is conflicting, note it briefly. "
         "Rank recent and authoritative sources higher. Respond like a human researcher would: factual, relevant, helpful."
     )
+    rag_notes = _get_rag_context()
+    if rag_notes:
+        sys_prompt += f"\n\nAlso consider these home system facts:\n{rag_notes}"
     msgs = [
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": f"Question: {question.strip()}\n\nNotes:\n{notes.strip()}\n\nWrite the answer now."},
@@ -110,7 +146,6 @@ _DENY_DOMAINS = [
     "vk.com","weibo.","4chan","8kun","/forum","forum.","boards.",
     "linktr.ee","tiktok.com","facebook.com","notebooklm.google.com"
 ]
-
 def _tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
 
@@ -205,7 +240,7 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
         score += min(len(snip)//120, 3)
         overlap_bonus = len(set(_tokenize(q)) & set(_tokenize(title + " " + snip)))
         score += min(overlap_bonus, 4)
-        years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + " " + (snip or ""))
+        years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + (snip or ""))
         if years:
             newest = max(int(y) for y in years)
             if newest >= _CURRENT_YEAR:
@@ -305,7 +340,6 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
     if DEBUG:
         print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
     return deduped
-
 def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
@@ -411,122 +445,35 @@ def _build_query_by_vertical(q: str, vertical: str) -> str:
         return f"{q} site:learn.microsoft.com OR site:stackoverflow.com OR site:unix.stackexchange.com OR site:github.com OR site:wikipedia.org"
     return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:history.com"
 
-def _try_all_backoffs(query: str, shaped: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
-    hits: List[Dict[str,str]] = []
-    if DEBUG: print("BACKOFF_PASS1_SHAPED")
-    # Pass 1: shaped (site-scoped) via DDG lib → API → wiki
-    hits.extend(_search_with_duckduckgo_lib(shaped, max_results=max_results*2))
-    if not hits:
-        hits.extend(_search_with_ddg_api(shaped, max_results=max_results*2))
-    if not hits:
-        hits.extend(_search_with_wikipedia(query))
-    if hits:
-        return hits
-
-    if DEBUG: print("BACKOFF_PASS2_PLAIN")
-    # Pass 2: plain query (no site:)
-    plain = query
-    hits.extend(_search_with_duckduckgo_lib(plain, max_results=max_results*2))
-    if not hits:
-        hits.extend(_search_with_ddg_api(plain, max_results=max_results*2))
-    if hits:
-        return hits
-
-    if DEBUG: print("BACKOFF_PASS3_KEYWORDS_ONLY")
-    # Pass 3: keyword-only query
-    kwq = _keywords_only(query)
-    hits.extend(_search_with_duckduckgo_lib(kwq, max_results=max_results*2))
-    if not hits:
-        hits.extend(_search_with_ddg_api(kwq, max_results=max_results*2))
-    if hits:
-        return hits
-
-    if DEBUG: print("BACKOFF_PASS4_SITE_LADDER")
-    # Pass 4: per-site ladder (especially good for fact queries)
-    for site in _vertical_site_ladder(vertical):
-        q_site = f'{kwq} site:{site}'
-        local = _search_with_duckduckgo_lib(q_site, max_results=max_results)
-        if not local:
-            local = _search_with_ddg_api(q_site, max_results=max_results)
-        if local:
-            hits.extend(local)
-        if len(hits) >= max_results:
-            break
-
-    # Final safety: Wikipedia summary with keywords
-    if not hits:
-        if DEBUG: print("BACKOFF_FINAL_WIKI")
-        wiki_fallback = _search_with_wikipedia(kwq)
-        hits.extend(wiki_fallback)
-    return hits
-
 # ----------------------------
-# Web search orchestration
-# ----------------------------
-def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
-    vertical = _detect_intent(query)
-    shaped = _build_query_by_vertical(query, vertical)
-
-    # Gather with tough fallbacks
-    hits = _try_all_backoffs(query, shaped, vertical, max_results)
-
-    # Add vertical extras (same as before)
-    facty = bool(_FACT_QUERY_RE.search(query))
-    if vertical == "tech":
-        hits.extend(_search_with_reddit(query, limit=6))
-        hits.extend(_search_with_github(query, limit=6))
-    elif vertical in {"entertainment", "sports"}:
-        if not facty:
-            hits.extend(_search_with_reddit(query, limit=4))
-    else:
-        if not facty:
-            hits.extend(_search_with_reddit(query, limit=3))
-
-    if DEBUG:
-        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical, "FACTY", facty)
-
-    ranked = _rank_hits(query, hits, vertical)
-    return ranked[:max_results] if ranked else []
-
-# ----------------------------
-# Render
-# ----------------------------
-def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
-    lines: List[str] = []
-    if summary.strip():
-        lines.append(summary.strip())
-    if sources:
-        dedup, seen = [], set()
-        for title, url in sources:
-            if not url or url in seen or _is_deny_domain(url):
-                continue
-            seen.add(url)
-            dedup.append((title, url))
-        if dedup:
-            lines.append("\nSources:")
-            for title, url in dedup[:5]:
-                lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
-    return "\n".join(lines).strip()
-
-def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
-    notes = []
-    for h in hits[:6]:
-        t = html.unescape((h.get("title") or "").strip())
-        s = html.unescape((h.get("snippet") or "").strip())
-        if t or s:
-            notes.append(f"- {t} — {s}")
-    return "\n".join(notes)
-
-# ----------------------------
-# Public entry
+# Public entry with RAG integration
 # ----------------------------
 def handle_message(source: str, text: str) -> str:
     q = (text or "").strip()
     if not q:
         return ""
+
     try:
         if DEBUG: print("IN_MSG:", q)
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
+
+        # Inject RAG context
+        rag_ctx = ""
+        try:
+            import rag
+            rag_ctx = rag.inject_context(q)
+        except Exception as e:
+            if DEBUG: print("RAG_ERR", repr(e))
+
+        if rag_ctx:
+            ans = _LLM.chat_generate(
+                messages=[{"role": "system", "content": "Use the provided facts if relevant:\n" + rag_ctx},
+                          {"role": "user", "content": q}],
+                system_prompt="",
+                max_new_tokens=256,
+            )
+        else:
+            ans = _chat_offline_singleturn(q, max_new_tokens=256)
+
         clean_ans = _clean_text(ans)
         if DEBUG: print("OFFLINE_ANS:", repr(clean_ans))
 
@@ -561,7 +508,6 @@ def handle_message(source: str, text: str) -> str:
                 if not hits: print("NO_HITS_AFTER_ALL_BACKOFFS")
 
             if hits:
-                # direct snippets for facty prompts
                 if _FACT_QUERY_RE.search(q):
                     snippets = []
                     for h in hits[:3]:
@@ -574,7 +520,6 @@ def handle_message(source: str, text: str) -> str:
                     sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                     return _render_web_answer("\n".join(snippets), sources)
 
-                # synthesizer for non-fact questions
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
                 if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
@@ -585,8 +530,10 @@ def handle_message(source: str, text: str) -> str:
 
         if clean_ans and not offline_unknown:
             return clean_ans
+
         fallback = _chat_offline_singleturn(q, max_new_tokens=240)
         return _clean_text(fallback) or "I don't know."
+
     except Exception as e:
         if DEBUG:
             traceback.print_exc()
