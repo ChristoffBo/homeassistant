@@ -30,6 +30,37 @@ try:
 except Exception:
     _LLM = None
 
+def _llm_ready() -> bool:
+    return _LLM is not None and hasattr(_LLM, "chat_generate")
+
+def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
+    if not _llm_ready():
+        return ""
+    try:
+        return _LLM.chat_generate(
+            messages=[{"role": "user", "content": user_msg}],
+            system_prompt="",
+            max_new_tokens=max_new_tokens,
+        ) or ""
+    except Exception:
+        return ""
+
+def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320) -> str:
+    if not _llm_ready():
+        return ""
+    sys_prompt = (
+        "You are a concise synthesizer. Using only the provided bullet notes, write a clear 4–6 sentence answer. "
+        "Prefer concrete facts & dates. Avoid speculation. If info is conflicting, note it briefly. "
+        "Rank recent and authoritative sources higher. Respond like a human researcher would: factual, relevant, helpful."
+    )
+    msgs = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": f"Question: {question.strip()}\n\nNotes:\n{notes.strip()}\n\nWrite the answer now."},
+    ]
+    try:
+        return _LLM.chat_generate(messages=msgs, system_prompt="", max_new_tokens=max_new_tokens) or ""
+    except Exception:
+        return ""
 # ----------------------------
 # RAG bridge
 # ----------------------------
@@ -69,6 +100,7 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
         return _LLM.chat_generate(messages=msgs, system_prompt="", max_new_tokens=max_new_tokens) or ""
     except Exception:
         return ""
+
 
 # ----------------------------
 # Topic detection
@@ -130,6 +162,7 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
             "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
+
 def _domain_of(url: str) -> str:
     try:
         return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
@@ -312,6 +345,7 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
     if DEBUG:
         print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
     return deduped
+
 def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
@@ -333,34 +367,195 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]
     if DEBUG: print("WIKI_NO_HIT Q:", query)
     return []
 
-# ----------------------------
-# RAG patch – load facts from rag_facts.json
-# ----------------------------
-def _load_rag_facts() -> List[str]:
-    paths = ["/share/jarvis_prime/memory/rag_facts.json", "/data/rag_facts.json"]
-    for p in paths:
-        try:
-            with open(p, "r") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return [json.dumps(data)]
-                elif isinstance(data, list):
-                    return [json.dumps(d) for d in data]
-        except Exception:
-            continue
-    return []
+def _search_with_reddit(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
+    try:
+        url = "https://www.reddit.com/search.json"
+        headers = {"User-Agent": "JarvisPrimeBot/1.0"}
+        t0 = time.time()
+        r = requests.get(url, params={"q": query, "limit": str(limit), "sort": "relevance"}, headers=headers, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+        hits: List[Dict[str,str]] = []
+        for child in data.get("data", {}).get("children", []):
+            d = child.get("data", {})
+            sub = (d.get("subreddit") or "").strip()
+            title = d.get("title") or ""
+            snippet = d.get("selftext") or ""
+            url = "https://www.reddit.com" + d.get("permalink", "")
+            if title and url:
+                hits.append({"title": f"Reddit/r/{sub}: {title}", "url": url, "snippet": snippet[:300]})
+        if DEBUG:
+            print("REDDIT_RAW_HITS", len(hits), "Q:", query, "T:", round(time.time()-t0,3))
+        return hits
+    except Exception as e:
+        if DEBUG:
+            print("REDDIT_ERR", repr(e), "Q:", query)
+        return []
 
-def _select_relevant_facts(q: str, facts: List[str], max_tokens: int = 800) -> str:
-    out = []
-    used = 0
-    for fact in facts:
-        toks = len(fact.split())
-        if used + toks > max_tokens:
+def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
+    hits = []
+    try:
+        repo_url = f"https://api.github.com/search/repositories?q={_urlquote(query)}&per_page={limit}"
+        t0 = time.time()
+        r = requests.get(repo_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
+        if r.status_code == 200:
+            data = r.json()
+            for item in data.get("items", []):
+                hits.append({"title": f"GitHub Repo: {item.get('full_name')}", "url": item.get("html_url"), "snippet": (item.get("description") or "")[:300]})
+        if DEBUG:
+            print("GITHUB_REPO_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Repo")), "Q:", query, "T:", round(time.time()-t0,3))
+    except Exception as e:
+        if DEBUG:
+            print("GITHUB_REPO_ERR", repr(e), "Q:", query)
+    try:
+        issues_url = f"https://api.github.com/search/issues?q={_urlquote(query)}&per_page={limit}"
+        t1 = time.time()
+        r = requests.get(issues_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
+        if r.status_code == 200:
+            data = r.json()
+            for item in data.get("items", []):
+                hits.append({"title": f"GitHub Issue: {item.get('title')}", "url": item.get("html_url"), "snippet": (item.get("body") or "")[:300]})
+        if DEBUG:
+            print("GITHUB_ISSUE_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Issue")), "Q:", query, "T:", round(time.time()-t1,3))
+    except Exception as e:
+        if DEBUG:
+            print("GITHUB_ISSUE_ERR", repr(e), "Q:", query)
+    if DEBUG:
+        print("GITHUB_RAW_HITS", len(hits), "Q:", query)
+    return hits
+
+# ---- Backoff helpers ----
+def _keywords_only(q: str) -> str:
+    stop = {"where","what","who","when","which","the","and","for","with","from","into",
+            "about","this","that","your","you","are","was","were","have","has","had",
+            "a","an","of","to","in","on","by","at","last","latest","most","recent",
+            "movie","film","release","won","winner","result","date","year"}
+    toks = [w for w in _tokenize(q) if w not in stop]
+    return " ".join(sorted(set(toks), key=toks.index)) or q
+
+def _vertical_site_ladder(vertical: str) -> List[str]:
+    if vertical == "sports":
+        return ["formula1.com", "espn.com", "motorsport.com", "autosport.com", "the-race.com", "wikipedia.org"]
+    if vertical == "entertainment":
+        return ["imdb.com", "rottentomatoes.com", "metacritic.com", "boxofficemojo.com", "wikipedia.org"]
+    if vertical == "tech":
+        return ["learn.microsoft.com", "stackoverflow.com", "unix.stackexchange.com", "github.com", "wikipedia.org"]
+    return ["wikipedia.org", "britannica.com", "biography.com", "history.com"]
+
+def _build_query_by_vertical(q: str, vertical: str) -> str:
+    if vertical == "entertainment":
+        return f"{q} site:imdb.com OR site:rottentomatoes.com OR site:metacritic.com OR site:wikipedia.org"
+    if vertical == "sports":
+        return f"{q} site:formula1.com OR site:espn.com OR site:fifa.com OR site:wikipedia.org OR site:autosport.com OR site:motorsport.com OR site:the-race.com"
+    if vertical == "tech":
+        return f"{q} site:learn.microsoft.com OR site:stackoverflow.com OR site:unix.stackexchange.com OR site:github.com OR site:wikipedia.org"
+    return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:history.com"
+
+def _try_all_backoffs(query: str, shaped: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
+    hits: List[Dict[str,str]] = []
+    if DEBUG: print("BACKOFF_PASS1_SHAPED")
+    # Pass 1: shaped (site-scoped) via DDG lib → API → wiki
+    hits.extend(_search_with_duckduckgo_lib(shaped, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_ddg_api(shaped, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_wikipedia(query))
+    if hits:
+        return hits
+
+    if DEBUG: print("BACKOFF_PASS2_PLAIN")
+    # Pass 2: plain query (no site:)
+    plain = query
+    hits.extend(_search_with_duckduckgo_lib(plain, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_ddg_api(plain, max_results=max_results*2))
+    if hits:
+        return hits
+
+    if DEBUG: print("BACKOFF_PASS3_KEYWORDS_ONLY")
+    # Pass 3: keyword-only query
+    kwq = _keywords_only(query)
+    hits.extend(_search_with_duckduckgo_lib(kwq, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_ddg_api(kwq, max_results=max_results*2))
+    if hits:
+        return hits
+
+    if DEBUG: print("BACKOFF_PASS4_SITE_LADDER")
+    # Pass 4: per-site ladder (especially good for fact queries)
+    for site in _vertical_site_ladder(vertical):
+        q_site = f'{kwq} site:{site}'
+        local = _search_with_duckduckgo_lib(q_site, max_results=max_results)
+        if not local:
+            local = _search_with_ddg_api(q_site, max_results=max_results)
+        if local:
+            hits.extend(local)
+        if len(hits) >= max_results:
             break
-        if any(k in fact.lower() for k in _tokenize(q)):
-            out.append(fact)
-            used += toks
-    return "\n".join(out)
+
+    # Final safety: Wikipedia summary with keywords
+    if not hits:
+        if DEBUG: print("BACKOFF_FINAL_WIKI")
+        wiki_fallback = _search_with_wikipedia(kwq)
+        hits.extend(wiki_fallback)
+    return hits
+
+# ----------------------------
+# Web search orchestration
+# ----------------------------
+def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
+    vertical = _detect_intent(query)
+    shaped = _build_query_by_vertical(query, vertical)
+
+    # Gather with tough fallbacks
+    hits = _try_all_backoffs(query, shaped, vertical, max_results)
+
+    # Add vertical extras (same as before)
+    facty = bool(_FACT_QUERY_RE.search(query))
+    if vertical == "tech":
+        hits.extend(_search_with_reddit(query, limit=6))
+        hits.extend(_search_with_github(query, limit=6))
+    elif vertical in {"entertainment", "sports"}:
+        if not facty:
+            hits.extend(_search_with_reddit(query, limit=4))
+    else:
+        if not facty:
+            hits.extend(_search_with_reddit(query, limit=3))
+
+    if DEBUG:
+        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical, "FACTY", facty)
+
+    ranked = _rank_hits(query, hits, vertical)
+    return ranked[:max_results] if ranked else []
+
+# ----------------------------
+# Render
+# ----------------------------
+def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
+    lines: List[str] = []
+    if summary.strip():
+        lines.append(summary.strip())
+    if sources:
+        dedup, seen = [], set()
+        for title, url in sources:
+            if not url or url in seen or _is_deny_domain(url):
+                continue
+            seen.add(url)
+            dedup.append((title, url))
+        if dedup:
+            lines.append("\nSources:")
+            for title, url in dedup[:5]:
+                lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
+    return "\n".join(lines).strip()
+
+def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
+    notes = []
+    for h in hits[:6]:
+        t = html.unescape((h.get("title") or "").strip())
+        s = html.unescape((h.get("snippet") or "").strip())
+        if t or s:
+            notes.append(f"- {t} — {s}")
+    return "\n".join(notes)
 
 # ----------------------------
 # Public entry
@@ -371,18 +566,11 @@ def handle_message(source: str, text: str) -> str:
         return ""
     try:
         if DEBUG: print("IN_MSG:", q)
-
-        # 1. RAG facts injection
-        rag_facts = _load_rag_facts()
-        context = _select_relevant_facts(q, rag_facts, max_tokens=800)
-        rag_prompt = f"Context:\n{context}\n\nQuestion: {q}" if context else q
-
-        # 2. Try offline LLM with RAG context
-        ans = _chat_offline_singleturn(rag_prompt, max_new_tokens=256)
+        ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
         if DEBUG: print("OFFLINE_ANS:", repr(clean_ans))
 
-        # 3. Offline unknown markers
+        # offline-unknown markers + force-web phrases
         offline_unknown_markers = {
             "i don't know.", "i dont know", "(no reply)", "unknown", "no idea",
             "i'm not sure", "i am unsure"
@@ -396,6 +584,7 @@ def handle_message(source: str, text: str) -> str:
             r"\bi'm unsure\b",
             r"\bi am not sure\b",
         ]
+
         offline_unknown = (not clean_ans) or (clean_ans.strip().lower() in offline_unknown_markers)
         if not offline_unknown and clean_ans:
             for pat in force_web_patterns:
@@ -404,11 +593,15 @@ def handle_message(source: str, text: str) -> str:
                     if DEBUG: print("FORCE_WEB_DUE_TO_OFFLINE_TEXT")
                     break
 
-        # 4. Web fallback
         if _should_use_web(q) or offline_unknown:
             if DEBUG: print("WEB_MODE_TRIGGERED")
             hits = _web_search(q, max_results=8)
+            if DEBUG:
+                print("POST_FILTER_HITS", len(hits))
+                if not hits: print("NO_HITS_AFTER_ALL_BACKOFFS")
+
             if hits:
+                # direct snippets for facty prompts
                 if _FACT_QUERY_RE.search(q):
                     snippets = []
                     for h in hits[:3]:
@@ -421,6 +614,7 @@ def handle_message(source: str, text: str) -> str:
                     sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                     return _render_web_answer("\n".join(snippets), sources)
 
+                # synthesizer for non-fact questions
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
                 if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
