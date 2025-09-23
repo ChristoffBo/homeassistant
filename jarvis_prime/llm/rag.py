@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 # /app/rag.py  (REST → /api/states)
+#
+# - Reads HA URL + token from /data/options.json (/data/config.json fallback)
+# - Pulls states via /api/states (read-only)
+# - Summarizes/boosts entities (solar, phones, zigbee, etc.)
+# - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
+#   and also mirrors to /data/rag_facts.json as a fallback
+# - inject_context(user_msg, top_k) returns a small, relevant context block
 
 import os, re, json, time, threading, urllib.request
 from typing import Any, Dict, List, Tuple
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
-# Primary + fallback output
-PRIMARY_DIRS   = ["/share/jarvis_prime/memory", "/share/jarvis_prime"]
+# Primary (single target) + fallback
+PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]   # <— only this one now
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
@@ -20,7 +27,10 @@ MQTT_KEYWORDS    = {"mqtt"}
 RADARR_KEYWORDS  = {"radarr"}
 SONARR_KEYWORDS  = {"sonarr"}
 
-DEVICE_CLASS_PRIORITY = {"motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,"battery":3,"temperature":3,"humidity":2,"power":3,"energy":3}
+DEVICE_CLASS_PRIORITY = {
+    "motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,
+    "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
+}
 
 QUERY_SYNONYMS = {
     "soc":["soc","state_of_charge","battery_soc","battery"],
@@ -44,13 +54,18 @@ def _load_options() -> Dict[str, Any]:
             if os.path.exists(p):
                 with open(p,"r",encoding="utf-8") as f:
                     raw=f.read()
-                try: data=json.loads(raw)
+                try:
+                    data=json.loads(raw)
                 except json.JSONDecodeError:
                     try:
-                        import yaml; data=yaml.safe_load(raw)
-                    except Exception: data=None
-                if isinstance(data,dict): cfg.update(data)
-        except Exception: pass
+                        import yaml
+                        data=yaml.safe_load(raw)
+                    except Exception:
+                        data=None
+                if isinstance(data,dict):
+                    cfg.update(data)
+        except Exception:
+            pass
     return cfg
 
 def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
@@ -65,7 +80,6 @@ def _upper_if_onoff(s: str) -> str:
     return s.upper() if s in ("on","off","open","closed") else s
 
 def _tok(s: str) -> List[str]:
-    import re
     return re.findall(r"[A-Za-z0-9_]+", s.lower() if s else "")
 
 def _expand_query_tokens(tokens: List[str]) -> List[str]:
@@ -81,7 +95,7 @@ def _short_iso(ts: str) -> str:
 
 def _fmt_num(state: str, unit: str) -> str:
     try:
-        v=float(state); 
+        v=float(state)
         if abs(v)<0.005: v=0.0
         s=f"{v:.2f}".rstrip("0").rstrip(".")
         return f"{s} {unit}".strip()
@@ -103,12 +117,14 @@ def _write_json_atomic(path: str, obj: dict):
     os.replace(tmp,path)
 
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
-    ha_url = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
+    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
     ha_token = (cfg.get("llm_enviroguard_ha_token",""))
     if not ha_url or not ha_token: return []
     headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
-    try: data = _http_get_json(f"{ha_url}/api/states", headers, timeout=25)
-    except Exception: return []
+    try:
+        data = _http_get_json(f"{ha_url}/api/states", headers, timeout=25)
+    except Exception:
+        return []
     if not isinstance(data,list): return []
 
     facts=[]
@@ -170,15 +186,15 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     return facts
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
+    """Fetch states and write rag_facts.json to primary + fallback."""
     global _LAST_REFRESH_TS
     cfg = _load_options()
     facts = _fetch_ha_states(cfg)
 
     result_paths=[]
     try:
-        result=facts
-        # write primary(s)
         payload = facts
+        # write primary(s) — now only one directory in PRIMARY_DIRS
         for d in PRIMARY_DIRS:
             try:
                 p=os.path.join(d,BASENAME)
@@ -212,7 +228,8 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
         return refresh_and_cache()
     return load_cached()
 
-def inject_context(user_msg: str, top_k: int=5) -> str:
+def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
+    """Return top-k matching fact summaries (synonym-aware)."""
     q=set(_expand_query_tokens(_tok(user_msg)))
     facts=get_facts()
     scored=[]
@@ -231,3 +248,4 @@ if __name__ == "__main__":
     print("Refreshing RAG facts from Home Assistant...")
     facts = refresh_and_cache()
     print(f"Wrote {len(facts)} facts.")
+```0
