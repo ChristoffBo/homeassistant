@@ -30,49 +30,15 @@ try:
 except Exception:
     _LLM = None
 
-# Try to import rag.inject_context if available (safe, read-only)
-try:
-    from rag import inject_context as _rag_inject  # type: ignore
-except Exception:
-    _rag_inject = None
-
 def _llm_ready() -> bool:
     return _LLM is not None and hasattr(_LLM, "chat_generate")
 
 def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
-    """
-    Runs the offline LLM for a single-turn reply.
-    If RAG is available, injects a context block (from HA) before the user's message.
-    The RAG module itself decides how many facts to include; here we cap the injected
-    context by characters to avoid blowing the model's prompt buffer.
-    """
     if not _llm_ready():
         return ""
     try:
-        # Prepend RAG context (if available)
-        user_content = user_msg
-        try:
-            if _rag_inject:
-                try:
-                    ctx = _rag_inject(user_msg)
-                    if ctx:
-                        # Safe cap: RAG decides how many facts (top_k), but we still avoid sending an enormous blob.
-                        # Use a generous cap while being defensive — large-context models can handle more, but this prevents OOM.
-                        CHAR_CAP = 20000  # conservative but generous; rag already tries to compute top_k dynamically
-                        if len(ctx) > CHAR_CAP:
-                            ctx = ctx[:CHAR_CAP].rsplit("\n", 1)[0]  # trim cleanly
-                        # Prefix clearly marked context
-                        prefix = "CONTEXT FROM HOME ASSISTANT (facts and summaries):\n" + ctx + "\n\n"
-                        user_content = prefix + user_msg
-                except Exception:
-                    # If rag fails for some reason, continue with original message
-                    pass
-        except Exception:
-            pass
-
-        # Call the LLM
         return _LLM.chat_generate(
-            messages=[{"role": "user", "content": user_content}],
+            messages=[{"role": "user", "content": user_msg}],
             system_prompt="",
             max_new_tokens=max_new_tokens,
         ) or ""
@@ -400,7 +366,7 @@ def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Di
             print("GITHUB_REPO_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Repo")), "Q:", query, "T:", round(time.time()-t0,3))
     except Exception as e:
         if DEBUG:
-            print("GITHUB_REPO_ERR", repr(e))
+            print("GITHUB_REPO_ERR", repr(e), "Q:", query)
     try:
         issues_url = f"https://api.github.com/search/issues?q={_urlquote(query)}&per_page={limit}"
         t1 = time.time()
@@ -413,7 +379,7 @@ def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Di
             print("GITHUB_ISSUE_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Issue")), "Q:", query, "T:", round(time.time()-t1,3))
     except Exception as e:
         if DEBUG:
-            print("GITHUB_ISSUE_ERR", repr(e))
+            print("GITHUB_ISSUE_ERR", repr(e), "Q:", query)
     if DEBUG:
         print("GITHUB_RAW_HITS", len(hits), "Q:", query)
     return hits
