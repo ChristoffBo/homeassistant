@@ -10,7 +10,13 @@
 # - Phones & persons (Sam’s phone, etc.)
 #
 # Output:
-# /share/jarvis_prime/memory/rag_facts.json → facts used by chatbot & notify
+# /share/jarvis_prime/memory/rag_facts.json  (primary, human-visible)
+# /data/rag_facts.json                       (fallback)
+#
+# Notes:
+# - Atomic writes to avoid partial files
+# - Creates /share/jarvis_prime/memory if missing
+# - Prints all write locations to logs for easy confirmation
 
 import os, json, sqlite3, re
 from datetime import datetime
@@ -20,9 +26,10 @@ DB_PATHS = [
     "/data/home-assistant_v2.db",
 ]
 
-# --- new persistent path in /share ---
-OUTPUT_PATH = "/share/jarvis_prime/memory/rag_facts.json"
-os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+# ---- OUTPUT CONFIG (primary in /share, fallback in /data) ----
+OUTPUT_PRIMARY_DIRS = ["/share/jarvis_prime/memory", "/share/jarvis_prime"]
+OUTPUT_FALLBACK_PATH = "/data/rag_facts.json"
+OUTPUT_BASENAME = "rag_facts.json"
 
 # --- Keyword groups for boosting ---
 SOLAR_KEYWORDS   = {"axpert", "inverter", "pv", "grid", "battery"}
@@ -38,6 +45,7 @@ NAME_MAP = {
     "sonoff-snzb-02d": "Living Room Temp",
 }
 
+# --- Helpers ---------------------------------------------------
 def normalize_name(eid: str) -> str:
     eid = eid.lower().replace("_", " ")
     for k, v in NAME_MAP.items():
@@ -61,11 +69,23 @@ def get_connection():
     for path in DB_PATHS:
         if os.path.exists(path):
             return sqlite3.connect(path)
-    raise FileNotFoundError("No home-assistant_v2.db found")
+    raise FileNotFoundError("No home-assistant_v2.db found in " + ", ".join(DB_PATHS))
 
+def _write_json_atomic(path: str, obj: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+# --- Main collector --------------------------------------------
 def collect_facts(limit_per_entity: int = 5):
     conn = get_connection()
     cur = conn.cursor()
+
+    # fetch last states for each entity
     cur.execute("""
         SELECT entity_id, state, attributes, last_updated
         FROM states
@@ -81,13 +101,18 @@ def collect_facts(limit_per_entity: int = 5):
 
     for eid, state, attrs, last_upd in rows:
         eid_l = eid.lower()
+
+        # skip unknown/unavailable
         if state in ("unknown", "unavailable", None, ""):
             continue
+
+        # parse attributes JSON
         try:
             attr = json.loads(attrs) if attrs else {}
         except Exception:
             attr = {}
 
+        # base fact
         fact = {
             "entity_id": eid,
             "name": normalize_name(eid),
@@ -97,27 +122,35 @@ def collect_facts(limit_per_entity: int = 5):
             "source": "ha",
         }
 
+        # include selected attributes
         for k in ["unit_of_measurement", "battery_level", "voltage", "current",
                   "power", "temperature", "humidity", "linkquality", "lqi", "rssi"]:
             if k in attr:
                 fact[k] = attr[k]
 
+        # scoring boosts
         if any(k in eid_l for k in SOLAR_KEYWORDS):
-            fact["score"] += 5; fact["source"] = "solar"
+            fact["score"] += 5
+            fact["source"] = "solar"
         if any(k in eid_l for k in ZIGBEE_KEYWORDS):
-            fact["score"] += 3; fact["source"] = "zigbee"
+            fact["score"] += 3
+            fact["source"] = "zigbee"
         if any(k in eid_l for k in TASMOTA_KEYWORDS):
-            fact["score"] += 2; fact["source"] = "tasmota"
+            fact["score"] += 2
+            fact["source"] = "tasmota"
         if any(k in eid_l for k in PHONE_KEYWORDS) or "device_tracker" in eid_l:
-            fact["score"] += 2; fact["source"] = "phone"
+            fact["score"] += 2
+            fact["source"] = "phone"
         if any(k in eid_l for k in PERSON_KEYWORDS):
-            fact["score"] += 2; fact["source"] = "person"
+            fact["score"] += 2
+            fact["source"] = "person"
 
+        # build summary for LLM context
         parts = [fact["name"]]
         if "state" in fact and fact["state"] not in (None, "", "on", "off"):
             parts.append(str(fact["state"]))
         if "unit_of_measurement" in fact:
-            parts.append(fact["unit_of_measurement"])
+            parts.append(str(fact["unit_of_measurement"]))
         if "battery_level" in fact:
             parts.append(f"Battery {fact['battery_level']}%")
         if "temperature" in fact:
@@ -134,24 +167,53 @@ def collect_facts(limit_per_entity: int = 5):
 
         facts.append(fact)
 
+    # sort by score and recency
     facts.sort(key=lambda x: (x["score"], x["last_updated"]), reverse=True)
-    pruned, seen = [], {}
+
+    # optional: trim per entity
+    pruned = []
+    seen = {}
     for f in facts:
         eid = f["entity_id"]
         seen.setdefault(eid, 0)
         if seen[eid] < limit_per_entity:
-            pruned.append(f); seen[eid] += 1
+            pruned.append(f)
+            seen[eid] += 1
 
     result = {
         "generated_at": now,
         "facts": pruned,
         "count": len(pruned),
+        "note": "These are live context facts from your Home Assistant setup. Use them when answering questions about the home environment.",
+        "write_targets": []  # will be filled below for debugging
     }
 
-    with open(OUTPUT_PATH, "w") as f:
-        json.dump(result, f, indent=2)
+    # ---- write to /share first, then fallback to /data ----
+    written_paths = []
+    for d in OUTPUT_PRIMARY_DIRS:
+        try:
+            p = os.path.join(d, OUTPUT_BASENAME)
+            _write_json_atomic(p, result)
+            written_paths.append(p)
+        except Exception as e:
+            print(f"[RAG] write failed for {d}: {e}")
+    # Always also write fallback
+    try:
+        _write_json_atomic(OUTPUT_FALLBACK_PATH, result)
+        written_paths.append(OUTPUT_FALLBACK_PATH)
+    except Exception as e:
+        print(f"[RAG] fallback write failed: {e}")
 
-    print(f"[RAG] wrote {len(pruned)} facts to {OUTPUT_PATH}")
+    result["write_targets"] = written_paths
+
+    # Re-write primary (first successful) including write_targets for full trace (non-fatal if fails)
+    if written_paths:
+        try:
+            _write_json_atomic(written_paths[0], result)
+        except Exception:
+            pass
+
+    print(f"[RAG] wrote {len(pruned)} facts to: " + " | ".join(written_paths))
 
 if __name__ == "__main__":
     collect_facts()
