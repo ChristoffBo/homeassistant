@@ -165,9 +165,9 @@ if [ "$CLEANUP" = "true" ]; then
 fi
 ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
 if [ "$LLM_ENABLED" = "true" ]; then
-  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi‑3";
+  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi-3";
   elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL"; LLM_STATUS="TinyLlama";
-  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen‑0.5b";
+  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen-0.5b";
   else ENGINE="none-selected"; LLM_STATUS="Disabled"; fi
   if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
     if [ ! -s "$ACTIVE_PATH" ]; then echo "[Jarvis Prime] 🔮 Downloading model ($ENGINE)…"; py_download "$ACTIVE_URL" "$ACTIVE_PATH"; fi
@@ -191,6 +191,23 @@ else
   export JARVIS_UI_DIR="/app/ui"
 fi
 mkdir -p "$JARVIS_UI_DIR" || true
+
+# ===== RAG bootstrap & refresher (ADDED) =====
+# Where rag.py writes its human-visible file; create dirs safely.
+mkdir -p /share/jarvis_prime/memory /share/jarvis_prime || true
+# Allow override via options.json (seconds), default 900s = 15 min
+export RAG_REFRESH_SECONDS=$(jq -r '.rag_refresh_seconds // 900' "$CONFIG_PATH")
+echo "[launcher] RAG: priming facts now (and every ${RAG_REFRESH_SECONDS}s)…"
+# Initial populate (non-fatal if HA not ready yet)
+python3 /app/rag.py || echo "[launcher] RAG prime failed (continuing)"
+# Background refresher loop, insulated from set -e
+(
+  set +e
+  while true; do
+    sleep "${RAG_REFRESH_SECONDS}"
+    python3 /app/rag.py || echo "[launcher] RAG refresh failed (will retry)"
+  done
+) &
 
 BANNER_LLM="$( [ "$LLM_ENABLED" = "true" ] && echo "$LLM_STATUS" || echo "Disabled" )"
 banner "$BANNER_LLM" "$ENGINE" "${LLM_MODEL_PATH:-}"
