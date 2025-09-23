@@ -69,39 +69,6 @@ try:
 except Exception:
     rag = None
 
-def _llm_ready() -> bool:
-    return _LLM is not None and hasattr(_LLM, "chat_generate")
-
-def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
-    if not _llm_ready():
-        return ""
-    try:
-        return _LLM.chat_generate(
-            messages=[{"role": "user", "content": user_msg}],
-            system_prompt="",
-            max_new_tokens=max_new_tokens,
-        ) or ""
-    except Exception:
-        return ""
-
-def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320) -> str:
-    if not _llm_ready():
-        return ""
-    sys_prompt = (
-        "You are a concise synthesizer. Using only the provided bullet notes, write a clear 4–6 sentence answer. "
-        "Prefer concrete facts & dates. Avoid speculation. If info is conflicting, note it briefly. "
-        "Rank recent and authoritative sources higher. Respond like a human researcher would: factual, relevant, helpful."
-    )
-    msgs = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": f"Question: {question.strip()}\n\nNotes:\n{notes.strip()}\n\nWrite the answer now."},
-    ]
-    try:
-        return _LLM.chat_generate(messages=msgs, system_prompt="", max_new_tokens=max_new_tokens) or ""
-    except Exception:
-        return ""
-
-
 # ----------------------------
 # Topic detection
 # ----------------------------
