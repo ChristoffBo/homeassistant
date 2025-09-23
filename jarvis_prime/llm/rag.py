@@ -226,7 +226,11 @@ def load_cached() -> List[Dict[str,Any]]:
 def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
         return refresh_and_cache()
-    return load_cached()
+    facts = load_cached()
+    # NEW: avoid “stuck empty” cache
+    if not facts:
+        return refresh_and_cache()
+    return facts
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     """Return top-k matching fact summaries (synonym-aware)."""
@@ -242,10 +246,19 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
                 s+=2
         scored.append((s,f.get("summary","")))
     top=sorted(scored,key=lambda x:x[0],reverse=True)[:top_k]
+
+    # Debug: show what matched (visible in Add-on Logs; no config needed)
+    try:
+        print(f"[RAG] inject_context: q={sorted(q)} | facts={len(facts)} | top_k={top_k} | matched={len([t for t in top if t[1]])}")
+        for i, (_, line) in enumerate(top[:3], 1):
+            if line:
+                print(f"[RAG] ctx[{i}]: {line}")
+    except Exception:
+        pass
+
     return "\n".join([t[1] for t in top if t[1]])
 
 if __name__ == "__main__":
     print("Refreshing RAG facts from Home Assistant...")
     facts = refresh_and_cache()
     print(f"Wrote {len(facts)} facts.")
-```0
