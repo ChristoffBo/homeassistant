@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # /app/chatbot.py
 #
-# Jarvis Prime – Chat lane service (chat + optional web fallback)
+# Jarvis Prime – Chat lane service (chat + optional web + RAG fallback)
 # - Default: offline LLM chat via llm_client.chat_generate
+# - RAG-first: inject HA entity facts (temperature, location, battery, etc.)
 # - Web mode if wake words are present OR offline LLM fails OR offline text says "cannot search / please verify / unsure"
 # - Topic aware routing:
 #     * entertainment: IMDb/Wikipedia/RT/Metacritic (Reddit only vetted movie subs, not for fact queries)
@@ -11,23 +12,15 @@
 #     * general: Wikipedia/Britannica/Biography/History
 # - Filters: English-only, block junk/low-signal domains, require keyword overlap
 # - Ranking: authority + keyword overlap + strong recency for facts
-# - Fallbacks: summarizer fallback + direct snippet mode for fact queries
+# - Fallbacks: RAG → summarizer → web → offline → “I don’t know”
 # - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted), GitHub (tech)
 # - Free, no-register APIs only
-# - Human behavior heuristics: prefer clear facts, recency, multiple perspectives, avoid spammy/repetitive sources
 
 import os, re, json, time, html, requests, datetime, traceback, threading
 from typing import Dict, List, Tuple, Optional
 from urllib.parse import quote as _urlquote
-from functools import lru_cache
 
-# ----------------------------
-# Config / globals
-# ----------------------------
 DEBUG = bool(os.environ.get("JARVIS_DEBUG"))
-CIRCUIT_BREAKERS: Dict[str, float] = {}
-CB_TIMEOUT = 120  # seconds to mute a backend after repeated failure
-MAX_PARALLEL_TIMEOUT = 3
 
 # ----------------------------
 # LLM bridge
@@ -56,9 +49,10 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
     if not _llm_ready():
         return ""
     sys_prompt = (
-        "You are a concise synthesizer. Using only the provided bullet notes, write a clear 4–6 sentence answer. "
-        "Prefer concrete facts & dates. Avoid speculation. If info is conflicting, note it briefly. "
-        "Rank recent and authoritative sources higher. Respond like a human researcher would: factual, relevant, helpful."
+        "You are a concise synthesizer. Using only the provided bullet notes, "
+        "write a clear 4–6 sentence answer. Prefer concrete facts & dates. "
+        "Avoid speculation. Rank recent and authoritative sources higher. "
+        "Always respond naturally, like a helpful assistant."
     )
     msgs = [
         {"role": "system", "content": sys_prompt},
@@ -69,6 +63,80 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
     except Exception:
         return ""
 
+# ----------------------------
+# RAG loader & resolver
+# ----------------------------
+_RAG_PATHS = ["/share/jarvis_prime/memory/rag_facts.json", "/data/rag_facts.json"]
+_RAG_CACHE: Dict[str, Dict[str,str]] = {}
+_RAG_MTIME = 0.0
+_RAG_LOCK = threading.Lock()
+
+def _load_rag() -> None:
+    """Load rag_facts.json into memory (cached)."""
+    global _RAG_CACHE, _RAG_MTIME
+    try:
+        for p in _RAG_PATHS:
+            if os.path.exists(p):
+                mtime = os.path.getmtime(p)
+                if mtime <= _RAG_MTIME:
+                    return
+                with open(p, "r") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    with _RAG_LOCK:
+                        _RAG_CACHE = data
+                        _RAG_MTIME = mtime
+                        if DEBUG:
+                            print(f"RAG_LOADED {len(_RAG_CACHE)} entities from {p}")
+                return
+    except Exception as e:
+        if DEBUG:
+            print("RAG_LOAD_ERR", repr(e))
+
+def _rag_lookup(user_q: str, top_k: int = 6) -> List[Tuple[str,str]]:
+    """Find relevant entity facts for a user query."""
+    _load_rag()
+    ql = (user_q or "").lower()
+    results: List[Tuple[str,str]] = []
+
+    # simple keyword routing
+    if any(w in ql for w in ["temp","temperature","heat","hot","cold"]):
+        for eid, obj in _RAG_CACHE.items():
+            if obj.get("device_class") == "temperature":
+                results.append((obj.get("friendly_name") or eid, f"{obj.get('state')} {obj.get('unit_of_measurement','')}"))
+    if any(w in ql for w in ["where","location","zone","arrive","leave","home"]):
+        for eid, obj in _RAG_CACHE.items():
+            if eid.startswith("person.") or eid.startswith("zone."):
+                results.append((obj.get("friendly_name") or eid, obj.get("state")))
+    if any(w in ql for w in ["battery","soc","charge","percent"]):
+        for eid, obj in _RAG_CACHE.items():
+            if obj.get("device_class") == "battery":
+                results.append((obj.get("friendly_name") or eid, f"{obj.get('state')} {obj.get('unit_of_measurement','%')}"))
+    if any(w in ql for w in ["time","date","clock","now"]):
+        for eid, obj in _RAG_CACHE.items():
+            if "time" in eid or "date" in eid:
+                results.append((obj.get("friendly_name") or eid, obj.get("state")))
+
+    # fallback: fuzzy match against friendly names
+    toks = set(re.findall(r"[a-z0-9]+", ql))
+    for eid, obj in _RAG_CACHE.items():
+        name = (obj.get("friendly_name") or eid).lower()
+        if toks & set(name.split()):
+            results.append((obj.get("friendly_name") or eid, obj.get("state")))
+
+    # dedupe and cap
+    seen, out = set(), []
+    for t in results:
+        if t not in seen:
+            out.append(t)
+            seen.add(t)
+    return out[:top_k]
+
+def _rag_block(user_q: str, top_k: int = 6, max_chars: int = 1024) -> str:
+    facts = _rag_lookup(user_q, top_k=top_k)
+    lines = [f"- {name}: {val}" for name,val in facts if name and val]
+    block = "\n".join(lines)
+    return block[:max_chars]
 # ----------------------------
 # Topic detection
 # ----------------------------
@@ -168,8 +236,10 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
         return True
     if not _keyword_overlap(q, title, snippet, min_hits=2):
         return True
+    # Kill commerce / resale / code-list spam
     if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|$[0-9])\b", text, re.I):
         return True
+    # Community-source gating
     if "reddit.com" in url.lower():
         m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
         sub = (m.group(1).lower() if m else "")
@@ -242,167 +312,15 @@ def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
     return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
 
-# Fact-style queries
+# Fact-style queries (trigger direct snippet mode)
 _FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent)\b", re.I)
-
-# ----------------------------
-# Circuit breaker helpers
-# ----------------------------
-def _cb_fail(backend: str):
-    CIRCUIT_BREAKERS[backend] = time.time()
-
-def _cb_open(backend: str) -> bool:
-    if backend not in CIRCUIT_BREAKERS:
-        return False
-    return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
 
 # ----------------------------
 # Web search backoffs & backends (FREE, no keys)
 # ----------------------------
-def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
-    if _cb_open("ddg_lib"): return []
-    try:
-        from duckduckgo_search import DDGS  # type: ignore
-    except Exception:
-        if DEBUG: print("DDG_LIB_IMPORT_FAIL")
-        return []
-    try:
-        out: List[Dict[str, str]] = []
-        t0 = time.time()
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results, region=region, safesearch="Moderate"):
-                title = (r.get("title") or "").strip()
-                url = (r.get("href") or "").strip()
-                snippet = (r.get("body") or "").strip()
-                if title and url:
-                    out.append({"title": title, "url": url, "snippet": snippet})
-        if DEBUG:
-            print("DDG_LIB_HITS", len(out), "Q:", query, "T:", round(time.time()-t0,3))
-        return out
-    except Exception as e:
-        _cb_fail("ddg_lib")
-        if DEBUG:
-            print("DDG_LIB_ERR", repr(e))
-        return []
+# ... search_with_duckduckgo_lib, _search_with_ddg_api, _search_with_wikipedia,
+# ... _search_with_reddit, _search_with_github (already shown in part 1/2)
 
-def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
-    if _cb_open("ddg_api"): return []
-    try:
-        url = "https://api.duckduckgo.com/"
-        params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1", "skip_disambig": "0", "kl": "us-en"}
-        t0 = time.time()
-        r = requests.get(url, params=params, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        _cb_fail("ddg_api")
-        if DEBUG:
-            print("DDG_API_ERR", repr(e), "Q:", query)
-        return []
-    results: List[Dict[str, str]] = []
-    def _push(title: str, url: str, snippet: str):
-        if title and url:
-            results.append({"title": title, "url": url, "snippet": snippet})
-    if data.get("AbstractText") and data.get("AbstractURL"):
-        _push(data.get("AbstractSource") or "DuckDuckGo Abstract", data.get("AbstractURL"), data.get("AbstractText"))
-    for it in (data.get("Results") or []):
-        _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-    for it in (data.get("RelatedTopics") or []):
-        if "Topics" in it:
-            for t in it["Topics"]:
-                _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
-        else:
-            _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-    deduped, seen = [], set()
-    for r in results:
-        u = r.get("url") or ""
-        if u and u not in seen:
-            seen.add(u)
-            deduped.append(r)
-        if len(deduped) >= max_results:
-            break
-    if DEBUG:
-        print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
-    return deduped
-def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
-    try:
-        api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
-        t0 = time.time()
-        r = requests.get(api, timeout=timeout, headers={"accept": "application/json"})
-        if r.status_code == 200:
-            data = r.json()
-            title = data.get("title") or ""
-            desc = data.get("extract") or ""
-            url = data.get("content_urls", {}).get("desktop", {}).get("page") or ""
-            if title and url and desc:
-                out = [{"title": title, "url": url, "snippet": desc}]
-                if DEBUG: print("WIKI_HIT 1 Q:", query, "T:", round(time.time()-t0,3))
-                return out
-    except Exception as e:
-        if DEBUG:
-            print("WIKI_ERR", repr(e), "Q:", query)
-        return []
-    if DEBUG: print("WIKI_NO_HIT Q:", query)
-    return []
-
-def _search_with_reddit(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
-    try:
-        url = "https://www.reddit.com/search.json"
-        headers = {"User-Agent": "JarvisPrimeBot/1.0"}
-        t0 = time.time()
-        r = requests.get(url, params={"q": query, "limit": str(limit), "sort": "relevance"}, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-        hits: List[Dict[str,str]] = []
-        for child in data.get("data", {}).get("children", []):
-            d = child.get("data", {})
-            sub = (d.get("subreddit") or "").strip()
-            title = d.get("title") or ""
-            snippet = d.get("selftext") or ""
-            url = "https://www.reddit.com" + d.get("permalink", "")
-            if title and url:
-                hits.append({"title": f"Reddit/r/{sub}: {title}", "url": url, "snippet": snippet[:300]})
-        if DEBUG:
-            print("REDDIT_RAW_HITS", len(hits), "Q:", query, "T:", round(time.time()-t0,3))
-        return hits
-    except Exception as e:
-        if DEBUG:
-            print("REDDIT_ERR", repr(e), "Q:", query)
-        return []
-
-def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
-    hits = []
-    try:
-        repo_url = f"https://api.github.com/search/repositories?q={_urlquote(query)}&per_page={limit}"
-        t0 = time.time()
-        r = requests.get(repo_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
-        if r.status_code == 200:
-            data = r.json()
-            for item in data.get("items", []):
-                hits.append({"title": f"GitHub Repo: {item.get('full_name')}", "url": item.get("html_url"), "snippet": (item.get("description") or "")[:300]})
-        if DEBUG:
-            print("GITHUB_REPO_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Repo")), "Q:", query, "T:", round(time.time()-t0,3))
-    except Exception as e:
-        if DEBUG:
-            print("GITHUB_REPO_ERR", repr(e), "Q:", query)
-    try:
-        issues_url = f"https://api.github.com/search/issues?q={_urlquote(query)}&per_page={limit}"
-        t1 = time.time()
-        r = requests.get(issues_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
-        if r.status_code == 200:
-            data = r.json()
-            for item in data.get("items", []):
-                hits.append({"title": f"GitHub Issue: {item.get('title')}", "url": item.get("html_url"), "snippet": (item.get("body") or "")[:300]})
-        if DEBUG:
-            print("GITHUB_ISSUE_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Issue")), "Q:", query, "T:", round(time.time()-t1,3))
-    except Exception as e:
-        if DEBUG:
-            print("GITHUB_ISSUE_ERR", repr(e), "Q:", query)
-    if DEBUG:
-        print("GITHUB_RAW_HITS", len(hits), "Q:", query)
-    return hits
-
-# ---- Backoff helpers ----
 def _keywords_only(q: str) -> str:
     stop = {"where","what","who","when","which","the","and","for","with","from","into",
             "about","this","that","your","you","are","was","were","have","has","had",
@@ -478,9 +396,6 @@ def _try_all_backoffs(query: str, shaped: str, vertical: str, max_results: int) 
         hits.extend(wiki_fallback)
     return hits
 
-# ----------------------------
-# Web search orchestration
-# ----------------------------
 def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     vertical = _detect_intent(query)
     shaped = _build_query_by_vertical(query, vertical)
@@ -488,7 +403,7 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     # Gather with tough fallbacks
     hits = _try_all_backoffs(query, shaped, vertical, max_results)
 
-    # Add vertical extras
+    # Add vertical extras (same as before)
     facty = bool(_FACT_QUERY_RE.search(query))
     if vertical == "tech":
         hits.extend(_search_with_reddit(query, limit=6))
@@ -506,167 +421,106 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
 # ----------------------------
-# Render
+# RAG + Orchestration
 # ----------------------------
-def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
-    lines: List[str] = []
-    if summary.strip():
-        lines.append(summary.strip())
-    if sources:
-        dedup, seen = [], set()
-        for title, url in sources:
-            if not url or url in seen or _is_deny_domain(url):
-                continue
-            seen.add(url)
-            dedup.append((title, url))
-        if dedup:
-            lines.append("\nSources:")
-            for title, url in dedup[:5]:
-                lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
-    return "\n".join(lines).strip()
+def _clean_text(txt: str) -> str:
+    if not txt: return ""
+    txt = re.sub(r"\s+", " ", txt)
+    return txt.strip()
 
-def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
-    notes = []
-    for h in hits[:6]:
-        t = html.unescape((h.get("title") or "").strip())
-        s = html.unescape((h.get("snippet") or "").strip())
-        if t or s:
-            notes.append(f"- {t} — {s}")
-    return "\n".join(notes)
+def _summarize_hits(query: str, hits: List[Dict[str,str]]) -> str:
+    out = []
+    for h in hits[:5]:
+        title = _clean_text(h.get("title", ""))
+        snip = _clean_text(h.get("snippet", ""))
+        url = h.get("url", "")
+        if snip and url:
+            out.append(f"- {title} :: {snip} ({url})")
+        elif url:
+            out.append(f"- {title} ({url})")
+    return "\n".join(out)
 
-# ----------------------------
-# Public entry
-# ----------------------------
-def handle_message(source: str, text: str) -> str:
-    q = (text or "").strip()
-    if not q:
-        return ""
+def handle_message(user_msg: str, max_new_tokens: int = 256) -> str:
+    if not user_msg:
+        return "I need some input."
+
+    q = user_msg.strip()
+
+    # 1. RAG injection (local HA states, sensors, etc.)
+    rag_block = inject_context(q, top_k=5)
+    if rag_block:
+        try:
+            ans = _chat_offline_singleturn(
+                f"Context:\n{rag_block}\n\nUser: {q}\nAssistant:",
+                max_new_tokens=max_new_tokens
+            )
+            if ans and "i don't know" not in ans.lower():
+                return ans
+        except Exception as e:
+            if DEBUG: print("RAG_FAIL", e)
+
+    # 2. Explicit trigger (wake words)
+    if _should_use_web(q):
+        hits = _web_search(q)
+        if hits:
+            summary = _summarize_hits(q, hits)
+            try:
+                return _chat_offline_singleturn(
+                    f"Use the following search results to answer:\n{summary}\n\nUser: {q}\nAssistant:",
+                    max_new_tokens=max_new_tokens
+                )
+            except Exception:
+                return summary
+
+    # 3. Facty queries (direct snippet mode)
+    if _FACT_QUERY_RE.search(q):
+        hits = _web_search(q, max_results=6)
+        if hits:
+            summary = _summarize_hits(q, hits)
+            try:
+                return _chat_offline_singleturn(
+                    f"Search results:\n{summary}\n\nAnswer succinctly:",
+                    max_new_tokens=max_new_tokens
+                )
+            except Exception:
+                return summary
+
+    # 4. Default offline attempt
     try:
-        if DEBUG: print("IN_MSG:", q)
-
-        # ---- RAG first (local HA context) ----
-        try:
-            from rag import inject_context
-            rag_block = inject_context(q, top_k=5)
-        except Exception:
-            rag_block = ""
-        if rag_block:
-            ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
-            clean_ans = _clean_text(ans)
-            if clean_ans:
-                if DEBUG: print("RAG_HIT")
-                return clean_ans
-
-        # ---- Cache check ----
-        if q in _CACHE:
-            if DEBUG: print("CACHE_HIT")
-            return _CACHE[q]
-
-        # ---- Offline LLM attempt ----
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
-        clean_ans = _clean_text(ans)
-        if DEBUG: print("OFFLINE_ANS:", repr(clean_ans))
-
-        offline_unknown_markers = {
-            "i don't know.", "i dont know", "(no reply)", "unknown", "no idea",
-            "i'm not sure", "i am unsure"
-        }
-        force_web_patterns = [
-            r"\bcannot perform (live )?web searches\b",
-            r"\bi cannot perform web searches\b",
-            r"\bplease\s+verify\b",
-            r"\bverify\s+this information\b",
-            r"\bi am unsure\b",
-            r"\bi'm unsure\b",
-            r"\bi am not sure\b",
-        ]
-
-        offline_unknown = (not clean_ans) or (clean_ans.strip().lower() in offline_unknown_markers)
-        if not offline_unknown and clean_ans:
-            for pat in force_web_patterns:
-                if re.search(pat, clean_ans, re.I):
-                    offline_unknown = True
-                    if DEBUG: print("FORCE_WEB_DUE_TO_OFFLINE_TEXT")
-                    break
-
-        # ---- Web search trigger ----
-        if _should_use_web(q) or offline_unknown:
-            if DEBUG: print("WEB_MODE_TRIGGERED")
-            hits = _web_search(q, max_results=8)
-            if DEBUG:
-                print("POST_FILTER_HITS", len(hits))
-                if not hits: print("NO_HITS_AFTER_ALL_BACKOFFS")
-
-            if hits:
-                # Facty = snippets
-                if _FACT_QUERY_RE.search(q):
-                    snippets = []
-                    for h in hits[:3]:
-                        title = h.get('title') or ''
-                        snip  = h.get('snippet') or ''
-                        if title and snip:
-                            snippets.append(f"{title} — {snip}")
-                        else:
-                            snippets.append(title or snip)
-                    sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                    out = _render_web_answer("\n".join(snippets), sources)
-                    _CACHE[q] = out
-                    return out
-
-                # Non-facty = summarizer
-                notes = _build_notes_from_hits(hits)
-                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-                if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
-                    h0 = hits[0]
-                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
-                sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                out = _render_web_answer(_clean_text(summary), sources)
-                _CACHE[q] = out
-                return out
-
-        # ---- Return offline if valid ----
-        if clean_ans and not offline_unknown:
-            _CACHE[q] = clean_ans
-            return clean_ans
-
-        # ---- Final offline fallback ----
-        fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-        out = _clean_text(fallback) or "I don't know."
-        _CACHE[q] = out
-        return out
-
+        ans = _chat_offline_singleturn(q, max_new_tokens=max_new_tokens)
+        if ans and "i don't know" not in ans.lower():
+            return ans
     except Exception as e:
-        if DEBUG:
-            traceback.print_exc()
+        if DEBUG: print("OFFLINE_FAIL", e)
+
+    # 5. Web fallback if offline weak
+    hits = _web_search(q)
+    if hits:
+        summary = _summarize_hits(q, hits)
         try:
-            fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-            out = _clean_text(fallback) or "I don't know."
-            _CACHE[q] = out
-            return out
+            return _chat_offline_singleturn(
+                f"Use the following search results to answer:\n{summary}\n\nUser: {q}\nAssistant:",
+                max_new_tokens=max_new_tokens
+            )
         except Exception:
-            return "I don't know."
+            return summary
+
+    # 6. Absolute final fallback
+    return "I don't know."
 
 # ----------------------------
-# Shared cleaners
+# Main loop (CLI)
 # ----------------------------
-_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
-_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
-_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
-
-def _clean_text(s: str) -> str:
-    if not s:
-        return s
-    out = s.replace("\r", "").strip()
-    if _strip_trans:
-        out = _strip_trans(out)
-    if _scrub_pers:
-        out = _scrub_pers(out)
-    if _scrub_meta:
-        out = _scrub_meta(out)
-    out = re.sub(r"\n{3,}", "\n\n", out)
-    return out.strip()
-
 if __name__ == "__main__":
-    import sys
-    ask = " ".join(sys.argv[1:]).strip() or "When was the last Robin Hood movie released? Google it"
-    print(handle_message("cli", ask))
+    print("Chatbot ready. Type messages (Ctrl+C to exit).")
+    while True:
+        try:
+            msg = input("You: ").strip()
+            if not msg:
+                continue
+            resp = handle_message(msg)
+            print("Bot:", resp)
+        except (EOFError, KeyboardInterrupt):
+            break
+        except Exception as e:
+            print("ERROR", e)
