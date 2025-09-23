@@ -14,51 +14,13 @@
 # - Fallbacks: summarizer fallback + direct snippet mode for fact queries
 # - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted), GitHub (tech)
 # - Free, no-register APIs only
+# - Human behavior heuristics: prefer clear facts, recency, multiple perspectives, avoid spammy/repetitive sources
 
 import os, re, json, time, html, requests, datetime, traceback
 from typing import Dict, List, Tuple, Optional
 from urllib.parse import quote as _urlquote
 
 DEBUG = bool(os.environ.get("JARVIS_DEBUG"))
-
-# ----------------------------
-# RAG facts loader
-# ----------------------------
-_RAG_FACTS: List[str] = []
-
-def _load_rag_facts() -> List[str]:
-    paths = [
-        "/share/jarvis_prime/memory/rag_facts.json",
-        "/share/jarvis_prime/rag_facts.json",
-        "/data/rag_facts.json"
-    ]
-    facts: List[str] = []
-    for p in paths:
-        try:
-            with open(p, "r") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    for d in data:
-                        if isinstance(d, dict):
-                            fact = d.get("summary") or d.get("fact") or d.get("value") or ""
-                            if fact:
-                                facts.append(str(fact))
-                        elif isinstance(d, str):
-                            facts.append(d)
-        except Exception:
-            continue
-    return facts
-
-_RAG_FACTS = _load_rag_facts()
-
-def _select_rag_facts(ctx_tokens: int, max_ratio: float = 0.05) -> str:
-    """Select a sane number of facts relative to ctx size (default 5%)."""
-    if not _RAG_FACTS:
-        return ""
-    approx_tokens_per_fact = 25
-    max_facts = max(10, int((ctx_tokens * max_ratio) / approx_tokens_per_fact))
-    chosen = _RAG_FACTS[:max_facts]
-    return "\n".join(f"- {c}" for c in chosen)
 
 # ----------------------------
 # LLM bridge
@@ -75,18 +37,9 @@ def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
     if not _llm_ready():
         return ""
     try:
-        ctx_tokens = getattr(_LLM, "CTX_TOKENS", 4096)
-        facts = _select_rag_facts(ctx_tokens)
-        system_prompt = ""
-        if facts:
-            system_prompt = (
-                "You are Jarvis Prime. Use the following live context facts when answering. "
-                "Do not say 'I don't know' if the answer exists in these facts.\n\n"
-                f"Context facts:\n{facts}\n\n"
-            )
         return _LLM.chat_generate(
             messages=[{"role": "user", "content": user_msg}],
-            system_prompt=system_prompt,
+            system_prompt="",
             max_new_tokens=max_new_tokens,
         ) or ""
     except Exception:
@@ -129,11 +82,440 @@ def _detect_intent(q: str) -> str:
     return "general"
 
 # ----------------------------
-# (all your web search helpers here — unchanged)
+# Helpers & filters
 # ----------------------------
-# I’ve kept every function exactly the same (DuckDuckGo, Reddit, GitHub, ranking, etc.)
-# No truncation has been applied — all helpers are intact in your copy.
+_AUTHORITY_COMMON = [
+    "wikipedia.org", "britannica.com", "biography.com", "history.com"
+]
+_AUTHORITY_ENT = [
+    "imdb.com", "rottentomatoes.com", "metacritic.com", "boxofficemojo.com"
+]
+_AUTHORITY_SPORTS = [
+    "espn.com", "fifa.com", "nba.com", "nfl.com", "olympics.com", "formula1.com",
+    "autosport.com", "motorsport.com", "the-race.com"
+]
+_AUTHORITY_TECH = [
+    "github.com", "gitlab.com", "stackoverflow.com", "superuser.com", "serverfault.com",
+    "unix.stackexchange.com", "askubuntu.com", "archlinux.org", "kernel.org",
+    "docs.python.org", "nodejs.org", "golang.org",
+    "learn.microsoft.com", "answers.microsoft.com", "support.microsoft.com",
+    "man7.org", "linux.org"
+]
+
+_REDDIT_ALLOW_ENT = {"movies","TrueFilm","MovieDetails","tipofmytongue","criterion","oscarrace"}
+_REDDIT_ALLOW_TECH = {"learnpython","python","programming","sysadmin","devops","linux","selfhosted","homelab","docker","kubernetes","opensource","techsupport","homeassistant","homeautomation"}
+
+_DENY_DOMAINS = [
+    "zhihu.com","baidu.com","pinterest.","quora.com","tumblr.com",
+    "vk.com","weibo.","4chan","8kun","/forum","forum.","boards.",
+    "linktr.ee","tiktok.com","facebook.com","notebooklm.google.com"
+]
+
+def _tokenize(text: str) -> List[str]:
+    return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
+
+def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> bool:
+    qk = set(_tokenize(q))
+    tk = set(_tokenize((title or "") + " " + (snippet or "")))
+    stop = {"where","what","who","when","which","the","and","for","with","from","into",
+            "about","this","that","your","you","are","was","were","have","has","had",
+            "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
+    qk = {w for w in qk if w not in stop}
+    return len(qk & tk) >= min_hits
+
+def _domain_of(url: str) -> str:
+    try:
+        return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
+    except Exception:
+        return ""
+
+def _is_deny_domain(url: str) -> bool:
+    d = _domain_of(url)
+    test = d + url.lower()
+    return any(bad in test for bad in _DENY_DOMAINS)
+
+def _is_authority(url: str, vertical: str) -> bool:
+    d = _domain_of(url)
+    pool = set(_AUTHORITY_COMMON)
+    if vertical == "entertainment":
+        pool.update(_AUTHORITY_ENT)
+    elif vertical == "sports":
+        pool.update(_AUTHORITY_SPORTS)
+    elif vertical == "tech":
+        pool.update(_AUTHORITY_TECH)
+    return any(d.endswith(ad) for ad in pool)
+
+def _is_english_text(text: str, max_ratio: float = 0.2) -> bool:
+    if not text:
+        return True
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    return (non_ascii / max(1, len(text))) <= max_ratio
+
+def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -> bool:
+    if not title and not snippet:
+        return True
+    if _is_deny_domain(url):
+        return True
+    text = (title or "") + " " + (snippet or "")
+    if not _is_english_text(text, max_ratio=0.2):
+        return True
+    if not _keyword_overlap(q, title, snippet, min_hits=2):
+        return True
+    # Kill commerce / resale / code-list spam
+    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|$[0-9])\b", text, re.I):
+        return True
+    # Community-source gating
+    if "reddit.com" in url.lower():
+        m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
+        sub = (m.group(1).lower() if m else "")
+        if vertical == "entertainment":
+            if sub not in {s.lower() for s in _REDDIT_ALLOW_ENT}:
+                return True
+        elif vertical == "tech":
+            if sub not in {s.lower() for s in _REDDIT_ALLOW_TECH}:
+                return True
+        elif vertical == "sports":
+            if sub not in {"formula1","motorsports"}:
+                return True
+    return False
+
+_CURRENT_YEAR = datetime.datetime.utcnow().year
+
+def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
+    scored = []
+    facty = bool(_FACT_QUERY_RE.search(q))
+    for h in hits:
+        url = (h.get("url") or "")
+        title = (h.get("title") or "")
+        snip = (h.get("snippet") or "")
+        if not url:
+            continue
+        if _is_junk_result(title, snip, url, q, vertical):
+            continue
+        score = 0
+        if _is_authority(url, vertical):
+            score += 8 if facty else 6
+        u = url.lower()
+        if vertical == "tech" and ("github.com" in u or "stackoverflow.com" in u):
+            score += 3
+        if vertical == "entertainment" and ("imdb.com" in u or "rottentomatoes.com" in u or "metacritic.com" in u):
+            score += 5 if facty else 3
+        if vertical == "sports" and ("formula1.com" in u or "espn.com" in u):
+            score += 5 if facty else 3
+        score += min(len(snip)//120, 3)
+        overlap_bonus = len(set(_tokenize(q)) & set(_tokenize(title + " " + snip)))
+        score += min(overlap_bonus, 4)
+        years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + " " + (snip or ""))
+        if years:
+            newest = max(int(y) for y in years)
+            if newest >= _CURRENT_YEAR:
+                score += 6 if facty else 4
+            elif newest == _CURRENT_YEAR - 1:
+                score += 4 if facty else 2
+            elif newest < _CURRENT_YEAR - 5:
+                score -= 3
+        scored.append((score, h))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    ranked = [h for _, h in scored]
+    if DEBUG:
+        print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
+    return ranked
+
 # ----------------------------
+# Triggers
+# ----------------------------
+_WEB_TRIGGERS = [
+    r"\bgoogle\s+it\b", r"\bgoogle\s+for\s+me\b", r"\bgoogle\b",
+    r"\bsearch\s+the\s+internet\b", r"\bsearch\s+the\s+web\b",
+    r"\bweb\s+search\b", r"\binternet\s+search\b",
+    r"\bcheck\s+internet\b", r"\bcheck\s+web\b",
+    r"\bcheck\s+online\b", r"\bsearch\s+online\b",
+    r"\blook\s+it\s+up\b", r"\buse\s+the\s+internet\b",
+    r"\bverify\s+online\b", r"\bverify\s+on\s+the\s+web\b",
+]
+
+def _should_use_web(q: str) -> bool:
+    ql = (q or "").lower()
+    return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
+
+# Fact-style queries (trigger direct snippet mode)
+_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent)\b", re.I)
+
+# ----------------------------
+# Web search backoffs & backends (FREE, no keys)
+# ----------------------------
+def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
+    try:
+        from duckduckgo_search import DDGS  # type: ignore
+    except Exception:
+        if DEBUG: print("DDG_LIB_IMPORT_FAIL")
+        return []
+    try:
+        out: List[Dict[str, str]] = []
+        t0 = time.time()
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results, region=region, safesearch="Moderate"):
+                title = (r.get("title") or "").strip()
+                url = (r.get("href") or "").strip()
+                snippet = (r.get("body") or "").strip()
+                if title and url:
+                    out.append({"title": title, "url": url, "snippet": snippet})
+        if DEBUG:
+            print("DDG_LIB_HITS", len(out), "Q:", query, "T:", round(time.time()-t0,3))
+        return out
+    except Exception as e:
+        if DEBUG:
+            print("DDG_LIB_ERR", repr(e))
+        return []
+
+def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
+    try:
+        url = "https://api.duckduckgo.com/"
+        params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1", "skip_disambig": "0", "kl": "us-en"}
+        t0 = time.time()
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        if DEBUG:
+            print("DDG_API_ERR", repr(e), "Q:", query)
+        return []
+    results: List[Dict[str, str]] = []
+    def _push(title: str, url: str, snippet: str):
+        if title and url:
+            results.append({"title": title, "url": url, "snippet": snippet})
+    if data.get("AbstractText") and data.get("AbstractURL"):
+        _push(data.get("AbstractSource") or "DuckDuckGo Abstract", data.get("AbstractURL"), data.get("AbstractText"))
+    for it in (data.get("Results") or []):
+        _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
+    for it in (data.get("RelatedTopics") or []):
+        if "Topics" in it:
+            for t in it["Topics"]:
+                _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
+        else:
+            _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
+    deduped, seen = [], set()
+    for r in results:
+        u = r.get("url") or ""
+        if u and u not in seen:
+            seen.add(u)
+            deduped.append(r)
+        if len(deduped) >= max_results:
+            break
+    if DEBUG:
+        print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
+    return deduped
+
+def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
+    try:
+        api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
+        t0 = time.time()
+        r = requests.get(api, timeout=timeout, headers={"accept": "application/json"})
+        if r.status_code == 200:
+            data = r.json()
+            title = data.get("title") or ""
+            desc = data.get("extract") or ""
+            url = data.get("content_urls", {}).get("desktop", {}).get("page") or ""
+            if title and url and desc:
+                out = [{"title": title, "url": url, "snippet": desc}]
+                if DEBUG: print("WIKI_HIT 1 Q:", query, "T:", round(time.time()-t0,3))
+                return out
+    except Exception as e:
+        if DEBUG:
+            print("WIKI_ERR", repr(e), "Q:", query)
+        return []
+    if DEBUG: print("WIKI_NO_HIT Q:", query)
+    return []
+
+def _search_with_reddit(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
+    try:
+        url = "https://www.reddit.com/search.json"
+        headers = {"User-Agent": "JarvisPrimeBot/1.0"}
+        t0 = time.time()
+        r = requests.get(url, params={"q": query, "limit": str(limit), "sort": "relevance"}, headers=headers, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+        hits: List[Dict[str,str]] = []
+        for child in data.get("data", {}).get("children", []):
+            d = child.get("data", {})
+            sub = (d.get("subreddit") or "").strip()
+            title = d.get("title") or ""
+            snippet = d.get("selftext") or ""
+            url = "https://www.reddit.com" + d.get("permalink", "")
+            if title and url:
+                hits.append({"title": f"Reddit/r/{sub}: {title}", "url": url, "snippet": snippet[:300]})
+        if DEBUG:
+            print("REDDIT_RAW_HITS", len(hits), "Q:", query, "T:", round(time.time()-t0,3))
+        return hits
+    except Exception as e:
+        if DEBUG:
+            print("REDDIT_ERR", repr(e), "Q:", query)
+        return []
+
+def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
+    hits = []
+    try:
+        repo_url = f"https://api.github.com/search/repositories?q={_urlquote(query)}&per_page={limit}"
+        t0 = time.time()
+        r = requests.get(repo_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
+        if r.status_code == 200:
+            data = r.json()
+            for item in data.get("items", []):
+                hits.append({"title": f"GitHub Repo: {item.get('full_name')}", "url": item.get("html_url"), "snippet": (item.get("description") or "")[:300]})
+        if DEBUG:
+            print("GITHUB_REPO_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Repo")), "Q:", query, "T:", round(time.time()-t0,3))
+    except Exception as e:
+        if DEBUG:
+            print("GITHUB_REPO_ERR", repr(e), "Q:", query)
+    try:
+        issues_url = f"https://api.github.com/search/issues?q={_urlquote(query)}&per_page={limit}"
+        t1 = time.time()
+        r = requests.get(issues_url, timeout=timeout, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "JarvisPrimeBot/1.0"})
+        if r.status_code == 200:
+            data = r.json()
+            for item in data.get("items", []):
+                hits.append({"title": f"GitHub Issue: {item.get('title')}", "url": item.get("html_url"), "snippet": (item.get("body") or "")[:300]})
+        if DEBUG:
+            print("GITHUB_ISSUE_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Issue")), "Q:", query, "T:", round(time.time()-t1,3))
+    except Exception as e:
+        if DEBUG:
+            print("GITHUB_ISSUE_ERR", repr(e), "Q:", query)
+    if DEBUG:
+        print("GITHUB_RAW_HITS", len(hits), "Q:", query)
+    return hits
+
+# ---- Backoff helpers ----
+def _keywords_only(q: str) -> str:
+    stop = {"where","what","who","when","which","the","and","for","with","from","into",
+            "about","this","that","your","you","are","was","were","have","has","had",
+            "a","an","of","to","in","on","by","at","last","latest","most","recent",
+            "movie","film","release","won","winner","result","date","year"}
+    toks = [w for w in _tokenize(q) if w not in stop]
+    return " ".join(sorted(set(toks), key=toks.index)) or q
+
+def _vertical_site_ladder(vertical: str) -> List[str]:
+    if vertical == "sports":
+        return ["formula1.com", "espn.com", "motorsport.com", "autosport.com", "the-race.com", "wikipedia.org"]
+    if vertical == "entertainment":
+        return ["imdb.com", "rottentomatoes.com", "metacritic.com", "boxofficemojo.com", "wikipedia.org"]
+    if vertical == "tech":
+        return ["learn.microsoft.com", "stackoverflow.com", "unix.stackexchange.com", "github.com", "wikipedia.org"]
+    return ["wikipedia.org", "britannica.com", "biography.com", "history.com"]
+
+def _build_query_by_vertical(q: str, vertical: str) -> str:
+    if vertical == "entertainment":
+        return f"{q} site:imdb.com OR site:rottentomatoes.com OR site:metacritic.com OR site:wikipedia.org"
+    if vertical == "sports":
+        return f"{q} site:formula1.com OR site:espn.com OR site:fifa.com OR site:wikipedia.org OR site:autosport.com OR site:motorsport.com OR site:the-race.com"
+    if vertical == "tech":
+        return f"{q} site:learn.microsoft.com OR site:stackoverflow.com OR site:unix.stackexchange.com OR site:github.com OR site:wikipedia.org"
+    return f"{q} site:wikipedia.org OR site:britannica.com OR site:biography.com OR site:history.com"
+
+def _try_all_backoffs(query: str, shaped: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
+    hits: List[Dict[str,str]] = []
+    if DEBUG: print("BACKOFF_PASS1_SHAPED")
+    # Pass 1: shaped (site-scoped) via DDG lib → API → wiki
+    hits.extend(_search_with_duckduckgo_lib(shaped, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_ddg_api(shaped, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_wikipedia(query))
+    if hits:
+        return hits
+
+    if DEBUG: print("BACKOFF_PASS2_PLAIN")
+    # Pass 2: plain query (no site:)
+    plain = query
+    hits.extend(_search_with_duckduckgo_lib(plain, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_ddg_api(plain, max_results=max_results*2))
+    if hits:
+        return hits
+
+    if DEBUG: print("BACKOFF_PASS3_KEYWORDS_ONLY")
+    # Pass 3: keyword-only query
+    kwq = _keywords_only(query)
+    hits.extend(_search_with_duckduckgo_lib(kwq, max_results=max_results*2))
+    if not hits:
+        hits.extend(_search_with_ddg_api(kwq, max_results=max_results*2))
+    if hits:
+        return hits
+
+    if DEBUG: print("BACKOFF_PASS4_SITE_LADDER")
+    # Pass 4: per-site ladder (especially good for fact queries)
+    for site in _vertical_site_ladder(vertical):
+        q_site = f'{kwq} site:{site}'
+        local = _search_with_duckduckgo_lib(q_site, max_results=max_results)
+        if not local:
+            local = _search_with_ddg_api(q_site, max_results=max_results)
+        if local:
+            hits.extend(local)
+        if len(hits) >= max_results:
+            break
+
+    # Final safety: Wikipedia summary with keywords
+    if not hits:
+        if DEBUG: print("BACKOFF_FINAL_WIKI")
+        wiki_fallback = _search_with_wikipedia(kwq)
+        hits.extend(wiki_fallback)
+    return hits
+
+# ----------------------------
+# Web search orchestration
+# ----------------------------
+def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
+    vertical = _detect_intent(query)
+    shaped = _build_query_by_vertical(query, vertical)
+
+    # Gather with tough fallbacks
+    hits = _try_all_backoffs(query, shaped, vertical, max_results)
+
+    # Add vertical extras (same as before)
+    facty = bool(_FACT_QUERY_RE.search(query))
+    if vertical == "tech":
+        hits.extend(_search_with_reddit(query, limit=6))
+        hits.extend(_search_with_github(query, limit=6))
+    elif vertical in {"entertainment", "sports"}:
+        if not facty:
+            hits.extend(_search_with_reddit(query, limit=4))
+    else:
+        if not facty:
+            hits.extend(_search_with_reddit(query, limit=3))
+
+    if DEBUG:
+        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical, "FACTY", facty)
+
+    ranked = _rank_hits(query, hits, vertical)
+    return ranked[:max_results] if ranked else []
+
+# ----------------------------
+# Render
+# ----------------------------
+def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
+    lines: List[str] = []
+    if summary.strip():
+        lines.append(summary.strip())
+    if sources:
+        dedup, seen = [], set()
+        for title, url in sources:
+            if not url or url in seen or _is_deny_domain(url):
+                continue
+            seen.add(url)
+            dedup.append((title, url))
+        if dedup:
+            lines.append("\nSources:")
+            for title, url in dedup[:5]:
+                lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
+    return "\n".join(lines).strip()
+
+def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
+    notes = []
+    for h in hits[:6]:
+        t = html.unescape((h.get("title") or "").strip())
+        s = html.unescape((h.get("snippet") or "").strip())
+        if t or s:
+            notes.append(f"- {t} — {s}")
+    return "\n".join(notes)
 
 # ----------------------------
 # Public entry
@@ -148,6 +530,7 @@ def handle_message(source: str, text: str) -> str:
         clean_ans = _clean_text(ans)
         if DEBUG: print("OFFLINE_ANS:", repr(clean_ans))
 
+        # offline-unknown markers + force-web phrases
         offline_unknown_markers = {
             "i don't know.", "i dont know", "(no reply)", "unknown", "no idea",
             "i'm not sure", "i am unsure"
@@ -178,6 +561,7 @@ def handle_message(source: str, text: str) -> str:
                 if not hits: print("NO_HITS_AFTER_ALL_BACKOFFS")
 
             if hits:
+                # direct snippets for facty prompts
                 if _FACT_QUERY_RE.search(q):
                     snippets = []
                     for h in hits[:3]:
@@ -190,6 +574,7 @@ def handle_message(source: str, text: str) -> str:
                     sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
                     return _render_web_answer("\n".join(snippets), sources)
 
+                # synthesizer for non-fact questions
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
                 if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
@@ -233,5 +618,5 @@ def _clean_text(s: str) -> str:
 
 if __name__ == "__main__":
     import sys
-    ask = " ".join(sys.argv[1:]).strip() or "Where is Samantha?"
+    ask = " ".join(sys.argv[1:]).strip() or "When was the last Robin Hood movie released? Google it"
     print(handle_message("cli", ask))
