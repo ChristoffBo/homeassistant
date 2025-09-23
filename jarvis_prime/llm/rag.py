@@ -21,7 +21,7 @@ FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
 # Include ALL domains
-INCLUDE_DOMAINS = None
+INCLUDE_DOMAINS = None  # None => include all domains
 
 # Keywords/integrations commonly seen
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
@@ -45,17 +45,20 @@ QUERY_SYNONYMS = {
     "load": ["load","power","w","kw","consumption"],
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
-    "where": ["where","location","zone","home","work","present"],
+    # location-style queries
+    "where": ["where","location","zone","home","work","present","presence","is"],
 }
 
 # Intent → categories
 INTENT_CATEGORY_MAP = {
-    "solar": {"energy.storage","energy.pv","energy.inverter"},
-    "pv":    {"energy.pv","energy.inverter","energy.storage"},
-    "soc":   {"energy.storage"},
+    "solar":   {"energy.storage","energy.pv","energy.inverter"},
+    "pv":      {"energy.pv","energy.inverter","energy.storage"},
+    "soc":     {"energy.storage"},
     "battery": {"energy.storage"},
-    "grid":  {"energy.grid"},
-    "load":  {"energy.load"},
+    "grid":    {"energy.grid"},
+    "load":    {"energy.load"},
+    # NEW: treat "where" queries as person/location intent
+    "where":   {"person"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
@@ -123,9 +126,11 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     manf = str(attrs.get("manufacturer","") or attrs.get("vendor","") or "").lower()
     model= str(attrs.get("model","") or "").lower()
 
+    # People/locations
     if domain in ("person","device_tracker"):
         cats.add("person")
 
+    # Energy related
     if any(k in toks for k in ("pv","inverter","ess","solar","solar_assistant","solarassistant")) \
        or any(k in manf for k in ("solar","solarassistant")) \
        or any(k in model for k in ("inverter","bms","battery")) \
@@ -138,11 +143,13 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if any(k in toks for k in ("soc","battery_soc","battery","state_of_charge","battery_state_of_charge")) or "bms" in model:
             cats.add("energy.storage")
 
+    # Grid/load
     if any(k in toks for k in ("grid","import","export")):
         cats.update({"energy","energy.grid"})
     if any(k in toks for k in ("load","consumption")):
         cats.update({"energy","energy.load"})
 
+    # Generic device batteries (sensors/phones/etc.)
     if device_class == "battery" or "battery" in toks:
         if "energy.storage" not in cats:
             cats.add("device.battery")
@@ -171,7 +178,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 
             attrs = item.get("attributes") or {}
             device_class = str(attrs.get("device_class","")).lower()
-            name  = str(item.get("friendly_name", eid))
+            name  = str(attrs.get("friendly_name", eid))
             state = str(item.get("state",""))
             unit  = str(attrs.get("unit_of_measurement","") or "")
             last_changed = str(item.get("last_changed","") or "")
@@ -248,7 +255,7 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
     print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
     return facts
 
-def load_cached() -> List[Dict[str,Any]]:
+def load_cached() -> List[Dict:str]:
     try:
         for d in PRIMARY_DIRS:
             p=os.path.join(d,BASENAME)
@@ -295,26 +302,52 @@ def inject_context(user_msg: str) -> str:
     facts = get_facts()
 
     want_cats = _intent_categories(q)
+
+    # detect location-style ask (helps even if user didn't use exact word 'where')
+    is_where_like = bool(q & {"where","location","zone","home","work","present","presence","is"})
+
     scored=[]
     for f in facts:
         s = int(f.get("score",1))
         ft=set(_tok(f.get("summary","")) + _tok(f.get("entity_id","")))
         cats=set(f.get("cats",[]))
 
+        # token match
         if q and (q & ft): s += 3
+
+        # energy-ish bump
         if q & SOLAR_KEYWORDS: s += 2
+
+        # SOC bump (ESS % sensors bubble up)
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
             s += 12
-        if want_cats and (cats & want_cats): s += 15
-        if want_cats & {"energy.storage"} and "energy.storage" in cats: s += 20
-        if want_cats & {"energy.storage"} and "device.battery" in cats and "energy.storage" not in cats: s -= 12
-        if want_cats & {"energy.storage"} and ("forecast" in ft or "estimated" in ft): s -= 10
+
+        # category routing
+        if want_cats and (cats & want_cats):
+            s += 15
+
+        # extra preference for storage if asking soc/battery/solar
+        if (want_cats & {"energy.storage"}) and ("energy.storage" in cats):
+            s += 20
+
+        # push down device batteries vs ESS
+        if (want_cats & {"energy.storage"}) and ("device.battery" in cats) and ("energy.storage" not in cats):
+            s -= 12
+
+        # push down forecasts for SOC asks
+        if (want_cats & {"energy.storage"}) and ("forecast" in ft or "estimated" in ft):
+            s -= 10
+
+        # NEW: location-style queries → prefer person/device_tracker
+        if is_where_like and ("person" in cats):
+            s += 25
 
         scored.append((s, f.get("summary","")))
+
     top=sorted(scored,key=lambda x:x[0],reverse=True)[:top_k]
 
     try:
-        print(f"[RAG] inject_context: q={sorted(q)} | want_cats={sorted(list(want_cats))} | facts={len(facts)} | top_k={top_k} | matched={len([t for t in top if t[1]])}")
+        print(f"[RAG] inject_context: top_k={top_k} | q={sorted(q)} | want_cats={sorted(list(want_cats))} | where_like={is_where_like} | facts={len(facts)} | matched={len([t for t in top if t[1]])}")
         for i, (_, line) in enumerate(top[:3], 1):
             if line:
                 print(f"[RAG] ctx[{i}]: {line}")
