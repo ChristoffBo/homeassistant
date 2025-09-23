@@ -135,6 +135,29 @@ def _write_json_atomic(path: str, obj: dict):
         json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
     os.replace(tmp,path)
 
+# ---- token & budget helpers ----
+
+SAFE_RAG_BUDGET_FRACTION = 0.30  # use 30% of ctx for RAG summaries
+
+def _estimate_tokens(text: str) -> int:
+    """Cheap token estimate (~1.3 * words), clamped to keep extremes sane."""
+    if not text:
+        return 0
+    words = len(re.findall(r"\S+", text))
+    est = int(words * 1.3)
+    return max(8, min(est, 128))  # typical summary lines land ~20–60 tokens
+
+def _ctx_tokens_from_options() -> int:
+    cfg = _load_options()
+    try:
+        return int(cfg.get("llm_ctx_tokens", 4096))
+    except Exception:
+        return 4096
+
+def _rag_budget_tokens(ctx_tokens: int) -> int:
+    # never starve context below 256 tokens, even on tiny ctx settings
+    return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
+
 # --------- categorization (generic, no per-entity config) ---------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -324,57 +347,94 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
-    """Return top-k matching fact summaries (synonym-aware, category-aware)."""
+    """Return a budgeted, relevance-sorted slice of fact summaries.
+
+    Behavior:
+      - Auto-detects llm_ctx_tokens from options
+      - Uses ~30% of ctx for RAG (SAFE_RAG_BUDGET_FRACTION)
+      - Prioritizes ESS/SOC and energy categories
+      - Demotes generic device batteries for SOC/ESS questions
+      - Greedy-packs summaries until token budget is exhausted
+      - If top_k > 0, it caps the *candidate pool*; budget still applies
+    """
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
     want_cats = _intent_categories(q)
 
-    scored=[]
+    scored: List[Tuple[int, Dict[str, Any]]] = []
     for f in facts:
-        s = int(f.get("score",1))
-        ft=set(_tok(f.get("summary","")) + _tok(f.get("entity_id","")))
-        cats=set(f.get("cats",[]))
+        s = int(f.get("score", 1))
+        ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
+        cats = set(f.get("cats", []))
 
-        # token match
+        # token / keyword correlation
         if q and (q & ft): s += 3
-        # energy-ish tokens get a small bump
         if q & SOLAR_KEYWORDS: s += 2
 
-        # STRONG bump for SOC-like sensors so ESS SOC rises to top
+        # prefer ESS SOC when relevant
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
             s += 12
 
-        # category routing: big boost if categories match intent
+        # category routing
         if want_cats and (cats & want_cats):
             s += 15
 
-        # Ultra preference for storage when user intent is SOC/battery/solar
+        # ultra preference for storage when SOC/battery/solar intent is present
         if want_cats & {"energy.storage"} and "energy.storage" in cats:
             s += 20
 
-        # Push down device batteries if asking about ESS
-        if want_cats & {"energy.storage"} and "device.battery" in cats and "energy.storage" not in cats:
+        # demote generic device batteries (phones, sensors) for SOC/ESS intent
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           ("device.battery" in cats) and ("energy.storage" not in cats):
+            s -= 18
+
+        # demote forecast-ish when asking SOC
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           (("forecast" in ft) or ("estimated" in ft)):
             s -= 12
 
-        # Push down forecasts if asking specifically for SOC
-        if want_cats & {"energy.storage"} and ("forecast" in ft or "estimated" in ft):
-            s -= 10
+        scored.append((s, f))
 
-        scored.append((s, f.get("summary","")))
-    top=sorted(scored,key=lambda x:x[0],reverse=True)[:top_k]
+    # sort best-first
+    scored.sort(key=lambda x: x[0], reverse=True)
 
-    # Debug: show matches in logs (no config toggles)
-    try:
-        print(f"[RAG] inject_context: q={sorted(q)} | want_cats={sorted(list(want_cats))} | facts={len(facts)} | top_k={top_k} | matched={len([t for t in top if t[1]])}")
-        for i, (_, line) in enumerate(top[:3], 1):
-            if line:
-                print(f"[RAG] ctx[{i}]: {line}")
-    except Exception:
-        pass
+    # ctx-aware budget
+    ctx_tokens = _ctx_tokens_from_options()
+    budget = _rag_budget_tokens(ctx_tokens)
 
-    return "\n".join([t[1] for t in top if t[1]])
+    # candidate pool: respect top_k if provided; otherwise use all facts under budget
+    candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
+
+    # order: for SOC/ESS queries, try storage facts first
+    if ("soc" in q) or (want_cats & {"energy.storage"}):
+        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
+        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
+        ordered   = ess_first + others
+    else:
+        ordered = candidate_facts
+
+    # greedy pack within token budget
+    selected: List[str] = []
+    remaining = budget
+
+    for f in ordered:
+        line = f.get("summary", "")
+        if not line:
+            continue
+        cost = _estimate_tokens(line)
+        if cost <= remaining:
+            selected.append(line)
+            remaining -= cost
+        # ensure at least one line even if single line slightly exceeds
+        if not selected and cost > remaining and remaining > 0:
+            selected.append(line)
+            remaining = 0
+        if remaining <= 0:
+            break
+
+    return "\n".join(selected)
 
 # ----------------- main -----------------
 
