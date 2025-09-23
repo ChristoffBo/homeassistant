@@ -1,212 +1,233 @@
 #!/usr/bin/env python3
-# /app/rag.py
-#
-# RAG entity collector for Jarvis Prime (REST version)
-# Builds rag_facts.json by calling Home Assistant /api/states
-#
-# Output (atomic writes):
-#   /share/jarvis_prime/memory/rag_facts.json  (primary, human-visible)
-#   /data/rag_facts.json                       (fallback)
+# /app/rag.py  (REST → /api/states)
 
-import os, json, re, urllib.request
-from datetime import datetime
-from typing import Dict, Any, List
+import os, re, json, time, threading, urllib.request
+from typing import Any, Dict, List, Tuple
 
-# --- Where to read HA connection from (your options.json has these) ---
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
-# ---- OUTPUT CONFIG (primary in /share, fallback in /data) ----
-OUTPUT_PRIMARY_DIRS = ["/share/jarvis_prime/memory", "/share/jarvis_prime"]
-OUTPUT_FALLBACK_PATH = "/data/rag_facts.json"
-OUTPUT_BASENAME = "rag_facts.json"
+# Primary + fallback output
+PRIMARY_DIRS   = ["/share/jarvis_prime/memory", "/share/jarvis_prime"]
+FALLBACK_PATH  = "/data/rag_facts.json"
+BASENAME       = "rag_facts.json"
 
-# --- Keyword groups for boosting ---
-SOLAR_KEYWORDS   = {"axpert", "inverter", "pv", "grid", "battery", "solar", "soc"}
-ZIGBEE_KEYWORDS  = {"zigbee", "zigbee2mqtt", "z2m", "zha", "linkquality", "lqi", "rssi"}
-TASMOTA_KEYWORDS = {"tasmota"}
-PHONE_KEYWORDS   = {"phone", "mobile"}
-PERSON_KEYWORDS  = {"person", "device_tracker"}
+INCLUDE_DOMAINS = {"light","switch","sensor","binary_sensor","person","device_tracker"}
 
-# --- Canonical name mapping (customize for household) ---
-NAME_MAP = {
-    "sam-phone": "Sam",
-    "sonoff-temp-study": "Study Temp",
-    "sonoff-snzb-02d": "Living Room Temp",
+SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","soc","battery_soc","battery","grid","load","generation","import","export"}
+SONOFF_KEYWORDS  = {"sonoff"}
+ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
+MQTT_KEYWORDS    = {"mqtt"}
+RADARR_KEYWORDS  = {"radarr"}
+SONARR_KEYWORDS  = {"sonarr"}
+
+DEVICE_CLASS_PRIORITY = {"motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,"battery":3,"temperature":3,"humidity":2,"power":3,"energy":3}
+
+QUERY_SYNONYMS = {
+    "soc":["soc","state_of_charge","battery_soc","battery"],
+    "solar":["solar","pv","generation","inverter","array"],
+    "pv":["pv","solar"],
+    "load":["load","power","w","kw","consumption"],
+    "grid":["grid","import","export"],
+    "battery":["battery","soc","charge"],
+    "where":["where","location","zone","home","work","present"],
 }
+
+REFRESH_INTERVAL_SEC = 15*60
+DEFAULT_TOP_K = 5
+_CACHE_LOCK = threading.RLock()
+_LAST_REFRESH_TS = 0.0
 
 def _load_options() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     for p in OPTIONS_PATHS:
         try:
             if os.path.exists(p):
-                with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    cfg.update(data)
-        except Exception:
-            pass
+                with open(p,"r",encoding="utf-8") as f:
+                    raw=f.read()
+                try: data=json.loads(raw)
+                except json.JSONDecodeError:
+                    try:
+                        import yaml; data=yaml.safe_load(raw)
+                    except Exception: data=None
+                if isinstance(data,dict): cfg.update(data)
+        except Exception: pass
     return cfg
 
-def _http_get_json(url: str, headers: Dict[str, str], timeout: int = 25):
+def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
     req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8", errors="replace"))
+        return json.loads(resp.read().decode("utf-8","replace"))
 
-def normalize_name(eid: str) -> str:
-    e = eid.lower().replace("_", " ")
-    for k, v in NAME_MAP.items():
-        if k in e:
-            return v
-    if "." in e:
-        e = e.split(".", 1)[1]
-    return e.strip()
+def _domain_of(eid: str) -> str:
+    return eid.split(".",1)[0] if "." in eid else ""
 
-def extract_value(state: str):
+def _upper_if_onoff(s: str) -> str:
+    return s.upper() if s in ("on","off","open","closed") else s
+
+def _tok(s: str) -> List[str]:
+    import re
+    return re.findall(r"[A-Za-z0-9_]+", s.lower() if s else "")
+
+def _expand_query_tokens(tokens: List[str]) -> List[str]:
+    out=[]; seen=set()
+    for t in tokens:
+        for x in QUERY_SYNONYMS.get(t,[t]):
+            if x not in seen:
+                seen.add(x); out.append(x)
+    return out
+
+def _short_iso(ts: str) -> str:
+    return ts.replace("T"," ").split(".")[0].replace("Z","") if ts else ""
+
+def _fmt_num(state: str, unit: str) -> str:
     try:
-        if state is None:
-            return None
-        if re.match(r"^-?\d+(\.\d+)?$", state):
-            return float(state) if "." in state else int(state)
-        return state
+        v=float(state); 
+        if abs(v)<0.005: v=0.0
+        s=f"{v:.2f}".rstrip("0").rstrip(".")
+        return f"{s} {unit}".strip()
     except Exception:
-        return state
+        return f"{state} {unit}".strip() if unit else state
+
+def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
+    zone = attrs.get("zone")
+    if zone: return zone
+    ls = (state or "").lower()
+    if ls in ("home","not_home"): return "Home" if ls=="home" else "Away"
+    return state
 
 def _write_json_atomic(path: str, obj: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    with open(tmp,"w",encoding="utf-8") as f:
+        json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp,path)
 
-def _boost_for_entity_id(eid_lower: str):
-    score = 1
-    source = "ha"
-    if any(k in eid_lower for k in SOLAR_KEYWORDS):
-        score += 5; source = "solar"
-    if any(k in eid_lower for k in ZIGBEE_KEYWORDS):
-        score += 3; source = "zigbee"
-    if any(k in eid_lower for k in TASMOTA_KEYWORDS):
-        score += 2; source = "tasmota"
-    if any(k in eid_lower for k in PHONE_KEYWORDS) or "device_tracker" in eid_lower:
-        score += 2; source = "phone"
-    if any(k in eid_lower for k in PERSON_KEYWORDS):
-        score += 2; source = "person"
-    return score, source
+def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
+    ha_url = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
+    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
+    if not ha_url or not ha_token: return []
+    headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
+    try: data = _http_get_json(f"{ha_url}/api/states", headers, timeout=25)
+    except Exception: return []
+    if not isinstance(data,list): return []
 
-def collect_facts(limit_per_entity: int = 5):
-    opts = _load_options()
-    base = (opts.get("llm_enviroguard_ha_base_url") or "").rstrip("/")
-    token = (opts.get("llm_enviroguard_ha_token") or "").strip()
-
-    if not base or not token:
-        print("[RAG] Missing llm_enviroguard_ha_base_url or llm_enviroguard_ha_token in /data/options.json")
-        return
-
-    url = f"{base}/api/states"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    try:
-        data = _http_get_json(url, headers, timeout=25)
-    except Exception as e:
-        print(f"[RAG] REST /api/states failed: {e}")
-        return
-
-    now = datetime.utcnow().isoformat()
-    facts: List[Dict[str, Any]] = []
-
-    for item in data if isinstance(data, list) else []:
+    facts=[]
+    for item in data:
         try:
             eid = str(item.get("entity_id") or "")
-            state = str(item.get("state") or "")
+            if not eid: continue
+            domain = _domain_of(eid)
+            if domain not in INCLUDE_DOMAINS: continue
+
             attrs = item.get("attributes") or {}
-            last_upd = (item.get("last_updated") or item.get("last_changed") or "")
+            device_class = str(attrs.get("device_class","")).lower()
+            name  = str(attrs.get("friendly_name", eid))
+            state = str(item.get("state",""))
+            unit  = str(attrs.get("unit_of_measurement","") or "")
+            last_changed = str(item.get("last_changed","") or "")
 
-            if not eid or state in ("unknown", "unavailable", ""):
-                continue
+            if state in ("","unknown","unavailable"): continue
+            if domain == "device_tracker":
+                state = _safe_zone_from_tracker(state, attrs)
 
-            eid_l = eid.lower()
-            score, source = _boost_for_entity_id(eid_l)
+            show_state = _upper_if_onoff(state) if state else ""
+            if unit and state not in ("on","off","open","closed"):
+                show_state = _fmt_num(state, unit)
 
-            fact = {
+            summary = name
+            if device_class: summary += f" ({device_class})"
+            if show_state:   summary += f": {show_state}"
+            recent = _short_iso(last_changed)
+            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
+                summary += f" (as of {recent})"
+
+            score=1
+            toks=_tok(eid)+_tok(name)+_tok(device_class)
+            if any(k in toks for k in SOLAR_KEYWORDS): score+=6
+            if "solar_assistant" in "_".join(toks) or "solarassistant" in "_".join(toks): score+=3
+            if any(k in toks for k in SONOFF_KEYWORDS): score+=3
+            if any(k in toks for k in ZIGBEE_KEYWORDS): score+=2
+            if any(k in toks for k in MQTT_KEYWORDS):   score+=2
+            if any(k in toks for k in RADARR_KEYWORDS): score+=3
+            if any(k in toks for k in SONARR_KEYWORDS): score+=3
+            score += DEVICE_CLASS_PRIORITY.get(device_class,0)
+            if domain in ("person","device_tracker"): score+=5
+            if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
+
+            facts.append({
                 "entity_id": eid,
-                "name": normalize_name(eid),
-                "state": extract_value(state),
-                "last_updated": last_upd,
-                "score": score,
-                "source": source,
-            }
-
-            # pick useful attributes if present
-            for k in ["unit_of_measurement","battery_level","voltage","current","power",
-                      "temperature","humidity","linkquality","lqi","rssi","device_class","friendly_name"]:
-                if k in attrs:
-                    fact[k] = attrs[k]
-
-            # build summary
-            parts = [fact["name"]]
-            if fact.get("state") not in (None, "", "on", "off"):
-                parts.append(str(fact["state"]))
-            if "unit_of_measurement" in fact:
-                parts.append(str(fact["unit_of_measurement"]))
-            if "battery_level" in fact:
-                parts.append(f"Battery {fact['battery_level']}%")
-            if "temperature" in fact:
-                parts.append(f"T={fact['temperature']}°C")
-            if "humidity" in fact:
-                parts.append(f"H={fact['humidity']}%")
-            if "linkquality" in fact:
-                parts.append(f"LQ={fact['linkquality']}")
-            if "rssi" in fact:
-                parts.append(f"RSSI={fact['rssi']}")
-            if "lqi" in fact:
-                parts.append(f"LQI={fact['lqi']}")
-            fact["summary"] = " ".join(map(str, parts))
-
-            facts.append(fact)
+                "domain": domain,
+                "device_class": device_class,
+                "friendly_name": name,
+                "state": state,
+                "unit": unit,
+                "last_changed": last_changed,
+                "summary": summary,
+                "score": score
+            })
         except Exception:
             continue
+    return facts
 
-    # sort + trim
-    facts.sort(key=lambda x: (x["score"], x["last_updated"]), reverse=True)
-    pruned, seen = [], {}
-    for f in facts:
-        eid = f["entity_id"]
-        seen.setdefault(eid, 0)
-        if seen[eid] < limit_per_entity:
-            pruned.append(f); seen[eid] += 1
+def refresh_and_cache() -> List[Dict[str,Any]]:
+    global _LAST_REFRESH_TS
+    cfg = _load_options()
+    facts = _fetch_ha_states(cfg)
 
-    result = {
-        "generated_at": now,
-        "facts": pruned,
-        "count": len(pruned),
-        "note": "Live context facts from Home Assistant via REST.",
-        "write_targets": []
-    }
-
-    written = []
-    for d in OUTPUT_PRIMARY_DIRS:
-        try:
-            p = os.path.join(d, OUTPUT_BASENAME)
-            _write_json_atomic(p, result)
-            written.append(p)
-        except Exception as e:
-            print(f"[RAG] write failed for {d}: {e}")
+    result_paths=[]
     try:
-        _write_json_atomic(OUTPUT_FALLBACK_PATH, result)
-        written.append(OUTPUT_FALLBACK_PATH)
-    except Exception as e:
-        print(f"[RAG] fallback write failed: {e}")
-
-    result["write_targets"] = written
-    if written:
+        result=facts
+        # write primary(s)
+        payload = facts
+        for d in PRIMARY_DIRS:
+            try:
+                p=os.path.join(d,BASENAME)
+                _write_json_atomic(p, payload); result_paths.append(p)
+            except Exception as e:
+                print(f"[RAG] write failed for {d}: {e}")
+        # fallback
         try:
-            _write_json_atomic(written[0], result)  # include write_targets in primary
-        except Exception:
-            pass
+            _write_json_atomic(FALLBACK_PATH, payload); result_paths.append(FALLBACK_PATH)
+        except Exception as e:
+            print(f"[RAG] fallback write failed: {e}")
+    finally:
+        _LAST_REFRESH_TS = time.time()
 
-    print(f"[RAG] wrote {len(pruned)} facts to: " + " | ".join(written))
+    print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
+    return facts
+
+def load_cached() -> List[Dict[str,Any]]:
+    try:
+        # prefer primary if present
+        for d in PRIMARY_DIRS:
+            p=os.path.join(d,BASENAME)
+            if os.path.exists(p):
+                with open(p,"r",encoding="utf-8") as f: return json.load(f)
+        with open(FALLBACK_PATH,"r",encoding="utf-8") as f: return json.load(f)
+    except Exception:
+        return []
+
+def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
+    if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
+        return refresh_and_cache()
+    return load_cached()
+
+def inject_context(user_msg: str, top_k: int=5) -> str:
+    q=set(_expand_query_tokens(_tok(user_msg)))
+    facts=get_facts()
+    scored=[]
+    for f in facts:
+        s=f.get("score",1)
+        if q:
+            ft=set(_tok(f.get("summary","")) + _tok(f.get("entity_id","")))
+            if q & ft: s+=3
+            if ({"solar","pv","inverter","soc","battery"} & q) and any(k in ft for k in SOLAR_KEYWORDS):
+                s+=2
+        scored.append((s,f.get("summary","")))
+    top=sorted(scored,key=lambda x:x[0],reverse=True)[:top_k]
+    return "\n".join([t[1] for t in top if t[1]])
 
 if __name__ == "__main__":
-    collect_facts()
+    print("Refreshing RAG facts from Home Assistant...")
+    facts = refresh_and_cache()
+    print(f"Wrote {len(facts)} facts.")
