@@ -26,20 +26,12 @@ INCLUDE_DOMAINS = None
 # ----------------- Keywords / Integrations -----------------
 
 # Energy / Solar
-SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
-
-# Smart devices
-SONOFF_KEYWORDS  = {"sonoff","ewelink"}
+SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export","axpert"}
+SONOFF_KEYWORDS  = {"sonoff","tasmota"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
 MQTT_KEYWORDS    = {"mqtt"}
 TUYA_KEYWORDS    = {"tuya","localtuya","local_tuya"}
-TASMOTA_KEYWORDS = {"tasmota"}
-
-# Infrastructure
-PROXMOX_KEYWORDS = {"proxmox","pve"}
-UNRAID_KEYWORDS  = {"unraid"}
-DOCKER_KEYWORDS  = {"docker","container"}
-SPEEDTEST_KEYWORDS = {"speedtest","internet","bandwidth","ping"}
+FORECAST_SOLAR   = {"forecast.solar","forecastsolar","forecast_solar"}
 
 # Media (separate + combined)
 PLEX_KEYWORDS    = {"plex"}
@@ -61,11 +53,11 @@ MEDIA_KEYWORDS   = set().union(
     SONOS_KEYWORDS, AMP_KEYWORDS, {"media","player"}
 )
 
-# Mobile devices
-MOBILE_KEYWORDS = {"mobile","phone","tablet","android","ios"}
-
-# Weather
-WEATHER_KEYWORDS = {"weather","forecast","rain","temperature","humidity","wind"}
+# Infra / system
+PROXMOX_KEYWORDS = {"proxmox","pve"}
+SPEEDTEST_KEYS   = {"speedtest","speed_test"}
+CPU_KEYS         = {"cpu","processor","loadavg","load_avg"}
+WEATHER_KEYS     = {"weather","weatherbit","openweathermap","met","yr"}
 
 # ----------------- Device-class priority -----------------
 
@@ -84,11 +76,6 @@ QUERY_SYNONYMS = {
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
     "where": ["where","location","zone","home","work","present"],
-    "media": ["media","plex","emby","jellyfin","radarr","sonarr","lidarr","bazarr","readarr","tv","player","kodi","chromecast"],
-    "infra": ["server","vm","proxmox","unraid","docker","container"],
-    "network": ["internet","speedtest","bandwidth","ping","latency"],
-    "weather": ["weather","forecast","rain","temperature","humidity","wind"],
-    "area": ["area","room","zone","kitchen","bedroom","livingroom","bathroom","garage"],
 }
 
 # Intent → categories we prefer
@@ -100,10 +87,6 @@ INTENT_CATEGORY_MAP = {
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
     "media": {"media"},
-    "infra": {"infra"},
-    "network": {"network"},
-    "weather": {"weather"},
-    "area": {"area"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
@@ -111,6 +94,7 @@ DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
+
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -215,22 +199,13 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if toks & SONOS_KEYWORDS: cats.add("media.sonos")
         if toks & AMP_KEYWORDS: cats.add("media.amplifier")
 
-    # Infrastructure
-    if any(k in toks for k in PROXMOX_KEYWORDS): cats.add("infra.proxmox")
-    if any(k in toks for k in UNRAID_KEYWORDS): cats.add("infra.unraid")
-    if any(k in toks for k in DOCKER_KEYWORDS): cats.add("infra.docker")
-
-    # Networking
-    if any(k in toks for k in SPEEDTEST_KEYWORDS): cats.add("network")
-
-    # Weather
-    if any(k in toks for k in WEATHER_KEYWORDS): cats.add("weather")
-
-    # Areas
-    if any(k in toks for k in QUERY_SYNONYMS["area"]): cats.add("area")
+    # Infra / system
+    if toks & PROXMOX_KEYWORDS: cats.add("infra.proxmox")
+    if toks & SPEEDTEST_KEYS: cats.add("infra.speedtest")
+    if toks & CPU_KEYS: cats.add("infra.cpu")
+    if toks & WEATHER_KEYS: cats.add("weather")
 
     return cats
-
 # ----------------- fetch + summarize -----------------
 
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
@@ -317,6 +292,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
+
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -366,7 +342,6 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
-
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -382,16 +357,6 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"energy.load"})
     if q_tokens & MEDIA_KEYWORDS:
         out.update({"media"})
-    if q_tokens & PROXMOX_KEYWORDS:
-        out.update({"infra.proxmox"})
-    if q_tokens & UNRAID_KEYWORDS:
-        out.update({"infra.unraid"})
-    if q_tokens & DOCKER_KEYWORDS:
-        out.update({"infra.docker"})
-    if q_tokens & WEATHER_KEYWORDS:
-        out.update({"weather"})
-    if q_tokens & QUERY_SYNONYMS["area"]:
-        out.update({"area"})
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
@@ -399,48 +364,31 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Domain/keyword overrides ----
+    # ---- Domain/keyword overrides (multiple allowed now) ----
+    filtered = []
     if "light" in q or "lights" in q:
-        facts = [f for f in facts if f["domain"] == "light"]
-    elif "switch" in q or "switches" in q:
-        facts = [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
-    elif "motion" in q or "occupancy" in q:
-        facts = [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
-    elif "axpert" in q:
-        facts = [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
-    elif "sonoff" in q:
-        facts = [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
-    elif "zigbee" in q or "z2m" in q:
-        facts = [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
-    elif "where" in q:
-        facts = [f for f in facts if f["domain"] in ("person","device_tracker")]
-    elif q & MEDIA_KEYWORDS:
-        facts = [f for f in facts if any(
+        filtered += [f for f in facts if f["domain"] == "light"]
+    if "switch" in q or "switches" in q:
+        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
+    if "motion" in q or "occupancy" in q:
+        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
+    if "axpert" in q:
+        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
+    if "sonoff" in q:
+        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
+    if "zigbee" in q or "z2m" in q:
+        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
+    if "where" in q:
+        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
+    if q & MEDIA_KEYWORDS:
+        filtered += [f for f in facts if any(
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
-    elif q & PROXMOX_KEYWORDS:
-        facts = [f for f in facts if any(
-            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
-            for m in PROXMOX_KEYWORDS
-        )]
-    elif q & UNRAID_KEYWORDS:
-        facts = [f for f in facts if any(
-            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
-            for m in UNRAID_KEYWORDS
-        )]
-    elif q & DOCKER_KEYWORDS:
-        facts = [f for f in facts if any(
-            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
-            for m in DOCKER_KEYWORDS
-        )]
-    elif q & WEATHER_KEYWORDS:
-        facts = [f for f in facts if any(
-            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
-            for m in WEATHER_KEYWORDS
-        )]
-    elif q & QUERY_SYNONYMS["area"]:
-        facts = [f for f in facts if f["domain"] in ("light","switch","sensor","binary_sensor") and f.get("friendly_name")]
+
+    # fallback if nothing matched
+    if filtered:
+        facts = filtered
 
     want_cats = _intent_categories(q)
 
@@ -452,20 +400,15 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
         if q and (q & ft): s += 3
         if q & SOLAR_KEYWORDS: s += 2
-
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
             s += 12
-
         if want_cats and (cats & want_cats):
             s += 15
-
         if want_cats & {"energy.storage"} and "energy.storage" in cats:
             s += 20
-
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
            ("device.battery" in cats) and ("energy.storage" not in cats):
             s -= 18
-
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
            (("forecast" in ft) or ("estimated" in ft)):
             s -= 12
