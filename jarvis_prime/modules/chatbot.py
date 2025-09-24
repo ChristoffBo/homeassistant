@@ -169,7 +169,6 @@ def _is_english_text(text: str, max_ratio: float = 0.2) -> bool:
         return True
     non_ascii = sum(1 for ch in text if ord(ch) > 127)
     return (non_ascii / max(1, len(text))) <= max_ratio
-
 def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -> bool:
     if not title and not snippet:
         return True
@@ -195,6 +194,7 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
             if sub not in {"formula1","motorsports"}:
                 return True
     return False
+
 # Fact-style queries (used by ranker)
 _FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
 
@@ -255,7 +255,6 @@ _WEB_TRIGGERS = [
 
 def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
-    # Explicit triggers always force web mode
     if any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS):
         return True
     return False
@@ -272,7 +271,7 @@ def _cb_open(backend: str) -> bool:
     return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
 
 # ----------------------------
-# Web search backends (FREE, no keys)
+# Web search backends
 # ----------------------------
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
     if _cb_open("ddg_lib"): return []
@@ -375,7 +374,7 @@ def _build_query_by_vertical(q: str, vertical: str) -> str:
 
 def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
     hits: List[Dict[str,str]] = []
-    # Wikipedia first for fast fact queries (bios, definitions)
+    # Wikipedia first
     hits.extend(_search_with_wikipedia(raw_q))
     if len(hits) >= max_results:
         return hits
@@ -439,59 +438,65 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
 # Public entry
 # ----------------------------
 _CACHE: Dict[str,str] = {}
+_LAST_QUERY: Optional[str] = None  # <-- stores last non-trigger query
 
 def handle_message(source: str, text: str) -> str:
+    global _LAST_QUERY
     q = (text or "").strip()
     if not q:
         return ""
     try:
         if DEBUG: print("IN_MSG:", q)
 
-        # 1) Try RAG context first (local HA facts)
-        try:
-            from rag import inject_context
-            try:
-                rag_block = inject_context(q, top_k=5)
-            except Exception:
-                rag_block = ""
-            if rag_block:
-                ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
-                clean_ans = _clean_text(ans)
-                if clean_ans:
-                    if DEBUG: print("RAG_HIT")
-                    return clean_ans
-        except Exception:
-            pass
-
-        # 2) Cache
+        # Cache hit
         if q in _CACHE:
             if DEBUG: print("CACHE_HIT")
             return _CACHE[q]
 
-        # 3) Offline Jarvis
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
-        clean_ans = _clean_text(ans)
-
-        # 4) Web mode only if explicitly requested
+        # If this is a web trigger phrase, reuse the last stored query
         if _should_use_web(q):
-            hits = _web_search(q, max_results=8)
+            real_q = _LAST_QUERY if _LAST_QUERY else q
+            hits = _web_search(real_q, max_results=8)
             if hits:
                 notes = _build_notes_from_hits(hits)
-                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
+                summary = _chat_offline_summarize(real_q, notes, max_new_tokens=320).strip()
                 if not summary:
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
                 out = _render_web_answer(_clean_text(summary), sources)
-                _CACHE[q] = out
+                _CACHE[real_q] = out
                 return out
+            return "No results found."
 
-        # 5) If offline had an answer, return it
+        # Otherwise: normal offline → rag + Jarvis
+        _LAST_QUERY = q  # store for later trigger use
+
+        # Try RAG first
+        try:
+            from rag import inject_context
+            rag_block = ""
+            try:
+                rag_block = inject_context(q, top_k=5)
+            except Exception:
+                pass
+            if rag_block:
+                ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
+                clean_ans = _clean_text(ans)
+                if clean_ans:
+                    if DEBUG: print("RAG_HIT")
+                    _CACHE[q] = clean_ans
+                    return clean_ans
+        except Exception:
+            pass
+
+        # Offline Jarvis
+        ans = _chat_offline_singleturn(q, max_new_tokens=256)
+        clean_ans = _clean_text(ans)
         if clean_ans:
             _CACHE[q] = clean_ans
             return clean_ans
 
-        # 6) Final fallback
         return "I don't know."
 
     except Exception:
