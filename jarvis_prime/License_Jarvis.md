@@ -1,6 +1,6 @@
 # Jarvis Prime – Alpha License
 
-Copyright (c) 2025 [Your Name or Handle]
+Copyright (c) 2025 Christoff Bothma
 
 ---
 
