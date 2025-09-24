@@ -1,7 +1,6 @@
 ## latest (2025-09-23 12:00:00)
 Added Rag aswell, if homeasstiant is added in the options.json token and url llm wil now be aware of your homeasstiant entities.
 Please Note internet search and Rag is experamental.
-In Chat if you ask him to goolge it, it wil :)
 ## latest (2025-09-22 12:00:00)
 Finally Added Chat, if llm is enabled chat is enabled. Wake word Talk or Chat.
 ## latest (2025-09-22 12:00:00)
