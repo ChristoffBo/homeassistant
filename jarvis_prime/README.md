@@ -18,7 +18,8 @@ Features
 • Multiple selectable personas: The Dude, Chick, Nerd, Rager, Comedian, Action, Ops  
 • EnviroGuard: adaptive LLM throttle adjusts CPU use based on ambient temperature  
 • Purge & Retention: configurable lifecycle for old messages  
-• Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled  
+• Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled 
+• Chat Lane: Rag aded, if you have set a long lived token and your homeasstiant url chat will now answer questions regarding your systems.
 
 Supported Sources
 • Radarr / Sonarr → Posters, runtime, SxxEyy, quality, size  
