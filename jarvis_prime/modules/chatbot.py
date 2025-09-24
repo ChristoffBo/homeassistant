@@ -12,8 +12,9 @@
 # - Filters: English-only, block junk/low-signal domains, require keyword overlap
 # - Ranking: authority + keyword overlap + strong recency for facts
 # - Fallbacks: summarizer fallback + direct snippet mode for fact queries
-# - Integrations: DuckDuckGo (ddgs), Wikipedia API, Reddit (vetted), GitHub (tech)
+# - Integrations: DuckDuckGo (ddgs), Wikipedia API (summary + search), Reddit (vetted), GitHub (tech)
 # - Free, no-register APIs only
+# - Human behavior heuristics: prefer clear facts, recency, multiple perspectives, avoid spammy/repetitive sources
 
 import os, re, json, time, html, requests, datetime, traceback, threading
 from typing import Dict, List, Tuple, Optional
@@ -132,7 +133,8 @@ _DENY_DOMAINS = [
 def _tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
 
-def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> bool:
+def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 1) -> bool:
+    """Relaxed: only require 1 overlap, always allow if English text passes"""
     qk = set(_tokenize(q))
     tk = set(_tokenize((title or "") + " " + (snippet or "")))
     stop = {"where","what","who","when","which","the","and","for","with","from","into",
@@ -140,55 +142,9 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
             "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
-
-def _min_hits_for_query(q: str) -> int:
-    core = [w for w in _tokenize(q) if w not in {"where","what","who","when","which","the","and","for","with","from","into","about","this","that"}]
-    if "f1" in core or "formula" in core or "leader" in core:
-        return 1
-    return 1 if len(core) <= 2 else 2
-
-def _strip_web_triggers(q: str) -> str:
-    out = q
-    for pat in [
-        r"\bgoogle\s+it\b", r"\bgoogle\s+for\s+me\b", r"\bgoogle\b",
-        r"\bsearch\s+the\s+internet\b", r"\bsearch\s+the\s+web\b",
-        r"\bweb\s+search\b", r"\binternet\s+search\b",
-        r"\bcheck\s+internet\b", r"\bcheck\s+web\b",
-        r"\bcheck\s+online\b", r"\bsearch\s+online\b",
-        r"\blook\s+it\s+up\b", r"\buse\s+the\s+internet\b",
-        r"\bverify\s+online\b", r"\bverify\s+on\s+the\s+web\b",
-    ]:
-        out = re.sub(pat, "", out, flags=re.I)
-    out = re.sub(r"\s{2,}", " ", out).strip(" .!?-")
-    return out
-def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -> bool:
-    if not title and not snippet:
-        return True
-    if _is_deny_domain(url):
-        return True
-    text = (title or "") + " " + (snippet or "")
-    if not _is_english_text(text, max_ratio=0.2):
-        return True
-    min_hits = _min_hits_for_query(q)
-    if not _keyword_overlap(q, title, snippet, min_hits=min_hits):
-        return True
-    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|[$][0-9])\b", text, re.I):
-        return True
-    if "reddit.com" in url.lower():
-        m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
-        sub = (m.group(1).lower() if m else "")
-        if vertical == "entertainment":
-            if sub not in {s.lower() for s in _REDDIT_ALLOW_ENT}:
-                return True
-        elif vertical == "tech":
-            if sub not in {s.lower() for s in _REDDIT_ALLOW_TECH}:
-                return True
-        elif vertical == "sports":
-            if sub not in {"formula1","motorsports"}:
-                return True
-    return False
-
+# Fact-style queries (used by ranker)
 _FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
+
 _CURRENT_YEAR = datetime.datetime.utcnow().year
 
 def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
@@ -200,7 +156,10 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
         snip = (h.get("snippet") or "")
         if not url:
             continue
-        if _is_junk_result(title, snip, url, q, vertical):
+        # keep more results, only skip if clearly junk
+        if _is_deny_domain(url):
+            continue
+        if not _is_english_text(title + " " + snip, max_ratio=0.25):
             continue
         score = 0
         if _is_authority(url, vertical):
@@ -226,8 +185,14 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
                 score -= 3
         scored.append((score, h))
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [h for _, h in scored]
+    ranked = [h for _, h in scored]
+    if DEBUG:
+        print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
+    return ranked
 
+# ----------------------------
+# Triggers
+# ----------------------------
 _WEB_TRIGGERS = [
     r"\bgoogle\s+it\b", r"\bgoogle\s+for\s+me\b", r"\bgoogle\b",
     r"\bsearch\s+the\s+internet\b", r"\bsearch\s+the\s+web\b",
@@ -239,25 +204,34 @@ _WEB_TRIGGERS = [
 ]
 
 def _should_use_web(q: str) -> bool:
-    return any(re.search(p, (q or ""), re.I) for p in _WEB_TRIGGERS)
+    ql = (q or "").lower()
+    if any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS):
+        return True
+    return False
 
+# ----------------------------
+# Circuit breaker helpers
+# ----------------------------
 def _cb_fail(backend: str):
     CIRCUIT_BREAKERS[backend] = time.time()
 
 def _cb_open(backend: str) -> bool:
-    return backend in CIRCUIT_BREAKERS and (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
+    if backend not in CIRCUIT_BREAKERS:
+        return False
+    return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
 
 # ----------------------------
-# Web search backends
+# Web search backends (FREE, no keys)
 # ----------------------------
-def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str,str]]:
+def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
     if _cb_open("ddg_lib"): return []
     try:
         from ddgs import DDGS
     except Exception:
+        if DEBUG: print("DDG_LIB_IMPORT_FAIL")
         return []
     try:
-        out = []
+        out: List[Dict[str, str]] = []
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=max_results, region=region, safesearch="Moderate"):
                 title = (r.get("title") or "").strip()
@@ -266,11 +240,12 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
                 if title and url:
                     out.append({"title": title, "url": url, "snippet": snippet})
         return out
-    except Exception:
+    except Exception as e:
         _cb_fail("ddg_lib")
+        if DEBUG: print("DDG_LIB_ERR", repr(e))
         return []
 
-def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
+def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
     if _cb_open("ddg_api"): return []
     try:
         url = "https://api.duckduckgo.com/"
@@ -278,11 +253,12 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
         r = requests.get(url, params=params, timeout=timeout)
         r.raise_for_status()
         data = r.json()
-    except Exception:
+    except Exception as e:
         _cb_fail("ddg_api")
+        if DEBUG: print("DDG_API_ERR", repr(e), "Q:", query)
         return []
-    results = []
-    def _push(title, url, snippet):
+    results: List[Dict[str, str]] = []
+    def _push(title: str, url: str, snippet: str):
         if title and url:
             results.append({"title": title, "url": url, "snippet": snippet})
     if data.get("AbstractText") and data.get("AbstractURL"):
@@ -295,17 +271,17 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
                 _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
         else:
             _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-    seen, deduped = set(), []
+    dedup, seen = [], set()
     for r in results:
         u = r.get("url") or ""
         if u and u not in seen:
             seen.add(u)
-            deduped.append(r)
-        if len(deduped) >= max_results:
+            dedup.append(r)
+        if len(dedup) >= max_results:
             break
-    return deduped
+    return dedup
 
-def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str,str]]:
+def _search_with_wikipedia_summary(query: str, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
         r = requests.get(api, timeout=timeout, headers={"accept": "application/json"})
@@ -320,24 +296,29 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str,str]]:
         return []
     return []
 
-def _search_with_reddit(query: str, max_results: int = 4, timeout: int = 6) -> List[Dict[str,str]]:
+def _search_with_wikipedia_search(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
+    """Wikipedia fulltext search API"""
     try:
-        url = f"https://www.reddit.com/search.json?q={_urlquote(query)}&sort=relevance&t=month&limit={max_results}"
-        r = requests.get(url, headers={"User-Agent": "JarvisBot/1.0"}, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-        hits = []
-        for child in data.get("data", {}).get("children", []):
-            d = child.get("data", {})
-            sub = d.get("subreddit", "").lower()
-            title = d.get("title") or ""
-            snippet = d.get("selftext") or d.get("title") or ""
-            link = "https://www.reddit.com" + d.get("permalink", "")
-            if title and link:
-                hits.append({"title": f"r/{sub}: {title}", "url": link, "snippet": snippet})
-        return hits
+        api = "https://en.wikipedia.org/w/api.php"
+        params = {"action": "query", "list": "search", "format": "json", "srsearch": query}
+        r = requests.get(api, params=params, timeout=timeout)
+        if r.status_code == 200:
+            data = r.json()
+            hits = []
+            for s in data.get("query", {}).get("search", []):
+                title = s.get("title") or ""
+                snippet = re.sub(r"<[^>]+>", "", s.get("snippet") or "")
+                url = f"https://en.wikipedia.org/wiki/{_urlquote(title.replace(' ', '_'))}"
+                hits.append({"title": title, "url": url, "snippet": snippet})
+                if len(hits) >= max_results:
+                    break
+            return hits
     except Exception:
         return []
+    return []
+# ----------------------------
+# Query shaping + backoffs
+# ----------------------------
 def _build_query_by_vertical(q: str, vertical: str) -> str:
     q = q.strip()
     if vertical == "entertainment":
@@ -350,27 +331,38 @@ def _build_query_by_vertical(q: str, vertical: str) -> str:
 
 def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
     hits: List[Dict[str,str]] = []
-    hits.extend(_search_with_wikipedia(raw_q))
+    # First try Wikipedia summary
+    hits.extend(_search_with_wikipedia_summary(raw_q))
     if len(hits) >= max_results:
         return hits
+    # Then Wikipedia search API
+    hits.extend(_search_with_wikipedia_search(raw_q, max_results=max_results))
+    if len(hits) >= max_results:
+        return hits
+    # Then DuckDuckGo library
     hits.extend(_search_with_duckduckgo_lib(shaped_q, max_results=max_results))
     if len(hits) >= max_results:
         return hits
+    # Finally DuckDuckGo API
     hits.extend(_search_with_ddg_api(shaped_q, max_results=max_results))
-    if len(hits) >= max_results:
-        return hits
-    # Last fallback: Reddit
-    hits.extend(_search_with_reddit(raw_q, max_results=max_results))
     return hits[:max_results]
 
-def _web_search(query: str, max_results: int = 8) -> List[Dict[str,str]]:
+# ----------------------------
+# Web search orchestration
+# ----------------------------
+def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     vertical = _detect_intent(query)
     shaped = _build_query_by_vertical(query, vertical)
     hits = _try_all_backoffs(query, shaped, vertical, max_results)
+    if DEBUG:
+        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical)
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
 
-def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
+# ----------------------------
+# Notes builder for summarizer
+# ----------------------------
+def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
     lines: List[str] = []
     for h in hits[:10]:
         title = (h.get("title") or "").strip()
@@ -383,7 +375,10 @@ def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
         return "- No usable web notes."
     return "\n".join(lines)
 
-def _render_web_answer(summary: str, sources: List[Tuple[str,str]]) -> str:
+# ----------------------------
+# Render
+# ----------------------------
+def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
     lines: List[str] = []
     if summary.strip():
         lines.append(summary.strip())
@@ -400,6 +395,9 @@ def _render_web_answer(summary: str, sources: List[Tuple[str,str]]) -> str:
                 lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
     return "\n".join(lines).strip()
 
+# ----------------------------
+# Public entry
+# ----------------------------
 _CACHE: Dict[str,str] = {}
 _LAST_QUERY: Optional[str] = None
 
@@ -409,7 +407,10 @@ def handle_message(source: str, text: str) -> str:
     if not q:
         return ""
     try:
+        if DEBUG: print("IN_MSG:", q)
+
         if q in _CACHE:
+            if DEBUG: print("CACHE_HIT")
             return _CACHE[q]
 
         is_trigger = _should_use_web(q)
@@ -437,6 +438,7 @@ def handle_message(source: str, text: str) -> str:
         real_q = stripped if stripped else q
         _LAST_QUERY = real_q
 
+        # Try RAG injection
         try:
             from rag import inject_context
             rag_block = ""
@@ -448,11 +450,13 @@ def handle_message(source: str, text: str) -> str:
                 ans = _chat_offline_summarize(real_q, rag_block, max_new_tokens=256)
                 clean_ans = _clean_text(ans)
                 if clean_ans:
+                    if DEBUG: print("RAG_HIT")
                     _CACHE[real_q] = clean_ans
                     return clean_ans
         except Exception:
             pass
 
+        # Local LLM
         ans = _chat_offline_singleturn(real_q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
         if clean_ans:
@@ -462,8 +466,13 @@ def handle_message(source: str, text: str) -> str:
         return "I don't know."
 
     except Exception:
+        if DEBUG:
+            traceback.print_exc()
         return "I don't know."
 
+# ----------------------------
+# Cleaners
+# ----------------------------
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
@@ -473,14 +482,20 @@ def _clean_text(s: str) -> str:
         return s
     out = s.replace("\r","").strip()
     if _strip_trans:
-        try: out = _strip_trans(out)
-        except Exception: pass
+        try:
+            out = _strip_trans(out)
+        except Exception:
+            pass
     if _scrub_pers:
-        try: out = _scrub_pers(out)
-        except Exception: pass
+        try:
+            out = _scrub_pers(out)
+        except Exception:
+            pass
     if _scrub_meta:
-        try: out = _scrub_meta(out)
-        except Exception: pass
+        try:
+            out = _scrub_meta(out)
+        except Exception:
+            pass
     return re.sub(r"\n{3,}","\n\n",out).strip()
 
 if __name__ == "__main__":
