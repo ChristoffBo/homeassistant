@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states)
+# /app/rag.py  (REST → /api/states + /api/areas)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
-# - Pulls states via /api/states (read-only)
+# - Pulls states via /api/states (read-only) + area metadata via /api/areas
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
@@ -70,7 +70,7 @@ DEVICE_CLASS_PRIORITY = {
 
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
-    "solar": ["solar","pv","generation","inverter","array","ess"],
+    "solar": ["solar","pv","generation","inverter","array","ess","axpert"],
     "pv": ["pv","solar"],
     "load": ["load","power","w","kw","consumption"],
     "grid": ["grid","import","export"],
@@ -94,7 +94,7 @@ DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
-
+_AREA_MAP: Dict[str,str] = {}
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -114,6 +114,7 @@ def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     ls = (state or "").lower()
     if ls in ("home","not_home"): return "Home" if ls=="home" else "Away"
     return state
+
 def _load_options() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     for p in OPTIONS_PATHS:
@@ -206,9 +207,28 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
 
     return cats
 
+# ----------------- fetch areas -----------------
+
+def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
+    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
+    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
+    if not ha_url or not ha_token: return {}
+    headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
+    try:
+        data = _http_get_json(f"{ha_url}/api/areas", headers, timeout=15)
+        amap={}
+        if isinstance(data,list):
+            for a in data:
+                if "area_id" in a and "name" in a:
+                    amap[a["area_id"]] = a["name"]
+        return amap
+    except Exception:
+        return {}
+
 # ----------------- fetch + summarize -----------------
 
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
+    global _AREA_MAP
     ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
     ha_token = (cfg.get("llm_enviroguard_ha_token",""))
     if not ha_url or not ha_token: return []
@@ -218,6 +238,10 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     except Exception:
         return []
     if not isinstance(data,list): return []
+
+    # also fetch areas once
+    if not _AREA_MAP:
+        _AREA_MAP = _fetch_area_map(cfg)
 
     facts=[]
     for item in data:
@@ -230,15 +254,15 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 
             attrs = item.get("attributes") or {}
             device_class = str(attrs.get("device_class","")).lower()
-            name  = str(item.get("friendly_name", eid))
+            area_id = attrs.get("area_id","")
+            area_name = _AREA_MAP.get(area_id,"") if area_id else ""
+            name  = str(attrs.get("friendly_name", eid))
             state = str(item.get("state",""))
             unit  = str(attrs.get("unit_of_measurement","") or "")
             last_changed = str(item.get("last_changed","") or "")
-            area = str(attrs.get("area_id") or attrs.get("area") or "").strip()
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-
-            # normalize tracker/person zones
+# normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
@@ -253,13 +277,13 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
-            # build summary (with area if present)
+            # build summary
             if domain == "person":
                 zone = _safe_zone_from_tracker(state, attrs)
                 summary = f"{name} is at {zone}"
             else:
                 summary = name
-                if area: summary = f"[{area}] {summary}"
+                if area_name: summary = f"[{area_name}] " + summary
                 if device_class: summary += f" ({device_class})"
                 if show_state: summary += f": {show_state}"
 
@@ -269,7 +293,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 
             # score baseline
             score=1
-            toks=_tok(eid)+_tok(name)+_tok(device_class)+_tok(area)
+            toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
             if "solar_assistant" in "_".join(toks): score+=3
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
@@ -278,17 +302,16 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if is_unknown: score -= 3
 
             cats = _infer_categories(eid, name, attrs, domain, device_class)
-            if area: cats.add(f"area.{area.lower()}")
 
             facts.append({
                 "entity_id": eid,
                 "domain": domain,
                 "device_class": device_class,
                 "friendly_name": name,
+                "area": area_name,
                 "state": state,
                 "unit": unit,
                 "last_changed": last_changed,
-                "area": area,
                 "summary": summary,
                 "score": score,
                 "cats": sorted(list(cats))
@@ -296,14 +319,14 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
+
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
-    """Fetch states and write rag_facts.json to primary + fallback. Also store in RAM."""
     global _LAST_REFRESH_TS, _MEM_CACHE
     cfg = _load_options()
     facts = _fetch_ha_states(cfg)
-    _MEM_CACHE = facts  # keep in memory
+    _MEM_CACHE = facts
 
     result_paths=[]
     try:
@@ -337,6 +360,7 @@ def load_cached() -> List[Dict[str,Any]]:
             return json.load(f)
     except Exception:
         return []
+    return []
 
 def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
@@ -368,7 +392,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Domain/keyword overrides (multiple allowed) ----
+    # ---- Domain/keyword overrides ----
     filtered = []
     if "light" in q or "lights" in q:
         filtered += [f for f in facts if f["domain"] == "light"]
@@ -389,12 +413,10 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
-    if q & PROXMOX_KEYWORDS:
-        filtered += [f for f in facts if any(p in f["entity_id"].lower() or p in f["friendly_name"].lower()
-                                             for p in PROXMOX_KEYWORDS)]
-    if q & WEATHER_KEYS:
-        filtered += [f for f in facts if any(w in f["entity_id"].lower() or w in f["friendly_name"].lower()
-                                             for w in WEATHER_KEYS)]
+    # area queries
+    for f in facts:
+        if f.get("area") and f.get("area","").lower() in q:
+            filtered.append(f)
 
     if filtered:
         facts = filtered
