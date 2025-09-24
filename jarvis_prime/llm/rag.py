@@ -16,14 +16,13 @@ from typing import Any, Dict, List, Tuple, Set
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
 # Primary (single target) + fallback
-PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]   # only this one now
+PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
-# Include ALL domains (set to a set to limit)
 INCLUDE_DOMAINS = None  # None => include all domains
 
-# Keywords/integrations commonly seen
+# Keywords/integrations
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
 SONOFF_KEYWORDS  = {"sonoff"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
@@ -31,13 +30,11 @@ MQTT_KEYWORDS    = {"mqtt"}
 RADARR_KEYWORDS  = {"radarr"}
 SONARR_KEYWORDS  = {"sonarr"}
 
-# Device-class priority boosts
 DEVICE_CLASS_PRIORITY = {
     "motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,
     "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
 }
 
-# Query synonyms (intent signals)
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
     "solar": ["solar","pv","generation","inverter","array","ess"],
@@ -49,18 +46,17 @@ QUERY_SYNONYMS = {
     "who": ["who","person","people"]
 }
 
-# Intent → categories we prefer
 INTENT_CATEGORY_MAP = {
     "solar": {"energy.storage","energy.pv","energy.inverter"},
     "pv":    {"energy.pv","energy.inverter","energy.storage"},
     "soc":   {"energy.storage"},
-    "battery": {"energy.storage"},  # generic "battery" → prefer ESS if any
+    "battery": {"energy.storage"},
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
-DEFAULT_TOP_K = 10   # raised from 5 → 10
+DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _FACTS_CACHE: List[Dict[str,Any]] = []
@@ -77,9 +73,6 @@ def _expand_query_tokens(tokens: List[str]) -> List[str]:
             if x not in seen:
                 seen.add(x); out.append(x)
     return out
-
-def _domain_of(eid: str) -> str:
-    return eid.split(".",1)[0] if "." in eid else ""
 
 def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     zone = attrs.get("zone")
@@ -120,8 +113,6 @@ def _write_json_atomic(path: str, obj: dict):
     with open(tmp,"w",encoding="utf-8") as f:
         json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
     os.replace(tmp,path)
-
-# ---- token & budget helpers ----
 
 SAFE_RAG_BUDGET_FRACTION = 0.30
 
@@ -194,8 +185,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             eid = str(item.get("entity_id") or "")
             if not eid: continue
             domain = eid.split(".",1)[0] if "." in eid else ""
-            if INCLUDE_DOMAINS and (domain not in INCLUDE_DOMAINS):
-                continue
 
             attrs = item.get("attributes") or {}
             device_class = str(attrs.get("device_class","")).lower()
@@ -220,12 +209,15 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                     show_state = f"{state} {unit}".strip()
 
             summary = name
-            if device_class:
-                summary += f" ({device_class})"
-            if show_state:
-                summary += f": {show_state}"
             if domain in ("person","device_tracker"):
                 summary = f"{name} is at {show_state}"
+            elif device_class:
+                summary += f" ({device_class})"
+                if show_state:
+                    summary += f": {show_state}"
+            else:
+                if show_state:
+                    summary += f": {show_state}"
 
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
@@ -323,7 +315,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Domain/keyword overrides ----
+    # ---- Overrides ----
     if "light" in q or "lights" in q:
         facts = [f for f in facts if f["domain"] == "light" or ("light" in _tok(f.get("friendly_name","")) and f["domain"] != "automation")]
     elif "switch" in q or "switches" in q:
@@ -340,6 +332,12 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         facts = [f for f in facts if "pool" in f["entity_id"].lower() or "pool" in f["friendly_name"].lower()]
     elif "who" in q and "home" in q:
         facts = [f for f in facts if f["domain"] == "person"]
+    elif "where" in q:
+        # check person entities; optionally match names
+        facts = [f for f in facts if f["domain"] == "person"]
+        name_tokens = q - {"where"}
+        if name_tokens:
+            facts = [f for f in facts if any(t in _tok(f.get("friendly_name","")) for t in name_tokens)]
 
     want_cats = _intent_categories(q)
 
@@ -373,33 +371,4 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
     if ("soc" in q) or (want_cats & {"energy.storage"}):
         ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
-        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
-        ordered   = ess_first + others
-    else:
-        ordered = candidate_facts
-
-    selected: List[str] = []
-    remaining = budget
-
-    for f in ordered:
-        line = f.get("summary", "")
-        if not line:
-            continue
-        cost = _estimate_tokens(line)
-        if cost <= remaining:
-            selected.append(line)
-            remaining -= cost
-        if not selected and cost > remaining and remaining > 0:
-            selected.append(line)
-            remaining = 0
-        if remaining <= 0:
-            break
-
-    return "\n".join(selected)
-
-# ----------------- main -----------------
-
-if __name__ == "__main__":
-    print("Refreshing RAG facts from Home Assistant...")
-    facts = refresh_and_cache()
-    print(f"Wrote {len(facts)} facts.")
+        others    = [f for f in candidate
