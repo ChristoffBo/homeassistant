@@ -6,6 +6,7 @@
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
+# - Keeps an in-memory cache of all facts for fast queries
 # - inject_context(user_msg, top_k) returns a small, relevant context block
 #
 # Safe: read-only, never calls HA /api/services
@@ -16,12 +17,15 @@ from typing import Any, Dict, List, Tuple, Set
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
 # Primary (single target) + fallback
-PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]   # only this one now
+PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
-# Include ALL domains (set to a set to limit)
-INCLUDE_DOMAINS = None  # None => include all domains
+# In-memory cache
+_MEMORY_CACHE: List[Dict[str, Any]] = []
+
+# Include ALL domains
+INCLUDE_DOMAINS = None  # None => include all
 
 # Keywords/integrations commonly seen
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
@@ -37,7 +41,7 @@ DEVICE_CLASS_PRIORITY = {
     "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
 }
 
-# Query synonyms (intent signals)
+# Query synonyms
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
     "solar": ["solar","pv","generation","inverter","array","ess"],
@@ -48,18 +52,18 @@ QUERY_SYNONYMS = {
     "where": ["where","location","zone","home","work","present"],
 }
 
-# Intent → categories we prefer
+# Intent → categories
 INTENT_CATEGORY_MAP = {
     "solar": {"energy.storage","energy.pv","energy.inverter"},
     "pv":    {"energy.pv","energy.inverter","energy.storage"},
     "soc":   {"energy.storage"},
-    "battery": {"energy.storage"},  # generic "battery" → prefer ESS if any
+    "battery": {"energy.storage"},
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
-DEFAULT_TOP_K = 10   # changed from 5 → 10
+DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 
@@ -76,31 +80,12 @@ def _expand_query_tokens(tokens: List[str]) -> List[str]:
                 seen.add(x); out.append(x)
     return out
 
-def _domain_of(eid: str) -> str:
-    return eid.split(".",1)[0] if "." in eid else ""
-
-def _upper_if_onoff(s: str) -> str:
-    return s.upper() if s in ("on","off","open","closed") else s
-
-def _short_iso(ts: str) -> str:
-    return ts.replace("T"," ").split(".")[0].replace("Z","") if ts else ""
-
-def _fmt_num(state: str, unit: str) -> str:
-    try:
-        v=float(state)
-        if abs(v)<0.005:
-            v=0.0
-        s=f"{v:.2f}".rstrip("0").rstrip(".")
-        return f"{s} {unit}".strip()
-    except Exception:
-        return f"{state} {unit}".strip() if unit else state
-
 def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     zone = attrs.get("zone")
     if zone: return zone
     ls = (state or "").lower()
     if ls in ("home","not_home"): return "Home" if ls=="home" else "Away"
-    return state
+    return state or "Unknown"
 
 def _load_options() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
@@ -135,13 +120,10 @@ def _write_json_atomic(path: str, obj: dict):
         json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
     os.replace(tmp,path)
 
-# ---- token & budget helpers ----
-
-SAFE_RAG_BUDGET_FRACTION = 0.30  # use 30% of ctx for RAG summaries
+SAFE_RAG_BUDGET_FRACTION = 0.30
 
 def _estimate_tokens(text: str) -> int:
-    if not text:
-        return 0
+    if not text: return 0
     words = len(re.findall(r"\S+", text))
     est = int(words * 1.3)
     return max(8, min(est, 128))
@@ -223,24 +205,32 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
-            show_state = state.upper() if state in ("on","off","open","closed") else state
-            if unit and state not in ("on","off","open","closed"):
-                try:
-                    v = float(state)
-                    if abs(v) < 0.005: v = 0.0
-                    s = f"{v:.2f}".rstrip("0").rstrip(".")
-                    show_state = f"{s} {unit}".strip()
-                except Exception:
-                    show_state = f"{state} {unit}".strip()
+            # --- Custom summarization for people ---
+            if domain == "person":
+                zone = _safe_zone_from_tracker(state, attrs)
+                summary = f"{name} is at {zone}"
+                if last_changed:
+                    recent = last_changed.replace("T"," ").split(".")[0].replace("Z","")
+                    summary += f" (as of {recent})"
+            else:
+                show_state = state.upper() if state in ("on","off","open","closed") else state
+                if unit and state not in ("on","off","open","closed"):
+                    try:
+                        v = float(state)
+                        if abs(v) < 0.005: v = 0.0
+                        s = f"{v:.2f}".rstrip("0").rstrip(".")
+                        show_state = f"{s} {unit}".strip()
+                    except Exception:
+                        show_state = f"{state} {unit}".strip()
 
-            summary = name
-            if device_class:
-                summary += f" ({device_class})"
-            if show_state:
-                summary += f": {show_state}"
-            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
-            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
-                summary += f" (as of {recent})"
+                summary = name
+                if device_class:
+                    summary += f" ({device_class})"
+                if show_state:
+                    summary += f": {show_state}"
+                if domain in ("device_tracker","binary_sensor","sensor") and last_changed:
+                    recent = last_changed.replace("T"," ").split(".")[0].replace("Z","")
+                    summary += f" (as of {recent})"
 
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
@@ -272,9 +262,10 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
-    global _LAST_REFRESH_TS
+    global _LAST_REFRESH_TS, _MEMORY_CACHE
     cfg = _load_options()
     facts = _fetch_ha_states(cfg)
+    _MEMORY_CACHE = facts  # update RAM cache
 
     result_paths=[]
     try:
@@ -292,16 +283,23 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
     finally:
         _LAST_REFRESH_TS = time.time()
 
-    print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
+    print(f"[RAG] wrote {len(facts)} facts to memory and disk: " + " | ".join(result_paths))
     return facts
 
 def load_cached() -> List[Dict[str,Any]]:
+    global _MEMORY_CACHE
+    if _MEMORY_CACHE:
+        return _MEMORY_CACHE
     try:
         for d in PRIMARY_DIRS:
             p=os.path.join(d,BASENAME)
             if os.path.exists(p):
-                with open(p,"r",encoding="utf-8") as f: return json.load(f)
-        with open(FALLBACK_PATH,"r",encoding="utf-8") as f: return json.load(f)
+                with open(p,"r",encoding="utf-8") as f:
+                    _MEMORY_CACHE = json.load(f)
+                    return _MEMORY_CACHE
+        with open(FALLBACK_PATH,"r",encoding="utf-8") as f:
+            _MEMORY_CACHE = json.load(f)
+            return _MEMORY_CACHE
     except Exception:
         return []
 
@@ -357,23 +355,13 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
         if q and (q & ft): s += 3
         if q & SOLAR_KEYWORDS: s += 2
-
-        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
-            s += 12
-
-        if want_cats and (cats & want_cats):
-            s += 15
-
-        if want_cats & {"energy.storage"} and "energy.storage" in cats:
-            s += 20
-
+        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft: s += 12
+        if want_cats and (cats & want_cats): s += 15
+        if want_cats & {"energy.storage"} and "energy.storage" in cats: s += 20
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           ("device.battery" in cats) and ("energy.storage" not in cats):
-            s -= 18
-
+           ("device.battery" in cats) and ("energy.storage" not in cats): s -= 18
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           (("forecast" in ft) or ("estimated" in ft)):
-            s -= 12
+           (("forecast" in ft) or ("estimated" in ft)): s -= 12
 
         scored.append((s, f))
 
@@ -415,4 +403,4 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 if __name__ == "__main__":
     print("Refreshing RAG facts from Home Assistant...")
     facts = refresh_and_cache()
-    print(f"Wrote {len(facts)} facts.")
+    print(f"Wrote {len(facts)} facts into memory + disk.")
