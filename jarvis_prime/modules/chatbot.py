@@ -87,6 +87,7 @@ def _detect_intent(q: str) -> str:
     if re.search(r"\b(movie|film)\b", ql):
         return "entertainment"
     return "general"
+
 # ----------------------------
 # Helpers & filters
 # ----------------------------
@@ -128,7 +129,6 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
             "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
-
 def _domain_of(url: str) -> str:
     try:
         return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
@@ -167,7 +167,7 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
         return True
     if not _keyword_overlap(q, title, snippet, min_hits=2):
         return True
-    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|$[0-9])\b", text, re.I):
+    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|[$][0-9])\b", text, re.I):
         return True
     if "reddit.com" in url.lower():
         m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
@@ -208,7 +208,7 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
         score += min(len(snip)//120, 3)
         overlap_bonus = len(set(_tokenize(q)) & set(_tokenize(title + " " + snip)))
         score += min(overlap_bonus, 4)
-        years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + (snip or ""))
+        years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + " " + (snip or ""))
         if years:
             newest = max(int(y) for y in years)
             if newest >= _CURRENT_YEAR:
@@ -237,19 +237,16 @@ _WEB_TRIGGERS = [
     r"\bverify\s+online\b", r"\bverify\s+on\s+the\s+web\b",
 ]
 
-def _strip_web_triggers(q: str) -> str:
-    """Remove trigger phrases from query before actual search"""
-    ql = q
-    for pat in _WEB_TRIGGERS:
-        ql = re.sub(pat, "", ql, flags=re.I)
-    return re.sub(r"\s+", " ", ql).strip()
-
 def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
-    return any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS)
+    # Explicit triggers always force web mode
+    if any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS):
+        return True
+    return False
 
 # Fact-style queries
-_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent)\b", re.I)
+_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
+
 # ----------------------------
 # Circuit breaker helpers
 # ----------------------------
@@ -260,11 +257,95 @@ def _cb_open(backend: str) -> bool:
     if backend not in CIRCUIT_BREAKERS:
         return False
     return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
+# ----------------------------
+# Web search backoffs & backends (FREE, no keys)
+# ----------------------------
+def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
+    if _cb_open("ddg_lib"): return []
+    try:
+        from duckduckgo_search import DDGS  # type: ignore
+    except Exception:
+        if DEBUG: print("DDG_LIB_IMPORT_FAIL")
+        return []
+    try:
+        out: List[Dict[str, str]] = []
+        t0 = time.time()
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results, region=region, safesearch="Moderate"):
+                title = (r.get("title") or "").strip()
+                url = (r.get("href") or "").strip()
+                snippet = (r.get("body") or "").strip()
+                if title and url:
+                    out.append({"title": title, "url": url, "snippet": snippet})
+        if DEBUG:
+            print("DDG_LIB_HITS", len(out), "Q:", query, "T:", round(time.time()-t0,3))
+        return out
+    except Exception as e:
+        _cb_fail("ddg_lib")
+        if DEBUG:
+            print("DDG_LIB_ERR", repr(e))
+        return []
 
-# ----------------------------
-# Web search backends (FREE, no keys)
-# ----------------------------
-# ... (DDG lib, DDG API, Wikipedia, Reddit, GitHub functions unchanged from before) ...
+def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
+    if _cb_open("ddg_api"): return []
+    try:
+        url = "https://api.duckduckgo.com/"
+        params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1", "skip_disambig": "0", "kl": "us-en"}
+        t0 = time.time()
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        _cb_fail("ddg_api")
+        if DEBUG:
+            print("DDG_API_ERR", repr(e), "Q:", query)
+        return []
+    results: List[Dict[str, str]] = []
+    def _push(title: str, url: str, snippet: str):
+        if title and url:
+            results.append({"title": title, "url": url, "snippet": snippet})
+    if data.get("AbstractText") and data.get("AbstractURL"):
+        _push(data.get("AbstractSource") or "DuckDuckGo Abstract", data.get("AbstractURL"), data.get("AbstractText"))
+    for it in (data.get("Results") or []):
+        _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
+    for it in (data.get("RelatedTopics") or []):
+        if "Topics" in it:
+            for t in it["Topics"]:
+                _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
+        else:
+            _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
+    deduped, seen = [], set()
+    for r in results:
+        u = r.get("url") or ""
+        if u and u not in seen:
+            seen.add(u)
+            deduped.append(r)
+        if len(deduped) >= max_results:
+            break
+    if DEBUG:
+        print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
+    return deduped
+
+def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
+    try:
+        api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
+        t0 = time.time()
+        r = requests.get(api, timeout=timeout, headers={"accept": "application/json"})
+        if r.status_code == 200:
+            data = r.json()
+            title = data.get("title") or ""
+            desc = data.get("extract") or ""
+            url = data.get("content_urls", {}).get("desktop", {}).get("page") or ""
+            if title and url and desc:
+                out = [{"title": title, "url": url, "snippet": desc}]
+                if DEBUG: print("WIKI_HIT 1 Q:", query, "T:", round(time.time()-t0,3))
+                return out
+    except Exception as e:
+        if DEBUG:
+            print("WIKI_ERR", repr(e), "Q:", query)
+        return []
+    if DEBUG: print("WIKI_NO_HIT Q:", query)
+    return []
 
 # ----------------------------
 # Web search orchestration
@@ -273,23 +354,10 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     vertical = _detect_intent(query)
     shaped = _build_query_by_vertical(query, vertical)
 
-    # Gather with tough fallbacks
     hits = _try_all_backoffs(query, shaped, vertical, max_results)
 
-    # Add vertical extras
-    facty = bool(_FACT_QUERY_RE.search(query))
-    if vertical == "tech":
-        hits.extend(_search_with_reddit(query, limit=6))
-        hits.extend(_search_with_github(query, limit=6))
-    elif vertical in {"entertainment", "sports"}:
-        if not facty:
-            hits.extend(_search_with_reddit(query, limit=4))
-    else:
-        if not facty:
-            hits.extend(_search_with_reddit(query, limit=3))
-
     if DEBUG:
-        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical, "FACTY", facty)
+        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical)
 
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
@@ -314,18 +382,11 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
                 lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
     return "\n".join(lines).strip()
 
-def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
-    notes = []
-    for h in hits[:6]:
-        t = html.unescape((h.get("title") or "").strip())
-        s = html.unescape((h.get("snippet") or "").strip())
-        if t or s:
-            notes.append(f"- {t} — {s}")
-    return "\n".join(notes)
-
 # ----------------------------
 # Public entry
 # ----------------------------
+_CACHE: Dict[str,str] = {}
+
 def handle_message(source: str, text: str) -> str:
     q = (text or "").strip()
     if not q:
@@ -333,29 +394,8 @@ def handle_message(source: str, text: str) -> str:
     try:
         if DEBUG: print("IN_MSG:", q)
 
-        # ---- Force web if explicit trigger ----
-        if _should_use_web(q):
-            clean_q = _strip_web_triggers(q)
-            if DEBUG: print("FORCED_WEB_MODE:", clean_q)
-            hits = _web_search(clean_q, max_results=8)
-            if hits:
-                if _FACT_QUERY_RE.search(clean_q):
-                    snippets = [f"{h.get('title','')} — {h.get('snippet','')}" for h in hits[:3]]
-                    sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                    return _render_web_answer("\n".join(snippets), sources)
-                else:
-                    notes = _build_notes_from_hits(hits)
-                    summary = _chat_offline_summarize(clean_q, notes, max_new_tokens=320).strip()
-                    if not summary or summary.lower() in {"i am unsure","i'm not sure","i don't know"}:
-                        h0 = hits[0]
-                        summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
-                    sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                    return _render_web_answer(_clean_text(summary), sources)
-            return "I tried to check online, but couldn't find useful results."
-
-        # ---- RAG first (local HA context) ----
+        from rag import inject_context
         try:
-            from rag import inject_context
             rag_block = inject_context(q, top_k=5)
         except Exception:
             rag_block = ""
@@ -366,45 +406,39 @@ def handle_message(source: str, text: str) -> str:
                 if DEBUG: print("RAG_HIT")
                 return clean_ans
 
-        # ---- Cache check ----
         if q in _CACHE:
             if DEBUG: print("CACHE_HIT")
             return _CACHE[q]
 
-        # ---- Offline LLM attempt ----
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
-        if DEBUG: print("OFFLINE_ANS:", repr(clean_ans))
 
-        offline_unknown_markers = {
-            "i don't know.", "i dont know", "(no reply)", "unknown", "no idea",
-            "i'm not sure", "i am unsure"
-        }
-        offline_unknown = (not clean_ans) or (clean_ans.strip().lower() in offline_unknown_markers)
+        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {"i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"}
 
-        # ---- Web fallback if offline unsure ----
-        if offline_unknown:
+        if _should_use_web(q) or offline_unknown:
             hits = _web_search(q, max_results=8)
             if hits:
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-                sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                return _render_web_answer(_clean_text(summary or "Here are some sources I found."), sources)
+                if not summary:
+                    h0 = hits[0]
+                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
+                sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
+                out = _render_web_answer(_clean_text(summary), sources)
+                _CACHE[q] = out
+                return out
 
-        # ---- Return offline if valid ----
         if clean_ans and not offline_unknown:
             _CACHE[q] = clean_ans
             return clean_ans
 
         return "I don't know."
 
-    except Exception as e:
-        if DEBUG:
-            traceback.print_exc()
+    except Exception:
         return "I don't know."
 
 # ----------------------------
-# Shared cleaners
+# Cleaners
 # ----------------------------
 _scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
 _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
@@ -413,20 +447,14 @@ _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 def _clean_text(s: str) -> str:
     if not s:
         return s
-    out = s.replace("\r", "").strip()
+    out = s.replace("\r","").strip()
     if _strip_trans:
         out = _strip_trans(out)
     if _scrub_pers:
         out = _scrub_pers(out)
     if _scrub_meta:
         out = _scrub_meta(out)
-    out = re.sub(r"\n{3,}", "\n\n", out)
-    return out.strip()
-
-# ----------------------------
-# Simple cache
-# ----------------------------
-_CACHE: Dict[str,str] = {}
+    return re.sub(r"\n{3,}","\n\n",out).strip()
 
 if __name__ == "__main__":
     import sys
