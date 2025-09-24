@@ -240,8 +240,9 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
     if DEBUG:
         print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
     return ranked
+
 # ----------------------------
-# Triggers
+# Triggers - FIXED
 # ----------------------------
 _WEB_TRIGGERS = [
     r"\bgoogle\s+it\b", r"\bgoogle\s+for\s+me\b", r"\bgoogle\b",
@@ -254,10 +255,22 @@ _WEB_TRIGGERS = [
 ]
 
 def _should_use_web(q: str) -> bool:
-    ql = (q or "").lower()
+    """Check if the query should trigger web search"""
+    ql = (q or "").lower().strip()
+    
+    # Debug: Print what we're checking
+    if DEBUG:
+        print(f"CHECKING_WEB_TRIGGERS for: '{ql}'")
+    
     # Explicit triggers always force web mode
-    if any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS):
-        return True
+    for pattern in _WEB_TRIGGERS:
+        if re.search(pattern, ql, re.I):
+            if DEBUG:
+                print(f"WEB_TRIGGER_MATCHED: {pattern}")
+            return True
+    
+    if DEBUG:
+        print("NO_WEB_TRIGGERS_MATCHED")
     return False
 
 # ----------------------------
@@ -272,36 +285,56 @@ def _cb_open(backend: str) -> bool:
     return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
 
 # ----------------------------
-# Web search backends (FREE, no keys)
+# Web search backends (FREE, no keys) - FIXED
 # ----------------------------
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
-    if _cb_open("ddg_lib"): return []
+    """Search using duckduckgo-search library"""
+    if _cb_open("ddg_lib"): 
+        if DEBUG: print("DDG_LIB_CIRCUIT_BREAKER_OPEN")
+        return []
+    
     try:
         from duckduckgo_search import DDGS  # type: ignore
-    except Exception:
-        if DEBUG: print("DDG_LIB_IMPORT_FAIL")
+    except ImportError as e:
+        if DEBUG: print(f"DDG_LIB_IMPORT_FAIL: {e}")
+        _cb_fail("ddg_lib")
         return []
+    
     try:
         out: List[Dict[str, str]] = []
         t0 = time.time()
+        
+        if DEBUG: print(f"DDG_LIB_SEARCHING: '{query}'")
+        
         with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results, region=region, safesearch="Moderate"):
+            results = ddgs.text(query, max_results=max_results, region=region, safesearch="Moderate")
+            for r in results:
                 title = (r.get("title") or "").strip()
                 url = (r.get("href") or "").strip()
                 snippet = (r.get("body") or "").strip()
                 if title and url:
                     out.append({"title": title, "url": url, "snippet": snippet})
+                    
         if DEBUG:
-            print("DDG_LIB_HITS", len(out), "Q:", query, "T:", round(time.time()-t0,3))
+            print(f"DDG_LIB_RESULTS: {len(out)} hits in {round(time.time()-t0,3)}s")
+            for i, hit in enumerate(out[:3]):  # Show first 3 results
+                print(f"  {i+1}. {hit['title'][:50]}... - {hit['url']}")
+        
         return out
+        
     except Exception as e:
         _cb_fail("ddg_lib")
         if DEBUG:
-            print("DDG_LIB_ERR", repr(e))
+            print(f"DDG_LIB_ERROR: {repr(e)}")
+            traceback.print_exc()
         return []
 
 def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
-    if _cb_open("ddg_api"): return []
+    """Fallback DDG API search"""
+    if _cb_open("ddg_api"): 
+        if DEBUG: print("DDG_API_CIRCUIT_BREAKER_OPEN")
+        return []
+        
     try:
         url = "https://api.duckduckgo.com/"
         params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1", "skip_disambig": "0", "kl": "us-en"}
@@ -312,22 +345,28 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
     except Exception as e:
         _cb_fail("ddg_api")
         if DEBUG:
-            print("DDG_API_ERR", repr(e), "Q:", query)
+            print(f"DDG_API_ERROR: {repr(e)}")
         return []
+    
     results: List[Dict[str, str]] = []
+    
     def _push(title: str, url: str, snippet: str):
         if title and url:
             results.append({"title": title, "url": url, "snippet": snippet})
+    
     if data.get("AbstractText") and data.get("AbstractURL"):
         _push(data.get("AbstractSource") or "DuckDuckGo Abstract", data.get("AbstractURL"), data.get("AbstractText"))
+    
     for it in (data.get("Results") or []):
         _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
+    
     for it in (data.get("RelatedTopics") or []):
         if "Topics" in it:
             for t in it["Topics"]:
                 _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
         else:
             _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
+    
     deduped, seen = [], set()
     for r in results:
         u = r.get("url") or ""
@@ -336,11 +375,18 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
             deduped.append(r)
         if len(deduped) >= max_results:
             break
+    
     if DEBUG:
-        print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
+        print(f"DDG_API_RESULTS: {len(deduped)} hits in {round(time.time()-t0,3)}s")
+    
     return deduped
 
 def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
+    """Search Wikipedia API"""
+    if _cb_open("wikipedia"):
+        if DEBUG: print("WIKIPEDIA_CIRCUIT_BREAKER_OPEN")
+        return []
+        
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
         t0 = time.time()
@@ -352,58 +398,103 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]
             url = data.get("content_urls", {}).get("desktop", {}).get("page") or ""
             if title and url and desc:
                 out = [{"title": title, "url": url, "snippet": desc}]
-                if DEBUG: print("WIKI_HIT 1 Q:", query, "T:", round(time.time()-t0,3))
+                if DEBUG: 
+                    print(f"WIKI_SUCCESS: {title} in {round(time.time()-t0,3)}s")
                 return out
     except Exception as e:
+        _cb_fail("wikipedia")
         if DEBUG:
-            print("WIKI_ERR", repr(e), "Q:", query)
+            print(f"WIKI_ERROR: {repr(e)}")
         return []
-    if DEBUG: print("WIKI_NO_HIT Q:", query)
+    
+    if DEBUG: print(f"WIKI_NO_RESULTS for: '{query}'")
     return []
 
 # ----------------------------
-# Query shaping + backoffs (FIXED)
+# Query shaping + backoffs
 # ----------------------------
 def _build_query_by_vertical(q: str, vertical: str) -> str:
+    """Shape query based on topic vertical"""
     q = q.strip()
+    
+    # Remove trigger words from the actual search query
+    clean_q = q
+    for pattern in _WEB_TRIGGERS:
+        clean_q = re.sub(pattern, "", clean_q, flags=re.I).strip()
+    
+    # Clean up extra whitespace
+    clean_q = re.sub(r'\s+', ' ', clean_q).strip()
+    
+    if DEBUG:
+        print(f"QUERY_SHAPING: '{q}' -> '{clean_q}' (vertical: {vertical})")
+    
     if vertical == "entertainment":
-        return f"{q} site:imdb.com OR site:wikipedia.org"
+        return f"{clean_q} site:imdb.com OR site:wikipedia.org"
     if vertical == "sports":
-        return f"{q} site:espn.com OR site:formula1.com OR site:wikipedia.org"
+        return f"{clean_q} site:espn.com OR site:formula1.com OR site:wikipedia.org"
     if vertical == "tech":
-        return f"{q} site:github.com OR site:stackoverflow.com OR site:wikipedia.org"
-    return q + " site:wikipedia.org"
+        return f"{clean_q} site:github.com OR site:stackoverflow.com OR site:wikipedia.org"
+    return clean_q + " site:wikipedia.org"
 
 def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
+    """Try all search backends in order"""
     hits: List[Dict[str,str]] = []
-    # Wikipedia first for fast fact queries (bios, definitions)
-    hits.extend(_search_with_wikipedia(raw_q))
+    
+    if DEBUG:
+        print(f"TRYING_SEARCH_BACKENDS for: '{raw_q}' shaped: '{shaped_q}'")
+    
+    # Wikipedia first for fast fact queries
+    wiki_hits = _search_with_wikipedia(raw_q)
+    hits.extend(wiki_hits)
     if len(hits) >= max_results:
+        if DEBUG: print(f"WIKIPEDIA_SUFFICIENT: {len(hits)} results")
         return hits
-    # DDG library
-    hits.extend(_search_with_duckduckgo_lib(shaped_q, max_results=max_results))
+    
+    # DDG library (primary)
+    ddg_lib_hits = _search_with_duckduckgo_lib(shaped_q, max_results=max_results)
+    hits.extend(ddg_lib_hits)
     if len(hits) >= max_results:
+        if DEBUG: print(f"DDG_LIB_SUFFICIENT: {len(hits)} total results")
         return hits
+    
     # DDG API fallback
-    hits.extend(_search_with_ddg_api(shaped_q, max_results=max_results))
+    ddg_api_hits = _search_with_ddg_api(shaped_q, max_results=max_results)
+    hits.extend(ddg_api_hits)
+    
+    if DEBUG:
+        print(f"ALL_BACKENDS_COMPLETE: {len(hits)} total results (wiki:{len(wiki_hits)}, ddg_lib:{len(ddg_lib_hits)}, ddg_api:{len(ddg_api_hits)})")
+    
     return hits[:max_results]
 
 # ----------------------------
 # Web search orchestration
 # ----------------------------
 def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
+    """Main web search orchestration"""
+    if DEBUG:
+        print(f"WEB_SEARCH_START: '{query}'")
+    
     vertical = _detect_intent(query)
     shaped = _build_query_by_vertical(query, vertical)
     hits = _try_all_backoffs(query, shaped, vertical, max_results)
+    
     if DEBUG:
-        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical)
+        print(f"RAW_HITS_TOTAL: {len(hits)} for vertical '{vertical}'")
+    
     ranked = _rank_hits(query, hits, vertical)
+    
+    if DEBUG:
+        print(f"FINAL_RANKED_RESULTS: {len(ranked)}")
+        for i, hit in enumerate(ranked[:3]):
+            print(f"  {i+1}. {hit.get('title', '')[:50]}... - {hit.get('url', '')}")
+    
     return ranked[:max_results] if ranked else []
 
 # ----------------------------
 # Notes builder for summarizer
 # ----------------------------
 def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
+    """Build notes from search hits for summarization"""
     lines: List[str] = []
     for h in hits[:10]:
         title = (h.get("title") or "").strip()
@@ -412,17 +503,22 @@ def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
         dom   = _domain_of(url)
         if title or snip:
             lines.append(f"- [{dom}] {title if title else '(no title)'} :: {snip[:500]} :: {url}")
+    
     if not lines:
         return "- No usable web notes."
+    
     return "\n".join(lines)
 
 # ----------------------------
 # Render
 # ----------------------------
 def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
+    """Render final web answer with sources"""
     lines: List[str] = []
+    
     if summary.strip():
         lines.append(summary.strip())
+    
     if sources:
         dedup, seen = [], set()
         for title, url in sources:
@@ -430,78 +526,13 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
                 continue
             seen.add(url)
             dedup.append((title, url))
+        
         if dedup:
             lines.append("\nSources:")
             for title, url in dedup[:5]:
                 lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
+    
     return "\n".join(lines).strip()
-# ----------------------------
-# Public entry
-# ----------------------------
-_CACHE: Dict[str,str] = {}
-
-def handle_message(source: str, text: str) -> str:
-    q = (text or "").strip()
-    if not q:
-        return ""
-    try:
-        if DEBUG: print("IN_MSG:", q)
-
-        # 1) Try RAG context first (local HA facts)
-        try:
-            from rag import inject_context
-            try:
-                rag_block = inject_context(q, top_k=5)
-            except Exception:
-                rag_block = ""
-            if rag_block:
-                ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
-                clean_ans = _clean_text(ans)
-                if clean_ans:
-                    if DEBUG: print("RAG_HIT")
-                    return clean_ans
-        except Exception:
-            pass
-
-        # 2) Cache
-        if q in _CACHE:
-            if DEBUG: print("CACHE_HIT")
-            return _CACHE[q]
-
-        # 3) Offline Jarvis
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
-        clean_ans = _clean_text(ans)
-
-        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {
-            "i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"
-        }
-
-        # 4) Web mode if explicitly requested OR offline is unknown
-        if _should_use_web(q) or offline_unknown:
-            hits = _web_search(q, max_results=8)
-            if hits:
-                notes = _build_notes_from_hits(hits)
-                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-                if not summary:
-                    h0 = hits[0]
-                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
-                sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
-                out = _render_web_answer(_clean_text(summary), sources)
-                _CACHE[q] = out
-                return out
-
-        # 5) If offline had a decent answer, use it
-        if clean_ans and not offline_unknown:
-            _CACHE[q] = clean_ans
-            return clean_ans
-
-        # 6) Final fallback
-        return "I don't know."
-
-    except Exception:
-        if DEBUG:
-            traceback.print_exc()
-        return "I don't know."
 
 # ----------------------------
 # Cleaners
@@ -511,6 +542,7 @@ _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
 def _clean_text(s: str) -> str:
+    """Clean and normalize text output"""
     if not s:
         return s
     out = s.replace("\r","").strip()
@@ -530,6 +562,108 @@ def _clean_text(s: str) -> str:
         except Exception:
             pass
     return re.sub(r"\n{3,}","\n\n",out).strip()
+
+# ----------------------------
+# Public entry - FIXED
+# ----------------------------
+_CACHE: Dict[str,str] = {}
+
+def handle_message(source: str, text: str) -> str:
+    """Main message handler"""
+    q = (text or "").strip()
+    if not q:
+        return ""
+    
+    try:
+        if DEBUG: 
+            print(f"HANDLE_MESSAGE_START: '{q}'")
+
+        # 1) Try RAG context first (local HA facts)
+        try:
+            from rag import inject_context
+            try:
+                rag_block = inject_context(q, top_k=5)
+            except Exception:
+                rag_block = ""
+            if rag_block:
+                ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
+                clean_ans = _clean_text(ans)
+                if clean_ans:
+                    if DEBUG: print("RAG_HIT_SUCCESS")
+                    return clean_ans
+        except Exception:
+            if DEBUG: print("RAG_NOT_AVAILABLE")
+            pass
+
+        # 2) Cache check
+        if q in _CACHE:
+            if DEBUG: print("CACHE_HIT_SUCCESS")
+            return _CACHE[q]
+
+        # 3) Check if web search is explicitly requested
+        web_requested = _should_use_web(q)
+        if DEBUG:
+            print(f"WEB_REQUESTED: {web_requested}")
+
+        # 4) Try offline Jarvis first (unless web explicitly requested)
+        offline_ans = ""
+        offline_unknown = True
+        
+        if not web_requested:  # Only try offline if web not explicitly requested
+            offline_ans = _chat_offline_singleturn(q, max_new_tokens=256)
+            clean_offline = _clean_text(offline_ans)
+            
+            offline_unknown = (not clean_offline) or clean_offline.strip().lower() in {
+                "i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"
+            }
+            
+            if DEBUG:
+                print(f"OFFLINE_RESULT: '{clean_offline[:100]}...' (unknown: {offline_unknown})")
+
+        # 5) Use web mode if explicitly requested OR offline is unknown
+        if web_requested or offline_unknown:
+            if DEBUG:
+                print(f"TRIGGERING_WEB_SEARCH (requested: {web_requested}, offline_unknown: {offline_unknown})")
+            
+            hits = _web_search(q, max_results=8)
+            
+            if hits:
+                if DEBUG:
+                    print(f"WEB_SEARCH_SUCCESS: {len(hits)} hits")
+                
+                notes = _build_notes_from_hits(hits)
+                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
+                
+                if not summary:
+                    h0 = hits[0]
+                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
+                
+                sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
+                out = _render_web_answer(_clean_text(summary), sources)
+                _CACHE[q] = out
+                return out
+            else:
+                if DEBUG:
+                    print("WEB_SEARCH_NO_RESULTS")
+
+        # 6) If offline had a decent answer, use it
+        if offline_ans and not offline_unknown:
+            clean_offline = _clean_text(offline_ans)
+            _CACHE[q] = clean_offline
+            if DEBUG:
+                print("USING_OFFLINE_RESULT")
+            return clean_offline
+
+        # 7) Final fallback
+        if DEBUG:
+            print("FINAL_FALLBACK")
+        return "I don't know."
+
+    except Exception as e:
+        if DEBUG:
+            print(f"HANDLE_MESSAGE_ERROR: {repr(e)}")
+            traceback.print_exc()
+        return "I don't know."
 
 if __name__ == "__main__":
     import sys
