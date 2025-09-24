@@ -69,6 +69,11 @@ QUERY_SYNONYMS = {
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
     "where": ["where","location","zone","home","work","present"],
+    "movies": ["movies","radarr"],
+    "series": ["series","shows","sonarr"],
+    "music": ["music","songs","lidarr"],
+    "subtitles": ["subtitles","bazarr"],
+    "books": ["books","ebooks","readarr"],
 }
 
 # Intent → categories we prefer
@@ -87,7 +92,6 @@ DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
-
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -330,7 +334,6 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
-
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -382,17 +385,15 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
 
-        if q and (q & ft): s += 3
-        if q & SOLAR_KEYWORDS: s += 2
+        if q and (q & ft): 
+            s += 3
+        if q & SOLAR_KEYWORDS: 
+            s += 2
 
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
             s += 12
 
         if want_cats and (cats & want_cats):
-            s += 15
-
-        if want
-if want_cats and (cats & want_cats):
             s += 15
 
         if want_cats & {"energy.storage"} and "energy.storage" in cats:
