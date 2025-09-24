@@ -114,7 +114,6 @@ def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     ls = (state or "").lower()
     if ls in ("home","not_home"): return "Home" if ls=="home" else "Away"
     return state
-
 def _load_options() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     for p in OPTIONS_PATHS:
@@ -206,6 +205,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if toks & WEATHER_KEYS: cats.add("weather")
 
     return cats
+
 # ----------------- fetch + summarize -----------------
 
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
@@ -230,10 +230,11 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 
             attrs = item.get("attributes") or {}
             device_class = str(attrs.get("device_class","")).lower()
-            name  = str(attrs.get("friendly_name", eid))
+            name  = str(item.get("friendly_name", eid))
             state = str(item.get("state",""))
             unit  = str(attrs.get("unit_of_measurement","") or "")
             last_changed = str(item.get("last_changed","") or "")
+            area = str(attrs.get("area_id") or attrs.get("area") or "").strip()
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
 
@@ -252,12 +253,13 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
-            # build summary
+            # build summary (with area if present)
             if domain == "person":
                 zone = _safe_zone_from_tracker(state, attrs)
                 summary = f"{name} is at {zone}"
             else:
                 summary = name
+                if area: summary = f"[{area}] {summary}"
                 if device_class: summary += f" ({device_class})"
                 if show_state: summary += f": {show_state}"
 
@@ -267,7 +269,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 
             # score baseline
             score=1
-            toks=_tok(eid)+_tok(name)+_tok(device_class)
+            toks=_tok(eid)+_tok(name)+_tok(device_class)+_tok(area)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
             if "solar_assistant" in "_".join(toks): score+=3
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
@@ -276,6 +278,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if is_unknown: score -= 3
 
             cats = _infer_categories(eid, name, attrs, domain, device_class)
+            if area: cats.add(f"area.{area.lower()}")
 
             facts.append({
                 "entity_id": eid,
@@ -285,6 +288,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 "state": state,
                 "unit": unit,
                 "last_changed": last_changed,
+                "area": area,
                 "summary": summary,
                 "score": score,
                 "cats": sorted(list(cats))
@@ -292,7 +296,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
-
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -342,6 +345,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
+
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -364,7 +368,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Domain/keyword overrides (multiple allowed now) ----
+    # ---- Domain/keyword overrides (multiple allowed) ----
     filtered = []
     if "light" in q or "lights" in q:
         filtered += [f for f in facts if f["domain"] == "light"]
@@ -385,8 +389,13 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
+    if q & PROXMOX_KEYWORDS:
+        filtered += [f for f in facts if any(p in f["entity_id"].lower() or p in f["friendly_name"].lower()
+                                             for p in PROXMOX_KEYWORDS)]
+    if q & WEATHER_KEYS:
+        filtered += [f for f in facts if any(w in f["entity_id"].lower() or w in f["friendly_name"].lower()
+                                             for w in WEATHER_KEYS)]
 
-    # fallback if nothing matched
     if filtered:
         facts = filtered
 
