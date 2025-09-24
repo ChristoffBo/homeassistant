@@ -44,9 +44,15 @@ def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
     if not _llm_ready():
         return ""
     try:
+        # ADDED: explicit system prompt for better factual answers
         return _LLM.chat_generate(
             messages=[{"role": "user", "content": user_msg}],
-            system_prompt="",
+            system_prompt=(
+                "You are Jarvis Prime, a knowledgeable assistant. "
+                "Answer factual questions directly and clearly if you know them. "
+                "Prefer concise, accurate answers. "
+                "Only say 'I don't know' if you truly have no knowledge."
+            ),
             max_new_tokens=max_new_tokens,
         ) or ""
     except Exception:
@@ -87,7 +93,6 @@ def _detect_intent(q: str) -> str:
     if re.search(r"\b(movie|film)\b", ql):
         return "entertainment"
     return "general"
-
 # ----------------------------
 # Helpers & filters
 # ----------------------------
@@ -111,6 +116,7 @@ _AUTHORITY_TECH = [
 
 _REDDIT_ALLOW_ENT = {"movies","TrueFilm","MovieDetails","tipofmytongue","criterion","oscarrace"}
 _REDDIT_ALLOW_TECH = {"learnpython","python","programming","sysadmin","devops","linux","selfhosted","homelab","docker","kubernetes","opensource","techsupport","homeassistant","homeautomation"}
+_REDDIT_ALLOW_SPORTS = {"formula1","motorsports"}
 
 _DENY_DOMAINS = [
     "zhihu.com","baidu.com","pinterest.","quora.com","tumblr.com",
@@ -168,20 +174,17 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
         return True
     if not _keyword_overlap(q, title, snippet, min_hits=2):
         return True
-    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|$[0-9])\b", text, re.I):
+    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|[$][0-9])\b", text, re.I):
         return True
     if "reddit.com" in url.lower():
         m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
         sub = (m.group(1).lower() if m else "")
-        if vertical == "entertainment":
-            if sub not in {s.lower() for s in _REDDIT_ALLOW_ENT}:
-                return True
-        elif vertical == "tech":
-            if sub not in {s.lower() for s in _REDDIT_ALLOW_TECH}:
-                return True
-        elif vertical == "sports":
-            if sub not in {"formula1","motorsports"}:
-                return True
+        if vertical == "entertainment" and sub not in {s.lower() for s in _REDDIT_ALLOW_ENT}:
+            return True
+        if vertical == "tech" and sub not in {s.lower() for s in _REDDIT_ALLOW_TECH}:
+            return True
+        if vertical == "sports" and sub not in {s.lower() for s in _REDDIT_ALLOW_SPORTS}:
+            return True
     return False
 
 _CURRENT_YEAR = datetime.datetime.utcnow().year
@@ -197,8 +200,9 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
         if _is_junk_result(title, snip, url, q, vertical):
             continue
         score = 0
+        # Authority sites get big boost
         if _is_authority(url, vertical):
-            score += 8 if facty else 6
+            score += 10 if facty else 7
         u = url.lower()
         if vertical == "tech" and ("github.com" in u or "stackoverflow.com" in u):
             score += 3
@@ -255,7 +259,6 @@ def _cb_open(backend: str) -> bool:
     if backend not in CIRCUIT_BREAKERS:
         return False
     return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
-
 # ----------------------------
 # Web search backoffs & backends (FREE, no keys)
 # ----------------------------
@@ -281,8 +284,7 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
         return out
     except Exception as e:
         _cb_fail("ddg_lib")
-        if DEBUG:
-            print("DDG_LIB_ERR", repr(e))
+        if DEBUG: print("DDG_LIB_ERR", repr(e))
         return []
 
 def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
@@ -296,8 +298,7 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
         data = r.json()
     except Exception as e:
         _cb_fail("ddg_api")
-        if DEBUG:
-            print("DDG_API_ERR", repr(e), "Q:", query)
+        if DEBUG: print("DDG_API_ERR", repr(e), "Q:", query)
         return []
     results: List[Dict[str, str]] = []
     def _push(title: str, url: str, snippet: str):
@@ -321,9 +322,9 @@ def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> 
             deduped.append(r)
         if len(deduped) >= max_results:
             break
-    if DEBUG:
-        print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
+    if DEBUG: print("DDG_API_HITS", len(deduped), "Q:", query, "T:", round(time.time()-t0,3))
     return deduped
+
 def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
     try:
         api = "https://en.wikipedia.org/api/rest_v1/page/summary/" + _urlquote(query)
@@ -339,8 +340,7 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]
                 if DEBUG: print("WIKI_HIT 1 Q:", query, "T:", round(time.time()-t0,3))
                 return out
     except Exception as e:
-        if DEBUG:
-            print("WIKI_ERR", repr(e), "Q:", query)
+        if DEBUG: print("WIKI_ERR", repr(e), "Q:", query)
         return []
     if DEBUG: print("WIKI_NO_HIT Q:", query)
     return []
@@ -362,12 +362,10 @@ def _search_with_reddit(query: str, limit: int = 6, timeout: int = 6) -> List[Di
             url = "https://www.reddit.com" + d.get("permalink", "")
             if title and url:
                 hits.append({"title": f"Reddit/r/{sub}: {title}", "url": url, "snippet": snippet[:300]})
-        if DEBUG:
-            print("REDDIT_RAW_HITS", len(hits), "Q:", query, "T:", round(time.time()-t0,3))
+        if DEBUG: print("REDDIT_RAW_HITS", len(hits), "Q:", query, "T:", round(time.time()-t0,3))
         return hits
     except Exception as e:
-        if DEBUG:
-            print("REDDIT_ERR", repr(e), "Q:", query)
+        if DEBUG: print("REDDIT_ERR", repr(e), "Q:", query)
         return []
 
 def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Dict[str,str]]:
@@ -380,11 +378,9 @@ def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Di
             data = r.json()
             for item in data.get("items", []):
                 hits.append({"title": f"GitHub Repo: {item.get('full_name')}", "url": item.get("html_url"), "snippet": (item.get("description") or "")[:300]})
-        if DEBUG:
-            print("GITHUB_REPO_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Repo")), "Q:", query, "T:", round(time.time()-t0,3))
+        if DEBUG: print("GITHUB_REPO_HITS", len(hits), "Q:", query, "T:", round(time.time()-t0,3))
     except Exception as e:
-        if DEBUG:
-            print("GITHUB_REPO_ERR", repr(e), "Q:", query)
+        if DEBUG: print("GITHUB_REPO_ERR", repr(e), "Q:", query)
     try:
         issues_url = f"https://api.github.com/search/issues?q={_urlquote(query)}&per_page={limit}"
         t1 = time.time()
@@ -393,13 +389,10 @@ def _search_with_github(query: str, limit: int = 6, timeout: int = 6) -> List[Di
             data = r.json()
             for item in data.get("items", []):
                 hits.append({"title": f"GitHub Issue: {item.get('title')}", "url": item.get("html_url"), "snippet": (item.get("body") or "")[:300]})
-        if DEBUG:
-            print("GITHUB_ISSUE_HITS", sum(1 for h in hits if h["title"].startswith("GitHub Issue")), "Q:", query, "T:", round(time.time()-t1,3))
+        if DEBUG: print("GITHUB_ISSUE_HITS", len(hits), "Q:", query, "T:", round(time.time()-t1,3))
     except Exception as e:
-        if DEBUG:
-            print("GITHUB_ISSUE_ERR", repr(e), "Q:", query)
-    if DEBUG:
-        print("GITHUB_RAW_HITS", len(hits), "Q:", query)
+        if DEBUG: print("GITHUB_ISSUE_ERR", repr(e), "Q:", query)
+    if DEBUG: print("GITHUB_RAW_HITS", len(hits), "Q:", query)
     return hits
 
 # ---- Backoff helpers ----
@@ -432,37 +425,30 @@ def _build_query_by_vertical(q: str, vertical: str) -> str:
 def _try_all_backoffs(query: str, shaped: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
     hits: List[Dict[str,str]] = []
     if DEBUG: print("BACKOFF_PASS1_SHAPED")
-    # Pass 1: shaped (site-scoped) via DDG lib → API → wiki
     hits.extend(_search_with_duckduckgo_lib(shaped, max_results=max_results*2))
     if not hits:
         hits.extend(_search_with_ddg_api(shaped, max_results=max_results*2))
     if not hits:
         hits.extend(_search_with_wikipedia(query))
-    if hits:
-        return hits
+    if hits: return hits
 
     if DEBUG: print("BACKOFF_PASS2_PLAIN")
-    # Pass 2: plain query (no site:)
     plain = query
     hits.extend(_search_with_duckduckgo_lib(plain, max_results=max_results*2))
     if not hits:
         hits.extend(_search_with_ddg_api(plain, max_results=max_results*2))
-    if hits:
-        return hits
+    if hits: return hits
 
     if DEBUG: print("BACKOFF_PASS3_KEYWORDS_ONLY")
-    # Pass 3: keyword-only query
     kwq = _keywords_only(query)
     hits.extend(_search_with_duckduckgo_lib(kwq, max_results=max_results*2))
     if not hits:
         hits.extend(_search_with_ddg_api(kwq, max_results=max_results*2))
-    if hits:
-        return hits
+    if hits: return hits
 
     if DEBUG: print("BACKOFF_PASS4_SITE_LADDER")
-    # Pass 4: per-site ladder (especially good for fact queries)
     for site in _vertical_site_ladder(vertical):
-        q_site = f'{kwq} site:{site}'
+        q_site = f"{kwq} site:{site}"
         local = _search_with_duckduckgo_lib(q_site, max_results=max_results)
         if not local:
             local = _search_with_ddg_api(q_site, max_results=max_results)
@@ -471,7 +457,6 @@ def _try_all_backoffs(query: str, shaped: str, vertical: str, max_results: int) 
         if len(hits) >= max_results:
             break
 
-    # Final safety: Wikipedia summary with keywords
     if not hits:
         if DEBUG: print("BACKOFF_FINAL_WIKI")
         wiki_fallback = _search_with_wikipedia(kwq)
@@ -484,11 +469,8 @@ def _try_all_backoffs(query: str, shaped: str, vertical: str, max_results: int) 
 def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     vertical = _detect_intent(query)
     shaped = _build_query_by_vertical(query, vertical)
-
-    # Gather with tough fallbacks
     hits = _try_all_backoffs(query, shaped, vertical, max_results)
 
-    # Add vertical extras
     facty = bool(_FACT_QUERY_RE.search(query))
     if vertical == "tech":
         hits.extend(_search_with_reddit(query, limit=6))
@@ -500,11 +482,10 @@ def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
         if not facty:
             hits.extend(_search_with_reddit(query, limit=3))
 
-    if DEBUG:
-        print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical, "FACTY", facty)
-
+    if DEBUG: print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical, "FACTY", facty)
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
+
 # ----------------------------
 # Render
 # ----------------------------
@@ -539,12 +520,11 @@ def _build_notes_from_hits(hits: List[Dict[str,str]]) -> str:
 # ----------------------------
 def handle_message(source: str, text: str) -> str:
     q = (text or "").strip()
-    if not q:
-        return ""
+    if not q: return ""
     try:
         if DEBUG: print("IN_MSG:", q)
 
-        # ---- RAG first (local HA context) ----
+        # ---- RAG first ----
         try:
             from rag import inject_context
             rag_block = inject_context(q, top_k=5)
@@ -557,94 +537,47 @@ def handle_message(source: str, text: str) -> str:
                 if DEBUG: print("RAG_HIT")
                 return clean_ans
 
-        # ---- Cache check ----
-        if q in _CACHE:
-            if DEBUG: print("CACHE_HIT")
-            return _CACHE[q]
-
-        # ---- Offline LLM attempt ----
+        # ---- Offline LLM ----
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
         if DEBUG: print("OFFLINE_ANS:", repr(clean_ans))
 
-        offline_unknown_markers = {
+        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {
             "i don't know.", "i dont know", "(no reply)", "unknown", "no idea",
             "i'm not sure", "i am unsure"
         }
-        force_web_patterns = [
-            r"\bcannot perform (live )?web searches\b",
-            r"\bi cannot perform web searches\b",
-            r"\bplease\s+verify\b",
-            r"\bverify\s+this information\b",
-            r"\bi am unsure\b",
-            r"\bi'm unsure\b",
-            r"\bi am not sure\b",
-        ]
-
-        offline_unknown = (not clean_ans) or (clean_ans.strip().lower() in offline_unknown_markers)
         if not offline_unknown and clean_ans:
-            for pat in force_web_patterns:
-                if re.search(pat, clean_ans, re.I):
-                    offline_unknown = True
-                    if DEBUG: print("FORCE_WEB_DUE_TO_OFFLINE_TEXT")
-                    break
+            return clean_ans
 
-        # ---- Web search trigger ----
+        # ---- Web search fallback ----
         if _should_use_web(q) or offline_unknown:
-            if DEBUG: print("WEB_MODE_TRIGGERED")
             hits = _web_search(q, max_results=8)
-            if DEBUG:
-                print("POST_FILTER_HITS", len(hits))
-                if not hits: print("NO_HITS_AFTER_ALL_BACKOFFS")
-
             if hits:
-                # Facty = snippets
                 if _FACT_QUERY_RE.search(q):
                     snippets = []
                     for h in hits[:3]:
-                        title = h.get('title') or ''
-                        snip  = h.get('snippet') or ''
+                        title = h.get("title") or ""
+                        snip  = h.get("snippet") or ""
                         if title and snip:
                             snippets.append(f"{title} — {snip}")
                         else:
                             snippets.append(title or snip)
                     sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                    out = _render_web_answer("\n".join(snippets), sources)
-                    _CACHE[q] = out
-                    return out
-
-                # Non-facty = summarizer
+                    return _render_web_answer("\n".join(snippets), sources)
                 notes = _build_notes_from_hits(hits)
                 summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
                 if not summary or summary.lower() in {"i am unsure", "i'm not sure", "i don't know"}:
                     h0 = hits[0]
                     summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
                 sources = [((h.get("title") or h.get("url") or ""), h.get("url") or "") for h in hits if h.get("url")]
-                out = _render_web_answer(_clean_text(summary), sources)
-                _CACHE[q] = out
-                return out
-
-        # ---- Return offline if valid ----
-        if clean_ans and not offline_unknown:
-            _CACHE[q] = clean_ans
-            return clean_ans
+                return _render_web_answer(_clean_text(summary), sources)
 
         # ---- Final offline fallback ----
-        fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-        out = _clean_text(fallback) or "I don't know."
-        _CACHE[q] = out
-        return out
+        return clean_ans or _clean_text(_chat_offline_singleturn(q, max_new_tokens=240)) or "I don't know."
 
     except Exception as e:
-        if DEBUG:
-            traceback.print_exc()
-        try:
-            fallback = _chat_offline_singleturn(q, max_new_tokens=240)
-            out = _clean_text(fallback) or "I don't know."
-            _CACHE[q] = out
-            return out
-        except Exception:
-            return "I don't know."
+        if DEBUG: traceback.print_exc()
+        return "I don't know."
 
 # ----------------------------
 # Shared cleaners
@@ -654,15 +587,11 @@ _scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
 _strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
 
 def _clean_text(s: str) -> str:
-    if not s:
-        return s
+    if not s: return s
     out = s.replace("\r", "").strip()
-    if _strip_trans:
-        out = _strip_trans(out)
-    if _scrub_pers:
-        out = _scrub_pers(out)
-    if _scrub_meta:
-        out = _scrub_meta(out)
+    if _strip_trans: out = _strip_trans(out)
+    if _scrub_pers: out = _scrub_pers(out)
+    if _scrub_meta: out = _scrub_meta(out)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
 
