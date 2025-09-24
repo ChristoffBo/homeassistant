@@ -2,7 +2,7 @@
 # /app/chatbot.py
 #
 # Jarvis Prime – Chat lane service (chat + optional web fallback)
-# - Default: offline LLM chat via llm_client.chat_generate
+# - Default: offline Jarvis LLM chat via llm_client.chat_generate
 # - Web mode if wake words are present OR offline LLM fails OR offline text says "cannot search / please verify / unsure"
 # - Topic aware routing:
 #     * entertainment: IMDb/Wikipedia/RT/Metacritic (Reddit only vetted movie subs, not for fact queries)
@@ -30,7 +30,7 @@ CB_TIMEOUT = 120  # seconds to mute a backend after repeated failure
 MAX_PARALLEL_TIMEOUT = 3
 
 # ----------------------------
-# LLM bridge
+# LLM bridge (Jarvis)
 # ----------------------------
 try:
     import llm_client as _LLM
@@ -46,7 +46,10 @@ def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
     try:
         return _LLM.chat_generate(
             messages=[{"role": "user", "content": user_msg}],
-            system_prompt="",
+            system_prompt=(
+                "You are Jarvis, a helpful and factual assistant. "
+                "Answer clearly if you know. If you truly cannot answer, say 'I don't know'."
+            ),
             max_new_tokens=max_new_tokens,
         ) or ""
     except Exception:
@@ -56,9 +59,9 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
     if not _llm_ready():
         return ""
     sys_prompt = (
-        "You are a concise synthesizer. Using only the provided bullet notes, write a clear 4–6 sentence answer. "
-        "Prefer concrete facts & dates. Avoid speculation. If info is conflicting, note it briefly. "
-        "Rank recent and authoritative sources higher. Respond like a human researcher would: factual, relevant, helpful."
+        "You are Jarvis, a concise synthesizer. Using only the provided bullet notes, "
+        "write a clear 4–6 sentence answer. Prefer concrete facts & dates. Avoid speculation. "
+        "If info is conflicting, note it briefly. Rank recent and authoritative sources higher."
     )
     msgs = [
         {"role": "system", "content": sys_prompt},
@@ -72,9 +75,18 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
 # ----------------------------
 # Topic detection
 # ----------------------------
-_TECH_KEYS = re.compile(r"\b(api|bug|error|exception|stacktrace|repo|github|docker|k8s|kubernetes|linux|debian|ubuntu|arch|kernel|python|node|golang|go|java|c\+\+|rust|mysql|postgres|sql|ssh|tls|ssl|dns|vpn|proxmox|homeassistant|zimaos|opnsense)\b", re.I)
-_ENT_KEYS  = re.compile(r"\b(movie|film|actor|actress|imdb|rotten|metacritic|trailer|box office|release|cast|director)\b", re.I)
-_SPORT_KEYS = re.compile(r"\b(f1|formula 1|grand prix|premier league|nba|nfl|fifa|world cup|uefa|olympics|tennis|atp|wta|golf|pga)\b", re.I)
+_TECH_KEYS = re.compile(
+    r"\b(api|bug|error|exception|stacktrace|repo|github|docker|k8s|kubernetes|linux|debian|ubuntu|arch|kernel|python|node|golang|go|java|c\+\+|rust|mysql|postgres|sql|ssh|tls|ssl|dns|vpn|proxmox|homeassistant|zimaos|opnsense)\b",
+    re.I,
+)
+_ENT_KEYS  = re.compile(
+    r"\b(movie|film|actor|actress|imdb|rotten|metacritic|trailer|box office|release|cast|director)\b",
+    re.I,
+)
+_SPORT_KEYS = re.compile(
+    r"\b(f1|formula 1|grand prix|premier league|nba|nfl|fifa|world cup|uefa|olympics|tennis|atp|wta|golf|pga)\b",
+    re.I,
+)
 
 def _detect_intent(q: str) -> str:
     ql = (q or "").lower()
@@ -129,6 +141,7 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
             "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
+
 def _domain_of(url: str) -> str:
     try:
         return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
@@ -183,7 +196,11 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
                 return True
     return False
 
+# Fact-style queries (used by ranker)
+_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
+
 _CURRENT_YEAR = datetime.datetime.utcnow().year
+
 def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
     scored = []
     facty = bool(_FACT_QUERY_RE.search(q))
@@ -223,7 +240,6 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
     if DEBUG:
         print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
     return ranked
-
 # ----------------------------
 # Triggers
 # ----------------------------
@@ -244,9 +260,6 @@ def _should_use_web(q: str) -> bool:
         return True
     return False
 
-# Fact-style queries
-_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
-
 # ----------------------------
 # Circuit breaker helpers
 # ----------------------------
@@ -257,8 +270,9 @@ def _cb_open(backend: str) -> bool:
     if backend not in CIRCUIT_BREAKERS:
         return False
     return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
+
 # ----------------------------
-# Web search backoffs & backends (FREE, no keys)
+# Web search backends (FREE, no keys)
 # ----------------------------
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
     if _cb_open("ddg_lib"): return []
@@ -348,19 +362,59 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]
     return []
 
 # ----------------------------
+# Query shaping + backoffs (FIXED)
+# ----------------------------
+def _build_query_by_vertical(q: str, vertical: str) -> str:
+    q = q.strip()
+    if vertical == "entertainment":
+        return f"{q} site:imdb.com OR site:wikipedia.org"
+    if vertical == "sports":
+        return f"{q} site:espn.com OR site:formula1.com OR site:wikipedia.org"
+    if vertical == "tech":
+        return f"{q} site:github.com OR site:stackoverflow.com OR site:wikipedia.org"
+    return q + " site:wikipedia.org"
+
+def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
+    hits: List[Dict[str,str]] = []
+    # Wikipedia first for fast fact queries (bios, definitions)
+    hits.extend(_search_with_wikipedia(raw_q))
+    if len(hits) >= max_results:
+        return hits
+    # DDG library
+    hits.extend(_search_with_duckduckgo_lib(shaped_q, max_results=max_results))
+    if len(hits) >= max_results:
+        return hits
+    # DDG API fallback
+    hits.extend(_search_with_ddg_api(shaped_q, max_results=max_results))
+    return hits[:max_results]
+
+# ----------------------------
 # Web search orchestration
 # ----------------------------
 def _web_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
     vertical = _detect_intent(query)
     shaped = _build_query_by_vertical(query, vertical)
-
     hits = _try_all_backoffs(query, shaped, vertical, max_results)
-
     if DEBUG:
         print("RAW_HITS_TOTAL", len(hits), "VERTICAL", vertical)
-
     ranked = _rank_hits(query, hits, vertical)
     return ranked[:max_results] if ranked else []
+
+# ----------------------------
+# Notes builder for summarizer
+# ----------------------------
+def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
+    lines: List[str] = []
+    for h in hits[:10]:
+        title = (h.get("title") or "").strip()
+        url   = (h.get("url") or "").strip()
+        snip  = (h.get("snippet") or "").strip()
+        dom   = _domain_of(url)
+        if title or snip:
+            lines.append(f"- [{dom}] {title if title else '(no title)'} :: {snip[:500]} :: {url}")
+    if not lines:
+        return "- No usable web notes."
+    return "\n".join(lines)
 
 # ----------------------------
 # Render
@@ -381,7 +435,6 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
             for title, url in dedup[:5]:
                 lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
     return "\n".join(lines).strip()
-
 # ----------------------------
 # Public entry
 # ----------------------------
@@ -394,27 +447,36 @@ def handle_message(source: str, text: str) -> str:
     try:
         if DEBUG: print("IN_MSG:", q)
 
-        from rag import inject_context
+        # 1) Try RAG context first (local HA facts)
         try:
-            rag_block = inject_context(q, top_k=5)
+            from rag import inject_context
+            try:
+                rag_block = inject_context(q, top_k=5)
+            except Exception:
+                rag_block = ""
+            if rag_block:
+                ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
+                clean_ans = _clean_text(ans)
+                if clean_ans:
+                    if DEBUG: print("RAG_HIT")
+                    return clean_ans
         except Exception:
-            rag_block = ""
-        if rag_block:
-            ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
-            clean_ans = _clean_text(ans)
-            if clean_ans:
-                if DEBUG: print("RAG_HIT")
-                return clean_ans
+            pass
 
+        # 2) Cache
         if q in _CACHE:
             if DEBUG: print("CACHE_HIT")
             return _CACHE[q]
 
+        # 3) Offline Jarvis
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
 
-        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {"i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"}
+        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {
+            "i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"
+        }
 
+        # 4) Web mode if explicitly requested OR offline is unknown
         if _should_use_web(q) or offline_unknown:
             hits = _web_search(q, max_results=8)
             if hits:
@@ -428,13 +490,17 @@ def handle_message(source: str, text: str) -> str:
                 _CACHE[q] = out
                 return out
 
+        # 5) If offline had a decent answer, use it
         if clean_ans and not offline_unknown:
             _CACHE[q] = clean_ans
             return clean_ans
 
+        # 6) Final fallback
         return "I don't know."
 
     except Exception:
+        if DEBUG:
+            traceback.print_exc()
         return "I don't know."
 
 # ----------------------------
@@ -449,11 +515,20 @@ def _clean_text(s: str) -> str:
         return s
     out = s.replace("\r","").strip()
     if _strip_trans:
-        out = _strip_trans(out)
+        try:
+            out = _strip_trans(out)
+        except Exception:
+            pass
     if _scrub_pers:
-        out = _scrub_pers(out)
+        try:
+            out = _scrub_pers(out)
+        except Exception:
+            pass
     if _scrub_meta:
-        out = _scrub_meta(out)
+        try:
+            out = _scrub_meta(out)
+        except Exception:
+            pass
     return re.sub(r"\n{3,}","\n\n",out).strip()
 
 if __name__ == "__main__":
