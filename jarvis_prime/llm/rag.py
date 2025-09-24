@@ -23,21 +23,44 @@ BASENAME       = "rag_facts.json"
 # Include ALL domains
 INCLUDE_DOMAINS = None
 
-# Keywords/integrations commonly seen
+# ----------------- Keywords / Integrations -----------------
+
+# Energy / Solar
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
 SONOFF_KEYWORDS  = {"sonoff"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
 MQTT_KEYWORDS    = {"mqtt"}
+TUYA_KEYWORDS    = {"tuya","localtuya","local_tuya"}
+
+# Media (separate + combined)
+PLEX_KEYWORDS    = {"plex"}
+EMBY_KEYWORDS    = {"emby"}
+JELLYFIN_KEYWORDS= {"jellyfin"}
+KODI_KEYWORDS    = {"kodi","xbmc"}
+TV_KEYWORDS      = {"tv","androidtv","chromecast","google_tv"}
 RADARR_KEYWORDS  = {"radarr"}
 SONARR_KEYWORDS  = {"sonarr"}
+LIDARR_KEYWORDS  = {"lidarr"}
+BAZARR_KEYWORDS  = {"bazarr"}
+READARR_KEYWORDS = {"readarr"}
+SONOS_KEYWORDS   = {"sonos"}
+AMP_KEYWORDS     = {"denon","onkyo","yamaha","marantz"}
 
-# Device-class priority boosts
+MEDIA_KEYWORDS   = set().union(
+    PLEX_KEYWORDS, EMBY_KEYWORDS, JELLYFIN_KEYWORDS, KODI_KEYWORDS, TV_KEYWORDS,
+    RADARR_KEYWORDS, SONARR_KEYWORDS, LIDARR_KEYWORDS, BAZARR_KEYWORDS, READARR_KEYWORDS,
+    SONOS_KEYWORDS, AMP_KEYWORDS, {"media","player"}
+)
+
+# ----------------- Device-class priority -----------------
+
 DEVICE_CLASS_PRIORITY = {
     "motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,
     "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
 }
 
-# Query synonyms (intent signals)
+# ----------------- Query synonyms -----------------
+
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
     "solar": ["solar","pv","generation","inverter","array","ess"],
@@ -56,6 +79,7 @@ INTENT_CATEGORY_MAP = {
     "battery": {"energy.storage"},
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
+    "media": {"media"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
@@ -131,13 +155,19 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
+# ----------------- categorization -----------------
+
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
     cats:set[str] = set()
     toks = set(_tok(eid) + _tok(name) + _tok(device_class))
     manf = str(attrs.get("manufacturer","") or attrs.get("vendor","") or "").lower()
     model= str(attrs.get("model","") or "").lower()
-    if domain in ("person","device_tracker"): cats.add("person")
-    if any(k in toks for k in ("pv","inverter","ess","solar","solar_assistant")) or "inverter" in model:
+
+    if domain in ("person","device_tracker"):
+        cats.add("person")
+
+    # Energy / solar
+    if any(k in toks for k in SOLAR_KEYWORDS) or "inverter" in model:
         cats.add("energy")
         if "pv" in toks or "solar" in toks: cats.add("energy.pv")
         if "inverter" in toks or "ess" in toks: cats.add("energy.inverter")
@@ -145,7 +175,25 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if "grid" in toks or "import" in toks or "export" in toks: cats.update({"energy","energy.grid"})
     if "load" in toks or "consumption" in toks: cats.update({"energy","energy.load"})
     if device_class == "battery" or "battery" in toks: cats.add("device.battery")
+
+    # Media
+    if any(k in toks for k in MEDIA_KEYWORDS):
+        cats.add("media")
+        if toks & PLEX_KEYWORDS: cats.add("media.plex")
+        if toks & EMBY_KEYWORDS: cats.add("media.emby")
+        if toks & JELLYFIN_KEYWORDS: cats.add("media.jellyfin")
+        if toks & KODI_KEYWORDS: cats.add("media.kodi")
+        if toks & TV_KEYWORDS: cats.add("media.tv")
+        if toks & RADARR_KEYWORDS: cats.add("media.radarr")
+        if toks & SONARR_KEYWORDS: cats.add("media.sonarr")
+        if toks & LIDARR_KEYWORDS: cats.add("media.lidarr")
+        if toks & BAZARR_KEYWORDS: cats.add("media.bazarr")
+        if toks & READARR_KEYWORDS: cats.add("media.readarr")
+        if toks & SONOS_KEYWORDS: cats.add("media.sonos")
+        if toks & AMP_KEYWORDS: cats.add("media.amplifier")
+
     return cats
+
 # ----------------- fetch + summarize -----------------
 
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
@@ -282,6 +330,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
+
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -295,6 +344,8 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"energy.grid"})
     if "load" in q_tokens:
         out.update({"energy.load"})
+    if q_tokens & MEDIA_KEYWORDS:
+        out.update({"media"})
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
@@ -306,7 +357,6 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     if "light" in q or "lights" in q:
         facts = [f for f in facts if f["domain"] == "light"]
     elif "switch" in q or "switches" in q:
-        # exclude automations mis-labeled
         facts = [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
     elif "motion" in q or "occupancy" in q:
         facts = [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
@@ -318,6 +368,11 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         facts = [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
     elif "where" in q:
         facts = [f for f in facts if f["domain"] in ("person","device_tracker")]
+    elif q & MEDIA_KEYWORDS:
+        facts = [f for f in facts if any(
+            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
+            for m in MEDIA_KEYWORDS
+        )]
 
     want_cats = _intent_categories(q)
 
@@ -334,6 +389,10 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             s += 12
 
         if want_cats and (cats & want_cats):
+            s += 15
+
+        if want
+if want_cats and (cats & want_cats):
             s += 15
 
         if want_cats & {"energy.storage"} and "energy.storage" in cats:
