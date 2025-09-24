@@ -141,7 +141,6 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
             "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
-
 # NEW: adaptive overlap threshold to avoid over-filtering facty/sports queries
 def _min_hits_for_query(q: str) -> int:
     core = [w for w in _tokenize(q) if w not in {"where","what","who","when","which","the","and","for","with","from","into","about","this","that"}]
@@ -164,6 +163,7 @@ def _strip_web_triggers(q: str) -> str:
         out = re.sub(pat, "", out, flags=re.I)
     out = re.sub(r"\s{2,}", " ", out).strip(" .!?-")
     return out
+
 def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -> bool:
     if not title and not snippet:
         return True
@@ -274,7 +274,7 @@ def _cb_open(backend: str) -> bool:
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
     if _cb_open("ddg_lib"): return []
     try:
-        from duckduckgo_search import DDGS  # type: ignore
+        from ddgs import DDGS  # patched import
     except Exception:
         if DEBUG: print("DDG_LIB_IMPORT_FAIL")
         return []
@@ -296,7 +296,6 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
         if DEBUG:
             print("DDG_LIB_ERR", repr(e))
         return []
-
 def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
     if _cb_open("ddg_api"): return []
     try:
@@ -357,6 +356,7 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]
         return []
     if DEBUG: print("WIKI_NO_HIT Q:", query)
     return []
+
 # ----------------------------
 # Query shaping + backoffs
 # ----------------------------
@@ -372,15 +372,12 @@ def _build_query_by_vertical(q: str, vertical: str) -> str:
 
 def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
     hits: List[Dict[str,str]] = []
-    # Wikipedia first for fast fact queries (bios, definitions)
     hits.extend(_search_with_wikipedia(raw_q))
     if len(hits) >= max_results:
         return hits
-    # DDG library
     hits.extend(_search_with_duckduckgo_lib(shaped_q, max_results=max_results))
     if len(hits) >= max_results:
         return hits
-    # DDG API fallback
     hits.extend(_search_with_ddg_api(shaped_q, max_results=max_results))
     return hits[:max_results]
 
@@ -436,7 +433,7 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
 # Public entry
 # ----------------------------
 _CACHE: Dict[str,str] = {}
-_LAST_QUERY: Optional[str] = None  # stores last non-trigger real question
+_LAST_QUERY: Optional[str] = None
 
 def handle_message(source: str, text: str) -> str:
     global _LAST_QUERY
@@ -446,7 +443,6 @@ def handle_message(source: str, text: str) -> str:
     try:
         if DEBUG: print("IN_MSG:", q)
 
-        # Cache hit (exact text)
         if q in _CACHE:
             if DEBUG: print("CACHE_HIT")
             return _CACHE[q]
@@ -454,9 +450,7 @@ def handle_message(source: str, text: str) -> str:
         is_trigger = _should_use_web(q)
         stripped = _strip_web_triggers(q)
 
-        # If it's a web trigger:
         if is_trigger:
-            # Use stripped part if present; otherwise reuse last real query
             real_q = stripped if stripped else (_LAST_QUERY or q)
             if not real_q:
                 return "No results found."
@@ -475,11 +469,9 @@ def handle_message(source: str, text: str) -> str:
             _LAST_QUERY = real_q
             return "No results found."
 
-        # Otherwise (no trigger): default path → RAG then offline Jarvis
         real_q = stripped if stripped else q
-        _LAST_QUERY = real_q  # remember for a future "Google it"
+        _LAST_QUERY = real_q
 
-        # 1) Try RAG context first
         try:
             from rag import inject_context
             rag_block = ""
@@ -497,14 +489,12 @@ def handle_message(source: str, text: str) -> str:
         except Exception:
             pass
 
-        # 2) Offline Jarvis
         ans = _chat_offline_singleturn(real_q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
         if clean_ans:
             _CACHE[real_q] = clean_ans
             return clean_ans
 
-        # 3) Final fallback (no auto-web)
         return "I don't know."
 
     except Exception:
