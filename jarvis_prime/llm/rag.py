@@ -16,14 +16,14 @@ from typing import Any, Dict, List, Tuple, Set
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
 # Primary (single target) + fallback
-PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]
+PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]   # only this one now
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
-# Include ALL domains (None = include all)
-INCLUDE_DOMAINS = None
+# Include ALL domains (set to a set to limit)
+INCLUDE_DOMAINS = None  # None => include all domains
 
-# Keywords/integrations
+# Keywords/integrations commonly seen
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
 SONOFF_KEYWORDS  = {"sonoff"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
@@ -31,11 +31,13 @@ MQTT_KEYWORDS    = {"mqtt"}
 RADARR_KEYWORDS  = {"radarr"}
 SONARR_KEYWORDS  = {"sonarr"}
 
+# Device-class priority boosts
 DEVICE_CLASS_PRIORITY = {
     "motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,
     "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
 }
 
+# Query synonyms (intent signals)
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
     "solar": ["solar","pv","generation","inverter","array","ess"],
@@ -44,24 +46,24 @@ QUERY_SYNONYMS = {
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
     "where": ["where","location","zone","home","work","present"],
+    "who": ["who","person","people"]
 }
 
+# Intent → categories we prefer
 INTENT_CATEGORY_MAP = {
     "solar": {"energy.storage","energy.pv","energy.inverter"},
     "pv":    {"energy.pv","energy.inverter","energy.storage"},
     "soc":   {"energy.storage"},
-    "battery": {"energy.storage"},
+    "battery": {"energy.storage"},  # generic "battery" → prefer ESS if any
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
-DEFAULT_TOP_K = 10
+DEFAULT_TOP_K = 10   # raised from 5 → 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
-
-# RAM cache
-_MEM_FACTS: List[Dict[str,Any]] = []
+_FACTS_CACHE: List[Dict[str,Any]] = []
 
 # ----------------- helpers -----------------
 
@@ -75,6 +77,9 @@ def _expand_query_tokens(tokens: List[str]) -> List[str]:
             if x not in seen:
                 seen.add(x); out.append(x)
     return out
+
+def _domain_of(eid: str) -> str:
+    return eid.split(".",1)[0] if "." in eid else ""
 
 def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     zone = attrs.get("zone")
@@ -116,10 +121,13 @@ def _write_json_atomic(path: str, obj: dict):
         json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
     os.replace(tmp,path)
 
+# ---- token & budget helpers ----
+
 SAFE_RAG_BUDGET_FRACTION = 0.30
 
 def _estimate_tokens(text: str) -> int:
-    if not text: return 0
+    if not text:
+        return 0
     words = len(re.findall(r"\S+", text))
     est = int(words * 1.3)
     return max(8, min(est, 128))
@@ -198,30 +206,26 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
 
-            # Normalize person state
-            if domain == "person":
+            if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
-                summary = f"{name} is {state}"
-            elif domain == "device_tracker":
-                state = _safe_zone_from_tracker(state, attrs)
-                summary = f"{name}: {state}"
-            else:
-                show_state = state.upper() if state in ("on","off","open","closed") else state
-                if unit and state not in ("on","off","open","closed"):
-                    try:
-                        v = float(state)
-                        if abs(v) < 0.005: v = 0.0
-                        s = f"{v:.2f}".rstrip("0").rstrip(".")
-                        show_state = f"{s} {unit}".strip()
-                    except Exception:
-                        show_state = f"{state} {unit}".strip()
-                summary = name
-                if device_class: summary += f" ({device_class})"
-                if show_state:   summary += f": {show_state}"
 
-            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
-            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
-                summary += f" (as of {recent})"
+            show_state = state.upper() if state in ("on","off","open","closed") else state
+            if unit and state not in ("on","off","open","closed"):
+                try:
+                    v = float(state)
+                    if abs(v) < 0.005: v = 0.0
+                    s = f"{v:.2f}".rstrip("0").rstrip(".")
+                    show_state = f"{s} {unit}".strip()
+                except Exception:
+                    show_state = f"{state} {unit}".strip()
+
+            summary = name
+            if device_class:
+                summary += f" ({device_class})"
+            if show_state:
+                summary += f": {show_state}"
+            if domain in ("person","device_tracker"):
+                summary = f"{name} is at {show_state}"
 
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
@@ -253,10 +257,9 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
-    global _LAST_REFRESH_TS, _MEM_FACTS
+    global _LAST_REFRESH_TS, _FACTS_CACHE
     cfg = _load_options()
     facts = _fetch_ha_states(cfg)
-    _MEM_FACTS = facts  # keep in memory too
 
     result_paths=[]
     try:
@@ -272,6 +275,7 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
         except Exception as e:
             print(f"[RAG] fallback write failed: {e}")
     finally:
+        _FACTS_CACHE = facts
         _LAST_REFRESH_TS = time.time()
 
     print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
@@ -288,12 +292,15 @@ def load_cached() -> List[Dict[str,Any]]:
         return []
 
 def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
-    global _MEM_FACTS
+    global _FACTS_CACHE
     if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
         return refresh_and_cache()
-    if _MEM_FACTS: return _MEM_FACTS
+    if _FACTS_CACHE:
+        return _FACTS_CACHE
     facts = load_cached()
-    if not facts: return refresh_and_cache()
+    if not facts:
+        return refresh_and_cache()
+    _FACTS_CACHE = facts
     return facts
 
 # ----------------- query → context -----------------
@@ -316,15 +323,23 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # --- Direct query overrides ---
-    if "who" in q and ("home" in q or "away" in q):
-        facts = [f for f in facts if f["domain"] == "person"]
-    elif "light" in q or "lights" in q:
-        facts = [f for f in facts if f["domain"] in ("light","switch") or "light" in _tok(f.get("friendly_name",""))]
+    # ---- Domain/keyword overrides ----
+    if "light" in q or "lights" in q:
+        facts = [f for f in facts if f["domain"] == "light" or ("light" in _tok(f.get("friendly_name","")) and f["domain"] != "automation")]
     elif "switch" in q or "switches" in q:
-        facts = [f for f in facts if f["domain"] == "switch" or "switch" in _tok(f.get("friendly_name",""))]
+        facts = [f for f in facts if (f["domain"] == "switch" or "switch" in _tok(f.get("friendly_name",""))) and f["domain"] != "automation"]
+    elif "motion" in q or "occupancy" in q:
+        facts = [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
+    elif "axpert" in q:
+        facts = [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
+    elif "sonoff" in q:
+        facts = [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
+    elif "zigbee" in q or "z2m" in q:
+        facts = [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
     elif "pool" in q:
         facts = [f for f in facts if "pool" in f["entity_id"].lower() or "pool" in f["friendly_name"].lower()]
+    elif "who" in q and "home" in q:
+        facts = [f for f in facts if f["domain"] == "person"]
 
     want_cats = _intent_categories(q)
 
@@ -338,12 +353,14 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         if q & SOLAR_KEYWORDS: s += 2
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
             s += 12
-        if want_cats and (cats & want_cats): s += 15
-        if want_cats & {"energy.storage"} and "energy.storage" in cats: s += 20
-        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           ("device.battery" in cats) and ("energy.storage" not in cats): s -= 18
-        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           (("forecast" in ft) or ("estimated" in ft)): s -= 12
+        if want_cats and (cats & want_cats):
+            s += 15
+        if want_cats & {"energy.storage"} and "energy.storage" in cats:
+            s += 20
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and ("device.battery" in cats) and ("energy.storage" not in cats):
+            s -= 18
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and (("forecast" in ft) or ("estimated" in ft)):
+            s -= 12
 
         scored.append((s, f))
 
@@ -351,6 +368,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
     ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
+
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
 
     if ("soc" in q) or (want_cats & {"energy.storage"}):
@@ -362,15 +380,20 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
     selected: List[str] = []
     remaining = budget
+
     for f in ordered:
         line = f.get("summary", "")
-        if not line: continue
+        if not line:
+            continue
         cost = _estimate_tokens(line)
         if cost <= remaining:
-            selected.append(line); remaining -= cost
+            selected.append(line)
+            remaining -= cost
         if not selected and cost > remaining and remaining > 0:
-            selected.append(line); remaining = 0
-        if remaining <= 0: break
+            selected.append(line)
+            remaining = 0
+        if remaining <= 0:
+            break
 
     return "\n".join(selected)
 
