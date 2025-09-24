@@ -287,6 +287,18 @@ def _cb_open(backend: str) -> bool:
 # ----------------------------
 # Web search backends (FREE, no keys) - FIXED
 # ----------------------------
+# ----------------------------
+# Web search backends (FREE, no keys)
+# ----------------------------
+try:
+    # Newer package name
+    from ddgs import DDGS
+except ImportError:
+    try:
+        # Legacy package name
+        from duckduckgo_search import DDGS
+    except ImportError:
+        DDGS = None
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
     """Search using duckduckgo-search library"""
     if _cb_open("ddg_lib"): 
