@@ -141,6 +141,7 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
             "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
+
 def _domain_of(url: str) -> str:
     try:
         return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
@@ -177,7 +178,9 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
     text = (title or "") + " " + (snippet or "")
     if not _is_english_text(text, max_ratio=0.2):
         return True
-    if not _keyword_overlap(q, title, snippet, min_hits=1):
+    # relaxed: allow more hits for short queries; min_hits adaptive
+    min_hits = 1
+    if not _keyword_overlap(q, title, snippet, min_hits=min_hits):
         return True
     if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|[$][0-9])\b", text, re.I):
         return True
@@ -194,9 +197,9 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
             if sub not in {"formula1","motorsports"}:
                 return True
     return False
-
 # Fact-style queries (used by ranker)
 _FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
+
 _CURRENT_YEAR = datetime.datetime.utcnow().year
 
 def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
@@ -235,26 +238,164 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
         scored.append((score, h))
     scored.sort(key=lambda x: x[0], reverse=True)
     ranked = [h for _, h in scored]
+    if DEBUG:
+        print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
     return ranked
+
+# ----------------------------
+# Helpers & filters (duplicate block)
+# ----------------------------
+_AUTHORITY_COMMON = [
+    "wikipedia.org", "britannica.com", "biography.com", "history.com"
+]
+_AUTHORITY_ENT = [
+    "imdb.com", "rottentomatoes.com", "metacritic.com", "boxofficemojo.com"
+]
+_AUTHORITY_SPORTS = [
+    "espn.com", "fifa.com", "nba.com", "nfl.com", "olympics.com", "formula1.com",
+    "autosport.com", "motorsport.com", "the-race.com"
+]
+_AUTHORITY_TECH = [
+    "github.com", "gitlab.com", "stackoverflow.com", "superuser.com", "serverfault.com",
+    "unix.stackexchange.com", "askubuntu.com", "archlinux.org", "kernel.org",
+    "docs.python.org", "nodejs.org", "golang.org",
+    "learn.microsoft.com", "answers.microsoft.com", "support.microsoft.com",
+    "man7.org", "linux.org"
+]
+
+_REDDIT_ALLOW_ENT = {"movies","TrueFilm","MovieDetails","tipofmytongue","criterion","oscarrace"}
+_REDDIT_ALLOW_TECH = {"learnpython","python","programming","sysadmin","devops","linux","selfhosted","homelab","docker","kubernetes","opensource","techsupport","homeassistant","homeautomation"}
+
+_DENY_DOMAINS = [
+    "zhihu.com","baidu.com","pinterest.","quora.com","tumblr.com",
+    "vk.com","weibo.","4chan","8kun","/forum","forum.","boards.",
+    "linktr.ee","tiktok.com","facebook.com","notebooklm.google.com"
+]
+
+def _tokenize(text: str) -> List[str]:
+    return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
+
+def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 1) -> bool:
+    qk = set(_tokenize(q))
+    tk = set(_tokenize((title or "") + " " + (snippet or "")))
+    stop = {"where","what","who","when","which","the","and","for","with","from","into",
+            "about","this","that","your","you","are","was","were","have","has","had",
+            "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
+    qk = {w for w in qk if w not in stop}
+    return len(qk & tk) >= min_hits
+
+def _domain_of(url: str) -> str:
+    try:
+        return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
+    except Exception:
+        return ""
+
+def _is_deny_domain(url: str) -> bool:
+    d = _domain_of(url)
+    test = d + url.lower()
+    return any(bad in test for bad in _DENY_DOMAINS)
+
+def _is_authority(url: str, vertical: str) -> bool:
+    d = _domain_of(url)
+    pool = set(_AUTHORITY_COMMON)
+    if vertical == "entertainment":
+        pool.update(_AUTHORITY_ENT)
+    elif vertical == "sports":
+        pool.update(_AUTHORITY_SPORTS)
+    elif vertical == "tech":
+        pool.update(_AUTHORITY_TECH)
+    return any(d.endswith(ad) for ad in pool)
+
+def _is_english_text(text: str, max_ratio: float = 0.3) -> bool:
+    if not text:
+        return True
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    return (non_ascii / max(1, len(text))) <= max_ratio
+
+def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -> bool:
+    if not title and not snippet:
+        return True
+    if _is_deny_domain(url):
+        return True
+    text = (title or "") + " " + (snippet or "")
+    if not _is_english_text(text, max_ratio=0.3):
+        return True
+    if not _keyword_overlap(q, title, snippet, min_hits=1):  # relaxed overlap
+        return True
+    if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|[$][0-9])\b", text, re.I):
+        return True
+    if "reddit.com" in url.lower():
+        m = re.search(r"/r/([A-Za-z0-9_]+)/", url)
+        sub = (m.group(1).lower() if m else "")
+        if vertical == "entertainment":
+            if sub not in {s.lower() for s in _REDDIT_ALLOW_ENT}:
+                return True
+        elif vertical == "tech":
+            if sub not in {s.lower() for s in _REDDIT_ALLOW_TECH}:
+                return True
+        elif vertical == "sports":
+            if sub not in {"formula1","motorsports"}:
+                return True
+    return False
+
+# Fact-style queries (duplicate)
+_FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
+_CURRENT_YEAR = datetime.datetime.utcnow().year
+
+def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
+    scored = []
+    facty = bool(_FACT_QUERY_RE.search(q))
+    for h in hits:
+        url = (h.get("url") or "")
+        title = (h.get("title") or "")
+        snip = (h.get("snippet") or "")
+        if not url:
+            continue
+        if _is_junk_result(title, snip, url, q, vertical):
+            continue
+        score = 0
+        if _is_authority(url, vertical):
+            score += 8 if facty else 6
+        u = url.lower()
+        if vertical == "tech" and ("github.com" in u or "stackoverflow.com" in u):
+            score += 3
+        if vertical == "entertainment" and ("imdb.com" in u or "rottentomatoes.com" in u or "metacritic.com" in u):
+            score += 5 if facty else 3
+        if vertical == "sports" and ("formula1.com" in u or "espn.com" in u):
+            score += 5 if facty else 3
+        score += min(len(snip)//120, 3)
+        overlap_bonus = len(set(_tokenize(q)) & set(_tokenize(title + " " + snip)))
+        score += min(overlap_bonus, 4)
+        years = re.findall(r"\b(20[0-9]{2})\b", (title or "") + " " + (snip or ""))
+        if years:
+            newest = max(int(y) for y in years)
+            if newest >= _CURRENT_YEAR:
+                score += 6 if facty else 4
+            elif newest == _CURRENT_YEAR - 1:
+                score += 4 if facty else 2
+            elif newest < _CURRENT_YEAR - 5:
+                score -= 3
+        scored.append((score, h))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [h for _, h in scored]
 
 # ----------------------------
 # Triggers
 # ----------------------------
 _WEB_TRIGGERS = [
-    r"\bgoogle\s+it\b[.!?]?", r"\bgoogle\s+for\s+me\b[.!?]?", r"\bgoogle\b[.!?]?",
-    r"\bsearch\s+the\s+internet\b[.!?]?", r"\bsearch\s+the\s+web\b[.!?]?",
-    r"\bweb\s+search\b[.!?]?", r"\binternet\s+search\b[.!?]?",
-    r"\bcheck\s+internet\b[.!?]?", r"\bcheck\s+web\b[.!?]?",
-    r"\bcheck\s+online\b[.!?]?", r"\bsearch\s+online\b[.!?]?",
-    r"\blook\s+it\s+up\b[.!?]?", r"\buse\s+the\s+internet\b[.!?]?",
-    r"\bverify\s+online\b[.!?]?", r"\bverify\s+on\s+the\s+web\b[.!?]?",
+    r"\bgoogle\s+it\b", r"\bgoogle\s+for\s+me\b", r"\bgoogle\b",
+    r"\bsearch\s+the\s+internet\b", r"\bsearch\s+the\s+web\b",
+    r"\bweb\s+search\b", r"\binternet\s+search\b",
+    r"\bcheck\s+internet\b", r"\bcheck\s+web\b",
+    r"\bcheck\s+online\b", r"\bsearch\s+online\b",
+    r"\blook\s+it\s+up\b", r"\buse\s+the\s+internet\b",
+    r"\bverify\s+online\b", r"\bverify\s+on\s+the\s+web\b",
 ]
 
 def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
-    for p in _WEB_TRIGGERS:
-        if re.search(p, ql, re.I):
-            return True
+    if any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS):
+        return True
     return False
 
 # ----------------------------
@@ -356,4 +497,119 @@ def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
 # Render
 # ----------------------------
 def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
-    lines:
+    lines: List[str] = []
+    if summary.strip():
+        lines.append(summary.strip())
+    if sources:
+        dedup, seen = [], set()
+        for title, url in sources:
+            if not url or url in seen or _is_deny_domain(url):
+                continue
+            seen.add(url)
+            dedup.append((title, url))
+        if dedup:
+            lines.append("\nSources:")
+            for title, url in dedup[:5]:
+                lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
+    return "\n".join(lines).strip()
+
+# ----------------------------
+# Public entry
+# ----------------------------
+_CACHE: Dict[str,str] = {}
+
+def _is_homeassistant_query(q: str) -> bool:
+    return bool(re.search(r"\b(light|switch|sensor|device|tracker|person|battery|soc|inverter|ha|homeassistant)\b", q, re.I))
+
+def handle_message(source: str, text: str) -> str:
+    q = (text or "").strip()
+    if not q:
+        return ""
+    try:
+        # 1) Cache
+        if q in _CACHE:
+            return _CACHE[q]
+
+        # 2) Web mode if explicitly triggered
+        if _should_use_web(q):
+            hits = _web_search(q, max_results=8)
+            if hits:
+                notes = _build_notes_from_hits(hits)
+                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
+                if not summary:
+                    h0 = hits[0]
+                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
+                sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
+                out = _render_web_answer(_clean_text(summary), sources)
+                _CACHE[q] = out
+                return out
+
+        # 3) RAG (only for HA-related queries)
+        if _is_homeassistant_query(q):
+            try:
+                from rag import inject_context
+                rag_block = inject_context(q, top_k=5)
+                if rag_block:
+                    ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
+                    clean_ans = _clean_text(ans)
+                    if clean_ans:
+                        return clean_ans
+            except Exception:
+                pass
+
+        # 4) Offline LLM
+        ans = _chat_offline_singleturn(q, max_new_tokens=256)
+        clean_ans = _clean_text(ans)
+        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {
+            "i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"
+        }
+
+        # 5) Web fallback if offline fails
+        if offline_unknown:
+            hits = _web_search(q, max_results=8)
+            if hits:
+                notes = _build_notes_from_hits(hits)
+                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
+                if not summary:
+                    h0 = hits[0]
+                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
+                sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
+                out = _render_web_answer(_clean_text(summary), sources)
+                _CACHE[q] = out
+                return out
+
+        # 6) Return offline if valid
+        if clean_ans and not offline_unknown:
+            _CACHE[q] = clean_ans
+            return clean_ans
+
+        return "I don't know."
+
+    except Exception:
+        return "I don't know."
+
+# ----------------------------
+# Cleaners
+# ----------------------------
+_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
+_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
+_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
+
+def _clean_text(s: str) -> str:
+    if not s: return s
+    out = s.replace("\r","").strip()
+    if _strip_trans:
+        try: out = _strip_trans(out)
+        except Exception: pass
+    if _scrub_pers:
+        try: out = _scrub_pers(out)
+        except Exception: pass
+    if _scrub_meta:
+        try: out = _scrub_meta(out)
+        except Exception: pass
+    return re.sub(r"\n{3,}","\n\n",out).strip()
+
+if __name__ == "__main__":
+    import sys
+    ask = " ".join(sys.argv[1:]).strip() or "Who is the current F1 leader Google it"
+    print(handle_message("cli", ask))
