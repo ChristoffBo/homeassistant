@@ -142,33 +142,28 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
 
-def _domain_of(url: str) -> str:
-    try:
-        return re.sub(r"^www\.", "", re.findall(r"https?://([^/]+)/?", url, re.I)[0].lower())
-    except Exception:
-        return ""
+# NEW: adaptive overlap threshold to avoid over-filtering facty/sports queries
+def _min_hits_for_query(q: str) -> int:
+    core = [w for w in _tokenize(q) if w not in {"where","what","who","when","which","the","and","for","with","from","into","about","this","that"}]
+    if "f1" in core or "formula" in core or "leader" in core:
+        return 1
+    return 1 if len(core) <= 2 else 2
 
-def _is_deny_domain(url: str) -> bool:
-    d = _domain_of(url)
-    test = d + url.lower()
-    return any(bad in test for bad in _DENY_DOMAINS)
-
-def _is_authority(url: str, vertical: str) -> bool:
-    d = _domain_of(url)
-    pool = set(_AUTHORITY_COMMON)
-    if vertical == "entertainment":
-        pool.update(_AUTHORITY_ENT)
-    elif vertical == "sports":
-        pool.update(_AUTHORITY_SPORTS)
-    elif vertical == "tech":
-        pool.update(_AUTHORITY_TECH)
-    return any(d.endswith(ad) for ad in pool)
-
-def _is_english_text(text: str, max_ratio: float = 0.2) -> bool:
-    if not text:
-        return True
-    non_ascii = sum(1 for ch in text if ord(ch) > 127)
-    return (non_ascii / max(1, len(text))) <= max_ratio
+# NEW: strip trigger phrases from mixed queries
+def _strip_web_triggers(q: str) -> str:
+    out = q
+    for pat in [
+        r"\bgoogle\s+it\b", r"\bgoogle\s+for\s+me\b", r"\bgoogle\b",
+        r"\bsearch\s+the\s+internet\b", r"\bsearch\s+the\s+web\b",
+        r"\bweb\s+search\b", r"\binternet\s+search\b",
+        r"\bcheck\s+internet\b", r"\bcheck\s+web\b",
+        r"\bcheck\s+online\b", r"\bsearch\s+online\b",
+        r"\blook\s+it\s+up\b", r"\buse\s+the\s+internet\b",
+        r"\bverify\s+online\b", r"\bverify\s+on\s+the\s+web\b",
+    ]:
+        out = re.sub(pat, "", out, flags=re.I)
+    out = re.sub(r"\s{2,}", " ", out).strip(" .!?-")
+    return out
 def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -> bool:
     if not title and not snippet:
         return True
@@ -177,7 +172,9 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
     text = (title or "") + " " + (snippet or "")
     if not _is_english_text(text, max_ratio=0.2):
         return True
-    if not _keyword_overlap(q, title, snippet, min_hits=2):
+    # use adaptive threshold
+    min_hits = _min_hits_for_query(q)
+    if not _keyword_overlap(q, title, snippet, min_hits=min_hits):
         return True
     if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|[$][0-9])\b", text, re.I):
         return True
@@ -255,6 +252,7 @@ _WEB_TRIGGERS = [
 
 def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
+    # Explicit triggers always force web mode
     if any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS):
         return True
     return False
@@ -271,7 +269,7 @@ def _cb_open(backend: str) -> bool:
     return (time.time() - CIRCUIT_BREAKERS[backend]) < CB_TIMEOUT
 
 # ----------------------------
-# Web search backends
+# Web search backends (FREE, no keys)
 # ----------------------------
 def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = "us-en") -> List[Dict[str, str]]:
     if _cb_open("ddg_lib"): return []
@@ -374,7 +372,7 @@ def _build_query_by_vertical(q: str, vertical: str) -> str:
 
 def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
     hits: List[Dict[str,str]] = []
-    # Wikipedia first
+    # Wikipedia first for fast fact queries (bios, definitions)
     hits.extend(_search_with_wikipedia(raw_q))
     if len(hits) >= max_results:
         return hits
@@ -438,7 +436,7 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
 # Public entry
 # ----------------------------
 _CACHE: Dict[str,str] = {}
-_LAST_QUERY: Optional[str] = None  # <-- stores last non-trigger query
+_LAST_QUERY: Optional[str] = None  # stores last non-trigger real question
 
 def handle_message(source: str, text: str) -> str:
     global _LAST_QUERY
@@ -448,14 +446,20 @@ def handle_message(source: str, text: str) -> str:
     try:
         if DEBUG: print("IN_MSG:", q)
 
-        # Cache hit
+        # Cache hit (exact text)
         if q in _CACHE:
             if DEBUG: print("CACHE_HIT")
             return _CACHE[q]
 
-        # If this is a web trigger phrase, reuse the last stored query
-        if _should_use_web(q):
-            real_q = _LAST_QUERY if _LAST_QUERY else q
+        is_trigger = _should_use_web(q)
+        stripped = _strip_web_triggers(q)
+
+        # If it's a web trigger:
+        if is_trigger:
+            # Use stripped part if present; otherwise reuse last real query
+            real_q = stripped if stripped else (_LAST_QUERY or q)
+            if not real_q:
+                return "No results found."
             hits = _web_search(real_q, max_results=8)
             if hits:
                 notes = _build_notes_from_hits(hits)
@@ -466,37 +470,41 @@ def handle_message(source: str, text: str) -> str:
                 sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
                 out = _render_web_answer(_clean_text(summary), sources)
                 _CACHE[real_q] = out
+                _LAST_QUERY = real_q
                 return out
+            _LAST_QUERY = real_q
             return "No results found."
 
-        # Otherwise: normal offline → rag + Jarvis
-        _LAST_QUERY = q  # store for later trigger use
+        # Otherwise (no trigger): default path → RAG then offline Jarvis
+        real_q = stripped if stripped else q
+        _LAST_QUERY = real_q  # remember for a future "Google it"
 
-        # Try RAG first
+        # 1) Try RAG context first
         try:
             from rag import inject_context
             rag_block = ""
             try:
-                rag_block = inject_context(q, top_k=5)
+                rag_block = inject_context(real_q, top_k=5)
             except Exception:
                 pass
             if rag_block:
-                ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
+                ans = _chat_offline_summarize(real_q, rag_block, max_new_tokens=256)
                 clean_ans = _clean_text(ans)
                 if clean_ans:
                     if DEBUG: print("RAG_HIT")
-                    _CACHE[q] = clean_ans
+                    _CACHE[real_q] = clean_ans
                     return clean_ans
         except Exception:
             pass
 
-        # Offline Jarvis
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
+        # 2) Offline Jarvis
+        ans = _chat_offline_singleturn(real_q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
         if clean_ans:
-            _CACHE[q] = clean_ans
+            _CACHE[real_q] = clean_ans
             return clean_ans
 
+        # 3) Final fallback (no auto-web)
         return "I don't know."
 
     except Exception:
