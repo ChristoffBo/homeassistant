@@ -132,7 +132,7 @@ _DENY_DOMAINS = [
 def _tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2]
 
-def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> bool:
+def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 1) -> bool:
     qk = set(_tokenize(q))
     tk = set(_tokenize((title or "") + " " + (snippet or "")))
     stop = {"where","what","who","when","which","the","and","for","with","from","into",
@@ -163,7 +163,7 @@ def _is_authority(url: str, vertical: str) -> bool:
         pool.update(_AUTHORITY_TECH)
     return any(d.endswith(ad) for ad in pool)
 
-def _is_english_text(text: str, max_ratio: float = 0.2) -> bool:
+def _is_english_text(text: str, max_ratio: float = 0.3) -> bool:
     if not text:
         return True
     non_ascii = sum(1 for ch in text if ord(ch) > 127)
@@ -175,7 +175,7 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
     if _is_deny_domain(url):
         return True
     text = (title or "") + " " + (snippet or "")
-    if not _is_english_text(text, max_ratio=0.2):
+    if not _is_english_text(text, max_ratio=0.3):
         return True
     if not _keyword_overlap(q, title, snippet, min_hits=1):  # relaxed overlap
         return True
@@ -197,7 +197,6 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
 
 # Fact-style queries (used by ranker)
 _FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
-
 _CURRENT_YEAR = datetime.datetime.utcnow().year
 
 def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[str,str]]:
@@ -235,10 +234,8 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
                 score -= 3
         scored.append((score, h))
     scored.sort(key=lambda x: x[0], reverse=True)
-    ranked = [h for _, h in scored]
-    if DEBUG:
-        print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
-    return ranked
+    return [h for _, h in scored]
+
 # ----------------------------
 # Triggers
 # ----------------------------
@@ -277,7 +274,6 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
     try:
         from duckduckgo_search import DDGS
     except Exception:
-        if DEBUG: print("DDG_LIB_IMPORT_FAIL")
         return []
     try:
         out: List[Dict[str, str]] = []
@@ -289,46 +285,9 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
                 if title and url:
                     out.append({"title": title, "url": url, "snippet": snippet})
         return out
-    except Exception as e:
+    except Exception:
         _cb_fail("ddg_lib")
-        if DEBUG: print("DDG_LIB_ERR", repr(e))
         return []
-
-def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
-    if _cb_open("ddg_api"): return []
-    try:
-        url = "https://api.duckduckgo.com/"
-        params = {"q": query, "format": "json", "no_redirect": "1", "no_html": "1", "skip_disambig": "0", "kl": "us-en"}
-        r = requests.get(url, params=params, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        _cb_fail("ddg_api")
-        if DEBUG: print("DDG_API_ERR", repr(e))
-        return []
-    results: List[Dict[str, str]] = []
-    def _push(title: str, url: str, snippet: str):
-        if title and url:
-            results.append({"title": title, "url": url, "snippet": snippet})
-    if data.get("AbstractText") and data.get("AbstractURL"):
-        _push(data.get("AbstractSource") or "DuckDuckGo Abstract", data.get("AbstractURL"), data.get("AbstractText"))
-    for it in (data.get("Results") or []):
-        _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-    for it in (data.get("RelatedTopics") or []):
-        if "Topics" in it:
-            for t in it["Topics"]:
-                _push(t.get("Text") or "", t.get("FirstURL") or "", t.get("Text") or "")
-        else:
-            _push(it.get("Text") or "", it.get("FirstURL") or "", it.get("Text") or "")
-    deduped, seen = [], set()
-    for r in results:
-        u = r.get("url") or ""
-        if u and u not in seen:
-            seen.add(u)
-            deduped.append(r)
-        if len(deduped) >= max_results:
-            break
-    return deduped
 
 def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]:
     try:
@@ -344,7 +303,6 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]
     except Exception:
         return []
     return []
-
 # ----------------------------
 # Query shaping + backoffs
 # ----------------------------
@@ -366,10 +324,6 @@ def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int
         return hits
     # DDG lib
     hits.extend(_search_with_duckduckgo_lib(shaped_q, max_results=max_results))
-    if len(hits) >= max_results:
-        return hits
-    # DDG API
-    hits.extend(_search_with_ddg_api(shaped_q, max_results=max_results))
     return hits[:max_results]
 
 # ----------------------------
