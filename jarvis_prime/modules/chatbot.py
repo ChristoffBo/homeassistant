@@ -177,7 +177,6 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
     text = (title or "") + " " + (snippet or "")
     if not _is_english_text(text, max_ratio=0.2):
         return True
-    # relaxed: allow more hits for short queries; min_hits adaptive
     if not _keyword_overlap(q, title, snippet, min_hits=1):
         return True
     if re.search(r"\b(price|venmo|cashapp|zelle|paypal|gift\s*card|promo\s*code|digital\s*code|[$][0-9])\b", text, re.I):
@@ -236,8 +235,6 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
         scored.append((score, h))
     scored.sort(key=lambda x: x[0], reverse=True)
     ranked = [h for _, h in scored]
-    if DEBUG:
-        print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
     return ranked
 
 # ----------------------------
@@ -257,8 +254,6 @@ def _should_use_web(q: str) -> bool:
     ql = (q or "").lower()
     for p in _WEB_TRIGGERS:
         if re.search(p, ql, re.I):
-            if DEBUG:
-                print(f"Trigger matched: {p}")
             return True
     return False
 
@@ -325,11 +320,9 @@ def _build_query_by_vertical(q: str, vertical: str) -> str:
 
 def _try_all_backoffs(raw_q: str, shaped_q: str, vertical: str, max_results: int) -> List[Dict[str,str]]:
     hits: List[Dict[str,str]] = []
-    # Wikipedia first
     hits.extend(_search_with_wikipedia(raw_q))
     if len(hits) >= max_results:
         return hits
-    # DDG lib
     hits.extend(_search_with_duckduckgo_lib(shaped_q, max_results=max_results))
     return hits[:max_results]
 
@@ -363,105 +356,4 @@ def _build_notes_from_hits(hits: List[Dict[str, str]]) -> str:
 # Render
 # ----------------------------
 def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
-    lines: List[str] = []
-    if summary.strip():
-        lines.append(summary.strip())
-    if sources:
-        dedup, seen = [], set()
-        for title, url in sources:
-            if not url or url in seen or _is_deny_domain(url):
-                continue
-            seen.add(url)
-            dedup.append((title, url))
-        if dedup:
-            lines.append("\nSources:")
-            for title, url in dedup[:5]:
-                lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
-    return "\n".join(lines).strip()
-
-# ----------------------------
-# Public entry
-# ----------------------------
-_CACHE: Dict[str,str] = {}
-
-def handle_message(source: str, text: str) -> str:
-    q = (text or "").strip()
-    if not q:
-        return ""
-    try:
-        # 1) Try RAG
-        try:
-            from rag import inject_context
-            rag_block = ""
-            try:
-                rag_block = inject_context(q, top_k=5)
-            except Exception:
-                pass
-            if rag_block:
-                ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
-                clean_ans = _clean_text(ans)
-                if clean_ans:
-                    return clean_ans
-        except Exception:
-            pass
-
-        # 2) Cache
-        if q in _CACHE:
-            return _CACHE[q]
-
-        # 3) Offline LLM
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
-        clean_ans = _clean_text(ans)
-        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {
-            "i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"
-        }
-
-        # 4) Web mode if triggered or unknown
-        if _should_use_web(q) or offline_unknown:
-            hits = _web_search(q, max_results=8)
-            if hits:
-                notes = _build_notes_from_hits(hits)
-                summary = _chat_offline_summarize(q, notes, max_new_tokens=320).strip()
-                if not summary:
-                    h0 = hits[0]
-                    summary = h0.get("snippet") or h0.get("title") or "Here are some sources I found."
-                sources = [(h.get("title") or h.get("url") or "", h.get("url") or "") for h in hits if h.get("url")]
-                out = _render_web_answer(_clean_text(summary), sources)
-                _CACHE[q] = out
-                return out
-
-        # 5) Use offline if valid
-        if clean_ans and not offline_unknown:
-            _CACHE[q] = clean_ans
-            return clean_ans
-
-        return "I don't know."
-
-    except Exception:
-        return "I don't know."
-
-# ----------------------------
-# Cleaners
-# ----------------------------
-_scrub_meta = getattr(_LLM, "_strip_meta_markers", None) if _LLM else None
-_scrub_pers = getattr(_LLM, "_scrub_persona_tokens", None) if _LLM else None
-_strip_trans = getattr(_LLM, "_strip_transport_tags", None) if _LLM else None
-
-def _clean_text(s: str) -> str:
-    if not s: return s
-    out = s.replace("\r","").strip()
-    if _strip_trans:
-        try: out = _strip_trans(out)
-        except Exception: pass
-    if _scrub_pers:
-        try: out = _scrub_pers(out)
-        except Exception: pass
-    if _scrub_meta:
-        try: out = _scrub_meta(out)
-        except Exception: pass
-    return re.sub(r"\n{3,}","\n\n",out).strip()
-
-if __name__ == "__main__":
-    import sys
-    ask = " ".join(sys.argv[1:]).strip() or "Who is the current F1 leader Google it"
-    print(handle_message("cli", ask))
+    lines:
