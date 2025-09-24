@@ -25,31 +25,44 @@ INCLUDE_DOMAINS = None
 
 # ----------------- Keywords / Integrations -----------------
 
-# Energy / Solar
-SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
+# Energy / Solar / Inverter
+SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export","axpert"}
 SONOFF_KEYWORDS  = {"sonoff"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
 MQTT_KEYWORDS    = {"mqtt"}
 TUYA_KEYWORDS    = {"tuya","localtuya","local_tuya"}
 
 # Media (separate + combined)
-PLEX_KEYWORDS    = {"plex"}
-EMBY_KEYWORDS    = {"emby"}
-JELLYFIN_KEYWORDS= {"jellyfin"}
-KODI_KEYWORDS    = {"kodi","xbmc"}
-TV_KEYWORDS      = {"tv","androidtv","chromecast","google_tv"}
-RADARR_KEYWORDS  = {"radarr"}
-SONARR_KEYWORDS  = {"sonarr"}
-LIDARR_KEYWORDS  = {"lidarr"}
-BAZARR_KEYWORDS  = {"bazarr"}
-READARR_KEYWORDS = {"readarr"}
-SONOS_KEYWORDS   = {"sonos"}
-AMP_KEYWORDS     = {"denon","onkyo","yamaha","marantz"}
+PLEX_KEYWORDS     = {"plex"}
+EMBY_KEYWORDS     = {"emby"}
+JELLYFIN_KEYWORDS = {"jellyfin"}
+KODI_KEYWORDS     = {"kodi","xbmc"}
+TV_KEYWORDS       = {"tv","androidtv","chromecast","google_tv"}
+RADARR_KEYWORDS   = {"radarr"}
+SONARR_KEYWORDS   = {"sonarr"}
+LIDARR_KEYWORDS   = {"lidarr"}
+BAZARR_KEYWORDS   = {"bazarr"}
+READARR_KEYWORDS  = {"readarr"}
+SONOS_KEYWORDS    = {"sonos"}
+AMP_KEYWORDS      = {"denon","onkyo","yamaha","marantz"}
 
 MEDIA_KEYWORDS   = set().union(
     PLEX_KEYWORDS, EMBY_KEYWORDS, JELLYFIN_KEYWORDS, KODI_KEYWORDS, TV_KEYWORDS,
     RADARR_KEYWORDS, SONARR_KEYWORDS, LIDARR_KEYWORDS, BAZARR_KEYWORDS, READARR_KEYWORDS,
     SONOS_KEYWORDS, AMP_KEYWORDS, {"media","player"}
+)
+
+# Infrastructure / homelab
+PROXMOX_KEYWORDS  = {"proxmox","pve"}
+UNRAID_KEYWORDS   = {"unraid"}
+DOCKER_KEYWORDS   = {"docker","container"}
+VM_KEYWORDS       = {"vm","virtual_machine","virtual"}
+FORECAST_KEYWORDS = {"forecast","forecast_solar"}
+WEATHERBIT_KEYWORDS = {"weatherbit"}
+
+INFRA_KEYWORDS = set().union(
+    PROXMOX_KEYWORDS, UNRAID_KEYWORDS, DOCKER_KEYWORDS, VM_KEYWORDS,
+    FORECAST_KEYWORDS, WEATHERBIT_KEYWORDS
 )
 
 # ----------------- Device-class priority -----------------
@@ -69,11 +82,8 @@ QUERY_SYNONYMS = {
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
     "where": ["where","location","zone","home","work","present"],
-    "movies": ["movies","radarr"],
-    "series": ["series","shows","sonarr"],
-    "music": ["music","songs","lidarr"],
-    "subtitles": ["subtitles","bazarr"],
-    "books": ["books","ebooks","readarr"],
+    "media": ["media","plex","emby","jellyfin","kodi","tv","androidtv","chromecast","google_tv","radarr","sonarr","lidarr","bazarr","readarr","sonos"],
+    "infra": ["infra","proxmox","pve","unraid","docker","vm","virtual","forecast","weatherbit"]
 }
 
 # Intent → categories we prefer
@@ -85,6 +95,7 @@ INTENT_CATEGORY_MAP = {
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
     "media": {"media"},
+    "infra": {"infra"}
 }
 
 REFRESH_INTERVAL_SEC = 15*60
@@ -196,6 +207,16 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if toks & SONOS_KEYWORDS: cats.add("media.sonos")
         if toks & AMP_KEYWORDS: cats.add("media.amplifier")
 
+    # Infrastructure / homelab
+    if any(k in toks for k in INFRA_KEYWORDS):
+        cats.add("infra")
+        if toks & PROXMOX_KEYWORDS: cats.add("infra.proxmox")
+        if toks & UNRAID_KEYWORDS: cats.add("infra.unraid")
+        if toks & DOCKER_KEYWORDS: cats.add("infra.docker")
+        if toks & VM_KEYWORDS: cats.add("infra.vm")
+        if toks & FORECAST_KEYWORDS: cats.add("infra.forecast")
+        if toks & WEATHERBIT_KEYWORDS: cats.add("infra.weatherbit")
+
     return cats
 
 # ----------------- fetch + summarize -----------------
@@ -262,6 +283,8 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
             if "solar_assistant" in "_".join(toks): score+=3
+            if any(k in toks for k in MEDIA_KEYWORDS): score+=6
+            if any(k in toks for k in INFRA_KEYWORDS): score+=6
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
             if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
@@ -284,7 +307,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
-
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -334,6 +356,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
+
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -349,6 +372,8 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"energy.load"})
     if q_tokens & MEDIA_KEYWORDS:
         out.update({"media"})
+    if q_tokens & INFRA_KEYWORDS:
+        out.update({"infra"})
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
@@ -376,6 +401,11 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
+    elif q & INFRA_KEYWORDS:
+        facts = [f for f in facts if any(
+            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
+            for m in INFRA_KEYWORDS
+        )]
 
     want_cats = _intent_categories(q)
 
@@ -385,10 +415,10 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
 
-        if q and (q & ft): 
-            s += 3
-        if q & SOLAR_KEYWORDS: 
-            s += 2
+        if q and (q & ft): s += 3
+        if q & SOLAR_KEYWORDS: s += 2
+        if q & MEDIA_KEYWORDS: s += 2
+        if q & INFRA_KEYWORDS: s += 2
 
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
             s += 12
