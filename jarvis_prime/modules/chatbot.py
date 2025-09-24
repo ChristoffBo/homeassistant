@@ -3,7 +3,7 @@
 #
 # Jarvis Prime – Chat lane service (chat + optional web fallback)
 # - Default: offline Jarvis LLM chat via llm_client.chat_generate
-# - Web mode if wake words are present OR offline LLM fails OR offline text says "cannot search / please verify / unsure"
+# - Web mode only if wake words are present ("google it", "search the web", etc.)
 # - Topic aware routing:
 #     * entertainment: IMDb/Wikipedia/RT/Metacritic (Reddit only vetted movie subs, not for fact queries)
 #     * tech/dev: GitHub + StackExchange + Reddit tech subs
@@ -195,7 +195,6 @@ def _is_junk_result(title: str, snippet: str, url: str, q: str, vertical: str) -
             if sub not in {"formula1","motorsports"}:
                 return True
     return False
-
 # Fact-style queries (used by ranker)
 _FACT_QUERY_RE = re.compile(r"\b(last|latest|when|date|year|who|winner|won|result|release|final|most recent|current leader)\b", re.I)
 
@@ -240,6 +239,7 @@ def _rank_hits(q: str, hits: List[Dict[str,str]], vertical: str) -> List[Dict[st
     if DEBUG:
         print("RANKED_TOP_URLS:", [h.get("url") for h in ranked[:8]])
     return ranked
+
 # ----------------------------
 # Triggers
 # ----------------------------
@@ -360,9 +360,8 @@ def _search_with_wikipedia(query: str, timeout: int = 6) -> List[Dict[str, str]]
         return []
     if DEBUG: print("WIKI_NO_HIT Q:", query)
     return []
-
 # ----------------------------
-# Query shaping + backoffs (FIXED)
+# Query shaping + backoffs
 # ----------------------------
 def _build_query_by_vertical(q: str, vertical: str) -> str:
     q = q.strip()
@@ -435,6 +434,7 @@ def _render_web_answer(summary: str, sources: List[Tuple[str, str]]) -> str:
             for title, url in dedup[:5]:
                 lines.append(f"• {title.strip() or _domain_of(url)} — {url.strip()}")
     return "\n".join(lines).strip()
+
 # ----------------------------
 # Public entry
 # ----------------------------
@@ -472,12 +472,8 @@ def handle_message(source: str, text: str) -> str:
         ans = _chat_offline_singleturn(q, max_new_tokens=256)
         clean_ans = _clean_text(ans)
 
-        offline_unknown = (not clean_ans) or clean_ans.strip().lower() in {
-            "i don't know.","i dont know","unknown","no idea","i'm not sure","i am unsure"
-        }
-
-        # 4) Web mode if explicitly requested OR offline is unknown
-        if _should_use_web(q) or offline_unknown:
+        # 4) Web mode only if explicitly requested
+        if _should_use_web(q):
             hits = _web_search(q, max_results=8)
             if hits:
                 notes = _build_notes_from_hits(hits)
@@ -490,8 +486,8 @@ def handle_message(source: str, text: str) -> str:
                 _CACHE[q] = out
                 return out
 
-        # 5) If offline had a decent answer, use it
-        if clean_ans and not offline_unknown:
+        # 5) If offline had an answer, return it
+        if clean_ans:
             _CACHE[q] = clean_ans
             return clean_ans
 
