@@ -12,7 +12,7 @@
 # - Filters: English-only, block junk/low-signal domains, require keyword overlap
 # - Ranking: authority + keyword overlap + strong recency for facts
 # - Fallbacks: summarizer fallback + direct snippet mode for fact queries
-# - Integrations: DuckDuckGo, Wikipedia, Reddit (vetted), GitHub (tech)
+# - Integrations: DuckDuckGo (ddgs), Wikipedia, Reddit (vetted), GitHub (tech)
 # - Free, no-register APIs only
 # - Human behavior heuristics: prefer clear facts, recency, multiple perspectives, avoid spammy/repetitive sources
 
@@ -99,7 +99,6 @@ def _detect_intent(q: str) -> str:
     if re.search(r"\b(movie|film)\b", ql):
         return "entertainment"
     return "general"
-
 # ----------------------------
 # Helpers & filters
 # ----------------------------
@@ -141,6 +140,7 @@ def _keyword_overlap(q: str, title: str, snippet: str, min_hits: int = 2) -> boo
             "movie","film","films","videos","watch","code","codes","list","sale","sell","selling"}
     qk = {w for w in qk if w not in stop}
     return len(qk & tk) >= min_hits
+
 # NEW: adaptive overlap threshold to avoid over-filtering facty/sports queries
 def _min_hits_for_query(q: str) -> int:
     core = [w for w in _tokenize(q) if w not in {"where","what","who","when","which","the","and","for","with","from","into","about","this","that"}]
@@ -256,7 +256,6 @@ def _should_use_web(q: str) -> bool:
     if any(re.search(p, ql, re.I) for p in _WEB_TRIGGERS):
         return True
     return False
-
 # ----------------------------
 # Circuit breaker helpers
 # ----------------------------
@@ -296,6 +295,7 @@ def _search_with_duckduckgo_lib(query: str, max_results: int = 6, region: str = 
         if DEBUG:
             print("DDG_LIB_ERR", repr(e))
         return []
+
 def _search_with_ddg_api(query: str, max_results: int = 6, timeout: int = 6) -> List[Dict[str, str]]:
     if _cb_open("ddg_api"): return []
     try:
