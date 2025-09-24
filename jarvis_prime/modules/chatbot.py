@@ -2,6 +2,7 @@
 
 import os, re, traceback
 from typing import Dict
+from datetime import datetime, timezone
 
 DEBUG = bool(os.environ.get("JARVIS_DEBUG"))
 _CACHE: Dict[str, str] = {}
@@ -17,14 +18,16 @@ except Exception:
 def _llm_ready() -> bool:
     return _LLM is not None and hasattr(_LLM, "chat_generate")
 
-def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
+def _chat_offline_singleturn(user_msg: str, current_time: str, max_new_tokens: int = 256) -> str:
     if not _llm_ready():
         return ""
     try:
         return _LLM.chat_generate(
             messages=[{"role": "user", "content": user_msg}],
             system_prompt=(
-                "You are Jarvis, a helpful and factual assistant. "
+                f"You are Jarvis, a helpful and factual assistant. "
+                f"The current date and time is {current_time}. "
+                "Use this for context when relevant. "
                 "Answer clearly if you know. If you truly cannot answer, say 'I don't know'."
             ),
             max_new_tokens=max_new_tokens,
@@ -32,13 +35,14 @@ def _chat_offline_singleturn(user_msg: str, max_new_tokens: int = 256) -> str:
     except Exception:
         return ""
 
-def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320) -> str:
+def _chat_offline_summarize(question: str, notes: str, current_time: str, max_new_tokens: int = 320) -> str:
     if not _llm_ready():
         return ""
     sys_prompt = (
-        "You are Jarvis, a concise synthesizer. Using only the provided bullet notes, "
-        "write a clear 4–6 sentence answer. Prefer concrete facts & dates. Avoid speculation. "
-        "If info is conflicting, note it briefly. Rank recent and authoritative notes higher."
+        f"You are Jarvis, a concise synthesizer. The current date/time is {current_time}. "
+        "Using only the provided bullet notes, write a clear 4–6 sentence answer. "
+        "Prefer concrete facts & dates. Avoid speculation. "
+        "If info is conflicting, note it briefly."
     )
     msgs = [
         {"role": "system", "content": sys_prompt},
@@ -52,14 +56,14 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
 # ----------------------------
 # RAG helpers
 # ----------------------------
-def _try_rag_context(q: str) -> str:
+def _try_rag_context(q: str, current_time: str) -> str:
     try:
         from rag import inject_context
         rag_block = inject_context(q, top_k=5)
     except Exception:
         rag_block = ""
     if rag_block:
-        ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
+        ans = _chat_offline_summarize(q, rag_block, current_time, max_new_tokens=256)
         return _clean_text(ans)
     return ""
 
@@ -95,8 +99,11 @@ def handle_message(source: str, text: str) -> str:
     try:
         if DEBUG: print("IN_MSG:", q)
 
+        # current time (UTC ISO style, safe for context)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
+
         # 1) Try RAG context
-        rag_ans = _try_rag_context(q)
+        rag_ans = _try_rag_context(q, now)
         if rag_ans:
             return rag_ans
 
@@ -106,7 +113,7 @@ def handle_message(source: str, text: str) -> str:
             return _CACHE[q]
 
         # 3) Offline Jarvis
-        ans = _chat_offline_singleturn(q, max_new_tokens=256)
+        ans = _chat_offline_singleturn(q, now, max_new_tokens=256)
         clean_ans = _clean_text(ans)
 
         # 4) Save to cache and return if valid
