@@ -189,7 +189,6 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         if not r.ok:
             return None
         j = r.json() or {}
-        # Prefer numeric state; else try common attribute names
         if "state" in j:
             v = j.get("state")
             if v is not None and str(v).lower() not in ("unknown", "unavailable"):
@@ -239,16 +238,6 @@ def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str
     return None, None
 
 def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[str, Any]) -> str:
-    """
-    Decide profile using thresholds and hysteresis.
-    Bands (from hottest to coolest):
-      OFF:   temp >= off_c
-      HOT:   off_c > temp >= hot_c
-      NORMAL: hot_c > temp > boost_c (above normal_c if set; otherwise default middle band)
-      BOOST: temp <= boost_c
-      COLD:  optional extra band if temp <= cold_c and a 'cold' profile exists
-    Hysteresis: require crossing thresholds +/- hyst before switching out of current band.
-    """
     off_c   = float(cfg.get("off_c"))
     hot_c   = float(cfg.get("hot_c"))
     normal_c= float(cfg.get("normal_c"))
@@ -258,24 +247,19 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
 
     lp = (last_profile or "normal").lower()
 
-    # Determine target band without hysteresis
     def band_of(t: float) -> str:
         if t >= off_c:
             return "off"
         if t >= hot_c:
             return "hot"
         if t <= boost_c:
-            # prefer explicit 'boost' if defined, else fall back to 'cold' if provided
             return "boost" if "boost" in cfg.get("profiles", {}) else ("cold" if "cold" in cfg.get("profiles", {}) else "normal")
-        # optional cold band even lower than boost
         if "cold" in cfg.get("profiles", {}) and t <= cold_c:
             return "cold"
-        # middle band
         return "normal"
 
     target = band_of(temp_c)
 
-    # Hysteresis edges for leaving current band
     if lp == "off":
         if temp_c <= off_c - hyst:
             return band_of(temp_c)
@@ -292,8 +276,6 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
         if temp_c >= cold_c + hyst:
             return band_of(temp_c)
         return "cold"
-
-    # lp == normal
     return target
 
 # ------------------------------
@@ -310,13 +292,9 @@ def get_boot_status_line(merged: dict) -> str:
     return "🌡️ EnviroGuard — ACTIVE" + suffix
 
 def command(want: str, merged: dict, send_message) -> bool:
-    """
-    Handle 'jarvis env <auto|PROFILE>' routed from bot.
-    """
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
 
-    # NEW: if no arg given, just report status
     if not w:
         prof = _state.get("profile", "normal")
         mode = _state.get("mode", "auto")
@@ -355,7 +333,6 @@ def command(want: str, merged: dict, send_message) -> bool:
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
-    # Initial apply from current profile to ensure knobs are set
     _apply_profile(_state.get("profile","normal"), merged, cfg)
     while True:
         try:
@@ -371,7 +348,6 @@ async def _poll_loop(merged: dict, send_message) -> None:
 
             if _state.get("mode","auto") == "auto" and temp_c is not None:
                 last = _state.get("profile","normal")
-                # OFF safety check first
                 if temp_c >= float(cfg.get("off_c")) - 0.0:
                     nextp = "off"
                 else:
@@ -390,12 +366,34 @@ async def _poll_loop(merged: dict, send_message) -> None:
                         except Exception:
                             pass
         except Exception as e:
-            # keep the loop alive
             print(f"[EnviroGuard] poll error: {e}")
         await asyncio.sleep(poll * 60)
 
 def start_background_poll(merged: dict, send_message) -> None:
-    """
-    Create/replace the background polling task. Safe to call multiple times.
-    """
-    # Initialize enabled flag & profile from
+    cfg = _cfg_from(merged)
+    _state["enabled"] = bool(cfg.get("enabled"))
+    _state["mode"] = _state.get("mode","auto")
+    _state["profile"] = _state.get("profile","normal")
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    t = _state.get("task")
+    if t and isinstance(t, asyncio.Task) and not t.done():
+        try:
+            t.cancel()
+        except Exception:
+            pass
+
+    _state["task"] = loop.create_task(_poll_loop(merged, send_message))
+
+def stop_background_poll() -> None:
+    t = _state.get("task")
+    if t and isinstance(t, asyncio.Task) and not t.done():
+        try:
+            t.cancel()
+        except Exception:
+            pass
+    _state["task"] = None
