@@ -3,8 +3,8 @@
 # EnviroGuard — ambient-aware LLM performance governor for Jarvis Prime
 #
 # Responsibilities:
-# - Prefer Home Assistant indoor temperature; fallback to Open‑Meteo outdoor
-# - Decide a profile (off/hot/normal/boost/cold/manual) using hysteresis to avoid flapping
+# - Prefer Home Assistant indoor temperature; fallback to Open-Meteo outdoor
+# - Decide a profile (off/ hot/ normal/ boost/ cold/ manual) using hysteresis to avoid flapping
 # - Apply profile by updating the shared "merged" config + select env vars
 # - OFF profile (or cpu_percent <= 0) hard-disables LLM/riffs to protect the host
 #
@@ -68,7 +68,7 @@ _cfg_template: Dict[str, Any] = {
     "ha_url": "",
     "ha_token": "",
     "ha_temperature_entity": "",
-    # Fallback Open‑Meteo
+    # Fallback Open-Meteo
     "weather_enabled": True,
     "weather_lat": -26.2041,
     "weather_lon": 28.0473,
@@ -206,7 +206,7 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         return None
 
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
-    """Get outdoor temperature from Open‑Meteo (fallback)."""
+    """Get outdoor temperature from Open-Meteo (fallback)."""
     if not cfg.get("weather_enabled", True):
         return None
     lat = cfg.get("weather_lat", -26.2041)
@@ -229,7 +229,7 @@ def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     return None
 
 def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
-    """Return (effective_temp_c, source). Prefer HA; fallback to Open‑Meteo."""
+    """Return (effective_temp_c, source). Prefer HA; fallback to Open-Meteo."""
     t = _ha_get_temperature(cfg)
     if t is not None:
         return round(float(t), 1), "homeassistant"
@@ -301,38 +301,75 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
 # ------------------------------
 def get_boot_status_line(merged: dict) -> str:
     cfg = _cfg_from(merged)
+    mode = _state.get("mode", "auto")
     if not cfg.get("enabled"):
-        return "🌡️ EnviroGuard — OFF"
+        return f"🌡️ EnviroGuard — OFF (mode={mode})"
     prof = _state.get("profile", "normal")
     t = _state.get("last_temp_c")
     src = _state.get("source") or "?"
-    suffix = f" (profile={prof}, {t} °C, src={src})" if t is not None else f" (profile={prof}, src={src})"
+    suffix = f" (mode={mode}, profile={prof}, {t} °C, src={src})" if t is not None else f" (mode={mode}, profile={prof}, src={src})"
     return "🌡️ EnviroGuard — ACTIVE" + suffix
 
 def command(want: str, merged: dict, send_message) -> bool:
     """
     Handle 'jarvis env <auto|PROFILE>' routed from bot.
+    If no argument, show current state (mode, profile, temp/source).
     """
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
-    if w == "auto":
-        _state["mode"] = "auto"
+
+    # Report current state when no argument is provided
+    if not w:
+        mode = _state.get("mode", "auto")
+        prof = _state.get("profile", "normal")
+        t = _state.get("last_temp_c")
+        src = _state.get("source") or "?"
+        msg = f"Mode={mode.upper()}, profile={prof.upper()}, src={src}"
+        if t is not None:
+            msg += f", {t:.1f}°C"
         if callable(send_message):
             try:
-                send_message("EnviroGuard", "Auto mode resumed — ambient temperature will control the profile.", priority=4, decorate=False)
+                send_message("EnviroGuard", msg, priority=4, decorate=False)
             except Exception:
                 pass
         return True
+
+    # Switch to AUTO mode
+    if w == "auto":
+        changed = (_state.get("mode") != "auto")
+        _state["mode"] = "auto"
+        if callable(send_message):
+            try:
+                text = "Switched to AUTO mode — ambient temperature will control the profile."
+                if not changed:
+                    text = "Already in AUTO mode — ambient temperature controls the profile."
+                send_message("EnviroGuard", text, priority=4, decorate=False)
+            except Exception:
+                pass
+        return True
+
+    # Manual profile selection
     profiles = (cfg.get("profiles") or {}).keys()
     if w in profiles:
+        was_mode = _state.get("mode")
         _state["mode"] = "manual"
         _apply_profile(w, merged, cfg)
         if callable(send_message):
             try:
-                send_message("EnviroGuard", f"Manual override → profile **{w.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)", priority=4, decorate=False)
+                prefix = "Switched to MANUAL" if was_mode != "manual" else "MANUAL override"
+                send_message(
+                    "EnviroGuard",
+                    (f"{prefix} → profile **{w.upper()}** "
+                     f"(CPU={merged.get('llm_max_cpu_percent')}%, "
+                     f"ctx={merged.get('llm_ctx_tokens')}, "
+                     f"to={merged.get('llm_timeout_seconds')}s)"),
+                    priority=4,
+                    decorate=False
+                )
             except Exception:
                 pass
         return True
+
     return False
 
 async def _poll_loop(merged: dict, send_message) -> None:
