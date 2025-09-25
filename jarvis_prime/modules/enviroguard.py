@@ -17,7 +17,11 @@
 # Dependency: requests
 
 from __future__ import annotations
-import os, json, time, asyncio, requests
+import os
+import json
+import time
+import asyncio
+import requests
 from typing import Optional, Dict, Any, Tuple
 
 # ------------------------------
@@ -32,7 +36,7 @@ _state: Dict[str, Any] = {
     "source": None,        # 'homeassistant' | 'open-meteo' | None
     "task": None,          # asyncio.Task or None
     "forced_off": False,   # we turned LLM off due to OFF profile
-    "profile_source": "defaults",  # --- ADDITIVE: track if values came from options.json or defaults
+    "profile_source": "defaults",  # track if profile values came from options.json or defaults
 }
 
 # Default configuration template
@@ -56,7 +60,7 @@ _cfg_template: Dict[str, Any] = {
         "cold":   { "cpu_percent": 60, "ctx_tokens": 8192, "timeout_seconds": 25 },
         "normal": { "cpu_percent": 30, "ctx_tokens": 4096, "timeout_seconds": 20 },
         "boost":  { "cpu_percent": 60, "ctx_tokens": 8192, "timeout_seconds": 25 },
-        # --- ADDITIVE: define an explicit OFF profile ---
+        # explicit OFF profile
         "off":    { "cpu_percent": 0, "ctx_tokens": 0, "timeout_seconds": 0 },
     },
     # Home Assistant (preferred source)
@@ -78,8 +82,49 @@ def _as_bool(v, default=False):
     if s in ("0","false","no","off"): return False
     return bool(default)
 
+def _try_parse_json_tolerant(s: str) -> Optional[dict]:
+    """Attempt several reasonable JSON parsing passes for strings."""
+    if not isinstance(s, str):
+        return None
+    # direct
+    try:
+        j = json.loads(s)
+        if isinstance(j, dict):
+            return j
+    except Exception:
+        pass
+    # strip wrappers and control chars
+    try:
+        j = json.loads(s.strip())
+        if isinstance(j, dict):
+            return j
+    except Exception:
+        pass
+    # replace Windows newlines and YAML folded newlines (keep single-line)
+    try:
+        flat = s.replace("\r\n", "\n").replace("\n", "").strip()
+        j = json.loads(flat)
+        if isinstance(j, dict):
+            return j
+    except Exception:
+        pass
+    # attempt to unescape common escapes
+    try:
+        un = s.encode("utf-8").decode("unicode_escape")
+        j = json.loads(un)
+        if isinstance(j, dict):
+            return j
+    except Exception:
+        pass
+    return None
+
 def _cfg_from(merged: dict) -> Dict[str, Any]:
-    """Build runtime config from merged options (supports multiple key names)."""
+    """Build runtime config from merged options (supports multiple key names).
+    Robustly accepts:
+      - YAML mapping (dict)
+      - Inline JSON string
+      - Multiline JSON string (folded YAML)
+    """
     cfg = dict(_cfg_template)
     try:
         # Enablement & cadence
@@ -94,19 +139,35 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         cfg["boost_c"]  = float(merged.get("llm_enviroguard_boost_c", cfg["boost_c"]))
         cfg["cold_c"]   = float(merged.get("llm_enviroguard_cold_c", cfg["cold_c"]))
         cfg["hyst_c"]   = float(merged.get("llm_enviroguard_hysteresis_c", cfg["hyst_c"]))
-# Profiles
-        prof = merged.get("llm_enviroguard_profiles", cfg["profiles"])
-        if isinstance(prof, str):
-            try:
-                prof = json.loads(prof)
-                _state["profile_source"] = "options.json"   # --- ADDITIVE
-            except Exception:
-                prof = cfg["profiles"]
-                _state["profile_source"] = "defaults"
-        if isinstance(prof, dict):
-            cfg["profiles"] = prof
-            if _state.get("profile_source") != "options.json":
-                _state["profile_source"] = "dict-merged"
+
+        # Profiles - robust handling
+        prof_raw = merged.get("llm_enviroguard_profiles", None)
+
+        if prof_raw is None:
+            # no key provided in merged; leave defaults
+            _state["profile_source"] = "defaults"
+        else:
+            # if it's already a dict (YAML mapping) accept it
+            if isinstance(prof_raw, dict):
+                cfg["profiles"] = prof_raw
+                _state["profile_source"] = "options.json"
+            else:
+                # if it's a string, try tolerant JSON parsing
+                parsed = None
+                if isinstance(prof_raw, str):
+                    parsed = _try_parse_json_tolerant(prof_raw)
+                # if parsed successfully, use it
+                if isinstance(parsed, dict):
+                    cfg["profiles"] = parsed
+                    _state["profile_source"] = "options.json"
+                else:
+                    # parsing failed; keep defaults but note that key existed
+                    # Some add-on systems may wrap JSON strings or escape them.
+                    # We mark source as 'string-unparseable' so logs reveal it.
+                    if isinstance(prof_raw, str):
+                        _state["profile_source"] = "string-unparseable"
+                    else:
+                        _state["profile_source"] = "defaults"
 
         # Home Assistant
         cfg["ha_url"] = str(
@@ -137,20 +198,46 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         print(f"[EnviroGuard] config merge error: {e}")
     return cfg
 
-
 def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
-    """Apply a profile and enforce OFF if cpu<=0 or name=='off'."""
+    """Apply a profile and enforce OFF if cpu<=0 or name=='off'.
+    IMPORTANT: always use cfg['profiles'] (which comes from options.json when provided).
+    """
     name = (name or "normal").lower()
-    prof = (cfg.get("profiles") or {}).get(name) or {}
+    profiles = cfg.get("profiles", {}) or {}
+    prof = profiles.get(name) or {}
 
-    cpu = int(prof.get("cpu_percent", merged.get("llm_max_cpu_percent", 80)))
-    ctx = int(prof.get("ctx_tokens",  merged.get("llm_ctx_tokens", 4096)))
-    tout = int(prof.get("timeout_seconds", merged.get("llm_timeout_seconds", 20)))
+    # Ensure numeric coercion and prefer profile-provided values, then merged fallback, then global defaults.
+    cpu = prof.get("cpu_percent")
+    ctx = prof.get("ctx_tokens")
+    tout = prof.get("timeout_seconds")
 
+    # fallbacks
+    if cpu is None:
+        cpu = merged.get("llm_max_cpu_percent", cfg.get("profiles", {}).get(name, {}).get("cpu_percent", 80))
+    if ctx is None:
+        ctx = merged.get("llm_ctx_tokens", cfg.get("profiles", {}).get(name, {}).get("ctx_tokens", 4096))
+    if tout is None:
+        tout = merged.get("llm_timeout_seconds", cfg.get("profiles", {}).get(name, {}).get("timeout_seconds", 20))
+
+    try:
+        cpu = int(cpu)
+    except Exception:
+        cpu = int(merged.get("llm_max_cpu_percent", 80))
+    try:
+        ctx = int(ctx)
+    except Exception:
+        ctx = int(merged.get("llm_ctx_tokens", 4096))
+    try:
+        tout = int(tout)
+    except Exception:
+        tout = int(merged.get("llm_timeout_seconds", 20))
+
+    # Apply to merged config (this makes bot.py / LLM use the knobs)
     merged["llm_max_cpu_percent"] = cpu
     merged["llm_ctx_tokens"] = ctx
     merged["llm_timeout_seconds"] = tout
 
+    # Export to environment for any subprocesses
     os.environ["LLM_MAX_CPU_PERCENT"] = str(cpu)
     os.environ["LLM_CTX_TOKENS"] = str(ctx)
     os.environ["LLM_TIMEOUT_SECONDS"] = str(tout)
@@ -162,20 +249,17 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
         os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
     else:
         if _state.get("forced_off"):
+            # restore LLM enabling on transition out of forced off
             merged["llm_enabled"] = True
             os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
         _state["forced_off"] = False
 
     _state["profile"] = name
 
-    # --- ADDITIVE: verbose log of applied profile ---
-    src = _state.get("profile_source", "unknown")
-    print(
-        f"[EnviroGuard] Applied profile {name.upper()} "
-        f"(CPU={cpu}%, ctx={ctx}, to={tout}s) "
-        f"[source={src}]"
-    )
-
+    # Verbose single-line log so you can easily see what was applied and where it came from.
+    src = _state.get("profile_source", "defaults")
+    # Normalized label for logs
+    print(f"[EnviroGuard] Applied profile {name.upper()} (CPU={cpu}%, ctx={ctx}, to={tout}s) [source={src}]")
 
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     url = cfg.get("ha_url") or ""
@@ -196,21 +280,22 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         if "state" in j:
             v = j.get("state")
             if v is not None and str(v).lower() not in ("unknown", "unavailable"):
-                print(f"[EnviroGuard] HA temperature state={v}")
-                return float(v)
+                # prefer direct state if numeric
+                try:
+                    return float(v)
+                except Exception:
+                    pass
         attrs = j.get("attributes") or {}
         for k in ("temperature", "current_temperature", "temp", "value"):
             if k in attrs:
                 try:
-                    val = float(attrs[k])
-                    print(f"[EnviroGuard] HA attribute {k}={val}")
-                    return val
+                    return float(attrs[k])
                 except Exception:
                     continue
         return None
-    except Exception as e:
-        print(f"[EnviroGuard] HA fetch error: {e}")
+    except Exception:
         return None
+
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     if not cfg.get("weather_enabled", True):
         return None
@@ -228,13 +313,10 @@ def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         cw = j.get("current_weather") or {}
         t = cw.get("temperature")
         if isinstance(t, (int, float)):
-            print(f"[EnviroGuard] Open-Meteo temperature={t}")
             return float(t)
-    except Exception as e:
-        print(f"[EnviroGuard] Meteo fetch error: {e}")
+    except Exception:
         return None
     return None
-
 
 def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
     t = _ha_get_temperature(cfg)
@@ -244,7 +326,6 @@ def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str
     if t is not None:
         return round(float(t), 1), "open-meteo"
     return None, None
-
 
 def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[str, Any]) -> str:
     off_c   = float(cfg.get("off_c"))
@@ -289,6 +370,7 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
         return "cold"
 
     return target
+
 # ------------------------------
 # Public API
 # ------------------------------
@@ -307,6 +389,7 @@ def get_boot_status_line(merged: dict) -> str:
                 f"(mode={mode.upper()}, profile={prof.upper()}, {t:.1f}°C, src={src})")
     else:
         return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, src={src})"
+
 def command(want: str, merged: dict, send_message) -> bool:
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
@@ -354,20 +437,17 @@ def command(want: str, merged: dict, send_message) -> bool:
 
     return True
 
-
-# --- ADDITIVE: expose set_profile API for bot.py ---
+# --- Programmatic profile setter for bot.py (returns knobs). ---
 def set_profile(name: str) -> Dict[str, Any]:
-    """Programmatic profile setter for bot.py (returns knobs)."""
     cfg = _cfg_from({})
     _apply_profile(name, {}, cfg)
     return cfg.get("profiles", {}).get(name, {})
-# --- end additive ---
-
 
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
-    _apply_profile(_state.get("profile", "normal"), merged, cfg)
+    # ensure current profile applied at startup (use existing _state profile)
+    _apply_profile(_state.get("profile","normal"), merged, cfg)
     while True:
         try:
             if not cfg.get("enabled", False):
@@ -380,8 +460,8 @@ async def _poll_loop(merged: dict, send_message) -> None:
                 _state["source"] = source or _state.get("source")
                 _state["last_ts"] = int(time.time())
 
-            if _state.get("mode", "auto") == "auto" and temp_c is not None:
-                last = _state.get("profile", "normal")
+            if _state.get("mode","auto") == "auto" and temp_c is not None:
+                last = _state.get("profile","normal")
                 if temp_c >= float(cfg.get("off_c")):
                     nextp = "off"
                 else:
@@ -405,11 +485,12 @@ async def _poll_loop(merged: dict, send_message) -> None:
         except Exception as e:
             print(f"[EnviroGuard] poll error: {e}")
         await asyncio.sleep(poll * 60)
+
 def start_background_poll(merged: dict, send_message):
     cfg = _cfg_from(merged)
     _state["enabled"] = bool(cfg.get("enabled"))
-    _state["mode"] = _state.get("mode", "auto")
-    _state["profile"] = _state.get("profile", "normal")
+    _state["mode"] = _state.get("mode","auto")
+    _state["profile"] = _state.get("profile","normal")
 
     try:
         loop = asyncio.get_running_loop()
@@ -425,8 +506,7 @@ def start_background_poll(merged: dict, send_message):
 
     task = loop.create_task(_poll_loop(merged, send_message))
     _state["task"] = task
-    return task   # --- ADDITIVE: return the task so bot.py sees it ---
-
+    return task   # return the task so bot.py sees it
 
 def stop_background_poll() -> None:
     t = _state.get("task")
