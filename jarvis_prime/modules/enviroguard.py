@@ -92,20 +92,16 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         cfg["boost_c"]  = float(merged.get("llm_enviroguard_boost_c", cfg["boost_c"]))
         cfg["cold_c"]   = float(merged.get("llm_enviroguard_cold_c", cfg["cold_c"]))
         cfg["hyst_c"]   = float(merged.get("llm_enviroguard_hysteresis_c", cfg["hyst_c"]))
-# Profiles (force load from options.json if present)
-        prof = merged.get("llm_enviroguard_profiles")
-        if prof:
-            if isinstance(prof, str):
-                try:
-                    cfg["profiles"] = json.loads(prof)
-                    print("[EnviroGuard] Loaded custom profiles from string JSON in options.json")
-                except Exception as e:
-                    print(f"[EnviroGuard] ERROR parsing llm_enviroguard_profiles: {e} → falling back to defaults")
-            elif isinstance(prof, dict):
-                cfg["profiles"] = prof
-                print("[EnviroGuard] Loaded custom profiles from dict in options.json")
-        else:
-            print("[EnviroGuard] WARNING: no llm_enviroguard_profiles found, using defaults")
+
+        # Profiles (ADDITIVE PATCH: accept both JSON string and plain dict)
+        prof = merged.get("llm_enviroguard_profiles", cfg["profiles"])
+        if isinstance(prof, str):
+            try:
+                prof = json.loads(prof)
+            except Exception:
+                pass
+        if isinstance(prof, dict):
+            cfg["profiles"] = prof
 
         # Home Assistant
         cfg["ha_url"] = str(
@@ -165,8 +161,6 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
 
     _state["profile"] = name
 
-    # Always log the applied profile
-    print(f"[EnviroGuard] PROFILE APPLIED → {name.upper()} (CPU={cpu}%, ctx={ctx}, to={tout}s)")
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     url = cfg.get("ha_url") or ""
     token = cfg.get("ha_token") or ""
@@ -181,7 +175,6 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
             timeout=6
         )
         if not r.ok:
-            print(f"[EnviroGuard] HA query failed {r.status_code}")
             return None
         j = r.json() or {}
         if "state" in j:
@@ -196,8 +189,7 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
                 except Exception:
                     continue
         return None
-    except Exception as e:
-        print(f"[EnviroGuard] HA temp fetch error: {e}")
+    except Exception:
         return None
 
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
@@ -212,15 +204,13 @@ def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         )
         r = requests.get(url, timeout=8)
         if not r.ok:
-            print(f"[EnviroGuard] Open-Meteo query failed {r.status_code}")
             return None
         j = r.json() or {}
         cw = j.get("current_weather") or {}
         t = cw.get("temperature")
         if isinstance(t, (int, float)):
             return float(t)
-    except Exception as e:
-        print(f"[EnviroGuard] Meteo temp fetch error: {e}")
+    except Exception:
         return None
     return None
 
@@ -232,6 +222,7 @@ def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str
     if t is not None:
         return round(float(t), 1), "open-meteo"
     return None, None
+
 def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[str, Any]) -> str:
     off_c   = float(cfg.get("off_c"))
     hot_c   = float(cfg.get("hot_c"))
@@ -273,7 +264,6 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
         return "cold"
 
     return target
-
 # ------------------------------
 # Public API
 # ------------------------------
@@ -291,6 +281,7 @@ def get_boot_status_line(merged: dict) -> str:
         return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, {t:.1f}°C, src={src})"
     else:
         return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, src={src})"
+
 def command(want: str, merged: dict, send_message) -> bool:
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
