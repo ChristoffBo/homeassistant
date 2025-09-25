@@ -93,13 +93,13 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         cfg["cold_c"]   = float(merged.get("llm_enviroguard_cold_c", cfg["cold_c"]))
         cfg["hyst_c"]   = float(merged.get("llm_enviroguard_hysteresis_c", cfg["hyst_c"]))
 
-        # Profiles (ADDITIVE PATCH: accept both JSON string and plain dict)
+        # Profiles
         prof = merged.get("llm_enviroguard_profiles", cfg["profiles"])
         if isinstance(prof, str):
             try:
                 prof = json.loads(prof)
             except Exception:
-                pass
+                prof = cfg["profiles"]
         if isinstance(prof, dict):
             cfg["profiles"] = prof
 
