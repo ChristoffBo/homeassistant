@@ -52,6 +52,7 @@ _cfg_template: Dict[str, Any] = {
     "profiles": {
         "manual": { "cpu_percent": 20, "ctx_tokens": 4096, "timeout_seconds": 20 },
         "hot":    { "cpu_percent": 10, "ctx_tokens": 2048, "timeout_seconds": 15 },
+        "cold":   { "cpu_percent": 60, "ctx_tokens": 8192, "timeout_seconds": 25 },
         "normal": { "cpu_percent": 30, "ctx_tokens": 4096, "timeout_seconds": 20 },
         "boost":  { "cpu_percent": 60, "ctx_tokens": 8192, "timeout_seconds": 25 },
         # --- ADDITIVE: define an explicit OFF profile ---
