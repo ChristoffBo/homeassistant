@@ -299,13 +299,17 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
 def get_boot_status_line(merged: dict) -> str:
     cfg = _cfg_from(merged)
     mode = _state.get("mode", "auto")
-    if not cfg.get("enabled"):
-        return f"🌡️ EnviroGuard — OFF (mode={mode})"
     prof = _state.get("profile", "normal")
     t = _state.get("last_temp_c")
     src = _state.get("source") or "?"
-    suffix = f" (mode={mode}, profile={prof}, {t} °C, src={src})" if t is not None else f" (mode={mode}, profile={prof}, src={src})"
-    return "🌡️ EnviroGuard — ACTIVE" + suffix
+
+    if not cfg.get("enabled"):
+        return f"🌡️ EnviroGuard — OFF (mode={mode.upper()}, profile={prof.upper()}, src={src})"
+
+    if t is not None:
+        return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, {t:.1f}°C, src={src})"
+    else:
+        return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, src={src})"
 
 def command(want: str, merged: dict, send_message) -> bool:
     """
