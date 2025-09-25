@@ -60,10 +60,11 @@ _cfg_template: Dict[str, Any] = {
         "normal": { "cpu_percent": 30, "ctx_tokens": 4096, "timeout_seconds": 20 },
         "boost":  { "cpu_percent": 60, "ctx_tokens": 8192, "timeout_seconds": 25 },
         # optional: "cold": { "cpu_percent": 35, "ctx_tokens": 4096, "timeout_seconds": 22 },
-        # optional OFF profile
+        # optional OFF profile; otherwise cpu_percent<=0 will be enforced dynamically
         # "off": { "cpu_percent": 0, "ctx_tokens": 0, "timeout_seconds": 0 },
     },
-    # Home Assistant
+    # Home Assistant (preferred source)
+    # Accept both classic and llm_enviroguard_ha_* keys via _cfg_from()
     "ha_url": "",
     "ha_token": "",
     "ha_temperature_entity": "",
@@ -83,39 +84,54 @@ def _as_bool(v, default=False):
     return bool(default)
 
 def _cfg_from(merged: dict) -> Dict[str, Any]:
+    """Build runtime config from merged options (supports multiple key names)."""
     cfg = dict(_cfg_template)
     try:
+        # Enablement & cadence
         cfg["enabled"] = _as_bool(merged.get("llm_enviroguard_enabled", cfg["enabled"]), cfg["enabled"])
         cfg["poll_minutes"] = int(merged.get("llm_enviroguard_poll_minutes", cfg["poll_minutes"]))
         cfg["max_stale_minutes"] = int(merged.get("llm_enviroguard_max_stale_minutes", cfg["max_stale_minutes"]))
+
+        # Thresholds (accept new explicit keys; fall back to old ones)
         cfg["off_c"]    = float(merged.get("llm_enviroguard_off_c", cfg["off_c"]))
         cfg["hot_c"]    = float(merged.get("llm_enviroguard_hot_c", cfg["hot_c"]))
         cfg["normal_c"] = float(merged.get("llm_enviroguard_normal_c", merged.get("llm_enviroguard_warm_c", cfg["normal_c"])))
         cfg["boost_c"]  = float(merged.get("llm_enviroguard_boost_c", cfg["boost_c"]))
         cfg["cold_c"]   = float(merged.get("llm_enviroguard_cold_c", cfg["cold_c"]))
         cfg["hyst_c"]   = float(merged.get("llm_enviroguard_hysteresis_c", cfg["hyst_c"]))
+
+        # Profiles (stringified JSON or dict)
         prof = merged.get("llm_enviroguard_profiles", cfg["profiles"])
         if isinstance(prof, str):
-            try: prof = json.loads(prof)
-            except Exception: prof = cfg["profiles"]
-        if isinstance(prof, dict): cfg["profiles"] = prof
+            try:
+                prof = json.loads(prof)
+            except Exception:
+                prof = cfg["profiles"]
+        if isinstance(prof, dict):
+            cfg["profiles"] = prof
+
+        # Home Assistant (prefer llm_enviroguard_ha_*; fall back to classic)
         cfg["ha_url"] = str(
             merged.get("llm_enviroguard_ha_base_url")
             or merged.get("ha_base_url")
             or merged.get("ha_url")
             or cfg["ha_url"]
         ).strip()
+
         cfg["ha_token"] = str(
             merged.get("llm_enviroguard_ha_token")
             or merged.get("ha_token")
             or cfg["ha_token"]
         ).strip()
+
         cfg["ha_temperature_entity"] = str(
             merged.get("llm_enviroguard_ha_temp_entity")
             or merged.get("ha_indoor_temp_entity")
             or merged.get("ha_temperature_entity")
             or cfg["ha_temperature_entity"]
         ).strip()
+
+        # Fallback weather
         cfg["weather_enabled"] = _as_bool(merged.get("weather_enabled", cfg["weather_enabled"]), cfg["weather_enabled"])
         cfg["weather_lat"] = float(merged.get("weather_lat", cfg["weather_lat"]))
         cfg["weather_lon"] = float(merged.get("weather_lon", cfg["weather_lon"]))
@@ -124,20 +140,24 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
     return cfg
 
 def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
+    """Apply a profile and enforce OFF if cpu<=0 or name=='off'."""
     name = (name or "normal").lower()
     prof = (cfg.get("profiles") or {}).get(name) or {}
     cpu = int(prof.get("cpu_percent", merged.get("llm_max_cpu_percent", 80)))
     ctx = int(prof.get("ctx_tokens",  merged.get("llm_ctx_tokens", 4096)))
     tout= int(prof.get("timeout_seconds", merged.get("llm_timeout_seconds", 20)))
 
+    # Apply to merged so the rest of the app sees it
     merged["llm_max_cpu_percent"] = cpu
     merged["llm_ctx_tokens"] = ctx
     merged["llm_timeout_seconds"] = tout
 
+    # Reflect in environment for sidecars / modules that read env
     os.environ["LLM_MAX_CPU_PERCENT"] = str(cpu)
     os.environ["LLM_CTX_TOKENS"] = str(ctx)
     os.environ["LLM_TIMEOUT_SECONDS"] = str(tout)
 
+    # Hard disable if OFF
     if cpu <= 0 or name == "off":
         _state["forced_off"] = True
         merged["llm_enabled"] = False
@@ -145,11 +165,13 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
         os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
     else:
         if _state.get("forced_off"):
+            # Only re-enable if we previously forced it off
             merged["llm_enabled"] = True
             os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
         _state["forced_off"] = False
 
     _state["profile"] = name
+
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     """Read current temperature from HA sensor if configured."""
     url = cfg.get("ha_url") or ""
@@ -167,6 +189,7 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         if not r.ok:
             return None
         j = r.json() or {}
+        # Prefer numeric state; else try common attribute names
         if "state" in j:
             v = j.get("state")
             if v is not None and str(v).lower() not in ("unknown", "unavailable"):
@@ -216,6 +239,16 @@ def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str
     return None, None
 
 def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[str, Any]) -> str:
+    """
+    Decide profile using thresholds and hysteresis.
+    Bands (from hottest to coolest):
+      OFF:   temp >= off_c
+      HOT:   off_c > temp >= hot_c
+      NORMAL: hot_c > temp > boost_c (above normal_c if set; otherwise default middle band)
+      BOOST: temp <= boost_c
+      COLD:  optional extra band if temp <= cold_c and a 'cold' profile exists
+    Hysteresis: require crossing thresholds +/- hyst before switching out of current band.
+    """
     off_c   = float(cfg.get("off_c"))
     hot_c   = float(cfg.get("hot_c"))
     normal_c= float(cfg.get("normal_c"))
@@ -225,32 +258,42 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
 
     lp = (last_profile or "normal").lower()
 
+    # Determine target band without hysteresis
     def band_of(t: float) -> str:
         if t >= off_c:
             return "off"
         if t >= hot_c:
             return "hot"
         if t <= boost_c:
+            # prefer explicit 'boost' if defined, else fall back to 'cold' if provided
             return "boost" if "boost" in cfg.get("profiles", {}) else ("cold" if "cold" in cfg.get("profiles", {}) else "normal")
+        # optional cold band even lower than boost
         if "cold" in cfg.get("profiles", {}) and t <= cold_c:
             return "cold"
+        # middle band
         return "normal"
 
     target = band_of(temp_c)
 
+    # Hysteresis edges for leaving current band
     if lp == "off":
-        if temp_c <= off_c - hyst: return band_of(temp_c)
+        if temp_c <= off_c - hyst:
+            return band_of(temp_c)
         return "off"
     if lp == "hot":
-        if temp_c <= hot_c - hyst: return band_of(temp_c)
+        if temp_c <= hot_c - hyst:
+            return band_of(temp_c)
         return "hot"
     if lp == "boost":
-        if temp_c >= boost_c + hyst: return band_of(temp_c)
+        if temp_c >= boost_c + hyst:
+            return band_of(temp_c)
         return "boost"
     if lp == "cold":
-        if temp_c >= cold_c + hyst: return band_of(temp_c)
+        if temp_c >= cold_c + hyst:
+            return band_of(temp_c)
         return "cold"
 
+    # lp == normal
     return target
 
 # ------------------------------
@@ -268,9 +311,14 @@ def get_boot_status_line(merged: dict) -> str:
     return "🌡️ EnviroGuard — ACTIVE" + suffix
 
 def command(want: str, merged: dict, send_message) -> bool:
+    """
+    Handle 'jarvis env <auto|PROFILE>' routed from bot.
+    If no argument, show current state (mode, profile, temp/source).
+    """
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
 
+    # Report current state when no argument is provided
     if not w:
         mode = _state.get("mode", "auto")
         prof = _state.get("profile", "normal")
@@ -286,6 +334,7 @@ def command(want: str, merged: dict, send_message) -> bool:
                 pass
         return True
 
+    # Switch to AUTO mode
     if w == "auto":
         changed = (_state.get("mode") != "auto")
         _state["mode"] = "auto"
@@ -299,6 +348,7 @@ def command(want: str, merged: dict, send_message) -> bool:
                 pass
         return True
 
+    # Manual profile selection
     profiles = (cfg.get("profiles") or {}).keys()
     if w in profiles:
         was_mode = _state.get("mode")
@@ -321,9 +371,11 @@ def command(want: str, merged: dict, send_message) -> bool:
         return True
 
     return False
+
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
+    # Initial apply from current profile to ensure knobs are set
     _apply_profile(_state.get("profile","normal"), merged, cfg)
     while True:
         try:
@@ -339,6 +391,7 @@ async def _poll_loop(merged: dict, send_message) -> None:
 
             if _state.get("mode","auto") == "auto" and temp_c is not None:
                 last = _state.get("profile","normal")
+                # OFF safety check first
                 if temp_c >= float(cfg.get("off_c")) - 0.0:
                     nextp = "off"
                 else:
@@ -350,20 +403,22 @@ async def _poll_loop(merged: dict, send_message) -> None:
                         try:
                             send_message(
                                 "EnviroGuard",
-                                f"{source or 'temp'} {temp_c:.1f}°C → profile **{nextp.upper()}** "
-                                f"(CPU={merged.get('llm_max_cpu_percent')}%, "
-                                f"ctx={merged.get('llm_ctx_tokens')}, "
-                                f"to={merged.get('llm_timeout_seconds')}s)",
+                                f"{source or 'temp'} {temp_c:.1f}°C → profile **{nextp.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
                                 priority=4,
                                 decorate=False
                             )
                         except Exception:
                             pass
         except Exception as e:
+            # keep the loop alive
             print(f"[EnviroGuard] poll error: {e}")
         await asyncio.sleep(poll * 60)
 
 def start_background_poll(merged: dict, send_message) -> None:
+    """
+    Create/replace the background polling task. Safe to call multiple times.
+    """
+    # Initialize enabled flag & profile from merged (support hot reload)
     cfg = _cfg_from(merged)
     _state["enabled"] = bool(cfg.get("enabled"))
     _state["mode"] = _state.get("mode","auto")
@@ -372,8 +427,10 @@ def start_background_poll(merged: dict, send_message) -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        # Not in async context; caller should schedule us
         return
 
+    # Cancel existing
     t = _state.get("task")
     if t and isinstance(t, asyncio.Task) and not t.done():
         try:
@@ -381,6 +438,7 @@ def start_background_poll(merged: dict, send_message) -> None:
         except Exception:
             pass
 
+    # Start new
     _state["task"] = loop.create_task(_poll_loop(merged, send_message))
 
 def stop_background_poll() -> None:
