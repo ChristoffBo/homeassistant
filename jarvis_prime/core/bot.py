@@ -680,21 +680,32 @@ def _handle_command(ncmd: str) -> bool:
     toks = ncmd.split()
 
     # --- ADDITIVE: plain "env" shows status ---
-    if toks and toks[0] in ("env", "profile"):
-    if len(toks) >= 2:
-        want = toks[1].lower()
-        if _enviroguard and hasattr(_enviroguard, "command"):
-            try:
-                ok = _enviroguard.command(want, merged, send_message)
-                if ok:
-                    return True
-            except Exception as e:
-                print(f"[bot] EnviroGuard command error: {e}")
-                send_message("EnviroGuard", f"⚠️ EnviroGuard error: {e}", priority=3, decorate=False)
-                return True
-        send_message("EnviroGuard", f"Unknown or unsupported profile '{want}'. Try: auto, or consult enviroguard profiles.", priority=3, decorate=False)
+    if toks and toks[0] == "env" and len(toks) == 1:
+        if _enviroguard:
+            prof = ""
+            temp_s = ""
+            if hasattr(_enviroguard, "get_current_profile"):
+                try:
+                    prof = _enviroguard.get_current_profile() or ""
+                except Exception:
+                    prof = ""
+            elif hasattr(_enviroguard, "state"):
+                try:
+                    prof = ((_enviroguard.state or {}) if isinstance(_enviroguard.state, dict) else {}).get("profile","")
+                except Exception:
+                    prof = ""
+            if hasattr(_enviroguard, "get_last_temperature_c"):
+                try:
+                    t = _enviroguard.get_last_temperature_c()
+                    if isinstance(t, (int, float)):
+                        temp_s = f", {float(t):.1f} °C"
+                except Exception:
+                    temp_s = ""
+            msg = f"🌡️ EnviroGuard — ACTIVE (profile={prof}{temp_s})" if prof else "🌡️ EnviroGuard — ACTIVE"
+            send_message("EnviroGuard", msg, priority=4, decorate=False)
+        else:
+            send_message("EnviroGuard", "🌡️ EnviroGuard — OFF", priority=4, decorate=False)
         return True
-
     # --- end additive ---
 
     if toks and toks[0] in ("env", "profile"):
@@ -1303,7 +1314,7 @@ async def _run_forever():
             task_or_none = None
             if hasattr(_enviroguard, "start_background_poll"):
                 try:
-                    task_or_none = _enviroguard.start_background_poll(merged,send_message)
+                    task_or_none = _enviroguard.start_background_poll(config=merged, notify=send_message)
                 except TypeError:
                     try:
                         task_or_none = _enviroguard.start_background_poll(merged)
