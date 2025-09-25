@@ -27,11 +27,11 @@ _state: Dict[str, Any] = {
     "enabled": False,
     "mode": "auto",        # auto | manual
     "profile": "normal",
-    "last_temp_c": None,   # float | None
-    "last_ts": 0,          # epoch seconds of last temp fetch
-    "source": None,        # 'homeassistant' | 'open-meteo' | None
-    "task": None,          # asyncio.Task or None
-    "forced_off": False,   # we turned LLM off due to OFF profile
+    "last_temp_c": None,
+    "last_ts": 0,
+    "source": None,
+    "task": None,
+    "forced_off": False,
 }
 
 # Default configuration template
@@ -39,25 +39,21 @@ _cfg_template: Dict[str, Any] = {
     "enabled": False,
     "poll_minutes": 30,
     "max_stale_minutes": 120,
-    # Temperature thresholds (°C)
     "off_c": 42,
     "hot_c": 33,
     "normal_c": 22,
     "boost_c": 16,
     "cold_c": 10,
     "hyst_c": 2,
-    # Profiles
     "profiles": {
         "manual": { "cpu_percent": 20, "ctx_tokens": 4096, "timeout_seconds": 20 },
         "hot":    { "cpu_percent": 10, "ctx_tokens": 2048, "timeout_seconds": 15 },
         "normal": { "cpu_percent": 30, "ctx_tokens": 4096, "timeout_seconds": 20 },
         "boost":  { "cpu_percent": 60, "ctx_tokens": 8192, "timeout_seconds": 25 },
     },
-    # Home Assistant
     "ha_url": "",
     "ha_token": "",
     "ha_temperature_entity": "",
-    # Fallback Open-Meteo
     "weather_enabled": True,
     "weather_lat": -26.2041,
     "weather_lon": 28.0473,
@@ -89,8 +85,7 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         if isinstance(prof, str):
             try: prof = json.loads(prof)
             except Exception: prof = cfg["profiles"]
-        if isinstance(prof, dict):
-            cfg["profiles"] = prof
+        if isinstance(prof, dict): cfg["profiles"] = prof
 
         cfg["ha_url"] = str(
             merged.get("llm_enviroguard_ha_base_url")
@@ -109,7 +104,6 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
             or merged.get("ha_temperature_entity")
             or cfg["ha_temperature_entity"]
         ).strip()
-
         cfg["weather_enabled"] = _as_bool(merged.get("weather_enabled", cfg["weather_enabled"]), cfg["weather_enabled"])
         cfg["weather_lat"] = float(merged.get("weather_lat", cfg["weather_lat"]))
         cfg["weather_lon"] = float(merged.get("weather_lon", cfg["weather_lon"]))
@@ -175,7 +169,7 @@ def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     except Exception: return None
     return None
 
-def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
+def _get_temperature(cfg: Dict[str, Any]):
     t = _ha_get_temperature(cfg)
     if t is not None: return round(float(t),1),"homeassistant"
     t = _meteo_get_temperature(cfg)
