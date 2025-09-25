@@ -3,7 +3,7 @@
 # EnviroGuard — ambient-aware LLM performance governor for Jarvis Prime
 #
 # Responsibilities:
-# - Prefer Home Assistant indoor temperature; fallback to Open‑Meteo outdoor
+# - Prefer Home Assistant indoor temperature; fallback to Open-Meteo outdoor
 # - Decide a profile (off/hot/normal/boost/cold/manual) using hysteresis to avoid flapping
 # - Apply profile by updating the shared "merged" config + select env vars
 # - OFF profile (or cpu_percent <= 0) hard-disables LLM/riffs to protect the host
@@ -68,7 +68,7 @@ _cfg_template: Dict[str, Any] = {
     "ha_url": "",
     "ha_token": "",
     "ha_temperature_entity": "",
-    # Fallback Open‑Meteo
+    # Fallback Open-Meteo
     "weather_enabled": True,
     "weather_lat": -26.2041,
     "weather_lon": 28.0473,
@@ -206,7 +206,7 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         return None
 
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
-    """Get outdoor temperature from Open‑Meteo (fallback)."""
+    """Get outdoor temperature from Open-Meteo (fallback)."""
     if not cfg.get("weather_enabled", True):
         return None
     lat = cfg.get("weather_lat", -26.2041)
@@ -229,7 +229,7 @@ def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     return None
 
 def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
-    """Return (effective_temp_c, source). Prefer HA; fallback to Open‑Meteo."""
+    """Return (effective_temp_c, source). Prefer HA; fallback to Open-Meteo."""
     t = _ha_get_temperature(cfg)
     if t is not None:
         return round(float(t), 1), "homeassistant"
@@ -315,6 +315,23 @@ def command(want: str, merged: dict, send_message) -> bool:
     """
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
+
+    # NEW: if no arg given, just report status
+    if not w:
+        prof = _state.get("profile", "normal")
+        mode = _state.get("mode", "auto")
+        temp = _state.get("last_temp_c")
+        src  = _state.get("source", "?")
+        msg = f"EnviroGuard status — mode={mode}, profile={prof.upper()}"
+        if temp is not None:
+            msg += f", temp={temp}°C (src={src})"
+        if callable(send_message):
+            try:
+                send_message("EnviroGuard", msg, priority=4, decorate=False)
+            except Exception:
+                pass
+        return True
+
     if w == "auto":
         _state["mode"] = "auto"
         if callable(send_message):
@@ -381,34 +398,4 @@ def start_background_poll(merged: dict, send_message) -> None:
     """
     Create/replace the background polling task. Safe to call multiple times.
     """
-    # Initialize enabled flag & profile from merged (support hot reload)
-    cfg = _cfg_from(merged)
-    _state["enabled"] = bool(cfg.get("enabled"))
-    _state["mode"] = _state.get("mode","auto")
-    _state["profile"] = _state.get("profile","normal")
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # Not in async context; caller should schedule us
-        return
-
-    # Cancel existing
-    t = _state.get("task")
-    if t and isinstance(t, asyncio.Task) and not t.done():
-        try:
-            t.cancel()
-        except Exception:
-            pass
-
-    # Start new
-    _state["task"] = loop.create_task(_poll_loop(merged, send_message))
-
-def stop_background_poll() -> None:
-    t = _state.get("task")
-    if t and isinstance(t, asyncio.Task) and not t.done():
-        try:
-            t.cancel()
-        except Exception:
-            pass
-    _state["task"] = None
+    # Initialize enabled flag & profile from
