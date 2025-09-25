@@ -158,7 +158,7 @@ try:
 
     # Ingest toggles from config file if present
     INGEST_GOTIFY_ENABLED  = bool(merged.get("ingest_gotify_enabled", INGEST_GOTIFY_ENABLED))
-    INGEST_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED)) and bool(merged.get("ingest_apprise_enabled", INGEST_APPRISE_ENABLED))
+    INGEST_APPRISE_ENABLED = bool(merged.get("intake_apprise_enabled", INTAKE_APPRISE_ENABLED)) and bool(merged.get("ingest_apprise_enabled", INTAKE_APPRISE_ENABLED))
     INGEST_SMTP_ENABLED    = bool(merged.get("ingest_smtp_enabled", INGEST_SMTP_ENABLED))
     INGEST_NTFY_ENABLED    = bool(merged.get("ingest_ntfy_enabled", INGEST_NTFY_ENABLED))
 
@@ -245,6 +245,7 @@ def _detect_wakeword(msg: str) -> Optional[str]:
         return "ops"
     return None
 # --- end additive ---
+
 # ============================
 # LLM model path resolver / autodetect
 # ============================
@@ -677,6 +678,36 @@ def _try_call(module, fn_name, *args, **kwargs):
 def _handle_command(ncmd: str) -> bool:
     # --- Manual EnviroGuard override: "jarvis env hot|normal|cold|boost|auto" or "jarvis profile X"
     toks = ncmd.split()
+
+    # --- ADDITIVE: plain "env" shows status ---
+    if toks and toks[0] == "env" and len(toks) == 1:
+        if _enviroguard:
+            prof = ""
+            temp_s = ""
+            if hasattr(_enviroguard, "get_current_profile"):
+                try:
+                    prof = _enviroguard.get_current_profile() or ""
+                except Exception:
+                    prof = ""
+            elif hasattr(_enviroguard, "state"):
+                try:
+                    prof = ((_enviroguard.state or {}) if isinstance(_enviroguard.state, dict) else {}).get("profile","")
+                except Exception:
+                    prof = ""
+            if hasattr(_enviroguard, "get_last_temperature_c"):
+                try:
+                    t = _enviroguard.get_last_temperature_c()
+                    if isinstance(t, (int, float)):
+                        temp_s = f", {float(t):.1f} °C"
+                except Exception:
+                    temp_s = ""
+            msg = f"🌡️ EnviroGuard — ACTIVE (profile={prof}{temp_s})" if prof else "🌡️ EnviroGuard — ACTIVE"
+            send_message("EnviroGuard", msg, priority=4, decorate=False)
+        else:
+            send_message("EnviroGuard", "🌡️ EnviroGuard — OFF", priority=4, decorate=False)
+        return True
+    # --- end additive ---
+
     if toks and toks[0] in ("env", "profile"):
         if len(toks) >= 2:
             want = toks[1].lower()
