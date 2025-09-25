@@ -19,6 +19,7 @@
   },
   "map": [
     "config:rw",
+    "data:rw",
     "share:rw",
     "ssl:rw"
   ],
@@ -34,6 +35,7 @@
   "schema": {},
   "volumes": {
     "/data": "/data",
-    "/config/zoraxy": "/config/zoraxy"
+    "/config/zoraxy": "/config/zoraxy",
+    "/share/zoraxy": "/share/zoraxy"
   }
 }
