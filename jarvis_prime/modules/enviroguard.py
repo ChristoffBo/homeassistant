@@ -78,40 +78,34 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         cfg["enabled"] = _as_bool(merged.get("llm_enviroguard_enabled", cfg["enabled"]), cfg["enabled"])
         cfg["poll_minutes"] = int(merged.get("llm_enviroguard_poll_minutes", cfg["poll_minutes"]))
         cfg["max_stale_minutes"] = int(merged.get("llm_enviroguard_max_stale_minutes", cfg["max_stale_minutes"]))
-
         cfg["off_c"]    = float(merged.get("llm_enviroguard_off_c", cfg["off_c"]))
         cfg["hot_c"]    = float(merged.get("llm_enviroguard_hot_c", cfg["hot_c"]))
         cfg["normal_c"] = float(merged.get("llm_enviroguard_normal_c", merged.get("llm_enviroguard_warm_c", cfg["normal_c"])))
         cfg["boost_c"]  = float(merged.get("llm_enviroguard_boost_c", cfg["boost_c"]))
         cfg["cold_c"]   = float(merged.get("llm_enviroguard_cold_c", cfg["cold_c"]))
         cfg["hyst_c"]   = float(merged.get("llm_enviroguard_hysteresis_c", cfg["hyst_c"]))
-
         prof = merged.get("llm_enviroguard_profiles", cfg["profiles"])
         if isinstance(prof, str):
             try: prof = json.loads(prof)
             except Exception: prof = cfg["profiles"]
         if isinstance(prof, dict): cfg["profiles"] = prof
-
         cfg["ha_url"] = str(
             merged.get("llm_enviroguard_ha_base_url")
             or merged.get("ha_base_url")
             or merged.get("ha_url")
             or cfg["ha_url"]
         ).strip()
-
         cfg["ha_token"] = str(
             merged.get("llm_enviroguard_ha_token")
             or merged.get("ha_token")
             or cfg["ha_token"]
         ).strip()
-
         cfg["ha_temperature_entity"] = str(
             merged.get("llm_enviroguard_ha_temp_entity")
             or merged.get("ha_indoor_temp_entity")
             or merged.get("ha_temperature_entity")
             or cfg["ha_temperature_entity"]
         ).strip()
-
         cfg["weather_enabled"] = _as_bool(merged.get("weather_enabled", cfg["weather_enabled"]), cfg["weather_enabled"])
         cfg["weather_lat"] = float(merged.get("weather_lat", cfg["weather_lat"]))
         cfg["weather_lon"] = float(merged.get("weather_lon", cfg["weather_lon"]))
@@ -125,15 +119,12 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
     cpu = int(prof.get("cpu_percent", merged.get("llm_max_cpu_percent", 80)))
     ctx = int(prof.get("ctx_tokens",  merged.get("llm_ctx_tokens", 4096)))
     tout= int(prof.get("timeout_seconds", merged.get("llm_timeout_seconds", 20)))
-
     merged["llm_max_cpu_percent"] = cpu
     merged["llm_ctx_tokens"] = ctx
     merged["llm_timeout_seconds"] = tout
-
     os.environ["LLM_MAX_CPU_PERCENT"] = str(cpu)
     os.environ["LLM_CTX_TOKENS"] = str(ctx)
     os.environ["LLM_TIMEOUT_SECONDS"] = str(tout)
-
     if cpu <= 0 or name == "off":
         _state["forced_off"] = True
         merged["llm_enabled"] = False
@@ -144,7 +135,6 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
             merged["llm_enabled"] = True
             os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
         _state["forced_off"] = False
-
     _state["profile"] = name
 
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
@@ -167,8 +157,7 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
                 try: return float(attrs[k])
                 except Exception: continue
         return None
-    except Exception:
-        return None
+    except Exception: return None
 
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     if not cfg.get("weather_enabled", True): return None
@@ -182,8 +171,7 @@ def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         cw = j.get("current_weather") or {}
         t = cw.get("temperature")
         if isinstance(t, (int, float)): return float(t)
-    except Exception:
-        return None
+    except Exception: return None
     return None
 
 def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
@@ -200,9 +188,7 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
     boost_c = float(cfg.get("boost_c"))
     cold_c  = float(cfg.get("cold_c"))
     hyst    = float(cfg.get("hyst_c", 0))
-
     lp = (last_profile or "normal").lower()
-
     def band_of(t: float) -> str:
         if t >= off_c: return "off"
         if t >= hot_c: return "hot"
@@ -210,22 +196,11 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
             return "boost" if "boost" in cfg.get("profiles", {}) else ("cold" if "cold" in cfg.get("profiles", {}) else "normal")
         if "cold" in cfg.get("profiles", {}) and t <= cold_c: return "cold"
         return "normal"
-
     target = band_of(temp_c)
-
-    if lp == "off":
-        if temp_c <= off_c - hyst: return band_of(temp_c)
-        return "off"
-    if lp == "hot":
-        if temp_c <= hot_c - hyst: return band_of(temp_c)
-        return "hot"
-    if lp == "boost":
-        if temp_c >= boost_c + hyst: return band_of(temp_c)
-        return "boost"
-    if lp == "cold":
-        if temp_c >= cold_c + hyst: return band_of(temp_c)
-        return "cold"
-
+    if lp == "off":   return band_of(temp_c) if temp_c <= off_c - hyst else "off"
+    if lp == "hot":   return band_of(temp_c) if temp_c <= hot_c - hyst else "hot"
+    if lp == "boost": return band_of(temp_c) if temp_c >= boost_c + hyst else "boost"
+    if lp == "cold":  return band_of(temp_c) if temp_c >= cold_c + hyst else "cold"
     return target
 
 # ------------------------------
@@ -233,7 +208,10 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
 # ------------------------------
 def get_boot_status_line(merged: dict) -> str:
     cfg = _cfg_from(merged)
+    _state["enabled"] = bool(cfg.get("enabled"))
     mode = _state.get("mode", "auto")
+    if not _state["enabled"]:
+        return f"🌡️ EnviroGuard — OFF (mode={mode})"
     prof = _state.get("profile", "normal")
     t = _state.get("last_temp_c")
     src = _state.get("source") or "?"
@@ -242,8 +220,8 @@ def get_boot_status_line(merged: dict) -> str:
 
 def command(want: str, merged: dict, send_message) -> bool:
     cfg = _cfg_from(merged)
+    _state["enabled"] = bool(cfg.get("enabled"))
     w = (want or "").strip().lower()
-
     if not w:
         mode = _state.get("mode", "auto")
         prof = _state.get("profile", "normal")
@@ -251,23 +229,20 @@ def command(want: str, merged: dict, send_message) -> bool:
         src = _state.get("source") or "?"
         msg = f"Mode={mode.upper()}, profile={prof.upper()}, src={src}"
         if t is not None: msg += f", {t:.1f}°C"
+        msg = ("DISABLED — " + msg) if not _state["enabled"] else ("ACTIVE — " + msg)
         if callable(send_message):
             try: send_message("EnviroGuard", msg, priority=4, decorate=False)
             except Exception: pass
         return True
-
     if w == "auto":
         changed = (_state.get("mode") != "auto")
         _state["mode"] = "auto"
         if callable(send_message):
             try:
-                text = "Switched to AUTO mode — ambient temperature will control the profile."
-                if not changed:
-                    text = "Already in AUTO mode — ambient temperature controls the profile."
+                text = "Switched to AUTO mode — ambient temperature will control the profile." if changed else "Already in AUTO mode — ambient temperature controls the profile."
                 send_message("EnviroGuard", text, priority=4, decorate=False)
             except Exception: pass
         return True
-
     profiles = (cfg.get("profiles") or {}).keys()
     if w in profiles:
         was_mode = _state.get("mode")
@@ -278,16 +253,11 @@ def command(want: str, merged: dict, send_message) -> bool:
                 prefix = "Switched to MANUAL" if was_mode != "manual" else "MANUAL override"
                 send_message(
                     "EnviroGuard",
-                    (f"{prefix} → profile **{w.upper()}** "
-                     f"(CPU={merged.get('llm_max_cpu_percent')}%, "
-                     f"ctx={merged.get('llm_ctx_tokens')}, "
-                     f"to={merged.get('llm_timeout_seconds')}s)"),
-                    priority=4,
-                    decorate=False
+                    f"{prefix} → profile **{w.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
+                    priority=4, decorate=False
                 )
             except Exception: pass
         return True
-
     return False
 
 async def _poll_loop(merged: dict, send_message) -> None:
@@ -299,32 +269,22 @@ async def _poll_loop(merged: dict, send_message) -> None:
             if not cfg.get("enabled", False):
                 await asyncio.sleep(poll * 60)
                 continue
-
             temp_c, source = _get_temperature(cfg)
             if temp_c is not None:
                 _state["last_temp_c"] = temp_c
                 _state["source"] = source or _state.get("source")
                 _state["last_ts"] = int(time.time())
-
             if _state.get("mode","auto") == "auto" and temp_c is not None:
                 last = _state.get("profile","normal")
-                if temp_c >= float(cfg.get("off_c")) - 0.0:
-                    nextp = "off"
-                else:
-                    nextp = _next_profile_with_hysteresis(temp_c, last, cfg)
-
+                nextp = "off" if temp_c >= float(cfg.get("off_c")) else _next_profile_with_hysteresis(temp_c, last, cfg)
                 if nextp != last:
                     _apply_profile(nextp, merged, cfg)
                     if callable(send_message):
                         try:
                             send_message(
                                 "EnviroGuard",
-                                f"{source or 'temp'} {temp_c:.1f}°C → profile **{nextp.upper()}** "
-                                f"(CPU={merged.get('llm_max_cpu_percent')}%, "
-                                f"ctx={merged.get('llm_ctx_tokens')}, "
-                                f"to={merged.get('llm_timeout_seconds')}s)",
-                                priority=4,
-                                decorate=False
+                                f"{source or 'temp'} {temp_c:.1f}°C → profile **{nextp.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
+                                priority=4, decorate=False
                             )
                         except Exception: pass
         except Exception as e:
@@ -336,17 +296,14 @@ def start_background_poll(merged: dict, send_message) -> None:
     _state["enabled"] = bool(cfg.get("enabled"))
     _state["mode"] = _state.get("mode","auto")
     _state["profile"] = _state.get("profile","normal")
-
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-
     t = _state.get("task")
     if t and isinstance(t, asyncio.Task) and not t.done():
         try: t.cancel()
         except Exception: pass
-
     _state["task"] = loop.create_task(_poll_loop(merged, send_message))
 
 def stop_background_poll() -> None:
@@ -355,12 +312,3 @@ def stop_background_poll() -> None:
         try: t.cancel()
         except Exception: pass
     _state["task"] = None
-
-# ------------------------------
-# Additive helpers
-# ------------------------------
-def get_current_profile() -> str:
-    return _state.get("profile", "normal")
-
-def get_last_temperature_c() -> Optional[float]:
-    return _state.get("last_temp_c")
