@@ -68,6 +68,7 @@ _cfg_template: Dict[str, Any] = {
     "weather_lat": -26.2041,
     "weather_lon": 28.0473,
 }
+
 # ------------------------------
 # Utilities
 # ------------------------------
@@ -93,8 +94,7 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         cfg["boost_c"]  = float(merged.get("llm_enviroguard_boost_c", cfg["boost_c"]))
         cfg["cold_c"]   = float(merged.get("llm_enviroguard_cold_c", cfg["cold_c"]))
         cfg["hyst_c"]   = float(merged.get("llm_enviroguard_hysteresis_c", cfg["hyst_c"]))
-
-        # Profiles
+# Profiles
         prof = merged.get("llm_enviroguard_profiles", cfg["profiles"])
         if isinstance(prof, str):
             try:
@@ -136,6 +136,8 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
     except Exception as e:
         print(f"[EnviroGuard] config merge error: {e}")
     return cfg
+
+
 def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
     """Apply a profile and enforce OFF if cpu<=0 or name=='off'."""
     name = (name or "normal").lower()
@@ -173,6 +175,8 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
         f"(CPU={cpu}%, ctx={ctx}, to={tout}s) "
         f"[source={src}]"
     )
+
+
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     url = cfg.get("ha_url") or ""
     token = cfg.get("ha_token") or ""
@@ -207,7 +211,6 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     except Exception as e:
         print(f"[EnviroGuard] HA fetch error: {e}")
         return None
-
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     if not cfg.get("weather_enabled", True):
         return None
@@ -232,6 +235,7 @@ def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         return None
     return None
 
+
 def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
     t = _ha_get_temperature(cfg)
     if t is not None:
@@ -240,6 +244,8 @@ def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str
     if t is not None:
         return round(float(t), 1), "open-meteo"
     return None, None
+
+
 def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[str, Any]) -> str:
     off_c   = float(cfg.get("off_c"))
     hot_c   = float(cfg.get("hot_c"))
@@ -301,8 +307,6 @@ def get_boot_status_line(merged: dict) -> str:
                 f"(mode={mode.upper()}, profile={prof.upper()}, {t:.1f}°C, src={src})")
     else:
         return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, src={src})"
-
-
 def command(want: str, merged: dict, send_message) -> bool:
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
@@ -349,6 +353,8 @@ def command(want: str, merged: dict, send_message) -> bool:
             pass
 
     return True
+
+
 # --- ADDITIVE: expose set_profile API for bot.py ---
 def set_profile(name: str) -> Dict[str, Any]:
     """Programmatic profile setter for bot.py (returns knobs)."""
