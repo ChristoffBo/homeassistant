@@ -162,12 +162,12 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
         _state["forced_off"] = True
         merged["llm_enabled"] = False
         merged["llm_rewrite_enabled"] = False
-        os.environ["BEAUTIFY_LLM_ENABLED"] = "0"
+        os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
     else:
         if _state.get("forced_off"):
             # Only re-enable if we previously forced it off
             merged["llm_enabled"] = True
-            os.environ["BEAUTIFY_LLM_ENABLED"] = "1"
+            os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
         _state["forced_off"] = False
 
     _state["profile"] = name
@@ -324,13 +324,9 @@ def command(want: str, merged: dict, send_message) -> bool:
         prof = _state.get("profile", "normal")
         t = _state.get("last_temp_c")
         src = _state.get("source") or "?"
-        msg = f"ENV MODE={mode.upper()}, PROFILE={prof.upper()}, SRC={src}"
+        msg = f"Mode={mode.upper()}, profile={prof.upper()}, src={src}"
         if t is not None:
             msg += f", {t:.1f}°C"
-
-        
-
-           
         if callable(send_message):
             try:
                 send_message("EnviroGuard", msg, priority=4, decorate=False)
