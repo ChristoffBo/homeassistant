@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas)
+# /app/rag.py  (REST → /api/states + /api/areas + Wikipedia API)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
+# - Adds Wikipedia support: if query contains "wiki" prefix, fetch summary from Wikipedia API
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
 # - inject_context(user_msg, top_k) returns a small, relevant context block
 #
-# Safe: read-only, never calls HA /api/services
+# Safe: never calls HA /api/services, Wikipedia only via read-only public API
 
-import os, re, json, time, threading, urllib.request
+import os, re, json, time, threading, urllib.request, urllib.parse
 from typing import Any, Dict, List, Tuple, Set
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
@@ -136,10 +137,15 @@ def _load_options() -> Dict[str, Any]:
             pass
     return cfg
 
-def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
+def _http_get_json(url: str, headers: Dict[str,str]={}, timeout: int=20):
     req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8","replace"))
+
+def _http_get_text(url: str, headers: Dict[str,str]={}, timeout: int=20) -> str:
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8","replace")
 
 def _write_json_atomic(path: str, obj: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -162,6 +168,27 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
+# ----------------- Wikipedia support -----------------
+
+def fetch_wikipedia_summary(query: str, sentences: int=2) -> str:
+    """
+    Fetch a short summary from Wikipedia API.
+    Only triggered if query starts with 'wiki '.
+    """
+    try:
+        term = query.replace("wiki","",1).strip()
+        if not term:
+            return ""
+        api_url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(term)
+        data = _http_get_json(api_url, timeout=15)
+        if isinstance(data, dict) and "extract" in data:
+            text = data.get("extract","").strip()
+            title = data.get("title","")
+            if text:
+                return f"Wikipedia: {title} — {text}"
+    except Exception as e:
+        print(f"[RAG][Wiki] fetch failed for {query}: {e}")
+    return ""
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -262,7 +289,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-# normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
@@ -319,7 +345,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
-
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -390,6 +415,24 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
+
+    # --- WIKIPEDIA OVERRIDE ---
+    if "wiki" in q or "wikipedia" in q:
+        try:
+            topic = " ".join([t for t in q_raw if t not in {"wiki","wikipedia"}])
+            if topic:
+                url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(topic)}"
+                req = urllib.request.Request(url, headers={"User-Agent":"JarvisPrime/1.0"})
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data=json.loads(resp.read().decode("utf-8","replace"))
+                summary = data.get("extract") or ""
+                title = data.get("title") or topic
+                if summary:
+                    return f"Wikipedia: {title} — {summary}"
+        except Exception as e:
+            return f"(Wikipedia lookup failed: {e})"
+    # --- END WIKIPEDIA OVERRIDE ---
+
     facts = get_facts()
 
     # ---- Domain/keyword overrides ----
@@ -413,7 +456,6 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
-    # area queries
     for f in facts:
         if f.get("area") and f.get("area","").lower() in q:
             filtered.append(f)
