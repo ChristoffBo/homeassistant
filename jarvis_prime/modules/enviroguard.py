@@ -310,30 +310,10 @@ def get_boot_status_line(merged: dict) -> str:
 def command(want: str, merged: dict, send_message) -> bool:
     """
     Handle 'jarvis env <auto|PROFILE>' routed from bot.
-    If no argument, show current state (mode, profile, temp/source).
-    Always report state after executing a command.
+    Always report current state (mode, profile, temp, source) at the end.
     """
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
-
-    def _report_state():
-        mode = _state.get("mode", "auto")
-        prof = _state.get("profile", "normal")
-        t = _state.get("last_temp_c")
-        src = _state.get("source") or "?"
-        msg = f"Mode={mode.upper()}, profile={prof.upper()}, src={src}"
-        if t is not None:
-            msg += f", {t:.1f}°C"
-        if callable(send_message):
-            try:
-                send_message("EnviroGuard", msg, priority=4, decorate=False)
-            except Exception:
-                pass
-
-    # Report current state when no argument is provided
-    if not w:
-        _report_state()
-        return True
 
     # Switch to AUTO mode
     if w == "auto":
@@ -347,12 +327,9 @@ def command(want: str, merged: dict, send_message) -> bool:
                 send_message("EnviroGuard", text, priority=4, decorate=False)
             except Exception:
                 pass
-        _report_state()
-        return True
 
     # Manual profile selection
-    profiles = (cfg.get("profiles") or {}).keys()
-    if w in profiles:
+    elif w in (cfg.get("profiles") or {}):
         was_mode = _state.get("mode")
         _state["mode"] = "manual"
         _apply_profile(w, merged, cfg)
@@ -370,10 +347,20 @@ def command(want: str, merged: dict, send_message) -> bool:
                 )
             except Exception:
                 pass
-        _report_state()
-        return True
 
-    return False
+    # Unknown argument → just ignore and continue
+    elif w:
+        return False
+
+    # Always send state line
+    if callable(send_message):
+        try:
+            line = get_boot_status_line(merged)
+            send_message("EnviroGuard", line, priority=4, decorate=False)
+        except Exception:
+            pass
+
+    return True
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
