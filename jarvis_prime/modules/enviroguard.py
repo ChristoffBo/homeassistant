@@ -69,6 +69,17 @@ _cfg_template: Dict[str, Any] = {
 # ------------------------------
 # Utilities
 # ------------------------------
+def _load_config_files() -> Dict[str, Any]:
+    """Try to load /data/options.json or /data/config.json."""
+    for path in ("/data/options.json", "/data/config.json"):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"[EnviroGuard] failed to load {path}: {e}")
+    return {}
+
 def _as_bool(v, default=False):
     s = str(v).strip().lower()
     if s in ("1","true","yes","on"): return True
@@ -76,7 +87,10 @@ def _as_bool(v, default=False):
     return bool(default)
 
 def _cfg_from(merged: dict) -> Dict[str, Any]:
-    """Build runtime config from merged options (supports multiple key names)."""
+    """Build runtime config from merged options and/or local files."""
+    if not merged:
+        merged = _load_config_files()
+
     cfg = dict(_cfg_template)
     try:
         # Enablement & cadence
@@ -130,7 +144,6 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
     except Exception as e:
         print(f"[EnviroGuard] config merge error: {e}")
     return cfg
-
 def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
     """Apply a profile and enforce OFF if cpu<=0 or name=='off'."""
     name = (name or "normal").lower()
@@ -221,7 +234,6 @@ def _get_temperature(cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional[str
     if t is not None:
         return round(float(t), 1), "open-meteo"
     return None, None
-
 def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[str, Any]) -> str:
     off_c   = float(cfg.get("off_c"))
     hot_c   = float(cfg.get("hot_c"))
@@ -280,7 +292,6 @@ def get_boot_status_line(merged: dict) -> str:
         return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, {t:.1f}°C, src={src})"
     else:
         return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, src={src})"
-
 def command(want: str, merged: dict, send_message) -> bool:
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
@@ -335,7 +346,6 @@ def set_profile(name: str) -> Dict[str, Any]:
     _apply_profile(name, {}, cfg)
     return cfg.get("profiles", {}).get(name, {})
 # --- end additive ---
-
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
@@ -374,7 +384,6 @@ async def _poll_loop(merged: dict, send_message) -> None:
         except Exception as e:
             print(f"[EnviroGuard] poll error: {e}")
         await asyncio.sleep(poll * 60)
-
 def start_background_poll(merged: dict, send_message):
     cfg = _cfg_from(merged)
     _state["enabled"] = bool(cfg.get("enabled"))
@@ -396,7 +405,6 @@ def start_background_poll(merged: dict, send_message):
     task = loop.create_task(_poll_loop(merged, send_message))
     _state["task"] = task
     return task   # --- ADDITIVE: return the task so bot.py sees it ---
-
 def stop_background_poll() -> None:
     t = _state.get("task")
     if t and isinstance(t, asyncio.Task) and not t.done():
