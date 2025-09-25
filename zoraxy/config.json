@@ -18,7 +18,9 @@
     "80/udp": 80
   },
   "map": [
-    "config:rw"
+    "config:rw",
+    "share:rw",
+    "ssl:rw"
   ],
   "panel_icon": "mdi:reverse",
   "panel_title": "Zoraxy",
@@ -29,5 +31,9 @@
   "privileged": [],
   "environment": {},
   "options": {},
-  "schema": {}
+  "schema": {},
+  "volumes": {
+    "/data": "/data",
+    "/config/zoraxy": "/config/zoraxy"
+  }
 }
