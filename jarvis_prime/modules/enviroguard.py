@@ -294,11 +294,6 @@ def get_boot_status_line(merged: dict) -> str:
         return f"🌡️ EnviroGuard — {prof} (mode={mode.upper()}, src={src})"
 
 
-    if not cfg.get("enabled"):
-        return f"🌡️ EnviroGuard — OFF (mode={mode.upper()}, profile={prof.upper()}, src={src})"
-
-    if t is not None:
-        return f"🌡️ EnviroGuard — ACTIVE (mode={mode.upper()}, profile={prof.upper()}, {t:.1f}°C, src={src})"
    
 def command(want: str, merged: dict, send_message) -> bool:
     cfg = _cfg_from(merged)
