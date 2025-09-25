@@ -121,7 +121,7 @@
     "uptimekuma_url": "http://10.0.0.99:3001",
     "uptimekuma_api_key": "uk2_1w672vOa6MPVybKDrMkeeCcHZmBnpLUXIxglqOmS",
     "uptimekuma_status_slug": "",
-"llm_enabled": true,
+    "llm_enabled": true,
     "llm_persona_riffs_enabled": true,
     "llm_rewrite_enabled": false,
     "llm_cleanup_on_disable": true,
