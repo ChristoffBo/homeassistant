@@ -14,7 +14,7 @@
 #   - start_background_poll(merged: dict, send_message: callable) -> None
 #   - stop_background_poll() -> None
 #
-# Dependency: requests
+# Dependency: requests, PyYAML (for tolerant parsing)
 
 from __future__ import annotations
 import os
@@ -22,6 +22,7 @@ import json
 import time
 import asyncio
 import requests
+import yaml
 from typing import Optional, Dict, Any, Tuple
 
 # ------------------------------
@@ -37,6 +38,8 @@ _state: Dict[str, Any] = {
     "task": None,          # asyncio.Task or None
     "forced_off": False,   # we turned LLM off due to OFF profile
     "profile_source": "defaults",  # track if profile values came from options.json or defaults
+    "profiles_json": None,
+    "profiles_yaml": None,
 }
 
 # Default configuration template
@@ -86,21 +89,18 @@ def _try_parse_json_tolerant(s: str) -> Optional[dict]:
     """Attempt several reasonable JSON parsing passes for strings."""
     if not isinstance(s, str):
         return None
-    # direct
     try:
         j = json.loads(s)
         if isinstance(j, dict):
             return j
     except Exception:
         pass
-    # strip wrappers and control chars
     try:
         j = json.loads(s.strip())
         if isinstance(j, dict):
             return j
     except Exception:
         pass
-    # replace Windows newlines and YAML folded newlines (keep single-line)
     try:
         flat = s.replace("\r\n", "\n").replace("\n", "").strip()
         j = json.loads(flat)
@@ -108,7 +108,6 @@ def _try_parse_json_tolerant(s: str) -> Optional[dict]:
             return j
     except Exception:
         pass
-    # attempt to unescape common escapes
     try:
         un = s.encode("utf-8").decode("unicode_escape")
         j = json.loads(un)
@@ -118,12 +117,57 @@ def _try_parse_json_tolerant(s: str) -> Optional[dict]:
         pass
     return None
 
+def _try_parse_yaml(s: str) -> Optional[dict]:
+    """Parse YAML if possible."""
+    if not isinstance(s, str):
+        return None
+    try:
+        y = yaml.safe_load(s)
+        if isinstance(y, dict):
+            return y
+    except Exception:
+        pass
+    return None
+
+def _normalize_profiles(prof_raw: Any) -> Optional[dict]:
+    """Normalize profiles input from merged config.
+    Accepts dict, JSON string, YAML string.
+    Saves both JSON+YAML versions into _state for debug.
+    """
+    if prof_raw is None:
+        return None
+    if isinstance(prof_raw, dict):
+        _state["profiles_json"] = json.dumps(prof_raw, indent=2)
+        try:
+            _state["profiles_yaml"] = yaml.safe_dump(prof_raw)
+        except Exception:
+            _state["profiles_yaml"] = None
+        return prof_raw
+    if isinstance(prof_raw, str):
+        parsed = _try_parse_json_tolerant(prof_raw)
+        if parsed:
+            _state["profiles_json"] = json.dumps(parsed, indent=2)
+            try:
+                _state["profiles_yaml"] = yaml.safe_dump(parsed)
+            except Exception:
+                _state["profiles_yaml"] = None
+            return parsed
+        parsed = _try_parse_yaml(prof_raw)
+        if parsed:
+            _state["profiles_yaml"] = yaml.safe_dump(parsed)
+            try:
+                _state["profiles_json"] = json.dumps(parsed, indent=2)
+            except Exception:
+                _state["profiles_json"] = None
+            return parsed
+    return None
 def _cfg_from(merged: dict) -> Dict[str, Any]:
     """Build runtime config from merged options (supports multiple key names).
     Robustly accepts:
       - YAML mapping (dict)
       - Inline JSON string
       - Multiline JSON string (folded YAML)
+    Always normalizes profiles to dict + stores JSON/YAML versions in _state.
     """
     cfg = dict(_cfg_template)
     try:
@@ -142,32 +186,16 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
 
         # Profiles - robust handling
         prof_raw = merged.get("llm_enviroguard_profiles", None)
+        parsed = _normalize_profiles(prof_raw)
 
-        if prof_raw is None:
-            # no key provided in merged; leave defaults
-            _state["profile_source"] = "defaults"
+        if parsed:
+            cfg["profiles"] = parsed
+            _state["profile_source"] = "options.json"
         else:
-            # if it's already a dict (YAML mapping) accept it
-            if isinstance(prof_raw, dict):
-                cfg["profiles"] = prof_raw
-                _state["profile_source"] = "options.json"
+            if prof_raw is None:
+                _state["profile_source"] = "defaults"
             else:
-                # if it's a string, try tolerant JSON parsing
-                parsed = None
-                if isinstance(prof_raw, str):
-                    parsed = _try_parse_json_tolerant(prof_raw)
-                # if parsed successfully, use it
-                if isinstance(parsed, dict):
-                    cfg["profiles"] = parsed
-                    _state["profile_source"] = "options.json"
-                else:
-                    # parsing failed; keep defaults but note that key existed
-                    # Some add-on systems may wrap JSON strings or escape them.
-                    # We mark source as 'string-unparseable' so logs reveal it.
-                    if isinstance(prof_raw, str):
-                        _state["profile_source"] = "string-unparseable"
-                    else:
-                        _state["profile_source"] = "defaults"
+                _state["profile_source"] = "string-unparseable"
 
         # Home Assistant
         cfg["ha_url"] = str(
@@ -211,7 +239,6 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
     ctx = prof.get("ctx_tokens")
     tout = prof.get("timeout_seconds")
 
-    # fallbacks
     if cpu is None:
         cpu = merged.get("llm_max_cpu_percent", cfg.get("profiles", {}).get(name, {}).get("cpu_percent", 80))
     if ctx is None:
@@ -232,12 +259,10 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
     except Exception:
         tout = int(merged.get("llm_timeout_seconds", 20))
 
-    # Apply to merged config (this makes bot.py / LLM use the knobs)
     merged["llm_max_cpu_percent"] = cpu
     merged["llm_ctx_tokens"] = ctx
     merged["llm_timeout_seconds"] = tout
 
-    # Export to environment for any subprocesses
     os.environ["LLM_MAX_CPU_PERCENT"] = str(cpu)
     os.environ["LLM_CTX_TOKENS"] = str(ctx)
     os.environ["LLM_TIMEOUT_SECONDS"] = str(tout)
@@ -249,18 +274,13 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
         os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
     else:
         if _state.get("forced_off"):
-            # restore LLM enabling on transition out of forced off
             merged["llm_enabled"] = True
             os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
         _state["forced_off"] = False
 
     _state["profile"] = name
-
-    # Verbose single-line log so you can easily see what was applied and where it came from.
     src = _state.get("profile_source", "defaults")
-    # Normalized label for logs
     print(f"[EnviroGuard] Applied profile {name.upper()} (CPU={cpu}%, ctx={ctx}, to={tout}s) [source={src}]")
-
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     url = cfg.get("ha_url") or ""
     token = cfg.get("ha_token") or ""
@@ -280,7 +300,6 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         if "state" in j:
             v = j.get("state")
             if v is not None and str(v).lower() not in ("unknown", "unavailable"):
-                # prefer direct state if numeric
                 try:
                     return float(v)
                 except Exception:
@@ -370,7 +389,6 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
         return "cold"
 
     return target
-
 # ------------------------------
 # Public API
 # ------------------------------
@@ -442,7 +460,6 @@ def set_profile(name: str) -> Dict[str, Any]:
     cfg = _cfg_from({})
     _apply_profile(name, {}, cfg)
     return cfg.get("profiles", {}).get(name, {})
-
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
