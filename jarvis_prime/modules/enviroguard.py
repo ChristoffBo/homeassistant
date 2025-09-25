@@ -73,7 +73,6 @@ _cfg_template: Dict[str, Any] = {
     "weather_lat": -26.2041,
     "weather_lon": 28.0473,
 }
-
 # ------------------------------
 # Utilities
 # ------------------------------
@@ -171,7 +170,6 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
         _state["forced_off"] = False
 
     _state["profile"] = name
-
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     """Read current temperature from HA sensor if configured."""
     url = cfg.get("ha_url") or ""
@@ -295,7 +293,6 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
 
     # lp == normal
     return target
-
 # ------------------------------
 # Public API
 # ------------------------------
@@ -314,12 +311,12 @@ def command(want: str, merged: dict, send_message) -> bool:
     """
     Handle 'jarvis env <auto|PROFILE>' routed from bot.
     If no argument, show current state (mode, profile, temp/source).
+    Always report state after executing a command.
     """
     cfg = _cfg_from(merged)
     w = (want or "").strip().lower()
 
-    # Report current state when no argument is provided
-    if not w:
+    def _report_state():
         mode = _state.get("mode", "auto")
         prof = _state.get("profile", "normal")
         t = _state.get("last_temp_c")
@@ -332,6 +329,10 @@ def command(want: str, merged: dict, send_message) -> bool:
                 send_message("EnviroGuard", msg, priority=4, decorate=False)
             except Exception:
                 pass
+
+    # Report current state when no argument is provided
+    if not w:
+        _report_state()
         return True
 
     # Switch to AUTO mode
@@ -346,6 +347,7 @@ def command(want: str, merged: dict, send_message) -> bool:
                 send_message("EnviroGuard", text, priority=4, decorate=False)
             except Exception:
                 pass
+        _report_state()
         return True
 
     # Manual profile selection
@@ -368,10 +370,10 @@ def command(want: str, merged: dict, send_message) -> bool:
                 )
             except Exception:
                 pass
+        _report_state()
         return True
 
     return False
-
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
