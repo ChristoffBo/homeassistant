@@ -203,65 +203,6 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         return None
     except Exception:
         return None
-def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
-    """Apply a profile and enforce OFF if cpu<=0 or name=='off'."""
-    name = (name or "normal").lower()
-    prof = (cfg.get("profiles") or {}).get(name) or {}
-    cpu = int(prof.get("cpu_percent", merged.get("llm_max_cpu_percent", 80)))
-    ctx = int(prof.get("ctx_tokens",  merged.get("llm_ctx_tokens", 4096)))
-    tout= int(prof.get("timeout_seconds", merged.get("llm_timeout_seconds", 20)))
-
-    merged["llm_max_cpu_percent"] = cpu
-    merged["llm_ctx_tokens"] = ctx
-    merged["llm_timeout_seconds"] = tout
-
-    os.environ["LLM_MAX_CPU_PERCENT"] = str(cpu)
-    os.environ["LLM_CTX_TOKENS"] = str(ctx)
-    os.environ["LLM_TIMEOUT_SECONDS"] = str(tout)
-
-    if cpu <= 0 or name == "off":
-        _state["forced_off"] = True
-        merged["llm_enabled"] = False
-        merged["llm_rewrite_enabled"] = False
-        os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
-    else:
-        if _state.get("forced_off"):
-            merged["llm_enabled"] = True
-            os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
-        _state["forced_off"] = False
-
-    _state["profile"] = name
-
-def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
-    url = cfg.get("ha_url") or ""
-    token = cfg.get("ha_token") or ""
-    entity = cfg.get("ha_temperature_entity") or ""
-    if not (url and token and entity):
-        return None
-    try:
-        s_url = f"{url.rstrip('/')}/api/states/{entity}"
-        r = requests.get(
-            s_url,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            timeout=6
-        )
-        if not r.ok:
-            return None
-        j = r.json() or {}
-        if "state" in j:
-            v = j.get("state")
-            if v is not None and str(v).lower() not in ("unknown", "unavailable"):
-                return float(v)
-        attrs = j.get("attributes") or {}
-        for k in ("temperature", "current_temperature", "temp", "value"):
-            if k in attrs:
-                try:
-                    return float(attrs[k])
-                except Exception:
-                    continue
-        return None
-    except Exception:
-        return None
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     if not cfg.get("weather_enabled", True):
         return None
