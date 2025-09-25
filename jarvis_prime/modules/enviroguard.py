@@ -372,6 +372,16 @@ def command(want: str, merged: dict, send_message) -> bool:
 
     return False
 
+# --- ADDITIVE: getters for bot.py to show profile + temp ---
+def get_current_profile() -> str:
+    """Return the current active profile."""
+    return _state.get("profile", "normal")
+
+def get_last_temperature_c() -> Optional[float]:
+    """Return the last recorded temperature in °C (or None)."""
+    return _state.get("last_temp_c")
+# --- end additive ---
+
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
     poll = max(1, int(cfg.get("poll_minutes", 30)))
@@ -395,15 +405,16 @@ async def _poll_loop(merged: dict, send_message) -> None:
                 if temp_c >= float(cfg.get("off_c")) - 0.0:
                     nextp = "off"
                 else:
-                    nextp = _next_profile_with_hysteresis(temp_c, last, cfg)
-
-                if nextp != last:
+if nextp != last:
                     _apply_profile(nextp, merged, cfg)
                     if callable(send_message):
                         try:
                             send_message(
                                 "EnviroGuard",
-                                f"{source or 'temp'} {temp_c:.1f}°C → profile **{nextp.upper()}** (CPU={merged.get('llm_max_cpu_percent')}%, ctx={merged.get('llm_ctx_tokens')}, to={merged.get('llm_timeout_seconds')}s)",
+                                f"{source or 'temp'} {temp_c:.1f}°C → profile **{nextp.upper()}** "
+                                f"(CPU={merged.get('llm_max_cpu_percent')}%, "
+                                f"ctx={merged.get('llm_ctx_tokens')}, "
+                                f"to={merged.get('llm_timeout_seconds')}s)",
                                 priority=4,
                                 decorate=False
                             )
@@ -449,3 +460,15 @@ def stop_background_poll() -> None:
         except Exception:
             pass
     _state["task"] = None
+
+
+# ------------------------------
+# Additive helpers
+# ------------------------------
+def get_current_profile() -> str:
+    """Return the current active profile."""
+    return _state.get("profile", "normal")
+
+def get_last_temperature_c() -> Optional[float]:
+    """Return the last recorded temperature in °C (or None)."""
+    return _state.get("last_temp_c")
