@@ -96,6 +96,7 @@ _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
+
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -173,10 +174,9 @@ def _fetch_wiki_summary(query: str) -> str:
     try:
         with urllib.request.urlopen(url, timeout=6) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
-            extract = data.get("extract") or ""
-            return extract.strip()
+            return data.get("extract","").strip()
     except Exception:
-        return "[Wiki] lookup failed (offline/unreachable)"
+        return ""
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -334,6 +334,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
+
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -383,7 +384,6 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
-
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -478,7 +478,8 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         scored.append((wiki_fact["score"], wiki_fact))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-ctx_tokens = _ctx_tokens_from_options()
+
+    ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
 
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
