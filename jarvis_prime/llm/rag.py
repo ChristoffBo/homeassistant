@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas, plus Wiki fallback context)
+# /app/rag.py  (REST → /api/states + /api/areas, plus strict wiki fallback)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls HA states via /api/states + area metadata via /api/areas
 # - Summarizes & categorizes HA entities
-# - Writes only HA facts to JSON (no wiki persisted)
-# - inject_context(user_msg, top_k) returns HA context, and if no HA fact is relevant, adds wiki summary transiently
+# - Writes **only** HA facts to JSON (no wiki persisted)
+# - inject_context(user_msg, top_k) returns HA context if HA has relevant info,
+#     else returns wiki summary (no mixing)
 
 import os, re, json, time, threading, urllib.request, urllib.error
 from typing import Any, Dict, List, Tuple, Set
@@ -156,7 +157,6 @@ def _rag_budget_tokens(ctx_tokens: int) -> int:
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
     cats: Set[str] = set()
     toks = set(_tok(eid) + _tok(name) + _tok(device_class))
-    manf = str(attrs.get("manufacturer","") or attrs.get("vendor","") or "").lower()
     model = str(attrs.get("model","") or "").lower()
 
     if domain in ("person", "device_tracker"):
@@ -368,64 +368,60 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
         return refresh_and_cache()
     return facts
 
-# ---------- Wikipedia fallback helper ----------
-
 def _fetch_wiki_summary(term: str) -> str:
     """
-    Fetch a short wiki summary for `term`, using Wikipedia REST API.
-    Returns empty string if failure.
+    Fetch short summary from Wikipedia REST API (when needed).
+    Returns blank if fails or no summary.
     """
     if not term:
         return ""
-    # Use Wikipedia REST API v1 summary
     url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.request.quote(term)
-    headers = {"User-Agent": "rag-integration/1.0"}  # required by Wikimedia API to identify client 1
+    headers = {"User-Agent": "rag-fallback/1.0"}  # user agent needed by Wikimedia APIs 1
     try:
         req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
             j = json.loads(resp.read().decode("utf-8", "replace"))
-            extract = j.get("extract") or ""
-            return extract.strip()
+            return j.get("extract", "").strip()
     except (urllib.error.URLError, json.JSONDecodeError):
         return ""
 
 def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
-    facts = get_facts()
+    ha_facts = get_facts()
 
-    # Domain / keyword filtering
+    # Filter HA facts by domain/keywords (same as before)
     filtered = []
     if "light" in q or "lights" in q:
-        filtered += [f for f in facts if f["domain"] == "light"]
+        filtered += [f for f in ha_facts if f["domain"] == "light"]
     if "switch" in q or "switches" in q:
-        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
+        filtered += [f for f in ha_facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
     if "motion" in q or "occupancy" in q:
-        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
+        filtered += [f for f in ha_facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
     if "axpert" in q:
-        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
+        filtered += [f for f in ha_facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
     if "sonoff" in q:
-        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
+        filtered += [f for f in ha_fats if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
     if "zigbee" in q or "z2m" in q:
-        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
+        filtered += [f for f in ha_facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
     if "where" in q:
-        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
+        filtered += [f for f in ha_facts if f["domain"] in ("person","device_tracker")]
     if q & MEDIA_KEYWORDS:
-        filtered += [f for f in facts if any(
+        filtered += [f for f in ha_facts if any(
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
-    for f in facts:
+    for f in ha_facts:
         if f.get("area") and f["area"].lower() in q:
             filtered.append(f)
-
     if filtered:
-        facts = filtered
+        ha_facts = filtered
 
     want_cats = set(_intent_categories(q))
 
-    scored: List[Tuple[int, Dict[str,Any]]] = []
-    for f in facts:
+    # Score HA facts
+    scored_ha: List[Tuple[int, Dict[str,Any]]] = []
+    for f in ha_facts:
         s = int(f.get("score", 1))
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
@@ -445,50 +441,59 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
         if (("soc" in q) or (want_cats & {"energy.storage"})) and (("forecast" in ft) or ("estimated" in ft)):
             s -= 12
 
-        scored.append((s, f))
+        scored_ha.append((s, f))
 
-    # If no HA facts or low confidence, fallback to wiki
-    wiki_fact = None
-    if not scored or scored[0][0] < 5:
-        # build search term from raw tokens not in stop words
-        term = " ".join(q_raw)
-        summary = _fetch_wiki_summary(term)
-        if summary:
-            wiki_fact = {"summary": f"[Wiki] {summary}", "score": 0, "cats": ["wiki"]}
-            scored.append((wiki_fact["score"], wiki_fact))
+    scored_ha.sort(key=lambda x: x[0], reverse=True)
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # Decide: if top HA fact is good enough → return HA context exclusively
+    if scored_ha and scored_ha[0][0] >= 10:
+        # Build context from top HA facts only
+        ctx_tokens = _ctx_tokens_from_options()
+        budget = _rag_budget_tokens(ctx_tokens)
+        candidate = [f for _, f in (scored_ha[:top_k] if top_k else scored_ha)]
+        selected: List[str] = []
+        rem = budget
+        for f in candidate:
+            line = f.get("summary", "")
+            if not line:
+                continue
+            cost = _estimate_tokens(line)
+            if cost <= rem:
+                selected.append(line)
+                rem -= cost
+            elif not selected and cost > rem and rem > 0:
+                selected.append(line)
+                rem = 0
+            if rem <= 0:
+                break
+        return "\n".join(selected)
 
+    # Otherwise, use wiki fallback, no HA mixing
+    term = " ".join(q_raw)
+    wiki_summary = _fetch_wiki_summary(term)
+    if wiki_summary:
+        return "[Wiki] " + wiki_summary
+
+    # Fallback if wiki also fails: return HA facts anyway
+    # (Though HA top was not strong)
     ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
-
-    candidate = [f for _, f in (scored[:top_k] if top_k else scored)]
-
+    candidate = [f for _, f in (scored_ha[:top_k] if top_k else scored_ha)]
     selected: List[str] = []
-    remaining = budget
-
+    rem = budget
     for f in candidate:
         line = f.get("summary", "")
         if not line:
             continue
         cost = _estimate_tokens(line)
-        # If wiki fact, treat separately
-        if f.get("cats") == ["wiki"]:
-            # cap wiki summary cost
-            allowed = min(cost, 200)
-            if allowed <= remaining:
-                selected.append(line)
-                remaining -= allowed
-        else:
-            if cost <= remaining:
-                selected.append(line)
-                remaining -= cost
-            elif not selected and cost > remaining and remaining > 0:
-                selected.append(line)
-                remaining = 0
-        if remaining <= 0:
+        if cost <= rem:
+            selected.append(line)
+            rem -= cost
+        elif not selected and cost > rem and rem > 0:
+            selected.append(line)
+            rem = 0
+        if rem <= 0:
             break
-
     return "\n".join(selected)
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
