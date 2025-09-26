@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas + Wiki fallback)
+# /app/rag.py  (REST → /api/states + /api/areas)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
-# - inject_context(user_msg, top_k, mode) returns a context block
-#   mode = "ha" → HA only, "wiki" → Wiki only, None → HA first, fallback Wiki
+# - inject_context(user_msg, top_k) returns a small, relevant context block
 #
 # Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request, urllib.parse
+import os, re, json, time, threading, urllib.request
 from typing import Any, Dict, List, Tuple, Set
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
@@ -163,34 +162,6 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
-# ----------------- Wiki retriever -----------------
-
-def _fetch_wiki_extract(query: str, max_chars: int = 2000) -> str:
-    """Fetch a short extract from Wikipedia via MediaWiki API (no key required)."""
-    try:
-        search_url = (
-            "https://en.wikipedia.org/w/api.php"
-            f"?action=query&list=search&srsearch={urllib.parse.quote(query)}&format=json"
-        )
-        sdata = _http_get_json(search_url, {}, timeout=15)
-        if not sdata or "query" not in sdata or not sdata["query"]["search"]:
-            return ""
-        pageid = sdata["query"]["search"][0]["pageid"]
-
-        extract_url = (
-            "https://en.wikipedia.org/w/api.php"
-            f"?action=query&prop=extracts&explaintext=1&format=json&pageids={pageid}"
-        )
-        edata = _http_get_json(extract_url, {}, timeout=15)
-        pages = edata.get("query", {}).get("pages", {})
-        if not pages: return ""
-        extract = pages[str(pageid)].get("extract", "")
-        if not extract: return ""
-
-        return extract[:max_chars]
-    except Exception as e:
-        print(f"[RAG] wiki fetch failed: {e}")
-        return ""
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -291,9 +262,11 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
+# normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
+            # displayable state
             show_state = state.upper() if state in ("on","off","open","closed") else state
             if unit and state not in ("on","off","open","closed"):
                 try:
@@ -304,6 +277,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
+            # build summary
             if domain == "person":
                 zone = _safe_zone_from_tracker(state, attrs)
                 summary = f"{name} is at {zone}"
@@ -317,6 +291,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
+            # score baseline
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
@@ -394,6 +369,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
+
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -411,66 +387,97 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"media"})
     return out
 
-def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K, mode: str=None) -> str:
-    """
-    mode:
-      "ha"   → force Home Assistant only
-      "wiki" → force Wikipedia only
-      None   → try HA first, fallback Wiki
-    """
-    ctx_tokens = _ctx_tokens_from_options()
-    budget = _rag_budget_tokens(ctx_tokens)
-
-    # Explicit Wiki mode
-    if mode == "wiki":
-        wiki_text = _fetch_wiki_extract(user_msg, max_chars=budget*6)
-        return wiki_text[:budget*6]
-
-    # Default / HA mode
+def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
+    # ---- Domain/keyword overrides ----
+    filtered = []
+    if "light" in q or "lights" in q:
+        filtered += [f for f in facts if f["domain"] == "light"]
+    if "switch" in q or "switches" in q:
+        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
+    if "motion" in q or "occupancy" in q:
+        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
+    if "axpert" in q:
+        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
+    if "sonoff" in q:
+        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
+    if "zigbee" in q or "z2m" in q:
+        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
+    if "where" in q:
+        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
+    if q & MEDIA_KEYWORDS:
+        filtered += [f for f in facts if any(
+            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
+            for m in MEDIA_KEYWORDS
+        )]
+    # area queries
+    for f in facts:
+        if f.get("area") and f.get("area","").lower() in q:
+            filtered.append(f)
+
+    if filtered:
+        facts = filtered
+
     want_cats = _intent_categories(q)
 
-    # Strict relevance scoring
     scored: List[Tuple[int, Dict[str, Any]]] = []
     for f in facts:
-        score = 0
+        s = int(f.get("score", 1))
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
 
-        if q & ft:  # keyword overlap
-            score += 10
-        if cats & want_cats:
-            score += 8
-        if score > 0:
-            scored.append((score, f))
+        if q and (q & ft): s += 3
+        if q & SOLAR_KEYWORDS: s += 2
+        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
+            s += 12
+        if want_cats and (cats & want_cats):
+            s += 15
+        if want_cats & {"energy.storage"} and "energy.storage" in cats:
+            s += 20
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           ("device.battery" in cats) and ("energy.storage" not in cats):
+            s -= 18
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           (("forecast" in ft) or ("estimated" in ft)):
+            s -= 12
+
+        scored.append((s, f))
 
     scored.sort(key=lambda x: x[0], reverse=True)
+
+    ctx_tokens = _ctx_tokens_from_options()
+    budget = _rag_budget_tokens(ctx_tokens)
+
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
+
+    if ("soc" in q) or (want_cats & {"energy.storage"}):
+        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
+        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
+        ordered   = ess_first + others
+    else:
+        ordered = candidate_facts
 
     selected: List[str] = []
     remaining = budget
-    for f in candidate_facts:
+
+    for f in ordered:
         line = f.get("summary", "")
-        if not line: continue
+        if not line:
+            continue
         cost = _estimate_tokens(line)
         if cost <= remaining:
             selected.append(line)
             remaining -= cost
+        if not selected and cost > remaining and remaining > 0:
+            selected.append(line)
+            remaining = 0
         if remaining <= 0:
             break
 
-    if selected:
-        return "\n".join(selected)
-
-    # No HA facts matched → fallback to Wiki
-    if mode is None:
-        wiki_text = _fetch_wiki_extract(user_msg, max_chars=budget*6)
-        return wiki_text[:budget*6]
-
-    return ""
+    return "\n".join(selected)
 
 # ----------------- main -----------------
 
