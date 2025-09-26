@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas + External Intakes)
+# /app/rag.py  (REST → /api/states + /api/areas)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
-# - Adds external intakes (Tech, Movies/Series, General, Cars) via free APIs
-#   * OSS Insight → trending repos
-#   * TMDb → trending movies/series (requires free API key in options.json)
-#   * Wikipedia → general summaries
-#   * CarQuery → car specs
-# - Startup + monthly refresh for intakes
-# - Writes merged JSON to /share/jarvis_prime/memory/rag_facts.json
+# - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
 # - inject_context(user_msg, top_k) returns a small, relevant context block
 #
-# Safe: never calls HA /api/services, only read-only APIs
+# Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request, urllib.parse
+import os, re, json, time, threading, urllib.request
 from typing import Any, Dict, List, Tuple, Set
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
@@ -97,15 +91,10 @@ INTENT_CATEGORY_MAP = {
 
 REFRESH_INTERVAL_SEC = 15*60
 DEFAULT_TOP_K = 10
-MONTHLY_REFRESH_SEC = 30*24*3600  # 30 days
-
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
-_LAST_INTAKE_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
-
-MAX_FILE_BYTES = 500 * 1024 * 1024  # 500 MB cap
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -147,8 +136,8 @@ def _load_options() -> Dict[str, Any]:
             pass
     return cfg
 
-def _http_get_json(url: str, headers: Dict[str,str]=None, timeout: int=20):
-    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
+    req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8","replace"))
 
@@ -158,17 +147,6 @@ def _write_json_atomic(path: str, obj: dict):
     with open(tmp,"w",encoding="utf-8") as f:
         json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
     os.replace(tmp,path)
-
-def _ensure_file_size(path: str, max_bytes: int):
-    try:
-        if os.path.exists(path) and os.path.getsize(path) > max_bytes:
-            with open(path,"r",encoding="utf-8") as f:
-                data=json.load(f)
-            if isinstance(data,list) and len(data) > 100:
-                data = data[-100:]  # keep last 100 entries if too big
-                _write_json_atomic(path, data)
-    except Exception as e:
-        print(f"[RAG] size check failed for {path}: {e}")
 
 SAFE_RAG_BUDGET_FRACTION = 0.30
 def _estimate_tokens(text: str) -> int:
@@ -228,96 +206,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if toks & WEATHER_KEYS: cats.add("weather")
 
     return cats
-# ----------------- External Intakes -----------------
 
-def fetch_oss_insight_trending(limit: int = 10) -> List[Dict[str, Any]]:
-    """Fetch trending GitHub repos from OSS Insight (free API)."""
-    url = f"https://ossinsight.io/api/trends/repos?limit={limit}"
-    try:
-        data = _http_get_json(url, timeout=15)
-        out=[]
-        for item in data.get("items", []):
-            repo = item.get("repo_name","")
-            stars = item.get("stars","")
-            desc = item.get("repo_description","")
-            out.append({
-                "source":"tech",
-                "summary": f"Trending repo {repo} ({stars} stars): {desc}",
-                "cats":["tech","github"],
-                "score": 5
-            })
-        return out
-    except Exception as e:
-        print(f"[RAG] OSS Insight fetch failed: {e}")
-        return []
-
-def fetch_tmdb_trending(api_key: str, media_type: str="movie", limit: int=10) -> List[Dict[str, Any]]:
-    """Fetch trending movies/TV from TMDb (requires free API key)."""
-    if not api_key:
-        return []
-    url = f"https://api.themoviedb.org/3/trending/{media_type}/week?api_key={api_key}"
-    try:
-        data = _http_get_json(url, timeout=15)
-        out=[]
-        for item in data.get("results", [])[:limit]:
-            title = item.get("title") or item.get("name") or "Untitled"
-            overview = item.get("overview","")
-            date = item.get("release_date") or item.get("first_air_date") or ""
-            out.append({
-                "source":"movies",
-                "summary": f"Trending {media_type}: {title} ({date}) — {overview}",
-                "cats":["media", media_type],
-                "score": 5
-            })
-        return out
-    except Exception as e:
-        print(f"[RAG] TMDb fetch failed: {e}")
-        return []
-
-def fetch_wikipedia_summary(query: str, limit: int = 1) -> List[Dict[str, Any]]:
-    """Fetch a short summary from Wikipedia REST API."""
-    if not query:
-        return []
-    q_enc = urllib.parse.quote(query)
-    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{q_enc}"
-    try:
-        data = _http_get_json(url, timeout=10)
-        title = data.get("title","")
-        extract = data.get("extract","")
-        return [{
-            "source":"general",
-            "summary": f"{title}: {extract}",
-            "cats":["general","wikipedia"],
-            "score": 4
-        }]
-    except Exception as e:
-        print(f"[RAG] Wikipedia fetch failed for {query}: {e}")
-        return []
-
-def fetch_carquery_makes(year: int = 2023) -> List[Dict[str, Any]]:
-    """Fetch car makes from CarQuery API (public, free)."""
-    url = f"https://www.carqueryapi.com/api/0.3/?cmd=getMakes&year={year}"
-    try:
-        raw = urllib.request.urlopen(url, timeout=15).read().decode("utf-8","replace")
-        # CarQuery returns JS-style JSONP, strip it
-        raw = raw.strip()
-        if raw.startswith("callback(") and raw.endswith(");"):
-            raw = raw[len("callback("):-2]
-        data = json.loads(raw)
-        out=[]
-        for item in data.get("Makes", [])[:10]:
-            name = item.get("make_display","")
-            country = item.get("make_country","")
-            out.append({
-                "source":"cars",
-                "summary": f"Car make {name} from {country}",
-                "cats":["cars"],
-                "score": 3
-            })
-        return out
-    except Exception as e:
-        print(f"[RAG] CarQuery fetch failed: {e}")
-        return []
 # ----------------- fetch areas -----------------
 
 def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
@@ -350,6 +239,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         return []
     if not isinstance(data,list): return []
 
+    # also fetch areas once
     if not _AREA_MAP:
         _AREA_MAP = _fetch_area_map(cfg)
 
@@ -372,9 +262,11 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
+# normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
+            # displayable state
             show_state = state.upper() if state in ("on","off","open","closed") else state
             if unit and state not in ("on","off","open","closed"):
                 try:
@@ -385,6 +277,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
+            # build summary
             if domain == "person":
                 zone = _safe_zone_from_tracker(state, attrs)
                 summary = f"{name} is at {zone}"
@@ -398,6 +291,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
+            # score baseline
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
@@ -426,49 +320,25 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             continue
     return facts
 
-# ----------------- IO + cache with intakes -----------------
+# ----------------- IO + cache -----------------
 
-def _fetch_external_intakes(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
-    tmdb_key = cfg.get("tmdb_api_key","")
-    out=[]
-    out += fetch_oss_insight_trending(limit=5)
-    out += fetch_tmdb_trending(tmdb_key, media_type="movie", limit=5)
-    out += fetch_tmdb_trending(tmdb_key, media_type="tv", limit=5)
-    out += fetch_carquery_makes(year=2023)
-    # Optionally preload some general summaries
-    out += fetch_wikipedia_summary("Artificial intelligence")
-    out += fetch_wikipedia_summary("Tom Cruise")
-    return out
 def refresh_and_cache() -> List[Dict[str,Any]]:
-    """Refresh HA facts, plus monthly external intakes, then write to JSON."""
-    global _LAST_REFRESH_TS, _LAST_INTAKE_TS, _MEM_CACHE
+    global _LAST_REFRESH_TS, _MEM_CACHE
     cfg = _load_options()
-
     facts = _fetch_ha_states(cfg)
-
-    now = time.time()
-    need_intakes = (now - _LAST_INTAKE_TS > MONTHLY_REFRESH_SEC) or (_LAST_INTAKE_TS == 0)
-    if need_intakes:
-        print("[RAG] refreshing external intakes...")
-        intakes = _fetch_external_intakes(cfg)
-        _LAST_INTAKE_TS = now
-        facts.extend(intakes)
-
     _MEM_CACHE = facts
-    payload = facts
 
     result_paths=[]
     try:
+        payload = facts
         for d in PRIMARY_DIRS:
             try:
                 p=os.path.join(d,BASENAME)
                 _write_json_atomic(p, payload); result_paths.append(p)
-                _ensure_file_size(p, MAX_FILE_BYTES)
             except Exception as e:
                 print(f"[RAG] write failed for {d}: {e}")
         try:
             _write_json_atomic(FALLBACK_PATH, payload); result_paths.append(FALLBACK_PATH)
-            _ensure_file_size(FALLBACK_PATH, MAX_FILE_BYTES)
         except Exception as e:
             print(f"[RAG] fallback write failed: {e}")
     finally:
@@ -486,9 +356,8 @@ def load_cached() -> List[Dict[str,Any]]:
             if os.path.exists(p):
                 with open(p,"r",encoding="utf-8") as f:
                     return json.load(f)
-        if os.path.exists(FALLBACK_PATH):
-            with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
-                return json.load(f)
+        with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
+            return json.load(f)
     except Exception:
         return []
     return []
@@ -500,6 +369,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
+
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -515,12 +385,6 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"energy.load"})
     if q_tokens & MEDIA_KEYWORDS:
         out.update({"media"})
-    if "tech" in q_tokens:
-        out.update({"tech"})
-    if "car" in q_tokens or "cars" in q_tokens:
-        out.update({"cars"})
-    if "movie" in q_tokens or "series" in q_tokens or "tv" in q_tokens:
-        out.update({"media"})
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
@@ -528,17 +392,31 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
+    # ---- Domain/keyword overrides ----
     filtered = []
+    if "light" in q or "lights" in q:
+        filtered += [f for f in facts if f["domain"] == "light"]
+    if "switch" in q or "switches" in q:
+        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
+    if "motion" in q or "occupancy" in q:
+        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
+    if "axpert" in q:
+        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
+    if "sonoff" in q:
+        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
+    if "zigbee" in q or "z2m" in q:
+        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
     if "where" in q:
-        filtered += [f for f in facts if f.get("domain") in ("person","device_tracker")]
+        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
     if q & MEDIA_KEYWORDS:
-        filtered += [f for f in facts if "media" in f.get("cats",[])]
-    if "tech" in q:
-        filtered += [f for f in facts if "tech" in f.get("cats",[])]
-    if "car" in q or "cars" in q:
-        filtered += [f for f in facts if "cars" in f.get("cats",[])]
-    if "movie" in q or "series" in q or "tv" in q:
-        filtered += [f for f in facts if "media" in f.get("cats",[])]
+        filtered += [f for f in facts if any(
+            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
+            for m in MEDIA_KEYWORDS
+        )]
+    # area queries
+    for f in facts:
+        if f.get("area") and f.get("area","").lower() in q:
+            filtered.append(f)
 
     if filtered:
         facts = filtered
@@ -548,14 +426,23 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     scored: List[Tuple[int, Dict[str, Any]]] = []
     for f in facts:
         s = int(f.get("score", 1))
-        ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id","")))
+        ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
 
         if q and (q & ft): s += 3
+        if q & SOLAR_KEYWORDS: s += 2
+        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
+            s += 12
         if want_cats and (cats & want_cats):
-            s += 10
-        if "energy.storage" in want_cats and "energy.storage" in cats:
-            s += 10
+            s += 15
+        if want_cats & {"energy.storage"} and "energy.storage" in cats:
+            s += 20
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           ("device.battery" in cats) and ("energy.storage" not in cats):
+            s -= 18
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           (("forecast" in ft) or ("estimated" in ft)):
+            s -= 12
 
         scored.append((s, f))
 
@@ -564,11 +451,22 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
 
+    candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
+
+    if ("soc" in q) or (want_cats & {"energy.storage"}):
+        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
+        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
+        ordered   = ess_first + others
+    else:
+        ordered = candidate_facts
+
     selected: List[str] = []
     remaining = budget
-    for _, f in scored[:top_k]:
-        line = f.get("summary","")
-        if not line: continue
+
+    for f in ordered:
+        line = f.get("summary", "")
+        if not line:
+            continue
         cost = _estimate_tokens(line)
         if cost <= remaining:
             selected.append(line)
@@ -584,6 +482,6 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 # ----------------- main -----------------
 
 if __name__ == "__main__":
-    print("Refreshing RAG facts (HA + external intakes)...")
+    print("Refreshing RAG facts from Home Assistant...")
     facts = refresh_and_cache()
-    print(f"Wrote {len(facts)} facts total.")
+    print(f"Wrote {len(facts)} facts.")
