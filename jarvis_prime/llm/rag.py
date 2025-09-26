@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas + Wikipedia fallback)
+# /app/rag.py  (REST → /api/states + /api/areas)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
@@ -7,22 +7,25 @@
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
 # - inject_context(user_msg, top_k) returns a small, relevant context block
-# - If no HA facts match for query, falls back to Wikipedia summary
 #
 # Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request, urllib.parse
+import os, re, json, time, threading, urllib.request
 from typing import Any, Dict, List, Tuple, Set
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
+# Primary (single target) + fallback
 PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
+
+# Include ALL domains
 INCLUDE_DOMAINS = None
 
-# ----------------- Keywords -----------------
+# ----------------- Keywords / Integrations -----------------
 
+# Energy / Solar
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export","axpert"}
 SONOFF_KEYWORDS  = {"sonoff","tasmota"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
@@ -30,6 +33,7 @@ MQTT_KEYWORDS    = {"mqtt"}
 TUYA_KEYWORDS    = {"tuya","localtuya","local_tuya"}
 FORECAST_SOLAR   = {"forecast.solar","forecastsolar","forecast_solar"}
 
+# Media (separate + combined)
 PLEX_KEYWORDS    = {"plex"}
 EMBY_KEYWORDS    = {"emby"}
 JELLYFIN_KEYWORDS= {"jellyfin"}
@@ -49,15 +53,20 @@ MEDIA_KEYWORDS   = set().union(
     SONOS_KEYWORDS, AMP_KEYWORDS, {"media","player"}
 )
 
+# Infra / system
 PROXMOX_KEYWORDS = {"proxmox","pve"}
 SPEEDTEST_KEYS   = {"speedtest","speed_test"}
 CPU_KEYS         = {"cpu","processor","loadavg","load_avg"}
 WEATHER_KEYS     = {"weather","weatherbit","openweathermap","met","yr"}
 
+# ----------------- Device-class priority -----------------
+
 DEVICE_CLASS_PRIORITY = {
     "motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,
     "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
 }
+
+# ----------------- Query synonyms -----------------
 
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
@@ -69,6 +78,7 @@ QUERY_SYNONYMS = {
     "where": ["where","location","zone","home","work","present"],
 }
 
+# Intent → categories we prefer
 INTENT_CATEGORY_MAP = {
     "solar": {"energy.storage","energy.pv","energy.inverter"},
     "pv":    {"energy.pv","energy.inverter","energy.storage"},
@@ -111,23 +121,23 @@ def _load_options() -> Dict[str, Any]:
         try:
             if os.path.exists(p):
                 with open(p,"r",encoding="utf-8") as f:
-                    raw = f.read()
+                    raw=f.read()
                 try:
-                    data = json.loads(raw)
+                    data=json.loads(raw)
                 except json.JSONDecodeError:
                     try:
                         import yaml
-                        data = yaml.safe_load(raw)
+                        data=yaml.safe_load(raw)
                     except Exception:
-                        data = None
-                if isinstance(data, dict):
+                        data=None
+                if isinstance(data,dict):
                     cfg.update(data)
         except Exception:
             pass
     return cfg
 
-def _http_get_json(url: str, headers: Dict[str,str]=None, timeout: int=20):
-    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
+    req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8","replace"))
 
@@ -152,22 +162,6 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
-# ----------------- Wikipedia Fallback -----------------
-
-def _wiki_summary(query: str, sentences: int=3) -> str:
-    """Fetch a summary from Wikipedia REST API if entity facts fail."""
-    try:
-        safe_q = urllib.parse.quote(query)
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{safe_q}"
-        data = _http_get_json(url, timeout=10)
-        if isinstance(data, dict):
-            extract = data.get("extract") or ""
-            if extract:
-                lines = extract.split(". ")
-                return ". ".join(lines[:sentences]).strip()
-    except Exception as e:
-        print(f"[RAG][Wiki] Failed: {e}")
-    return ""
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -268,7 +262,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-            # normalize tracker/person zones
+# normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
@@ -325,6 +319,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
+
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -391,7 +386,6 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     if q_tokens & MEDIA_KEYWORDS:
         out.update({"media"})
     return out
-
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
@@ -483,22 +477,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         if remaining <= 0:
             break
 
-    # ----------------- Wikipedia fallback -----------------
-    if not selected:
-        try:
-            q_str = " ".join(q_raw)
-            if q_str:
-                url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(q_str)}"
-                with urllib.request.urlopen(url, timeout=10) as resp:
-                    data = json.loads(resp.read().decode("utf-8","replace"))
-                    extract = data.get("extract")
-                    if extract:
-                        return f"[Wikipedia] {extract}"
-        except Exception as e:
-            print(f"[RAG] Wikipedia fetch failed: {e}")
-
     return "\n".join(selected)
-
 
 # ----------------- main -----------------
 
