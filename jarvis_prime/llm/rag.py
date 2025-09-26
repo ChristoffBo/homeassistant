@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas, plus strict wiki fallback)
+# /app/rag.py  (REST → /api/states + /api/areas + strict wiki fallback)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls HA states via /api/states + area metadata via /api/areas
 # - Summarizes & categorizes HA entities
-# - Writes **only** HA facts to JSON (no wiki persisted)
-# - inject_context(user_msg, top_k) returns HA context if HA has relevant info,
-#     else returns wiki summary (no mixing)
+# - Writes only HA facts persistently (no wiki persisted)
+# - inject_context(user_msg, top_k) returns HA context if relevant, else wiki summary
 
-import os, re, json, time, threading, urllib.request, urllib.error
+import os
+import re
+import json
+import time
+import threading
+import urllib.request
+import urllib.error
+import urllib.parse
 from typing import Any, Dict, List, Tuple, Set
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
@@ -18,6 +24,7 @@ BASENAME = "rag_facts.json"
 
 INCLUDE_DOMAINS = None
 
+# Keywords / domain indicators
 SOLAR_KEYWORDS = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export","axpert"}
 SONOFF_KEYWORDS = {"sonoff","tasmota"}
 ZIGBEE_KEYWORDS = {"zigbee","zigbee2mqtt","z2m","zha"}
@@ -50,8 +57,17 @@ CPU_KEYS = {"cpu","processor","loadavg","load_avg"}
 WEATHER_KEYS = {"weather","weatherbit","openweathermap","met","yr"}
 
 DEVICE_CLASS_PRIORITY = {
-    "motion":6, "presence":6, "occupancy":5, "door":4, "opening":4,
-    "window":3, "battery":3, "temperature":3, "humidity":2, "power":3, "energy":3
+    "motion": 6,
+    "presence": 6,
+    "occupancy": 5,
+    "door": 4,
+    "opening": 4,
+    "window": 3,
+    "battery": 3,
+    "temperature": 3,
+    "humidity": 2,
+    "power": 3,
+    "energy": 3
 }
 
 QUERY_SYNONYMS = {
@@ -66,11 +82,11 @@ QUERY_SYNONYMS = {
 
 INTENT_CATEGORY_MAP = {
     "solar": {"energy.storage","energy.pv","energy.inverter"},
-    "pv":    {"energy.pv","energy.inverter","energy.storage"},
-    "soc":   {"energy.storage"},
+    "pv": {"energy.pv","energy.inverter","energy.storage"},
+    "soc": {"energy.storage"},
     "battery": {"energy.storage"},
-    "grid":  {"energy.grid"},
-    "load":  {"energy.load"},
+    "grid": {"energy.grid"},
+    "load": {"energy.load"},
     "media": {"media"},
 }
 
@@ -78,8 +94,10 @@ REFRESH_INTERVAL_SEC = 15 * 60
 DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
-_MEM_CACHE: List[Dict[str,Any]] = []
-_AREA_MAP: Dict[str,str] = {}
+_MEM_CACHE: List[Dict[str, Any]] = []
+_AREA_MAP: Dict[str, str] = {}
+
+# --- Helpers ---
 
 def _tok(s: str) -> List[str]:
     return re.findall(r"[A-Za-z0-9_]+", s.lower() if s else "")
@@ -124,7 +142,7 @@ def _load_options() -> Dict[str, Any]:
             pass
     return cfg
 
-def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
+def _http_get_json(url: str, headers: Dict[str,str], timeout: int = 20):
     req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", "replace"))
@@ -138,6 +156,7 @@ def _write_json_atomic(path: str, obj: dict):
     os.replace(tmp, path)
 
 SAFE_RAG_BUDGET_FRACTION = 0.30
+
 def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
@@ -193,14 +212,18 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if toks & SONOS_KEYWORDS: cats.add("media.sonos")
         if toks & AMP_KEYWORDS: cats.add("media.amplifier")
 
-    if toks & PROXMOX_KEYWORDS: cats.add("infra.proxmox")
-    if toks & SPEEDTEST_KEYS: cats.add("infra.speedtest")
-    if toks & CPU_KEYS: cats.add("infra.cpu")
-    if toks & WEATHER_KEYS: cats.add("weather")
+    if toks & PROXMOX_KEYWORDS:
+        cats.add("infra.proxmox")
+    if toks & SPEEDTEST_KEYS:
+        cats.add("infra.speedtest")
+    if toks & CPU_KEYS:
+        cats.add("infra.cpu")
+    if toks & WEATHER_KEYS:
+        cats.add("weather")
 
     return cats
 
-def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
+def _fetch_area_map(cfg: Dict[str, Any]) -> Dict[str, str]:
     ha_url = (cfg.get("llm_enviroguard_ha_base_url", "").rstrip("/"))
     ha_token = (cfg.get("llm_enviroguard_ha_token", ""))
     if not ha_url or not ha_token:
@@ -208,7 +231,7 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
     headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
     try:
         data = _http_get_json(f"{ha_url}/api/areas", headers, timeout=15)
-        amap: Dict[str,str] = {}
+        amap: Dict[str, str] = {}
         if isinstance(data, list):
             for a in data:
                 if "area_id" in a and "name" in a:
@@ -217,7 +240,7 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
     except Exception:
         return {}
 
-def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
+def _fetch_ha_states(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     global _AREA_MAP
     ha_url = (cfg.get("llm_enviroguard_ha_base_url", "").rstrip("/"))
     ha_token = (cfg.get("llm_enviroguard_ha_token", ""))
@@ -234,31 +257,31 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     if not _AREA_MAP:
         _AREA_MAP = _fetch_area_map(cfg)
 
-    facts: List[Dict[str,Any]] = []
+    facts: List[Dict[str, Any]] = []
     for item in data:
         try:
             eid = str(item.get("entity_id") or "")
             if not eid:
                 continue
-            domain = eid.split(".",1)[0] if "." in eid else ""
+            domain = eid.split(".", 1)[0] if "." in eid else ""
             if INCLUDE_DOMAINS and (domain not in INCLUDE_DOMAINS):
                 continue
 
             attrs = item.get("attributes") or {}
-            device_class = str(attrs.get("device_class","")).lower()
+            device_class = str(attrs.get("device_class", "")).lower()
             area_id = attrs.get("area_id", "")
             area_name = _AREA_MAP.get(area_id, "") if area_id else ""
             name = str(attrs.get("friendly_name", eid))
-            state = str(item.get("state",""))
-            unit = str(attrs.get("unit_of_measurement","") or "")
-            last_changed = str(item.get("last_changed","") or "")
+            state = str(item.get("state", ""))
+            unit = str(attrs.get("unit_of_measurement", "") or "")
+            last_changed = str(item.get("last_changed", "") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
-            show_state = state.upper() if state in ("on","off","open","closed") else state
-            if unit and state not in ("on","off","open","closed"):
+            show_state = state.upper() if state in ("on", "off", "open", "closed") else state
+            if unit and state not in ("on", "off", "open", "closed"):
                 try:
                     v = float(state)
                     if abs(v) < 0.005:
@@ -280,7 +303,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 if show_state:
                     summary += f": {show_state}"
 
-            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
+            recent = last_changed.replace("T", " ").split(".")[0].replace("Z", "") if last_changed else ""
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
@@ -317,8 +340,8 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             continue
     return facts
 
-def refresh_and_cache() -> List[Dict[str,Any]]:
-    global _LAST_REFRESH_TS, _MEM_CACHE
+def refresh_and_cache() -> List[Dict[str, Any]]:
+    global _LAST_REFRESH_TS, __MEM_CACHE
     cfg = _load_options()
     facts = _fetch_ha_states(cfg)
     _MEM_CACHE = facts
@@ -341,7 +364,7 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
     print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
     return facts
 
-def load_cached() -> List[Dict[str,Any]]:
+def load_cached() -> List[Dict[str, Any]]:
     global _MEM_CACHE
     if _MEM_CACHE:
         return _MEM_CACHE
@@ -360,13 +383,15 @@ def load_cached() -> List[Dict[str,Any]]:
         return []
     return []
 
-def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
+def get_facts(force_refresh: bool = False) -> List[Dict[str, Any]]:
     if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
         return refresh_and_cache()
     facts = load_cached()
     if not facts:
         return refresh_and_cache()
     return facts
+
+# --- Wikipedia fallback helper ---
 
 def _fetch_wiki_summary(term: str) -> str:
     """
@@ -375,14 +400,15 @@ def _fetch_wiki_summary(term: str) -> str:
     """
     if not term:
         return ""
-    url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.request.quote(term)
-    headers = {"User-Agent": "rag-fallback/1.0"}  # user agent needed by Wikimedia APIs 1
+    safe = urllib.parse.quote(term)
+    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{safe}"
+    headers = {"User-Agent": "rag-fallback/1.0"}
     try:
         req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
             j = json.loads(resp.read().decode("utf-8", "replace"))
             return j.get("extract", "").strip()
-    except (urllib.error.URLError, json.JSONDecodeError):
+    except Exception:
         return ""
 
 def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
@@ -390,7 +416,7 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     ha_facts = get_facts()
 
-    # Filter HA facts by domain/keywords (same as before)
+    # Filter HA facts based on domain/keywords
     filtered = []
     if "light" in q or "lights" in q:
         filtered += [f for f in ha_facts if f["domain"] == "light"]
@@ -401,7 +427,7 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
     if "axpert" in q:
         filtered += [f for f in ha_facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
     if "sonoff" in q:
-        filtered += [f for f in ha_fats if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
+        filtered += [f for f in ha_facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
     if "zigbee" in q or "z2m" in q:
         filtered += [f for f in ha_facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
     if "where" in q:
@@ -414,13 +440,14 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
     for f in ha_facts:
         if f.get("area") and f["area"].lower() in q:
             filtered.append(f)
+
     if filtered:
         ha_facts = filtered
 
     want_cats = set(_intent_categories(q))
 
     # Score HA facts
-    scored_ha: List[Tuple[int, Dict[str,Any]]] = []
+    scored_ha: List[Tuple[int, Dict[str, Any]]] = []
     for f in ha_facts:
         s = int(f.get("score", 1))
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
@@ -445,9 +472,9 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
 
     scored_ha.sort(key=lambda x: x[0], reverse=True)
 
-    # Decide: if top HA fact is good enough → return HA context exclusively
+    # Decide whether HA is “good enough”
     if scored_ha and scored_ha[0][0] >= 10:
-        # Build context from top HA facts only
+        # Use HA-only context
         ctx_tokens = _ctx_tokens_from_options()
         budget = _rag_budget_tokens(ctx_tokens)
         candidate = [f for _, f in (scored_ha[:top_k] if top_k else scored_ha)]
@@ -468,14 +495,13 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
                 break
         return "\n".join(selected)
 
-    # Otherwise, use wiki fallback, no HA mixing
+    # Fallback to wiki only
     term = " ".join(q_raw)
     wiki_summary = _fetch_wiki_summary(term)
     if wiki_summary:
         return "[Wiki] " + wiki_summary
 
-    # Fallback if wiki also fails: return HA facts anyway
-    # (Though HA top was not strong)
+    # If wiki also fails, fallback to HA anyway
     ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
     candidate = [f for _, f in (scored_ha[:top_k] if top_k else scored_ha)]
