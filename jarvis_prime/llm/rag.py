@@ -158,177 +158,10 @@ def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8","replace"))
 
-def _write_json_atomic(path: str, obj: dict):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp,"w",encoding="utf-8") as f:
-        json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
-    os.replace(tmp,path)
-
-SAFE_RAG_BUDGET_FRACTION = 0.30
-def _estimate_tokens(text: str) -> int:
-    if not text: return 0
-    words = len(re.findall(r"\S+", text))
-    return max(8, min(int(words * 1.3), 128))
-
-def _ctx_tokens_from_options() -> int:
-    cfg = _load_options()
-    try: return int(cfg.get("llm_ctx_tokens", 4096))
-    except Exception: return 4096
-
-def _rag_budget_tokens(ctx_tokens: int) -> int:
-    return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
-
-# ----------------- curated fetcher -----------------
-
 def _http_get_text(url: str, timeout: int=20) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Jarvis-RAG"}, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8","replace")
-
-def refresh_curated() -> List[Dict[str,Any]]:
-    now = datetime.datetime.utcnow()
-    if os.path.exists(CURATED_PATH):
-        try:
-            ts = os.path.getmtime(CURATED_PATH)
-            age_days = (time.time() - ts) / 86400
-            if age_days < CURATED_REFRESH_INTERVAL_DAYS:
-                with open(CURATED_PATH,"r",encoding="utf-8") as f:
-                    return json.load(f)
-        except Exception:
-            pass
-
-    curated: List[Dict[str,Any]] = []
-    for key, url in CURATED_URLS.items():
-        try:
-            txt = _http_get_text(url, timeout=15)
-            if txt:
-                if url.endswith(".json"):
-                    try:
-                        data = json.loads(txt)
-                        if isinstance(data, list):
-                            for item in data[:200]:
-                                curated.append({
-                                    "summary": f"{key.title()} :: {str(item)[:200]}",
-                                    "cats": [key],
-                                    "score": 1
-                                })
-                        elif isinstance(data, dict):
-                            curated.append({
-                                "summary": f"{key.title()} :: {list(data.keys())[:20]}",
-                                "cats": [key],
-                                "score": 1
-                            })
-                    except Exception:
-                        pass
-                else:
-                    # treat as plain text
-                    curated.append({
-                        "summary": f"{key.title()} :: {txt[:200]}",
-                        "cats": [key],
-                        "score": 1
-                    })
-        except Exception as e:
-            print(f"[RAG] curated fetch failed for {key}: {e}")
-
-    try:
-        _write_json_atomic(CURATED_PATH, curated)
-    except Exception as e:
-        print("[RAG] curated write failed:", e)
-
-    print(f"[RAG] refreshed curated: {len(curated)} items")
-    return curated
-
-def load_curated() -> List[Dict[str,Any]]:
-    try:
-        if os.path.exists(CURATED_PATH):
-            with open(CURATED_PATH,"r",encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        return []
-    return []
-# ----------------- Device-class priority -----------------
-
-DEVICE_CLASS_PRIORITY = {
-    "motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,
-    "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
-}
-
-# ----------------- Query synonyms -----------------
-
-QUERY_SYNONYMS = {
-    "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
-    "solar": ["solar","pv","generation","inverter","array","ess","axpert"],
-    "pv": ["pv","solar"],
-    "load": ["load","power","w","kw","consumption"],
-    "grid": ["grid","import","export"],
-    "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
-    "where": ["where","location","zone","home","work","present"],
-}
-
-# Intent → categories we prefer
-INTENT_CATEGORY_MAP = {
-    "solar": {"energy.storage","energy.pv","energy.inverter"},
-    "pv":    {"energy.pv","energy.inverter","energy.storage"},
-    "soc":   {"energy.storage"},
-    "battery": {"energy.storage"},
-    "grid":  {"energy.grid"},
-    "load":  {"energy.load"},
-    "media": {"media"},
-}
-
-REFRESH_INTERVAL_SEC = 15*60
-DEFAULT_TOP_K = 10
-_CACHE_LOCK = threading.RLock()
-_LAST_REFRESH_TS = 0.0
-_MEM_CACHE: List[Dict[str,Any]] = []
-_AREA_MAP: Dict[str,str] = {}
-
-# ----------------- helpers -----------------
-
-def _tok(s: str) -> List[str]:
-    return re.findall(r"[A-Za-z0-9_]+", s.lower() if s else "")
-
-def _expand_query_tokens(tokens: List[str]) -> List[str]:
-    out=[]; seen=set()
-    for t in tokens:
-        for x in QUERY_SYNONYMS.get(t,[t]):
-            if x not in seen:
-                seen.add(x); out.append(x)
-    return out
-
-def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
-    zone = attrs.get("zone")
-    if zone: return zone
-    ls = (state or "").lower()
-    if ls in ("home","not_home"): return "Home" if ls=="home" else "Away"
-    return state
-
-def _load_options() -> Dict[str, Any]:
-    cfg: Dict[str, Any] = {}
-    for p in OPTIONS_PATHS:
-        try:
-            if os.path.exists(p):
-                with open(p,"r",encoding="utf-8") as f:
-                    raw=f.read()
-                try:
-                    data=json.loads(raw)
-                except json.JSONDecodeError:
-                    try:
-                        import yaml
-                        data=yaml.safe_load(raw)
-                    except Exception:
-                        data=None
-                if isinstance(data,dict):
-                    cfg.update(data)
-        except Exception:
-            pass
-    return cfg
-
-def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
-    req = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8","replace"))
 
 def _write_json_atomic(path: str, obj: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -350,13 +183,7 @@ def _ctx_tokens_from_options() -> int:
 
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
-
 # ----------------- curated fetcher -----------------
-
-def _http_get_text(url: str, timeout: int=20) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "Jarvis-RAG"}, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8","replace")
 
 def refresh_curated() -> List[Dict[str,Any]]:
     now = datetime.datetime.utcnow()
@@ -589,7 +416,7 @@ if __name__ == "__main__":
 
     # Refresh curated knowledge monthly
     try:
-        curated = load_curated_facts(force_refresh=False)
+        curated = refresh_curated()  # ✅ fixed: correct function name
         print(f"[RAG] Curated knowledge available: {len(curated)} entries")
     except Exception as e:
         print(f"[RAG] Curated knowledge refresh failed: {e}")
