@@ -95,6 +95,7 @@ _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
+
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -210,9 +211,19 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
 # ----------------- fetch areas -----------------
 
 def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
-    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
-    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
-    if not ha_url or not ha_token: return {}
+    # Try multiple possible config key names for flexibility
+    ha_url = (cfg.get("ha_url") or 
+              cfg.get("homeassistant_url") or 
+              cfg.get("llm_enviroguard_ha_base_url") or "").rstrip("/")
+    
+    ha_token = (cfg.get("ha_token") or 
+                cfg.get("homeassistant_token") or 
+                cfg.get("llm_enviroguard_ha_token") or "")
+    
+    if not ha_url or not ha_token: 
+        print("[RAG] No HA URL/token found in config")
+        return {}
+        
     headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
     try:
         data = _http_get_json(f"{ha_url}/api/areas", headers, timeout=15)
@@ -221,21 +232,35 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
             for a in data:
                 if "area_id" in a and "name" in a:
                     amap[a["area_id"]] = a["name"]
+        print(f"[RAG] Loaded {len(amap)} areas")
         return amap
-    except Exception:
+    except Exception as e:
+        print(f"[RAG] Failed to fetch areas: {e}")
         return {}
 
 # ----------------- fetch + summarize -----------------
 
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     global _AREA_MAP
-    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
-    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
-    if not ha_url or not ha_token: return []
+    
+    # Try multiple possible config key names for flexibility
+    ha_url = (cfg.get("ha_url") or 
+              cfg.get("homeassistant_url") or 
+              cfg.get("llm_enviroguard_ha_base_url") or "").rstrip("/")
+    
+    ha_token = (cfg.get("ha_token") or 
+                cfg.get("homeassistant_token") or 
+                cfg.get("llm_enviroguard_ha_token") or "")
+    
+    if not ha_url or not ha_token: 
+        print("[RAG] No HA URL/token found in config")
+        return []
+        
     headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
     try:
         data = _http_get_json(f"{ha_url}/api/states", headers, timeout=25)
-    except Exception:
+    except Exception as e:
+        print(f"[RAG] Failed to fetch states: {e}")
         return []
     if not isinstance(data,list): return []
 
@@ -262,7 +287,8 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-# normalize tracker/person zones
+            
+            # normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
@@ -316,7 +342,8 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 "score": score,
                 "cats": sorted(list(cats))
             })
-        except Exception:
+        except Exception as e:
+            print(f"[RAG] Error processing entity {item.get('entity_id', 'unknown')}: {e}")
             continue
     return facts
 
@@ -324,51 +351,77 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
     global _LAST_REFRESH_TS, _MEM_CACHE
-    cfg = _load_options()
-    facts = _fetch_ha_states(cfg)
-    _MEM_CACHE = facts
+    
+    with _CACHE_LOCK:
+        cfg = _load_options()
+        facts = _fetch_ha_states(cfg)
+        _MEM_CACHE = facts
 
-    result_paths=[]
-    try:
-        payload = facts
-        for d in PRIMARY_DIRS:
-            try:
-                p=os.path.join(d,BASENAME)
-                _write_json_atomic(p, payload); result_paths.append(p)
-            except Exception as e:
-                print(f"[RAG] write failed for {d}: {e}")
+        result_paths=[]
         try:
-            _write_json_atomic(FALLBACK_PATH, payload); result_paths.append(FALLBACK_PATH)
-        except Exception as e:
-            print(f"[RAG] fallback write failed: {e}")
-    finally:
-        _LAST_REFRESH_TS = time.time()
+            # Create payload with metadata
+            payload = {
+                "facts": facts,
+                "timestamp": time.time(),
+                "count": len(facts)
+            }
+            
+            for d in PRIMARY_DIRS:
+                try:
+                    p=os.path.join(d,BASENAME)
+                    _write_json_atomic(p, payload); result_paths.append(p)
+                except Exception as e:
+                    print(f"[RAG] write failed for {d}: {e}")
+            try:
+                _write_json_atomic(FALLBACK_PATH, payload); result_paths.append(FALLBACK_PATH)
+            except Exception as e:
+                print(f"[RAG] fallback write failed: {e}")
+        finally:
+            _LAST_REFRESH_TS = time.time()
 
-    print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
-    return facts
+        print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
+        return facts
 
 def load_cached() -> List[Dict[str,Any]]:
     global _MEM_CACHE
-    if _MEM_CACHE: return _MEM_CACHE
-    try:
-        for d in PRIMARY_DIRS:
-            p=os.path.join(d,BASENAME)
-            if os.path.exists(p):
-                with open(p,"r",encoding="utf-8") as f:
-                    return json.load(f)
-        with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
-            return json.load(f)
-    except Exception:
+    with _CACHE_LOCK:
+        if _MEM_CACHE: return _MEM_CACHE
+        
+        try:
+            # Try primary locations first
+            for d in PRIMARY_DIRS:
+                p=os.path.join(d,BASENAME)
+                if os.path.exists(p):
+                    with open(p,"r",encoding="utf-8") as f:
+                        data = json.load(f)
+                        # Handle both old format (list) and new format (dict with facts key)
+                        if isinstance(data, list):
+                            return data
+                        elif isinstance(data, dict) and "facts" in data:
+                            return data["facts"]
+            
+            # Try fallback
+            if os.path.exists(FALLBACK_PATH):
+                with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
+                    data = json.load(f)
+                    # Handle both old format (list) and new format (dict with facts key)
+                    if isinstance(data, list):
+                        return data
+                    elif isinstance(data, dict) and "facts" in data:
+                        return data["facts"]
+        except Exception as e:
+            print(f"[RAG] Error loading cached facts: {e}")
+            
         return []
-    return []
 
 def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
-    if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
-        return refresh_and_cache()
-    facts = load_cached()
-    if not facts:
-        return refresh_and_cache()
-    return facts
+    with _CACHE_LOCK:
+        if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
+            return refresh_and_cache()
+        facts = load_cached()
+        if not facts:
+            return refresh_and_cache()
+        return facts
 
 # ----------------- query → context -----------------
 
@@ -395,22 +448,22 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     # ---- Domain/keyword overrides ----
     filtered = []
     if "light" in q or "lights" in q:
-        filtered += [f for f in facts if f["domain"] == "light"]
+        filtered += [f for f in facts if f.get("domain") == "light"]
     if "switch" in q or "switches" in q:
-        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
+        filtered += [f for f in facts if f.get("domain") == "switch" and not f.get("entity_id","").startswith("automation.")]
     if "motion" in q or "occupancy" in q:
-        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
+        filtered += [f for f in facts if f.get("domain") == "binary_sensor" and f.get("device_class") == "motion"]
     if "axpert" in q:
-        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
+        filtered += [f for f in facts if "axpert" in f.get("entity_id","").lower() or "axpert" in f.get("friendly_name","").lower()]
     if "sonoff" in q:
-        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
+        filtered += [f for f in facts if "sonoff" in f.get("entity_id","").lower() or "sonoff" in f.get("friendly_name","").lower()]
     if "zigbee" in q or "z2m" in q:
-        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
+        filtered += [f for f in facts if "zigbee" in f.get("entity_id","").lower() or "zigbee" in f.get("friendly_name","").lower()]
     if "where" in q:
-        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
+        filtered += [f for f in facts if f.get("domain") in ("person","device_tracker")]
     if q & MEDIA_KEYWORDS:
         filtered += [f for f in facts if any(
-            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
+            m in f.get("entity_id","").lower() or m in f.get("friendly_name","").lower()
             for m in MEDIA_KEYWORDS
         )]
     # area queries
@@ -479,9 +532,97 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
     return "\n".join(selected)
 
+# ----------------- Additional utility functions -----------------
+
+def search_entities(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """Search entities based on query string"""
+    facts = get_facts()
+    
+    if not query:
+        return facts[:limit]
+    
+    q_tokens = set(_tok(query))
+    
+    # Score and filter entities
+    scored = []
+    for entity in facts:
+        score = 0
+        entity_tokens = set(_tok(entity.get("entity_id", "")) + _tok(entity.get("friendly_name", "")))
+        
+        # Exact matches
+        if q_tokens & entity_tokens:
+            score += 10
+        
+        # Partial matches
+        for token in q_tokens:
+            if any(token in et for et in entity_tokens):
+                score += 3
+        
+        if score > 0:
+            scored.append((score, entity))
+    
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [entity for _, entity in scored[:limit]]
+
+def get_stats() -> Dict[str, Any]:
+    """Get statistics about the RAG system"""
+    facts = get_facts()
+    
+    # Count by domain
+    domain_counts = {}
+    for entity in facts:
+        domain = entity.get("domain", "unknown")
+        domain_counts[domain] = domain_counts.get(domain, 0) + 1
+    
+    return {
+        "total_facts": len(facts),
+        "domains": domain_counts,
+        "areas": len(_AREA_MAP),
+        "last_refresh": _LAST_REFRESH_TS,
+        "cache_size": len(_MEM_CACHE)
+    }
+
 # ----------------- main -----------------
 
 if __name__ == "__main__":
-    print("Refreshing RAG facts from Home Assistant...")
-    facts = refresh_and_cache()
-    print(f"Wrote {len(facts)} facts.")
+    import sys
+    
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        
+        if command == "refresh":
+            print("Manually refreshing RAG facts...")
+            facts = refresh_and_cache()
+            print(f"Refreshed {len(facts)} facts.")
+            
+        elif command == "stats":
+            stats = get_stats()
+            print(json.dumps(stats, indent=2))
+            
+        elif command == "search" and len(sys.argv) > 2:
+            query = " ".join(sys.argv[2:])
+            results = search_entities(query, 10)
+            print(f"Found {len(results)} entities for '{query}':")
+            for r in results:
+                print(f"  - {r.get('summary', r.get('entity_id', 'unknown'))}")
+                
+        elif command == "context" and len(sys.argv) > 2:
+            query = " ".join(sys.argv[2:])
+            context = inject_context(query)
+            print(f"Context for '{query}':")
+            print("=" * 50)
+            print(context)
+            
+        elif command == "test":
+            print("Testing configuration...")
+            cfg = _load_options()
+            print(f"Config keys: {list(cfg.keys())}")
+            facts = get_facts(force_refresh=True)
+            print(f"Successfully loaded {len(facts)} facts")
+            
+        else:
+            print("Usage: python rag.py [refresh|stats|search <query>|context <query>|test]")
+    else:
+        print("Refreshing RAG facts from Home Assistant...")
+        facts = refresh_and_cache()
+        print(f"Wrote {len(facts)} facts.")
