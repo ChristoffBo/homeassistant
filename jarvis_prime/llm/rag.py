@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas)
+# /app/rag.py  (REST → /api/states + /api/areas + Wiki summaries)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
@@ -7,10 +7,11 @@
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
 # - inject_context(user_msg, top_k) returns a small, relevant context block
+# - NEW: Explicit "wiki"/"wikipedia" trigger injects transient Wiki summary
 #
 # Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request
+import os, re, json, time, threading, urllib.request, urllib.parse
 from typing import Any, Dict, List, Tuple, Set
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
@@ -162,6 +163,20 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
+# ----------------- Wiki helper -----------------
+
+def _fetch_wiki_summary(query: str) -> str:
+    """Fetch a short summary from Wikipedia for a given query term."""
+    if not query:
+        return ""
+    url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(query)
+    try:
+        with urllib.request.urlopen(url, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+            extract = data.get("extract") or ""
+            return extract.strip()
+    except Exception:
+        return "[Wiki] lookup failed (offline/unreachable)"
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -262,7 +277,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-# normalize tracker/person zones
+            # normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
@@ -319,7 +334,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
-
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -392,7 +406,20 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Domain/keyword overrides ----
+    # --- Wiki integration ---
+    wiki_fact = None
+    if "wiki" in q or "wikipedia" in q:
+        # remove trigger tokens and build search term
+        search_terms = " ".join(t for t in q_raw if t not in ("wiki","wikipedia"))
+        summary = _fetch_wiki_summary(search_terms)
+        if summary:
+            wiki_fact = {
+                "summary": f"[Wiki] {summary}",
+                "score": 99,
+                "cats": ["wiki"]
+            }
+
+    # ---- HA domain/keyword overrides ----
     filtered = []
     if "light" in q or "lights" in q:
         filtered += [f for f in facts if f["domain"] == "light"]
@@ -446,9 +473,12 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
         scored.append((s, f))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # add wiki fact after HA scoring
+    if wiki_fact:
+        scored.append((wiki_fact["score"], wiki_fact))
 
-    ctx_tokens = _ctx_tokens_from_options()
+    scored.sort(key=lambda x: x[0], reverse=True)
+ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
 
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
@@ -467,13 +497,17 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         line = f.get("summary", "")
         if not line:
             continue
-        cost = _estimate_tokens(line)
-        if cost <= remaining:
+        if f.get("cats") == ["wiki"]:
+            cost = min(_estimate_tokens(line), 200)  # cap wiki separately
             selected.append(line)
-            remaining -= cost
-        if not selected and cost > remaining and remaining > 0:
-            selected.append(line)
-            remaining = 0
+        else:
+            cost = _estimate_tokens(line)
+            if cost <= remaining:
+                selected.append(line)
+                remaining -= cost
+            if not selected and cost > remaining and remaining > 0:
+                selected.append(line)
+                remaining = 0
         if remaining <= 0:
             break
 
