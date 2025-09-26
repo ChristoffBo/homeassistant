@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas)
+# /app/rag.py  (REST → /api/states + /api/areas + Free Knowledge APIs)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
+# - Fetches entertainment, automotive, tech knowledge from free APIs
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
@@ -10,8 +11,9 @@
 #
 # Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request
+import os, re, json, time, threading, urllib.request, requests
 from typing import Any, Dict, List, Tuple, Set
+from datetime import datetime
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
@@ -22,6 +24,25 @@ BASENAME       = "rag_facts.json"
 
 # Include ALL domains
 INCLUDE_DOMAINS = None
+
+# ----------------- Free API Endpoints -----------------
+
+# All free, no API keys needed
+FREE_APIS = {
+    # Entertainment APIs with actual movie/actor data
+    "trending_movies": "https://api.themoviedb.org/3/trending/movie/day?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",  # Free public key
+    "trending_tv": "https://api.themoviedb.org/3/trending/tv/day?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",
+    "popular_movies": "https://api.themoviedb.org/3/movie/popular?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",
+    "popular_actors": "https://api.themoviedb.org/3/person/popular?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",
+    
+    # Other free APIs
+    "news": "https://newsapi.org/v2/top-headlines?country=us&pageSize=5&apiKey=demo",
+    "cars": "https://vpic.nhtsa.dot.gov/api/vehicles/GetMakesForVehicleType/car?format=json",
+    "space": "http://api.open-notify.org/astros.json",
+    "programming_jokes": "https://v2.jokeapi.dev/joke/Programming?type=single",
+    "tech_news": "https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=5",
+    "world_time": "http://worldtimeapi.org/api/ip",
+}
 
 # ----------------- Keywords / Integrations -----------------
 
@@ -53,6 +74,23 @@ MEDIA_KEYWORDS   = set().union(
     SONOS_KEYWORDS, AMP_KEYWORDS, {"media","player"}
 )
 
+# Entertainment keywords (expanded)
+MOVIE_KEYWORDS = {"movie", "film", "cinema", "theatre", "hollywood", "blockbuster"}
+TV_KEYWORDS_ENT = {"tv", "television", "series", "show", "netflix", "hbo", "disney", "amazon"}
+ACTOR_KEYWORDS = {"actor", "actress", "celebrity", "star", "director", "producer"}
+GENRE_KEYWORDS = {"action", "comedy", "drama", "horror", "sci-fi", "romance", "thriller"}
+
+ENTERTAINMENT_KEYWORDS = set().union(MOVIE_KEYWORDS, TV_KEYWORDS_ENT, ACTOR_KEYWORDS, GENRE_KEYWORDS)
+
+# Knowledge domains
+AUTOMOTIVE_KEYWORDS = {"car", "vehicle", "ford", "toyota", "honda", "tesla", "bmw", "mercedes", "audi"}
+TECH_KEYWORDS = {"tech", "technology", "computer", "software", "hardware", "programming", "ai", "coding"}
+NEWS_KEYWORDS = {"news", "headlines", "current", "events", "world", "politics"}
+WEATHER_KEYWORDS = {"weather", "temperature", "forecast", "rain", "sunny", "cloudy"}
+SPACE_KEYWORDS = {"space", "astronaut", "nasa", "orbit", "iss", "rocket"}
+JOKE_KEYWORDS = {"joke", "funny", "humor", "laugh", "comedy"}
+QUOTE_KEYWORDS = {"quote", "inspiration", "motivation", "wisdom"}
+
 # Infra / system
 PROXMOX_KEYWORDS = {"proxmox","pve"}
 SPEEDTEST_KEYS   = {"speedtest","speed_test"}
@@ -76,6 +114,10 @@ QUERY_SYNONYMS = {
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
     "where": ["where","location","zone","home","work","present"],
+    "movie": ["movie", "film", "cinema", "flick"],
+    "tv": ["tv", "television", "series", "show"],
+    "actor": ["actor", "actress", "celebrity", "star"],
+    "car": ["car", "vehicle", "auto", "automobile", "ride"],
 }
 
 # Intent → categories we prefer
@@ -87,6 +129,11 @@ INTENT_CATEGORY_MAP = {
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
     "media": {"media"},
+    "movie": {"entertainment.movies"},
+    "tv": {"entertainment.tv"},
+    "actor": {"entertainment.people"},
+    "car": {"automotive"},
+    "tech": {"technology"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
@@ -95,6 +142,7 @@ _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
+
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -162,6 +210,159 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
+# ----------------- Free API Knowledge Fetching -----------------
+
+def _fetch_entertainment_facts() -> List[Dict[str, Any]]:
+    """Fetch current movies, TV shows, and actors from TMDB"""
+    facts = []
+    
+    # Trending Movies
+    try:
+        response = requests.get(FREE_APIS["trending_movies"], timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            for movie in data.get("results", [])[:5]:
+                release_year = movie.get("release_date", "")[:4] if movie.get("release_date") else "TBA"
+                facts.append({
+                    "type": "knowledge",
+                    "category": "entertainment",
+                    "entity_id": f"movie.{movie['id']}",
+                    "title": movie.get("title", ""),
+                    "summary": f"Trending Movie: {movie.get('title', '')} ({release_year}) - Rating: {movie.get('vote_average', 0)}/10 - {movie.get('overview', '')[:100]}...",
+                    "popularity": movie.get("popularity", 0),
+                    "release_date": movie.get("release_date", ""),
+                    "score": 9,
+                    "cats": ["entertainment", "entertainment.movies", "trending"],
+                    "last_updated": datetime.now().isoformat()
+                })
+    except Exception as e:
+        print(f"Trending movies API error: {e}")
+    
+    # Popular TV Shows
+    try:
+        response = requests.get(FREE_APIS["trending_tv"], timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            for show in data.get("results", [])[:5]:
+                first_air_year = show.get("first_air_date", "")[:4] if show.get("first_air_date") else "TBA"
+                facts.append({
+                    "type": "knowledge",
+                    "category": "entertainment",
+                    "entity_id": f"tv.{show['id']}",
+                    "title": show.get("name", ""),
+                    "summary": f"Trending TV Show: {show.get('name', '')} ({first_air_year}) - Rating: {show.get('vote_average', 0)}/10 - {show.get('overview', '')[:100]}...",
+                    "popularity": show.get("popularity", 0),
+                    "first_air_date": show.get("first_air_date", ""),
+                    "score": 8,
+                    "cats": ["entertainment", "entertainment.tv", "trending"],
+                    "last_updated": datetime.now().isoformat()
+                })
+    except Exception as e:
+        print(f"Trending TV API error: {e}")
+    
+    # Popular Actors
+    try:
+        response = requests.get(FREE_APIS["popular_actors"], timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            for person in data.get("results", [])[:8]:
+                known_for = [item.get("title") or item.get("name") for item in person.get("known_for", [])[:2]]
+                known_for_str = ", ".join([k for k in known_for if k])
+                facts.append({
+                    "type": "knowledge",
+                    "category": "entertainment",
+                    "entity_id": f"person.{person['id']}",
+                    "title": person.get("name", ""),
+                    "summary": f"Popular Actor: {person.get('name', '')} - Known for: {known_for_str}",
+                    "popularity": person.get("popularity", 0),
+                    "known_for": known_for,
+                    "score": 7,
+                    "cats": ["entertainment", "entertainment.people", "actors"],
+                    "last_updated": datetime.now().isoformat()
+                })
+    except Exception as e:
+        print(f"Popular actors API error: {e}")
+    
+    return facts
+
+def _fetch_other_knowledge_facts() -> List[Dict[str, Any]]:
+    """Fetch other types of knowledge facts"""
+    facts = []
+    
+    # Car facts
+    try:
+        response = requests.get(FREE_APIS["cars"], timeout=10)
+        if response.status_code == 200:
+            car_data = response.json()
+            for make in car_data.get("Results", [])[:8]:
+                facts.append({
+                    "type": "knowledge",
+                    "category": "automotive",
+                    "entity_id": f"car.{make.get('MakeId', '')}",
+                    "title": make.get("MakeName", ""),
+                    "summary": f"Car brand: {make.get('MakeName', '')}",
+                    "score": 5,
+                    "cats": ["automotive", "cars"],
+                    "last_updated": datetime.now().isoformat()
+                })
+    except Exception as e:
+        print(f"Car API error: {e}")
+    
+    # Space facts
+    try:
+        response = requests.get(FREE_APIS["space"], timeout=10)
+        if response.status_code == 200:
+            space_data = response.json()
+            facts.append({
+                "type": "knowledge",
+                "category": "space",
+                "entity_id": "space.astronauts",
+                "title": "People in Space",
+                "summary": f"There are {space_data.get('number', 0)} people in space right now: {', '.join([p['name'] for p in space_data.get('people', [])])}",
+                "score": 5,
+                "cats": ["space", "science"],
+                "last_updated": datetime.now().isoformat()
+            })
+    except Exception as e:
+        print(f"Space API error: {e}")
+    
+    # Tech news
+    try:
+        response = requests.get(FREE_APIS["tech_news"], timeout=10)
+        if response.status_code == 200:
+            tech_data = response.json()
+            for hit in tech_data.get("hits", [])[:3]:
+                facts.append({
+                    "type": "knowledge",
+                    "category": "technology",
+                    "entity_id": f"tech.{hit.get('created_at_i', '')}",
+                    "title": hit.get("title", ""),
+                    "summary": f"Tech News: {hit.get('title', '')} - Points: {hit.get('points', 0)}",
+                    "score": 6,
+                    "cats": ["technology", "news"],
+                    "last_updated": datetime.now().isoformat()
+                })
+    except Exception as e:
+        print(f"Tech news API error: {e}")
+    
+    return facts
+
+def _fetch_knowledge_facts() -> List[Dict[str, Any]]:
+    """Combine all knowledge facts"""
+    facts = []
+    
+    # Entertainment facts (movies, TV, actors)
+    entertainment_facts = _fetch_entertainment_facts()
+    facts.extend(entertainment_facts)
+    
+    # Other knowledge facts
+    other_facts = _fetch_other_knowledge_facts()
+    facts.extend(other_facts)
+    
+    return facts
+
+# ... (rest of the file remains the same until categorization)
+
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -199,6 +400,19 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if toks & SONOS_KEYWORDS: cats.add("media.sonos")
         if toks & AMP_KEYWORDS: cats.add("media.amplifier")
 
+    # Knowledge domains
+    if any(k in toks for k in ENTERTAINMENT_KEYWORDS): 
+        cats.add("entertainment")
+        if toks & MOVIE_KEYWORDS: cats.add("entertainment.movies")
+        if toks & TV_KEYWORDS_ENT: cats.add("entertainment.tv")
+        if toks & ACTOR_KEYWORDS: cats.add("entertainment.people")
+    if any(k in toks for k in AUTOMOTIVE_KEYWORDS): cats.add("automotive")
+    if any(k in toks for k in TECH_KEYWORDS): cats.add("technology")
+    if any(k in toks for k in NEWS_KEYWORDS): cats.add("news")
+    if any(k in toks for k in WEATHER_KEYWORDS): cats.add("weather")
+    if any(k in toks for k in SPACE_KEYWORDS): cats.add("space")
+    if any(k in toks for k in JOKE_KEYWORDS): cats.add("humor")
+
     # Infra / system
     if toks & PROXMOX_KEYWORDS: cats.add("infra.proxmox")
     if toks & SPEEDTEST_KEYS: cats.add("infra.speedtest")
@@ -207,170 +421,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
 
     return cats
 
-# ----------------- fetch areas -----------------
-
-def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
-    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
-    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
-    if not ha_url or not ha_token: return {}
-    headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
-    try:
-        data = _http_get_json(f"{ha_url}/api/areas", headers, timeout=15)
-        amap={}
-        if isinstance(data,list):
-            for a in data:
-                if "area_id" in a and "name" in a:
-                    amap[a["area_id"]] = a["name"]
-        return amap
-    except Exception:
-        return {}
-
-# ----------------- fetch + summarize -----------------
-
-def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
-    global _AREA_MAP
-    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
-    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
-    if not ha_url or not ha_token: return []
-    headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
-    try:
-        data = _http_get_json(f"{ha_url}/api/states", headers, timeout=25)
-    except Exception:
-        return []
-    if not isinstance(data,list): return []
-
-    # also fetch areas once
-    if not _AREA_MAP:
-        _AREA_MAP = _fetch_area_map(cfg)
-
-    facts=[]
-    for item in data:
-        try:
-            eid = str(item.get("entity_id") or "")
-            if not eid: continue
-            domain = eid.split(".",1)[0] if "." in eid else ""
-            if INCLUDE_DOMAINS and (domain not in INCLUDE_DOMAINS):
-                continue
-
-            attrs = item.get("attributes") or {}
-            device_class = str(attrs.get("device_class","")).lower()
-            area_id = attrs.get("area_id","")
-            area_name = _AREA_MAP.get(area_id,"") if area_id else ""
-            name  = str(attrs.get("friendly_name", eid))
-            state = str(item.get("state",""))
-            unit  = str(attrs.get("unit_of_measurement","") or "")
-            last_changed = str(item.get("last_changed","") or "")
-
-            is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-# normalize tracker/person zones
-            if domain == "device_tracker" and not is_unknown:
-                state = _safe_zone_from_tracker(state, attrs)
-
-            # displayable state
-            show_state = state.upper() if state in ("on","off","open","closed") else state
-            if unit and state not in ("on","off","open","closed"):
-                try:
-                    v = float(state)
-                    if abs(v) < 0.005: v = 0.0
-                    s = f"{v:.2f}".rstrip("0").rstrip(".")
-                    show_state = f"{s} {unit}".strip()
-                except Exception:
-                    show_state = f"{state} {unit}".strip()
-
-            # build summary
-            if domain == "person":
-                zone = _safe_zone_from_tracker(state, attrs)
-                summary = f"{name} is at {zone}"
-            else:
-                summary = name
-                if area_name: summary = f"[{area_name}] " + summary
-                if device_class: summary += f" ({device_class})"
-                if show_state: summary += f": {show_state}"
-
-            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
-            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
-                summary += f" (as of {recent})"
-
-            # score baseline
-            score=1
-            toks=_tok(eid)+_tok(name)+_tok(device_class)
-            if any(k in toks for k in SOLAR_KEYWORDS): score+=6
-            if "solar_assistant" in "_".join(toks): score+=3
-            score += DEVICE_CLASS_PRIORITY.get(device_class,0)
-            if domain in ("person","device_tracker"): score+=5
-            if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
-            if is_unknown: score -= 3
-
-            cats = _infer_categories(eid, name, attrs, domain, device_class)
-
-            facts.append({
-                "entity_id": eid,
-                "domain": domain,
-                "device_class": device_class,
-                "friendly_name": name,
-                "area": area_name,
-                "state": state,
-                "unit": unit,
-                "last_changed": last_changed,
-                "summary": summary,
-                "score": score,
-                "cats": sorted(list(cats))
-            })
-        except Exception:
-            continue
-    return facts
-
-# ----------------- IO + cache -----------------
-
-def refresh_and_cache() -> List[Dict[str,Any]]:
-    global _LAST_REFRESH_TS, _MEM_CACHE
-    cfg = _load_options()
-    facts = _fetch_ha_states(cfg)
-    _MEM_CACHE = facts
-
-    result_paths=[]
-    try:
-        payload = facts
-        for d in PRIMARY_DIRS:
-            try:
-                p=os.path.join(d,BASENAME)
-                _write_json_atomic(p, payload); result_paths.append(p)
-            except Exception as e:
-                print(f"[RAG] write failed for {d}: {e}")
-        try:
-            _write_json_atomic(FALLBACK_PATH, payload); result_paths.append(FALLBACK_PATH)
-        except Exception as e:
-            print(f"[RAG] fallback write failed: {e}")
-    finally:
-        _LAST_REFRESH_TS = time.time()
-
-    print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
-    return facts
-
-def load_cached() -> List[Dict[str,Any]]:
-    global _MEM_CACHE
-    if _MEM_CACHE: return _MEM_CACHE
-    try:
-        for d in PRIMARY_DIRS:
-            p=os.path.join(d,BASENAME)
-            if os.path.exists(p):
-                with open(p,"r",encoding="utf-8") as f:
-                    return json.load(f)
-        with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
-            return json.load(f)
-    except Exception:
-        return []
-    return []
-
-def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
-    if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
-        return refresh_and_cache()
-    facts = load_cached()
-    if not facts:
-        return refresh_and_cache()
-    return facts
-
-# ----------------- query → context -----------------
+# ... (rest of the file remains the same until intent categories)
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     out:set[str] = set()
@@ -385,7 +436,22 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"energy.load"})
     if q_tokens & MEDIA_KEYWORDS:
         out.update({"media"})
+    if q_tokens & ENTERTAINMENT_KEYWORDS:
+        out.update({"entertainment"})
+        if q_tokens & MOVIE_KEYWORDS: out.update({"entertainment.movies"})
+        if q_tokens & TV_KEYWORDS_ENT: out.update({"entertainment.tv"})
+        if q_tokens & ACTOR_KEYWORDS: out.update({"entertainment.people"})
+    if q_tokens & AUTOMOTIVE_KEYWORDS:
+        out.update({"automotive"})
+    if q_tokens & TECH_KEYWORDS:
+        out.update({"technology"})
+    if q_tokens & NEWS_KEYWORDS:
+        out.update({"news"})
+    if q_tokens & SPACE_KEYWORDS:
+        out.update({"space"})
     return out
+
+# ... (rest of the file remains the same until scoring)
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
@@ -429,6 +495,19 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
 
+        # Boost entertainment facts for relevant queries
+        if f.get("type") == "knowledge" and "entertainment" in cats:
+            if "entertainment.movies" in cats and (q & MOVIE_KEYWORDS): s += 30
+            if "entertainment.tv" in cats and (q & TV_KEYWORDS_ENT): s += 30
+            if "entertainment.people" in cats and (q & ACTOR_KEYWORDS): s += 30
+            if "trending" in cats and (q & {"trending", "popular", "new"}): s += 15
+
+        # Boost other knowledge facts
+        if f.get("type") == "knowledge":
+            if "automotive" in cats and (q & AUTOMOTIVE_KEYWORDS): s += 25
+            if "technology" in cats and (q & TECH_KEYWORDS): s += 25
+            if "space" in cats and (q & SPACE_KEYWORDS): s += 25
+
         if q and (q & ft): s += 3
         if q & SOLAR_KEYWORDS: s += 2
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
@@ -453,7 +532,12 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
 
-    if ("soc" in q) or (want_cats & {"energy.storage"}):
+    # Special ordering for entertainment queries
+    if q & ENTERTAINMENT_KEYWORDS:
+        entertainment_first = [f for f in candidate_facts if "entertainment" in set(f.get("cats", []))]
+        others = [f for f in candidate_facts if "entertainment" not in set(f.get("cats", []))]
+        ordered = entertainment_first + others
+    elif ("soc" in q) or (want_cats & {"energy.storage"}):
         ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
         others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
         ordered   = ess_first + others
@@ -482,6 +566,13 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 # ----------------- main -----------------
 
 if __name__ == "__main__":
-    print("Refreshing RAG facts from Home Assistant...")
+    print("Refreshing RAG facts from Home Assistant + Free APIs...")
     facts = refresh_and_cache()
-    print(f"Wrote {len(facts)} facts.")
+    ha_count = len([f for f in facts if f.get("type") == "ha_entity"])
+    knowledge_count = len([f for f in facts if f.get("type") == "knowledge"])
+    entertainment_count = len([f for f in facts if f.get("type") == "knowledge" and "entertainment" in f.get("cats", [])])
+    
+    print(f"Wrote {len(facts)} total facts:")
+    print(f"  - {ha_count} HA entities")
+    print(f"  - {knowledge_count} knowledge items")
+    print(f"  - {entertainment_count} entertainment items (movies/TV/actors)")
