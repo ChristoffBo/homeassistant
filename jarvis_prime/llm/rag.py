@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas + Wikipedia)
+# /app/rag.py  (REST → /api/states + /api/areas + Wikipedia fallback)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
@@ -7,12 +7,13 @@
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
 # - inject_context(user_msg, top_k) returns a small, relevant context block
-# - Adds Wikipedia REST API as fallback for general queries
+# - Adds fallback to Wikipedia if HA + LLM facts don’t cover the query
 #
 # Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request, urllib.parse
+import os, re, json, time, threading, urllib.request
 from typing import Any, Dict, List, Tuple, Set
+import wikipediaapi
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
@@ -96,6 +97,7 @@ _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
+
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -136,9 +138,8 @@ def _load_options() -> Dict[str, Any]:
         except Exception:
             pass
     return cfg
-
-def _http_get_json(url: str, headers: Dict[str,str]=None, timeout: int=20):
-    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
+    req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8","replace"))
 
@@ -163,30 +164,244 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
-# ----------------- Wikipedia fetch -----------------
-
-def _fetch_wiki_summary(query: str) -> str:
-    try:
-        title = urllib.parse.quote(query.strip())
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
-        data = _http_get_json(url, timeout=10)
-        if isinstance(data, dict):
-            summary = data.get("extract") or ""
-            if summary:
-                return f"Wikipedia: {summary}"
-        return ""
-    except Exception:
-        return ""
-
 # ----------------- categorization -----------------
 
-# (unchanged _infer_categories function here)
+def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
+    cats:set[str] = set()
+    toks = set(_tok(eid) + _tok(name) + _tok(device_class))
+    manf = str(attrs.get("manufacturer","") or attrs.get("vendor","") or "").lower()
+    model= str(attrs.get("model","") or "").lower()
 
-# ----------------- fetch areas, states, cache -----------------
+    if domain in ("person","device_tracker"):
+        cats.add("person")
 
-# (unchanged functions for HA fetch and cache here)
+    # Energy / solar
+    if any(k in toks for k in SOLAR_KEYWORDS) or "inverter" in model:
+        cats.add("energy")
+        if "pv" in toks or "solar" in toks: cats.add("energy.pv")
+        if "inverter" in toks or "ess" in toks: cats.add("energy.inverter")
+        if "soc" in toks or "battery" in toks or "bms" in model: cats.add("energy.storage")
+    if "grid" in toks or "import" in toks or "export" in toks: cats.update({"energy","energy.grid"})
+    if "load" in toks or "consumption" in toks: cats.update({"energy","energy.load"})
+    if device_class == "battery" or "battery" in toks: cats.add("device.battery")
+
+    # Media
+    if any(k in toks for k in MEDIA_KEYWORDS):
+        cats.add("media")
+        if toks & PLEX_KEYWORDS: cats.add("media.plex")
+        if toks & EMBY_KEYWORDS: cats.add("media.emby")
+        if toks & JELLYFIN_KEYWORDS: cats.add("media.jellyfin")
+        if toks & KODI_KEYWORDS: cats.add("media.kodi")
+        if toks & TV_KEYWORDS: cats.add("media.tv")
+        if toks & RADARR_KEYWORDS: cats.add("media.radarr")
+        if toks & SONARR_KEYWORDS: cats.add("media.sonarr")
+        if toks & LIDARR_KEYWORDS: cats.add("media.lidarr")
+        if toks & BAZARR_KEYWORDS: cats.add("media.bazarr")
+        if toks & READARR_KEYWORDS: cats.add("media.readarr")
+        if toks & SONOS_KEYWORDS: cats.add("media.sonos")
+        if toks & AMP_KEYWORDS: cats.add("media.amplifier")
+
+    # Infra / system
+    if toks & PROXMOX_KEYWORDS: cats.add("infra.proxmox")
+    if toks & SPEEDTEST_KEYS: cats.add("infra.speedtest")
+    if toks & CPU_KEYS: cats.add("infra.cpu")
+    if toks & WEATHER_KEYS: cats.add("weather")
+
+    return cats
+
+# ----------------- fetch areas -----------------
+
+def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
+    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
+    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
+    if not ha_url or not ha_token: return {}
+    headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
+    try:
+        data = _http_get_json(f"{ha_url}/api/areas", headers, timeout=15)
+        amap={}
+        if isinstance(data,list):
+            for a in data:
+                if "area_id" in a and "name" in a:
+                    amap[a["area_id"]] = a["name"]
+        return amap
+    except Exception:
+        return {}
+
+# ----------------- fetch + summarize -----------------
+
+def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
+    global _AREA_MAP
+    ha_url   = (cfg.get("llm_enviroguard_ha_base_url","").rstrip("/"))
+    ha_token = (cfg.get("llm_enviroguard_ha_token",""))
+    if not ha_url or not ha_token: return []
+    headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
+    try:
+        data = _http_get_json(f"{ha_url}/api/states", headers, timeout=25)
+    except Exception:
+        return []
+    if not isinstance(data,list): return []
+
+    # also fetch areas once
+    if not _AREA_MAP:
+        _AREA_MAP = _fetch_area_map(cfg)
+
+    facts=[]
+    for item in data:
+        try:
+            eid = str(item.get("entity_id") or "")
+            if not eid: continue
+            domain = eid.split(".",1)[0] if "." in eid else ""
+            if INCLUDE_DOMAINS and (domain not in INCLUDE_DOMAINS):
+                continue
+
+            attrs = item.get("attributes") or {}
+            device_class = str(attrs.get("device_class","")).lower()
+            area_id = attrs.get("area_id","")
+            area_name = _AREA_MAP.get(area_id,"") if area_id else ""
+            name  = str(attrs.get("friendly_name", eid))
+            state = str(item.get("state",""))
+            unit  = str(attrs.get("unit_of_measurement","") or "")
+            last_changed = str(item.get("last_changed","") or "")
+
+            is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
+            # normalize tracker/person zones
+            if domain == "device_tracker" and not is_unknown:
+                state = _safe_zone_from_tracker(state, attrs)
+
+            # displayable state
+            show_state = state.upper() if state in ("on","off","open","closed") else state
+            if unit and state not in ("on","off","open","closed"):
+                try:
+                    v = float(state)
+                    if abs(v) < 0.005: v = 0.0
+                    s = f"{v:.2f}".rstrip("0").rstrip(".")
+                    show_state = f"{s} {unit}".strip()
+                except Exception:
+                    show_state = f"{state} {unit}".strip()
+
+            # build summary
+            if domain == "person":
+                zone = _safe_zone_from_tracker(state, attrs)
+                summary = f"{name} is at {zone}"
+            else:
+                summary = name
+                if area_name: summary = f"[{area_name}] " + summary
+                if device_class: summary += f" ({device_class})"
+                if show_state: summary += f": {show_state}"
+
+            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
+            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
+                summary += f" (as of {recent})"
+
+            # score baseline
+            score=1
+            toks=_tok(eid)+_tok(name)+_tok(device_class)
+            if any(k in toks for k in SOLAR_KEYWORDS): score+=6
+            if "solar_assistant" in "_".join(toks): score+=3
+            score += DEVICE_CLASS_PRIORITY.get(device_class,0)
+            if domain in ("person","device_tracker"): score+=5
+            if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
+            if is_unknown: score -= 3
+
+            cats = _infer_categories(eid, name, attrs, domain, device_class)
+
+            facts.append({
+                "entity_id": eid,
+                "domain": domain,
+                "device_class": device_class,
+                "friendly_name": name,
+                "area": area_name,
+                "state": state,
+                "unit": unit,
+                "last_changed": last_changed,
+                "summary": summary,
+                "score": score,
+                "cats": sorted(list(cats))
+            })
+        except Exception:
+            continue
+    return facts
+# ----------------- IO + cache -----------------
+
+def refresh_and_cache() -> List[Dict[str,Any]]:
+    global _LAST_REFRESH_TS, _MEM_CACHE
+    cfg = _load_options()
+    facts = _fetch_ha_states(cfg)
+    _MEM_CACHE = facts
+
+    result_paths=[]
+    try:
+        payload = facts
+        for d in PRIMARY_DIRS:
+            try:
+                p=os.path.join(d,BASENAME)
+                _write_json_atomic(p, payload); result_paths.append(p)
+            except Exception as e:
+                print(f"[RAG] write failed for {d}: {e}")
+        try:
+            _write_json_atomic(FALLBACK_PATH, payload); result_paths.append(FALLBACK_PATH)
+        except Exception as e:
+            print(f"[RAG] fallback write failed: {e}")
+    finally:
+        _LAST_REFRESH_TS = time.time()
+
+    print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
+    return facts
+
+def load_cached() -> List[Dict[str,Any]]:
+    global _MEM_CACHE
+    if _MEM_CACHE: return _MEM_CACHE
+    try:
+        for d in PRIMARY_DIRS:
+            p=os.path.join(d,BASENAME)
+            if os.path.exists(p):
+                with open(p,"r",encoding="utf-8") as f:
+                    return json.load(f)
+        with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
+            return json.load(f)
+    except Exception:
+        return []
+    return []
+
+def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
+    if force_refresh or (time.time() - _LAST_REFRESH_TS > REFRESH_INTERVAL_SEC):
+        return refresh_and_cache()
+    facts = load_cached()
+    if not facts:
+        return refresh_and_cache()
+    return facts
 
 # ----------------- query → context -----------------
+
+def _intent_categories(q_tokens: Set[str]) -> Set[str]:
+    out:set[str] = set()
+    for key, cats in INTENT_CATEGORY_MAP.items():
+        if key in q_tokens:
+            out.update(cats)
+    if q_tokens & {"solar","pv","inverter","ess","soc","battery"}:
+        out.update({"energy","energy.storage","energy.pv","energy.inverter"})
+    if "grid" in q_tokens:
+        out.update({"energy.grid"})
+    if "load" in q_tokens:
+        out.update({"energy.load"})
+    if q_tokens & MEDIA_KEYWORDS:
+        out.update({"media"})
+    return out
+
+def _fetch_wikipedia_extract(query: str, sentences: int = 2) -> str:
+    """Fetch a short plain-text extract from Wikipedia REST API."""
+    try:
+        q = urllib.parse.quote(query)
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{q}"
+        req = urllib.request.Request(url, headers={"User-Agent":"Jarvis-RAG/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8","replace"))
+        extract = data.get("extract")
+        if extract:
+            return extract.strip()
+    except Exception as e:
+        print(f"[RAG] Wikipedia fetch failed: {e}")
+    return ""
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
@@ -214,7 +429,6 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
-
     # area queries
     for f in facts:
         if f.get("area") and f.get("area","").lower() in q:
@@ -223,15 +437,69 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     if filtered:
         facts = filtered
 
-    # scoring (unchanged scoring logic here)
+    want_cats = _intent_categories(q)
 
-    if facts:
-        # build HA-based context (same as before)
-        # (unchanged scoring and budget logic here)
-        pass
+    scored: List[Tuple[int, Dict[str, Any]]] = []
+    for f in facts:
+        s = int(f.get("score", 1))
+        ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
+        cats = set(f.get("cats", []))
+
+        if q and (q & ft): s += 3
+        if q & SOLAR_KEYWORDS: s += 2
+        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
+            s += 12
+        if want_cats and (cats & want_cats):
+            s += 15
+        if want_cats & {"energy.storage"} and "energy.storage" in cats:
+            s += 20
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           ("device.battery" in cats) and ("energy.storage" not in cats):
+            s -= 18
+        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
+           (("forecast" in ft) or ("estimated" in ft)):
+            s -= 12
+
+        scored.append((s, f))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    ctx_tokens = _ctx_tokens_from_options()
+    budget = _rag_budget_tokens(ctx_tokens)
+
+    candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
+
+    if ("soc" in q) or (want_cats & {"energy.storage"}):
+        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
+        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
+        ordered   = ess_first + others
     else:
-        # fallback to Wikipedia if no HA facts match
-        return _fetch_wiki_summary(user_msg)
+        ordered = candidate_facts
+
+    selected: List[str] = []
+    remaining = budget
+
+    for f in ordered:
+        line = f.get("summary", "")
+        if not line:
+            continue
+        cost = _estimate_tokens(line)
+        if cost <= remaining:
+            selected.append(line)
+            remaining -= cost
+        if not selected and cost > remaining and remaining > 0:
+            selected.append(line)
+            remaining = 0
+        if remaining <= 0:
+            break
+
+    # ---- Wikipedia fallback if nothing matched ----
+    if not selected:
+        wiki_text = _fetch_wikipedia_extract(user_msg)
+        if wiki_text:
+            return f"[Wikipedia] {wiki_text}"
+
+    return "\n".join(selected)
 
 # ----------------- main -----------------
 
