@@ -7,7 +7,7 @@
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
 # - inject_context(user_msg, top_k) returns a small, relevant context block
-# - If no HA facts match for query, falls back to Wikipedia summary (via REST)
+# - If no HA facts match for query, falls back to Wikipedia summary
 #
 # Safe: read-only, never calls HA /api/services
 
@@ -20,6 +20,8 @@ PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 INCLUDE_DOMAINS = None
+
+# ----------------- Keywords -----------------
 
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export","axpert"}
 SONOFF_KEYWORDS  = {"sonoff","tasmota"}
@@ -83,6 +85,7 @@ _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
+# ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
     return re.findall(r"[A-Za-z0-9_]+", s.lower() if s else "")
@@ -122,6 +125,7 @@ def _load_options() -> Dict[str, Any]:
         except Exception:
             pass
     return cfg
+
 def _http_get_json(url: str, headers: Dict[str,str]=None, timeout: int=20):
     req = urllib.request.Request(url, headers=headers or {}, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -164,7 +168,6 @@ def _wiki_summary(query: str, sentences: int=3) -> str:
     except Exception as e:
         print(f"[RAG][Wiki] Failed: {e}")
     return ""
-
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -176,6 +179,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if domain in ("person","device_tracker"):
         cats.add("person")
 
+    # Energy / solar
     if any(k in toks for k in SOLAR_KEYWORDS) or "inverter" in model:
         cats.add("energy")
         if "pv" in toks or "solar" in toks: cats.add("energy.pv")
@@ -185,6 +189,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if "load" in toks or "consumption" in toks: cats.update({"energy","energy.load"})
     if device_class == "battery" or "battery" in toks: cats.add("device.battery")
 
+    # Media
     if any(k in toks for k in MEDIA_KEYWORDS):
         cats.add("media")
         if toks & PLEX_KEYWORDS: cats.add("media.plex")
@@ -200,6 +205,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if toks & SONOS_KEYWORDS: cats.add("media.sonos")
         if toks & AMP_KEYWORDS: cats.add("media.amplifier")
 
+    # Infra / system
     if toks & PROXMOX_KEYWORDS: cats.add("infra.proxmox")
     if toks & SPEEDTEST_KEYS: cats.add("infra.speedtest")
     if toks & CPU_KEYS: cats.add("infra.cpu")
@@ -224,6 +230,7 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
         return amap
     except Exception:
         return {}
+
 # ----------------- fetch + summarize -----------------
 
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
@@ -238,6 +245,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         return []
     if not isinstance(data,list): return []
 
+    # also fetch areas once
     if not _AREA_MAP:
         _AREA_MAP = _fetch_area_map(cfg)
 
@@ -260,9 +268,11 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
+            # normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
+            # displayable state
             show_state = state.upper() if state in ("on","off","open","closed") else state
             if unit and state not in ("on","off","open","closed"):
                 try:
@@ -273,6 +283,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
+            # build summary
             if domain == "person":
                 zone = _safe_zone_from_tracker(state, attrs)
                 summary = f"{name} is at {zone}"
@@ -286,6 +297,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
+            # score baseline
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
@@ -313,7 +325,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
-
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -363,6 +374,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
     if not facts:
         return refresh_and_cache()
     return facts
+
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -386,6 +398,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
+    # ---- Domain/keyword overrides ----
     filtered = []
     if "light" in q or "lights" in q:
         filtered += [f for f in facts if f["domain"] == "light"]
@@ -406,6 +419,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
+    # area queries
     for f in facts:
         if f.get("area") and f.get("area","").lower() in q:
             filtered.append(f)
