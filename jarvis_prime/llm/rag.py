@@ -227,6 +227,8 @@ def _fetch_entertainment_facts() -> List[Dict[str, Any]]:
                     "type": "knowledge",
                     "category": "entertainment",
                     "entity_id": f"movie.{movie['id']}",
+                    "domain": "knowledge",
+                    "friendly_name": movie.get("title", ""),
                     "title": movie.get("title", ""),
                     "summary": f"Trending Movie: {movie.get('title', '')} ({release_year}) - Rating: {movie.get('vote_average', 0)}/10 - {movie.get('overview', '')[:100]}...",
                     "popularity": movie.get("popularity", 0),
@@ -249,6 +251,8 @@ def _fetch_entertainment_facts() -> List[Dict[str, Any]]:
                     "type": "knowledge",
                     "category": "entertainment",
                     "entity_id": f"tv.{show['id']}",
+                    "domain": "knowledge",
+                    "friendly_name": show.get("name", ""),
                     "title": show.get("name", ""),
                     "summary": f"Trending TV Show: {show.get('name', '')} ({first_air_year}) - Rating: {show.get('vote_average', 0)}/10 - {show.get('overview', '')[:100]}...",
                     "popularity": show.get("popularity", 0),
@@ -272,6 +276,8 @@ def _fetch_entertainment_facts() -> List[Dict[str, Any]]:
                     "type": "knowledge",
                     "category": "entertainment",
                     "entity_id": f"person.{person['id']}",
+                    "domain": "knowledge",
+                    "friendly_name": person.get("name", ""),
                     "title": person.get("name", ""),
                     "summary": f"Popular Actor: {person.get('name', '')} - Known for: {known_for_str}",
                     "popularity": person.get("popularity", 0),
@@ -299,6 +305,8 @@ def _fetch_other_knowledge_facts() -> List[Dict[str, Any]]:
                     "type": "knowledge",
                     "category": "automotive",
                     "entity_id": f"car.{make.get('MakeId', '')}",
+                    "domain": "knowledge",
+                    "friendly_name": make.get("MakeName", ""),
                     "title": make.get("MakeName", ""),
                     "summary": f"Car brand: {make.get('MakeName', '')}",
                     "score": 5,
@@ -317,6 +325,8 @@ def _fetch_other_knowledge_facts() -> List[Dict[str, Any]]:
                 "type": "knowledge",
                 "category": "space",
                 "entity_id": "space.astronauts",
+                "domain": "knowledge",
+                "friendly_name": "People in Space",
                 "title": "People in Space",
                 "summary": f"There are {space_data.get('number', 0)} people in space right now: {', '.join([p['name'] for p in space_data.get('people', [])])}",
                 "score": 5,
@@ -336,6 +346,8 @@ def _fetch_other_knowledge_facts() -> List[Dict[str, Any]]:
                     "type": "knowledge",
                     "category": "technology",
                     "entity_id": f"tech.{hit.get('created_at_i', '')}",
+                    "domain": "knowledge",
+                    "friendly_name": hit.get("title", ""),
                     "title": hit.get("title", ""),
                     "summary": f"Tech News: {hit.get('title', '')} - Points: {hit.get('points', 0)}",
                     "score": 6,
@@ -361,7 +373,50 @@ def _fetch_knowledge_facts() -> List[Dict[str, Any]]:
     
     return facts
 
-# ... (rest of the file remains the same until categorization)
+# ----------------- Home Assistant Integration -----------------
+
+def _fetch_ha_areas() -> Dict[str, str]:
+    """Fetch area information from Home Assistant"""
+    cfg = _load_options()
+    ha_url = cfg.get("ha_url", "").strip()
+    ha_token = cfg.get("ha_token", "").strip()
+    
+    if not ha_url or not ha_token:
+        print("Warning: No HA URL/token configured")
+        return {}
+    
+    try:
+        url = f"{ha_url}/api/areas"
+        headers = {
+            "Authorization": f"Bearer {ha_token}",
+            "Content-Type": "application/json"
+        }
+        data = _http_get_json(url, headers)
+        return {area["area_id"]: area["name"] for area in data}
+    except Exception as e:
+        print(f"Error fetching areas: {e}")
+        return {}
+
+def _fetch_ha_states() -> List[Dict[str, Any]]:
+    """Fetch entity states from Home Assistant"""
+    cfg = _load_options()
+    ha_url = cfg.get("ha_url", "").strip()
+    ha_token = cfg.get("ha_token", "").strip()
+    
+    if not ha_url or not ha_token:
+        print("Warning: No HA URL/token configured")
+        return []
+    
+    try:
+        url = f"{ha_url}/api/states"
+        headers = {
+            "Authorization": f"Bearer {ha_token}",
+            "Content-Type": "application/json"
+        }
+        return _http_get_json(url, headers)
+    except Exception as e:
+        print(f"Error fetching states: {e}")
+        return []
 
 # ----------------- categorization -----------------
 
@@ -421,7 +476,59 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
 
     return cats
 
-# ... (rest of the file remains the same until intent categories)
+def _build_summary(eid: str, name: str, state: str, attrs: Dict[str,Any], domain: str, device_class: str, area: str) -> str:
+    """Build a summary for an entity"""
+    parts = [name or eid]
+    
+    if area:
+        parts.append(f"(in {area})")
+    
+    if state and state not in ("unavailable", "unknown"):
+        if domain == "person" or domain == "device_tracker":
+            zone = _safe_zone_from_tracker(state, attrs)
+            parts.append(f"is at {zone}")
+        elif device_class == "battery":
+            parts.append(f"battery at {state}%")
+        elif domain in ("light", "switch", "fan"):
+            parts.append(f"is {state}")
+        elif domain == "sensor":
+            unit = attrs.get("unit_of_measurement", "")
+            if unit:
+                parts.append(f"reads {state} {unit}")
+            else:
+                parts.append(f"is {state}")
+        else:
+            parts.append(f"is {state}")
+    
+    return " ".join(parts)
+
+def _calculate_score(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str, cats: Set[str]) -> int:
+    """Calculate relevance score for an entity"""
+    score = 1
+    
+    # Domain-based scoring
+    domain_scores = {
+        "person": 8, "device_tracker": 8, "light": 6, "switch": 6, "sensor": 5,
+        "binary_sensor": 4, "climate": 7, "media_player": 6, "automation": 3
+    }
+    score += domain_scores.get(domain, 1)
+    
+    # Device class priority
+    if device_class:
+        score += DEVICE_CLASS_PRIORITY.get(device_class, 0)
+    
+    # Category-based boosts
+    if "energy" in cats: score += 3
+    if "energy.storage" in cats: score += 5
+    if "media" in cats: score += 2
+    if "person" in cats: score += 4
+    
+    # Name-based adjustments
+    name_lower = (name or "").lower()
+    if "main" in name_lower or "primary" in name_lower: score += 2
+    if "hidden" in name_lower or "helper" in name_lower: score -= 2
+    
+    return max(1, score)
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     out:set[str] = set()
@@ -451,128 +558,61 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"space"})
     return out
 
-# ... (rest of the file remains the same until scoring)
+# ----------------- Core RAG Functions -----------------
 
-def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
-    q_raw = _tok(user_msg)
-    q = set(_expand_query_tokens(q_raw))
-    facts = get_facts()
-
-    # ---- Domain/keyword overrides ----
-    filtered = []
-    if "light" in q or "lights" in q:
-        filtered += [f for f in facts if f["domain"] == "light"]
-    if "switch" in q or "switches" in q:
-        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
-    if "motion" in q or "occupancy" in q:
-        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
-    if "axpert" in q:
-        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
-    if "sonoff" in q:
-        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
-    if "zigbee" in q or "z2m" in q:
-        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
-    if "where" in q:
-        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
-    if q & MEDIA_KEYWORDS:
-        filtered += [f for f in facts if any(
-            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
-            for m in MEDIA_KEYWORDS
-        )]
-    # area queries
-    for f in facts:
-        if f.get("area") and f.get("area","").lower() in q:
-            filtered.append(f)
-
-    if filtered:
-        facts = filtered
-
-    want_cats = _intent_categories(q)
-
-    scored: List[Tuple[int, Dict[str, Any]]] = []
-    for f in facts:
-        s = int(f.get("score", 1))
-        ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
-        cats = set(f.get("cats", []))
-
-        # Boost entertainment facts for relevant queries
-        if f.get("type") == "knowledge" and "entertainment" in cats:
-            if "entertainment.movies" in cats and (q & MOVIE_KEYWORDS): s += 30
-            if "entertainment.tv" in cats and (q & TV_KEYWORDS_ENT): s += 30
-            if "entertainment.people" in cats and (q & ACTOR_KEYWORDS): s += 30
-            if "trending" in cats and (q & {"trending", "popular", "new"}): s += 15
-
-        # Boost other knowledge facts
-        if f.get("type") == "knowledge":
-            if "automotive" in cats and (q & AUTOMOTIVE_KEYWORDS): s += 25
-            if "technology" in cats and (q & TECH_KEYWORDS): s += 25
-            if "space" in cats and (q & SPACE_KEYWORDS): s += 25
-
-        if q and (q & ft): s += 3
-        if q & SOLAR_KEYWORDS: s += 2
-        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
-            s += 12
-        if want_cats and (cats & want_cats):
-            s += 15
-        if want_cats & {"energy.storage"} and "energy.storage" in cats:
-            s += 20
-        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           ("device.battery" in cats) and ("energy.storage" not in cats):
-            s -= 18
-        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           (("forecast" in ft) or ("estimated" in ft)):
-            s -= 12
-
-        scored.append((s, f))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-
-    ctx_tokens = _ctx_tokens_from_options()
-    budget = _rag_budget_tokens(ctx_tokens)
-
-    candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
-
-    # Special ordering for entertainment queries
-    if q & ENTERTAINMENT_KEYWORDS:
-        entertainment_first = [f for f in candidate_facts if "entertainment" in set(f.get("cats", []))]
-        others = [f for f in candidate_facts if "entertainment" not in set(f.get("cats", []))]
-        ordered = entertainment_first + others
-    elif ("soc" in q) or (want_cats & {"energy.storage"}):
-        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
-        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
-        ordered   = ess_first + others
-    else:
-        ordered = candidate_facts
-
-    selected: List[str] = []
-    remaining = budget
-
-    for f in ordered:
-        line = f.get("summary", "")
-        if not line:
-            continue
-        cost = _estimate_tokens(line)
-        if cost <= remaining:
-            selected.append(line)
-            remaining -= cost
-        if not selected and cost > remaining and remaining > 0:
-            selected.append(line)
-            remaining = 0
-        if remaining <= 0:
-            break
-
-    return "\n".join(selected)
-
-# ----------------- main -----------------
-
-if __name__ == "__main__":
-    print("Refreshing RAG facts from Home Assistant + Free APIs...")
-    facts = refresh_and_cache()
-    ha_count = len([f for f in facts if f.get("type") == "ha_entity"])
-    knowledge_count = len([f for f in facts if f.get("type") == "knowledge"])
-    entertainment_count = len([f for f in facts if f.get("type") == "knowledge" and "entertainment" in f.get("cats", [])])
+def refresh_and_cache() -> List[Dict[str, Any]]:
+    """Refresh facts from HA and external APIs, cache them"""
+    global _MEM_CACHE, _AREA_MAP, _LAST_REFRESH_TS
     
-    print(f"Wrote {len(facts)} total facts:")
-    print(f"  - {ha_count} HA entities")
-    print(f"  - {knowledge_count} knowledge items")
-    print(f"  - {entertainment_count} entertainment items (movies/TV/actors)")
+    with _CACHE_LOCK:
+        now = time.time()
+        
+        # Fetch area mapping
+        _AREA_MAP = _fetch_ha_areas()
+        
+        # Fetch HA states
+        ha_states = _fetch_ha_states()
+        facts = []
+        
+        # Process HA entities
+        for state_obj in ha_states:
+            try:
+                eid = state_obj["entity_id"]
+                domain = eid.split(".")[0]
+                
+                # Skip if domain filtering is active
+                if INCLUDE_DOMAINS and domain not in INCLUDE_DOMAINS:
+                    continue
+                
+                attrs = state_obj.get("attributes", {})
+                state = state_obj.get("state", "")
+                name = attrs.get("friendly_name", eid)
+                device_class = attrs.get("device_class", "")
+                area_id = attrs.get("area_id")
+                area = _AREA_MAP.get(area_id, "") if area_id else ""
+                
+                # Infer categories
+                cats = _infer_categories(eid, name, attrs, domain, device_class)
+                
+                # Build summary
+                summary = _build_summary(eid, name, state, attrs, domain, device_class, area)
+                
+                # Calculate score
+                score = _calculate_score(eid, name, attrs, domain, device_class, cats)
+                
+                fact = {
+                    "type": "ha_entity",
+                    "entity_id": eid,
+                    "domain": domain,
+                    "friendly_name": name,
+                    "state": state,
+                    "device_class": device_class,
+                    "area": area,
+                    "summary": summary,
+                    "score": score,
+                    "cats": list(cats),
+                    "last_updated": state_obj.get("last_updated", "")
+                }
+                facts.append(fact)
+                
+            except Exception as e:
