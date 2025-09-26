@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-# /app/rag.py  (REST → /api/states + /api/areas + curated knowledge)
+# /app/rag.py  (REST → /api/states + /api/areas)
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
-# - Also fetches curated external knowledge (movies, actors, series, cars, tech, OPNSense, Docker)
-# - Writes combined JSON to /share/jarvis_prime/memory/rag_facts.json
+# - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
 # - inject_context(user_msg, top_k) returns a small, relevant context block
 #
@@ -13,7 +12,6 @@
 
 import os, re, json, time, threading, urllib.request
 from typing import Any, Dict, List, Tuple, Set
-import datetime
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
@@ -60,21 +58,6 @@ PROXMOX_KEYWORDS = {"proxmox","pve"}
 SPEEDTEST_KEYS   = {"speedtest","speed_test"}
 CPU_KEYS         = {"cpu","processor","loadavg","load_avg"}
 WEATHER_KEYS     = {"weather","weatherbit","openweathermap","met","yr"}
-
-# ----------------- Curated external sources -----------------
-
-CURATED_URLS = {
-    "movies": "https://raw.githubusercontent.com/prust/wikipedia-movie-data/master/movies.json",
-    "actors": "https://raw.githubusercontent.com/prust/wikipedia-movie-data/master/movies.json",
-    "series": "https://raw.githubusercontent.com/awesomedata/awesome-tv-series/master/tvseries.json",
-    "cars":   "https://raw.githubusercontent.com/vega/vega-datasets/master/data/cars.json",
-    "tech":   "https://raw.githubusercontent.com/EbookFoundation/free-programming-books/main/books/free-programming-books-subjects.md",
-    "opnsense": "https://raw.githubusercontent.com/opnsense/docs/master/source/releases.rst",
-    "docker":   "https://raw.githubusercontent.com/docker-library/docs/master/README.md"
-}
-
-CURATED_PATH = "/share/jarvis_prime/memory/curated_facts.json"
-CURATED_REFRESH_INTERVAL_DAYS = 30
 
 # ----------------- Device-class priority -----------------
 
@@ -158,11 +141,6 @@ def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8","replace"))
 
-def _http_get_text(url: str, timeout: int=20) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "Jarvis-RAG"}, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8","replace")
-
 def _write_json_atomic(path: str, obj: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -228,6 +206,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if toks & WEATHER_KEYS: cats.add("weather")
 
     return cats
+
 # ----------------- fetch areas -----------------
 
 def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
@@ -283,7 +262,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-            # normalize tracker/person zones
+# normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
@@ -340,19 +319,18 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         except Exception:
             continue
     return facts
+
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
     global _LAST_REFRESH_TS, _MEM_CACHE
     cfg = _load_options()
     facts = _fetch_ha_states(cfg)
-    curated = refresh_curated()
-    combined = facts + curated
-    _MEM_CACHE = combined
+    _MEM_CACHE = facts
 
     result_paths=[]
     try:
-        payload = combined
+        payload = facts
         for d in PRIMARY_DIRS:
             try:
                 p=os.path.join(d,BASENAME)
@@ -366,8 +344,8 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
     finally:
         _LAST_REFRESH_TS = time.time()
 
-    print(f"[RAG] wrote {len(combined)} facts to: " + " | ".join(result_paths))
-    return combined
+    print(f"[RAG] wrote {len(facts)} facts to: " + " | ".join(result_paths))
+    return facts
 
 def load_cached() -> List[Dict[str,Any]]:
     global _MEM_CACHE
@@ -378,9 +356,8 @@ def load_cached() -> List[Dict[str,Any]]:
             if os.path.exists(p):
                 with open(p,"r",encoding="utf-8") as f:
                     return json.load(f)
-        if os.path.exists(FALLBACK_PATH):
-            with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
-                return json.load(f)
+        with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
+            return json.load(f)
     except Exception:
         return []
     return []
@@ -418,22 +395,22 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     # ---- Domain/keyword overrides ----
     filtered = []
     if "light" in q or "lights" in q:
-        filtered += [f for f in facts if f.get("domain") == "light"]
+        filtered += [f for f in facts if f["domain"] == "light"]
     if "switch" in q or "switches" in q:
-        filtered += [f for f in facts if f.get("domain") == "switch" and not f["entity_id"].startswith("automation.")]
+        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
     if "motion" in q or "occupancy" in q:
-        filtered += [f for f in facts if f.get("domain") == "binary_sensor" and f.get("device_class") == "motion"]
+        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
     if "axpert" in q:
-        filtered += [f for f in facts if "axpert" in f.get("entity_id","").lower() or "axpert" in f.get("friendly_name","").lower()]
+        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
     if "sonoff" in q:
-        filtered += [f for f in facts if "sonoff" in f.get("entity_id","").lower() or "sonoff" in f.get("friendly_name","").lower()]
+        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
     if "zigbee" in q or "z2m" in q:
-        filtered += [f for f in facts if "zigbee" in f.get("entity_id","").lower() or "zigbee" in f.get("friendly_name","").lower()]
+        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
     if "where" in q:
-        filtered += [f for f in facts if f.get("domain") in ("person","device_tracker")]
+        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
     if q & MEDIA_KEYWORDS:
         filtered += [f for f in facts if any(
-            m in f.get("entity_id","").lower() or m in f.get("friendly_name","").lower()
+            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
             for m in MEDIA_KEYWORDS
         )]
     # area queries
@@ -501,21 +478,10 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             break
 
     return "\n".join(selected)
+
 # ----------------- main -----------------
 
 if __name__ == "__main__":
     print("Refreshing RAG facts from Home Assistant...")
-    try:
-        facts = refresh_and_cache()
-        print(f"Wrote {len(facts)} total facts (HA + curated).")
-    except Exception as e:
-        print(f"[RAG] HA refresh failed: {e}")
-
-    # Ensure curated knowledge exists / refresh monthly
-    try:
-        curated = load_curated()
-        if not curated:
-            curated = refresh_curated()
-        print(f"[RAG] Curated knowledge available: {len(curated)} entries")
-    except Exception as e:
-        print(f"[RAG] Curated knowledge refresh failed: {e}")
+    facts = refresh_and_cache()
+    print(f"Wrote {len(facts)} facts.")
