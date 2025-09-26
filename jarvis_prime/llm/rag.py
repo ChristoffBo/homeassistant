@@ -3,7 +3,7 @@
 #
 # - Reads HA URL + token from /data/options.json (/data/config.json fallback)
 # - Pulls states via /api/states (read-only) + area metadata via /api/areas
-# - Fetches entertainment, automotive, tech knowledge from free APIs
+# - Fetches entertainment, automotive, tech knowledge from free APIs (no keys)
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
@@ -11,7 +11,7 @@
 #
 # Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request, requests
+import os, re, json, time, threading, requests
 from typing import Any, Dict, List, Tuple, Set
 from datetime import datetime
 
@@ -22,28 +22,19 @@ PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
-# Include ALL domains
+# Include ALL domains unless restricted
 INCLUDE_DOMAINS = None
 
 # ----------------- Free API Endpoints -----------------
-
-# All free, no API keys needed
 FREE_APIS = {
-    # Entertainment APIs with actual movie/actor data
-    "trending_movies": "https://api.themoviedb.org/3/trending/movie/day?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",  # Free public key
-    "trending_tv": "https://api.themoviedb.org/3/trending/tv/day?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",
-    "popular_movies": "https://api.themoviedb.org/3/movie/popular?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",
-    "popular_actors": "https://api.themoviedb.org/3/person/popular?api_key=15d2ea6d0dc1d476efbca3eba2b9bbfb",
-    
-    # Other free APIs
-    "news": "https://newsapi.org/v2/top-headlines?country=us&pageSize=5&apiKey=demo",
+    "jokes": "https://v2.jokeapi.dev/joke/Any?type=single",
+    "tech_news": "https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=5",
     "cars": "https://vpic.nhtsa.dot.gov/api/vehicles/GetMakesForVehicleType/car?format=json",
     "space": "http://api.open-notify.org/astros.json",
-    "programming_jokes": "https://v2.jokeapi.dev/joke/Programming?type=single",
-    "tech_news": "https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=5",
     "world_time": "http://worldtimeapi.org/api/ip",
+    "tvmaze": "https://api.tvmaze.com/shows?page=1",
+    "wiki_summary": "https://en.wikipedia.org/api/rest_v1/page/summary/",  # append query
 }
-
 # ----------------- Keywords / Integrations -----------------
 
 # Energy / Solar
@@ -54,12 +45,12 @@ MQTT_KEYWORDS    = {"mqtt"}
 TUYA_KEYWORDS    = {"tuya","localtuya","local_tuya"}
 FORECAST_SOLAR   = {"forecast.solar","forecastsolar","forecast_solar"}
 
-# Media (separate + combined)
+# Media
 PLEX_KEYWORDS    = {"plex"}
 EMBY_KEYWORDS    = {"emby"}
 JELLYFIN_KEYWORDS= {"jellyfin"}
 KODI_KEYWORDS    = {"kodi","xbmc"}
-TV_KEYWORDS      = {"tv","androidtv","chromecast","google_tv"}
+TV_KEYWORDS_MEDIA= {"tv","androidtv","chromecast","google_tv"}
 RADARR_KEYWORDS  = {"radarr"}
 SONARR_KEYWORDS  = {"sonarr"}
 LIDARR_KEYWORDS  = {"lidarr"}
@@ -69,17 +60,16 @@ SONOS_KEYWORDS   = {"sonos"}
 AMP_KEYWORDS     = {"denon","onkyo","yamaha","marantz"}
 
 MEDIA_KEYWORDS   = set().union(
-    PLEX_KEYWORDS, EMBY_KEYWORDS, JELLYFIN_KEYWORDS, KODI_KEYWORDS, TV_KEYWORDS,
+    PLEX_KEYWORDS, EMBY_KEYWORDS, JELLYFIN_KEYWORDS, KODI_KEYWORDS, TV_KEYWORDS_MEDIA,
     RADARR_KEYWORDS, SONARR_KEYWORDS, LIDARR_KEYWORDS, BAZARR_KEYWORDS, READARR_KEYWORDS,
     SONOS_KEYWORDS, AMP_KEYWORDS, {"media","player"}
 )
 
-# Entertainment keywords (expanded)
+# Entertainment keywords
 MOVIE_KEYWORDS = {"movie", "film", "cinema", "theatre", "hollywood", "blockbuster"}
 TV_KEYWORDS_ENT = {"tv", "television", "series", "show", "netflix", "hbo", "disney", "amazon"}
 ACTOR_KEYWORDS = {"actor", "actress", "celebrity", "star", "director", "producer"}
 GENRE_KEYWORDS = {"action", "comedy", "drama", "horror", "sci-fi", "romance", "thriller"}
-
 ENTERTAINMENT_KEYWORDS = set().union(MOVIE_KEYWORDS, TV_KEYWORDS_ENT, ACTOR_KEYWORDS, GENRE_KEYWORDS)
 
 # Knowledge domains
@@ -98,14 +88,12 @@ CPU_KEYS         = {"cpu","processor","loadavg","load_avg"}
 WEATHER_KEYS     = {"weather","weatherbit","openweathermap","met","yr"}
 
 # ----------------- Device-class priority -----------------
-
 DEVICE_CLASS_PRIORITY = {
     "motion":6,"presence":6,"occupancy":5,"door":4,"opening":4,"window":3,
     "battery":3,"temperature":3,"humidity":2,"power":3,"energy":3
 }
 
 # ----------------- Query synonyms -----------------
-
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
     "solar": ["solar","pv","generation","inverter","array","ess","axpert"],
@@ -142,7 +130,6 @@ _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
-
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -184,10 +171,14 @@ def _load_options() -> Dict[str, Any]:
             pass
     return cfg
 
-def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
-    req = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8","replace"))
+def _http_get_json(url: str, headers: Dict[str,str]=None, timeout: int=20):
+    try:
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        print(f"HTTP error for {url}: {e}")
+    return {}
 
 def _write_json_atomic(path: str, obj: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -200,7 +191,7 @@ SAFE_RAG_BUDGET_FRACTION = 0.30
 def _estimate_tokens(text: str) -> int:
     if not text: return 0
     words = len(re.findall(r"\S+", text))
-    return max(8, min(int(words * 1.3), 128))
+    return max(8, min(int(words * 1.5), 512))  # raised cap to 512
 
 def _ctx_tokens_from_options() -> int:
     cfg = _load_options()
@@ -212,94 +203,58 @@ def _rag_budget_tokens(ctx_tokens: int) -> int:
 
 # ----------------- Free API Knowledge Fetching -----------------
 
-def _fetch_entertainment_facts() -> List[Dict[str, Any]]:
-    """Fetch current movies, TV shows, and actors from TMDB"""
+def _fetch_joke_facts() -> List[Dict[str, Any]]:
     facts = []
-    
-    # Trending Movies
     try:
-        response = requests.get(FREE_APIS["trending_movies"], timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            for movie in data.get("results", [])[:5]:
-                release_year = movie.get("release_date", "")[:4] if movie.get("release_date") else "TBA"
+        resp = requests.get(FREE_APIS["jokes"], timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "joke" in data:
                 facts.append({
                     "type": "knowledge",
-                    "category": "entertainment",
-                    "entity_id": f"movie.{movie['id']}",
+                    "category": "humor",
+                    "entity_id": f"joke.{int(time.time())}",
                     "domain": "knowledge",
-                    "friendly_name": movie.get("title", ""),
-                    "title": movie.get("title", ""),
-                    "summary": f"Trending Movie: {movie.get('title', '')} ({release_year}) - Rating: {movie.get('vote_average', 0)}/10 - {movie.get('overview', '')[:100]}...",
-                    "popularity": movie.get("popularity", 0),
-                    "release_date": movie.get("release_date", ""),
-                    "score": 9,
-                    "cats": ["entertainment", "entertainment.movies", "trending"],
+                    "friendly_name": "Joke",
+                    "title": "Joke",
+                    "summary": data["joke"],
+                    "score": 6,
+                    "cats": ["humor"],
                     "last_updated": datetime.now().isoformat()
                 })
     except Exception as e:
-        print(f"Trending movies API error: {e}")
-    
-    # Popular TV Shows
-    try:
-        response = requests.get(FREE_APIS["trending_tv"], timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            for show in data.get("results", [])[:5]:
-                first_air_year = show.get("first_air_date", "")[:4] if show.get("first_air_date") else "TBA"
-                facts.append({
-                    "type": "knowledge",
-                    "category": "entertainment",
-                    "entity_id": f"tv.{show['id']}",
-                    "domain": "knowledge",
-                    "friendly_name": show.get("name", ""),
-                    "title": show.get("name", ""),
-                    "summary": f"Trending TV Show: {show.get('name', '')} ({first_air_year}) - Rating: {show.get('vote_average', 0)}/10 - {show.get('overview', '')[:100]}...",
-                    "popularity": show.get("popularity", 0),
-                    "first_air_date": show.get("first_air_date", ""),
-                    "score": 8,
-                    "cats": ["entertainment", "entertainment.tv", "trending"],
-                    "last_updated": datetime.now().isoformat()
-                })
-    except Exception as e:
-        print(f"Trending TV API error: {e}")
-    
-    # Popular Actors
-    try:
-        response = requests.get(FREE_APIS["popular_actors"], timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            for person in data.get("results", [])[:8]:
-                known_for = [item.get("title") or item.get("name") for item in person.get("known_for", [])[:2]]
-                known_for_str = ", ".join([k for k in known_for if k])
-                facts.append({
-                    "type": "knowledge",
-                    "category": "entertainment",
-                    "entity_id": f"person.{person['id']}",
-                    "domain": "knowledge",
-                    "friendly_name": person.get("name", ""),
-                    "title": person.get("name", ""),
-                    "summary": f"Popular Actor: {person.get('name', '')} - Known for: {known_for_str}",
-                    "popularity": person.get("popularity", 0),
-                    "known_for": known_for,
-                    "score": 7,
-                    "cats": ["entertainment", "entertainment.people", "actors"],
-                    "last_updated": datetime.now().isoformat()
-                })
-    except Exception as e:
-        print(f"Popular actors API error: {e}")
-    
+        print(f"Joke API error: {e}")
     return facts
 
-def _fetch_other_knowledge_facts() -> List[Dict[str, Any]]:
-    """Fetch other types of knowledge facts"""
+def _fetch_tech_news_facts() -> List[Dict[str, Any]]:
     facts = []
-    
-    # Car facts
     try:
-        response = requests.get(FREE_APIS["cars"], timeout=10)
-        if response.status_code == 200:
-            car_data = response.json()
+        resp = requests.get(FREE_APIS["tech_news"], timeout=10)
+        if resp.status_code == 200:
+            tech_data = resp.json()
+            for hit in tech_data.get("hits", [])[:5]:
+                facts.append({
+                    "type": "knowledge",
+                    "category": "technology",
+                    "entity_id": f"tech.{hit.get('created_at_i', '')}",
+                    "domain": "knowledge",
+                    "friendly_name": hit.get("title", ""),
+                    "title": hit.get("title", ""),
+                    "summary": f"Tech News: {hit.get('title', '')} - Points: {hit.get('points', 0)}",
+                    "score": 6,
+                    "cats": ["technology", "news"],
+                    "last_updated": datetime.now().isoformat()
+                })
+    except Exception as e:
+        print(f"Tech news API error: {e}")
+    return facts
+
+def _fetch_car_facts() -> List[Dict[str, Any]]:
+    facts = []
+    try:
+        resp = requests.get(FREE_APIS["cars"], timeout=10)
+        if resp.status_code == 200:
+            car_data = resp.json()
             for make in car_data.get("Results", [])[:8]:
                 facts.append({
                     "type": "knowledge",
@@ -315,12 +270,15 @@ def _fetch_other_knowledge_facts() -> List[Dict[str, Any]]:
                 })
     except Exception as e:
         print(f"Car API error: {e}")
-    
-    # Space facts
+    return facts
+
+def _fetch_space_facts() -> List[Dict[str, Any]]:
+    facts = []
     try:
-        response = requests.get(FREE_APIS["space"], timeout=10)
-        if response.status_code == 200:
-            space_data = response.json()
+        resp = requests.get(FREE_APIS["space"], timeout=10)
+        if resp.status_code == 200:
+            space_data = resp.json()
+            people = ", ".join([p['name'] for p in space_data.get('people', [])])
             facts.append({
                 "type": "knowledge",
                 "category": "space",
@@ -328,69 +286,111 @@ def _fetch_other_knowledge_facts() -> List[Dict[str, Any]]:
                 "domain": "knowledge",
                 "friendly_name": "People in Space",
                 "title": "People in Space",
-                "summary": f"There are {space_data.get('number', 0)} people in space right now: {', '.join([p['name'] for p in space_data.get('people', [])])}",
+                "summary": f"There are {space_data.get('number', 0)} people in space: {people}",
                 "score": 5,
                 "cats": ["space", "science"],
                 "last_updated": datetime.now().isoformat()
             })
     except Exception as e:
         print(f"Space API error: {e}")
-    
-    # Tech news
+    return facts
+
+def _fetch_world_time_fact() -> List[Dict[str, Any]]:
+    facts = []
     try:
-        response = requests.get(FREE_APIS["tech_news"], timeout=10)
-        if response.status_code == 200:
-            tech_data = response.json()
-            for hit in tech_data.get("hits", [])[:3]:
+        resp = requests.get(FREE_APIS["world_time"], timeout=10)
+        if resp.status_code == 200:
+            wt = resp.json()
+            datetime_str = wt.get("datetime", "")
+            tz = wt.get("timezone", "")
+            facts.append({
+                "type": "knowledge",
+                "category": "time",
+                "entity_id": "world.time",
+                "domain": "knowledge",
+                "friendly_name": "World Time",
+                "title": "World Time",
+                "summary": f"Current time in {tz}: {datetime_str}",
+                "score": 4,
+                "cats": ["time", "world"],
+                "last_updated": datetime.now().isoformat()
+            })
+    except Exception as e:
+        print(f"World Time API error: {e}")
+    return facts
+
+def _fetch_wiki_summary(query: str) -> List[Dict[str, Any]]:
+    facts = []
+    try:
+        url = FREE_APIS["wiki_summary"] + requests.utils.quote(query)
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if "extract" in data:
                 facts.append({
                     "type": "knowledge",
-                    "category": "technology",
-                    "entity_id": f"tech.{hit.get('created_at_i', '')}",
+                    "category": "wiki",
+                    "entity_id": f"wiki.{query.lower()}",
                     "domain": "knowledge",
-                    "friendly_name": hit.get("title", ""),
-                    "title": hit.get("title", ""),
-                    "summary": f"Tech News: {hit.get('title', '')} - Points: {hit.get('points', 0)}",
-                    "score": 6,
-                    "cats": ["technology", "news"],
+                    "friendly_name": data.get("title", query),
+                    "title": data.get("title", query),
+                    "summary": data.get("extract", ""),
+                    "score": 5,
+                    "cats": ["knowledge", "wiki"],
                     "last_updated": datetime.now().isoformat()
                 })
     except Exception as e:
-        print(f"Tech news API error: {e}")
-    
+        print(f"Wikipedia API error: {e}")
     return facts
 
-def _fetch_knowledge_facts() -> List[Dict[str, Any]]:
-    """Combine all knowledge facts"""
+def _fetch_tvmaze_facts() -> List[Dict[str, Any]]:
     facts = []
-    
-    # Entertainment facts (movies, TV, actors)
-    entertainment_facts = _fetch_entertainment_facts()
-    facts.extend(entertainment_facts)
-    
-    # Other knowledge facts
-    other_facts = _fetch_other_knowledge_facts()
-    facts.extend(other_facts)
-    
+    try:
+        resp = requests.get(FREE_APIS["tvmaze"], timeout=10)
+        if resp.status_code == 200:
+            shows = resp.json()
+            for show in shows[:5]:
+                title = show.get("name")
+                year = show.get("premiered", "")[:4] if show.get("premiered") else "TBA"
+                summary = re.sub("<[^<]+?>", "", show.get("summary") or "")
+                facts.append({
+                    "type": "knowledge",
+                    "category": "entertainment",
+                    "entity_id": f"tvmaze.{show['id']}",
+                    "domain": "knowledge",
+                    "friendly_name": title,
+                    "title": title,
+                    "summary": f"TV Show: {title} ({year}) – {summary[:120]}...",
+                    "score": 7,
+                    "cats": ["entertainment", "entertainment.tv"],
+                    "last_updated": datetime.now().isoformat()
+                })
+    except Exception as e:
+        print(f"TVMaze API error: {e}")
     return facts
 
+def _fetch_external_facts() -> List[Dict[str, Any]]:
+    """Fetch all external API facts"""
+    facts: List[Dict[str, Any]] = []
+    facts.extend(_fetch_joke_facts())
+    facts.extend(_fetch_tech_news_facts())
+    facts.extend(_fetch_car_facts())
+    facts.extend(_fetch_space_facts())
+    facts.extend(_fetch_world_time_fact())
+    facts.extend(_fetch_tvmaze_facts())
+    return facts
 # ----------------- Home Assistant Integration -----------------
 
 def _fetch_ha_areas() -> Dict[str, str]:
-    """Fetch area information from Home Assistant"""
     cfg = _load_options()
     ha_url = cfg.get("ha_url", "").strip()
     ha_token = cfg.get("ha_token", "").strip()
-    
     if not ha_url or not ha_token:
         print("Warning: No HA URL/token configured")
         return {}
-    
     try:
         url = f"{ha_url}/api/areas"
-        headers = {
-            "Authorization": f"Bearer {ha_token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {ha_token}"}
         data = _http_get_json(url, headers)
         return {area["area_id"]: area["name"] for area in data}
     except Exception as e:
@@ -398,21 +398,15 @@ def _fetch_ha_areas() -> Dict[str, str]:
         return {}
 
 def _fetch_ha_states() -> List[Dict[str, Any]]:
-    """Fetch entity states from Home Assistant"""
     cfg = _load_options()
     ha_url = cfg.get("ha_url", "").strip()
     ha_token = cfg.get("ha_token", "").strip()
-    
     if not ha_url or not ha_token:
         print("Warning: No HA URL/token configured")
         return []
-    
     try:
         url = f"{ha_url}/api/states"
-        headers = {
-            "Authorization": f"Bearer {ha_token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {ha_token}"}
         return _http_get_json(url, headers)
     except Exception as e:
         print(f"Error fetching states: {e}")
@@ -446,7 +440,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         if toks & EMBY_KEYWORDS: cats.add("media.emby")
         if toks & JELLYFIN_KEYWORDS: cats.add("media.jellyfin")
         if toks & KODI_KEYWORDS: cats.add("media.kodi")
-        if toks & TV_KEYWORDS: cats.add("media.tv")
+        if toks & TV_KEYWORDS_MEDIA: cats.add("media.tv")
         if toks & RADARR_KEYWORDS: cats.add("media.radarr")
         if toks & SONARR_KEYWORDS: cats.add("media.sonarr")
         if toks & LIDARR_KEYWORDS: cats.add("media.lidarr")
@@ -477,19 +471,16 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     return cats
 
 def _build_summary(eid: str, name: str, state: str, attrs: Dict[str,Any], domain: str, device_class: str, area: str) -> str:
-    """Build a summary for an entity"""
     parts = [name or eid]
-    
     if area:
         parts.append(f"(in {area})")
-    
     if state and state not in ("unavailable", "unknown"):
-        if domain == "person" or domain == "device_tracker":
+        if domain in ("person","device_tracker"):
             zone = _safe_zone_from_tracker(state, attrs)
             parts.append(f"is at {zone}")
         elif device_class == "battery":
             parts.append(f"battery at {state}%")
-        elif domain in ("light", "switch", "fan"):
+        elif domain in ("light","switch","fan"):
             parts.append(f"is {state}")
         elif domain == "sensor":
             unit = attrs.get("unit_of_measurement", "")
@@ -499,107 +490,55 @@ def _build_summary(eid: str, name: str, state: str, attrs: Dict[str,Any], domain
                 parts.append(f"is {state}")
         else:
             parts.append(f"is {state}")
-    
     return " ".join(parts)
 
 def _calculate_score(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str, cats: Set[str]) -> int:
-    """Calculate relevance score for an entity"""
     score = 1
-    
-    # Domain-based scoring
     domain_scores = {
         "person": 8, "device_tracker": 8, "light": 6, "switch": 6, "sensor": 5,
         "binary_sensor": 4, "climate": 7, "media_player": 6, "automation": 3
     }
     score += domain_scores.get(domain, 1)
-    
-    # Device class priority
     if device_class:
         score += DEVICE_CLASS_PRIORITY.get(device_class, 0)
-    
-    # Category-based boosts
     if "energy" in cats: score += 3
     if "energy.storage" in cats: score += 5
     if "media" in cats: score += 2
     if "person" in cats: score += 4
-    
-    # Name-based adjustments
     name_lower = (name or "").lower()
     if "main" in name_lower or "primary" in name_lower: score += 2
     if "hidden" in name_lower or "helper" in name_lower: score -= 2
-    
     return max(1, score)
-
-def _intent_categories(q_tokens: Set[str]) -> Set[str]:
-    out:set[str] = set()
-    for key, cats in INTENT_CATEGORY_MAP.items():
-        if key in q_tokens:
-            out.update(cats)
-    if q_tokens & {"solar","pv","inverter","ess","soc","battery"}:
-        out.update({"energy","energy.storage","energy.pv","energy.inverter"})
-    if "grid" in q_tokens:
-        out.update({"energy.grid"})
-    if "load" in q_tokens:
-        out.update({"energy.load"})
-    if q_tokens & MEDIA_KEYWORDS:
-        out.update({"media"})
-    if q_tokens & ENTERTAINMENT_KEYWORDS:
-        out.update({"entertainment"})
-        if q_tokens & MOVIE_KEYWORDS: out.update({"entertainment.movies"})
-        if q_tokens & TV_KEYWORDS_ENT: out.update({"entertainment.tv"})
-        if q_tokens & ACTOR_KEYWORDS: out.update({"entertainment.people"})
-    if q_tokens & AUTOMOTIVE_KEYWORDS:
-        out.update({"automotive"})
-    if q_tokens & TECH_KEYWORDS:
-        out.update({"technology"})
-    if q_tokens & NEWS_KEYWORDS:
-        out.update({"news"})
-    if q_tokens & SPACE_KEYWORDS:
-        out.update({"space"})
-    return out
-
 # ----------------- Core RAG Functions -----------------
 
-def refresh_and_cache() -> List[Dict[str, Any]]:
-    """Refresh facts from HA and external APIs, cache them"""
+def refresh_and_cache(include_external: bool=True) -> List[Dict[str, Any]]:
+    """Refresh facts from HA and optionally external APIs, cache them, and write to disk."""
     global _MEM_CACHE, _AREA_MAP, _LAST_REFRESH_TS
-    
+
     with _CACHE_LOCK:
         now = time.time()
-        
-        # Fetch area mapping
         _AREA_MAP = _fetch_ha_areas()
-        
-        # Fetch HA states
         ha_states = _fetch_ha_states()
-        facts = []
-        
+        facts: List[Dict[str, Any]] = []
+
         # Process HA entities
         for state_obj in ha_states:
             try:
                 eid = state_obj["entity_id"]
                 domain = eid.split(".")[0]
-                
-                # Skip if domain filtering is active
                 if INCLUDE_DOMAINS and domain not in INCLUDE_DOMAINS:
                     continue
-                
                 attrs = state_obj.get("attributes", {})
                 state = state_obj.get("state", "")
                 name = attrs.get("friendly_name", eid)
                 device_class = attrs.get("device_class", "")
                 area_id = attrs.get("area_id")
                 area = _AREA_MAP.get(area_id, "") if area_id else ""
-                
-                # Infer categories
+
                 cats = _infer_categories(eid, name, attrs, domain, device_class)
-                
-                # Build summary
                 summary = _build_summary(eid, name, state, attrs, domain, device_class, area)
-                
-                # Calculate score
                 score = _calculate_score(eid, name, attrs, domain, device_class, cats)
-                
+
                 fact = {
                     "type": "ha_entity",
                     "entity_id": eid,
@@ -614,5 +553,62 @@ def refresh_and_cache() -> List[Dict[str, Any]]:
                     "last_updated": state_obj.get("last_updated", "")
                 }
                 facts.append(fact)
-                
             except Exception as e:
+                print(f"Error processing state: {e}")
+
+        # Add external facts (daily)
+        if include_external:
+            facts.extend(_fetch_external_facts())
+
+        # Save cache + write to disk
+        _MEM_CACHE = facts
+        _LAST_REFRESH_TS = now
+        for d in PRIMARY_DIRS:
+            _write_json_atomic(os.path.join(d, BASENAME), facts)
+        _write_json_atomic(FALLBACK_PATH, facts)
+
+        return facts
+
+# ----------------- Background Refresh Schedulers -----------------
+
+def _auto_refresh_ha():
+    try:
+        refresh_and_cache(include_external=False)
+    except Exception as e:
+        print(f"Auto HA refresh error: {e}")
+    threading.Timer(300, _auto_refresh_ha).start()  # every 5 min
+
+def _auto_refresh_external():
+    try:
+        refresh_and_cache(include_external=True)
+    except Exception as e:
+        print(f"Auto external refresh error: {e}")
+    threading.Timer(86400, _auto_refresh_external).start()  # every 24h
+
+# Kick off initial refresh
+try:
+    refresh_and_cache(include_external=True)  # full refresh at startup
+    _auto_refresh_ha()
+    _auto_refresh_external()
+except Exception as e:
+    print(f"Initial refresh error: {e}")
+
+# ----------------- Context Injection -----------------
+
+def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
+    """Return a small context block relevant to the user message."""
+    toks = _expand_query_tokens(_tok(user_msg))
+    q_tokens = set(toks)
+    cats = _intent_categories(q_tokens)
+    with _CACHE_LOCK:
+        facts = list(_MEM_CACHE)
+    # Filter by categories if any
+    if cats:
+        facts = [f for f in facts if cats & set(f.get("cats", []))]
+    # Sort by score
+    facts.sort(key=lambda x: x.get("score", 1), reverse=True)
+    selected = facts[:top_k]
+    lines = []
+    for f in selected:
+        lines.append(f"{f.get('summary')}")
+    return "\n".join(lines)
