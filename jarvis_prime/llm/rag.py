@@ -291,11 +291,9 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-            # normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
-            # displayable state
             show_state = state.upper() if state in ("on","off","open","closed") else state
             if unit and state not in ("on","off","open","closed"):
                 try:
@@ -306,7 +304,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
-            # build summary
             if domain == "person":
                 zone = _safe_zone_from_tracker(state, attrs)
                 summary = f"{name} is at {zone}"
@@ -320,7 +317,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
-            # score baseline
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS): score+=6
@@ -435,92 +431,41 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K, mode: str=None) -> s
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Domain/keyword overrides ----
-    filtered = []
-    if "light" in q or "lights" in q:
-        filtered += [f for f in facts if f["domain"] == "light"]
-    if "switch" in q or "switches" in q:
-        filtered += [f for f in facts if f["domain"] == "switch" and not f["entity_id"].startswith("automation.")]
-    if "motion" in q or "occupancy" in q:
-        filtered += [f for f in facts if f["domain"] == "binary_sensor" and f["device_class"] == "motion"]
-    if "axpert" in q:
-        filtered += [f for f in facts if "axpert" in f["entity_id"].lower() or "axpert" in f["friendly_name"].lower()]
-    if "sonoff" in q:
-        filtered += [f for f in facts if "sonoff" in f["entity_id"].lower() or "sonoff" in f["friendly_name"].lower()]
-    if "zigbee" in q or "z2m" in q:
-        filtered += [f for f in facts if "zigbee" in f["entity_id"].lower() or "zigbee" in f["friendly_name"].lower()]
-    if "where" in q:
-        filtered += [f for f in facts if f["domain"] in ("person","device_tracker")]
-    if q & MEDIA_KEYWORDS:
-        filtered += [f for f in facts if any(
-            m in f["entity_id"].lower() or m in f["friendly_name"].lower()
-            for m in MEDIA_KEYWORDS
-        )]
-    # area queries
-    for f in facts:
-        if f.get("area") and f.get("area","").lower() in q:
-            filtered.append(f)
-
-    if filtered:
-        facts = filtered
-
     want_cats = _intent_categories(q)
 
+    # Strict relevance scoring
     scored: List[Tuple[int, Dict[str, Any]]] = []
     for f in facts:
-        s = int(f.get("score", 1))
+        score = 0
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
 
-        if q and (q & ft): s += 3
-        if q & SOLAR_KEYWORDS: s += 2
-        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
-            s += 12
-        if want_cats and (cats & want_cats):
-            s += 15
-        if want_cats & {"energy.storage"} and "energy.storage" in cats:
-            s += 20
-        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           ("device.battery" in cats) and ("energy.storage" not in cats):
-            s -= 18
-        if (("soc" in q) or (want_cats & {"energy.storage"})) and \
-           (("forecast" in ft) or ("estimated" in ft)):
-            s -= 12
-
-        scored.append((s, f))
+        if q & ft:  # keyword overlap
+            score += 10
+        if cats & want_cats:
+            score += 8
+        if score > 0:
+            scored.append((score, f))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
-
-    if ("soc" in q) or (want_cats & {"energy.storage"}):
-        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
-        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
-        ordered   = ess_first + others
-    else:
-        ordered = candidate_facts
 
     selected: List[str] = []
     remaining = budget
-
-    for f in ordered:
+    for f in candidate_facts:
         line = f.get("summary", "")
-        if not line:
-            continue
+        if not line: continue
         cost = _estimate_tokens(line)
         if cost <= remaining:
             selected.append(line)
             remaining -= cost
-        if not selected and cost > remaining and remaining > 0:
-            selected.append(line)
-            remaining = 0
         if remaining <= 0:
             break
 
     if selected:
         return "\n".join(selected)
 
-    # fallback to Wiki if nothing matched and no explicit mode
+    # No HA facts matched → fallback to Wiki
     if mode is None:
         wiki_text = _fetch_wiki_extract(user_msg, max_chars=budget*6)
         return wiki_text[:budget*6]
