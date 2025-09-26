@@ -5,7 +5,7 @@
 # - Default: offline Jarvis LLM chat via llm_client.chat_generate
 # - If HA RAG facts exist, summarize them
 # - Otherwise fall back to offline LLM directly
-# - No Wikipedia, DDG, Reddit, or other external calls
+
 
 import os, re, traceback
 from typing import Dict
