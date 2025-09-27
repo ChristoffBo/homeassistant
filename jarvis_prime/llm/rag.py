@@ -1015,11 +1015,14 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
             # Use only entertainment facts for entertainment queries
             all_facts = entertainment_facts
             print(f"[RAG] Entertainment query detected - using {len(entertainment_facts)} entertainment facts only")
+        else:
+            # If no entertainment facts available, still heavily penalize non-entertainment
+            print(f"[RAG] Entertainment query detected but no entertainment facts available")
     
     # ---- Domain/keyword overrides ----
     filtered = []
     
-    # Home Assistant specific filters (only if NOT entertainment query)
+    # Home Assistant specific filters (SKIP ENTIRELY if entertainment query)
     if not is_entertainment_query:
         if "light" in q or "lights" in q:
             filtered += [f for f in all_facts if f.get("domain") == "light"]
@@ -1036,8 +1039,8 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
         if "where" in q:
             filtered += [f for f in all_facts if f.get("domain") in ("person","device_tracker")]
     
-    # Weather specific filters
-    if q & WEATHER_KEYS:
+    # Weather specific filters (only if NOT entertainment query)
+    if not is_entertainment_query and (q & WEATHER_KEYS):
         filtered += [f for f in all_facts if f.get("source") == "openweather" or "weather" in f.get("cats", [])]
     
     # Entertainment specific filters (always apply)
@@ -1053,7 +1056,7 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
     if q & {"actor", "actress", "star", "celebrity"}:
         filtered += [f for f in all_facts if "entertainment.actors" in f.get("cats", [])]
     
-    # Area queries (only if NOT entertainment query)
+    # Area queries (SKIP if entertainment query)
     if not is_entertainment_query:
         for f in all_facts:
             if f.get("area") and f.get("area","").lower() in q:
