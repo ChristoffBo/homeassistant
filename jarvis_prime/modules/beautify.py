@@ -1,1171 +1,597 @@
 from __future__ import annotations
-import re, json, importlib, random, html, os
-from typing import List, Tuple, Optional, Dict, Any
-from urllib.parse import unquote_plus, parse_qs  # ADD
+import re, json, importlib, html, os
+from typing import List, Tuple, Optional, Dict, Any, Protocol, NamedTuple
+from urllib.parse import unquote_plus, parse_qs
+from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
+from functools import lru_cache
+import logging
 
-# -------- Regex library --------
-IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
-# tolerate spaces/newlines between ] and (, and angle-bracketed URLs
-# CAPTURE ALT (group 1) + URL (group 2)
-MD_IMG_RE  = re.compile(r'!\[([^\]]*)\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
-KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+)$', re.M)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# timestamps and types
-TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
-DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-{1,2}]|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
-TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
+# -------- Data Structures --------
+@dataclass
+class ProcessingResult:
+    """Encapsulates the result of message processing"""
+    text: str
+    extras: Dict[str, Any]
+    images: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
-# Strict IPv4: each octet 0-255
-IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{2})\b')
-HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
-VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
+@dataclass
+class MessageContext:
+    """Encapsulates message processing context"""
+    title: str
+    body: str
+    source_hint: Optional[str] = None
+    persona: Optional[str] = None
+    extras_in: Optional[Dict[str, Any]] = None
+    mood: str = "neutral"
+    mode: str = "standard"
+    persona_quip: bool = True
 
-EMOJI_RE = re.compile("[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]", flags=re.UNICODE)
-
-LIKELY_POSTER_HOSTS = (
-    "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
-)
-
-# === NEW: universal finish helpers (non-destructive) ===
-CODE_FENCE_RE = re.compile(r'```.*?```', re.S)
-LINK_RE       = re.compile(r'\[[^\]]+?\]\([^)]+?\)')
-
-def _fold_repeats(text: str, threshold: int = 3) -> str:
-    """Collapse runs of identical lines into a single line with ×N, keep head/tail if huge."""
-    lines = text.splitlines()
-    out, i = [], 0
-    while i < len(lines):
-        j = i + 1
-        while j < len(lines) and lines[j] == lines[i]:
-            j += 1
-        n = j - i
-        if n > threshold:
-            out.append(f"{lines[i]}  ×{n}")
-        else:
-            out.extend(lines[i:j])
-        i = j
-    if len(out) > 1200:
-        return "\n".join(out[:700] + ["…(folded)"] + out[-300:])
-    return "\n".join(out)
-
-def _safe_truncate(s: str, max_len: int = 3500) -> str:
-    """
-    Non-destructive truncation: never cuts inside code fences, markdown links/images, or raw image URLs.
-    Applies only if the final message is extremely long.
-    """
-    if len(s) <= max_len:
-        return s
-    protected = []
-    for rx in (CODE_FENCE_RE, MD_IMG_RE, LINK_RE, IMG_URL_RE):
-        for m in rx.finditer(s):
-            protected.append((m.start(), m.end()))
-    protected.sort()
-    out, pos, used, budget = [], 0, 0, max_len
-    for a, b in protected:
-        if a > pos:
-            chunk = s[pos:a]
-            if used + len(chunk) > budget:
-                room = max(0, budget - used - 8)
-                sub  = chunk[:room]
-                cut  = max(sub.rfind("\n"), sub.rfind(" "), sub.rfind("\t"))
-                if cut < room * 0.6:
-                    cut = room
-                out.append(sub[:cut].rstrip() + "\n\n…(truncated)")
-                return "".join(out)
-            out.append(chunk); used += len(chunk)
-        seg = s[a:b]
-        if used + len(seg) > budget:
-            out.append("\n\n…(truncated)")
-            return "".join(out)
-        out.append(seg); used += len(seg); pos = b
-    if pos < len(s):
-        tail = s[pos:]
-        if used + len(tail) > budget:
-            room = max(0, budget - used - 8)
-            sub  = tail[:room]
-            cut  = max(sub.rfind("\n"), sub.rfind(" "), sub.rfind("\t"))
-            if cut < room * 0.6:
-                cut = room
-            out.append(sub[:cut].rstrip() + "\n\n…(truncated)")
-            return "".join(out)
-        out.append(tail)
-    return "".join(out)
-
-# -------- NEW: key/value to bullets --------
-def _kv_to_bullets(text: str) -> Optional[str]:
-    """Turn key: value lines into neat bullets for readability."""
-    if not text:
-        return None
-    kvs = []
-    for ln in text.splitlines():
-        m = KV_RE.match(ln)
-        if m:
-            key, val = m.group(1).strip(), m.group(2).strip()
-            if key.lower() not in {"title", "message", "topic", "tags", "priority"}:
-                kvs.append(f"- **{key}:** {val}")
-    if kvs:
-        return "\n".join(kvs)
-    return None
-
-# -------- Helpers --------
-def _prefer_host_key(url: str) -> int:
-    try:
-        from urllib.parse import urlparse
-        host = (urlparse(url).netloc or "").lower()
-        return 0 if any(k in host for k in LIKELY_POSTER_HOSTS) else 1
-    except Exception:
-        return 1
-
-def _strip_noise(text: str) -> str:
-    if not text: return ""
-    s = EMOJI_RE.sub("", text)
-    NOISE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
-    kept = [ln for ln in s.splitlines() if not NOISE.match(ln)]
-    return "\n".join(kept)
-
-def _normalize(text: str) -> str:
-    s = (text or "").replace("\t","  ")
-    s = re.sub(r'[ \t]+$', "", s, flags=re.M)
-    s = re.sub(r'\n{3,}', '\n\n', s)
-    return s.strip()
-
-def _linewise_dedup_markdown(text: str, protect_message: bool = False) -> str:
-    """Safe de-dup that never splits on '.' and can protect the 📝 Message block."""
-    lines = text.splitlines()
-    out: List[str] = []
-    seen: set = set()
-    in_code = False
-    in_msg  = False
-
-    for ln in lines:
-        t = ln.rstrip()
-
-        # code fences pass-through
-        if t.strip().startswith("```"):
-            in_code = not in_code
-            out.append(t); continue
-        if in_code:
-            out.append(t); continue
-
-        # Message block protection
-        if protect_message:
-            if t.strip().startswith("📝 Message"):
-                in_msg = True
-                out.append(t); continue
-            if in_msg and (t.strip().startswith("📄 ") or t.strip().startswith("🧠 ") or t.strip().startswith("![") or t.strip().startswith("📟 ")):
-                in_msg = False
-
-        if protect_message and in_msg:
-            out.append(t)
-            continue
-
-        key = re.sub(r'\s+', ' ', t.strip()).lower()
-        if key and key not in seen:
-            seen.add(key); out.append(t)
-        elif t.strip() == "":
-            if out and out[-1].strip() != "":
-                out.append(t)
-
-    return "\n".join(out).strip()
-
-def _harvest_images(text: str) -> Tuple[str, List[str], List[str]]:
-    """Strip images from body but keep meaning: retain ALT as [image: ALT]."""
-    if not text: return "", [], []
-    urls: List[str] = []
-    alts: List[str] = []
-
-    def _md(m):
-        alt = (m.group(1) or "").strip()
-        url = m.group(2)
-        alts.append(alt)
-        urls.append(url)
-        return f"[image: {alt}]" if alt else "[image]"
-
-    def _bare(m):
-        u = m.group(1).rstrip('.,;:)]>"\'')
-        urls.append(u)
-        return ""  # remove bare URL
-
-    text = MD_IMG_RE.sub(_md, text)
-    text = IMG_URL_RE.sub(_bare, text)
-
-    uniq=[]; seen=set()
-    for u in sorted(urls, key=_prefer_host_key):
-        if u not in seen: seen.add(u); uniq.append(u)
-    return text.strip(), uniq, alts
-
-def _find_ips(*texts: str) -> List[str]:
-    ips=[]; seen=set()
-    for t in texts:
-        if not t: continue
-        for m in IP_RE.finditer(t):
-            ip = m.group(0)
-            if ip not in seen: seen.add(ip); ips.append(ip)
-    return ips
-
-def _repair_ipv4(val: str, *contexts: str) -> str:
-    cand = re.sub(r'\s*\.\s*', '.', (val or '').strip())
-    m = IP_RE.search(cand)
-    if m: return m.group(0)
-    parts = re.findall(r'\d{1,3}', cand)
-    if len(parts) == 4:
-        j = '.'.join(parts)
-        if IP_RE.fullmatch(j): return j
-    for ctx in contexts:
-        m = IP_RE.search(ctx or "")
-        if m: return m.group(0)
-    return val.strip()
-
-def _first_nonempty_line(s: str) -> str:
-    for ln in (s or "").splitlines():
-        t = ln.strip()
-        if t: return t
-    return ""
-
-def _fmt_kv(label: str, value: str) -> str:
-    v = value.strip()
-    if re.search(r'\d', v):  # emphasize numeric values
-        v = f"`{v}`"
-    return f"- **{label.strip()}:** {v}"
-
-# -------- Persona overlay --------
-def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
-    if not persona: return None
-    try:
-        mod = importlib.import_module("personality")
-        mod = importlib.reload(mod)
-        quip = ""
-        if hasattr(mod, "quip"):
-            try: quip = str(mod.quip(persona) or "").strip()
-            except Exception: quip = ""
-        return f"💬 {persona} says: {'— ' + quip if quip else ''}".rstrip()
-    except Exception:
-        return f"💬 {persona} says:"
-
-# -------- Minimal header (no dash bars) --------
-def _header(kind: str, badge: str = "") -> List[str]:
-    return [f"📟 Jarvis Prime {badge}".rstrip()]
-
-def _severity_badge(text: str) -> str:
-    low = text.lower()
-    if re.search(r'\b(error|failed|critical)\b', low): return "❌"
-    if re.search(r'\b(warn|warning)\b', low): return "⚠️"
-    if re.search(r'\b(success|ok|online|completed|pass|finished)\b', low): return "✅"
-    return ""
-
-def _looks_json(body: str) -> bool:
-    try: json.loads(body); return True
-    except Exception: return False
-
-def _detect_type(title: str, body: str) -> str:
-    tb = (title + " " + body).lower()
-    if "speedtest" in tb: return "SpeedTest"
-    if "apt" in tb or "dpkg" in tb: return "APT Update"
-    if "watchtower" in tb: return "Watchtower"
-    if "qnap" in tb or "qts" in tb: return "QNAP"
-    if "sonarr" in tb: return "Sonarr"
-    if "radarr" in tb: return "Radarr"
-    if _looks_json(body): return "JSON"
-    if "error" in tb or "warning" in tb or "failed" in tb: return "Log Event"
-    return "Message"
-
-def _harvest_timestamp(title: str, body: str) -> Optional[str]:
-    for src in (title or "", body or ""):
-        for rx in (TS_RE, DATE_ONLY_RE, TIME_ONLY_RE):
-            m = rx.search(src)
-            if m: return m.group(0).strip()
-    return None
-
-# ====== Options & toggles ======
-def _read_options() -> Dict[str, Any]:
-    try:
-        with open("/data/options.json", "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-def _bool_from_env(*names: str, default: bool = False) -> bool:
-    for n in names:
-        v = (os.getenv(n) or "").strip().lower()
-        if v in ("1","true","yes","on"):  return True
-        if v in ("0","false","no","off"): return False
-    return default
-
-def _bool_from_options(opt: Dict[str, Any], key: str, default: bool = False) -> bool:
-    try:
-        v = str(opt.get(key, default)).strip().lower()
-        return v in ("1","true","yes","on")
-    except Exception:
-        return default
-
-def _llm_riffs_enabled() -> bool:
-    opt = _read_options()
-    env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
-    opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
-    if opt_riffs is not None:
-        return opt_riffs
-    return _bool_from_options(opt, "llm_enabled", default=env_enabled)
-
-def _personality_enabled() -> bool:
-    opt = _read_options()
-    env_enabled = _bool_from_env("PERSONALITY_ENABLED", default=True)
-    return _bool_from_options(opt, "personality_enabled", default=env_enabled)
-
-def _ui_persona_header_enabled() -> bool:
-    opt = _read_options()
-    env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)
-    return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
-
-# >>> CHANGED: rewrite toggle reads ONLY config.json; default False
-def _llm_message_rewrite_enabled() -> bool:
-    opt = _read_options()
-    return _bool_from_options(opt, "llm_rewrite_enabled", default=False)
-
-# >>> CHANGED: default cap = 350; sourced from config.json if present
-def _llm_message_rewrite_max_chars() -> int:
-    opt = _read_options()
-    try:
-        return int(opt.get("llm_message_rewrite_max_chars", 350))
-    except Exception:
-        return 350
-
-# ============================
-# Riffs (FIXED to use llm_client first)
-# ============================
-def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
-    if not persona:
-        return []
-    if not _llm_riffs_enabled():
-        return []
-    # Prefer cleaned path from llm_client first
-    try:
-        import importlib
-        llm = importlib.import_module("llm_client")
-        llm = importlib.reload(llm)
-        out = llm.persona_riff(persona=persona, context=context)
-        if isinstance(out, list) and out:
-            return [s.strip() for s in out if s and s.strip()]
-        if isinstance(out, str) and out.strip():
-            return [out.strip()]
-    except Exception:
-        pass
-    # Fallback to personality.llm_quips if llm_client failed
-    try:
-        mod = importlib.import_module("personality")
-        mod = importlib.reload(mod)
-        if hasattr(mod, "llm_quips"):
-            max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
-            out = mod.llm_quips(persona, context=context, max_lines=max_lines)
-            if isinstance(out, list):
-                return [str(x).strip() for x in out if str(x).strip()]
-    except Exception:
-        pass
-    return []
-
-# >>> NEW: neutral LLM rewrite (no persona), respects only config.json toggle
-def _neutral_llm_rewrite(context: str, max_chars: int = 350) -> Optional[str]:
-    """
-    Neutral, terse rewrite to keep key facts. No persona. Returns None to keep original.
-    """
-    if not _llm_message_rewrite_enabled():
-        return None
-    try:
-        llm = importlib.import_module("llm_client")
-    except Exception:
-        return None
-    try:
-        # Keep it neutral + short; no formatting, no lists, no emojis.
-        sys_prompt = (
-            "YOU ARE A NEUTRAL, TERSE REWRITER.\n"
-            f"Rules: Preserve key facts, remove fluff, <= {max_chars} chars, no bullets, no markdown, no emojis, no persona."
-        )
-        user_prompt = "Rewrite neutrally:\n" + (context or "").strip()
-        if hasattr(llm, "rewrite"):
-            raw = llm.rewrite(
-                text=f"[SYSTEM]\n{sys_prompt}\n[INPUT]\n{user_prompt}\n[OUTPUT]\n",
-                mood="neutral",
-                timeout=8,
-                cpu_limit=70,
-                allow_profanity=False,
-            )
-            s = (raw or "").strip()
-            if s:
-                return s[:max_chars].strip()
-    except Exception:
-        pass
-    return None
-
-# --------- global helpers for riffs & persona ----------
-def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
-    if passed_persona:
-        return passed_persona
-    try:
-        with open("/data/personality_state.json", "r", encoding="utf-8") as f:
-            st = json.load(f)
-            p = (st.get("current_persona") or "").strip()
-            if p:
-                return p
-    except Exception:
-        pass
-    try:
-        with open("/data/options.json", "r", encoding="utf-8") as f:
-            opt = json.load(f)
-            p = (opt.get("default_persona") or "").strip()
-            if p:
-                return p
-    except Exception:
-        pass
-    p = (os.getenv("DEFAULT_PERSONA") or "").strip()
-    return p or None
-
-def _global_riff_hint(extras_in: Optional[Dict[str, Any]], source_hint: Optional[str]) -> bool:
-    if isinstance(extras_in, dict) and "riff_hint" in extras_in:
+# -------- Configuration Manager --------
+class ConfigManager:
+    """Centralized configuration management with caching"""
+    
+    def __init__(self):
+        self._config_cache = {}
+        self._last_modified = {}
+    
+    @lru_cache(maxsize=32)
+    def get_options(self) -> Dict[str, Any]:
+        """Load options with caching"""
         try:
-            return bool(extras_in.get("riff_hint"))
-        except Exception:
-            return True
-    src = (source_hint or "").strip().lower()
-    auto_sources = {
-        "smtp","proxy","webhook","webhooks","apprise","gotify","ntfy",
-        "sonarr","radarr","watchtower","speedtest","apt","syslog","qnap"
-    }
-    if src in auto_sources:
-        return True
-    default_on = os.getenv("BEAUTIFY_RIFFS_DEFAULT", "true").lower() in ("1","true","yes")
-    return default_on
-
-def _debug(msg: str) -> None:
-    if os.getenv("BEAUTIFY_DEBUG", "").lower() in ("1","true","yes"):
+            with open("/data/options.json", "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception as e:
+            logger.warning(f"Failed to load options: {e}")
+            return {}
+    
+    def get_bool(self, key: str, default: bool = False, env_names: List[str] = None) -> bool:
+        """Get boolean value with env variable fallback"""
+        # Check environment variables first
+        if env_names:
+            for env_name in env_names:
+                env_val = os.getenv(env_name, "").strip().lower()
+                if env_val in ("1", "true", "yes", "on"):
+                    return True
+                elif env_val in ("0", "false", "no", "off"):
+                    return False
+        
+        # Check options file
+        options = self.get_options()
         try:
-            print(f"[beautify] {msg}")
+            val = str(options.get(key, default)).strip().lower()
+            return val in ("1", "true", "yes", "on")
         except Exception:
-            pass
+            return default
+    
+    def get_int(self, key: str, default: int, env_name: str = None) -> int:
+        """Get integer value with env variable fallback"""
+        if env_name:
+            try:
+                return int(os.getenv(env_name, str(default)))
+            except ValueError:
+                pass
+        
+        options = self.get_options()
+        try:
+            return int(options.get(key, default))
+        except (ValueError, TypeError):
+            return default
+    
+    @property
+    def beautify_enabled(self) -> bool:
+        return not self.get_bool("beautify_disabled", False, ["BEAUTIFY_DISABLED"])
+    
+    @property
+    def llm_riffs_enabled(self) -> bool:
+        return self.get_bool("llm_persona_riffs_enabled", True, ["BEAUTIFY_LLM_ENABLED", "llm_enabled"])
+    
+    @property
+    def personality_enabled(self) -> bool:
+        return self.get_bool("personality_enabled", True, ["PERSONALITY_ENABLED"])
+    
+    @property
+    def llm_rewrite_enabled(self) -> bool:
+        return self.get_bool("llm_rewrite_enabled", False)
+    
+    @property
+    def max_message_length(self) -> int:
+        return self.get_int("max_message_length", 3500, "BEAUTIFY_MAX_LEN")
+    
+    @property
+    def rewrite_max_chars(self) -> int:
+        return self.get_int("llm_message_rewrite_max_chars", 350)
 
-# ===== global OFF switch =====
-def _beautify_is_disabled() -> bool:
-    env = (os.getenv("BEAUTIFY_ENABLED") or "").strip().lower()
-    if env in ("0","false","no","off","disabled"):
-        return True
-    try:
-        with open("/data/options.json","r",encoding="utf-8") as f:
-            opt = json.load(f)
-            v = str(opt.get("beautify_enabled","true")).strip().lower()
-            if v in ("0","false","no","off","disabled"):
-                return True
-    except Exception:
+# Global config instance
+config = ConfigManager()
+
+# -------- Text Processing Utilities --------
+class TextProcessor:
+    """Handles text cleaning and normalization"""
+    
+    # Compiled regex patterns for better performance
+    IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
+    MD_IMG_RE = re.compile(r'!\[([^\]]*)\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
+    KV_RE = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+)$', re.M)
+    TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
+    IP_RE = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{2})\b')
+    EMOJI_RE = re.compile("[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]")
+    NOISE_RE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
+    MIME_HEADER_RE = re.compile(r'^\s*Content-(?:Disposition|Type|Length|Transfer-Encoding)\s*:.*$', re.I | re.M)
+    ACTION_SAYS_RE = re.compile(r'^\s*action\s+says:\s*.*$', re.I | re.M)
+    META_LINE_RE = re.compile(r'^\s*(?:tone|rule|rules|guidelines?|style(?:\s*hint)?|instruction|instructions|system(?:\s*prompt)?|persona|respond(?:\s*with)?|produce\s*only)\s*[:\-]', re.I)
+    
+    @classmethod
+    def strip_noise(cls, text: str) -> str:
+        """Remove common noise patterns"""
+        if not text:
+            return ""
+        
+        s = cls.EMOJI_RE.sub("", text)
+        lines = [line for line in s.splitlines() if not cls.NOISE_RE.match(line)]
+        return "\n".join(lines)
+    
+    @classmethod
+    def normalize_whitespace(cls, text: str) -> str:
+        """Normalize whitespace and line breaks"""
+        if not text:
+            return ""
+        
+        s = text.replace("\t", "  ")
+        s = re.sub(r'[ \t]+$', "", s, flags=re.M)
+        s = re.sub(r'\n{3,}', '\n\n', s)
+        return s.strip()
+    
+    @classmethod
+    def extract_images(cls, text: str) -> Tuple[str, List[str], List[str]]:
+        """Extract images while preserving meaning through alt text"""
+        if not text:
+            return "", [], []
+        
+        urls, alts = [], []
+        
+        def replace_markdown_img(match):
+            alt = (match.group(1) or "").strip()
+            url = match.group(2)
+            alts.append(alt)
+            urls.append(url)
+            return f"[image: {alt}]" if alt else "[image]"
+        
+        def replace_bare_url(match):
+            url = match.group(1).rstrip('.,;:)]>"\'')
+            urls.append(url)
+            return ""
+        
+        text = cls.MD_IMG_RE.sub(replace_markdown_img, text)
+        text = cls.IMG_URL_RE.sub(replace_bare_url, text)
+        
+        # Deduplicate URLs, preferring poster hosts
+        unique_urls = []
+        seen = set()
+        poster_hosts = {"githubusercontent.com", "fanart.tv", "themoviedb.org", "image.tmdb.org"}
+        
+        for url in sorted(urls, key=lambda u: (0 if any(h in u.lower() for h in poster_hosts) else 1)):
+            if url not in seen:
+                seen.add(url)
+                unique_urls.append(url)
+        
+        return text.strip(), unique_urls, alts
+    
+    @classmethod
+    def safe_truncate(cls, text: str, max_len: int = 3500) -> str:
+        """Truncate without breaking markdown structures"""
+        if len(text) <= max_len:
+            return text
+        
+        # Find protected regions (code blocks, links, images)
+        protected_patterns = [
+            re.compile(r'```.*?```', re.S),
+            re.compile(r'\[[^\]]+?\]\([^)]+?\)'),
+            cls.IMG_URL_RE
+        ]
+        
+        protected_ranges = []
+        for pattern in protected_patterns:
+            for match in pattern.finditer(text):
+                protected_ranges.append((match.start(), match.end()))
+        
+        protected_ranges.sort()
+        
+        # Truncate safely
+        pos = 0
+        result = []
+        used = 0
+        
+        for start, end in protected_ranges:
+            if start > pos:
+                chunk = text[pos:start]
+                if used + len(chunk) > max_len:
+                    remaining = max_len - used - 15  # Reserve space for "...(truncated)"
+                    if remaining > 0:
+                        safe_cut = max(chunk.rfind("\n"), chunk.rfind(" "))
+                        if safe_cut > remaining * 0.6:
+                            chunk = chunk[:safe_cut]
+                        else:
+                            chunk = chunk[:remaining]
+                        result.append(chunk.rstrip() + "\n\n...(truncated)")
+                    return "".join(result)
+                result.append(chunk)
+                used += len(chunk)
+            
+            segment = text[start:end]
+            if used + len(segment) > max_len:
+                result.append("\n\n...(truncated)")
+                return "".join(result)
+            
+            result.append(segment)
+            used += len(segment)
+            pos = end
+        
+        if pos < len(text):
+            remaining_text = text[pos:]
+            if used + len(remaining_text) <= max_len:
+                result.append(remaining_text)
+            else:
+                available = max_len - used - 15
+                if available > 0:
+                    safe_cut = max(remaining_text.rfind("\n"), remaining_text.rfind(" "))
+                    if safe_cut > available * 0.6:
+                        remaining_text = remaining_text[:safe_cut]
+                    else:
+                        remaining_text = remaining_text[:available]
+                    result.append(remaining_text.rstrip() + "\n\n...(truncated)")
+        
+        return "".join(result)
+
+# -------- Message Type Handlers --------
+class MessageHandler(ABC):
+    """Abstract base class for message type handlers"""
+    
+    @abstractmethod
+    def can_handle(self, context: MessageContext) -> bool:
+        """Check if this handler can process the given message"""
         pass
-    return False
+    
+    @abstractmethod
+    def process(self, context: MessageContext) -> ProcessingResult:
+        """Process the message and return formatted result"""
+        pass
 
-# ============================
-# Watchtower-aware summarizer (LESS AGGRESSIVE)
-# ============================
-_WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
-_WT_UPDATED_RXES = [
-    re.compile(
-        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
-        re.I),
-    re.compile(
-        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
-        re.I),
-]
-_WT_FRESH_RX = re.compile(r':\s*Fresh\s*$', re.I)
-
-def _watchtower_host_from_title(title: str) -> Optional[str]:
-    m = _WT_HOST_RX.search(title or "")
-    if m:
-        return m.group(1).strip()
-    return None
-
-def _opt_int(name: str, default: int) -> int:
-    opt = _read_options()
-    try:
-        return int(opt.get(name, default))
-    except Exception:
-        return default
-
-def _opt_bool(name: str, default: bool) -> bool:
-    opt = _read_options()
-    try:
-        v = str(opt.get(name, default)).strip().lower()
-        return v in ("1","true","yes","on")
-    except Exception:
-        return default
-
-def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, Dict[str, Any]]:
-    lines = (body or "").splitlines()
-    updated: List[Tuple[str, str, str, str]] = []
-    raw_kept: List[str] = []
-    for ln in lines:
-        if _WT_FRESH_RX.search(ln):
-            continue
-        matched = False
-        for rx in _WT_UPDATED_RXES:
-            m = rx.match(ln)
-            if m:
-                name = (m.groupdict().get("name") or "").strip()
-                img  = (m.groupdict().get("img") or "").strip()
-                old  = (m.groupdict().get("old") or "").strip()
-                new  = (m.groupdict().get("new") or "").strip()
-                if not img:
-                    img = name
-                updated.append((name, img, old, new))
-                matched = True
-                break
-        if not matched:
-            raw_kept.append(ln)
-
-    host = _watchtower_host_from_title(title) or "unknown"
-    meta: Dict[str, Any] = {"watchtower::host": host, "watchtower::updated_count": len(updated)}
-
-    if not updated:
-        md = f"**Host:** `{host}`\n\n_No updates (all images fresh)._"
-        return md, meta
-
-    if len(updated) > max(1, limit):
-        updated = updated[:limit]
-        meta["watchtower::truncated"] = True
-
-    bullets = "\n".join([
-        f"• `{name}` → `{img}`\n   old: `{old}` → new: `{new}`"
-        for name, img, old, new in updated
-    ])
-    md_lines = [f"**Host:** `{host}`", "", f"**Updated ({len(updated)}):**", bullets]
-
-    # Optional raw tail
-    raw_tail_n = _opt_int("watchtower_raw_tail_lines", 0)
-    if raw_tail_n > 0 and raw_kept:
-        tail = "\n".join(raw_kept[-raw_tail_n:]).strip()
-        if tail:
-            md_lines += ["", "<details><summary>Raw</summary>", "", "```", tail, "```", "</details>"]
-
-    return "\n".join(md_lines), meta
-
-# ============================
-# QNAP summarizer (LESS AGGRESSIVE)
-# ============================
-_QNAP_DISK_RX = re.compile(r'\b(?:disk|drive)\s*(\d+)\b', re.I)
-_QNAP_VOL_RX  = re.compile(r'\bvol(?:ume)?\s*([A-Za-z0-9_-]+)', re.I)
-
-def _summarize_qnap(title: str, body: str, limit_kv: int = 20) -> Tuple[str, Dict[str, Any]]:
-    """
-    Keep the headline, extract useful key:value pairs, and optionally append a raw tail.
-    """
-    lines = [ln for ln in (body or "").splitlines() if ln.strip()]
-    kvs: List[str] = []
-    others: List[str] = []
-
-    disk = None
-    vol  = None
-
-    # First pass: collect KV and try to detect disk/volume
-    for ln in lines:
-        m = KV_RE.match(ln.strip())
-        if m:
-            k, v = m.group(1).strip(), m.group(2).strip()
-            if k.lower() not in {"title","message","topic","tags","priority"}:
-                kvs.append((k, v))
+class WatchtowerHandler(MessageHandler):
+    """Handler for Watchtower Docker update messages"""
+    
+    HOST_PATTERN = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
+    UPDATE_PATTERNS = [
+        re.compile(r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$', re.I),
+        re.compile(r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$', re.I),
+    ]
+    FRESH_PATTERN = re.compile(r':\s*Fresh\s*$', re.I)
+    
+    def can_handle(self, context: MessageContext) -> bool:
+        text = f"{context.title} {context.body}".lower()
+        return "watchtower" in text
+    
+    def process(self, context: MessageContext) -> ProcessingResult:
+        # Extract host information
+        host_match = self.HOST_PATTERN.search(context.title or "")
+        host = host_match.group(1) if host_match else "unknown"
+        
+        # Parse updates
+        updates = []
+        other_lines = []
+        
+        for line in (context.body or "").splitlines():
+            if self.FRESH_PATTERN.search(line):
+                continue
+            
+            matched = False
+            for pattern in self.UPDATE_PATTERNS:
+                match = pattern.match(line)
+                if match:
+                    groups = match.groupdict()
+                    updates.append({
+                        'name': groups.get('name', '').strip(),
+                        'image': groups.get('img', groups.get('name', '')).strip(),
+                        'old_hash': groups.get('old', '').strip(),
+                        'new_hash': groups.get('new', '').strip()
+                    })
+                    matched = True
+                    break
+            
+            if not matched and line.strip():
+                other_lines.append(line)
+        
+        # Build markdown
+        lines = [f"📟 Jarvis Prime", "", f"**Host:** `{host}`"]
+        
+        if not updates:
+            lines.append("\n_No updates (all images fresh)._")
         else:
-            others.append(ln)
-
-        if disk is None:
-            dm = _QNAP_DISK_RX.search(ln)
-            if dm:
-                disk = dm.group(1)
-        if vol is None:
-            vm = _QNAP_VOL_RX.search(ln)
-            if vm:
-                vol = vm.group(1)
-
-    # Build tidy bullets (cap to avoid spam)
-    bullets = []
-    header_bits = []
-    if disk: header_bits.append(f"Disk `{disk}`")
-    if vol:  header_bits.append(f"Vol `{vol}`")
-
-    if header_bits:
-        bullets.append(f"- **Scope:** " + ", ".join(header_bits))
-
-    for i, (k, v) in enumerate(kvs[:max(1, limit_kv)]):
-        bullets.append(f"- **{k}:** {v}")
-
-    # If no KV at all, fall back to generic bullets from remaining lines
-    if not kvs and others:
-        for ln in others[:10]:
-            bullets.append(f"- {ln.strip()}")
-
-    md_lines = []
-    md_lines.append("**QNAP Alert:**")
-    if bullets:
-        md_lines += bullets
-
-    # Optional raw tail
-    raw_tail_n = _opt_int("qnap_raw_tail_lines", 0)
-    if raw_tail_n > 0 and lines:
-        tail = "\n".join(lines[-raw_tail_n:]).strip()
-        if tail:
-            md_lines += ["", "<details><summary>Raw</summary>", "", "```", tail, "```", "</details>"]
-
-    meta: Dict[str, Any] = {"qnap::kv_count": len(kvs), "qnap::has_disk": bool(disk), "qnap::has_vol": bool(vol)}
-    return "\n".join(md_lines), meta
-
-# -------- querystring detection & body cleanup helpers --------
-_QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
-
-def _maybe_parse_query_payload(s: Optional[str]) -> Optional[Dict[str, str]]:
-    """If the string looks like a URL-encoded querystring, parse and return {k:v} (first values)."""
-    if not s:
-        return None
-    txt = s.strip().strip(' \t\r\n?')
-    if "=" not in txt or "&" not in txt:
-        return None
-    dec = unquote_plus(txt)
-    if not any((k + "=") in dec for k in _QS_TRIGGER_KEYS):
-        return None
-    try:
-        parsed = parse_qs(dec, keep_blank_values=True, strict_parsing=False)
-        return {k: (v[0] if isinstance(v, list) and v else "") for k, v in parsed.items()}
-    except Exception:
-        return None
-
-_ACTION_SAYS_RX = re.compile(r'^\s*action\s+says:\s*.*$', re.I | re.M)
-
-def _strip_action_says(text: str) -> str:
-    """Remove any 'action says:' lines from visible body (riffs/personas untouched elsewhere)."""
-    if not text:
-        return ""
-    out = _ACTION_SAYS_RX.sub("", text)
-    return re.sub(r'\n{3,}', '\n\n', out).strip()
-
-# MIME header stripping (SMTP / proxy leakage)
-_MIME_HEADER_RX = re.compile(r'^\s*Content-(?:Disposition|Type|Length|Transfer-Encoding)\s*:.*$', re.I | re.M)
-def _strip_mime_headers(text: str) -> str:
-    if not text:
-        return ""
-    s = _MIME_HEADER_RX.sub("", text)
-    return re.sub(r'\n{3,}', '\n\n', s).strip()
-
-# --- SUBJECT CLEANUP & CARD TITLE -------------------------------------------------
-INTAKE_NAMES = {"proxy","smtp","apprise","gotify","ntfy","webhook","webhooks"}
-
-def _infer_subject_from_body(body: str) -> Optional[str]:
-    """Try to infer a friendly subject from common test and status texts."""
-    b = (body or "").strip()
-    for ln in b.splitlines():
-        m = re.match(r'\s*Subject\s*:\s*(.+?)\s*$', ln, re.I)
-        if m:
-            return m.group(1).strip()
-    m = re.search(r'\btest message from\s+(sonarr|radarr|lidarr|prowlarr|readarr)\b', b, re.I)
-    if m:
-        svc = m.group(1).title()
-        return f"{svc} - Test Notification"
-    if re.search(r'\bspeedtest\b', b, re.I):
-        return "SpeedTest Result"
-    for ln in b.splitlines():
-        t = ln.strip()
-        if not t:
-            continue
-        if re.match(r'^(?:subject|title|message)\s*[:=]', t, re.I):
-            continue
-        return t[:120]
-    return None
-
-def _clean_subject(raw_title: str, body: str) -> str:
-    """Remove intake tags, duplicate 'Jarvis Prime:' prefixes, and fallback to better subject."""
-    t = (raw_title or "").strip()
-    if not t:
-        t = ""
-    t = re.sub(r'^\s*(?:(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*)+', '', t, flags=re.I)
-    t = re.sub(r'^\s*(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*[:\-]\s*', '', t, flags=re.I)
-    if t.strip().lower() in INTAKE_NAMES or t.strip().lower() in {"message","notification","test"}:
-        new_t = _infer_subject_from_body(body)
-        if new_t:
-            t = new_t
-    t = re.sub(r'^\s*(?:jarvis\s*prime\s*:?\s*)+', '', t, flags=re.I)
-    return (t or "").strip()
-
-def _build_client_title(subject: str) -> str:
-    subj = (subject or "").strip()
-    return f"Jarvis Prime: {subj}" if subj else "Jarvis Prime"
-
-# --- Poster/icon fallback ---------------------------------------------------------
-def _icon_map_from_options() -> Dict[str,str]:
-    try:
-        with open("/data/options.json","r",encoding="utf-8") as f:
-            opt = json.load(f) or {}
-            m = opt.get("icon_map") or {}
-            if isinstance(m, dict):
-                return {str(k).lower(): str(v) for k,v in m.items() if v}
-    except Exception:
-        pass
-    return {}
-
-def _builtin_icon_map() -> Dict[str,str]:
-    base = "https://raw.githubusercontent.com/walkxcode/dashboard-icons/master/png"
-    return {
-        "sonarr": f"{base}/sonarr.png",
-        "radarr": f"{base}/radarr.png",
-        "lidarr": f"{base}/lidarr.png",
-        "prowlarr": f"{base}/prowlarr.png",
-        "readarr": f"{base}/readarr.png",
-        "bazarr": f"{base}/bazarr.png",
-        "qbittorrent": f"{base}/qbittorrent.png",
-        "transmission": f"{base}/transmission.png",
-        "jellyfin": f"{base}/jellyfin.png",
-        "plex": f"{base}/plex.png",
-        "emby": f"{base}/emby.png",
-        "sabnzbd": f"{base}/sabnzbd.png",
-        "overseerr": f"{base}/overseerr.png",
-        "gluetun": f"{base}/gluetun.png",
-        "pihole": f"{base}/pi-hole.png",
-        "unifi": f"{base}/unifi-network.png",
-        "portainer": f"{base}/portainer.png",
-        "watchtower": f"{base}/watchtower.png",
-        "docker": f"{base}/docker.png",
-        "homeassistant": f"{base}/home-assistant.png",
-        "speedtest": f"{base}/speedtest.png",
-        "apt": f"{base}/debian.png",
-        "smtp": f"{base}/mail.png",
-        "apprise": f"{base}/bell.png",
-        "gotify": f"{base}/bell.png",
-        "ntfy": f"{base}/bell.png",
-        "proxy": f"{base}/reverse-proxy.png",
-        "qnap": f"{base}/nas.png",
-        "unraid": f"{base}/unraid.png",
-    }
-
-def _icon_from_env(keyword: str) -> Optional[str]:
-    key = f"ICON_{keyword.upper()}_URL"
-    v = os.getenv(key) or ""
-    return v.strip() or None
-
-def _default_icon() -> Optional[str]:
-    try:
-        with open("/data/options.json","r",encoding="utf-8") as f:
-            opt = json.load(f) or {}
-            d = opt.get("default_icon") or ""
-            if str(d).strip():
-                return str(d).strip()
-    except Exception:
-        pass
-    v = os.getenv("ICON_DEFAULT_URL") or ""
-    return v.strip() or None
-
-def _poster_fallback(title: str, body: str) -> Optional[str]:
-    """Pick a poster icon if the intake didn't provide one, using keywords."""
-    keywords = ["sonarr","radarr","lidarr","prowlarr","readarr","bazarr",
-                "qbittorrent","transmission","jellyfin","plex","emby",
-                "sabnzbd","overseerr","gluetun","pihole","unifi","portainer",
-                "watchtower","docker","homeassistant","speedtest","apt",
-                "smtp","apprise","gotify","ntfy","proxy","qnap","unraid"]
-    text = f"{title} {body}".lower()
-    opt_map = _icon_map_from_options()
-    builtin = _builtin_icon_map()
-    for word in keywords:
-        if word in text:
-            return opt_map.get(word) or _icon_from_env(word) or builtin.get(word)
-    return _default_icon()
-
-def _remove_kv_lines(text: str) -> str:
-    """
-    Keep human 'key: value' content (e.g., CPU: 68%). Only drop transport noise:
-    - Content-* MIME lines
-    - pure transport fields: title/message/topic/tags/priority (when alone)
-    """
-    if not text:
-        return ""
-    kept = []
-    for ln in text.splitlines():
-        t = ln.strip()
-        if t.lower().startswith("content-"):
-            continue
-        m = KV_RE.match(t)
-        if m:
-            k = m.group(1).strip().lower()
-            if k in {"title","message","topic","tags","priority"}:
-                continue
-        kept.append(ln)
-    s = "\n".join(kept)
-    s = re.sub(r'\n{3,}', '\n\n', s).strip()
-    return s
-
-def _final_qs_cleanup(text: str) -> str:
-    """If the *visible* message still looks like a querystring, decode and keep only human text."""
-    if not text:
-        return ""
-    maybe = _maybe_parse_query_payload(text)
-    if maybe:
-        for k in ("message","text","body","m"):
-            if k in maybe and maybe[k].strip():
-                return maybe[k].strip()
-        parts = []
-        for k,v in maybe.items():
-            if k.lower() in {"title","topic","tags","priority"}:
-                continue
-            parts.append(f"{k}: {v}")
-        return "\n".join(parts).strip() or text
-    return text
-
-# -------- Meta/prompt scrubber (prevents visible "Tone/Rules" leakage) --------
-_META_LINE_RX = re.compile(
-    r'^\s*(?:tone|rule|rules|guidelines?|style(?:\s*hint)?|instruction|instructions|system(?:\s*prompt)?|persona|respond(?:\s*with)?|produce\s*only)\s*[:\-]',
-    re.I
-)
-# >>> CHANGED: also strip plain [SYSTEM]/[INPUT]/[OUTPUT] tags, not just special markers.
-_META_TAG_RX = re.compile(r'\s*(?:(?:SYSTEM|INPUT|OUTPUT)|(?:SYSTEM|INPUT|OUTPUT))\s*', re.I)
-
-def _scrub_meta(text: str) -> str:
-    if not text:
-        return ""
-    s = _META_TAG_RX.sub(" ", text)
-    keep: List[str] = []
-    for ln in s.splitlines():
-        if _META_LINE_RX.search(ln):
-            continue
-        keep.append(ln)
-    s = "\n".join(keep)
-    s = re.sub(r'\n{3,}', '\n\n', s).strip()
-    return s
-
-# -------- Intake preprocessors --------
-def _preprocess_smtp(title: str, body: str) -> Tuple[str, str]:
-    body = _strip_mime_headers(body or "")
-    body = re.sub(r'\n{2,}', '\n\n', body).strip()
-    return (title or "").strip(), body
-
-def _preprocess_gotify_like(title: str, body: str) -> Tuple[str, str]:
-    qs = _maybe_parse_query_payload(body)
-    if qs:
-        t = qs.get("title", title)
-        m = qs.get("message", body)
-        return (t or "").strip(), (m or "").strip()
-    return (title or "").strip(), (body or "").strip()
-
-def _preprocess_proxy(title: str, body: str) -> Tuple[str, str]:
-    t = title or ""
-    b = body or ""
-    blocks = re.findall(r'(?is)name="(title|message)"\s*\r?\n\r?\n(.*?)(?:\r?\n--|$)', b)
-    fields = {k.lower(): v.strip() for k,v in blocks}
-    qs = _maybe_parse_query_payload(b)
-    if qs:
-        fields.update({k.lower(): v for k,v in qs.items()})
-    if fields.get("title"): t = fields["title"]
-    if fields.get("message"): b = fields["message"]
-    b = re.sub(r'(?im)^content-disposition.*name="[^"]+"\s*', '', b)
-    b = _strip_mime_headers(b)
-    b = re.sub(r'\n{2,}', '\n\n', b).strip()
-    return (t or "").strip(), b
-
-def _preprocess_generic(title: str, body: str) -> Tuple[str, str]:
-    return (title or "").strip(), (body or "").strip()
-
-def _normalize_intake(source: str, title: str, body: str) -> Tuple[str, str]:
-    src = (source or "").lower()
-    if src == "smtp":
-        return _preprocess_smtp(title, body)
-    if src in ("gotify","ntfy","apprise"):
-        return _preprocess_gotify_like(title, body)
-    if src == "proxy":
-        return _preprocess_proxy(title, body)
-    return _preprocess_generic(title, body)
-
-# -------- Public API --------
-def beautify_message(title: str, body: str, *, mood: str = "neutral",
-                     source_hint: Optional[str] = None, mode: str = "standard",
-                     persona: Optional[str] = None, persona_quip: bool = True,
-                     extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
-
-    # >>> ADDITIVE: Hard-skip ALL processing for Joke messages (exactly what you asked)
-    if isinstance(title, str) and "joke" in title.lower():
-        text = body if isinstance(body, str) else ("" if body is None else str(body))
-        extras: Dict[str, Any] = {
+            lines.extend(["", f"**Updated ({len(updates)}):**"])
+            for update in updates:
+                lines.append(f"• `{update['name']}` → `{update['image']}`")
+                lines.append(f"   old: `{update['old_hash']}` → new: `{update['new_hash']}`")
+        
+        metadata = {
+            "watchtower::host": host,
+            "watchtower::updated_count": len(updates),
+            "watchtower::has_updates": len(updates) > 0
+        }
+        
+        extras = {
             "client::display": {"contentType": "text/markdown"},
-            "client::title": (title.strip() or "Jarvis Prime: Joke"),
+            "client::title": f"Jarvis Prime: Watchtower Updates",
+            "jarvis::beautified": True,
+            "jarvis::handler": "watchtower"
+        }
+        
+        return ProcessingResult(
+            text="\n".join(lines),
+            extras=extras,
+            metadata=metadata
+        )
+
+class StandardHandler(MessageHandler):
+    """Handler for standard messages"""
+    
+    def can_handle(self, context: MessageContext) -> bool:
+        return True  # Default handler accepts everything
+    
+    def process(self, context: MessageContext) -> ProcessingResult:
+        processor = TextProcessor()
+        
+        # Clean and process text
+        cleaned_body = processor.strip_noise(context.body or "")
+        normalized_body = processor.normalize_whitespace(cleaned_body)
+        normalized_body = html.unescape(normalized_body)
+        
+        # Extract images
+        body_without_images, images, image_alts = processor.extract_images(normalized_body)
+        
+        # Detect message severity
+        severity_badge = self._get_severity_badge(context.title, body_without_images)
+        
+        # Build formatted message
+        lines = [f"📟 Jarvis Prime {severity_badge}".rstrip()]
+        
+        # Add subject if present
+        clean_subject = self._clean_subject(context.title, body_without_images)
+        if clean_subject:
+            lines.extend(["", f"**Subject:** {clean_subject}"])
+        
+        # Add message content
+        if body_without_images.strip():
+            lines.extend(["", "📝 Message", body_without_images.strip()])
+        
+        # Add poster image
+        poster_url = self._get_poster_url(images, context.title, body_without_images)
+        if poster_url:
+            lines.extend(["", f"![poster]({poster_url})"])
+        
+        extras = {
+            "client::display": {"contentType": "text/markdown"},
+            "client::title": f"Jarvis Prime: {clean_subject}" if clean_subject else "Jarvis Prime",
+            "jarvis::beautified": True,
+            "jarvis::handler": "standard",
+            "jarvis::allImageUrls": images or ([poster_url] if poster_url else [])
+        }
+        
+        if images or poster_url:
+            extras["client::notification"] = {"bigImageUrl": images[0] if images else poster_url}
+        
+        return ProcessingResult(
+            text="\n".join(lines),
+            extras=extras,
+            images=images or ([poster_url] if poster_url else [])
+        )
+    
+    def _get_severity_badge(self, title: str, body: str) -> str:
+        """Determine severity badge from content"""
+        text = f"{title} {body}".lower()
+        if re.search(r'\b(error|failed|critical)\b', text):
+            return "❌"
+        elif re.search(r'\b(warn|warning)\b', text):
+            return "⚠️"
+        elif re.search(r'\b(success|ok|online|completed|pass|finished)\b', text):
+            return "✅"
+        return ""
+    
+    def _clean_subject(self, title: str, body: str) -> str:
+        """Clean and normalize the subject line"""
+        cleaned = (title or "").strip()
+        
+        # Remove intake prefixes
+        intake_pattern = re.compile(r'^\s*(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*[:\-]?\s*', re.I)
+        cleaned = intake_pattern.sub('', cleaned)
+        
+        # Remove Jarvis Prime prefixes
+        jarvis_pattern = re.compile(r'^\s*(?:jarvis\s*prime\s*:?\s*)+', re.I)
+        cleaned = jarvis_pattern.sub('', cleaned)
+        
+        return cleaned.strip()
+    
+    @lru_cache(maxsize=64)
+    def _get_poster_url(self, images_tuple: Tuple[str, ...], title: str, body: str) -> Optional[str]:
+        """Get poster URL with caching"""
+        images = list(images_tuple) if images_tuple else []
+        
+        if images:
+            return images[0]
+        
+        # Icon mapping for common services
+        icon_map = {
+            "sonarr": "https://raw.githubusercontent.com/walkxcode/dashboard-icons/master/png/sonarr.png",
+            "radarr": "https://raw.githubusercontent.com/walkxcode/dashboard-icons/master/png/radarr.png",
+            "watchtower": "https://raw.githubusercontent.com/walkxcode/dashboard-icons/master/png/watchtower.png",
+            # Add more as needed
+        }
+        
+        text = f"{title} {body}".lower()
+        for service, icon_url in icon_map.items():
+            if service in text:
+                return icon_url
+        
+        return None
+
+# -------- Main Processor --------
+class MessageBeautifier:
+    """Main message processing orchestrator"""
+    
+    def __init__(self):
+        self.handlers: List[MessageHandler] = [
+            WatchtowerHandler(),
+            StandardHandler()  # Keep as last (default handler)
+        ]
+        self.processor = TextProcessor()
+    
+    def beautify_message(self, title: str, body: str, **kwargs) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """Main entry point for message beautification"""
+        try:
+            # Early exit for disabled beautification
+            if not config.beautify_enabled:
+                return self._raw_passthrough(title, body, kwargs.get('persona'))
+            
+            # Handle special cases
+            if self._is_joke_message(title):
+                return self._handle_joke_message(title, body)
+            
+            if self._is_raw_persona_message(kwargs.get('extras_in')):
+                return self._handle_raw_persona_message(title, body)
+            
+            # Create processing context
+            context = MessageContext(
+                title=title or "",
+                body=body or "",
+                source_hint=kwargs.get('source_hint'),
+                persona=kwargs.get('persona'),
+                extras_in=kwargs.get('extras_in'),
+                mood=kwargs.get('mood', 'neutral'),
+                mode=kwargs.get('mode', 'standard'),
+                persona_quip=kwargs.get('persona_quip', True)
+            )
+            
+            # Find appropriate handler
+            handler = self._find_handler(context)
+            if not handler:
+                logger.warning("No handler found for message")
+                return self._raw_passthrough(title, body, context.persona)
+            
+            # Process message
+            result = handler.process(context)
+            
+            # Apply post-processing
+            result = self._apply_post_processing(result, context)
+            
+            return result.text, result.extras
+            
+        except Exception as e:
+            logger.error(f"Error beautifying message: {e}")
+            return self._raw_passthrough(title, body, kwargs.get('persona'))
+    
+    def _find_handler(self, context: MessageContext) -> Optional[MessageHandler]:
+        """Find the first handler that can process the message"""
+        for handler in self.handlers:
+            if handler.can_handle(context):
+                return handler
+        return None
+    
+    def _apply_post_processing(self, result: ProcessingResult, context: MessageContext) -> ProcessingResult:
+        """Apply common post-processing steps"""
+        # Add persona riffs if enabled
+        if config.llm_riffs_enabled and context.persona:
+            riffs = self._generate_persona_riffs(result.text, context.persona)
+            if riffs:
+                riff_lines = [f"", f"🧠 {context.persona} riff"]
+                riff_lines.extend(f"> {riff}" for riff in riffs)
+                result.text += "\n".join(riff_lines)
+                result.extras["jarvis::llm_riff_lines"] = len(riffs)
+        
+        # Apply safe truncation
+        result.text = self.processor.safe_truncate(result.text, config.max_message_length)
+        
+        return result
+    
+    def _generate_persona_riffs(self, context: str, persona: str) -> List[str]:
+        """Generate persona-based commentary"""
+        try:
+            llm = importlib.import_module("llm_client")
+            llm = importlib.reload(llm)
+            
+            riffs = llm.persona_riff(persona=persona, context=context)
+            if isinstance(riffs, list):
+                return [str(riff).strip() for riff in riffs if str(riff).strip()]
+            elif isinstance(riffs, str) and riffs.strip():
+                return [riffs.strip()]
+        except Exception as e:
+            logger.warning(f"Failed to generate persona riffs: {e}")
+        
+        return []
+    
+    def _is_joke_message(self, title: str) -> bool:
+        """Check if message is a joke"""
+        return isinstance(title, str) and "joke" in title.lower()
+    
+    def _is_raw_persona_message(self, extras_in: Optional[Dict[str, Any]]) -> bool:
+        """Check if message should bypass persona processing"""
+        return isinstance(extras_in, dict) and extras_in.get("jarvis::raw_persona")
+    
+    def _handle_joke_message(self, title: str, body: str) -> Tuple[str, Dict[str, Any]]:
+        """Handle joke messages with minimal processing"""
+        extras = {
+            "client::display": {"contentType": "text/markdown"},
+            "client::title": title.strip() or "Jarvis Prime: Joke",
             "jarvis::beautified": False,
             "jarvis::raw_joke": True,
             "riff_hint": False,
         }
-        return (text or "").strip(), extras
-
-    # NEW: Skip beautifying/persona riffs if personality marked it as 'raw'.
-    if isinstance(extras_in, dict) and extras_in.get("jarvis::raw_persona"):
-        text = body if isinstance(body, str) else ("" if body is None else str(body))
-        extras: Dict[str, Any] = {
+        return (body or "").strip(), extras
+    
+    def _handle_raw_persona_message(self, title: str, body: str) -> Tuple[str, Dict[str, Any]]:
+        """Handle raw persona messages"""
+        extras = {
             "client::display": {"contentType": "text/markdown"},
-            "client::title": _build_client_title(_clean_subject(title or "", text)),
+            "client::title": f"Jarvis Prime: {(title or '').strip()}",
             "jarvis::beautified": False,
             "jarvis::raw_persona": True,
         }
-        return text, extras
-
-    # RAW passthrough if beautifier is OFF:
-    if _beautify_is_disabled():
-        raw_title = title if title is not None else ""
-        raw_body  = body  if body  is not None else ""
-
-        lines: List[str] = []
-
-        eff_persona = _effective_persona(persona)
-        if _personality_enabled() and not _ui_persona_header_enabled():
-            pol = _persona_overlay_line(eff_persona)
-            if pol:
-                lines.append(pol)
-
-        # Show raw body untouched
-        lines.append(raw_body)
-
-        # Optional riffs
-        if _llm_riffs_enabled() and eff_persona:
-            riff_ctx = _scrub_meta(raw_body if isinstance(raw_body, str) else "")
-            riffs = _persona_llm_riffs(riff_ctx, eff_persona)
-            real_riffs = [(r or "").replace("\r","").strip() for r in (riffs or [])]
-            real_riffs = [r for r in real_riffs if r]
-            if real_riffs:
-                lines += ["", f"🧠 {eff_persona} riff"]
-                for r in real_riffs:
-                    lines.append("> " + r)
-
-        text = "\n".join(lines)
-        extras: Dict[str, Any] = {
+        return body or "", extras
+    
+    def _raw_passthrough(self, title: str, body: str, persona: Optional[str]) -> Tuple[str, Dict[str, Any]]:
+        """Handle raw message passthrough"""
+        text_lines = []
+        
+        # Add persona overlay if enabled
+        if config.personality_enabled and persona:
+            text_lines.append(f"💬 {persona} says:")
+        
+        text_lines.append(body or "")
+        
+        extras = {
             "client::display": {"contentType": "text/markdown"},
+            "client::title": f"Jarvis Prime: {(title or '').strip()}",
             "jarvis::beautified": False
         }
-        return text, extras
+        
+        return "\n".join(text_lines), extras
 
-    # --------- Beautifier ON path ---------
-    stripped = _strip_noise(body)
-    normalized = _normalize(stripped)
-    normalized = html.unescape(normalized)
+# -------- Public API --------
+_beautifier = MessageBeautifier()
 
-    title, normalized = _normalize_intake(source_hint or "", title, normalized)
-
-    # --- Querystring normalization ---
-    qs_title = _maybe_parse_query_payload(title)
-    qs_body  = _maybe_parse_query_payload(normalized)
-
-    if qs_title and "title" in qs_title:
-        title = unquote_plus(qs_title.get("title") or "") or title
-    if qs_body and "title" in qs_body:
-        title = unquote_plus(qs_body.get("title") or "") or title
-
-    if qs_title and "message" in qs_title:
-        normalized = unquote_plus(qs_title.get("message") or "") or normalized
-    if qs_body and "message" in qs_body:
-        normalized = unquote_plus(qs_body.get("message") or "") or normalized
-
-    if (title or "").strip() and (qs_title or qs_body):
-        try:
-            title_decoded = unquote_plus(title.strip())
-            if qs_title and "title" in qs_title:
-                title = unquote_plus(qs_title.get("title") or "").strip() or title_decoded
-            else:
-                title = title_decoded
-        except Exception:
-            pass
-
-    # remove 'action says:' lines and MIME junk
-    normalized = _strip_action_says(normalized)
-    normalized = _strip_mime_headers(normalized)
-
-    # images (keep meaning via ALT placeholders)
-    body_wo_imgs, images, image_alts = _harvest_images(normalized)
-
-    kind = _detect_type(title, body_wo_imgs)
-    badge = _severity_badge(title + " " + body_wo_imgs)
-
-    clean_subject = _clean_subject(title, body_wo_imgs)
-
-    # ===== Watchtower special-case =====
-    if kind == "Watchtower":
-        lines: List[str] = []
-        lines += _header("Watchtower", badge)
-
-        eff_persona = _effective_persona(persona)
-        if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
-            pol = _persona_overlay_line(eff_persona)
-            if pol: lines += [pol]
-
-        wt_md, wt_meta = _summarize_watchtower(title, body_wo_imgs)
-        lines += ["", wt_md]
-
-        riff_hint = _global_riff_hint(extras_in, source_hint)
-        riffs: List[str] = []
-        if riff_hint and _llm_riffs_enabled() and eff_persona:
-            ctx = _scrub_meta(body_wo_imgs)
-            if clean_subject:
-                ctx = (ctx + "\n\nSubject: " + clean_subject).strip()
-            riffs = _persona_llm_riffs(ctx, eff_persona)
-        real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
-        real_riffs = [ r for r in real_riffs if r ]
-        if real_riffs:
-            lines += ["", f"🧠 {eff_persona} riff"]
-            for r in real_riffs:
-                lines.append("> " + r)
-
-        text = "\n".join(lines).strip()
-        text = _linewise_dedup_markdown(text, protect_message=True)
-        text = _fold_repeats(text)
-        max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
-        text = _safe_truncate(text, max_len=max_len)
-
-        extras: Dict[str, Any] = {
-            "client::display": {"contentType": "text/markdown"},
-            "client::title": _build_client_title(clean_subject),
-            "jarvis::beautified": True,
-            "jarvis::llm_riff_lines": len(real_riffs or []),
-            "watchtower::host": wt_meta.get("watchtower::host"),
-            "watchtower::updated_count": wt_meta.get("watchtower::updated_count"),
-        }
-        if wt_meta.get("watchtower::truncated"):
-            extras["watchtower::truncated"] = True
-        if isinstance(extras_in, dict):
-            extras.update(extras_in)
-        if images:
-            extras["jarvis::allImageUrls"] = images
-            extras["client::notification"] = {"bigImageUrl": images[0]}
-        else:
-            poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
-            if poster:
-                extras["jarvis::allImageUrls"] = [poster]
-                extras["client::notification"] = {"bigImageUrl": poster}
-                lines += ["", f"![poster]({poster})"]
-                text = "\n".join(lines).strip()
-        return text, extras
-
-    # ===== QNAP special-case =====
-    if kind == "QNAP":
-        lines: List[str] = []
-        lines += _header("QNAP", badge)
-
-        eff_persona = _effective_persona(persona)
-        if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
-            pol = _persona_overlay_line(eff_persona)
-            if pol: lines += [pol]
-
-        qnap_md, qnap_meta = _summarize_qnap(title, body_wo_imgs)
-        lines += ["", qnap_md]
-
-        riff_hint = _global_riff_hint(extras_in, source_hint)
-        riffs: List[str] = []
-        if riff_hint and _llm_riffs_enabled() and eff_persona:
-            ctx = _scrub_meta(body_wo_imgs)
-            if clean_subject:
-                ctx = (ctx + "\n\nSubject: " + clean_subject).strip()
-            riffs = _persona_llm_riffs(ctx, eff_persona)
-
-        real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
-        real_riffs = [ r for r in real_riffs if r ]
-        if real_riffs:
-            lines += ["", f"🧠 {eff_persona} riff"]
-            for r in real_riffs:
-                lines.append("> " + r)
-
-        text = "\n".join(lines).strip()
-        text = _linewise_dedup_markdown(text, protect_message=True)
-        text = _fold_repeats(text)
-        max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
-        text = _safe_truncate(text, max_len=max_len)
-
-        extras: Dict[str, Any] = {
-            "client::display": {"contentType": "text/markdown"},
-            "client::title": _build_client_title(clean_subject or "QNAP Alert"),
-            "jarvis::beautified": True,
-            "jarvis::allImageUrls": [],
-            "jarvis::llm_riff_lines": len(real_riffs or []),
-        }
-        poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
-        if poster:
-            extras["jarvis::allImageUrls"] = [poster]
-            extras["client::notification"] = {"bigImageUrl": poster}
-            lines += ["", f"![poster]({poster})"]
-            text = "\n".join(lines).strip()
-
-        if isinstance(extras_in, dict):
-            extras.update(extras_in)
-        return text, extras
-
-    # ===== Standard path (Message-only layout) =====
-    lines: List[str] = []
-    lines += _header(kind, badge)
-
-    eff_persona = _effective_persona(persona)
-    if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
-        pol = _persona_overlay_line(eff_persona)
-        if pol: lines += [pol]
-
-    subj = (clean_subject or "").strip()
-    if subj:
-        lines += ["", f"**Subject:** {subj}"]
-
-    # Always keep human content visible (entire body); drop only transport kv/mime noise
-    raw_message = (body_wo_imgs or "").strip() or normalized.strip()
-    message_snip = _remove_kv_lines(raw_message).strip()
-    if not message_snip:
-        message_snip = (raw_message or normalized or "No message provided.").strip()
-
-    # Decode leftover querystrings
-    message_snip = _final_qs_cleanup(message_snip)
-
-    # === NEW: Convert Key:Value lines to bullets (non-destructive) ===
-    kv_bullets = _kv_to_bullets(message_snip)
-    if kv_bullets:
-        message_snip = kv_bullets
-
-    # ---- OPTIONAL LLM MESSAGE REWRITE (neutral, toggleable) ----
-    try:
-        if _llm_message_rewrite_enabled():
-            max_chars = _llm_message_rewrite_max_chars()
-            rewrite_ctx = _scrub_meta(message_snip)
-            rewritten = _neutral_llm_rewrite(rewrite_ctx, max_chars=max_chars)
-            if isinstance(rewritten, str) and rewritten.strip():
-                message_snip = _scrub_meta(rewritten.strip())
-    except Exception:
-        pass
-
-    if message_snip:
-        lines += ["", "📝 Message", message_snip]
-
-    poster = None
-    if images:
-        poster = images[0]
-    else:
-        poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
-        if poster:
-            images = [poster]
-    if poster:
-        lines += ["", f"![poster]({poster})"]
-
-    riffs: List[str] = []
-    riff_hint = _global_riff_hint(extras_in, source_hint)
-    _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
-    if riff_hint and _llm_riffs_enabled() and eff_persona:
-        ctx = _scrub_meta(message_snip)
-        if subj:
-            ctx = (ctx + "\n\nSubject: " + subj).strip()
-        riffs = _persona_llm_riffs(ctx, eff_persona)
-
-    real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
-    real_riffs = [ r for r in real_riffs if r ]
-    if real_riffs:
-        lines += ["", f"🧠 {eff_persona} riff"]
-        for r in real_riffs:
-            lines.append("> " + r)
-
-    text = "\n".join(lines).strip()
-    text = _linewise_dedup_markdown(text, protect_message=True)
-    text = _fold_repeats(text)
-    max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
-    text = _safe_truncate(text, max_len=max_len)
-
-    extras: Dict[str, Any] = {
-        "client::display": {"contentType": "text/markdown"},
-        "client::title": _build_client_title(clean_subject),
-        "jarvis::beautified": True,
-        "jarvis::allImageUrls": images,
-        "jarvis::llm_riff_lines": len(real_riffs or []),
-    }
-    if images:
-        extras["client::notification"] = {"bigImageUrl": images[0]}
-    if isinstance(extras_in, dict):
-        extras.update(extras_in)
-
-    return text, extras
+def beautify_message(title: str, body: str, **kwargs) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """
+    Public API function for message beautification
+    
+    Args:
+        title: Message title/subject
+        body: Message body content
+        **kwargs: Additional options (mood, source_hint, persona, etc.)
+    
+    Returns:
+        Tuple of (formatted_text, extras_dict)
+    """
+    return _beautifier.beautify_message(title, body, **kwargs)
