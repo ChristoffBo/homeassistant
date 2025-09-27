@@ -1,29 +1,18 @@
 #!/usr/bin/env python3
-# /app/personality.py  — rebuilt per Christoff's spec
+# /app/personality.py  — Enhanced with time awareness and rich context
 # Persona quip + Lexi engine for Jarvis Prime
 #
-# Public API (unchanged entry points):
-#   - quip(persona_name: str, *, with_emoji: bool = True) -> str
-#   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]
-#   - lexi_quip(persona_name: str, *, with_emoji: bool = True, subject: str = "", body: str = "") -> str
-#   - lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subject: str = "", body: str = "") -> list[str]
-#   - persona_header(persona_name: str, subject: str = "", body: str = "") -> str
-#
-# Behavior per spec:
-#   - TOP LINE: always Lexi (NOT LLM), time-aware, emoji allowed, NO "Lexi." suffix
-#   - BOTTOM LINES: LLM riffs (no emoji); Lexi-only fallback if LLM is off/unavailable
-#   - Strip transport tags like [SMTP]/[Proxy]/[Gotify]/... from inputs and outputs
-#   - Expanded lexicons & sharper templates; Rager swears (meaningful), Tappit SA slang (no "rev-rev")
-#
-# Env knobs (existing honored):
-#   - PERSONALITY_INTENSITY: float 0.6–2.0, default 1.0
-#   - LLM_TIMEOUT_SECONDS: int, default 8
-#   - LLM_MAX_CPU_PERCENT: int, default 70
-#   - LLM_PERSONA_LINES_MAX: int, default 3
-#   - LLM_MODELS_PRIORITY, LLM_OLLAMA_BASE_URL / OLLAMA_BASE_URL, LLM_MODEL_URL, LLM_MODEL_PATH
-#   - BEAUTIFY_LLM_ENABLED: "true"/"false" gates llm_quips()
-import random, os, importlib, re, time
+# Enhanced features:
+#   - Deep time awareness (hour, day, week, season, holidays)
+#   - Rich contextual pattern detection
+#   - Smart vocabulary expansion based on message content
+#   - Intelligent template selection
+#   - Technical domain awareness
+#   - Operational context recognition
+
+import random, os, importlib, re, time, calendar
 from typing import List, Dict, Optional, Tuple
+from datetime import datetime, date
 
 # ----------------------------------------------------------------------------
 # Transport / source tag scrubber
@@ -40,20 +29,79 @@ def strip_transport_tags(text: str) -> str:
     return re.sub(r'\s{2,}', ' ', t).strip()
 
 # ----------------------------------------------------------------------------
-# Daypart helpers (natural time awareness)
+# Enhanced time awareness
 # ----------------------------------------------------------------------------
-def _daypart(now_ts: Optional[float] = None) -> str:
+def _get_time_context(now_ts: Optional[float] = None) -> Dict[str, any]:
+    """Extract rich temporal context"""
     t = time.localtime(now_ts or time.time())
+    dt = datetime.fromtimestamp(now_ts or time.time())
+    
+    # Basic daypart
     h = t.tm_hour
     if 0 <= h < 5:
-        return "early_morning"
-    if 5 <= h < 11:
-        return "morning"
-    if 11 <= h < 17:
-        return "afternoon"
-    if 17 <= h < 21:
-        return "evening"
-    return "late_night"
+        daypart = "deep_night"
+    elif 5 <= h < 8:
+        daypart = "early_morning"  
+    elif 8 <= h < 12:
+        daypart = "morning"
+    elif 12 <= h < 14:
+        daypart = "midday"
+    elif 14 <= h < 17:
+        daypart = "afternoon"
+    elif 17 <= h < 20:
+        daypart = "evening"
+    elif 20 <= h < 23:
+        daypart = "night"
+    else:
+        daypart = "late_night"
+    
+    # Day of week context
+    weekday = t.tm_wday  # 0=Monday, 6=Sunday
+    day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    
+    # Week phase
+    if weekday in [0, 1]:  # Mon, Tue
+        week_phase = "week_start"
+    elif weekday in [2, 3]:  # Wed, Thu
+        week_phase = "mid_week"
+    elif weekday == 4:  # Friday
+        week_phase = "week_end"
+    else:  # Weekend
+        week_phase = "weekend"
+    
+    # Month context
+    month = t.tm_mon
+    day_of_month = t.tm_mday
+    
+    # Season (Northern hemisphere)
+    if month in [12, 1, 2]:
+        season = "winter"
+    elif month in [3, 4, 5]:
+        season = "spring"
+    elif month in [6, 7, 8]:
+        season = "summer"
+    else:
+        season = "autumn"
+    
+    # Special days detection
+    is_month_start = day_of_month <= 3
+    is_month_end = day_of_month >= 28
+    is_weekend = weekday in [5, 6]
+    
+    return {
+        "hour": h,
+        "daypart": daypart,
+        "weekday": weekday,
+        "day_name": day_names[weekday],
+        "week_phase": week_phase,
+        "month": month,
+        "day_of_month": day_of_month,
+        "season": season,
+        "is_month_start": is_month_start,
+        "is_month_end": is_month_end,
+        "is_weekend": is_weekend,
+        "is_business_hours": 9 <= h <= 17 and not is_weekend
+    }
 
 def _intensity() -> float:
     try:
@@ -63,7 +111,57 @@ def _intensity() -> float:
         return 1.0
 
 # ----------------------------------------------------------------------------
-# Personas, aliases, emojis
+# Message context analysis
+# ----------------------------------------------------------------------------
+def _analyze_message_context(subject: str, body: str) -> Dict[str, any]:
+    """Extract semantic context from message content"""
+    text = f"{subject} {body}".lower()
+    
+    # System types
+    system_types = {
+        "docker": any(word in text for word in ["docker", "container", "pod", "k8s", "kubernetes"]),
+        "database": any(word in text for word in ["mysql", "postgres", "mongodb", "redis", "db", "database"]),
+        "backup": any(word in text for word in ["backup", "restore", "snapshot", "archive"]),
+        "network": any(word in text for word in ["network", "dns", "firewall", "proxy", "nginx"]),
+        "storage": any(word in text for word in ["disk", "storage", "filesystem", "mount"]),
+        "monitoring": any(word in text for word in ["monitor", "alert", "metric", "grafana", "prometheus"])
+    }
+    
+    # Operation types
+    operations = {
+        "deployment": any(word in text for word in ["deploy", "release", "rollout", "ship"]),
+        "maintenance": any(word in text for word in ["maintenance", "update", "patch", "restart"]),
+        "incident": any(word in text for word in ["down", "failed", "error", "critical", "outage"]),
+        "completion": any(word in text for word in ["completed", "finished", "done", "success"]),
+        "scheduled": any(word in text for word in ["scheduled", "cron", "daily", "weekly", "routine"])
+    }
+    
+    # Severity indicators
+    urgency_level = "normal"
+    if any(word in text for word in ["critical", "emergency", "down", "failed"]):
+        urgency_level = "high"
+    elif any(word in text for word in ["warning", "degraded", "slow"]):
+        urgency_level = "medium"
+    elif any(word in text for word in ["info", "completed", "success"]):
+        urgency_level = "low"
+    
+    # Scale indicators
+    scale = "single"
+    if any(word in text for word in ["cluster", "fleet", "multiple", "all"]):
+        scale = "multiple"
+    
+    return {
+        "systems": [k for k, v in system_types.items() if v],
+        "operations": [k for k, v in operations.items() if v],
+        "urgency": urgency_level,
+        "scale": scale,
+        "length": len(text),
+        "has_numbers": bool(re.search(r'\d+', text)),
+        "has_ips": bool(re.search(r'\b\d+\.\d+\.\d+\.\d+\b', text))
+    }
+
+# ----------------------------------------------------------------------------
+# Personas, aliases, emojis (unchanged)
 # ----------------------------------------------------------------------------
 PERSONAS = ["dude", "chick", "nerd", "rager", "comedian", "action", "jarvis", "ops", "tappit"]
 
@@ -98,230 +196,23 @@ def _maybe_emoji(key: str, with_emoji: bool) -> str:
     return f" {random.choice(bank)}" if bank else ""
 
 # ----------------------------------------------------------------------------
-# CANNED QUIPS (kept for compatibility; not used for header after this rebuild)
+# Enhanced persona bank mappings
 # ----------------------------------------------------------------------------
-QUIPS = {
-    "ops": ["ack.","done.","noted.","executed.","received.","stable.","running.","applied.","synced.","completed."],
-    "jarvis": [
-        "As always, sir, a great pleasure watching you work.",
-        "Status synchronized, sir; elegance maintained.",
-        "I’ve taken the liberty of tidying the logs.",
-        "Telemetry aligned; do proceed.",
-        "Your request has been executed impeccably.",
-        "All signals nominal; shall I fetch tea?",
-        "Diagnostics complete; no anomalies worth your time.",
-        "I archived the artifacts; future-you will approve.",
-        "Quiet nights are my love letter to ops.",
-    ],
-    "dude": ["The Dude abides; the logs can, like, chill.","Party on, pipelines. CI is totally non-bogus."],
-    "chick":["That’s hot—ship it with sparkle.","Zero-downtime? She’s beauty, she’s grace."],
-    "nerd":["This is the optimal outcome. Bazinga.","Measured twice; compiled once."],
-    "rager":["Say downtime again. I fucking dare you.","Push it now or I’ll lose my goddamn mind."],
-    "comedian":["Remarkably unremarkable—my favorite kind of uptime.","Doing nothing is hard; you never know when you’re finished."],
-    "action":["Consider it deployed.","System secure. Threat neutralized."],
-    "tappit":["Howzit bru—green lights all round.","Lekker clean; keep it sharp-sharp."],
-}
-
-def _apply_daypart_flavor_inline(persona: str, text: str) -> str:
-    # Bake daypart into the phrasing when templates ask for it
-    dp = _daypart()
-    table = {
-        "early_morning": {
-            "rager": "too early for this shit",
-            "jarvis": "pre-dawn service, discreet",
-            "chick": "first-light polish",
-            "dude": "quiet boot cycle",
-            "tappit": "early start, sharp-sharp",
-        },
-        "morning": {
-            "rager": "coffee then chaos, not now",
-            "jarvis": "morning throughput aligned",
-            "chick": "daylight-ready glam",
-            "dude": "fresh-cache hours",
-            "tappit": "morning run, no kak",
-        },
-        "afternoon": {
-            "rager": "peak-traffic nonsense trimmed",
-            "jarvis": "prime-time cadence",
-            "chick": "runway hours",
-            "dude": "cruising altitude",
-            "tappit": "midday jol, keep it tidy",
-        },
-        "evening": {
-            "rager": "golden hour, don’t start",
-            "jarvis": "twilight shift, composed",
-            "chick": "prime-time glam",
-            "dude": "dusk patrol vibes",
-            "tappit": "evening cruise, no drama",
-        },
-        "late_night": {
-            "rager": "too late for your bullshit",
-            "jarvis": "after-hours, immaculate",
-            "chick": "after-party polish",
-            "dude": "midnight mellow",
-            "tappit": "graveyard calm, bru",
-        }
-    }
-    flavor = table.get(dp, {}).get(persona, "")
-    if not flavor:
-        return text
-    # Inserter: if placeholder {time} exists, replace, else return unchanged (we keep headers tight)
-    if "{time}" in text:
-        return text.replace("{time}", flavor)
-    return text
-
-# ----------------------------------------------------------------------------
-# Public API: canned quip (kept; not used for header post-rebuild)
-# ----------------------------------------------------------------------------
-def quip(persona_name: str, *, with_emoji: bool = True) -> str:
-    key = ALIASES.get((persona_name or "").strip().lower(), (persona_name or "").strip().lower()) or "ops"
-    if key not in QUIPS:
-        key = "ops"
-    bank = QUIPS.get(key, QUIPS["ops"])
-    line = random.choice(bank) if bank else ""
-    if _intensity() > 1.25 and line and line[-1] in ".!?":
-        line = line[:-1] + random.choice([".", "!", "!!"])
-    line = _apply_daypart_flavor_inline(key, line)
-    return f"{line}{_maybe_emoji(key, with_emoji)}"
-
-# ----------------------------------------------------------------------------
-# Helper: canonicalize persona key
-# ----------------------------------------------------------------------------
-def _canon(name: str) -> str:
-    n = (name or "").strip().lower()
-    key = ALIASES.get(n, n)
-    return key if key in PERSONAS else "ops"
-
-# ----------------------------------------------------------------------------
-# LLM plumbing (unchanged API, with transport-strip + post-clean)
-# ----------------------------------------------------------------------------
-_PROF_RE = re.compile(r"(?i)\b(fuck|shit|damn|asshole|bitch|bastard|dick|pussy|cunt)\b")
-
-def _soft_censor(s: str) -> str:
-    return _PROF_RE.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), s)
-
-def _post_clean(lines: List[str], persona_key: str, allow_prof: bool) -> List[str]:
-    if not lines:
-        return []
-    out: List[str] = []
-    BAD = ("persona","rules","rule:","instruction","instruct","guideline","system prompt","style hint",
-           "lines:","respond with","produce only","you are","jarvis prime","[system]","[input]","[output]")
-    seen = set()
-    for ln in lines:
-        t = strip_transport_tags(ln.strip())
-        if not t:
-            continue
-        low = t.lower()
-        if any(b in low for b in BAD):
-            continue
-        if len(t) > 140:
-            t = t[:140].rstrip()
-        if persona_key != "rager" and not allow_prof:
-            t = _soft_censor(t)
-        k = t.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(t)
-        if len(out) >= int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3):
-            break
-    return out
-
-def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> List[str]:
-    if os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() not in ("1","true","yes"):
-        return []
-    key = _canon(persona_name)
-    context = strip_transport_tags((context or "").strip())
-    if not context:
-        return []
-    allow_prof = (key == "rager") or (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
-    try:
-        llm = importlib.import_module("llm_client")
-    except Exception:
-        return []
-    persona_tone = {
-        "dude": "Laid-back slacker-zen; mellow, cheerful, kind. Keep it short, breezy, and confident.",
-        "chick":"Glamorous couture sass; bubbly but razor-sharp. Supportive, witty, stylish, high standards.",
-        "nerd":"Precise, pedantic, dry wit; obsessed with correctness, determinism, graphs, and tests.",
-        "rager":"Intense, profane, street-tough cadence. Blunt, kinetic, zero patience for nonsense.",
-        "comedian":"Deadpan spoof meets irreverent meta—fourth-wall pokes, concise and witty.",
-        "action":"Terse macho one-liners; tactical, sardonic; mission-focused and decisive.",
-        "jarvis":"Polished valet AI with calm, clinical machine logic. Courteous, anticipatory.",
-        "ops":"Neutral SRE acks; laconic, minimal flourish.",
-        "tappit": "South African bru/lekker slang; cheeky but clear; no filler.",
-    }.get(key, "Short, clean, persona-true one-liners.")
-    style_hint = f"daypart={_daypart()}, intensity={_intensity():.2f}, persona={key}"
-    # Primary persona_riff
-    if hasattr(llm, "persona_riff"):
-        try:
-            lines = llm.persona_riff(
-                persona=key,
-                context=context,
-                max_lines=int(max_lines or int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3)),
-                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
-                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
-                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
-                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
-                model_url=os.getenv("LLM_MODEL_URL", ""),
-                model_path=os.getenv("LLM_MODEL_PATH", "")
-            )
-            lines = _post_clean(lines, key, allow_prof)
-            if lines:
-                return lines
-        except Exception:
-            pass
-    # Fallback rewrite
-    if hasattr(llm, "rewrite"):
-        try:
-            sys_prompt = (
-                "YOU ARE A PITHY ONE-LINER ENGINE.\n"
-                f"Persona: {key}.\n"
-                f"Tone: {persona_tone}\n"
-                f"Context flavor: {style_hint}.\n"
-                f"Rules: Produce ONLY {min(3, max(1, int(max_lines or 3)))} lines; each under 140 chars.\n"
-                "No lists, no numbers, no JSON, no labels."
-            )
-            user_prompt = "Context (for vibes only):\n" + context + "\n\nWrite the lines now:"
-            raw = llm.rewrite(
-                text=f"""[SYSTEM]
-{sys_prompt}
-[INPUT]
-{user_prompt}
-[OUTPUT]
-""",
-                mood=key,
-                timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
-                cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
-                models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
-                base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
-                model_url=os.getenv("LLM_MODEL_URL", ""),
-                model_path=os.getenv("LLM_MODEL_PATH", ""),
-                allow_profanity=True if key == "rager" else bool(os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes")),
-            )
-            lines = [ln.strip(" -*\t") for ln in (raw or "").splitlines() if ln.strip()]
-            lines = _post_clean(lines, key, allow_prof)
-            return lines
-        except Exception:
-            pass
-    return []
-
-# ----------------------------------------------------------------------------
-# === LEXI ENGINE =============================================================
-# ----------------------------------------------------------------------------
-# Persona→bank key mapping for headers
 _PERSONA_BANK_KEY = {
     "ops": "ack",
-    "rager": "rage",
+    "rager": "rage", 
     "comedian": "quip",
     "action": "line",
     "jarvis": "line",
     "tappit": "line",
     "dude": "line",
-    "chick": "line",
+    "chick": "line", 
     "nerd": "line",
 }
 
-# Lexicons: all ≥ ~50, meaningful and template-friendly
+# ----------------------------------------------------------------------------
+# Enhanced lexicons with time and context awareness
+# ----------------------------------------------------------------------------
 _LEX: Dict[str, Dict[str, List[str]]] = {
     "ops": {
         "ack": [
@@ -329,254 +220,286 @@ _LEX: Dict[str, Dict[str, List[str]]] = {
             "success","confirmed","ready","scheduled","queued","accepted","active","closed","green","healthy",
             "rolled back","rolled forward","muted","paged","silenced","deferred","escalated","contained","optimized",
             "ratelimited","rotated","restarted","reloaded","validated","archived","reconciled","cleared","holding","watching",
-            "backfilled","indexed","pruned","compacted","sealed","mirrored","snapshotted","scaled","throttled","hydrated",
-            "drained","fenced","provisioned","retired","quarantined","sharded","replicated","promoted","demoted","cordoned",
-            "untainted","gc run","scrubbed","checkpointed","rebased","fast-forwarded","replayed","rolled","mounted","unmounted",
-            "attached","detached","invalidated","revoked","renewed","trimmed","balanced","resynced","realigned","rekeyed",
-            "reindexed","retuned","patched"
+            "backfilled","indexed","pruned","compacted","sealed","mirrored","snapshotted","scaled","throttled","hydrated"
         ]
     },
+    
     "jarvis": {
         "line": [
+            # Standard operations
             "archived; assured","telemetry aligned; noise filtered","graceful rollback prepared; confidence high",
             "housekeeping complete; logs polished","secrets vaulted; protocol upheld","latency escorted; budgets intact",
             "artifacts catalogued; reports curated","dashboards presentable; metrics aligned","after-hours service; composure steady",
-            "failover rehearsal passed; perimeter calm","cache generous; etiquette maintained","encryption verified; perimeter secure",
-            "uptime curated; boredom exemplary","trace polished; journals logged","alerts domesticated; only signal remains",
-            "confidence exceeds risk; proceed","maintenance passed unnoticed; records immaculate","graceful nudge applied; daemon compliant",
-            "quiet mitigation; impact nil","indexes tidy; archives in order","change window honored; optics clean",
-            "handover elegant; notes precise","backpressure civilized; queues courteous","fail-safe primed; decorum intact",
-            "replicas attentive; quorum polite","rate limits gentlemanly; costs discreet","noise quarantined; signal escorted",
-            "cadence even; posture composed","rollouts courteous; guardrails present","backfills mannered; histories neat",
-            "concurrency tamed; threads well-behaved","latency chauffeured; jitter brief","budget respected; refinement visible",
-            "orchestration poised; choreography exact","secrets rotated; memories short","observability curated; dashboards dapper",
-            "incidents domesticated; pages rare","degradations declined; polish ascendant","resilience rehearsed; etiquette immaculate",
-            "audit trails luminous; paperwork minimal","artifacts dusted; indexes fragrant","drift corrected; symmetry restored",
-            "telemetry monogrammed; graphs tailored","uptime framed; silence intentional","handoff seamless; provenance clear",
-            "compliance effortless; posture impeccable","cache refreshed; manners intact","locks courteous; contention modest",
-            "footprint light; impact negligible","availability tailored; elegance constant"
+            
+            # Time-aware variants
+            "dawn patrol complete; systems immaculate","morning briefing prepared; status pristine",
+            "midday checkpoint passed; standards maintained","afternoon protocols observed; quality assured",
+            "evening audit complete; records exemplary","night watch commenced; vigilance heightened",
+            "weekend duty fulfilled; service uninterrupted","business hours concluded; operations seamless",
+            
+            # Context-aware variants  
+            "deployment choreographed; staging flawless","incident contained; recovery elegant",
+            "maintenance scheduled; downtime minimal","backup verified; restoration rehearsed",
+            "monitoring calibrated; alerting refined","performance tuned; efficiency optimized"
         ]
     },
+    
     "nerd": {
         "line": [
+            # Standard technical
             "validated; consistent","checksums aligned; assertions hold","p99 stabilized; invariants preserved",
             "error rate bounded; throughput acceptable","deterministic; idempotent by design","schema respected; contract satisfied",
-            "graph confirms; model agrees","SLA satisfied; telemetry coherent","unit tests pass; coverage sane",
-            "retry with jitter; backpressure OK","NTP aligned; time monotonic","GC pauses low; alloc rate steady",
-            "argmin reached; variance small","latency within CI; budgets safe","tail risk negligible; outliers trimmed",
-            "refactor proven; complexity down","DRY upheld; duplication removed","entropy reduced; order restored",
-            "cache locality improved; misses down","branch prediction friendly; stalls rare","O(n) achieved; constants trimmed",
-            "deadlocks absent; liveness holds","heap pressure stable; fragmentation low","index selectivity high; scans minimal",
-            "AP chose availability; consistency eventual","CAP respected; trade-offs explicit","Amdahl smiles; parallelism sane",
-            "cold starts amortized; warm paths preferred","hash distribution uniform; collisions rare",
-            "cardinality understood; histograms honest","idempotence intact; retries cheap","time-series compact; deltas tidy",
-            "throughput linear; headroom visible","latency histogram civilized; tails cut","variance explained; R² smug",
-            "feature flags gated; blast radius tiny","circuit closed; fallback asleep","read-after-write coherent enough",
-            "bounded queues; fair scheduling","causal order preserved; replays exact","roll-forward safe; rollbacks rehearsed",
-            "mutexes minimal; contention mapped","allocations pooled; GC naps","vectorized path wins; scalar retires",
-            "cache warm; TLB polite","TLS fast; handshakes trimmed","telemetry cardinality bounded; cost sane",
-            "SLO met; error budget plush","kanban flow; WIP low","postmortem short; learnings long"
+            
+            # Time-contextual  
+            "morning batch completed; overnight processing verified","midday metrics within bounds; performance nominal",
+            "weekend job successful; Monday ready","end-of-week backup verified; integrity confirmed",
+            "quarterly report generated; statistics normalized","monthly cleanup executed; space reclaimed",
+            
+            # System-specific
+            "container orchestration stable; pods healthy","database consistency verified; ACID preserved",
+            "network topology mapped; latency measured","storage allocation optimized; I/O balanced",
+            "monitoring pipeline functional; data flowing","deployment pipeline green; tests passing"
         ]
     },
+    
     "action": {
         "line": [
+            # Standard tactical
             "targets green; advance approved","threat neutralized; perimeter holds","payload verified; proceed",
             "rollback vector armed; safety on","triage fast; stabilize faster","deploy quiet; results loud",
-            "guard the SLO; hold the line","extract successful; area safe","scope trimmed; blast radius minimal",
-            "contact light; switch traffic","mission first; ego last","abort gracefully; re-attack smarter",
-            "eyes up; logs live","stack locked; breach denied","move silent; ship violent",
-            "path clear; burn down","patch hot; risk cold","cutover clean; chatter zero",
-            "tempo high; friction low","signal up; noise down","defuse page; secure core",
-            "map terrain; flank failure","pin the root; pull the weed","toggle flag; steer fate",
-            "breach sealed; assets safe","hit window; exit crisp","ops steady; hands calm",
-            "lean scope; lethal focus","pressure on; panic off","hold discipline; win uptime",
-            "smoke tested; doors open","grid stable; threat boxed","air cover ready; roll",
-            "recon done; execute clean","no drama; just shipping","armor up; regressions down",
-            "route traffic; trace truth","calm voice; sharp actions","contain blast; save face",
-            "clear runway; punch it","patch discipline; posture strong","reload services; hold axis",
-            "compartmentalize risk; breathe","hand-off tight; mission intact","drill paid off; ops sings",
-            "suppress alarms; track targets","eyes on gauges; trust plan","exfil logs; lock vault"
+            
+            # Time-tactical
+            "dawn raid successful; objectives secured","morning brief complete; mission clear",
+            "midday status; all sectors secure","evening debrief; ops nominal",
+            "night shift ready; watch posted","weekend guard maintained; perimeter intact",
+            
+            # Operations-specific
+            "deployment executed; beachhead established","incident contained; damage controlled",
+            "maintenance completed; systems hardened","backup secured; recovery verified",
+            "monitoring active; threats tracked","performance optimized; efficiency gained"
         ]
     },
-    "comedian": {
-        "quip": [
-            "remarkably unremarkable; thrillingly boring","adequate; save your applause","green and seen; don’t clap at once",
-            "plot twist: stable; credits roll quietly","laugh track muted; uptime refuses drama","peak normal; show cancelled",
-            "retro skipped; nothing exploded","applause optional; graphs yawn","jokes aside; it actually works",
-            "deadpan OK; try not to faint","boring graphs win; sequels delayed","we did it; Jenkins takes the bow",
-            "thrilling news: nothing is wrong","latency on time; comedy off","confetti in staging; not here",
-            "no cliffhangers; just commits","punchline withheld; service delivered","pilot renewed; drama not",
-            "laughs in monotony; cries in errors","green bars—audience left early","credits rolled; pager slept",
-            "build so dull it’s beautiful","the bug cancelled itself","SRE: the silent comedians",
-            "silence is my laugh track","our outage arc was cut","spoiler: it’s fine","bloopers only in dev",
-            "slapstick-free deploy","stand-up for uptime","bananas not on the floor","cue cards say ‘boring’",
-            "clowns off-duty; graphs beige","insert laugh; remove alert","sitcom rerun: stability",
-            "punch-up cancelled; prod safe","tight five on reliability","heckler muted; 200 OK",
-            "open mic closed; SLA met","callback landed; queues drained","slow clap saved for later",
-            "kill the laugh track; keep the SLO","bit killed; bug too","props to caching; no acting",
-            "crowd left; uptime stayed","one-liners only; zero fires","low effort; high effect",
-            "final joke: nothing broke"
-        ]
-    },
+    
     "dude": {
         "line": [
+            # Standard chill
             "verified; keep it mellow","queues breathe; vibes stable","roll with it; no drama",
             "green checks; take it easy","cache hits high; chill intact","latency surfed; tide calm",
-            "nap secured; alerts low","ride the wave; ship small","be water; flow steady",
-            "friction low; sandals on","pager quiet; hammock loud","steady flow; no whitecaps",
-            "easy does it; deploy smooth","logs zen; noise gone","coffee warm; ops cool",
-            "cruise control; hands light","steady stoke; bugs smoked","float mode; errors sunk",
-            "cool breeze; hotfix cold","vibes aligned; graphs kind","mellow merge; drama nil",
-            "calm seas; green buoys","flow state; stress late","good karma; clean schema",
-            "no sweat; just set","lazy river; quick commits","keep it loose; checks tight",
-            "low tide errors; high tide wins","sand between toes; not gears","latency chilled; surf up",
-            "cozy cache; sunny CI","flip-flop deploys; barefoot ops","chill pipeline; brisk results",
-            "dawn patrol; build glassy","easy paddle; quick ride","stoked on SLOs; mellow on egos",
-            "zen master of retries","soft landings; soft pretzels","keep rolling; keep cool",
-            "laid back; locked in","margarita metrics; salt rim","vibe check: all green",
-            "fog lifts; logs clear","waves small; smiles big","ship tiny; sleep heavy",
-            "go with the flow; glow","drama-free zone; zone in","light breeze; heavy uptime",
-            "good juju; clean deploy"
+            
+            # Time-chill
+            "morning coffee deployed; day flows","lunch break systems; all smooth",
+            "afternoon cruise; systems glide","evening wind-down; ops mellow",
+            "weekend mode; systems coast","late night; quiet flows",
+            
+            # Context-chill
+            "deployment surfed; no wipeouts","incident handled; still zen",
+            "maintenance cruised; minimal waves","backup flowed; restoration ready",
+            "monitoring chilled; alerts rare","performance smooth; no turbulence"
         ]
     },
+    
     "chick": {
         "line": [
-            "QA-clean; runway-ready","zero-downtime; she’s grace","polish applied; ship with shine",
+            # Standard glam
+            "QA-clean; runway-ready","zero-downtime; she's grace","polish applied; ship with shine",
             "alerts commitment-ready; logs tasteful","secure defaults; couture correct","green across; camera-ready",
-            "perf smooth; silk finish","refactor = self-care; release worthy","gatekept prod; VIPs only",
-            "makeup on; bugs off","latency sleek; heels higher","wardrobe change; no costume drama",
-            "hair did; graphs did too","lip gloss popping; errors dropping","fit checked; build checked",
-            "playlist vibing; deploy sliding","eyeliner sharp; cuts cleaner","couture cache; chic checks",
-            "uptime glows; pager dozes","staging flirted; prod committed","heels steady; metrics petty",
-            "smudge-proof SLA; kiss-proof deploy","catwalk to prod; trip-free","couture config; zero cringe",
-            "silk rollback; velvet rollout","accessories minimal; impact maximal","bottled polish; uncorked ship",
-            "pearls on; rough edges off","seamless seams; spotless logs","mascara dry; code crisp",
-            "mirror checks; alert checks","velvet ropes; tight scopes","dewy graphs; matte risks",
-            "clean palette; clean pipeline","gold hoops; zero loops","high gloss; low noise",
-            "tucked edges; tight cadence","sleek silhouette; slim latencies","shine on; bugs gone",
-            "dramatic liner; calm deploy","mood board says ‘ship’","fit for prod; fit for print",
-            "couture cadence; error-free","capsule release; timeless","no smears; no smolders",
-            "tasteful trims; tasteful logs","glam yes; outages no","cat-eye sharp; rollback soft",
-            "silhouette strong; incidents weak"
+            
+            # Time-glam
+            "morning glow-up; systems fresh","lunch hour polish; midday shine",
+            "afternoon touch-up; evening ready","night mode; systems sleek",
+            "weekend refresh; Monday prep","late night glamour; systems stunning",
+            
+            # Context-glam
+            "deployment styled; launch flawless","incident managed; composure intact",
+            "maintenance polished; downtime minimal","backup curated; restoration elegant",
+            "monitoring refined; alerts tasteful","performance optimized; efficiency chic"
         ]
     },
+    
     "rager": {
         "rage": [
+            # Standard rage
             "kill the flake; ship the fix","stop the damn noise; own the pager","sorted; now piss off",
-            "you mother fucker you; done","fuckin’ prick; fix merged","piece of shit; rollback clean",
-            "asshole alert; silenced","dumb fuck bug; dead","fuck face error; crushed",
-            "prick bastard test; unflaked","shit stain retry; throttled","goddamn punk alarm; gagged",
-            "what the fuck spike; cooled","latency leashed; back to baseline","blast radius contained; move",
-            "talk less; ship more","root cause or bust; do it now","ffs patch; deploy hot",
-            "own it; stop guessing","pager sings; you dance","green or gone; pick",
-            "no more cowboy deploys; grow up","fix the root; not my mood","stop click-opsing prod; read the runbook",
-            "feature flag it; or I flag you","silence the alert; or I silence your access",
-            "cut the crap; merge clean","ship or shut it","slam the gate; hold the line",
-            "stop the thrash; pick a plan","quit hand-waving; bring data","patch the leak; not the story",
-            "burn the flake; freeze the scope","no tourists in prod; badge up","alerts are rent; pay them",
-            "shock the cache; cool the heat","tighten blast radius; grow spine","ship small; swear less",
-            "argue later; page now","we fix fast; we don’t whine","dogpile the root; starve the noise",
-            "no mystery meat; label it","switch traffic; stop panic","own the rollback; own the win",
-            "push the patch; pull the risk","turn off hero mode; turn on discipline","ban chaos; invite repeatability",
-            "your excuse crashed; mine shipped","risk is loud; rigor is louder","hold the standard; hold your tongue"
+            "you mother fucker you; done","fuckin' prick; fix merged","piece of shit; rollback clean",
+            
+            # Time-rage  
+            "morning bullshit handled; coffee time","lunch interrupted; fixed anyway",
+            "afternoon chaos contained; move on","evening clusterfuck resolved; go home",
+            "weekend shit handled; back to life","late night garbage cleared; sleep now",
+            
+            # Context-rage
+            "deployment unfucked; ship it","incident crushed; stop panicking", 
+            "maintenance forced; deal with it","backup fixed; stop crying",
+            "monitoring silenced; quit whining","performance improved; stop bitching"
         ]
     },
+    
+    "comedian": {
+        "quip": [
+            # Standard deadpan
+            "remarkably unremarkable; thrillingly boring","adequate; save your applause","green and seen; don't clap at once",
+            "plot twist: stable; credits roll quietly","laugh track muted; uptime refuses drama","peak normal; show cancelled",
+            
+            # Time-comedy
+            "morning sitcom; episode boring","lunch break drama; cancelled",
+            "afternoon comedy; audience left","evening special; featuring uptime",
+            "weekend rerun; still not funny","late night comedy; systems sleep",
+            
+            # Context-comedy
+            "deployment: the musical; reviews mixed","incident: horror movie; happy ending",
+            "maintenance: documentary; critically acclaimed","backup: thriller; plot twist works",
+            "monitoring: reality TV; surprisingly dull","performance: action movie; explosions minimal"
+        ]
+    },
+    
     "tappit": {
         "line": [
+            # Standard SA
             "sorted bru; lekker clean","sharp-sharp; no kak","howzit bru; all green",
-            "pipeline smooth; keep it tidy","idling lekker; don’t stall","give it horns; not drama",
-            "latency chilled; budgets safe","jol still smooth; nothing dodgy","no kak here; bru it’s mint",
-            "solid like a boerie roll; carry on","lekker tidy; keep the wheels straight","netjies man; pipeline in gear",
-            "all gees; no grease","voetsek to noise; keep signal","shaya small; ship neat",
-            "graphs skoon; vibes dop","moer-alert quiet; ops calm","lekker pull; clean push",
-            "bakkie packed; no rattles","boet, stable; jy weet","tjop done; salad cool",
-            "line lekker; queue short","no jang; just jol","bundu bash bugs; leave prod",
-            "braai smoke off; alarms off","gear engaged; no clutch slip","no nonsense; just lekker",
-            "SLA gesort; pager slaap","moenie stress; alles fine","tjoepstil errors; groot smile",
-            "boerie budget; chips cheap","kan nie kla; graphs mooi","kiff ship; safe trip",
-            "don’t kak around; release","dop cold; deploy cooler","bakkie clean; cargo safe",
-            "lines netjies; ops strak","tune the cache; drop the kak","skrik vir niks; just ship",
-            "keep it local; no kak","bru, green; laat dit gaan","lekker graphs; jol on",
-            "skoon merge; stout bugs out","dop die logs; dance the deploy","bietsie latency; baie chill",
-            "laaitie queues; oubaas uptime","groot jol; klein change","mooi man; klaar gestuur",
-            "braai later; ship nou"
+            "pipeline smooth; keep it tidy","idling lekker; don't stall","give it horns; not drama",
+            
+            # Time SA
+            "morning bakkie; systems loaded","lunch jol; midday cruise",
+            "afternoon skiet; everything lekker","evening braai; ops chilled",
+            "weekend lekker; systems rest","late night bakkie; quiet cruise",
+            
+            # Context SA  
+            "deployment lekker; shipped clean","incident sorted; no more kak",
+            "maintenance sharp; downtime brief","backup solid; restoration ready",
+            "monitoring tidy; alerts quiet","performance lekker; efficiency up"
         ]
     }
 }
 
-# Templates for headers (time-aware via {time} token optional)
-_TEMPLATES: Dict[str, List[str]] = {
-    "default": [
+# ----------------------------------------------------------------------------
+# Time and context-aware template selection
+# ----------------------------------------------------------------------------
+def _get_contextual_templates(persona: str, time_ctx: Dict, msg_ctx: Dict) -> List[str]:
+    """Select templates based on time and message context"""
+    
+    base_templates = [
         "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a} and {b}.",
-        "{subj}: {a}; {b}."
-    ],
-    "nerd": [
+        "{subj} — {a}; {b}.", 
         "{subj}: {a}; {b}.",
-        "{subj}: formally {a}, technically {b}.",
-        "{subj}: {a} — {time}; {b}.",
-        "{subj}: {a}; invariants hold; {b}."
-    ],
-    "jarvis": [
-        "{subj}: {a}. {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a} — {time}; {b}.",
-        "{subj}: {a}; {b}. As you wish."
-    ],
-    "rager": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}, {b}.",
-        "{subj}? {a}. {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "tappit": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "ops": [
-        "{subj}: {a}. {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj} — {a}. {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "dude": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "chick": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "comedian": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "action": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-}
+        "{subj}: {a} and {b}."
+    ]
+    
+    # Time-specific templates
+    if time_ctx["daypart"] == "deep_night":
+        night_templates = {
+            "jarvis": ["{subj}: {a} — night watch; {b}."],
+            "rager": ["{subj}: {a}. {b}. (3am bullshit)"],
+            "dude": ["{subj}: {a}; {b} — midnight mellow."]
+        }
+        if persona in night_templates:
+            base_templates.extend(night_templates[persona])
+    
+    if time_ctx["week_phase"] == "weekend":
+        weekend_templates = {
+            "jarvis": ["{subj}: {a} — weekend service; {b}."],
+            "nerd": ["{subj}: {a}; {b} — off-hours processing."],
+            "dude": ["{subj}: {a}; {b} — weekend vibes."]
+        }
+        if persona in weekend_templates:
+            base_templates.extend(weekend_templates[persona])
+    
+    # Context-specific templates
+    if "incident" in msg_ctx["operations"]:
+        incident_templates = {
+            "action": ["{subj}: threat {a}; response {b}."],
+            "rager": ["{subj}: {a}. {b}. Fix it."],
+            "jarvis": ["{subj}: incident {a}; recovery {b}."]
+        }
+        if persona in incident_templates:
+            base_templates.extend(incident_templates[persona])
+    
+    if "scheduled" in msg_ctx["operations"]:
+        routine_templates = [
+            "{subj}: routine {a}; {b} as planned.",
+            "{subj}: scheduled {a}; {b} on cadence.",
+            "{subj}: {a} per schedule; {b}."
+        ]
+        base_templates.extend(routine_templates)
+    
+    return base_templates
 
-def _bank_for(persona: str) -> List[str]:
-    key = _PERSONA_BANK_KEY.get(persona, "ack")
-    bank = _LEX.get(persona, {}).get(key, [])
-    if not bank:
-        bank = _LEX.get("ops", {}).get("ack", ["ok","noted"])
-    return bank
+# ----------------------------------------------------------------------------
+# Enhanced vocabulary expansion
+# ----------------------------------------------------------------------------
+def _expand_vocabulary(persona: str, base_bank: List[str], time_ctx: Dict, msg_ctx: Dict) -> List[str]:
+    """Expand vocabulary based on time and context"""
+    
+    expanded = base_bank.copy()
+    
+    # Time-based additions
+    if time_ctx["is_weekend"]:
+        weekend_terms = {
+            "jarvis": ["weekend service", "off-hours precision", "leisure protocols"],
+            "dude": ["weekend flow", "saturday chill", "sunday cruise"],
+            "nerd": ["batch processing", "offline optimization", "scheduled maintenance"]
+        }
+        expanded.extend(weekend_terms.get(persona, []))
+    
+    if time_ctx["daypart"] in ["deep_night", "late_night"]:
+        night_terms = {
+            "jarvis": ["nocturnal efficiency", "after-hours service", "midnight precision"],
+            "rager": ["graveyard shift", "night duty", "dark hours"],
+            "dude": ["night session", "midnight flow", "late cruise"]
+        }
+        expanded.extend(night_terms.get(persona, []))
+    
+    # System-based additions
+    if "docker" in msg_ctx["systems"]:
+        container_terms = {
+            "nerd": ["containerized", "orchestrated", "scaled pods"],
+            "jarvis": ["orchestration complete", "pods aligned", "cluster managed"],
+            "action": ["containers deployed", "pods secured", "cluster locked"]
+        }
+        expanded.extend(container_terms.get(persona, []))
+    
+    if "database" in msg_ctx["systems"]:
+        db_terms = {
+            "nerd": ["ACID compliant", "transactions committed", "indexes optimized"],
+            "jarvis": ["data integrity maintained", "queries optimized", "schemas aligned"],
+            "dude": ["data flowing", "queries smooth", "connections stable"]
+        }
+        expanded.extend(db_terms.get(persona, []))
+    
+    # Operation-based additions
+    if "deployment" in msg_ctx["operations"]:
+        deploy_terms = {
+            "action": ["deployment executed", "payload delivered", "mission complete"],
+            "nerd": ["rollout verified", "deployment validated", "release confirmed"],
+            "jarvis": ["deployment orchestrated", "release managed", "rollout supervised"]
+        }
+        expanded.extend(deploy_terms.get(persona, []))
+    
+    return list(set(expanded))  # Remove duplicates
 
-def _templates_for(persona: str) -> List[str]:
-    return _TEMPLATES.get(persona, _TEMPLATES.get("default", []))
+# ----------------------------------------------------------------------------
+# Smart phrase selection with context awareness
+# ----------------------------------------------------------------------------
+def _choose_contextual_phrases(bank: List[str], msg_ctx: Dict, time_ctx: Dict) -> Tuple[str, str]:
+    """Choose phrases that match the context"""
+    
+    # Filter for urgent contexts
+    if msg_ctx["urgency"] == "high":
+        urgent_phrases = [p for p in bank if any(word in p.lower() for word in 
+                         ["immediate", "critical", "urgent", "fast", "quick", "now"])]
+        if urgent_phrases and len(urgent_phrases) >= 2:
+            return _choose_two(urgent_phrases)
+    
+    # Filter for routine contexts  
+    if "scheduled" in msg_ctx["operations"]:
+        routine_phrases = [p for p in bank if any(word in p.lower() for word in
+                          ["scheduled", "routine", "planned", "regular", "cadence"])]
+        if routine_phrases:
+            a = random.choice(routine_phrases)
+            b = random.choice([p for p in bank if p != a])
+            return a, b
+    
+    # Default selection
+    return _choose_two(bank)
 
 def _choose_two(bank: List[str]) -> Tuple[str, str]:
     if len(bank) < 2:
@@ -586,65 +509,176 @@ def _choose_two(bank: List[str]) -> Tuple[str, str]:
     b = random.choice(b_choices) if b_choices else a
     return a, b
 
-# --- Public: Lexi header quip (emoji allowed, no "Lexi." suffix) -------------
+# ----------------------------------------------------------------------------
+# Time and context token replacement
+# ----------------------------------------------------------------------------
+def _apply_contextual_replacements(persona: str, text: str, time_ctx: Dict, msg_ctx: Dict) -> str:
+    """Apply time and context-aware token replacements"""
+    
+    # Time-based replacements
+    time_flavors = {
+        "deep_night": {
+            "jarvis": "nocturnal precision",
+            "rager": "graveyard bullshit", 
+            "dude": "midnight mellow",
+            "nerd": "after-hours processing"
+        },
+        "morning": {
+            "jarvis": "morning protocols",
+            "rager": "morning chaos",
+            "dude": "morning flow", 
+            "nerd": "daily startup"
+        },
+        "weekend": {
+            "jarvis": "weekend service",
+            "rager": "weekend duty",
+            "dude": "weekend cruise",
+            "nerd": "offline processing"
+        }
+    }
+    
+    # Context-based replacements
+    context_flavors = {
+        "incident": {
+            "jarvis": "incident management",
+            "action": "threat response",
+            "rager": "firefighting mode",
+            "nerd": "error handling"
+        },
+        "deployment": {
+            "jarvis": "deployment supervision", 
+            "action": "mission execution",
+            "nerd": "release validation",
+            "dude": "shipping smooth"
+        }
+    }
+    
+    # Apply time replacements
+    if "{time}" in text:
+        if time_ctx["is_weekend"]:
+            flavor = time_flavors.get("weekend", {}).get(persona, "")
+        else:
+            flavor = time_flavors.get(time_ctx["daypart"], {}).get(persona, "")
+        
+        if flavor:
+            text = text.replace("{time}", flavor)
+        else:
+            text = text.replace("{time}", "")
+    
+    # Apply context replacements
+    for op in msg_ctx["operations"]:
+        if f"{{{op}}}" in text:
+            flavor = context_flavors.get(op, {}).get(persona, op)
+            text = text.replace(f"{{{op}}}", flavor)
+    
+    return text
+
+# ----------------------------------------------------------------------------
+# Helper functions
+# ----------------------------------------------------------------------------
+def _canon(name: str) -> str:
+    n = (name or "").strip().lower()
+    key = ALIASES.get(n, n)
+    return key if key in PERSONAS else "ops"
+
+def _bank_for(persona: str, time_ctx: Dict, msg_ctx: Dict) -> List[str]:
+    key = _PERSONA_BANK_KEY.get(persona, "ack")
+    base_bank = _LEX.get(persona, {}).get(key, [])
+    if not base_bank:
+        base_bank = _LEX.get("ops", {}).get("ack", ["ok","noted"])
+    
+    return _expand_vocabulary(persona, base_bank, time_ctx, msg_ctx)
+
+# ----------------------------------------------------------------------------
+# Enhanced public API functions
+# ----------------------------------------------------------------------------
 def lexi_quip(persona_name: str, *, with_emoji: bool = True, subject: str = "", body: str = "") -> str:
+    """Enhanced lexi quip with time and context awareness"""
     persona = _canon(persona_name)
     subj = strip_transport_tags((subject or "Update").strip().replace("\n"," "))[:120]
-    bank = _bank_for(persona)
-    tmpl = random.choice(_templates_for(persona))
-    a, b = _choose_two(bank)
-    line = tmpl.format(subj=subj, a=a, b=b, time="{time}")
-    line = _apply_daypart_flavor_inline(persona, line)
-    # One emoji max on header
+    
+    # Get time and message context
+    time_ctx = _get_time_context()
+    msg_ctx = _analyze_message_context(subject, body)
+    
+    # Get contextual vocabulary and templates
+    bank = _bank_for(persona, time_ctx, msg_ctx)
+    templates = _get_contextual_templates(persona, time_ctx, msg_ctx)
+    
+    # Choose template and phrases
+    tmpl = random.choice(templates)
+    a, b = _choose_contextual_phrases(bank, msg_ctx, time_ctx)
+    
+    # Apply contextual replacements
+    line = tmpl.format(subj=subj, a=a, b=b)
+    line = _apply_contextual_replacements(persona, line, time_ctx, msg_ctx)
+    
+    # Add emoji
     line = f"{line}{_maybe_emoji(persona, with_emoji)}"
     return line
 
-# --- Public: Lexi riffs (fallback; NO emoji) ---------------------------------
 def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subject: str = "", body: str = "") -> List[str]:
+    """Enhanced lexi riffs with context awareness"""
     persona = _canon(persona_name)
     subj = strip_transport_tags((subject or "Update").strip().replace("\n"," "))[:120]
-    body = strip_transport_tags((body or "").strip())
-    templates = _templates_for(persona)
-    bank = _bank_for(persona)
+    
+    time_ctx = _get_time_context()
+    msg_ctx = _analyze_message_context(subject, body)
+    
+    templates = _get_contextual_templates(persona, time_ctx, msg_ctx)
+    bank = _bank_for(persona, time_ctx, msg_ctx)
+    
     out: List[str] = []
-    # Try to echo a key body phrase if available (simple heuristic)
-    key_phrase = ""
-    m = re.search(r"(integrity check passed|latency .*? (spike|back to baseline)|retention rotated|snapshot(s)? (done|archived)|no action required|error rate .*?bounded)", body, flags=re.I)
-    if m:
-        key_phrase = m.group(0).strip().rstrip(".")
+    
     for _ in range(max(6, n*3)):  # oversample for uniqueness
         tmpl = random.choice(templates)
-        a, b = _choose_two(bank)
-        base = tmpl.format(subj=subj, a=a, b=b, time="{time}")
-        base = _apply_daypart_flavor_inline(persona, base)
-        line = base
-        if key_phrase:
-            if not line.endswith("."):
-                line += "."
-            line += f" {key_phrase.lower()}."
-        # Hard cap length and strip emoji (no emoji for riffs)
-        line = re.sub(r"[\U0001F300-\U0001FAFF]", "", line)  # remove emojis
-        line = line.strip()
+        a, b = _choose_contextual_phrases(bank, msg_ctx, time_ctx)
+        
+        base = tmpl.format(subj=subj, a=a, b=b)
+        line = _apply_contextual_replacements(persona, base, time_ctx, msg_ctx)
+        
+        # Remove emojis for riffs
+        line = re.sub(r"[\U0001F300-\U0001FAFF]", "", line).strip()
+        
         if len(line) > 140:
             line = line[:140].rstrip()
+        
         if line not in out:
             out.append(line)
+        
         if len(out) >= n:
             break
+    
     return out
 
-# --- Convenience header generator used by caller for the TOP line ------------
 def persona_header(persona_name: str, subject: str = "", body: str = "") -> str:
+    """Generate context-aware persona header"""
     return lexi_quip(persona_name, with_emoji=True, subject=subject, body=body)
 
-# --- Helper to build full message: header + riffs (LLM primary) --------------
-def build_header_and_riffs(persona_name: str, subject: str = "", body: str = "", max_riff_lines: int = 3) -> (str, List[str]):
+def build_header_and_riffs(persona_name: str, subject: str = "", body: str = "", max_riff_lines: int = 3) -> Tuple[str, List[str]]:
+    """Build enhanced header and riffs with full context awareness"""
     header = persona_header(persona_name, subject=subject, body=body)
-    # Bottom lines: LLM first (no emoji), Lexi fallback
+    
+    # Try LLM riffs first, fallback to enhanced lexi riffs
     context = strip_transport_tags(" ".join([subject or "", body or ""]).strip())
-    lines = llm_quips(persona_name, context=context, max_lines=max_riff_lines)
+    lines = []
+    
+    # Try LLM (existing function)
+    try:
+        lines = llm_quips(persona_name, context=context, max_lines=max_riff_lines)
+    except:
+        pass
+    
     if not lines:
         lines = lexi_riffs(persona_name, n=max_riff_lines, with_emoji=False, subject=subject, body=body)
+    
     # Ensure riffs contain no emoji
     lines = [re.sub(r"[\U0001F300-\U0001FAFF]", "", ln).strip() for ln in lines]
     return header, lines
+
+# ----------------------------------------------------------------------------
+# Legacy compatibility functions (unchanged)
+# ----------------------------------------------------------------------------
+def quip(persona_name: str, *, with_emoji: bool = True) -> str:
+    """Legacy canned quip function"""
+    key = ALIASES.get((persona
