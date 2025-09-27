@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/rag.py  (Enhanced with Weather + General Knowledge)
+# /app/rag.py  (Enhanced with Weather + General Knowledge - FIXED ENTERTAINMENT SCORING)
 #
 # - Home Assistant: Every 5 minutes + startup (states + areas)
 # - Weather: Every hour + startup (OpenWeatherMap free tier)
@@ -962,7 +962,7 @@ def load_cached() -> List[Dict[str,Any]]:
     """Legacy function - loads HA cache only for backward compatibility"""
     return load_ha_cached()
 
-# ----------------- Enhanced Context Injection -----------------
+# ----------------- Enhanced Context Injection - FIXED ENTERTAINMENT SCORING -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     """Determine intent categories from query tokens"""
@@ -998,37 +998,49 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     return out
 
 def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
-    """Enhanced context injection from all sources"""
+    """Enhanced context injection from all sources - FIXED FOR ENTERTAINMENT QUERIES"""
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
+    
+    # Check if this is primarily an entertainment query
+    is_entertainment_query = bool(q & {"movie", "film", "cinema", "tv", "show", "series", "television", "actor", "actress", "star", "celebrity"})
     
     # Get facts from all sources
     all_facts = get_all_facts()
     
+    # FOR ENTERTAINMENT QUERIES: Filter to only entertainment sources first
+    if is_entertainment_query:
+        entertainment_facts = [f for f in all_facts if f.get("source") in ("tmdb", "wikipedia")]
+        if entertainment_facts:
+            # Use only entertainment facts for entertainment queries
+            all_facts = entertainment_facts
+            print(f"[RAG] Entertainment query detected - using {len(entertainment_facts)} entertainment facts only")
+    
     # ---- Domain/keyword overrides ----
     filtered = []
     
-    # Home Assistant specific filters
-    if "light" in q or "lights" in q:
-        filtered += [f for f in all_facts if f.get("domain") == "light"]
-    if "switch" in q or "switches" in q:
-        filtered += [f for f in all_facts if f.get("domain") == "switch" and not f.get("entity_id","").startswith("automation.")]
-    if "motion" in q or "occupancy" in q:
-        filtered += [f for f in all_facts if f.get("domain") == "binary_sensor" and f.get("device_class") == "motion"]
-    if "axpert" in q:
-        filtered += [f for f in all_facts if "axpert" in f.get("entity_id","").lower() or "axpert" in f.get("friendly_name","").lower()]
-    if "sonoff" in q:
-        filtered += [f for f in all_facts if "sonoff" in f.get("entity_id","").lower() or "sonoff" in f.get("friendly_name","").lower()]
-    if "zigbee" in q or "z2m" in q:
-        filtered += [f for f in all_facts if "zigbee" in f.get("entity_id","").lower() or "zigbee" in f.get("friendly_name","").lower()]
-    if "where" in q:
-        filtered += [f for f in all_facts if f.get("domain") in ("person","device_tracker")]
+    # Home Assistant specific filters (only if NOT entertainment query)
+    if not is_entertainment_query:
+        if "light" in q or "lights" in q:
+            filtered += [f for f in all_facts if f.get("domain") == "light"]
+        if "switch" in q or "switches" in q:
+            filtered += [f for f in all_facts if f.get("domain") == "switch" and not f.get("entity_id","").startswith("automation.")]
+        if "motion" in q or "occupancy" in q:
+            filtered += [f for f in all_facts if f.get("domain") == "binary_sensor" and f.get("device_class") == "motion"]
+        if "axpert" in q:
+            filtered += [f for f in all_facts if "axpert" in f.get("entity_id","").lower() or "axpert" in f.get("friendly_name","").lower()]
+        if "sonoff" in q:
+            filtered += [f for f in all_facts if "sonoff" in f.get("entity_id","").lower() or "sonoff" in f.get("friendly_name","").lower()]
+        if "zigbee" in q or "z2m" in q:
+            filtered += [f for f in all_facts if "zigbee" in f.get("entity_id","").lower() or "zigbee" in f.get("friendly_name","").lower()]
+        if "where" in q:
+            filtered += [f for f in all_facts if f.get("domain") in ("person","device_tracker")]
     
     # Weather specific filters
     if q & WEATHER_KEYS:
         filtered += [f for f in all_facts if f.get("source") == "openweather" or "weather" in f.get("cats", [])]
     
-    # Entertainment specific filters
+    # Entertainment specific filters (always apply)
     if q & MEDIA_KEYWORDS:
         filtered += [f for f in all_facts if any(
             m in f.get("entity_id","").lower() or m in f.get("friendly_name","").lower()
@@ -1041,10 +1053,11 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
     if q & {"actor", "actress", "star", "celebrity"}:
         filtered += [f for f in all_facts if "entertainment.actors" in f.get("cats", [])]
     
-    # Area queries
-    for f in all_facts:
-        if f.get("area") and f.get("area","").lower() in q:
-            filtered.append(f)
+    # Area queries (only if NOT entertainment query)
+    if not is_entertainment_query:
+        for f in all_facts:
+            if f.get("area") and f.get("area","").lower() in q:
+                filtered.append(f)
 
     if filtered:
         facts = filtered
@@ -1060,13 +1073,21 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
         cats = set(f.get("cats", []))
         source = f.get("source", "")
 
-        # Source priority scoring
-        if source == "homeassistant":
-            s += 10  # Highest priority for personal HA data
-        elif source == "openweather":
-            s += 5   # Medium priority for weather
-        elif source in ("tmdb", "wikipedia"):
-            s += 2   # Lower priority for general knowledge
+        # FIXED: Entertainment-first scoring
+        if is_entertainment_query:
+            # For entertainment queries, prioritize entertainment sources heavily
+            if source in ("tmdb", "wikipedia"):
+                s += 50  # Massive boost for entertainment sources
+            else:
+                s -= 30  # Penalize non-entertainment sources for entertainment queries
+        else:
+            # Normal source priority scoring for non-entertainment queries
+            if source == "homeassistant":
+                s += 10  # Highest priority for personal HA data
+            elif source == "openweather":
+                s += 5   # Medium priority for weather
+            elif source in ("tmdb", "wikipedia"):
+                s += 2   # Lower priority for general knowledge
 
         # Query matching
         if q and (q & ft): 
@@ -1086,11 +1107,18 @@ def inject_context(user_msg: str, top_k: int = DEFAULT_TOP_K) -> str:
         if (q & WEATHER_KEYS) and source == "openweather":
             s += 10
         
-        # Entertainment query boost
-        if (q & {"movie", "film", "cinema"}) and "entertainment.movies" in cats:
-            s += 8
-        if (q & {"tv", "show", "series"}) and "entertainment.tv" in cats:
-            s += 8
+        # Entertainment query boost (now much stronger)
+        if is_entertainment_query:
+            if (q & {"movie", "film", "cinema"}) and "entertainment.movies" in cats:
+                s += 25
+            if (q & {"tv", "show", "series"}) and "entertainment.tv" in cats:
+                s += 25
+        else:
+            # Normal entertainment boost for non-entertainment queries
+            if (q & {"movie", "film", "cinema"}) and "entertainment.movies" in cats:
+                s += 8
+            if (q & {"tv", "show", "series"}) and "entertainment.tv" in cats:
+                s += 8
 
         # Penalties
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
