@@ -62,6 +62,15 @@ def _chat_offline_summarize(question: str, notes: str, max_new_tokens: int = 320
     except Exception:
         return ""
 
+def _is_entertainment_query(text: str) -> bool:
+    """Check if query is about entertainment topics"""
+    entertainment_keywords = {
+        "movie", "film", "cinema", "actor", "actress", "star", "celebrity", 
+        "tv", "show", "series", "television", "episode", "season"
+    }
+    tokens = set(re.findall(r"[A-Za-z0-9_]+", text.lower()))
+    return bool(tokens & entertainment_keywords)
+
 # ----------------------------
 # Public entry
 # ----------------------------
@@ -76,16 +85,27 @@ def handle_message(source: str, text: str) -> str:
         try:
             from rag import inject_context
             try:
-                rag_block = inject_context(q, top_k=5)
-            except Exception:
+                # FIXED: Check if it's an entertainment query first
+                if _is_entertainment_query(q):
+                    # For entertainment queries, use higher top_k but system will filter to entertainment only
+                    rag_block = inject_context(q, top_k=10)
+                    if DEBUG: print(f"[CHAT] Entertainment query detected, RAG returned {len(rag_block.split()) if rag_block else 0} words")
+                else:
+                    # For non-entertainment queries, use normal top_k
+                    rag_block = inject_context(q, top_k=8)
+                    if DEBUG: print(f"[CHAT] Normal query, RAG returned {len(rag_block.split()) if rag_block else 0} words")
+            except Exception as e:
+                if DEBUG: print(f"[CHAT] RAG failed: {e}")
                 rag_block = ""
-            if rag_block:
+            
+            if rag_block and rag_block.strip():
                 ans = _chat_offline_summarize(q, rag_block, max_new_tokens=256)
                 clean_ans = _clean_text(ans)
                 if clean_ans:
                     if DEBUG: print("RAG_HIT")
                     return clean_ans
-        except Exception:
+        except Exception as e:
+            if DEBUG: print(f"[CHAT] RAG import/call failed: {e}")
             pass
 
         # 2) Cache
