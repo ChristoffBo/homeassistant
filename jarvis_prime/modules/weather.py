@@ -1,6 +1,6 @@
-import json, yaml, requests, random, os, io
+import json, yaml, requests, random, os, io, statistics
 from datetime import datetime, timezone
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 # -----------------------------
 # Load config from /data/options.json (JSON or YAML). Fallback: /data/config.json
@@ -188,9 +188,70 @@ def _blend_vals(vals, mode="median") -> Optional[float]:
     if not nums: return None
     if mode == "max": return max(nums)
     if mode == "min": return min(nums)
+    if mode == "mean": return sum(nums) / len(nums)
     nums.sort()
     n = len(nums); mid = n // 2
     return nums[mid] if n % 2 else (nums[mid-1] + nums[mid]) / 2.0
+
+# -----------------------------
+# NEW: Confidence calculation
+# -----------------------------
+def _calculate_confidence(values: List[Optional[float]], value_type: str = "temperature") -> str:
+    """Calculate confidence based on model agreement.
+    
+    Args:
+        values: List of values from different models
+        value_type: 'temperature' or 'precipitation' for different thresholds
+    """
+    nums = [float(x) for x in values if isinstance(x, (int, float))]
+    if len(nums) < 2:
+        return "Low"  # Only one source available
+    
+    try:
+        std_dev = statistics.stdev(nums)
+        
+        if value_type == "temperature":
+            # Temperature confidence thresholds (°C)
+            if std_dev < 1.5:
+                return "High"    # Models agree within 1.5°C
+            elif std_dev < 3.0:
+                return "Medium"  # Models agree within 3°C
+            else:
+                return "Low"     # Models disagree significantly
+        
+        elif value_type == "precipitation":
+            # Precipitation confidence thresholds (%)
+            if std_dev < 10:
+                return "High"    # Models agree within 10%
+            elif std_dev < 20:
+                return "Medium"  # Models agree within 20%
+            else:
+                return "Low"     # Models disagree significantly
+        
+        else:
+            # Generic confidence for other metrics
+            mean_val = sum(nums) / len(nums)
+            if mean_val == 0:
+                return "High" if std_dev < 0.1 else "Medium"
+            
+            coefficient_of_variation = std_dev / abs(mean_val)
+            if coefficient_of_variation < 0.1:
+                return "High"
+            elif coefficient_of_variation < 0.3:
+                return "Medium"
+            else:
+                return "Low"
+                
+    except (statistics.StatisticsError, ZeroDivisionError):
+        return "Low"
+    
+    return "Medium"  # Fallback
+
+def _blend_with_confidence(vals, mode="median", value_type="temperature") -> Tuple[Optional[float], str]:
+    """Blend values and return both result and confidence."""
+    blended = _blend_vals(vals, mode)
+    confidence = _calculate_confidence(vals, value_type)
+    return blended, confidence
 
 # -----------------------------
 # Icons & commentary
@@ -225,12 +286,12 @@ def _icon_for_code(code, big=False):
     return mapping.get(code, "🌍")
 
 def _commentary(temp_max, code):
-    hot_lines = ["🔥 Scorching hot today — stay hydrated and find some shade!","☀️ Sun’s blazing, don’t forget sunscreen.","🥵 The heat is on — perfect excuse for ice cream.","🌞 Hot day ahead, keep your energy cool.","🔥 Expect high temps, slow down and take it easy."]
-    warm_lines = ["😎 Beautiful warm weather — enjoy it while it lasts.","🌤 Great day to be outdoors.","😊 Pleasant temps — perfect for a walk.","☀️ Warm and cozy, nothing extreme.","🌼 Feels like a proper summer’s day."]
+    hot_lines = ["🔥 Scorching hot today — stay hydrated and find some shade!","☀️ Sun's blazing, don't forget sunscreen.","🥵 The heat is on — perfect excuse for ice cream.","🌞 Hot day ahead, keep your energy cool.","🔥 Expect high temps, slow down and take it easy."]
+    warm_lines = ["😎 Beautiful warm weather — enjoy it while it lasts.","🌤 Great day to be outdoors.","😊 Pleasant temps — perfect for a walk.","☀️ Warm and cozy, nothing extreme.","🌼 Feels like a proper summer's day."]
     mild_lines = ["🙂 A mild day — comfortable all around.","🌤 Not too hot, not too cold — just right.","🍃 Balanced weather, easy on the body.","☁️ Calm and moderate day ahead.","👍 Perfectly tolerable conditions."]
     cold_lines = ["❄️ Brrr — chilly day, layer up!","🥶 Cold weather incoming, wear something thick.","🌬 Wind chill will make it feel colder.","🧥 Jacket weather, no doubt.","🔥 Good day for a hot drink inside."]
-    rain_lines = ["🌧 Showers expected — keep an umbrella handy.","☔ Rain on the way, don’t get caught off guard.","🌦 Cloudbursts could surprise you.","🌧 Wet weather day, roads may be slippery.","⛈ Storm risk — drive safe."]
-    snow_lines = ["❄️ Snow incoming — magical but cold.","☃️ Bundle up, it’s snow time.","🌨 Expect flakes in the air today.","❄️ Slippery conditions possible.","🏔 Winter wonderland vibes."]
+    rain_lines = ["🌧 Showers expected — keep an umbrella handy.","☔ Rain on the way, don't get caught off guard.","🌦 Cloudbursts could surprise you.","🌧 Wet weather day, roads may be slippery.","⛈ Storm risk — drive safe."]
+    snow_lines = ["❄️ Snow incoming — magical but cold.","☃️ Bundle up, it's snow time.","🌨 Expect flakes in the air today.","❄️ Slippery conditions possible.","🏔 Winter wonderland vibes."]
     storm_lines = ["⚡ Thunderstorm risk — stay indoors if possible.","⛈ Lightning expected, unplug sensitive gear.","🌪 Severe weather — caution advised.","💨 Strong winds could cause disruptions.","⛔ Avoid unnecessary travel if storm worsens."]
 
     if code in [61,63,65,80,81,82]:
@@ -490,12 +551,17 @@ def current_weather():
     except Exception:
         tmax_today = None
 
-    # ---- mini-ensemble blending (silent fail) ----
+    # ---- Enhanced ensemble blending with confidence ----
     met = _get_metno_daily(LAT, LON)                         # MET Norway
     gfs = _get_openmeteo_daily_model(LAT, LON, model="gfs")  # Open-Meteo GFS
 
-    blended_tmax = _blend_vals([tmax_today, met.get("tmax"), gfs.get("tmax")], mode="median")
-    blended_pop  = _blend_vals([prob_today, met.get("pop"),  gfs.get("pop")],  mode="max")
+    # Temperature blending (median) with confidence
+    temp_values = [tmax_today, met.get("tmax"), gfs.get("tmax")]
+    blended_tmax, temp_confidence = _blend_with_confidence(temp_values, mode="median", value_type="temperature")
+
+    # Precipitation blending (mean instead of max) with confidence
+    precip_values = [prob_today, met.get("pop"), gfs.get("pop")]
+    blended_pop, precip_confidence = _blend_with_confidence(precip_values, mode="mean", value_type="precipitation")
 
     # Compact Solar label (HIGH/MED/LOW or Night)
     solar_label = _solar_compact_label(rad_today, cloud_today)
@@ -503,11 +569,12 @@ def current_weather():
         solar_label = "⚡ Night"
     lines.append(_kv("⚡ Solar (today)", solar_label[2:]))
 
-    # Chance of rain — use blended if available
+    # Chance of rain — use blended with confidence
     final_pop = blended_pop if isinstance(blended_pop, (int, float)) else prob_today
     if isinstance(final_pop, (int, float)) and final_pop > 0:
         label = "☔ Chance of rain" if final_pop < 60 else "⚠️ High chance of rain"
-        lines.append(_kv(label, f"{int(round(final_pop))}%"))
+        confidence_indicator = f" (confidence: {precip_confidence})" if precip_confidence != "High" else ""
+        lines.append(_kv(label, f"{int(round(final_pop))}%{confidence_indicator}"))
 
     # Hail/severe-storm note (show only if risky codes)
     if code_today in (95,96,99):
@@ -528,10 +595,14 @@ def current_weather():
         _notify_once_daily("heavy_rain", f"🌧 Heavy rain risk — {CITY}",
                            f"High chance of rain today ({int(final_pop)}%). Watch for flooding.")
 
-    # Replace the outlook commentary to use blended tmax if available
+    # Replace the outlook commentary to use blended tmax with confidence
     comment_temp = blended_tmax if isinstance(blended_tmax, (int, float)) else tmax_today
     if comment_temp is not None:
-        lines.append(_kv("Outlook", _commentary(comment_temp, code_today)))
+        temp_conf_indicator = f" (confidence: {temp_confidence})" if temp_confidence != "High" else ""
+        outlook_text = _commentary(comment_temp, code_today)
+        if temp_conf_indicator:
+            outlook_text += temp_conf_indicator
+        lines.append(_kv("Outlook", outlook_text))
 
     return "\n".join(lines), None
 
@@ -565,7 +636,7 @@ def forecast_weather():
     if not times:
         return "⚠️ No forecast data returned", None
 
-    # Today header
+    # Today header with enhanced blending
     tmin0 = tmins[0] if len(tmins) > 0 else "?"
     tmax0 = tmaxs[0] if len(tmaxs) > 0 else "?"
     code0 = codes[0] if len(codes) > 0 else -1
@@ -578,32 +649,56 @@ def forecast_weather():
 
     lines = []
     lines.append(f"{icon0_big} Today — {CITY}")
-    lines.append(_kv("Range", f"{tmin0}°C – {tmax0}°C"))
-    if indoor_c is not None: lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
+    
+    # Enhanced temperature display with confidence for today
     try:
         tmax0_f = float(tmax0)
+        tmin0_f = float(tmin0)
     except Exception:
         tmax0_f = None
+        tmin0_f = None
 
-    # Blend today's commentary temp and rain chance with extra sources
+    # Blend today's data with external sources
     met_today = _get_metno_daily(LAT, LON)
     gfs_today = _get_openmeteo_daily_model(LAT, LON, model="gfs")
-    blended_tmax0 = _blend_vals([tmax0_f, met_today.get("tmax"), gfs_today.get("tmax")], mode="median")
-    blended_prob0 = _blend_vals([prob0,  met_today.get("pop"),  gfs_today.get("pop")],  mode="max")
+    
+    # Temperature blending with confidence
+    temp_values = [tmax0_f, met_today.get("tmax"), gfs_today.get("tmax")]
+    blended_tmax0, temp_confidence = _blend_with_confidence(temp_values, mode="median", value_type="temperature")
+    
+    # Precipitation blending with confidence (using mean instead of max)
+    precip_values = [prob0, met_today.get("pop"), gfs_today.get("pop")]
+    blended_prob0, precip_confidence = _blend_with_confidence(precip_values, mode="mean", value_type="precipitation")
 
-    lines.append(_kv("Outlook", _commentary(blended_tmax0 if blended_tmax0 is not None else tmax0_f, code0)))
+    # Display temperature range with confidence if not high
+    temp_conf_indicator = f" (confidence: {temp_confidence})" if temp_confidence != "High" else ""
+    if tmin0_f is not None and blended_tmax0 is not None:
+        lines.append(_kv("Range", f"{tmin0_f:.0f}°C – {blended_tmax0:.0f}°C{temp_conf_indicator}"))
+    else:
+        lines.append(_kv("Range", f"{tmin0}°C – {tmax0}°C{temp_conf_indicator}"))
+    
+    if indoor_c is not None: 
+        lines.append(_kv("🏠 Indoor", f"{indoor_c:.1f}°C"))
+
+    # Outlook using blended temperature
+    comment_temp = blended_tmax0 if blended_tmax0 is not None else tmax0_f
+    if comment_temp is not None:
+        lines.append(_kv("Outlook", _commentary(comment_temp, code0)))
+
     lines.append(_kv("⚡ Solar", _solar_compact_label(rad0, cloud0)[2:]))
-    if isinstance(blended_prob0, (int, float)) and blended_prob0 > 0:
-        label = "☔ Chance of rain" if blended_prob0 < 60 else "⚠️ High chance of rain"
-        lines.append(_kv(label, f"{int(round(blended_prob0))}%"))
-    elif isinstance(prob0, (int, float)) and prob0 > 0:
-        label = "☔ Chance of rain" if prob0 < 60 else "⚠️ High chance of rain"
-        lines.append(_kv(label, f"{prob0}%"))
+    
+    # Enhanced precipitation display with confidence
+    final_prob0 = blended_prob0 if isinstance(blended_prob0, (int, float)) else prob0
+    if isinstance(final_prob0, (int, float)) and final_prob0 > 0:
+        label = "☔ Chance of rain" if final_prob0 < 60 else "⚠️ High chance of rain"
+        precip_conf_indicator = f" (confidence: {precip_confidence})" if precip_confidence != "High" else ""
+        lines.append(_kv(label, f"{int(round(final_prob0))}%{precip_conf_indicator}"))
+    
     if code0 in (95,96,99):
         lines.append("⚠️ Severe storm risk — hail possible.")
 
     # Optional: also trigger alerts from forecast view (idempotent via cache)
-    heavy_rain0 = isinstance(blended_prob0, (int, float)) and blended_prob0 >= 70
+    heavy_rain0 = isinstance(final_prob0, (int, float)) and final_prob0 >= 70
     thunder0 = code0 in (95, 96, 99)
     hail0 = code0 in (96, 99)
     if thunder0:
@@ -614,7 +709,7 @@ def forecast_weather():
                            "Hail possible today. Move vehicles under cover.")
     elif heavy_rain0:
         _notify_once_daily("heavy_rain", f"🌧 Heavy rain risk — {CITY}",
-                           f"High chance of rain today ({int(blended_prob0)}%). Watch for flooding.")
+                           f"High chance of rain today ({int(final_prob0)}%). Watch for flooding.")
 
     # 7-day list (solar: HIGH/MED/LOW; hide rain% if 0)
     lines.append("")
@@ -630,8 +725,8 @@ def forecast_weather():
         prob = probs[i] if i < len(probs) else None
 
         # For "today" line, keep using blended probability; other days leave as Open-Meteo
-        if i == 0 and isinstance(blended_prob0, (int, float)):
-            prob = blended_prob0
+        if i == 0 and isinstance(final_prob0, (int, float)):
+            prob = final_prob0
 
         solar_str = _solar_compact_label(rad, cloud)[2:]
         rain_str = f" · ☔ {int(round(prob))}%" if isinstance(prob, (int, float)) and prob > 0 else ""
