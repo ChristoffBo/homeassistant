@@ -248,6 +248,7 @@
 
   /* =============== CHAT FUNCTIONALITY =============== */
   let chatHistory = [];
+  let waitingForResponse = false;
 
   function addChatMessage(content, isUser = false) {
     const messagesContainer = $('#chat-messages');
@@ -283,22 +284,19 @@
       
       addChatMessage(text, true);
       input.value = '';
+      waitingForResponse = true;
       
-      // Work directly with your storage system - bypass internal server
-      // This creates the message exactly like Gotify does, triggering your bot's chat routing
-      
+      // Format message exactly like Gotify does to trigger your bot.py chat routing
       try {
-        // Create message directly in storage - this will trigger _process_incoming in bot.py
         const messagePayload = {
-          title: 'chat',  // This triggers the chat routing in your bot.py
-          message: text,  // Using 'message' field like Gotify
-          body: text,     // Also include 'body' for compatibility
+          title: 'chat',           // This triggers _extract_chat_query() in bot.py
+          message: text,           // This is what gets processed by chatbot.py
           source: 'webui-chat',
           priority: 5,
           created_at: Math.floor(Date.now() / 1000)
         };
         
-        console.log('Sending chat message:', messagePayload);
+        console.log('Sending chat message to trigger LLM:', messagePayload);
         
         const response = await fetch(API('api/messages'), {
           method: 'POST',
@@ -309,26 +307,28 @@
         });
         
         if (response.ok) {
-          // Success! The message is now in your system and will be processed by bot.py
+          updateChatStatus('Sent to AI...');
+          toast('Message sent to Jarvis AI', 'success');
+          
+          // Set timeout for response
           setTimeout(() => {
-            addChatMessage('✅ Message sent to Jarvis. AI response will appear in the inbox.', false);
-          }, 500);
-          
-          updateChatStatus('Sent');
-          setTimeout(() => updateChatStatus('Ready'), 2000);
-          
-          toast('Chat message sent successfully', 'success');
+            if (waitingForResponse) {
+              addChatMessage('⏰ Response taking longer than expected. Check the inbox.', false);
+              waitingForResponse = false;
+              updateChatStatus('Ready');
+            }
+          }, 15000); // 15 second timeout
           
         } else {
           const errorText = await response.text().catch(() => 'Unknown error');
-          throw new Error(`Storage API failed: ${response.status} - ${errorText}`);
+          throw new Error(`API failed: ${response.status} - ${errorText}`);
         }
         
-      } catch (storageError) {
-        console.error('Storage method failed:', storageError);
+      } catch (apiError) {
+        console.error('API method failed:', apiError);
+        waitingForResponse = false;
         
-        // Show helpful message with exact Gotify format
-        addChatMessage(`🔧 Web storage unavailable. Use Gotify instead:`, false);
+        addChatMessage(`🔧 API unavailable. Use Gotify instead:`, false);
         addChatMessage(`📱 Send to Gotify: "chat ${text}"`, false);
         
         updateChatStatus('Use Gotify');
@@ -337,12 +337,33 @@
       
     } catch (e) {
       console.error('Chat system error:', e);
+      waitingForResponse = false;
       addChatMessage('❌ Chat system error. Use Gotify with "chat" prefix.', false);
       updateChatStatus('Error');
       toast('Chat system error', 'error');
     } finally {
       sendBtn.classList.remove('loading');
     }
+  }
+
+  // Listen for chat responses in the SSE stream
+  function handleChatResponse(data) {
+    if (!waitingForResponse) return;
+    
+    // Look for responses with title "Chat" (from your bot.py _route_chat_freeform)
+    const title = (data.title || '').toLowerCase();
+    const message = data.message || data.body || '';
+    
+    if (title.includes('chat') && message.trim()) {
+      // This is a chat response from your LLM
+      addChatMessage(message.trim(), false);
+      waitingForResponse = false;
+      updateChatStatus('Ready');
+      toast('Response received from Jarvis', 'success');
+      return true; // Mark as handled
+    }
+    
+    return false; // Not a chat response
   }
 
   $('#chat-send').addEventListener('click', sendChatMessage);
