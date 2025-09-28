@@ -1,34 +1,34 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  --bg-primary: #0a0f16;
-  --bg-secondary: #101720;
-  --bg-tertiary: #151d2a;
-  --surface-primary: #1a2332;
-  --surface-secondary: #202938;
-  --surface-tertiary: #253041;
-  --surface-elevated: #2d3748;
-  --border-primary: #2d3748;
-  --border-secondary: #374151;
-  --border-accent: #4a90e2;
-  --text-primary: #f7fafc;
-  --text-secondary: #cbd5e0;
-  --text-tertiary: #a0aec0;
-  --text-muted: #718096;
-  --accent-blue: #4a90e2;
-  --accent-green: #48bb78;
-  --accent-red: #f56565;
-  --accent-orange: #ed8936;
-  --accent-purple: #9f7aea;
-  --accent-cyan: #38b2ac;
-  --accent-yellow: #ecc94b;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.16);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.20);
-  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.25);
-  --glow-blue: 0 0 20px rgba(74, 144, 226, 0.3);
-  --glow-green: 0 0 20px rgba(72, 187, 120, 0.3);
-  --glow-red: 0 0 20px rgba(245, 101, 101, 0.3);
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #111111;
+  --surface-primary: #151515;
+  --surface-secondary: #1a1a1a;
+  --surface-tertiary: #1f1f1f;
+  --surface-elevated: #242424;
+  --border-primary: #2a2a2a;
+  --border-secondary: #333333;
+  --border-accent: #404040;
+  --text-primary: #ffffff;
+  --text-secondary: #b8b8b8;
+  --text-tertiary: #8a8a8a;
+  --text-muted: #666666;
+  --accent-blue: #3b82f6;
+  --accent-green: #10b981;
+  --accent-red: #ef4444;
+  --accent-orange: #f59e0b;
+  --accent-purple: #8b5cf6;
+  --accent-cyan: #06b6d4;
+  --accent-yellow: #eab308;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.8);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.4);
+  --glow-blue: 0 0 20px rgba(59, 130, 246, 0.2);
+  --glow-green: 0 0 20px rgba(16, 185, 129, 0.2);
+  --glow-red: 0 0 20px rgba(239, 68, 68, 0.2);
 }
 
 * { 
@@ -39,7 +39,7 @@
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+  background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.6;
   font-weight: 400;
@@ -49,7 +49,7 @@ body {
 
 /* =============== HEADER SYSTEM =============== */
 .system-header {
-  background: linear-gradient(135deg, var(--surface-primary) 0%, var(--surface-secondary) 100%);
+  background: var(--surface-primary);
   border-bottom: 1px solid var(--border-primary);
   padding: 16px 24px;
   position: sticky;
@@ -88,7 +88,7 @@ body {
 
 @keyframes pulse-glow {
   0%, 100% { box-shadow: var(--glow-blue); }
-  50% { box-shadow: 0 0 30px rgba(74, 144, 226, 0.5); }
+  50% { box-shadow: 0 0 30px rgba(59, 130, 246, 0.3); }
 }
 
 .brand-text {
@@ -99,7 +99,7 @@ body {
 .brand-title {
   font-size: 20px;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+  background: linear-gradient(135deg, var(--accent-blue), var(--text-primary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -140,15 +140,15 @@ body {
 }
 
 .nav-tab:hover {
-  background: var(--surface-primary);
+  background: var(--surface-secondary);
   color: var(--text-primary);
   transform: translateY(-1px);
 }
 
 .nav-tab.active {
-  background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-  color: white;
-  box-shadow: var(--glow-blue);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-accent);
 }
 
 .system-status {
@@ -162,7 +162,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: var(--surface-tertiary);
+  background: var(--surface-secondary);
   border: 1px solid var(--border-primary);
   border-radius: 20px;
   font-size: 12px;
@@ -259,6 +259,7 @@ body {
 .metric-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg);
+  background: var(--surface-secondary);
 }
 
 .metric-card::before {
@@ -267,8 +268,8 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+  height: 2px;
+  background: var(--border-accent);
 }
 
 .metric-card.green::before { background: var(--accent-green); }
@@ -342,18 +343,20 @@ body {
 }
 
 .btn:hover {
-  background: var(--surface-tertiary);
+  background: var(--surface-elevated);
   transform: translateY(-1px);
   box-shadow: var(--shadow-md);
+  border-color: var(--border-accent);
 }
 
 .btn.primary {
-  background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+  background: var(--accent-blue);
   border-color: var(--accent-blue);
   color: white;
 }
 
 .btn.primary:hover {
+  background: #2563eb;
   box-shadow: var(--glow-blue);
 }
 
@@ -363,10 +366,18 @@ body {
   color: white;
 }
 
+.btn.danger:hover {
+  background: #dc2626;
+}
+
 .btn.success {
   background: var(--accent-green);
   border-color: var(--accent-green);
   color: white;
+}
+
+.btn.success:hover {
+  background: #059669;
 }
 
 .btn:disabled {
@@ -390,7 +401,8 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.2);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background: var(--surface-tertiary);
 }
 
 .form-group {
@@ -459,7 +471,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .data-table tbody tr.selected {
-  background: linear-gradient(135deg, rgba(74, 144, 226, 0.1), rgba(159, 122, 234, 0.1));
+  background: var(--surface-tertiary);
   border-left: 3px solid var(--accent-blue);
 }
 
@@ -581,7 +593,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .chat-message.user .message-content {
-  background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+  background: var(--accent-blue);
   color: white;
   border-bottom-right-radius: 4px;
 }
@@ -625,7 +637,8 @@ input:focus, select:focus, textarea:focus {
 .chat-input:focus {
   outline: none;
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.2);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background: var(--surface-tertiary);
 }
 
 /* =============== WAKE INTERFACE =============== */
@@ -664,7 +677,7 @@ input:focus, select:focus, textarea:focus {
   border: 1px solid var(--border-secondary);
   border-radius: 8px;
   padding: 12px 16px;
-  color: var(--accent-purple);
+  color: var(--accent-blue);
   font-family: 'JetBrains Mono', monospace;
   font-weight: 600;
   white-space: nowrap;
@@ -689,7 +702,7 @@ input:focus, select:focus, textarea:focus {
   margin-bottom: 8px;
   background: var(--surface-primary);
   border-radius: 8px;
-  border-left: 3px solid var(--accent-purple);
+  border-left: 3px solid var(--accent-blue);
 }
 
 .wake-command {
