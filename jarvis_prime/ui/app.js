@@ -284,26 +284,78 @@
       addChatMessage(text, true);
       input.value = '';
       
-      // Send to backend with "chat" prefix as per your bot.py logic
-      const response = await jfetch(API('internal/emit'), {
-        method: 'POST',
-        body: JSON.stringify({ 
-          title: 'chat',  // This triggers the chat routing in bot.py
-          body: text,
-          source: 'webui'
-        })
-      });
+      // Since Gotify works, let's inject directly into the message stream
+      // This simulates how Gotify sends messages to your bot
+      let success = false;
       
-      // For chat, we expect the response to come back via the normal message flow
-      // The bot will process "chat " + text and send a reply
-      updateChatStatus('Sent');
-      setTimeout(() => updateChatStatus('Ready'), 2000);
+      try {
+        // Create a message in the inbox with "chat" title - this triggers your bot's chat routing
+        const messageData = {
+          title: 'chat',
+          body: text,
+          source: 'webui-chat',
+          created_at: Math.floor(Date.now() / 1000),
+          priority: 5
+        };
+        
+        // First try to save directly to storage (mimics Gotify behavior)
+        const response = await fetch(API('api/messages'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(messageData)
+        });
+        
+        if (response.ok) {
+          success = true;
+          // Give immediate feedback
+          setTimeout(() => {
+            addChatMessage('Message sent to Jarvis. Response will appear in the inbox shortly.', false);
+          }, 500);
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+      } catch (e) {
+        console.log('Direct message creation failed:', e.message);
+        
+        // Fallback: try wake endpoint
+        try {
+          const response = await fetch(API('internal/wake'), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text: 'chat ' + text })
+          });
+          
+          if (response.ok) {
+            success = true;
+            setTimeout(() => {
+              addChatMessage('Message sent via wake endpoint.', false);
+            }, 500);
+          } else {
+            throw new Error(`Wake endpoint failed: ${response.status}`);
+          }
+          
+        } catch (e2) {
+          // Final fallback: show instruction for Gotify
+          addChatMessage(`🔧 Web UI chat unavailable. Send via Gotify: "chat ${text}"`, false);
+          success = true; // Don't show error since we gave instructions
+        }
+      }
+      
+      if (success) {
+        updateChatStatus('Sent');
+        setTimeout(() => updateChatStatus('Ready'), 2000);
+      }
       
     } catch (e) {
       console.error('Chat error:', e);
-      addChatMessage('❌ Sorry, I encountered an error. Please try again.', false);
+      addChatMessage('❌ Unable to send message. Try using Gotify with "chat" prefix.', false);
       updateChatStatus('Error');
-      toast('Chat message failed: ' + e.message, 'error');
+      toast('Chat unavailable - use Gotify instead', 'error');
     } finally {
       sendBtn.classList.remove('loading');
     }
