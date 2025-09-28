@@ -1,3 +1,6 @@
+## latest (2025-09-28 12:00:00)
+Removed Internet search.
+Fixed Enviroguard 
 ## latest (2025-09-23 12:00:00)
 Added Rag aswell, if homeasstiant is added in the options.json token and url llm wil now be aware of your homeasstiant entities.
 Please Note internet search and Rag is experamental.
