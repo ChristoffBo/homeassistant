@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /app/enviroguard.py
-# EnviroGuard — ambient-aware LLM performance governor for Jarvis Prime
+# EnviroGuard â€" ambient-aware LLM performance governor for Jarvis Prime
 #
 # Responsibilities:
 # - Prefer Home Assistant indoor temperature; fallback to Open-Meteo outdoor
@@ -39,7 +39,7 @@ _cfg_template: Dict[str, Any] = {
     "enabled": False,
     "poll_minutes": 30,
     "max_stale_minutes": 120,
-    # Temperature thresholds (°C)
+    # Temperature thresholds (Â°C)
     "off_c": 42,
     "hot_c": 33,
     "normal_c": 22,
@@ -144,6 +144,7 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
     except Exception as e:
         print(f"[EnviroGuard] config merge error: {e}")
     return cfg
+
 def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
     """Apply a profile and enforce OFF if cpu<=0 or name=='off'."""
     name = (name or "normal").lower()
@@ -203,6 +204,7 @@ def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
         return None
     except Exception:
         return None
+
 def _meteo_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
     if not cfg.get("weather_enabled", True):
         return None
@@ -275,6 +277,7 @@ def _next_profile_with_hysteresis(temp_c: float, last_profile: str, cfg: Dict[st
         return "cold"
 
     return target
+
 # ------------------------------
 # Public API
 # ------------------------------
@@ -295,7 +298,6 @@ def get_boot_status_line(merged: dict) -> str:
         f"🌡️ EnviroGuard — {mode.upper()} mode, profile={prof}, "
         f"temp={t:.1f}°C (src={src})"
     )
-
 
 def command(want: str, merged: dict, send_message) -> bool:
     cfg = _cfg_from(merged)
@@ -332,9 +334,25 @@ def command(want: str, merged: dict, send_message) -> bool:
             except Exception:
                 pass
 
-    elif w:
+    elif w == "":
+        # Just show status when no argument provided
+        pass
+    else:
+        # Invalid profile
+        if callable(send_message):
+            try:
+                available = list((cfg.get("profiles") or {}).keys())
+                send_message(
+                    "EnviroGuard", 
+                    f"Unknown profile '{w}'. Available: {', '.join(available)}, auto", 
+                    priority=3, 
+                    decorate=False
+                )
+            except Exception:
+                pass
         return False
 
+    # Always show current status
     if callable(send_message):
         try:
             line = get_boot_status_line(merged)
@@ -344,13 +362,27 @@ def command(want: str, merged: dict, send_message) -> bool:
 
     return True
 
-# --- ADDITIVE: expose set_profile API for bot.py ---
-def set_profile(name: str) -> Dict[str, Any]:
+def set_profile(name: str, merged: dict = None) -> Dict[str, Any]:
     """Programmatic profile setter for bot.py (returns knobs)."""
-    cfg = _cfg_from({})
-    _apply_profile(name, {}, cfg)
-    return cfg.get("profiles", {}).get(name, {})
-# --- end additive ---
+    if merged is None:
+        merged = _load_config_files()
+    
+    cfg = _cfg_from(merged)
+    
+    # Check if profile exists
+    available_profiles = cfg.get("profiles", {})
+    if name not in available_profiles:
+        return {}
+    
+    _state["mode"] = "manual"
+    _apply_profile(name, merged, cfg)
+    
+    prof = available_profiles.get(name, {})
+    return {
+        "cpu_percent": prof.get("cpu_percent", 30),
+        "ctx_tokens": prof.get("ctx_tokens", 4096), 
+        "timeout_seconds": prof.get("timeout_seconds", 20)
+    }
 
 async def _poll_loop(merged: dict, send_message) -> None:
     cfg = _cfg_from(merged)
@@ -411,7 +443,7 @@ def start_background_poll(merged: dict, send_message):
 
     task = loop.create_task(_poll_loop(merged, send_message))
     _state["task"] = task
-    return task   # --- ADDITIVE: return the task so bot.py sees it ---
+    return task
 
 def stop_background_poll() -> None:
     t = _state.get("task")
@@ -421,3 +453,35 @@ def stop_background_poll() -> None:
         except Exception:
             pass
     _state["task"] = None
+
+# ------------------------------
+# Compatibility API for bot.py
+# ------------------------------
+def get_current_profile() -> str:
+    """Return the current active profile name."""
+    return _state.get("profile", "normal")
+
+def get_last_temperature_c() -> Optional[float]:
+    """Return the last recorded temperature in Celsius."""
+    return _state.get("last_temp_c")
+
+def set_mode(mode: str) -> None:
+    """Set the operating mode (auto/manual)."""
+    _state["mode"] = str(mode or "auto").lower()
+
+def apply_manual_profile(profile_name: str) -> None:
+    """Apply a manual profile override (for bot.py compatibility)."""
+    name = str(profile_name or "normal").lower()
+    _state["mode"] = "manual"
+    _state["profile"] = name
+    
+    # Load config and apply profile
+    merged = _load_config_files()
+    cfg = _cfg_from(merged)
+    _apply_profile(name, merged, cfg)
+
+# For bot.py that checks hasattr(_enviroguard, "state")
+@property 
+def state() -> dict:
+    """Expose internal state as a read-only property."""
+    return dict(_state)  # Return a copy to prevent external modification
