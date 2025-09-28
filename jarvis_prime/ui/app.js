@@ -301,45 +301,32 @@
       input.value = '';
       waitingForResponse = true;
       
-      // Send to internal/wake to trigger chat command (same endpoint that System Commands use)
-      try {
-        console.log('Sending chat message via wake endpoint:', `chat ${text}`);
-        
-        await jfetch(API('internal/wake'), {
-          method: 'POST',
-          body: JSON.stringify({ text: `chat ${text}` })
-        });
-        
-        updateChatStatus('Sent to AI...');
-        toast('Message sent to Jarvis AI', 'success');
-        
-        // Set timeout for response
-        const responseTimeout = setTimeout(() => {
-          if (waitingForResponse) {
-            console.log('Chat response timeout');
-            addChatMessage('No response received. Check the inbox for any new messages.', false);
-            waitingForResponse = false;
-            updateChatStatus('Ready');
-          }
-        }, 30000);
-        
-        window.lastChatTimeout = responseTimeout;
-        
-      } catch (apiError) {
-        console.error('Wake endpoint failed:', apiError);
-        waitingForResponse = false;
-        
-        addChatMessage(`API unavailable. Try using Gotify instead:`, false);
-        addChatMessage(`Send to Gotify: "chat ${text}"`, false);
-        
-        updateChatStatus('Use Gotify');
-        toast(`Send via Gotify: "chat ${text}"`, 'info');
-      }
+      console.log('Sending chat message via wake endpoint:', `chat ${text}`);
+      
+      await jfetch(API('internal/wake'), {
+        method: 'POST',
+        body: JSON.stringify({ text: `chat ${text}` })
+      });
+      
+      updateChatStatus('Sent to AI...');
+      toast('Message sent to Jarvis AI', 'success');
+      
+      // Set timeout for response
+      const responseTimeout = setTimeout(() => {
+        if (waitingForResponse) {
+          console.log('Chat response timeout');
+          addChatMessage('No response received. Check the inbox for any new messages.', false);
+          waitingForResponse = false;
+          updateChatStatus('Ready');
+        }
+      }, 30000);
+      
+      window.lastChatTimeout = responseTimeout;
       
     } catch (e) {
-      console.error('Chat system error:', e);
+      console.error('Chat error:', e);
       waitingForResponse = false;
-      addChatMessage('Chat system error. Try using Gotify with "chat" prefix.', false);
+      addChatMessage('Chat system error.', false);
       updateChatStatus('Error');
       toast('Chat system error', 'error');
     } finally {
