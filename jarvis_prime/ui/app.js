@@ -322,7 +322,16 @@
     messagesContainer.appendChild(messageDiv);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
     
-    chatHistory.push({ content, isUser, timestamp: Date.now() });
+    // Save to history and localStorage
+    const historyItem = { content, isUser, timestamp: Date.now() };
+    chatHistory.push(historyItem);
+    
+    // Keep only last 50 messages to prevent localStorage bloat
+    if (chatHistory.length > 50) {
+      chatHistory = chatHistory.slice(-50);
+    }
+    
+    saveChatHistory();
   }
 
   function updateChatStatus(status) {
