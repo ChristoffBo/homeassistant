@@ -3,7 +3,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-  // API configuration
+  // API configuration - FIXED
   function apiRoot() {
     if (window.JARVIS_API_BASE) {
       let v = String(window.JARVIS_API_BASE);
@@ -23,7 +23,22 @@
   }
   
   const ROOT = apiRoot();
-  const API = (path) => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
+
+  // FIXED: Handle internal endpoints differently
+  const API = (path) => {
+    const pathStr = String(path).replace(/^\/+/, '');
+    
+    // For internal endpoints, route directly to port 2599
+    if (pathStr.startsWith('internal/')) {
+      const url = new URL(window.location.origin);
+      url.port = '2599';
+      url.pathname = '/' + pathStr;
+      return url.toString();
+    }
+    
+    // For everything else, use the normal API root
+    return new URL(pathStr, ROOT).toString();
+  };
 
   // Toast notifications
   function toast(msg, type = 'info') {
