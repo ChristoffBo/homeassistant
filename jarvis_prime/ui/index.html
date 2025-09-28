@@ -3,100 +3,257 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Jarvis Prime</title>
-
-  <!-- Optional: override API base if UI is hosted elsewhere
-       Example: window.JARVIS_API_BASE='http://10.0.0.99:2581/';
-  -->
+  <title>Jarvis Prime Control System</title>
+  
   <script>window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;</script>
-
-  <!-- Make relative URLs work for both Ingress and direct host -->
+  
   <script>
     (function () {
       var p = location.pathname;
       if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
       var dir = p.endsWith('/') ? p : p.replace(/[^\/]*$/, '');
-      if (!dir.endsWith('/')) dir += '/';
+      if (!dir.endsWith('/') && dir !== '') dir += '/';
       document.write('<base href="' + dir + '">');
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=2.1" />
+  <link rel="stylesheet" href="style.css?v=3.0" />
 </head>
+
 <body>
-  <header class="topnav">
-    <div class="brand">Jarvis Prime</div>
-    <nav>
-      <button class="tablink active" data-tab="inbox">Inbox</button>
-    </nav>
+  <header class="system-header">
+    <div class="header-content">
+      <div class="system-brand">
+        <div class="brand-icon">🤖</div>
+        <div class="brand-text">
+          <div class="brand-title">Jarvis Prime</div>
+          <div class="brand-subtitle">Neural Control System</div>
+        </div>
+      </div>
+      
+      <nav class="system-nav">
+        <button class="nav-tab active" data-tab="inbox">
+          📥 Message Inbox
+        </button>
+        <button class="nav-tab" data-tab="chat">
+          💬 AI Chat
+        </button>
+        <button class="nav-tab" data-tab="wake">
+          ⚡ System Commands
+        </button>
+      </nav>
+      
+      <div class="system-status">
+        <div class="status-indicator">
+          <div class="status-dot" id="connection-status"></div>
+          <span id="system-status-text">Connected</span>
+        </div>
+      </div>
+    </div>
   </header>
 
-  <main>
-    <!-- Inbox -->
-    <section id="inbox" class="tab active">
-      <div class="page-head">
-        <h2>Inbox</h2>
-        <div class="stats">
-          <div class="stat blue">Today <span id="msg-today">0</span></div>
-          <div class="stat green">Archived <span id="msg-arch">0</span></div>
-          <div class="stat red">Errors <span id="msg-err">0</span></div>
+  <main class="system-main">
+    <!-- =============== INBOX TAB =============== -->
+    <section id="inbox" class="tab-panel active">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Message Inbox</h1>
+          <div class="panel-subtitle">Centralized notification and event management</div>
+        </div>
+      </div>
 
-          <!-- NEW: Chat (pastel purple) -->
-          <div class="stat purple" id="chat-box">
-            <label for="chat-input" class="sr-only">Chat</label>
-            <span class="stat-label">Chat:</span>
-            <input id="chat-input" placeholder="Type…" />
-            <button id="chat-send" class="btn primary">Send</button>
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <div class="metric-label">Today</div>
           </div>
-
-          <!-- NEW: Purge (pastel orange) -->
-          <div class="stat orange" id="purge-box">
-            <span class="stat-label">Purge:</span>
+          <div class="metric-value" id="msg-today">0</div>
+        </div>
+        
+        <div class="metric-card green">
+          <div class="metric-header">
+            <div class="metric-label">Archived</div>
+          </div>
+          <div class="metric-value" id="msg-arch">0</div>
+        </div>
+        
+        <div class="metric-card red">
+          <div class="metric-header">
+            <div class="metric-label">Errors</div>
+          </div>
+          <div class="metric-value" id="msg-err">0</div>
+        </div>
+        
+        <div class="metric-card orange">
+          <div class="metric-header">
+            <div class="metric-label">Auto-Purge</div>
+          </div>
+          <div class="metric-controls">
             <select id="purge-select">
               <option value="1">1 day</option>
-              <option value="7" selected>7 day</option>
-              <option value="30">30 day</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
             </select>
             <button id="purge-now" class="btn danger">Run</button>
           </div>
         </div>
       </div>
 
-      <div class="inbox-wrap">
-        <div class="inbox-left panel">
+      <div class="inbox-layout">
+        <div class="panel">
           <div class="panel-head">
-            <div class="row-actions">
-              <label class="lbl"><input type="checkbox" id="pv-follow" checked /> Auto-preview new</label>
-              <button id="del-all" class="btn danger">Delete All</button>
-              <label class="lbl"><input type="checkbox" id="keep-arch" /> Keep archived</label>
+            <div class="flex gap-4">
+              <div class="checkbox-group">
+                <input type="checkbox" id="pv-follow" checked />
+                <label for="pv-follow">Auto-preview new messages</label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="keep-arch" />
+                <label for="keep-arch">Keep archived when deleting all</label>
+              </div>
             </div>
+            <button id="del-all" class="btn danger">Delete All Messages</button>
           </div>
-          <table class="msg-table">
+          
+          <table class="data-table">
             <thead>
               <tr>
-                <th>Time</th><th>Source</th><th>Title</th><th>Actions</th>
+                <th>Timestamp</th>
+                <th>Source</th>
+                <th>Title</th>
+                <th>Actions</th>
               </tr>
             </thead>
-            <tbody id="msg-body"><tr><td colspan="4">Loading...</td></tr></tbody>
+            <tbody id="msg-body">
+              <tr><td colspan="4" class="text-center text-muted">Loading messages...</td></tr>
+            </tbody>
           </table>
         </div>
 
-        <aside class="inbox-preview panel">
-          <div class="preview-head">
-            <div class="ph-left">
-              <div class="ph-title" id="pv-title">No message selected</div>
-              <div class="ph-meta" id="pv-meta">–</div>
+        <div class="preview-panel">
+          <div class="preview-header">
+            <div>
+              <div class="preview-title" id="pv-title">No message selected</div>
+              <div class="preview-meta" id="pv-meta">—</div>
             </div>
           </div>
-          <div class="preview-body" id="pv-body">
-            <p class="muted">Click a message to see its contents here.</p>
+          <div class="preview-content" id="pv-body">
+            <div class="text-center text-muted">Select a message to preview its contents</div>
           </div>
-        </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== CHAT TAB =============== -->
+    <section id="chat" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>AI Chat Interface</h1>
+          <div class="panel-subtitle">Natural conversation with Jarvis AI • Messages auto-prefixed with "chat"</div>
+        </div>
+        <div class="metrics-grid" style="margin: 0; grid-template-columns: auto auto;">
+          <div class="metric-card cyan">
+            <div class="metric-header">
+              <div class="metric-label">Chat Status</div>
+            </div>
+            <div style="font-size: 14px; font-weight: 500;" id="chat-status">Ready</div>
+          </div>
+          <div class="metric-card purple">
+            <div class="metric-controls">
+              <button id="clear-chat" class="btn">Clear History</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-container">
+        <div class="chat-header">
+          <div class="chat-title">💬 Conversation with Jarvis</div>
+          <div class="chat-status">
+            <div class="status-dot"></div>
+            <span>Neural Network Active</span>
+          </div>
+        </div>
+        
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-message bot">
+            <div class="message-content">
+              👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
+            </div>
+            <div class="message-time">System initialized</div>
+          </div>
+        </div>
+        
+        <div class="chat-input-area">
+          <textarea 
+            id="chat-input" 
+            class="chat-input" 
+            placeholder="Type your message here... (Press Ctrl+Enter to send)"
+            rows="1"></textarea>
+          <button id="chat-send" class="btn primary">
+            Send Message
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== WAKE TAB =============== -->
+    <section id="wake" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>System Commands</h1>
+          <div class="panel-subtitle">Direct system control and automation • Commands auto-prefixed with "jarvis"</div>
+        </div>
+        <div class="metrics-grid" style="margin: 0; grid-template-columns: auto;">
+          <div class="metric-card purple">
+            <div class="metric-header">
+              <div class="metric-label">Last Command</div>
+            </div>
+            <div style="font-size: 14px; font-weight: 500;" id="last-wake">No commands sent</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wake-container">
+        <div class="wake-input-panel">
+          <h3 style="margin-bottom: 16px; color: var(--text-primary);">Send System Command</h3>
+          <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 20px;">
+            Commands are automatically prefixed with "jarvis" and sent to the system processor.
+          </p>
+          
+          <div class="wake-input-group">
+            <div class="wake-prefix">jarvis</div>
+            <input 
+              type="text" 
+              id="wake-input" 
+              class="wake-input"
+              placeholder="turn on lights, weather, digest, help..."
+            />
+            <button id="wake-send" class="btn primary">Execute</button>
+          </div>
+          
+          <div style="margin-top: 16px;">
+            <h4 style="color: var(--text-secondary); margin-bottom: 8px; font-size: 14px;">Common Commands:</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px;">
+              <button class="btn" onclick="document.getElementById('wake-input').value='weather'; document.getElementById('wake-send').click();">weather</button>
+              <button class="btn" onclick="document.getElementById('wake-input').value='digest'; document.getElementById('wake-send').click();">digest</button>
+              <button class="btn" onclick="document.getElementById('wake-input').value='help'; document.getElementById('wake-send').click();">help</button>
+              <button class="btn" onclick="document.getElementById('wake-input').value='kuma'; document.getElementById('wake-send').click();">uptime</button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="wake-input-panel">
+          <h3 style="margin-bottom: 16px; color: var(--text-primary);">Command History</h3>
+          <div class="wake-history" id="wake-history">
+            <div class="text-center text-muted">No commands executed yet</div>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
   <div id="toast"></div>
-  <script src="app.js?v=2.1"></script>
+  <script src="app.js?v=3.0"></script>
 </body>
 </html>
