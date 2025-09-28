@@ -296,7 +296,7 @@
           created_at: Math.floor(Date.now() / 1000)
         };
         
-        console.log('Sending chat message to trigger LLM:', messagePayload);
+        console.log('🚀 Sending chat message to trigger LLM:', messagePayload);
         
         const response = await fetch(API('api/messages'), {
           method: 'POST',
@@ -307,17 +307,24 @@
         });
         
         if (response.ok) {
+          const result = await response.json().catch(() => ({}));
+          console.log('✅ Message sent successfully:', result);
+          
           updateChatStatus('Sent to AI...');
           toast('Message sent to Jarvis AI', 'success');
           
-          // Set timeout for response
-          setTimeout(() => {
+          // Set timeout for response - increased to 30 seconds for LLM processing
+          const responseTimeout = setTimeout(() => {
             if (waitingForResponse) {
-              addChatMessage('⏰ Response taking longer than expected. Check the inbox.', false);
+              console.log('⏰ Chat response timeout');
+              addChatMessage('⏰ No response received. Check the inbox for any new messages.', false);
               waitingForResponse = false;
               updateChatStatus('Ready');
             }
-          }, 15000); // 15 second timeout
+          }, 30000); // 30 second timeout
+          
+          // Store timeout so we can clear it if we get a response
+          window.lastChatTimeout = responseTimeout;
           
         } else {
           const errorText = await response.text().catch(() => 'Unknown error');
@@ -325,10 +332,10 @@
         }
         
       } catch (apiError) {
-        console.error('API method failed:', apiError);
+        console.error('❌ API method failed:', apiError);
         waitingForResponse = false;
         
-        addChatMessage(`🔧 API unavailable. Use Gotify instead:`, false);
+        addChatMessage(`🔧 API unavailable. Try using Gotify instead:`, false);
         addChatMessage(`📱 Send to Gotify: "chat ${text}"`, false);
         
         updateChatStatus('Use Gotify');
@@ -336,9 +343,9 @@
       }
       
     } catch (e) {
-      console.error('Chat system error:', e);
+      console.error('❌ Chat system error:', e);
       waitingForResponse = false;
-      addChatMessage('❌ Chat system error. Use Gotify with "chat" prefix.', false);
+      addChatMessage('❌ Chat system error. Try using Gotify with "chat" prefix.', false);
       updateChatStatus('Error');
       toast('Chat system error', 'error');
     } finally {
@@ -348,14 +355,39 @@
 
   // Listen for chat responses in the SSE stream
   function handleChatResponse(data) {
-    if (!waitingForResponse) return;
+    if (!waitingForResponse) return false;
     
-    // Look for responses with title "Chat" (from your bot.py _route_chat_freeform)
+    // Look for responses from your chatbot.py system
     const title = (data.title || '').toLowerCase();
+    const source = (data.source || '').toLowerCase();
     const message = data.message || data.body || '';
     
-    if (title.includes('chat') && message.trim()) {
-      // This is a chat response from your LLM
+    console.log('Checking if chat response:', { title, source, message: message.substring(0, 100) });
+    
+    // Check multiple indicators that this is a chat response:
+    // 1. Title contains "chat" or is empty (common for LLM responses)
+    // 2. Source might be "chatbot" or "llm" or similar
+    // 3. Or if we're waiting and get any substantial message that's not from webui
+    const isChatResponse = (
+      title.includes('chat') ||
+      title.includes('response') ||
+      title.includes('assistant') ||
+      source.includes('chatbot') ||
+      source.includes('llm') ||
+      source.includes('openai') ||
+      source.includes('claude') ||
+      (source !== 'webui-chat' && message.trim().length > 10) // Any non-webui message while waiting
+    );
+    
+    if (isChatResponse && message.trim()) {
+      console.log('✅ Chat response detected!');
+      
+      // Clear the timeout since we got a response
+      if (window.lastChatTimeout) {
+        clearTimeout(window.lastChatTimeout);
+        window.lastChatTimeout = null;
+      }
+      
       addChatMessage(message.trim(), false);
       waitingForResponse = false;
       updateChatStatus('Ready');
@@ -531,6 +563,19 @@
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data || '{}');
+          
+          // Check if this is a chat response first
+          if (data.event === 'created') {
+            const isHandled = handleChatResponse(data);
+            if (isHandled) {
+              console.log('Chat response handled:', data);
+              // Still refresh inbox but don't auto-select if chat handled it
+              loadInbox();
+              return;
+            }
+          }
+          
+          // Handle other inbox events
           if (['created', 'deleted', 'deleted_all', 'saved', 'purged'].includes(data.event)) {
             loadInbox().then(() => {
               if (data.event === 'created' && $('#pv-follow')?.checked) {
