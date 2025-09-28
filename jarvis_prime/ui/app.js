@@ -1,4 +1,62 @@
-(function () {
+/* =============== CHAT FUNCTIONALITY =============== */
+  let chatHistory = [];
+  let waitingForResponse = false;
+
+  // Load chat history from localStorage
+  function loadChatHistory() {
+    try {
+      const saved = localStorage.getItem('jarvis_chat_history');
+      if (saved) {
+        chatHistory = JSON.parse(saved);
+        restoreChatMessages();
+      }
+    } catch (e) {
+      console.warn('Failed to load chat history:', e);
+      chatHistory = [];
+    }
+  }
+
+  // Save chat history to localStorage
+  function saveChatHistory() {
+    try {
+      localStorage.setItem('jarvis_chat_history', JSON.stringify(chatHistory));
+    } catch (e) {
+      console.warn('Failed to save chat history:', e);
+    }
+  }
+
+  // Restore chat messages in the UI
+  function restoreChatMessages() {
+    const messagesContainer = $('#chat-messages');
+    messagesContainer.innerHTML = `
+      <div class="chat-message bot">
+        <div class="message-content">
+          👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
+        </div>
+        <div class="message-time">System initialized</div>
+      </div>
+    `;
+    
+    chatHistory.forEach(item => {
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `chat-message ${item.isUser ? 'user' : 'bot'}`;
+      const time = new Date(item.timestamp).toLocaleTimeString();
+      messageDiv.innerHTML = `
+        <div class="message-content">${item.content}</div>
+        <div class="message-time">${time}</div>
+      `;
+      messagesContainer.appendChild(messageDiv);
+    });
+    
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+
+  // Load chat history from localStorage
+  function loadChatHistory() {
+    try {
+      const saved = localStorage.getItem('jarvis_chat_history');
+      if (saved) {
+        chat(function () {
   /* =============== CORE UTILITIES =============== */
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -289,9 +347,9 @@
       // Format message exactly like Gotify does to trigger your bot.py chat routing
       try {
         const messagePayload = {
-          title: 'chat',           // This triggers _extract_chat_query() in bot.py
-          message: text,           // This is what gets processed by chatbot.py
-          body: text,              // Also include body field for backend compatibility
+          title: 'chat',                    // Keep title as "chat" for consistency
+          message: `chat ${text}`,          // Include "chat" prefix in message body
+          body: `chat ${text}`,             // Include "chat" prefix in body field
           source: 'webui-chat',
           priority: 5,
           created_at: Math.floor(Date.now() / 1000)
@@ -356,32 +414,29 @@
 
   // Listen for chat responses in the SSE stream
   function handleChatResponse(data) {
-    if (!waitingForResponse) return false;
+    console.log('🔍 Checking message for chat response:', data);
     
     // Look for responses from your chatbot.py system
-    const title = (data.title || '').toLowerCase();
-    const source = (data.source || '').toLowerCase();
+    const title = (data.title || '').toLowerCase().trim();
+    const source = (data.source || '').toLowerCase().trim();
     const message = data.message || data.body || '';
     
-    console.log('Checking if chat response:', { title, source, message: message.substring(0, 100) });
+    console.log('Chat detection - waiting:', waitingForResponse, 'title:', title, 'source:', source);
     
-    // Check multiple indicators that this is a chat response:
-    // 1. Title contains "chat" or is empty (common for LLM responses)
-    // 2. Source might be "chatbot" or "llm" or similar
-    // 3. Or if we're waiting and get any substantial message that's not from webui
+    // Enhanced detection for jarvis_out responses with "Chat" title
     const isChatResponse = (
+      (source === 'jarvis_out' && title === 'chat') ||  // Exact match for your system
       title.includes('chat') ||
       title.includes('response') ||
       title.includes('assistant') ||
       source.includes('chatbot') ||
       source.includes('llm') ||
       source.includes('openai') ||
-      source.includes('claude') ||
-      (source !== 'webui-chat' && message.trim().length > 10) // Any non-webui message while waiting
+      source.includes('claude')
     );
     
     if (isChatResponse && message.trim()) {
-      console.log('✅ Chat response detected!');
+      console.log('✅ Chat response detected!', { title, source, messageLength: message.length });
       
       // Clear the timeout since we got a response
       if (window.lastChatTimeout) {
@@ -396,6 +451,7 @@
       return true; // Mark as handled
     }
     
+    console.log('❌ Not identified as chat response');
     return false; // Not a chat response
   }
 
