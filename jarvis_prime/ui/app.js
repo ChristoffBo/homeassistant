@@ -474,15 +474,9 @@
 
   $('#clear-chat').addEventListener('click', () => {
     if (confirm('Clear all chat messages?')) {
-      $('#chat-messages').innerHTML = `
-        <div class="chat-message bot">
-          <div class="message-content">
-            👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
-          </div>
-          <div class="message-time">System initialized</div>
-        </div>
-      `;
       chatHistory = [];
+      saveChatHistory();
+      restoreChatMessages();
       toast('Chat cleared', 'success');
     }
   });
@@ -630,6 +624,8 @@
         try {
           const data = JSON.parse(ev.data || '{}');
           
+          console.log('📡 SSE message received:', data);
+          
           // Check if this is a chat response first
           if (data.event === 'created') {
             const isHandled = handleChatResponse(data);
@@ -643,13 +639,16 @@
           
           // Handle other inbox events
           if (['created', 'deleted', 'deleted_all', 'saved', 'purged'].includes(data.event)) {
+            console.log('📨 Inbox event detected, refreshing...');
             loadInbox().then(() => {
               if (data.event === 'created' && $('#pv-follow')?.checked) {
                 if (data.id) selectRowById(data.id);
               }
             });
           }
-        } catch {}
+        } catch (e) {
+          console.error('SSE message parse error:', e);
+        }
       };
     }
     
