@@ -284,78 +284,62 @@
       addChatMessage(text, true);
       input.value = '';
       
-      // Since Gotify works, let's inject directly into the message stream
-      // This simulates how Gotify sends messages to your bot
-      let success = false;
+      // Work directly with your storage system - bypass internal server
+      // This creates the message exactly like Gotify does, triggering your bot's chat routing
       
       try {
-        // Create a message in the inbox with "chat" title - this triggers your bot's chat routing
-        const messageData = {
-          title: 'chat',
-          body: text,
+        // Create message directly in storage - this will trigger _process_incoming in bot.py
+        const messagePayload = {
+          title: 'chat',  // This triggers the chat routing in your bot.py
+          message: text,  // Using 'message' field like Gotify
+          body: text,     // Also include 'body' for compatibility
           source: 'webui-chat',
-          created_at: Math.floor(Date.now() / 1000),
-          priority: 5
+          priority: 5,
+          created_at: Math.floor(Date.now() / 1000)
         };
         
-        // First try to save directly to storage (mimics Gotify behavior)
+        console.log('Sending chat message:', messagePayload);
+        
         const response = await fetch(API('api/messages'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(messageData)
+          body: JSON.stringify(messagePayload)
         });
         
         if (response.ok) {
-          success = true;
-          // Give immediate feedback
+          // Success! The message is now in your system and will be processed by bot.py
           setTimeout(() => {
-            addChatMessage('Message sent to Jarvis. Response will appear in the inbox shortly.', false);
+            addChatMessage('✅ Message sent to Jarvis. AI response will appear in the inbox.', false);
           }, 500);
+          
+          updateChatStatus('Sent');
+          setTimeout(() => updateChatStatus('Ready'), 2000);
+          
+          toast('Chat message sent successfully', 'success');
+          
         } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          const errorText = await response.text().catch(() => 'Unknown error');
+          throw new Error(`Storage API failed: ${response.status} - ${errorText}`);
         }
         
-      } catch (e) {
-        console.log('Direct message creation failed:', e.message);
+      } catch (storageError) {
+        console.error('Storage method failed:', storageError);
         
-        // Fallback: try wake endpoint
-        try {
-          const response = await fetch(API('internal/wake'), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ text: 'chat ' + text })
-          });
-          
-          if (response.ok) {
-            success = true;
-            setTimeout(() => {
-              addChatMessage('Message sent via wake endpoint.', false);
-            }, 500);
-          } else {
-            throw new Error(`Wake endpoint failed: ${response.status}`);
-          }
-          
-        } catch (e2) {
-          // Final fallback: show instruction for Gotify
-          addChatMessage(`🔧 Web UI chat unavailable. Send via Gotify: "chat ${text}"`, false);
-          success = true; // Don't show error since we gave instructions
-        }
-      }
-      
-      if (success) {
-        updateChatStatus('Sent');
-        setTimeout(() => updateChatStatus('Ready'), 2000);
+        // Show helpful message with exact Gotify format
+        addChatMessage(`🔧 Web storage unavailable. Use Gotify instead:`, false);
+        addChatMessage(`📱 Send to Gotify: "chat ${text}"`, false);
+        
+        updateChatStatus('Use Gotify');
+        toast(`Send via Gotify: "chat ${text}"`, 'info');
       }
       
     } catch (e) {
-      console.error('Chat error:', e);
-      addChatMessage('❌ Unable to send message. Try using Gotify with "chat" prefix.', false);
+      console.error('Chat system error:', e);
+      addChatMessage('❌ Chat system error. Use Gotify with "chat" prefix.', false);
       updateChatStatus('Error');
-      toast('Chat unavailable - use Gotify instead', 'error');
+      toast('Chat system error', 'error');
     } finally {
       sendBtn.classList.remove('loading');
     }
