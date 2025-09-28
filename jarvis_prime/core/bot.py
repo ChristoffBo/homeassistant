@@ -855,6 +855,9 @@ def _handle_command(ncmd: str) -> bool:
         msg, _ = _try_call(m_arr, "longest_series")
         send_message("Longest Series", msg or "No data.")
         return True
+	if ncmd.startswith("chat "):
+		chat_query = ncmd[5:]  # Remove "chat " prefix
+		return _route_chat_freeform("webui-wake", chat_query)
 
     return False
 # ============================
