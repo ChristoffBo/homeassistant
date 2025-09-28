@@ -898,53 +898,47 @@ def _extract_chat_query(title: str, body: str) -> Optional[str]:
 
 def _route_chat_freeform(source: str, query: str) -> bool:
     """
-    Send a chat reply using available chat module(s). Prefers chatbot.handle_message(source, text).
-    Falls back to chat.handle_chat_command(...) variants if needed.
+    Send a chat reply using chatbot.py (LLM chat only).
     """
-    # Try both module names without removing existing import logic
-    m_chat = None
+    # Only try chatbot.py for LLM chat
+    m_chatbot = None
     try:
-        m_chat = __import__("chatbot")
+        m_chatbot = __import__("chatbot")
     except Exception:
-        try:
-            m_chat = __import__("chat")
-        except Exception:
-            m_chat = None
+        m_chatbot = None
 
-    if not m_chat:
+    if not m_chatbot:
         send_message("Chat", "Chat engine unavailable.", extras={"bypass_beautify": True})
         return True
 
     reply = ""
     err = None
     try:
-        if hasattr(m_chat, "handle_message"):
+        if hasattr(m_chatbot, "handle_message"):
             # preferred path (chatbot.py)
-            reply = m_chat.handle_message(source or "intake", query or "")
-        elif hasattr(m_chat, "handle_chat_command"):
+            reply = m_chatbot.handle_message(source or "intake", query or "")
+        elif hasattr(m_chatbot, "handle_chat_command"):
             # try common shapes
             try:
-                reply, _ = m_chat.handle_chat_command(query or "")
+                reply, _ = m_chatbot.handle_chat_command(query or "")
             except TypeError:
                 try:
-                    reply, _ = m_chat.handle_chat_command("ask", query or "")
+                    reply, _ = m_chatbot.handle_chat_command("ask", query or "")
                 except Exception as e2:
                     err = e2
         else:
-            err = RuntimeError("No supported chat entrypoint")
+            err = RuntimeError("No supported chat entrypoint in chatbot.py")
     except Exception as e:
         err = e
 
     if err:
-        send_message("Chat", f"⚠️ Chat error: {err}", extras={"bypass_beautify": True})
+        send_message("Chat", f"Chat error: {err}", extras={"bypass_beautify": True})
         return True
 
     reply = (reply or "").strip() or "(no reply)"
     # Bypass beautifier + persona header for clean chat
     send_message("Chat", reply, extras={"bypass_beautify": True})
     return True
-# --- end additive ---
-
 def _process_incoming(title: str, body: str, source: str = "intake", original_id: Optional[str] = None, priority: int = 5):
     if _seen_recent(title or "", body or "", source, original_id or ""):
         return
