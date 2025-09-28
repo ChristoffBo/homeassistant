@@ -353,54 +353,33 @@
       input.value = '';
       waitingForResponse = true;
       
-      // Format message exactly like Gotify does to trigger your bot.py chat routing
+      // Send to the internal wake endpoint like wake commands, but with "chat" prefix
       try {
-        const messagePayload = {
-          title: 'chat',                    // Keep title as "chat" for consistency
-          message: `chat ${text}`,          // Include "chat" prefix in message body
-          body: `chat ${text}`,             // Include "chat" prefix in body field
-          source: 'webui-chat',
-          priority: 5,
-          created_at: Math.floor(Date.now() / 1000)
-        };
+        console.log('🚀 Sending chat message via wake endpoint:', `chat ${text}`);
         
-        console.log('🚀 Sending chat message to trigger LLM:', messagePayload);
-        
-        const response = await fetch(API('api/messages'), {
+        await jfetch(API('internal/wake'), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(messagePayload)
+          body: JSON.stringify({ text: `chat ${text}` })  // Same format as wake but with "chat" prefix
         });
         
-        if (response.ok) {
-          const result = await response.json().catch(() => ({}));
-          console.log('✅ Message sent successfully:', result);
-          
-          updateChatStatus('Sent to AI...');
-          toast('Message sent to Jarvis AI', 'success');
-          
-          // Set timeout for response - increased to 30 seconds for LLM processing
-          const responseTimeout = setTimeout(() => {
-            if (waitingForResponse) {
-              console.log('⏰ Chat response timeout');
-              addChatMessage('⏰ No response received. Check the inbox for any new messages.', false);
-              waitingForResponse = false;
-              updateChatStatus('Ready');
-            }
-          }, 30000); // 30 second timeout
-          
-          // Store timeout so we can clear it if we get a response
-          window.lastChatTimeout = responseTimeout;
-          
-        } else {
-          const errorText = await response.text().catch(() => 'Unknown error');
-          throw new Error(`API failed: ${response.status} - ${errorText}`);
-        }
+        updateChatStatus('Sent to AI...');
+        toast('Message sent to Jarvis AI', 'success');
+        
+        // Set timeout for response - increased to 30 seconds for LLM processing
+        const responseTimeout = setTimeout(() => {
+          if (waitingForResponse) {
+            console.log('⏰ Chat response timeout');
+            addChatMessage('⏰ No response received. Check the inbox for any new messages.', false);
+            waitingForResponse = false;
+            updateChatStatus('Ready');
+          }
+        }, 30000); // 30 second timeout
+        
+        // Store timeout so we can clear it if we get a response
+        window.lastChatTimeout = responseTimeout;
         
       } catch (apiError) {
-        console.error('❌ API method failed:', apiError);
+        console.error('❌ Wake endpoint failed:', apiError);
         waitingForResponse = false;
         
         addChatMessage(`🔧 API unavailable. Try using Gotify instead:`, false);
@@ -423,14 +402,14 @@
 
   // Listen for chat responses in the SSE stream
   function handleChatResponse(data) {
-    console.log('🔍 Checking message for chat response:', data);
+    if (!waitingForResponse) return false;
     
     // Look for responses from your chatbot.py system
-    const title = (data.title || '').toLowerCase().trim();
-    const source = (data.source || '').toLowerCase().trim();
+    const title = (data.title || '').toLowerCase();
+    const source = (data.source || '').toLowerCase();
     const message = data.message || data.body || '';
     
-    console.log('Chat detection - waiting:', waitingForResponse, 'title:', title, 'source:', source);
+    console.log('Checking if chat response:', { title, source, message: message.substring(0, 100) });
     
     // Enhanced detection for jarvis_out responses with "Chat" title
     const isChatResponse = (
@@ -460,7 +439,6 @@
       return true; // Mark as handled
     }
     
-    console.log('❌ Not identified as chat response');
     return false; // Not a chat response
   }
 
@@ -474,9 +452,15 @@
 
   $('#clear-chat').addEventListener('click', () => {
     if (confirm('Clear all chat messages?')) {
+      $('#chat-messages').innerHTML = `
+        <div class="chat-message bot">
+          <div class="message-content">
+            👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
+          </div>
+          <div class="message-time">System initialized</div>
+        </div>
+      `;
       chatHistory = [];
-      saveChatHistory();
-      restoreChatMessages();
       toast('Chat cleared', 'success');
     }
   });
@@ -624,8 +608,6 @@
         try {
           const data = JSON.parse(ev.data || '{}');
           
-          console.log('📡 SSE message received:', data);
-          
           // Check if this is a chat response first
           if (data.event === 'created') {
             const isHandled = handleChatResponse(data);
@@ -639,16 +621,13 @@
           
           // Handle other inbox events
           if (['created', 'deleted', 'deleted_all', 'saved', 'purged'].includes(data.event)) {
-            console.log('📨 Inbox event detected, refreshing...');
             loadInbox().then(() => {
               if (data.event === 'created' && $('#pv-follow')?.checked) {
                 if (data.id) selectRowById(data.id);
               }
             });
           }
-        } catch (e) {
-          console.error('SSE message parse error:', e);
-        }
+        } catch {}
       };
     }
     
