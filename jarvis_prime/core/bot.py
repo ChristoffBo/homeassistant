@@ -1314,7 +1314,7 @@ async def _run_forever():
             task_or_none = None
             if hasattr(_enviroguard, "start_background_poll"):
                 try:
-                    task_or_none = _enviroguard.start_background_poll(config=merged, notify=send_message)
+                    task_or_none = _enviroguard.start_background_poll(merged, send_message)
                 except TypeError:
                     try:
                         task_or_none = _enviroguard.start_background_poll(merged)
