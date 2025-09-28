@@ -856,11 +856,6 @@ def _handle_command(ncmd: str) -> bool:
         send_message("Longest Series", msg or "No data.")
         return True
 
-# Handle freeform chat commands from wake endpoint
-    if ncmd.startswith("chat "):
-        chat_query = ncmd[5:]  # Remove "chat " prefix
-        return _route_chat_freeform("webui-wake", chat_query)
-
     return False
 # ============================
 # Dedup + intake fan-in
