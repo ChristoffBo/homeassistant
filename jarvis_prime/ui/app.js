@@ -1,62 +1,4 @@
-/* =============== CHAT FUNCTIONALITY =============== */
-  let chatHistory = [];
-  let waitingForResponse = false;
-
-  // Load chat history from localStorage
-  function loadChatHistory() {
-    try {
-      const saved = localStorage.getItem('jarvis_chat_history');
-      if (saved) {
-        chatHistory = JSON.parse(saved);
-        restoreChatMessages();
-      }
-    } catch (e) {
-      console.warn('Failed to load chat history:', e);
-      chatHistory = [];
-    }
-  }
-
-  // Save chat history to localStorage
-  function saveChatHistory() {
-    try {
-      localStorage.setItem('jarvis_chat_history', JSON.stringify(chatHistory));
-    } catch (e) {
-      console.warn('Failed to save chat history:', e);
-    }
-  }
-
-  // Restore chat messages in the UI
-  function restoreChatMessages() {
-    const messagesContainer = $('#chat-messages');
-    messagesContainer.innerHTML = `
-      <div class="chat-message bot">
-        <div class="message-content">
-          👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
-        </div>
-        <div class="message-time">System initialized</div>
-      </div>
-    `;
-    
-    chatHistory.forEach(item => {
-      const messageDiv = document.createElement('div');
-      messageDiv.className = `chat-message ${item.isUser ? 'user' : 'bot'}`;
-      const time = new Date(item.timestamp).toLocaleTimeString();
-      messageDiv.innerHTML = `
-        <div class="message-content">${item.content}</div>
-        <div class="message-time">${time}</div>
-      `;
-      messagesContainer.appendChild(messageDiv);
-    });
-    
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
-
-  // Load chat history from localStorage
-  function loadChatHistory() {
-    try {
-      const saved = localStorage.getItem('jarvis_chat_history');
-      if (saved) {
-        chat(function () {
+(function () {
   /* =============== CORE UTILITIES =============== */
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -322,16 +264,7 @@
     messagesContainer.appendChild(messageDiv);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
     
-    // Save to history and localStorage
-    const historyItem = { content, isUser, timestamp: Date.now() };
-    chatHistory.push(historyItem);
-    
-    // Keep only last 50 messages to prevent localStorage bloat
-    if (chatHistory.length > 50) {
-      chatHistory = chatHistory.slice(-50);
-    }
-    
-    saveChatHistory();
+    chatHistory.push({ content, isUser, timestamp: Date.now() });
   }
 
   function updateChatStatus(status) {
@@ -355,44 +288,43 @@
       
       // Send to the internal wake endpoint like wake commands, but with "chat" prefix
       try {
-        console.log('🚀 Sending chat message via wake endpoint:', `chat ${text}`);
+        console.log('Sending chat message via wake endpoint:', `chat ${text}`);
         
         await jfetch(API('internal/wake'), {
           method: 'POST',
-          body: JSON.stringify({ text: `chat ${text}` })  // Same format as wake but with "chat" prefix
+          body: JSON.stringify({ text: `chat ${text}` })
         });
         
         updateChatStatus('Sent to AI...');
         toast('Message sent to Jarvis AI', 'success');
         
-        // Set timeout for response - increased to 30 seconds for LLM processing
+        // Set timeout for response
         const responseTimeout = setTimeout(() => {
           if (waitingForResponse) {
-            console.log('⏰ Chat response timeout');
-            addChatMessage('⏰ No response received. Check the inbox for any new messages.', false);
+            console.log('Chat response timeout');
+            addChatMessage('No response received. Check the inbox for any new messages.', false);
             waitingForResponse = false;
             updateChatStatus('Ready');
           }
-        }, 30000); // 30 second timeout
+        }, 30000);
         
-        // Store timeout so we can clear it if we get a response
         window.lastChatTimeout = responseTimeout;
         
       } catch (apiError) {
-        console.error('❌ Wake endpoint failed:', apiError);
+        console.error('Wake endpoint failed:', apiError);
         waitingForResponse = false;
         
-        addChatMessage(`🔧 API unavailable. Try using Gotify instead:`, false);
-        addChatMessage(`📱 Send to Gotify: "chat ${text}"`, false);
+        addChatMessage(`API unavailable. Try using Gotify instead:`, false);
+        addChatMessage(`Send to Gotify: "chat ${text}"`, false);
         
         updateChatStatus('Use Gotify');
         toast(`Send via Gotify: "chat ${text}"`, 'info');
       }
       
     } catch (e) {
-      console.error('❌ Chat system error:', e);
+      console.error('Chat system error:', e);
       waitingForResponse = false;
-      addChatMessage('❌ Chat system error. Try using Gotify with "chat" prefix.', false);
+      addChatMessage('Chat system error. Try using Gotify with "chat" prefix.', false);
       updateChatStatus('Error');
       toast('Chat system error', 'error');
     } finally {
@@ -404,16 +336,14 @@
   function handleChatResponse(data) {
     if (!waitingForResponse) return false;
     
-    // Look for responses from your chatbot.py system
     const title = (data.title || '').toLowerCase();
     const source = (data.source || '').toLowerCase();
     const message = data.message || data.body || '';
     
     console.log('Checking if chat response:', { title, source, message: message.substring(0, 100) });
     
-    // Enhanced detection for jarvis_out responses with "Chat" title
     const isChatResponse = (
-      (source === 'jarvis_out' && title === 'chat') ||  // Exact match for your system
+      (source === 'jarvis_out' && title === 'chat') ||
       title.includes('chat') ||
       title.includes('response') ||
       title.includes('assistant') ||
@@ -424,9 +354,8 @@
     );
     
     if (isChatResponse && message.trim()) {
-      console.log('✅ Chat response detected!', { title, source, messageLength: message.length });
+      console.log('Chat response detected!', { title, source, messageLength: message.length });
       
-      // Clear the timeout since we got a response
       if (window.lastChatTimeout) {
         clearTimeout(window.lastChatTimeout);
         window.lastChatTimeout = null;
@@ -436,10 +365,10 @@
       waitingForResponse = false;
       updateChatStatus('Ready');
       toast('Response received from Jarvis', 'success');
-      return true; // Mark as handled
+      return true;
     }
     
-    return false; // Not a chat response
+    return false;
   }
 
   $('#chat-send').addEventListener('click', sendChatMessage);
@@ -455,7 +384,7 @@
       $('#chat-messages').innerHTML = `
         <div class="chat-message bot">
           <div class="message-content">
-            👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
+            Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
           </div>
           <div class="message-time">System initialized</div>
         </div>
@@ -474,7 +403,6 @@
       timestamp: Date.now()
     });
     
-    // Keep only last 20 wake commands
     if (wakeHistory.length > 20) {
       wakeHistory = wakeHistory.slice(0, 20);
     }
@@ -508,10 +436,9 @@
     try {
       sendBtn.classList.add('loading');
       
-      // Send to the internal wake endpoint (which handles jarvis commands)
       await jfetch(API('internal/wake'), {
         method: 'POST',
-        body: JSON.stringify({ text })  // bot.py will prepend "jarvis" automatically
+        body: JSON.stringify({ text })
       });
       
       addWakeToHistory(text);
@@ -608,18 +535,15 @@
         try {
           const data = JSON.parse(ev.data || '{}');
           
-          // Check if this is a chat response first
           if (data.event === 'created') {
             const isHandled = handleChatResponse(data);
             if (isHandled) {
               console.log('Chat response handled:', data);
-              // Still refresh inbox but don't auto-select if chat handled it
               loadInbox();
               return;
             }
           }
           
-          // Handle other inbox events
           if (['created', 'deleted', 'deleted_all', 'saved', 'purged'].includes(data.event)) {
             loadInbox().then(() => {
               if (data.event === 'created' && $('#pv-follow')?.checked) {
@@ -632,7 +556,7 @@
     }
     
     connect();
-    setInterval(loadInbox, 5 * 60 * 1000); // Refresh every 5 minutes
+    setInterval(loadInbox, 5 * 60 * 1000);
   })();
 
   /* =============== AUTO-RESIZE INPUTS =============== */
@@ -646,7 +570,6 @@
   loadInbox();
   updateWakeHistory();
   
-  // Show welcome message
   setTimeout(() => {
     toast('Jarvis Prime Control System initialized successfully', 'success');
   }, 1000);
