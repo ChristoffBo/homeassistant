@@ -116,24 +116,27 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         if isinstance(prof, dict):
             cfg["profiles"] = prof
 
-        # Home Assistant
+        # Home Assistant - match weather.py exact fallback pattern
         cfg["ha_url"] = str(
-            merged.get("llm_enviroguard_ha_base_url")
-            or merged.get("ha_base_url")
+            merged.get("ha_base_url")
+            or merged.get("llm_enviroguard_ha_base_url")
             or merged.get("ha_url")
             or cfg["ha_url"]
         ).strip()
 
         cfg["ha_token"] = str(
-            merged.get("llm_enviroguard_ha_token")
-            or merged.get("ha_token")
+            merged.get("ha_token")
+            or merged.get("llm_enviroguard_ha_token")
             or cfg["ha_token"]
         ).strip()
 
         cfg["ha_temperature_entity"] = str(
-            merged.get("llm_enviroguard_ha_temp_entity")
-            or merged.get("ha_indoor_temp_entity")
+            merged.get("ha_indoor_temp_entity")
             or merged.get("weather_indoor_sensor_entity")
+            or merged.get("llm_enviroguard_ha_temp_entity")
+            or merged.get("ha_temp_entity")
+            or merged.get("ha_temp_entity_id")
+            or merged.get("weather_ha_temp_entity_id")
             or merged.get("ha_temperature_entity")
             or cfg["ha_temperature_entity"]
         ).strip()
