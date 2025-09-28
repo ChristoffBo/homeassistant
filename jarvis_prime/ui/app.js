@@ -291,6 +291,7 @@
         const messagePayload = {
           title: 'chat',           // This triggers _extract_chat_query() in bot.py
           message: text,           // This is what gets processed by chatbot.py
+          body: text,              // Also include body field for backend compatibility
           source: 'webui-chat',
           priority: 5,
           created_at: Math.floor(Date.now() / 1000)
