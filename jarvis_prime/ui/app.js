@@ -301,18 +301,13 @@
       input.value = '';
       waitingForResponse = true;
       
-      // Send to internal/emit to trigger _process_incoming() which handles chat routing
+      // Send to internal/wake to trigger chat command (same endpoint that System Commands use)
       try {
-        console.log('Sending chat message via emit endpoint:', `chat ${text}`);
+        console.log('Sending chat message via wake endpoint:', `chat ${text}`);
         
-        await jfetch(API('internal/emit'), {
+        await jfetch(API('internal/wake'), {
           method: 'POST',
-          body: JSON.stringify({ 
-            title: 'chat',
-            body: `chat ${text}`,  // Put "chat" prefix in body for _extract_chat_query()
-            source: 'webui-chat',
-            priority: 5
-          })
+          body: JSON.stringify({ text: `chat ${text}` })
         });
         
         updateChatStatus('Sent to AI...');
@@ -331,7 +326,7 @@
         window.lastChatTimeout = responseTimeout;
         
       } catch (apiError) {
-        console.error('Emit endpoint failed:', apiError);
+        console.error('Wake endpoint failed:', apiError);
         waitingForResponse = false;
         
         addChatMessage(`API unavailable. Try using Gotify instead:`, false);
