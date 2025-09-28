@@ -3,7 +3,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-  // API configuration - FIXED
+  // API configuration
   function apiRoot() {
     if (window.JARVIS_API_BASE) {
       let v = String(window.JARVIS_API_BASE);
@@ -23,22 +23,7 @@
   }
   
   const ROOT = apiRoot();
-
-  // FIXED: Handle internal endpoints differently
-  const API = (path) => {
-    const pathStr = String(path).replace(/^\/+/, '');
-    
-    // For internal endpoints, route directly to port 2599
-    if (pathStr.startsWith('internal/')) {
-      const url = new URL(window.location.origin);
-      url.port = '2599';
-      url.pathname = '/' + pathStr;
-      return url.toString();
-    }
-    
-    // For everything else, use the normal API root
-    return new URL(pathStr, ROOT).toString();
-  };
+  const API = (path) => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
 
   // Toast notifications
   function toast(msg, type = 'info') {
@@ -301,32 +286,50 @@
       input.value = '';
       waitingForResponse = true;
       
-      console.log('Sending chat message via wake endpoint:', `chat ${text}`);
-      
-      await jfetch(API('internal/wake'), {
-        method: 'POST',
-        body: JSON.stringify({ text: `chat ${text}` })
-      });
-      
-      updateChatStatus('Sent to AI...');
-      toast('Message sent to Jarvis AI', 'success');
-      
-      // Set timeout for response
-      const responseTimeout = setTimeout(() => {
-        if (waitingForResponse) {
-          console.log('Chat response timeout');
-          addChatMessage('No response received. Check the inbox for any new messages.', false);
-          waitingForResponse = false;
-          updateChatStatus('Ready');
-        }
-      }, 30000);
-      
-      window.lastChatTimeout = responseTimeout;
+      // Send to internal/emit to trigger _process_incoming() which handles chat routing
+      try {
+        console.log('Sending chat message via emit endpoint:', `chat ${text}`);
+        
+        await jfetch(API('internal/emit'), {
+          method: 'POST',
+          body: JSON.stringify({ 
+            title: 'chat',
+            body: `chat ${text}`,  // Put "chat" prefix in body for _extract_chat_query()
+            source: 'webui-chat',
+            priority: 5
+          })
+        });
+        
+        updateChatStatus('Sent to AI...');
+        toast('Message sent to Jarvis AI', 'success');
+        
+        // Set timeout for response
+        const responseTimeout = setTimeout(() => {
+          if (waitingForResponse) {
+            console.log('Chat response timeout');
+            addChatMessage('No response received. Check the inbox for any new messages.', false);
+            waitingForResponse = false;
+            updateChatStatus('Ready');
+          }
+        }, 30000);
+        
+        window.lastChatTimeout = responseTimeout;
+        
+      } catch (apiError) {
+        console.error('Emit endpoint failed:', apiError);
+        waitingForResponse = false;
+        
+        addChatMessage(`API unavailable. Try using Gotify instead:`, false);
+        addChatMessage(`Send to Gotify: "chat ${text}"`, false);
+        
+        updateChatStatus('Use Gotify');
+        toast(`Send via Gotify: "chat ${text}"`, 'info');
+      }
       
     } catch (e) {
-      console.error('Chat error:', e);
+      console.error('Chat system error:', e);
       waitingForResponse = false;
-      addChatMessage('Chat system error.', false);
+      addChatMessage('Chat system error. Try using Gotify with "chat" prefix.', false);
       updateChatStatus('Error');
       toast('Chat system error', 'error');
     } finally {
