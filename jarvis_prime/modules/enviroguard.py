@@ -133,6 +133,7 @@ def _cfg_from(merged: dict) -> Dict[str, Any]:
         cfg["ha_temperature_entity"] = str(
             merged.get("llm_enviroguard_ha_temp_entity")
             or merged.get("ha_indoor_temp_entity")
+            or merged.get("weather_indoor_sensor_entity")
             or merged.get("ha_temperature_entity")
             or cfg["ha_temperature_entity"]
         ).strip()
