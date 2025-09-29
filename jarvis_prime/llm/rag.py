@@ -79,6 +79,13 @@ QUERY_SYNONYMS = {
     "where": ["where","location","zone","home","work","present"],
 }
 
+# ----------------- Area synonyms -----------------
+AREA_SYNONYMS = {
+    "lounge": ["living room","lounge","tv room"],
+    "study": ["study","office"],
+    "bedroom": ["bedroom","main bedroom","master bedroom"],
+}
+
 # Intent → categories
 INTENT_CATEGORY_MAP = {
     "solar": {"energy.storage","energy.pv","energy.inverter"},
@@ -100,6 +107,7 @@ _AREA_FETCH_ATTEMPTS = 0
 MAX_AREA_FETCH_ATTEMPTS = 3
 
 SAFE_RAG_BUDGET_FRACTION = 0.30
+
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -266,7 +274,6 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
         return {}
 
 # ----------------- fetch + summarize -----------------
-
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     global _AREA_MAP
     
@@ -324,7 +331,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
-            # build summary string (for debugging, not final grouping)
             summary = name
             if area_name: summary = f"[{area_name}] " + summary
             if device_class: summary += f" ({device_class})"
@@ -332,7 +338,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if last_changed:
                 summary += f" (as of {last_changed.replace('T',' ').split('.')[0].replace('Z','')})"
 
-            # scoring
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
             if any(k in toks for k in SOLAR_KEYWORDS) and not any(k in toks for k in AXPERT_KEYWORDS):
@@ -364,6 +369,7 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             print(f"[RAG] Error processing entity {item.get('entity_id', 'unknown')}: {e}")
             continue
     return facts
+
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -433,6 +439,7 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
         if not facts:
             return refresh_and_cache()
         return facts
+
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -493,11 +500,8 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     people_facts = [f for f in candidate_facts if "person" in f.get("cats", [])][:8]
     media_facts  = [f for f in candidate_facts if "media" in f.get("cats", [])][:8]
     infra_facts  = [f for f in candidate_facts if any(x in f.get("cats", []) for x in ["infra.proxmox","infra.cpu","infra.speedtest","weather"])][:8]
-
-    # Areas bucket = everything else (grouped later)
     area_facts   = [f for f in candidate_facts if f not in energy_facts+people_facts+media_facts+infra_facts][:20]
 
-    # Merge all buckets
     merged = energy_facts + people_facts + media_facts + infra_facts + area_facts
 
     # ---- Grouping by area ----
@@ -506,12 +510,25 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         area = f.get("area") or "Unassigned"
         grouped.setdefault(area, []).append(f)
 
-    # ---- Area override: if query mentions an area, bring it to the top ----
+    # ---- Area override (with synonyms) ----
     for area in list(grouped.keys()):
         if area.lower() in q:
             items = grouped.pop(area)
             grouped = {area: items, **grouped}
             break
+        for qtok in q:
+            if qtok in AREA_SYNONYMS:
+                for syn in AREA_SYNONYMS[qtok]:
+                    if syn.lower() == area.lower():
+                        items = grouped.pop(area)
+                        grouped = {area: items, **grouped}
+                        break
+
+    # ---- Keyword override: energy terms ----
+    if q & {"solar", "axpert", "battery", "soc", "grid", "load"}:
+        energy_items = [f for f in facts if any("energy" in c for c in f.get("cats", []))]
+        if energy_items:
+            grouped = {"Energy": energy_items, **grouped}
 
     # ---- Format lines ----
     selected_lines: List[str] = []
@@ -579,6 +596,7 @@ def get_stats() -> Dict[str, Any]:
         "last_refresh": _LAST_REFRESH_TS,
         "cache_size": len(_MEM_CACHE)
     }
+
 # ----------------- main -----------------
 
 if __name__ == "__main__":
