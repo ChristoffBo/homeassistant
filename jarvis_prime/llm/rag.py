@@ -134,6 +134,7 @@ def _rel_time(ts: str) -> str:
         return f"{int(hrs//24)} days ago"
     except Exception:
         return ts
+
 def _load_options() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     for p in OPTIONS_PATHS:
@@ -512,12 +513,6 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
             grouped = {area: items, **grouped}
             break
 
-    # ---- Keyword override: solar / axpert / battery ----
-    if q & {"solar","axpert","battery","soc","pv","grid","load"}:
-        energy_items = [f for f in facts if any("energy" in c for c in f.get("cats", []))]
-        if energy_items:
-            grouped = {"Energy": energy_items[:25], **grouped}
-
     # ---- Format lines ----
     selected_lines: List[str] = []
     ctx_tokens = _ctx_tokens_from_options()
@@ -584,7 +579,6 @@ def get_stats() -> Dict[str, Any]:
         "last_refresh": _LAST_REFRESH_TS,
         "cache_size": len(_MEM_CACHE)
     }
-
 # ----------------- main -----------------
 
 if __name__ == "__main__":
@@ -629,6 +623,6 @@ if __name__ == "__main__":
         print("Refreshing RAG facts from Home Assistant...")
         facts = refresh_and_cache()
         print(f"Wrote {len(facts)} facts.")
-        else:
+else:
     # If rag.py is imported as a module, preload cache into memory
     refresh_and_cache()
