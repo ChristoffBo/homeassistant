@@ -12,7 +12,6 @@
 
 import os, re, json, time, threading, urllib.request
 from typing import Any, Dict, List, Tuple, Set
-from datetime import datetime, timedelta
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
 
@@ -23,10 +22,6 @@ BASENAME       = "rag_facts.json"
 
 # Include ALL domains
 INCLUDE_DOMAINS = None
-
-# Diagnostic entities to exclude (reduce noise)
-EXCLUDE_SUFFIXES = {"_linkquality", "_rssi", "_lqi", "_last_seen", "_last_updated", "_update_available"}
-EXCLUDE_KEYWORDS = {"diagnostic", "debug", "rssi", "lqi", "linkquality"}
 
 # ----------------- Keywords / Integrations -----------------
 
@@ -77,13 +72,10 @@ QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
     "solar": ["solar","pv","generation","inverter","array","ess","axpert"],
     "pv": ["pv","solar"],
-    "load": ["load","power","w","kw","consumption","using","usage"],
+    "load": ["load","power","w","kw","consumption"],
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
     "where": ["where","location","zone","home","work","present"],
-    "lights": ["light","lights","lighting"],
-    "temperature": ["temperature","temp","hot","cold","warm"],
-    "energy": ["energy","power","consumption","usage","using"],
 }
 
 # Intent → categories we prefer
@@ -95,13 +87,10 @@ INTENT_CATEGORY_MAP = {
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
     "media": {"media"},
-    "using": {"energy.load"},
-    "usage": {"energy.load"},
-    "consumption": {"energy.load"},
 }
 
 REFRESH_INTERVAL_SEC = 15*60
-DEFAULT_TOP_K = 12
+DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
@@ -174,65 +163,6 @@ def _ctx_tokens_from_options() -> int:
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
 
-def _should_exclude_entity(eid: str, name: str, attrs: Dict[str,Any]) -> bool:
-    """Determine if entity should be excluded as diagnostic/noise"""
-    eid_lower = eid.lower()
-    name_lower = name.lower()
-    
-    # Check suffixes
-    for suffix in EXCLUDE_SUFFIXES:
-        if eid_lower.endswith(suffix):
-            return True
-    
-    # Check keywords
-    toks = set(_tok(eid) + _tok(name))
-    if toks & EXCLUDE_KEYWORDS:
-        return True
-    
-    # Check entity category
-    entity_category = attrs.get("entity_category", "")
-    if entity_category in ("diagnostic", "config"):
-        return True
-    
-    return False
-
-def _normalize_unit_value(value: float, unit: str) -> Tuple[float, str]:
-    """Normalize values to most readable units"""
-    try:
-        v = float(value)
-        unit_lower = unit.lower()
-        
-        # Power: W to kW if > 1000
-        if unit_lower == "w" and abs(v) >= 1000:
-            return (v / 1000, "kW")
-        
-        # Energy: Wh to kWh if > 1000
-        if unit_lower == "wh" and abs(v) >= 1000:
-            return (v / 1000, "kWh")
-        
-        return (v, unit)
-    except:
-        return (value, unit)
-
-def _is_stale_entity(last_changed: str, domain: str) -> bool:
-    """Check if entity hasn't changed in a very long time"""
-    if not last_changed:
-        return False
-    
-    # Only apply staleness check to sensors and binary_sensors
-    if domain not in ("sensor", "binary_sensor"):
-        return False
-    
-    try:
-        changed_dt = datetime.fromisoformat(last_changed.replace("Z", "+00:00"))
-        now = datetime.now(changed_dt.tzinfo)
-        age = now - changed_dt
-        
-        # Consider stale if unchanged for 30+ days
-        return age > timedelta(days=30)
-    except:
-        return False
-
 # ----------------- categorization -----------------
 
 def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, device_class: str) -> Set[str]:
@@ -249,16 +179,10 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
         cats.add("energy")
         if "pv" in toks or "solar" in toks: cats.add("energy.pv")
         if "inverter" in toks or "ess" in toks: cats.add("energy.inverter")
-        if "soc" in toks or ("battery" in toks and domain == "sensor"): 
-            cats.add("energy.storage")
+        if "soc" in toks or "battery" in toks or "bms" in model: cats.add("energy.storage")
     if "grid" in toks or "import" in toks or "export" in toks: cats.update({"energy","energy.grid"})
     if "load" in toks or "consumption" in toks: cats.update({"energy","energy.load"})
-    if device_class == "battery" or ("battery" in toks and domain == "sensor"): 
-        # Distinguish between device battery and energy storage
-        if "soc" in toks or "state_of_charge" in toks:
-            cats.add("energy.storage")
-        else:
-            cats.add("device.battery")
+    if device_class == "battery" or "battery" in toks: cats.add("device.battery")
 
     # Media
     if any(k in toks for k in MEDIA_KEYWORDS):
@@ -403,43 +327,32 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 continue
 
             attrs = item.get("attributes") or {}
-            
-            # Skip diagnostic/noise entities
-            name  = str(attrs.get("friendly_name", eid))
-            if _should_exclude_entity(eid, name, attrs):
-                continue
-            
             device_class = str(attrs.get("device_class","")).lower()
             area_id = attrs.get("area_id","")
             area_name = _AREA_MAP.get(area_id,"") if area_id else ""
+            name  = str(attrs.get("friendly_name", eid))
             state = str(item.get("state",""))
             unit  = str(attrs.get("unit_of_measurement","") or "")
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
             
-            # Skip stale entities
-            if _is_stale_entity(last_changed, domain):
-                continue
-            
             # normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
-            # displayable state with smart unit normalization
+            # displayable state
             show_state = state.upper() if state in ("on","off","open","closed") else state
             if unit and state not in ("on","off","open","closed"):
                 try:
                     v = float(state)
                     if abs(v) < 0.005: v = 0.0
-                    # Normalize units
-                    v, unit = _normalize_unit_value(v, unit)
                     s = f"{v:.2f}".rstrip("0").rstrip(".")
                     show_state = f"{s} {unit}".strip()
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
-            # build summary - more concise, less redundant timestamps
+            # build summary
             if domain == "person":
                 zone = _safe_zone_from_tracker(state, attrs)
                 summary = f"{name} is at {zone}"
@@ -449,11 +362,9 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 if device_class: summary += f" ({device_class})"
                 if show_state: summary += f": {show_state}"
 
-            # Only add timestamps for critical domains or recent changes
-            if domain in ("person","device_tracker"):
-                recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
-                if recent:
-                    summary += f" (as of {recent})"
+            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
+            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
+                summary += f" (as of {recent})"
 
             # score baseline
             score=1
@@ -462,20 +373,8 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if "solar_assistant" in "_".join(toks): score+=3
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
+            if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
             if is_unknown: score -= 3
-            
-            # Boost entities with recent changes
-            if last_changed:
-                try:
-                    changed_dt = datetime.fromisoformat(last_changed.replace("Z", "+00:00"))
-                    now = datetime.now(changed_dt.tzinfo)
-                    age = now - changed_dt
-                    if age < timedelta(hours=1):
-                        score += 3  # Very recent
-                    elif age < timedelta(hours=6):
-                        score += 1  # Recent
-                except:
-                    pass
 
             cats = _infer_categories(eid, name, attrs, domain, device_class)
 
@@ -584,26 +483,11 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
         out.update({"energy","energy.storage","energy.pv","energy.inverter"})
     if "grid" in q_tokens:
         out.update({"energy.grid"})
-    if q_tokens & {"load","using","usage","consumption"}:
+    if "load" in q_tokens:
         out.update({"energy.load"})
     if q_tokens & MEDIA_KEYWORDS:
         out.update({"media"})
     return out
-
-def _group_related_entities(facts: List[Dict[str,Any]]) -> Dict[str, List[Dict[str,Any]]]:
-    """Group related entities by base device/system"""
-    groups: Dict[str, List[Dict[str,Any]]] = {}
-    
-    for f in facts:
-        eid = f.get("entity_id", "")
-        # Extract base name (before first underscore with common suffixes)
-        base = re.sub(r'_(soc|state_of_charge|battery|power|energy|voltage|current|temperature|load|grid|pv).*$', '', eid.lower())
-        
-        if base not in groups:
-            groups[base] = []
-        groups[base].append(f)
-    
-    return groups
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
@@ -661,10 +545,6 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
            (("forecast" in ft) or ("estimated" in ft)):
             s -= 12
-        
-        # Boost energy load queries
-        if q & {"using","usage","consumption","load"} and "energy.load" in cats:
-            s += 10
 
         scored.append((s, f))
 
@@ -675,111 +555,47 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
 
-    # Smart ordering based on intent
     if ("soc" in q) or (want_cats & {"energy.storage"}):
-        ess_first = [f for f in candidate
-_facts if "energy.storage" in set(f.get("cats", []))]
+        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
         others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
         ordered   = ess_first + others
-    elif q & {"using","usage","consumption","load"}:
-        load_first = [f for f in candidate_facts if "energy.load" in set(f.get("cats", []))]
-        others     = [f for f in candidate_facts if "energy.load" not in set(f.get("cats", []))]
-        ordered    = load_first + others
     else:
         ordered = candidate_facts
 
     selected: List[str] = []
     remaining = budget
     seen_entities: Set[str] = set()
-    seen_devices: Set[str] = set()
 
-    # Add category headers for better organization
-    category_sections: Dict[str, List[str]] = {}
-    
     for f in ordered:
         line = f.get("summary", "")
         eid = f.get("entity_id", "")
-        cats = set(f.get("cats", []))
-        
         if not line:
             continue
         
-        # Extract device base name for deduplication
-        device_base = re.sub(r'_(soc|state_of_charge|battery|power|energy|voltage|current|temperature|load|grid|pv).*$', '', eid.lower())
-        
         # Skip duplicate/similar SOC entities when querying for battery SOC
         if ("soc" in q) or (want_cats & {"energy.storage"}):
+            # Extract the base entity name without the specific attribute
+            base_name = re.sub(r'_(soc|state_of_charge|battery).*$', '', eid.lower())
+            
             # If we've already added an SOC entity from this device, skip additional ones
-            if device_base in seen_devices and "soc" in eid.lower():
+            if base_name in seen_entities and "soc" in eid.lower():
                 continue
             
-            # Track this device
+            # Track this entity
             if "soc" in eid.lower() or "state_of_charge" in eid.lower():
-                seen_devices.add(device_base)
-        
-        # Smart deduplication for similar entities from same device
-        if device_base in seen_devices and len(seen_devices) > 3:
-            # Already have multiple entities from this device, be selective
-            if not any(keyword in eid.lower() for keyword in ["soc", "power", "load", "grid", "battery"]):
-                continue
-        
-        seen_devices.add(device_base)
+                seen_entities.add(base_name)
         
         cost = _estimate_tokens(line)
         if cost <= remaining:
-            # Determine primary category for grouping
-            primary_cat = None
-            if "energy.storage" in cats:
-                primary_cat = "Battery Storage"
-            elif "energy.load" in cats:
-                primary_cat = "Energy Usage"
-            elif "energy.pv" in cats or "energy.inverter" in cats:
-                primary_cat = "Solar Generation"
-            elif "energy.grid" in cats:
-                primary_cat = "Grid"
-            elif "person" in cats:
-                primary_cat = "People"
-            elif "media" in cats:
-                primary_cat = "Media"
-            else:
-                primary_cat = "Other"
-            
-            if primary_cat not in category_sections:
-                category_sections[primary_cat] = []
-            
-            category_sections[primary_cat].append(line)
+            selected.append(line)
             remaining -= cost
-            
-        if not selected and not category_sections and cost > remaining and remaining > 0:
-            # Ensure at least one item even if over budget
-            if "Other" not in category_sections:
-                category_sections["Other"] = []
-            category_sections["Other"].append(line)
+        if not selected and cost > remaining and remaining > 0:
+            selected.append(line)
             remaining = 0
-            
         if remaining <= 0:
             break
 
-    # Build output with smart category headers (only if multiple categories)
-    output_lines = []
-    category_order = ["Battery Storage", "Solar Generation", "Energy Usage", "Grid", "People", "Media", "Other"]
-    
-    # Only use headers if we have multiple categories and sufficient budget
-    use_headers = len(category_sections) > 1 and budget > 500
-    
-    for cat in category_order:
-        if cat in category_sections and category_sections[cat]:
-            if use_headers:
-                # Add category header
-                header = f"## {cat}"
-                header_cost = _estimate_tokens(header)
-                if header_cost < remaining:
-                    output_lines.append(header)
-                    remaining -= header_cost
-            
-            output_lines.extend(category_sections[cat])
-    
-    return "\n".join(output_lines)
+    return "\n".join(selected)
 
 # ----------------- Additional utility functions -----------------
 
@@ -819,20 +635,13 @@ def get_stats() -> Dict[str, Any]:
     
     # Count by domain
     domain_counts = {}
-    category_counts = {}
-    
     for entity in facts:
         domain = entity.get("domain", "unknown")
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
-        
-        # Count categories
-        for cat in entity.get("cats", []):
-            category_counts[cat] = category_counts.get(cat, 0) + 1
     
     return {
         "total_facts": len(facts),
         "domains": domain_counts,
-        "categories": category_counts,
         "areas": len(_AREA_MAP),
         "last_refresh": _LAST_REFRESH_TS,
         "cache_size": len(_MEM_CACHE)
@@ -868,8 +677,6 @@ if __name__ == "__main__":
             print(f"Context for '{query}':")
             print("=" * 50)
             print(context)
-            print("=" * 50)
-            print(f"\nEstimated tokens: {_estimate_tokens(context)}")
             
         elif command == "test":
             print("Testing configuration...")
@@ -878,16 +685,9 @@ if __name__ == "__main__":
             facts = get_facts(force_refresh=True)
             print(f"Successfully loaded {len(facts)} facts")
             
-            # Test some common queries
-            test_queries = ["battery soc", "how much energy am I using", "where is everyone"]
-            for tq in test_queries:
-                ctx = inject_context(tq)
-                print(f"\n--- Test query: '{tq}' ---")
-                print(f"Context lines: {len(ctx.splitlines())}")
-                print(f"Estimated tokens: {_estimate_tokens(ctx)}")
-            
         else:
-            print("Usage: python rag.py [refresh|stats|search <query>|context <query>|test]")
+            print("Usage: python rag.
+[refresh|stats|search <query>|context <query>|test]")
     else:
         print("Refreshing RAG facts from Home Assistant...")
         facts = refresh_and_cache()
