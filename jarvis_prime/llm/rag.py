@@ -113,7 +113,7 @@ _AREA_MAP: Dict[str,str] = {}
 _AREA_FETCH_ATTEMPTS = 0
 MAX_AREA_FETCH_ATTEMPTS = 3
 
-SAFE_RAG_BUDGET_FRACTION = 0.30
+SAFE_RAG_BUDGET_FRACTION = 0.20
 
 # ----------------- helpers -----------------
 
