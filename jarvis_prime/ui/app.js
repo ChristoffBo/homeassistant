@@ -132,8 +132,7 @@
     const m = INBOX_ITEMS.find(x => String(x.id) === String(id));
     renderPreview(m);
   }
-
-  async function loadInbox() {
+async function loadInbox() {
     const tb = $('#msg-body');
     try {
       updateSystemStatus('connecting', 'Loading...');
@@ -286,7 +285,7 @@
       input.value = '';
       waitingForResponse = true;
       
-      // Send to internal/emit to trigger _process_incoming() which handles chat routing
+      // Try main emit flow
       try {
         console.log('Sending chat message via emit endpoint:', `chat ${text}`);
         
@@ -294,7 +293,7 @@
           method: 'POST',
           body: JSON.stringify({ 
             title: 'chat',
-            body: `chat ${text}`,  // Put "chat" prefix in body for _extract_chat_query()
+            body: `chat ${text}`,
             source: 'webui-chat',
             priority: 5
           })
@@ -325,7 +324,24 @@
         updateChatStatus('Use Gotify');
         toast(`Send via Gotify: "chat ${text}"`, 'info');
       }
-      
+
+      // --- Additive fallback: call /chat directly if emit not supported ---
+      try {
+        const chatResp = await jfetch(API('chat'), {
+          method: 'POST',
+          body: JSON.stringify({ text })
+        });
+        if (chatResp && (chatResp.reply || chatResp.response || chatResp.text)) {
+          addChatMessage(chatResp.reply || chatResp.response || chatResp.text, false);
+          waitingForResponse = false;
+          updateChatStatus('Ready');
+          toast('Response received directly from Jarvis AI', 'success');
+          return; // stop here, we got a direct reply
+        }
+      } catch (directErr) {
+        console.warn('Direct /chat call failed:', directErr);
+      }
+
     } catch (e) {
       console.error('Chat system error:', e);
       waitingForResponse = false;
@@ -336,8 +352,7 @@
       sendBtn.classList.remove('loading');
     }
   }
-
-  // Listen for chat responses in the SSE stream
+// Listen for chat responses in the SSE stream
   function handleChatResponse(data) {
     if (!waitingForResponse) return false;
     
