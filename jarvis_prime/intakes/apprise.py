@@ -7,7 +7,7 @@
 #   POST /intake/apprise
 #   POST /notify
 #   POST /notify/<config_key>
-# Accepts: JSON with {title, body, type, tags[]} as used by Apprise API /notify
+# Accepts: JSON with {title, body, type, tags[], attach} as used by Apprise API /notify
 # Normalizes and emits into Jarvis via INTERNAL_EMIT_URL.
 
 from __future__ import annotations
@@ -63,7 +63,8 @@ def _emit_to_jarvis(msg: Dict[str, Any]) -> None:
                 "body":  msg.get("body", ""),
                 "priority": 5,
                 "source": "apprise",
-                "id": ""
+                "id": "",
+                "extras": msg.get("extras", {})
             },
             timeout=5
         )
@@ -186,6 +187,7 @@ def _coerce_payload() -> Tuple[Dict[str, Any], Dict[str, Any]]:
 def _normalize(payload: Dict[str, Any], extras_in: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert Apprise-style JSON into Jarvis's internal message shape.
+    Includes poster auto-detection for Radarr, Sonarr, and Apprise attach (multi-image aware).
     """
     title = payload.get("title") or payload.get("subject") or ""
     body  = payload.get("body")  or payload.get("message") or ""
@@ -199,6 +201,35 @@ def _normalize(payload: Dict[str, Any], extras_in: Dict[str, Any]) -> Dict[str, 
     passthrough = {k: v for k, v in payload.items() if k not in ("title","subject","body","message","type","priority","tags","tag")}
     extras = {"payload": passthrough}
     extras.update(extras_in or {})
+
+    # Poster auto-detect (Radarr, Sonarr, Apprise attach)
+    posters: List[str] = []
+
+    if "poster" in payload:  # Radarr
+        url = str(payload["poster"]).strip()
+        if url:
+            posters.append(url)
+
+    if "series" in payload and isinstance(payload["series"], dict):  # Sonarr
+        imgs = payload["series"].get("images") or []
+        if isinstance(imgs, list):
+            for img in imgs:
+                if isinstance(img, dict) and img.get("coverType") == "poster":
+                    url = str(img.get("remoteUrl") or "").strip()
+                    if url:
+                        posters.append(url)
+
+    if "attach" in payload:  # Apprise attach field(s)
+        if isinstance(payload["attach"], list):
+            posters.extend([str(u).strip() for u in payload["attach"] if u])
+        else:
+            url = str(payload["attach"]).strip()
+            if url:
+                posters.append(url)
+
+    if posters:
+        extras["posters"] = posters
+        extras["poster"] = posters[0]  # first one for compatibility
 
     riff_param = request.args.get("riff", "").strip()
     riff_hdr   = (request.headers.get("X-Jarvis-Riff", "") or "").strip()
