@@ -26,7 +26,7 @@ INCLUDE_DOMAINS = None
 # ----------------- Keywords / Integrations -----------------
 
 # Energy / Solar
-SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
+SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","axpert","battery_soc","soc","battery","grid","load","generation","import","export"}
 AXPERT_KEYWORDS  = {"axpert"}
 SONOFF_KEYWORDS  = {"sonoff","tasmota"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
