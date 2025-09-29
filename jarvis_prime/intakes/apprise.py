@@ -17,6 +17,7 @@ import time
 from typing import Dict, Any, List, Optional, Tuple
 import requests
 import threading
+import queue
 from flask import Flask, request, jsonify
 
 # ---------- configuration from env ----------
@@ -45,6 +46,43 @@ try:
 except Exception as e:
     riff_message = None
     print(f"[apprise] ⚠️ riff unavailable: {e}")
+
+# ---------- queue + worker pool ----------
+_emit_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+
+def _emit_to_jarvis(msg: Dict[str, Any]) -> None:
+    """
+    Forward a normalized message into Jarvis internal pipeline.
+    """
+    try:
+        s = requests.Session()
+        s.post(
+            INTERNAL_EMIT_URL,
+            json={
+                "title": msg.get("title", "Notification"),
+                "body":  msg.get("body", ""),
+                "priority": 5,
+                "source": "apprise",
+                "id": ""
+            },
+            timeout=5
+        )
+    except Exception as e:
+        print(f"[apprise] ⚠️ emit failed: {e}")
+
+def _emit_worker():
+    while True:
+        msg = _emit_queue.get()
+        try:
+            _emit_to_jarvis(msg)
+        except Exception as e:
+            print(f"[apprise] ⚠️ worker emit failed: {e}")
+        finally:
+            _emit_queue.task_done()
+
+# start worker pool (default: 8 threads)
+for _ in range(8):
+    threading.Thread(target=_emit_worker, daemon=True).start()
 
 # ---------- helpers ----------
 def _now_ts() -> int:
@@ -183,26 +221,6 @@ def _normalize(payload: Dict[str, Any], extras_in: Dict[str, Any]) -> Dict[str, 
         "extras": extras,
     }
 
-def _emit_to_jarvis(msg: Dict[str, Any]) -> None:
-    """
-    Forward a normalized message into Jarvis internal pipeline (fire-and-forget).
-    """
-    try:
-        s = requests.Session()
-        s.post(
-            INTERNAL_EMIT_URL,
-            json={
-                "title": msg.get("title", "Notification"),
-                "body":  msg.get("body", ""),
-                "priority": 5,
-                "source": "apprise",
-                "id": ""
-            },
-            timeout=5  # shorter timeout so it never blocks long
-        )
-    except Exception as e:
-        print(f"[apprise] ⚠️ emit failed (non-blocking): {e}")
-
 def _handle_post_common(path_key: Optional[str] = None):
     token, cfg_key = _extract_auth(path_key)
     if not _authorized(token, cfg_key):
@@ -223,8 +241,8 @@ def _handle_post_common(path_key: Optional[str] = None):
     except Exception as e:
         print(f"[apprise] riff failed: {e}")
 
-    # Fire-and-forget emit in a background thread
-    threading.Thread(target=_emit_to_jarvis, args=(msg,), daemon=True).start()
+    # Push message into queue for worker threads
+    _emit_queue.put(msg)
 
     return jsonify({
         "ok": True,
@@ -264,7 +282,7 @@ def _run_with_waitress():
     try:
         from waitress import serve
         print(f"[apprise] waitress serving on {BIND}:{PORT} (token={'set' if EXPECTED_TOKEN else 'none'}, accept_any_key={ACCEPT_ANY_KEY}, allowed_keys={ALLOWED_KEYS})")
-        serve(app, host=BIND, port=PORT, threads=32)  # bumped threads from 8 → 32
+        serve(app, host=BIND, port=PORT, threads=32)
     except Exception as e:
         print(f"[apprise] waitress failed, falling back to Flask dev server: {e}")
         app.run(host=BIND, port=PORT, threaded=True)
