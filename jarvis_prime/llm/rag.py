@@ -26,8 +26,13 @@ INCLUDE_DOMAINS = None
 # ----------------- Keywords / Integrations -----------------
 
 # Energy / Solar
-SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","axpert","battery_soc","soc","battery","grid","load","generation","import","export"}
-AXPERT_KEYWORDS  = {"axpert"}
+SOLAR_KEYWORDS   = {
+    "solar","solar_assistant","pv","inverter","axpert","battery_soc","soc","battery",
+    "grid","load","generation","import","export",
+    # --- Additive expansion ---
+    "pvinput","gridvoltage","ac_output","battery_voltage","batt_soc","charge_current"
+}
+AXPERT_KEYWORDS  = {"axpert","inverter","invt","mpp","voltronic"}  # expanded
 SONOFF_KEYWORDS  = {"sonoff","tasmota"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
 MQTT_KEYWORDS    = {"mqtt"}
@@ -71,7 +76,7 @@ DEVICE_CLASS_PRIORITY = {
 
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
-    "solar": ["solar","pv","generation","inverter","array","ess"],
+    "solar": ["solar","pv","generation","inverter","array","ess","axpert"],
     "pv": ["pv","solar"],
     "load": ["load","power","w","kw","consumption"],
     "grid": ["grid","import","export"],
@@ -95,6 +100,8 @@ INTENT_CATEGORY_MAP = {
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
     "media": {"media"},
+    # --- Additive ---
+    "axpert": {"energy.inverter","energy.storage","energy.grid"}
 }
 
 REFRESH_INTERVAL_SEC = 10*60
@@ -120,7 +127,6 @@ def _expand_query_tokens(tokens: List[str]) -> List[str]:
             if x not in seen:
                 seen.add(x); out.append(x)
     return out
-
 def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     zone = attrs.get("zone")
     if zone: return zone
@@ -272,7 +278,6 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
         _AREA_FETCH_ATTEMPTS += 1
         print(f"[RAG] Failed to fetch areas (attempt {_AREA_FETCH_ATTEMPTS}/{MAX_AREA_FETCH_ATTEMPTS}): {e}")
         return {}
-
 # ----------------- fetch + summarize -----------------
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     global _AREA_MAP
@@ -317,7 +322,11 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             unit  = str(attrs.get("unit_of_measurement","") or "")
             last_changed = str(item.get("last_changed","") or "")
 
+            # --- Skip dead/unavailable entities (additive patch) ---
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
+            if is_unknown:
+                continue  # skip dead entities for this refresh
+
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
@@ -343,12 +352,11 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if any(k in toks for k in SOLAR_KEYWORDS) and not any(k in toks for k in AXPERT_KEYWORDS):
                 score+=3
             if any(k in toks for k in AXPERT_KEYWORDS):
-                score+=3
+                score+=6   # additive: extra boost for Axpert
             if "solar_assistant" in "_".join(toks): score+=2
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
             if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
-            if is_unknown: score -= 3
 
             cats = _infer_categories(eid, name, attrs, domain, device_class)
 
@@ -439,7 +447,6 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
         if not facts:
             return refresh_and_cache()
         return facts
-
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
