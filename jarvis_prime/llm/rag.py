@@ -6,11 +6,11 @@
 # - Summarizes/boosts entities and auto-categorizes them (no per-entity config)
 # - Writes primary JSON to /share/jarvis_prime/memory/rag_facts.json
 #   and also mirrors to /data/rag_facts.json as a fallback
-# - inject_context(user_msg, top_k) returns a small, relevant context block
+# - inject_context(user_msg, top_k) returns a grouped, relevant context block
 #
 # Safe: read-only, never calls HA /api/services
 
-import os, re, json, time, threading, urllib.request
+import os, re, json, time, threading, urllib.request, math
 from typing import Any, Dict, List, Tuple, Set
 
 OPTIONS_PATHS = ["/data/options.json", "/data/config.json"]
@@ -20,12 +20,12 @@ PRIMARY_DIRS   = ["/share/jarvis_prime/memory"]
 FALLBACK_PATH  = "/data/rag_facts.json"
 BASENAME       = "rag_facts.json"
 
-# Include ALL domains
+# Include ALL domains unless restricted
 INCLUDE_DOMAINS = None
 
 # ----------------- Keywords / Integrations -----------------
 
-# Energy / Solar - FIXED: Separated axpert from general solar keywords
+# Energy / Solar
 SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export"}
 AXPERT_KEYWORDS  = {"axpert"}
 SONOFF_KEYWORDS  = {"sonoff","tasmota"}
@@ -34,7 +34,7 @@ MQTT_KEYWORDS    = {"mqtt"}
 TUYA_KEYWORDS    = {"tuya","localtuya","local_tuya"}
 FORECAST_SOLAR   = {"forecast.solar","forecastsolar","forecast_solar"}
 
-# Media (separate + combined)
+# Media
 PLEX_KEYWORDS    = {"plex"}
 EMBY_KEYWORDS    = {"emby"}
 JELLYFIN_KEYWORDS= {"jellyfin"}
@@ -79,7 +79,7 @@ QUERY_SYNONYMS = {
     "where": ["where","location","zone","home","work","present"],
 }
 
-# Intent → categories we prefer
+# Intent → categories
 INTENT_CATEGORY_MAP = {
     "solar": {"energy.storage","energy.pv","energy.inverter"},
     "pv":    {"energy.pv","energy.inverter","energy.storage"},
@@ -90,15 +90,16 @@ INTENT_CATEGORY_MAP = {
     "media": {"media"},
 }
 
-REFRESH_INTERVAL_SEC = 10*60  # CHANGED: From 15 to 10 minutes
+REFRESH_INTERVAL_SEC = 10*60
 DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
-_AREA_FETCH_ATTEMPTS = 0  # ADDED: For retry logic
-MAX_AREA_FETCH_ATTEMPTS = 3  # ADDED: Max retries for area fetching
+_AREA_FETCH_ATTEMPTS = 0
+MAX_AREA_FETCH_ATTEMPTS = 3
 
+SAFE_RAG_BUDGET_FRACTION = 0.30
 # ----------------- helpers -----------------
 
 def _tok(s: str) -> List[str]:
@@ -118,6 +119,21 @@ def _safe_zone_from_tracker(state: str, attrs: Dict[str,Any]) -> str:
     ls = (state or "").lower()
     if ls in ("home","not_home"): return "Home" if ls=="home" else "Away"
     return state
+
+def _rel_time(ts: str) -> str:
+    """Convert ISO timestamp to relative time string (e.g., '2 min ago')."""
+    if not ts: return ""
+    try:
+        t = time.mktime(time.strptime(ts.replace("T"," ").split(".")[0], "%Y-%m-%d %H:%M:%S"))
+        diff = max(0, time.time() - t)
+        mins = int(diff // 60)
+        hrs  = int(diff // 3600)
+        if mins < 1: return "just now"
+        if mins < 60: return f"{mins} min ago"
+        if hrs < 24: return f"{hrs} hr ago"
+        return f"{int(hrs//24)} days ago"
+    except Exception:
+        return ts
 
 def _load_options() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
@@ -152,7 +168,6 @@ def _write_json_atomic(path: str, obj: dict):
         json.dump(obj,f,indent=2); f.flush(); os.fsync(f.fileno())
     os.replace(tmp,path)
 
-SAFE_RAG_BUDGET_FRACTION = 0.30
 def _estimate_tokens(text: str) -> int:
     if not text: return 0
     words = len(re.findall(r"\S+", text))
@@ -177,7 +192,7 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if domain in ("person","device_tracker"):
         cats.add("person")
 
-    # Energy / solar - IMPROVED: More precise categorization
+    # Energy / solar
     is_axpert = any(k in toks for k in AXPERT_KEYWORDS)
     is_solar = any(k in toks for k in SOLAR_KEYWORDS) or "inverter" in model
     
@@ -213,18 +228,15 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if toks & WEATHER_KEYS: cats.add("weather")
 
     return cats
-
 # ----------------- fetch areas -----------------
 
 def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
-    """IMPROVED: Added retry logic for area fetching"""
+    """Fetch area_id → area_name mapping from Home Assistant (with retry)."""
     global _AREA_FETCH_ATTEMPTS
     
-    # Try multiple possible config key names for flexibility
     ha_url = (cfg.get("ha_url") or 
               cfg.get("homeassistant_url") or 
               cfg.get("llm_enviroguard_ha_base_url") or "").rstrip("/")
-    
     ha_token = (cfg.get("ha_token") or 
                 cfg.get("homeassistant_token") or 
                 cfg.get("llm_enviroguard_ha_token") or "")
@@ -246,7 +258,7 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
                 if "area_id" in a and "name" in a:
                     amap[a["area_id"]] = a["name"]
         print(f"[RAG] Loaded {len(amap)} areas")
-        _AREA_FETCH_ATTEMPTS = 0  # Reset on success
+        _AREA_FETCH_ATTEMPTS = 0
         return amap
     except Exception as e:
         _AREA_FETCH_ATTEMPTS += 1
@@ -258,11 +270,9 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
 def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
     global _AREA_MAP
     
-    # Try multiple possible config key names for flexibility
     ha_url = (cfg.get("ha_url") or 
               cfg.get("homeassistant_url") or 
               cfg.get("llm_enviroguard_ha_base_url") or "").rstrip("/")
-    
     ha_token = (cfg.get("ha_token") or 
                 cfg.get("homeassistant_token") or 
                 cfg.get("llm_enviroguard_ha_token") or "")
@@ -279,7 +289,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         return []
     if not isinstance(data,list): return []
 
-    # IMPROVED: Fetch areas first if not loaded or empty
     if not _AREA_MAP or len(_AREA_MAP) == 0:
         _AREA_MAP = _fetch_area_map(cfg)
 
@@ -302,12 +311,9 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             last_changed = str(item.get("last_changed","") or "")
 
             is_unknown = str(state).lower() in ("", "unknown", "unavailable", "none")
-            
-            # normalize tracker/person zones
             if domain == "device_tracker" and not is_unknown:
                 state = _safe_zone_from_tracker(state, attrs)
 
-            # displayable state
             show_state = state.upper() if state in ("on","off","open","closed") else state
             if unit and state not in ("on","off","open","closed"):
                 try:
@@ -318,32 +324,21 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 except Exception:
                     show_state = f"{state} {unit}".strip()
 
-            # build summary
-            if domain == "person":
-                zone = _safe_zone_from_tracker(state, attrs)
-                summary = f"{name} is at {zone}"
-            else:
-                summary = name
-                if area_name: summary = f"[{area_name}] " + summary
-                if device_class: summary += f" ({device_class})"
-                if show_state: summary += f": {show_state}"
+            # build summary string (for debugging, not final grouping)
+            summary = name
+            if area_name: summary = f"[{area_name}] " + summary
+            if device_class: summary += f" ({device_class})"
+            if show_state: summary += f": {show_state}"
+            if last_changed:
+                summary += f" (as of {last_changed.replace('T',' ').split('.')[0].replace('Z','')})"
 
-            recent = last_changed.replace("T"," ").split(".")[0].replace("Z","") if last_changed else ""
-            if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
-                summary += f" (as of {recent})"
-
-            # IMPROVED: More conservative scoring - reduced from +6 to +3 for solar
+            # scoring
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
-            
-            # Only boost solar entities moderately (not axpert specifically)
             if any(k in toks for k in SOLAR_KEYWORDS) and not any(k in toks for k in AXPERT_KEYWORDS):
                 score+=3
-            
-            # Axpert gets same boost as other solar (no extra boosting)
             if any(k in toks for k in AXPERT_KEYWORDS):
                 score+=3
-                
             if "solar_assistant" in "_".join(toks): score+=2
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
@@ -369,7 +364,6 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             print(f"[RAG] Error processing entity {item.get('entity_id', 'unknown')}: {e}")
             continue
     return facts
-
 # ----------------- IO + cache -----------------
 
 def refresh_and_cache() -> List[Dict[str,Any]]:
@@ -382,13 +376,11 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
 
         result_paths=[]
         try:
-            # Create payload with metadata
             payload = {
                 "facts": facts,
                 "timestamp": time.time(),
                 "count": len(facts)
             }
-            
             for d in PRIMARY_DIRS:
                 try:
                     p=os.path.join(d,BASENAME)
@@ -411,23 +403,19 @@ def load_cached() -> List[Dict[str,Any]]:
         if _MEM_CACHE: return _MEM_CACHE
         
         try:
-            # Try primary locations first
             for d in PRIMARY_DIRS:
                 p=os.path.join(d,BASENAME)
                 if os.path.exists(p):
                     with open(p,"r",encoding="utf-8") as f:
                         data = json.load(f)
-                        # Handle both old format (list) and new format (dict with facts key)
                         if isinstance(data, list):
                             return data
                         elif isinstance(data, dict) and "facts" in data:
                             return data["facts"]
             
-            # Try fallback
             if os.path.exists(FALLBACK_PATH):
                 with open(FALLBACK_PATH,"r",encoding="utf-8") as f: 
                     data = json.load(f)
-                    # Handle both old format (list) and new format (dict with facts key)
                     if isinstance(data, list):
                         return data
                     elif isinstance(data, dict) and "facts" in data:
@@ -445,7 +433,6 @@ def get_facts(force_refresh: bool=False) -> List[Dict[str,Any]]:
         if not facts:
             return refresh_and_cache()
         return facts
-
 # ----------------- query → context -----------------
 
 def _intent_categories(q_tokens: Set[str]) -> Set[str]:
@@ -453,10 +440,8 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     for key, cats in INTENT_CATEGORY_MAP.items():
         if key in q_tokens:
             out.update(cats)
-    # IMPROVED: More selective solar intent detection (don't include axpert in general solar)
     if q_tokens & (SOLAR_KEYWORDS - AXPERT_KEYWORDS):
         out.update({"energy","energy.storage","energy.pv","energy.inverter"})
-    # Only add axpert categories if explicitly mentioned
     if q_tokens & AXPERT_KEYWORDS:
         out.update({"energy.inverter"})
     if "grid" in q_tokens:
@@ -468,68 +453,49 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
+    """Return grouped context string for LLM ingestion."""
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Domain/keyword overrides - IMPROVED: Only filter for axpert if explicitly mentioned ----
+    # ---- Specific filters ----
     filtered = []
-    has_specific_filter = False
-    
     if "light" in q or "lights" in q:
         filtered += [f for f in facts if f.get("domain") == "light"]
-        has_specific_filter = True
     if "switch" in q or "switches" in q:
         filtered += [f for f in facts if f.get("domain") == "switch" and not f.get("entity_id","").startswith("automation.")]
-        has_specific_filter = True
     if "motion" in q or "occupancy" in q:
         filtered += [f for f in facts if f.get("domain") == "binary_sensor" and f.get("device_class") == "motion"]
-        has_specific_filter = True
-    # FIXED: Only filter for axpert if explicitly in query
     if q & AXPERT_KEYWORDS:
         filtered += [f for f in facts if "axpert" in f.get("entity_id","").lower() or "axpert" in f.get("friendly_name","").lower()]
-        has_specific_filter = True
     if "sonoff" in q:
         filtered += [f for f in facts if "sonoff" in f.get("entity_id","").lower() or "sonoff" in f.get("friendly_name","").lower()]
-        has_specific_filter = True
     if "zigbee" in q or "z2m" in q:
         filtered += [f for f in facts if "zigbee" in f.get("entity_id","").lower() or "zigbee" in f.get("friendly_name","").lower()]
-        has_specific_filter = True
     if "where" in q:
         filtered += [f for f in facts if f.get("domain") in ("person","device_tracker")]
-        has_specific_filter = True
     if q & MEDIA_KEYWORDS:
         filtered += [f for f in facts if any(
             m in f.get("entity_id","").lower() or m in f.get("friendly_name","").lower()
             for m in MEDIA_KEYWORDS
         )]
-        has_specific_filter = True
-    # area queries
-    for f in facts:
-        if f.get("area") and f.get("area","").lower() in q:
-            filtered.append(f)
-            has_specific_filter = True
 
     if filtered:
         facts = filtered
 
     want_cats = _intent_categories(q)
 
+    # ---- Scoring ----
     scored: List[Tuple[int, Dict[str, Any]]] = []
     for f in facts:
         s = int(f.get("score", 1))
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
-
-        # IMPROVED: Better token matching - reward exact matches more
         overlap = q & ft
         if overlap:
-            s += len(overlap) * 4  # Boost for each matching token
-            
-        # REDUCED: Less aggressive blanket solar boost
-        if (q & SOLAR_KEYWORDS) and not has_specific_filter:
+            s += len(overlap) * 4
+        if (q & SOLAR_KEYWORDS):
             s += 1
-            
         if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
             s += 12
         if want_cats and (cats & want_cats):
@@ -542,84 +508,75 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
            (("forecast" in ft) or ("estimated" in ft)):
             s -= 12
-
         scored.append((s, f))
-
     scored.sort(key=lambda x: x[0], reverse=True)
 
+    # ---- Budget ----
     ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
-
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
 
-    if ("soc" in q) or (want_cats & {"energy.storage"}):
-        ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
-        others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
-        ordered   = ess_first + others
-    else:
-        ordered = candidate_facts
+    # ---- Grouping by area ----
+    grouped: Dict[str, List[Dict[str,Any]]] = {}
+    for f in candidate_facts:
+        area = f.get("area") or "Unassigned"
+        grouped.setdefault(area, []).append(f)
 
-    selected: List[str] = []
+    # ---- Format lines ----
+    selected_lines: List[str] = []
     remaining = budget
-
-    for f in ordered:
-        line = f.get("summary", "")
-        if not line:
-            continue
-        cost = _estimate_tokens(line)
-        if cost <= remaining:
-            selected.append(line)
-            remaining -= cost
-        if not selected and cost > remaining and remaining > 0:
-            selected.append(line)
-            remaining = 0
+    for area, items in grouped.items():
+        header = f"[{area}]"
+        selected_lines.append(header)
+        for f in items:
+            state_str = f.get("state","")
+            if f.get("unit"):
+                state_str = f"{state_str} {f.get('unit')}".strip()
+            rel_ts = _rel_time(f.get("last_changed",""))
+            line = f"- {f.get('friendly_name')} ({f.get('device_class') or f.get('domain')}): {state_str}"
+            if rel_ts: line += f" (as of {rel_ts})"
+            cats = f.get("cats", [])
+            if cats: line += f" {{{','.join(cats)}}}"
+            cost = _estimate_tokens(line) + _estimate_tokens(header)
+            if cost <= remaining:
+                selected_lines.append(line)
+                remaining -= cost
+            if remaining <= 0:
+                break
         if remaining <= 0:
             break
 
-    return "\n".join(selected)
-
+    return "\n".join(selected_lines)
 # ----------------- Additional utility functions -----------------
 
 def search_entities(query: str, limit: int = 10) -> List[Dict[str, Any]]:
     """Search entities based on query string"""
     facts = get_facts()
-    
     if not query:
         return facts[:limit]
     
     q_tokens = set(_tok(query))
-    
-    # Score and filter entities
     scored = []
     for entity in facts:
         score = 0
         entity_tokens = set(_tok(entity.get("entity_id", "")) + _tok(entity.get("friendly_name", "")))
-        
-        # Exact matches
         if q_tokens & entity_tokens:
             score += 10
-        
-        # Partial matches
         for token in q_tokens:
             if any(token in et for et in entity_tokens):
                 score += 3
-        
         if score > 0:
             scored.append((score, entity))
-    
     scored.sort(key=lambda x: x[0], reverse=True)
     return [entity for _, entity in scored[:limit]]
 
 def get_stats() -> Dict[str, Any]:
     """Get statistics about the RAG system"""
     facts = get_facts()
-    
-    # Count by domain
     domain_counts = {}
     for entity in facts:
         domain = entity.get("domain", "unknown")
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
-    
     return {
         "total_facts": len(facts),
         "domains": domain_counts,
@@ -627,7 +584,6 @@ def get_stats() -> Dict[str, Any]:
         "last_refresh": _LAST_REFRESH_TS,
         "cache_size": len(_MEM_CACHE)
     }
-
 # ----------------- main -----------------
 
 if __name__ == "__main__":
