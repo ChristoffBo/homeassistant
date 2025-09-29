@@ -1328,5 +1328,34 @@ async def _run_forever():
     while True:
         await asyncio.sleep(60)
 
+# ----------------- CHATBOT ENDPOINT -----------------
+from flask import request, jsonify
+
+@app.route("/chat", methods=["POST"])
+def chat_endpoint():
+    """
+    WebUI chatbot endpoint.
+    Accepts: { "message": "your text" }
+    Routes it into the internal emit() → _process_incoming() pipeline.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        text = str(data.get("message") or "").strip()
+        if not text:
+            return jsonify({"error": "Missing 'message'"}), 400
+
+        # Re-use existing emit logic
+        emit_event = {
+            "title": "chat",
+            "body": f"chat {text}",
+            "source": "webui-chat",
+            "priority": 5
+        }
+        _process_incoming(emit_event)  # already in your bot.py
+
+        return jsonify({"status": "ok", "echo": text}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     main()
