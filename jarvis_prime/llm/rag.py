@@ -564,11 +564,27 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
 
     selected: List[str] = []
     remaining = budget
+    seen_entities: Set[str] = set()
 
     for f in ordered:
         line = f.get("summary", "")
+        eid = f.get("entity_id", "")
         if not line:
             continue
+        
+        # Skip duplicate/similar SOC entities when querying for battery SOC
+        if ("soc" in q) or (want_cats & {"energy.storage"}):
+            # Extract the base entity name without the specific attribute
+            base_name = re.sub(r'_(soc|state_of_charge|battery).*$', '', eid.lower())
+            
+            # If we've already added an SOC entity from this device, skip additional ones
+            if base_name in seen_entities and "soc" in eid.lower():
+                continue
+            
+            # Track this entity
+            if "soc" in eid.lower() or "state_of_charge" in eid.lower():
+                seen_entities.add(base_name)
+        
         cost = _estimate_tokens(line)
         if cost <= remaining:
             selected.append(line)
@@ -670,7 +686,8 @@ if __name__ == "__main__":
             print(f"Successfully loaded {len(facts)} facts")
             
         else:
-            print("Usage: python rag.py [refresh|stats|search <query>|context <query>|test]")
+            print("Usage: python rag.
+[refresh|stats|search <query>|context <query>|test]")
     else:
         print("Refreshing RAG facts from Home Assistant...")
         facts = refresh_and_cache()
