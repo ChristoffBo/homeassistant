@@ -23,10 +23,15 @@ BASENAME       = "rag_facts.json"
 # Include ALL domains
 INCLUDE_DOMAINS = None
 
+# Enable debug logging (set to True for verbose output)
+DEBUG_MODE = False
+
 # ----------------- Keywords / Integrations -----------------
 
 # Energy / Solar
-SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","soc","battery","grid","load","generation","import","export","axpert"}
+SOLAR_KEYWORDS   = {"solar","solar_assistant","pv","inverter","ess","battery_soc","generation","grid","load","import","export"}
+AXPERT_KEYWORDS  = {"axpert"}  # Separated from solar for more precise matching
+BATTERY_KEYWORDS = {"battery","soc","state_of_charge","battery_state_of_charge","charge"}
 SONOFF_KEYWORDS  = {"sonoff","tasmota"}
 ZIGBEE_KEYWORDS  = {"zigbee","zigbee2mqtt","z2m","zha"}
 MQTT_KEYWORDS    = {"mqtt"}
@@ -59,6 +64,10 @@ SPEEDTEST_KEYS   = {"speedtest","speed_test"}
 CPU_KEYS         = {"cpu","processor","loadavg","load_avg"}
 WEATHER_KEYS     = {"weather","weatherbit","openweathermap","met","yr"}
 
+# Diagnostic entities to filter out
+DIAGNOSTIC_SUFFIXES = {"_linkquality", "_rssi", "_lqi", "_signal", "_noise", "_snr", "_last_seen"}
+DIAGNOSTIC_KEYWORDS = {"diagnostic", "update_available", "config", "availability"}
+
 # ----------------- Device-class priority -----------------
 
 DEVICE_CLASS_PRIORITY = {
@@ -70,12 +79,14 @@ DEVICE_CLASS_PRIORITY = {
 
 QUERY_SYNONYMS = {
     "soc": ["soc","state_of_charge","battery_state_of_charge","battery_soc","battery","charge","charge_percentage","soc_percentage","soc_percent"],
-    "solar": ["solar","pv","generation","inverter","array","ess","axpert"],
+    "solar": ["solar","pv","generation","inverter","array","ess"],
     "pv": ["pv","solar"],
     "load": ["load","power","w","kw","consumption"],
     "grid": ["grid","import","export"],
     "battery": ["battery","soc","charge","state_of_charge","battery_state_of_charge","charge_percentage","soc_percentage","soc_percent"],
     "where": ["where","location","zone","home","work","present"],
+    "lights": ["light","lights","lighting","lamp","lamps"],
+    "switches": ["switch","switches","outlet","outlets","plug","plugs"],
 }
 
 # Intent → categories we prefer
@@ -87,16 +98,24 @@ INTENT_CATEGORY_MAP = {
     "grid":  {"energy.grid"},
     "load":  {"energy.load"},
     "media": {"media"},
+    "axpert": {"energy.inverter"},
 }
 
-REFRESH_INTERVAL_SEC = 15*60
+REFRESH_INTERVAL_SEC = 10*60  # Changed from 15 to 10 minutes
 DEFAULT_TOP_K = 10
 _CACHE_LOCK = threading.RLock()
 _LAST_REFRESH_TS = 0.0
 _MEM_CACHE: List[Dict[str,Any]] = []
 _AREA_MAP: Dict[str,str] = {}
+_AREA_FETCH_ATTEMPTS = 0
+MAX_AREA_FETCH_ATTEMPTS = 3
 
 # ----------------- helpers -----------------
+
+def _debug_log(msg: str):
+    """Debug logging helper"""
+    if DEBUG_MODE:
+        print(f"[RAG DEBUG] {msg}")
 
 def _tok(s: str) -> List[str]:
     return re.findall(r"[A-Za-z0-9_]+", s.lower() if s else "")
@@ -133,8 +152,8 @@ def _load_options() -> Dict[str, Any]:
                         data=None
                 if isinstance(data,dict):
                     cfg.update(data)
-        except Exception:
-            pass
+        except Exception as e:
+            _debug_log(f"Failed to load {p}: {e}")
     return cfg
 
 def _http_get_json(url: str, headers: Dict[str,str], timeout: int=20):
@@ -151,9 +170,13 @@ def _write_json_atomic(path: str, obj: dict):
 
 SAFE_RAG_BUDGET_FRACTION = 0.30
 def _estimate_tokens(text: str) -> int:
+    """Improved token estimation closer to actual tokenization"""
     if not text: return 0
+    # More accurate: count words, punctuation, and special chars
     words = len(re.findall(r"\S+", text))
-    return max(8, min(int(words * 1.3), 128))
+    special_chars = len(re.findall(r"[^\w\s]", text))
+    # Average: 1.3 tokens per word + punctuation tokens
+    return max(8, min(int(words * 1.3 + special_chars * 0.5), 128))
 
 def _ctx_tokens_from_options() -> int:
     cfg = _load_options()
@@ -162,6 +185,23 @@ def _ctx_tokens_from_options() -> int:
 
 def _rag_budget_tokens(ctx_tokens: int) -> int:
     return max(256, int(ctx_tokens * SAFE_RAG_BUDGET_FRACTION))
+
+def _is_diagnostic_entity(eid: str, name: str) -> bool:
+    """Check if entity is a diagnostic/monitoring entity that should be deprioritized"""
+    eid_lower = eid.lower()
+    name_lower = name.lower()
+    
+    # Check suffixes
+    for suffix in DIAGNOSTIC_SUFFIXES:
+        if eid_lower.endswith(suffix):
+            return True
+    
+    # Check keywords
+    for keyword in DIAGNOSTIC_KEYWORDS:
+        if keyword in eid_lower or keyword in name_lower:
+            return True
+    
+    return False
 
 # ----------------- categorization -----------------
 
@@ -174,12 +214,16 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
     if domain in ("person","device_tracker"):
         cats.add("person")
 
-    # Energy / solar
-    if any(k in toks for k in SOLAR_KEYWORDS) or "inverter" in model:
+    # Energy / solar - more precise matching
+    is_solar_entity = any(k in toks for k in SOLAR_KEYWORDS) or "inverter" in model
+    is_axpert = any(k in toks for k in AXPERT_KEYWORDS)
+    
+    if is_solar_entity or is_axpert:
         cats.add("energy")
         if "pv" in toks or "solar" in toks: cats.add("energy.pv")
-        if "inverter" in toks or "ess" in toks: cats.add("energy.inverter")
-        if "soc" in toks or "battery" in toks or "bms" in model: cats.add("energy.storage")
+        if "inverter" in toks or "ess" in toks or is_axpert: cats.add("energy.inverter")
+        if any(k in toks for k in BATTERY_KEYWORDS) or "bms" in model: cats.add("energy.storage")
+    
     if "grid" in toks or "import" in toks or "export" in toks: cats.update({"energy","energy.grid"})
     if "load" in toks or "consumption" in toks: cats.update({"energy","energy.load"})
     if device_class == "battery" or "battery" in toks: cats.add("device.battery")
@@ -211,6 +255,9 @@ def _infer_categories(eid: str, name: str, attrs: Dict[str,Any], domain: str, de
 # ----------------- fetch areas -----------------
 
 def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
+    """Fetch area map with retry logic"""
+    global _AREA_FETCH_ATTEMPTS
+    
     # Try multiple possible config key names for flexibility
     ha_url = (cfg.get("ha_url") or 
               cfg.get("homeassistant_url") or 
@@ -223,6 +270,10 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
     if not ha_url or not ha_token: 
         print("[RAG] No HA URL/token found in config")
         return {}
+    
+    if _AREA_FETCH_ATTEMPTS >= MAX_AREA_FETCH_ATTEMPTS:
+        _debug_log(f"Max area fetch attempts ({MAX_AREA_FETCH_ATTEMPTS}) reached")
+        return {}
         
     headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
     try:
@@ -233,9 +284,11 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
                 if "area_id" in a and "name" in a:
                     amap[a["area_id"]] = a["name"]
         print(f"[RAG] Loaded {len(amap)} areas")
+        _AREA_FETCH_ATTEMPTS = 0  # Reset on success
         return amap
     except Exception as e:
-        print(f"[RAG] Failed to fetch areas: {e}")
+        _AREA_FETCH_ATTEMPTS += 1
+        print(f"[RAG] Failed to fetch areas (attempt {_AREA_FETCH_ATTEMPTS}/{MAX_AREA_FETCH_ATTEMPTS}): {e}")
         return {}
 
 # ----------------- fetch + summarize -----------------
@@ -257,16 +310,17 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         return []
         
     headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
+    
+    # Fetch areas first if not already loaded or if empty
+    if not _AREA_MAP or len(_AREA_MAP) == 0:
+        _AREA_MAP = _fetch_area_map(cfg)
+    
     try:
         data = _http_get_json(f"{ha_url}/api/states", headers, timeout=25)
     except Exception as e:
         print(f"[RAG] Failed to fetch states: {e}")
         return []
     if not isinstance(data,list): return []
-
-    # also fetch areas once
-    if not _AREA_MAP:
-        _AREA_MAP = _fetch_area_map(cfg)
 
     facts=[]
     for item in data:
@@ -317,15 +371,38 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
             if domain in ("person","device_tracker","binary_sensor","sensor") and recent:
                 summary += f" (as of {recent})"
 
-            # score baseline
+            # score baseline - more conservative
             score=1
             toks=_tok(eid)+_tok(name)+_tok(device_class)
-            if any(k in toks for k in SOLAR_KEYWORDS): score+=6
-            if "solar_assistant" in "_".join(toks): score+=3
+            
+            # Check if diagnostic entity
+            is_diagnostic = _is_diagnostic_entity(eid, name)
+            
+            # Solar scoring - more targeted
+            is_solar_entity = any(k in toks for k in SOLAR_KEYWORDS)
+            is_axpert_entity = any(k in toks for k in AXPERT_KEYWORDS)
+            
+            # Only boost solar entities moderately (reduced from +6 to +3)
+            if is_solar_entity and not is_axpert_entity:
+                score += 3
+            
+            # Axpert gets separate boost only (not cumulative with solar)
+            if is_axpert_entity:
+                score += 3
+            
+            # Special boost for solar_assistant (reduced from +3 to +2)
+            if "solar_assistant" in "_".join(toks):
+                score += 2
+            
             score += DEVICE_CLASS_PRIORITY.get(device_class,0)
             if domain in ("person","device_tracker"): score+=5
-            if eid.endswith(("_linkquality","_rssi","_lqi")): score-=2
-            if is_unknown: score -= 3
+            
+            # More aggressive penalties for diagnostic entities
+            if is_diagnostic: 
+                score -= 5
+            
+            if is_unknown: 
+                score -= 3
 
             cats = _infer_categories(eid, name, attrs, domain, device_class)
 
@@ -340,11 +417,14 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
                 "last_changed": last_changed,
                 "summary": summary,
                 "score": score,
-                "cats": sorted(list(cats))
+                "cats": sorted(list(cats)),
+                "is_diagnostic": is_diagnostic
             })
         except Exception as e:
-            print(f"[RAG] Error processing entity {item.get('entity_id', 'unknown')}: {e}")
+            _debug_log(f"Error processing entity {item.get('entity_id', 'unknown')}: {e}")
             continue
+    
+    _debug_log(f"Processed {len(facts)} entities")
     return facts
 
 # ----------------- IO + cache -----------------
@@ -363,7 +443,8 @@ def refresh_and_cache() -> List[Dict[str,Any]]:
             payload = {
                 "facts": facts,
                 "timestamp": time.time(),
-                "count": len(facts)
+                "count": len(facts),
+                "areas": len(_AREA_MAP)
             }
             
             for d in PRIMARY_DIRS:
@@ -430,51 +511,83 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     for key, cats in INTENT_CATEGORY_MAP.items():
         if key in q_tokens:
             out.update(cats)
-    if q_tokens & {"solar","pv","inverter","ess","soc","battery"}:
+    
+    # More precise intent detection
+    if q_tokens & (SOLAR_KEYWORDS - AXPERT_KEYWORDS):
         out.update({"energy","energy.storage","energy.pv","energy.inverter"})
+    
+    # Only add Axpert intent if explicitly mentioned
+    if q_tokens & AXPERT_KEYWORDS:
+        out.update({"energy.inverter"})
+    
     if "grid" in q_tokens:
         out.update({"energy.grid"})
     if "load" in q_tokens:
         out.update({"energy.load"})
     if q_tokens & MEDIA_KEYWORDS:
         out.update({"media"})
+    
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
+    
+    _debug_log(f"Query tokens: {q}")
 
-    # ---- Domain/keyword overrides ----
+    # ---- Domain/keyword overrides - more precise matching ----
     filtered = []
+    has_specific_filter = False
+    
     if "light" in q or "lights" in q:
         filtered += [f for f in facts if f.get("domain") == "light"]
+        has_specific_filter = True
+        
     if "switch" in q or "switches" in q:
         filtered += [f for f in facts if f.get("domain") == "switch" and not f.get("entity_id","").startswith("automation.")]
+        has_specific_filter = True
+        
     if "motion" in q or "occupancy" in q:
         filtered += [f for f in facts if f.get("domain") == "binary_sensor" and f.get("device_class") == "motion"]
-    if "axpert" in q:
+        has_specific_filter = True
+        
+    # Only filter for Axpert if explicitly mentioned
+    if q & AXPERT_KEYWORDS:
         filtered += [f for f in facts if "axpert" in f.get("entity_id","").lower() or "axpert" in f.get("friendly_name","").lower()]
-    if "sonoff" in q:
+        has_specific_filter = True
+        
+    if q & SONOFF_KEYWORDS:
         filtered += [f for f in facts if "sonoff" in f.get("entity_id","").lower() or "sonoff" in f.get("friendly_name","").lower()]
-    if "zigbee" in q or "z2m" in q:
+        has_specific_filter = True
+        
+    if ("zigbee" in q or "z2m" in q) and not has_specific_filter:
         filtered += [f for f in facts if "zigbee" in f.get("entity_id","").lower() or "zigbee" in f.get("friendly_name","").lower()]
+        has_specific_filter = True
+        
     if "where" in q:
         filtered += [f for f in facts if f.get("domain") in ("person","device_tracker")]
-    if q & MEDIA_KEYWORDS:
+        has_specific_filter = True
+        
+    if (q & MEDIA_KEYWORDS) and not has_specific_filter:
         filtered += [f for f in facts if any(
             m in f.get("entity_id","").lower() or m in f.get("friendly_name","").lower()
             for m in MEDIA_KEYWORDS
         )]
+        has_specific_filter = True
+        
     # area queries
     for f in facts:
         if f.get("area") and f.get("area","").lower() in q:
             filtered.append(f)
+            has_specific_filter = True
 
     if filtered:
         facts = filtered
+        _debug_log(f"Filtered to {len(facts)} entities based on specific matches")
 
     want_cats = _intent_categories(q)
+    _debug_log(f"Intent categories: {want_cats}")
 
     scored: List[Tuple[int, Dict[str, Any]]] = []
     for f in facts:
@@ -482,30 +595,56 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
         cats = set(f.get("cats", []))
 
-        if q and (q & ft): s += 3
-        if q & SOLAR_KEYWORDS: s += 2
-        if {"state_of_charge","battery_state_of_charge","battery_soc","soc"} & ft:
-            s += 12
+        # Exact token matches get highest boost
+        overlap = q & ft
+        if overlap:
+            s += len(overlap) * 5  # Reward each matching token
+            _debug_log(f"Entity {f.get('entity_id')} matched tokens: {overlap}, bonus: {len(overlap) * 5}")
+
+        # Category matching - but not too aggressive
         if want_cats and (cats & want_cats):
-            s += 15
+            category_bonus = 10
+            s += category_bonus
+            _debug_log(f"Entity {f.get('entity_id')} matched categories: {cats & want_cats}, bonus: {category_bonus}")
+
+        # Special handling for storage queries
         if want_cats & {"energy.storage"} and "energy.storage" in cats:
-            s += 20
+            s += 15
+            _debug_log(f"Entity {f.get('entity_id')} is energy.storage, bonus: 15")
+
+        # Penalty for device batteries when asking about energy storage
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
            ("device.battery" in cats) and ("energy.storage" not in cats):
-            s -= 18
+            s -= 20  # Stronger penalty
+            _debug_log(f"Entity {f.get('entity_id')} is device battery (not storage), penalty: -20")
+
+        # Penalty for forecast/estimated values
         if (("soc" in q) or (want_cats & {"energy.storage"})) and \
            (("forecast" in ft) or ("estimated" in ft)):
-            s -= 12
+            s -= 15
+            _debug_log(f"Entity {f.get('entity_id')} is forecast/estimate, penalty: -15")
+
+        # Additional penalty for diagnostic entities in results
+        if f.get("is_diagnostic", False):
+            s -= 3
+            _debug_log(f"Entity {f.get('entity_id')} is diagnostic, penalty: -3")
 
         scored.append((s, f))
 
     scored.sort(key=lambda x: x[0], reverse=True)
+    
+    if DEBUG_MODE:
+        _debug_log("Top 10 scored entities:")
+        for i, (score, entity) in enumerate(scored[:10]):
+            _debug_log(f"  {i+1}. [{score}] {entity.get('entity_id')} - {entity.get('summary', '')[:80]}")
 
     ctx_tokens = _ctx_tokens_from_options()
     budget = _rag_budget_tokens(ctx_tokens)
+    _debug_log(f"Token budget: {budget}")
 
     candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
 
+    # Prioritize energy storage entities for SOC queries
     if ("soc" in q) or (want_cats & {"energy.storage"}):
         ess_first = [f for f in candidate_facts if "energy.storage" in set(f.get("cats", []))]
         others    = [f for f in candidate_facts if "energy.storage" not in set(f.get("cats", []))]
@@ -530,6 +669,7 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         if remaining <= 0:
             break
 
+    _debug_log(f"Selected {len(selected)} entities for context")
     return "\n".join(selected)
 
 # ----------------- Additional utility functions -----------------
@@ -574,13 +714,41 @@ def get_stats() -> Dict[str, Any]:
         domain = entity.get("domain", "unknown")
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
     
+    # Count by category
+    category_counts = {}
+    for entity in facts:
+        for cat in entity.get("cats", []):
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+    
+    # Count diagnostic entities
+    diagnostic_count = sum(1 for e in facts if e.get("is_diagnostic", False))
+    
     return {
         "total_facts": len(facts),
         "domains": domain_counts,
+        "categories": category_counts,
         "areas": len(_AREA_MAP),
+        "diagnostic_entities": diagnostic_count,
         "last_refresh": _LAST_REFRESH_TS,
-        "cache_size": len(_MEM_CACHE)
+        "cache_size": len(_MEM_CACHE),
+        "refresh_interval_minutes": REFRESH_INTERVAL_SEC / 60
     }
+
+def get_entities_by_area(area_name: str) -> List[Dict[str, Any]]:
+    """Get all entities in a specific area"""
+    facts = get_facts()
+    area_lower = area_name.lower()
+    return [f for f in facts if f.get("area", "").lower() == area_lower]
+
+def get_entities_by_domain(domain: str) -> List[Dict[str, Any]]:
+    """Get all entities of a specific domain"""
+    facts = get_facts()
+    return [f for f in facts if f.get("domain") == domain]
+
+def get_entities_by_category(category: str) -> List[Dict[str, Any]]:
+    """Get all entities matching a specific category"""
+    facts = get_facts()
+    return [f for f in facts if category in f.get("cats", [])]
 
 # ----------------- main -----------------
 
@@ -613,15 +781,68 @@ if __name__ == "__main__":
             print("=" * 50)
             print(context)
             
+        elif command == "debug" and len(sys.argv) > 2:
+            global DEBUG_MODE
+            DEBUG_MODE = True
+            query = " ".join(sys.argv[2:])
+            print(f"Debug mode - Context for '{query}':")
+            print("=" * 50)
+            context = inject_context(query)
+            print("\nFinal Context:")
+            print("=" * 50)
+            print(context)
+            
+        elif command == "area" and len(sys.argv) > 2:
+            area = " ".join(sys.argv[2:])
+            results = get_entities_by_area(area)
+            print(f"Found {len(results)} entities in area '{area}':")
+            for r in results:
+                print(f"  - {r.get('summary', r.get('entity_id', 'unknown'))}")
+                
+        elif command == "domain" and len(sys.argv) > 2:
+            domain = sys.argv[2]
+            results = get_entities_by_domain(domain)
+            print(f"Found {len(results)} entities in domain '{domain}':")
+            for r in results[:20]:  # Limit to first 20
+                print(f"  - {r.get('summary', r.get('entity_id', 'unknown'))}")
+                
+        elif command == "category" and len(sys.argv) > 2:
+            category = sys.argv[2]
+            results = get_entities_by_category(category)
+            print(f"Found {len(results)} entities in category '{category}':")
+            for r in results:
+                print(f"  - {r.get('summary', r.get('entity_id', 'unknown'))}")
+                
         elif command == "test":
             print("Testing configuration...")
             cfg = _load_options()
             print(f"Config keys: {list(cfg.keys())}")
+            
+            print("\nFetching areas...")
+            global _AREA_MAP
+            _AREA_MAP = _fetch_area_map(cfg)
+            print(f"Found {len(_AREA_MAP)} areas")
+            
+            print("\nFetching entities...")
             facts = get_facts(force_refresh=True)
             print(f"Successfully loaded {len(facts)} facts")
             
+            print("\nSample entities:")
+            for f in facts[:5]:
+                print(f"  - {f.get('summary', 'unknown')}")
+            
         else:
-            print("Usage: python rag.py [refresh|stats|search <query>|context <query>|test]")
+            print("Usage: python rag.py [command] [args]")
+            print("\nCommands:")
+            print("  refresh              - Manually refresh RAG facts")
+            print("  stats                - Show statistics")
+            print("  search <query>       - Search for entities")
+            print("  context <query>      - Get context for a query")
+            print("  debug <query>        - Get context with debug output")
+            print("  area <area_name>     - Get entities by area")
+            print("  domain <domain>      - Get entities by domain")
+            print("  category <category>  - Get entities by category")
+            print("  test                 - Test configuration and connectivity")
     else:
         print("Refreshing RAG facts from Home Assistant...")
         facts = refresh_and_cache()
