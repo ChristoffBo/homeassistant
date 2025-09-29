@@ -453,40 +453,14 @@ def _intent_categories(q_tokens: Set[str]) -> Set[str]:
     return out
 
 def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
-    """Return grouped context string for LLM ingestion."""
+    """Return grouped context string with multi-bucket coverage for LLM ingestion."""
     q_raw = _tok(user_msg)
     q = set(_expand_query_tokens(q_raw))
     facts = get_facts()
 
-    # ---- Specific filters ----
-    filtered = []
-    if "light" in q or "lights" in q:
-        filtered += [f for f in facts if f.get("domain") == "light"]
-    if "switch" in q or "switches" in q:
-        filtered += [f for f in facts if f.get("domain") == "switch" and not f.get("entity_id","").startswith("automation.")]
-    if "motion" in q or "occupancy" in q:
-        filtered += [f for f in facts if f.get("domain") == "binary_sensor" and f.get("device_class") == "motion"]
-    if q & AXPERT_KEYWORDS:
-        filtered += [f for f in facts if "axpert" in f.get("entity_id","").lower() or "axpert" in f.get("friendly_name","").lower()]
-    if "sonoff" in q:
-        filtered += [f for f in facts if "sonoff" in f.get("entity_id","").lower() or "sonoff" in f.get("friendly_name","").lower()]
-    if "zigbee" in q or "z2m" in q:
-        filtered += [f for f in facts if "zigbee" in f.get("entity_id","").lower() or "zigbee" in f.get("friendly_name","").lower()]
-    if "where" in q:
-        filtered += [f for f in facts if f.get("domain") in ("person","device_tracker")]
-    if q & MEDIA_KEYWORDS:
-        filtered += [f for f in facts if any(
-            m in f.get("entity_id","").lower() or m in f.get("friendly_name","").lower()
-            for m in MEDIA_KEYWORDS
-        )]
-
-    if filtered:
-        facts = filtered
-
-    want_cats = _intent_categories(q)
-
     # ---- Scoring ----
     scored: List[Tuple[int, Dict[str, Any]]] = []
+    want_cats = _intent_categories(q)
     for f in facts:
         s = int(f.get("score", 1))
         ft = set(_tok(f.get("summary", "")) + _tok(f.get("entity_id", "")))
@@ -511,23 +485,44 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
         scored.append((s, f))
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # ---- Budget ----
-    ctx_tokens = _ctx_tokens_from_options()
-    budget = _rag_budget_tokens(ctx_tokens)
-    candidate_facts = [f for _, f in (scored[:top_k] if top_k else scored)]
+    # ---- Candidate pool ----
+    candidate_facts = [f for _, f in (scored[:top_k*3] if top_k else scored)]
+
+    # ---- Buckets ----
+    energy_facts = [f for f in candidate_facts if any("energy" in c for c in f.get("cats", []))][:10]
+    people_facts = [f for f in candidate_facts if "person" in f.get("cats", [])][:10]
+    media_facts  = [f for f in candidate_facts if "media" in f.get("cats", [])][:10]
+    infra_facts  = [f for f in candidate_facts if any(x in f.get("cats", []) for x in ["infra.proxmox","infra.cpu","infra.speedtest","weather"])][:10]
+
+    # Areas bucket = everything else (grouped later)
+    area_facts   = [f for f in candidate_facts if f not in energy_facts+people_facts+media_facts+infra_facts][:20]
+
+    # Merge all buckets
+    merged = energy_facts + people_facts + media_facts + infra_facts + area_facts
 
     # ---- Grouping by area ----
     grouped: Dict[str, List[Dict[str,Any]]] = {}
-    for f in candidate_facts:
+    for f in merged:
         area = f.get("area") or "Unassigned"
         grouped.setdefault(area, []).append(f)
 
+    # ---- Area override: if query mentions an area, bring it to the top ----
+    for area in list(grouped.keys()):
+        if area.lower() in q:
+            items = grouped.pop(area)
+            grouped = {area: items, **grouped}
+            break
+
     # ---- Format lines ----
     selected_lines: List[str] = []
+    ctx_tokens = _ctx_tokens_from_options()
+    budget = _rag_budget_tokens(ctx_tokens)
     remaining = budget
+
     for area, items in grouped.items():
         header = f"[{area}]"
-        selected_lines.append(header)
+        if header not in selected_lines:
+            selected_lines.append(header)
         for f in items:
             state_str = f.get("state","")
             if f.get("unit"):
