@@ -489,10 +489,10 @@ def inject_context(user_msg: str, top_k: int=DEFAULT_TOP_K) -> str:
     candidate_facts = [f for _, f in (scored[:top_k*3] if top_k else scored)]
 
     # ---- Buckets ----
-    energy_facts = [f for f in candidate_facts if any("energy" in c for c in f.get("cats", []))][:10]
-    people_facts = [f for f in candidate_facts if "person" in f.get("cats", [])][:10]
-    media_facts  = [f for f in candidate_facts if "media" in f.get("cats", [])][:10]
-    infra_facts  = [f for f in candidate_facts if any(x in f.get("cats", []) for x in ["infra.proxmox","infra.cpu","infra.speedtest","weather"])][:10]
+    energy_facts = [f for f in candidate_facts if any("energy" in c for c in f.get("cats", []))][:8]
+    people_facts = [f for f in candidate_facts if "person" in f.get("cats", [])][:8]
+    media_facts  = [f for f in candidate_facts if "media" in f.get("cats", [])][:8]
+    infra_facts  = [f for f in candidate_facts if any(x in f.get("cats", []) for x in ["infra.proxmox","infra.cpu","infra.speedtest","weather"])][:8]
 
     # Areas bucket = everything else (grouped later)
     area_facts   = [f for f in candidate_facts if f not in energy_facts+people_facts+media_facts+infra_facts][:20]
