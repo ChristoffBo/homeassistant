@@ -623,3 +623,6 @@ if __name__ == "__main__":
         print("Refreshing RAG facts from Home Assistant...")
         facts = refresh_and_cache()
         print(f"Wrote {len(facts)} facts.")
+else:
+    # If rag.py is imported as a module, preload cache into memory
+    refresh_and_cache()
