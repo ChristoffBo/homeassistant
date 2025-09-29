@@ -225,18 +225,52 @@ def _fetch_area_map(cfg: Dict[str,Any]) -> Dict[str,str]:
         return {}
         
     headers = {"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
-    try:
-        data = _http_get_json(f"{ha_url}/api/areas", headers, timeout=15)
-        amap={}
-        if isinstance(data,list):
-            for a in data:
-                if "area_id" in a and "name" in a:
-                    amap[a["area_id"]] = a["name"]
-        print(f"[RAG] Loaded {len(amap)} areas")
-        return amap
-    except Exception as e:
-        print(f"[RAG] Failed to fetch areas: {e}")
-        return {}
+    
+    # Try multiple possible endpoints
+    endpoints = [
+        "/api/config/area_registry/list",  # Correct endpoint for area registry
+        "/api/areas",                       # Fallback attempt
+    ]
+    
+    for endpoint in endpoints:
+        try:
+            data = _http_get_json(f"{ha_url}{endpoint}", headers, timeout=15)
+            amap = {}
+            
+            # Handle different response formats
+            if isinstance(data, list):
+                for a in data:
+                    # area_registry format
+                    if "area_id" in a and "name" in a:
+                        amap[a["area_id"]] = a["name"]
+                    # Alternative format
+                    elif "id" in a and "name" in a:
+                        amap[a["id"]] = a["name"]
+                        
+            elif isinstance(data, dict):
+                # Handle dict response format
+                for area_id, area_info in data.items():
+                    if isinstance(area_info, dict) and "name" in area_info:
+                        amap[area_id] = area_info["name"]
+                    elif isinstance(area_info, str):
+                        amap[area_id] = area_info
+            
+            if amap:
+                print(f"[RAG] Loaded {len(amap)} areas from {endpoint}")
+                return amap
+            else:
+                print(f"[RAG] No areas found in response from {endpoint}")
+                
+        except urllib.error.HTTPError as e:
+            print(f"[RAG] HTTP {e.code} fetching {endpoint}: {e.reason}")
+            continue
+        except Exception as e:
+            print(f"[RAG] Failed to fetch from {endpoint}: {e}")
+            continue
+    
+    # If all endpoints failed, try to build area map from entity attributes
+    print("[RAG] Could not fetch areas from any endpoint, will try extracting from entity attributes")
+    return {}
 
 # ----------------- fetch + summarize -----------------
 
@@ -264,9 +298,24 @@ def _fetch_ha_states(cfg: Dict[str,Any]) -> List[Dict[str,Any]]:
         return []
     if not isinstance(data,list): return []
 
-    # also fetch areas once
+    # Fetch areas if not already populated
     if not _AREA_MAP:
         _AREA_MAP = _fetch_area_map(cfg)
+        
+        # If still empty after trying endpoints, build from entity attributes
+        if not _AREA_MAP:
+            print("[RAG] Building area map from entity attributes...")
+            temp_area_map = {}
+            for item in data:
+                attrs = item.get("attributes") or {}
+                area_id = attrs.get("area_id")
+                # Try to get area name from entity attributes
+                area_name = attrs.get("area_name") or attrs.get("area")
+                if area_id and area_name and isinstance(area_name, str):
+                    temp_area_map[area_id] = area_name
+            if temp_area_map:
+                _AREA_MAP = temp_area_map
+                print(f"[RAG] Built area map with {len(_AREA_MAP)} areas from entity attributes")
 
     facts=[]
     for item in data:
