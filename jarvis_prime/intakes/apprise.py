@@ -16,6 +16,7 @@ import json
 import time
 from typing import Dict, Any, List, Optional, Tuple
 import requests
+import threading
 from flask import Flask, request, jsonify
 
 # ---------- configuration from env ----------
@@ -184,20 +185,23 @@ def _normalize(payload: Dict[str, Any], extras_in: Dict[str, Any]) -> Dict[str, 
 
 def _emit_to_jarvis(msg: Dict[str, Any]) -> None:
     """
-    Forward a normalized message into Jarvis internal pipeline.
+    Forward a normalized message into Jarvis internal pipeline (fire-and-forget).
     """
-    r = requests.post(
-        INTERNAL_EMIT_URL,
-        json={
-            "title": msg.get("title", "Notification"),
-            "body":  msg.get("body", ""),
-            "priority": 5,
-            "source": "apprise",
-            "id": ""
-        },
-        timeout=60
-    )
-    r.raise_for_status()
+    try:
+        s = requests.Session()
+        s.post(
+            INTERNAL_EMIT_URL,
+            json={
+                "title": msg.get("title", "Notification"),
+                "body":  msg.get("body", ""),
+                "priority": 5,
+                "source": "apprise",
+                "id": ""
+            },
+            timeout=5  # shorter timeout so it never blocks long
+        )
+    except Exception as e:
+        print(f"[apprise] ⚠️ emit failed (non-blocking): {e}")
 
 def _handle_post_common(path_key: Optional[str] = None):
     token, cfg_key = _extract_auth(path_key)
@@ -219,10 +223,8 @@ def _handle_post_common(path_key: Optional[str] = None):
     except Exception as e:
         print(f"[apprise] riff failed: {e}")
 
-    try:
-        _emit_to_jarvis(msg)
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"emit failed: {e}"}), 500
+    # Fire-and-forget emit in a background thread
+    threading.Thread(target=_emit_to_jarvis, args=(msg,), daemon=True).start()
 
     return jsonify({
         "ok": True,
@@ -262,7 +264,7 @@ def _run_with_waitress():
     try:
         from waitress import serve
         print(f"[apprise] waitress serving on {BIND}:{PORT} (token={'set' if EXPECTED_TOKEN else 'none'}, accept_any_key={ACCEPT_ANY_KEY}, allowed_keys={ALLOWED_KEYS})")
-        serve(app, host=BIND, port=PORT, threads=8)
+        serve(app, host=BIND, port=PORT, threads=32)  # bumped threads from 8 → 32
     except Exception as e:
         print(f"[apprise] waitress failed, falling back to Flask dev server: {e}")
         app.run(host=BIND, port=PORT, threaded=True)
