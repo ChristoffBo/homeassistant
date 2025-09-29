@@ -76,7 +76,7 @@ def handle_message(source: str, text: str) -> str:
         try:
             from rag import inject_context
             try:
-                rag_block = inject_context(q, top_k=50)
+                rag_block = inject_context(q, top_k=60)
             except Exception:
                 rag_block = ""
             if rag_block:
