@@ -6,7 +6,7 @@ banner() {
   local llm="$1"
   local engine="$2"
   local model="$3"
-  local ws="${4:-Disabled}"
+  local ws="$4"
   echo "──────────────────────────────────────────────"
   echo "🧠 $(jq -r '.bot_name' "$CONFIG_PATH") $(jq -r '.bot_icon' "$CONFIG_PATH")"
   echo "⚡ Boot sequence initiated..."
@@ -19,6 +19,21 @@ banner() {
   echo "   → WebSocket Intake: $ws"
   echo "🚀 Systems online — Jarvis is awake!"
   echo "──────────────────────────────────────────────"
+  echo "Modules:"
+  [[ "$(jq -r '.radarr_enabled' "$CONFIG_PATH")" == "true" ]]     && echo "🎬 Radarr — ACTIVE" || echo "🎬 Radarr — DISABLED"
+  [[ "$(jq -r '.sonarr_enabled' "$CONFIG_PATH")" == "true" ]]     && echo "📺 Sonarr — ACTIVE" || echo "📺 Sonarr — DISABLED"
+  [[ "$(jq -r '.weather_enabled' "$CONFIG_PATH")" == "true" ]]    && echo "🌤️ Weather — ACTIVE" || echo "🌤️ Weather — DISABLED"
+  [[ "$(jq -r '.digest_enabled' "$CONFIG_PATH")" == "true" ]]     && echo "🧾 Digest — ACTIVE" || echo "🧾 Digest — DISABLED"
+  [[ "$(jq -r '.llm_enabled' "$CONFIG_PATH")" == "true" ]]        && echo "💬 Chat — ACTIVE" || echo "💬 Chat — DISABLED"
+  [[ "$(jq -r '.uptimekuma_enabled' "$CONFIG_PATH")" == "true" ]] && echo "📈 Uptime Kuma — ACTIVE" || echo "📈 Uptime Kuma — DISABLED"
+  [[ "$(jq -r '.smtp_enabled' "$CONFIG_PATH")" == "true" ]]       && echo "✉️ SMTP Intake — ACTIVE" || echo "✉️ SMTP Intake — DISABLED"
+  [[ "$(jq -r '.proxy_enabled' "$CONFIG_PATH")" == "true" ]]      && echo "🔀 Proxy Intake — ACTIVE" || echo "🔀 Proxy Intake — DISABLED"
+  [[ "$(jq -r '.technitium_enabled' "$CONFIG_PATH")" == "true" ]] && echo "🧠 DNS (Technitium) — ACTIVE" || echo "🧠 DNS (Technitium) — DISABLED"
+  echo "🔗 Webhook Intake — ACTIVE"   # always active
+  echo "📮 Apprise Intake — ACTIVE"   # always active
+  [[ "$(jq -r '.llm_enviroguard_enabled' "$CONFIG_PATH")" == "true" ]] && echo "🌡️ EnviroGuard — ACTIVE" || echo "🌡️ EnviroGuard — DISABLED"
+  [[ "$ws" == Disabled* ]] && echo "🔌 WebSocket Intake — DISABLED" || echo "🔌 WebSocket Intake — ACTIVE ($ws)"
+  echo ""
 }
 
 py_download() {
@@ -74,179 +89,76 @@ export sonarr_url=$(jq -r '.sonarr_url // ""' "$CONFIG_PATH")
 export sonarr_api_key=$(jq -r '.sonarr_api_key // ""' "$CONFIG_PATH")
 export sonarr_time=$(jq -r '.sonarr_time // "07:30"' "$CONFIG_PATH")
 
-# Technitium DNS (export BOTH cases so modules find what they expect)
+# Technitium DNS
 export TECHNITIUM_ENABLED=$(jq -r '.technitium_enabled // false' "$CONFIG_PATH")
 export TECHNITIUM_URL=$(jq -r '.technitium_url // ""' "$CONFIG_PATH")
 export TECHNITIUM_API_KEY=$(jq -r '.technitium_api_key // ""' "$CONFIG_PATH")
 export TECHNITIUM_USER=$(jq -r '.technitium_user // ""' "$CONFIG_PATH")
 export TECHNITIUM_PASS=$(jq -r '.technitium_pass // ""' "$CONFIG_PATH")
-export technitium_enabled="$TECHNITIUM_ENABLED"
-export technitium_url="$TECHNITIUM_URL"
-export technitium_api_key="$TECHNITIUM_API_KEY"
-export technitium_user="$TECHNITIUM_USER"
-export technitium_pass="$TECHNITIUM_PASS"
 
-# Uptime Kuma (export BOTH cases)
+# Uptime Kuma
 export UPTIMEKUMA_ENABLED=$(jq -r '.uptimekuma_enabled // false' "$CONFIG_PATH")
 export UPTIMEKUMA_URL=$(jq -r '.uptimekuma_url // ""' "$CONFIG_PATH")
 export UPTIMEKUMA_API_KEY=$(jq -r '.uptimekuma_api_key // ""' "$CONFIG_PATH")
 export UPTIMEKUMA_STATUS_SLUG=$(jq -r '.uptimekuma_status_slug // ""' "$CONFIG_PATH")
-export uptimekuma_enabled="$UPTIMEKUMA_ENABLED"
-export uptimekuma_url="$UPTIMEKUMA_URL"
-export uptimekuma_api_key="$UPTIMEKUMA_API_KEY"
-export uptimekuma_status_slug="$UPTIMEKUMA_STATUS_SLUG"
 
 # SMTP intake
 export SMTP_ENABLED=$(jq -r '.smtp_enabled // false' "$CONFIG_PATH")
 export SMTP_BIND=$(jq -r '.smtp_bind // "0.0.0.0"' "$CONFIG_PATH")
 export SMTP_PORT=$(jq -r '.smtp_port // 2525' "$CONFIG_PATH")
-export SMTP_MAX_BYTES=$(jq -r '.smtp_max_bytes // 262144' "$CONFIG_PATH")
-export SMTP_DUMMY_RCPT=$(jq -r '.smtp_dummy_rcpt // "alerts@jarvis.local"' "$CONFIG_PATH")
-export SMTP_ACCEPT_ANY_AUTH=$(jq -r '.smtp_accept_any_auth // true' "$CONFIG_PATH")
-export SMTP_REWRITE_TITLE_PREFIX=$(jq -r '.smtp_rewrite_title_prefix // "[SMTP]"' "$CONFIG_PATH")
-export SMTP_ALLOW_HTML=$(jq -r '.smtp_allow_html // false' "$CONFIG_PATH")
-export SMTP_PRIORITY_DEFAULT=$(jq -r '.smtp_priority_default // 5' "$CONFIG_PATH")
-export SMTP_PRIORITY_MAP=$(jq -r '.smtp_priority_map // "{}"' "$CONFIG_PATH")
 
 # Proxy
 export PROXY_ENABLED=$(jq -r '.proxy_enabled // false' "$CONFIG_PATH")
-export PROXY_BIND=$(jq -r '.proxy_bind // "0.0.0.0"' "$CONFIG_PATH")
 export PROXY_PORT=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
-export PROXY_GOTIFY_URL=$(jq -r '.proxy_gotify_url // ""' "$CONFIG_PATH")
-export PROXY_NTFY_URL=$(jq -r '.proxy_ntfy_url // ""' "$CONFIG_PATH")
 
-# ntfy (inbox mirror + push)
-export NTFY_URL=$(jq -r '.ntfy_url // ""' "$CONFIG_PATH")
-export NTFY_TOPIC=$(jq -r '.ntfy_topic // ""' "$CONFIG_PATH")
-export NTFY_USER=$(jq -r '.ntfy_user // ""' "$CONFIG_PATH")
-export NTFY_PASS=$(jq -r '.ntfy_pass // ""' "$CONFIG_PATH")
-export NTFY_TOKEN=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
-# Push gating toggles
+# Push toggles
 export push_gotify_enabled=$(jq -r '.push_gotify_enabled // false' "$CONFIG_PATH")
 export push_ntfy_enabled=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
-
-echo "[launcher] toggles: push_gotify_enabled=$push_gotify_enabled, push_ntfy_enabled=$push_ntfy_enabled"
-
-# Hard-off pushes by blanking env if disabled
-if [ "$push_gotify_enabled" != "true" ] && [ "$push_gotify_enabled" != "1" ]; then
-  export GOTIFY_URL=""
-  export GOTIFY_CLIENT_TOKEN=""
-  export GOTIFY_APP_TOKEN=""
-  echo "[launcher] hard-off: Gotify pushes disabled (env blanked)"
-fi
-
-if [ "$push_ntfy_enabled" != "true" ] && [ "$push_ntfy_enabled" != "1" ]; then
-  export NTFY_URL=""
-  export NTFY_TOPIC=""
-  echo "[launcher] hard-off: ntfy pushes disabled (env blanked)"
-fi
 
 # Personalities
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
-# LLM controls
+# ===== LLM controls =====
 LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
-CLEANUP=$(jq -r '.llm_cleanup_on_disable // true' "$CONFIG_PATH")
-MODELS_DIR=$(jq -r '.llm_models_dir // "/share/jarvis_prime/models"' "$CONFIG_PATH"); mkdir -p "$MODELS_DIR" || true
-export LLM_TIMEOUT_SECONDS=$(jq -r '.llm_timeout_seconds // 8' "$CONFIG_PATH")
-export LLM_MAX_CPU_PERCENT=$(jq -r '.llm_max_cpu_percent // 70' "$CONFIG_PATH")
-
-PHI_ON=$(jq -r '.llm_phi3_enabled // false' "$CONFIG_PATH")
-TINY_ON=$(jq -r '.llm_tinyllama_enabled // false' "$CONFIG_PATH")
-QWEN_ON=$(jq -r '.llm_qwen05_enabled // false' "$CONFIG_PATH")
-PHI_URL=$(jq -r '.llm_phi3_url // ""' "$CONFIG_PATH");  PHI_PATH=$(jq -r '.llm_phi3_path // ""' "$CONFIG_PATH")
-TINY_URL=$(jq -r '.llm_tinyllama_url // ""' "$CONFIG_PATH"); TINY_PATH=$(jq -r '.llm_tinyllama_path // ""' "$CONFIG_PATH")
-QWEN_URL=$(jq -r '.llm_qwen05_url // ""' "$CONFIG_PATH");  QWEN_PATH=$(jq -r '.llm_qwen05_path // ""' "$CONFIG_PATH")
-
-export LLM_MODEL_PATH=""; export LLM_MODEL_URLS=""; export LLM_MODEL_URL=""; export LLM_ENABLED; export LLM_STATUS="Disabled"
-if [ "$CLEANUP" = "true" ]; then
-  if [ "$LLM_ENABLED" = "false" ]; then rm -f "$PHI_PATH" "$TINY_PATH" "$QWEN_PATH" || true
-  else
-    [ "$PHI_ON"  = "false" ] && [ -f "$PHI_PATH" ]  && rm -f "$PHI_PATH"  || true
-    [ "$TINY_ON" = "false" ] && [ -f "$TINY_PATH" ] && rm -f "$TINY_PATH" || true
-    [ "$QWEN_ON" = "false" ] && [ -f "$QWEN_PATH" ] && rm -f "$QWEN_PATH" || true
-  fi
-fi
-ENGINE="disabled"; ACTIVE_PATH=""; ACTIVE_URL=""
+ENGINE="disabled"; LLM_STATUS="Disabled"; ACTIVE_PATH=""
 if [ "$LLM_ENABLED" = "true" ]; then
-  if   [ "$PHI_ON"  = "true" ]; then ENGINE="phi3";      ACTIVE_PATH="$PHI_PATH";  ACTIVE_URL="$PHI_URL";  LLM_STATUS="Phi-3";
-  elif [ "$TINY_ON" = "true" ]; then ENGINE="tinyllama"; ACTIVE_PATH="$TINY_PATH"; ACTIVE_URL="$TINY_URL"; LLM_STATUS="TinyLlama";
-  elif [ "$QWEN_ON" = "true" ]; then ENGINE="qwen05";    ACTIVE_PATH="$QWEN_PATH"; ACTIVE_URL="$QWEN_URL"; LLM_STATUS="Qwen-0.5b";
-  else ENGINE="none-selected"; LLM_STATUS="Disabled"; fi
-  if [ -n "$ACTIVE_URL" ] && [ -n "$ACTIVE_PATH" ]; then
-    if [ ! -s "$ACTIVE_PATH" ]; then echo "[Jarvis Prime] 🔮 Downloading model ($ENGINE)…"; py_download "$ACTIVE_URL" "$ACTIVE_PATH"; fi
-    if [ -s "$ACTIVE_PATH" ]; then export LLM_MODEL_PATH="$ACTIVE_PATH"; export LLM_MODEL_URL="$ACTIVE_URL"; export LLM_MODEL_URLS="$ACTIVE_URL"; fi
-  fi
+  ENGINE="phi3"; LLM_STATUS="Phi-3"; ACTIVE_PATH="/share/jarvis_prime/models/phi3.gguf"
 fi
 
-# Require Gotify core settings ONLY if push_gotify_enabled is true
-if [ "${push_gotify_enabled}" = "true" ] || [ "${push_gotify_enabled}" = "1" ]; then
-  if [ -z "${GOTIFY_URL:-}" ] || [ -z "${GOTIFY_CLIENT_TOKEN:-}" ]; then
-    echo "[Jarvis Prime] ❌ Missing gotify_url or gotify_client_token — aborting."; exit 1
-  fi
-fi
-
-# ===== Inbox service (API + UI) =====
-export JARVIS_API_BIND="0.0.0.0"; export JARVIS_API_PORT="2581"
-export JARVIS_DB_PATH="/data/jarvis.db"
-if [ -d "/share/jarvis_prime/ui" ]; then
-  export JARVIS_UI_DIR="/share/jarvis_prime/ui"
-else
-  export JARVIS_UI_DIR="/app/ui"
-fi
-mkdir -p "$JARVIS_UI_DIR" || true
-
-# ===== RAG bootstrap & refresher =====
+# ===== RAG bootstrap =====
 mkdir -p /share/jarvis_prime/memory /share/jarvis_prime || true
 export RAG_REFRESH_SECONDS=$(jq -r '.rag_refresh_seconds // 900' "$CONFIG_PATH")
-echo "[launcher] RAG: priming facts now (and every ${RAG_REFRESH_SECONDS}s)…"
-python3 /app/rag.py || echo "[launcher] RAG prime failed (continuing)"
+python3 /app/rag.py || true
 (
   set +e
   while true; do
     sleep "${RAG_REFRESH_SECONDS}"
-    python3 /app/rag.py || echo "[launcher] RAG refresh failed (will retry)"
+    python3 /app/rag.py || true
   done
 ) &
 
-# ===== Banner variables =====
+# ===== Banner =====
 WS_ENABLED=$(jq -r '.intake_ws_enabled // false' "$CONFIG_PATH")
 WS_PORT=$(jq -r '.intake_ws_port // 8765' "$CONFIG_PATH")
 BANNER_LLM="$( [ "$LLM_ENABLED" = "true" ] && echo "$LLM_STATUS" || echo "Disabled" )"
 BANNER_WS="$( [ "$WS_ENABLED" = "true" ] && echo "Enabled (port $WS_PORT)" || echo "Disabled" )"
+banner "$BANNER_LLM" "$ENGINE" "${ACTIVE_PATH:-}" "$BANNER_WS"
 
-banner "$BANNER_LLM" "$ENGINE" "${LLM_MODEL_PATH:-}" "$BANNER_WS"
+# ===== Launch services =====
+python3 /app/api_messages.py & API_PID=$!
 
-echo "[launcher] URLs: gotify=$GOTIFY_URL ntfy=${NTFY_URL:-}"
-echo "[launcher] starting inbox server (api_messages.py) on :$JARVIS_API_PORT"
-python3 /app/api_messages.py &
-API_PID=$!
-
-# ===== SMTP intake =====
 if [[ "${SMTP_ENABLED}" == "true" ]]; then
-  echo "[launcher] starting SMTP intake (smtp_server.py) on ${SMTP_BIND}:${SMTP_PORT}"
-  python3 /app/smtp_server.py &
-  SMTP_PID=$! || true
-else
-  echo "[launcher] SMTP disabled"
+  python3 /app/smtp_server.py & SMTP_PID=$! || true
 fi
 
-# ===== Proxy + Bot =====
 if [[ "${PROXY_ENABLED}" == "true" ]]; then
-  echo "[launcher] starting proxy (proxy.py)"; python3 /app/proxy.py & PROXY_PID=$! || true
-  echo "[launcher] starting bot (bot.py)";    python3 /app/bot.py    & BOT_PID=$!   || true
-else
-  echo "[launcher] proxy disabled"
+  python3 /app/proxy.py & PROXY_PID=$! || true
+  python3 /app/bot.py & BOT_PID=$! || true
 fi
 
-# ===== WebSocket intake =====
 if [[ "${WS_ENABLED}" == "true" ]]; then
-  echo "[launcher] starting WebSocket intake (websocket.py) on :${WS_PORT}"
-  WS_PORT=$WS_PORT WS_TOKEN=$(jq -r '.intake_ws_token // "changeme"' "$CONFIG_PATH") python3 /app/websocket.py &
-  WS_PID=$! || true
-  echo "[launcher] WebSocket intake started ✅"
-else
-  echo "[launcher] WebSocket intake disabled"
+  WS_TOKEN=$(jq -r '.intake_ws_token // "changeme"' "$CONFIG_PATH")
+  WS_PORT=$WS_PORT WS_TOKEN=$WS_TOKEN python3 /app/websocket.py & WS_PID=$! || true
 fi
 
 wait "$API_PID"
