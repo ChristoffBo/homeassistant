@@ -1,81 +1,60 @@
 #!/usr/bin/env python3
 # /app/websocket.py
-#
-# Jarvis Prime — WebSocket Intake
-# Provides a persistent intake channel: /intake/ws
-#
-# - Clients connect: ws://<host>:8765/intake/ws?token=<secret>
-# - Messages are JSON: {"title": "Backup complete", "message": "Radarr finished"}
-# - Each message is acked: {"status": "ok"}
-# - Multiple clients supported concurrently
 
-import os
-import json
-import asyncio
-import aiohttp
-import websockets
+import os, json, asyncio, aiohttp, websockets
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 # ======================================================
-# Config (reads from options.json via Supervisor → env)
+# Load HA options.json directly
 # ======================================================
-INTAKE_PORT = int(os.environ.get("intake_ws_port", 8765))
-AUTH_TOKEN = os.environ.get("intake_ws_token", "changeme")
-ENABLED = os.environ.get("intake_ws_enabled", "false").lower() in ("1", "true", "yes")
-INTERNAL_EMIT = os.environ.get("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
+CONFIG_FILE = "/data/options.json"
+cfg = {}
+try:
+    with open(CONFIG_FILE) as f:
+        cfg = json.load(f)
+except Exception:
+    pass
 
-if not ENABLED:
-    print("[WS] Intake disabled by config")
-    exit(0)
+ENABLED = str(cfg.get("intake_ws_enabled", False)).lower() in ("1", "true", "yes")
+INTAKE_PORT = int(cfg.get("intake_ws_port", os.environ.get("WS_PORT", 8765)))
+AUTH_TOKEN = cfg.get("intake_ws_token", os.environ.get("WS_TOKEN", "changeme"))
+INTERNAL_EMIT = os.environ.get("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
 # ======================================================
 # Forward into Jarvis
 # ======================================================
 async def process_intake(data: dict):
-    """Forward intake payload into Jarvis via /internal/emit"""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(INTERNAL_EMIT, json=data) as resp:
                 if resp.status != 200:
-                    text = await resp.text()
-                    print(f"[WS] Forward failed: {resp.status} {text}")
+                    print(f"[WS] Forward failed {resp.status}")
                 else:
-                    print("[WS] Forwarded to Jarvis:", data)
+                    print("[WS] Forwarded:", data)
     except Exception as e:
         print("[WS] Error forwarding:", e)
 
 # ======================================================
-# Connection manager
+# Handler
 # ======================================================
-connected_clients = set()
+connected = set()
 
 async def handler(ws, path):
-    # --- parse query token ---
+    # Parse ?token
+    token = None
     try:
-        query = {}
         if "?" in path:
-            query = dict(pair.split("=", 1) for pair in path.split("?")[1].split("&"))
-    except Exception:
-        query = {}
-
-    token = query.get("token")
-    if not token:
-        try:
-            first = await asyncio.wait_for(ws.recv(), timeout=5)
-            token = json.loads(first).get("token")
-        except Exception:
-            await ws.send(json.dumps({"status": "error", "error": "Missing token"}))
-            await ws.close()
-            return
-
+            q = dict(p.split("=", 1) for p in path.split("?", 1)[1].split("&"))
+            token = q.get("token")
+    except:
+        pass
     if token != AUTH_TOKEN:
         await ws.send(json.dumps({"status": "error", "error": "Auth failed"}))
         await ws.close()
         return
 
-    # --- register client ---
-    connected_clients.add(ws)
-    print(f"[WS] Client connected ({len(connected_clients)} total)")
+    connected.add(ws)
+    print(f"[WS] Client connected ({len(connected)})")
 
     try:
         async for msg in ws:
@@ -84,25 +63,25 @@ async def handler(ws, path):
                 await process_intake(data)
                 await ws.send(json.dumps({"status": "ok"}))
             except Exception as e:
-                err = str(e)
-                print("[WS] Error handling message:", err)
-                await ws.send(json.dumps({"status": "error", "error": err}))
+                await ws.send(json.dumps({"status": "error", "error": str(e)}))
     except (ConnectionClosedError, ConnectionClosedOK):
         pass
     finally:
-        connected_clients.remove(ws)
-        print(f"[WS] Client disconnected ({len(connected_clients)} left)")
+        connected.remove(ws)
+        print(f"[WS] Client disconnected ({len(connected)})")
 
 # ======================================================
 # Main
 # ======================================================
 async def main():
-    async with websockets.serve(handler, "0.0.0.0", INTAKE_PORT, ping_interval=20, ping_timeout=20):
-        print(f"[WS] Intake WebSocket running on port {INTAKE_PORT}")
-        await asyncio.Future()  # run forever
+    if not ENABLED:
+        print("[WS] Intake disabled by config")
+        await asyncio.Future()
+        return
+
+    async with websockets.serve(handler, "0.0.0.0", INTAKE_PORT):
+        print(f"[WS] Intake running on :{INTAKE_PORT} (token={AUTH_TOKEN})")
+        await asyncio.Future()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("[WS] Shutting down")
+    asyncio.run(main())
