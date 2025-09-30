@@ -55,7 +55,6 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
-  backdrop-filter: blur(20px);
   box-shadow: var(--shadow-md);
 }
 
@@ -103,6 +102,7 @@ body {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  color: var(--accent-blue);
 }
 
 .brand-subtitle {
@@ -312,7 +312,6 @@ body {
   border: 1px solid var(--border-primary);
   border-radius: 16px;
   padding: 24px;
-  backdrop-filter: blur(10px);
   box-shadow: var(--shadow-sm);
 }
 
@@ -492,6 +491,13 @@ input:focus, select:focus, textarea:focus {
   top: 100px;
 }
 
+@supports (-moz-appearance: none) {
+  .preview-panel {
+    position: relative;
+    top: auto;
+  }
+}
+
 .preview-header {
   display: flex;
   justify-content: space-between;
@@ -579,121 +585,6 @@ input:focus, select:focus, textarea:focus {
   height: 44px;
 }
 
-/* =============== CHAT INTERFACE =============== */
-.chat-container {
-  height: 600px;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: var(--shadow-md);
-}
-
-.chat-header {
-  background: var(--surface-secondary);
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-primary);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.chat-title {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.chat-status {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  background: var(--bg-secondary);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.chat-message {
-  display: flex;
-  flex-direction: column;
-  max-width: 80%;
-}
-
-.chat-message.user {
-  align-self: flex-end;
-}
-
-.chat-message.bot {
-  align-self: flex-start;
-}
-
-.message-content {
-  padding: 12px 16px;
-  border-radius: 16px;
-  word-wrap: break-word;
-  position: relative;
-  box-shadow: var(--shadow-sm);
-}
-
-.chat-message.user .message-content {
-  background: var(--accent-blue);
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-
-.chat-message.bot .message-content {
-  background: var(--surface-primary);
-  border: 1px solid var(--border-primary);
-  color: var(--text-primary);
-  border-bottom-left-radius: 4px;
-}
-
-.message-time {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  padding: 0 4px;
-}
-
-.chat-input-area {
-  padding: 16px 20px;
-  background: var(--surface-primary);
-  border-top: 1px solid var(--border-primary);
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-}
-
-.chat-input {
-  flex: 1;
-  background: var(--surface-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: 12px;
-  padding: 12px 16px;
-  color: var(--text-primary);
-  resize: none;
-  min-height: 44px;
-  max-height: 120px;
-  font-family: inherit;
-}
-
-.chat-input:focus {
-  outline: none;
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  background: var(--surface-tertiary);
-}
-
 /* =============== WAKE INTERFACE =============== */
 .wake-container {
   display: grid;
@@ -768,6 +659,234 @@ input:focus, select:focus, textarea:focus {
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* =============== ORCHESTRATOR STYLES =============== */
+.orch-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--surface-secondary);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border-primary);
+  margin-bottom: 24px;
+}
+
+.orch-tab {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.orch-tab:hover {
+  background: var(--surface-tertiary);
+  color: var(--text-primary);
+}
+
+.orch-tab.active {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-accent);
+}
+
+.orch-panel {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+
+.orch-panel.active {
+  display: block;
+}
+
+.playbooks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.playbook-card {
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  padding: 20px;
+  transition: all 0.3s ease;
+}
+
+.playbook-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--border-accent);
+}
+
+.playbook-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.playbook-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.playbook-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.server-card {
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.3s ease;
+}
+
+.server-card:hover {
+  border-color: var(--border-accent);
+  background: var(--surface-tertiary);
+}
+
+.server-info {
+  flex: 1;
+}
+
+.server-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.server-details {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.server-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.log-output {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  padding: 20px;
+  min-height: 300px;
+  max-height: 500px;
+  overflow-y: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #0f0;
+}
+
+.log-output:empty::before {
+  content: 'No logs to display. Run a playbook to see output here.';
+  color: var(--text-muted);
+}
+
+.log-line {
+  margin-bottom: 4px;
+  word-wrap: break-word;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal.active {
+  display: flex;
+}
+
+.modal-content {
+  background: var(--surface-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 16px;
+  max-width: 600px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-xl);
+}
+
+.modal-header {
+  padding: 24px;
+  border-bottom: 1px solid var(--border-primary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h2 {
+  font-size: 20px;
+  color: var(--text-primary);
+}
+
+.modal-content form {
+  padding: 24px;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-badge.completed {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--accent-green);
+}
+
+.status-badge.failed {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--accent-red);
+}
+
+.status-badge.running {
+  background: rgba(251, 191, 36, 0.2);
+  color: var(--accent-yellow);
+  animation: pulse 2s infinite;
+}
+
+.status-badge.disabled {
+  background: rgba(138, 138, 138, 0.2);
+  color: var(--text-muted);
 }
 
 /* =============== TOAST NOTIFICATIONS =============== */
@@ -854,6 +973,10 @@ input:focus, select:focus, textarea:focus {
   .metrics-grid {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
+  
+  .playbooks-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 768px) {
@@ -891,54 +1014,3 @@ input:focus, select:focus, textarea:focus {
 .mb-4 { margin-bottom: 16px; }
 .mt-4 { margin-top: 16px; }
 .hidden { display: none; }
-/* Add these fixes to your existing style.css */
-
-/* Firefox Mobile Compatibility Fixes */
-
-/* Remove problematic backdrop-filter */
-.system-header {
-  background: var(--surface-primary);
-  border-bottom: 1px solid var(--border-primary);
-  padding: 16px 24px;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  /* backdrop-filter: blur(20px); */ /* Remove this line */
-  box-shadow: var(--shadow-md);
-}
-
-/* Fix sticky positioning on mobile */
-@supports (-moz-appearance: none) {
-  .preview-panel {
-    position: relative; /* Change from sticky to relative for Firefox */
-    top: auto;
-  }
-}
-
-/* Ensure text rendering works */
-.brand-title {
-  font-size: 20px;
-  font-weight: 700;
-  background: linear-gradient(135deg, var(--accent-blue), var(--text-primary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  /* Fallback for Firefox */
-  color: var(--accent-blue);
-}
-
-/* Fix flex gaps for older Firefox versions */
-@supports not (gap: 12px) {
-  .chat-input-group > * + * {
-    margin-left: 12px;
-  }
-  
-  .system-nav > * + * {
-    margin-left: 4px;
-  }
-  
-  .metrics-grid {
-    gap: 16px;
-    grid-gap: 16px; /* Fallback */
-  }
-}
