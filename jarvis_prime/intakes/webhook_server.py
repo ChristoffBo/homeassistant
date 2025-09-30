@@ -88,30 +88,82 @@ def _require_token(req: "web.Request") -> bool:
     t = req.headers.get("X-Webhook-Token") or req.query.get("token") or ""
     return (t == WEBHOOK_TOKEN)
 
-def _extract_payload(req_json: Optional[Dict[str, Any]], req_text: str, headers: "web.BaseRequest.headers") -> Tuple[str, str, int, Dict[str, Any]]:
+def _extract_payload(
+    req_json: Optional[Dict[str, Any]],
+    req_text: str,
+    headers: "web.BaseRequest.headers"
+) -> Tuple[str, str, int, Dict[str, Any]]:
     """
     Prefer JSON {title,message,priority,extras}, accept aliases and plain text.
+    Special handling for *arr webhooks: Sonarr, Radarr, Lidarr, Readarr.
     """
     title, message, priority, extras = "", "", 5, {}
 
     if isinstance(req_json, dict):
-        title   = _safe_str(req_json.get("title", "")) or _safe_str(req_json.get("subject", ""))
-        message = (
-            _safe_str(req_json.get("message", "")) or
-            _safe_str(req_json.get("body", "")) or
-            _safe_str(req_json.get("text", "")) or
-            _safe_str(req_json.get("msg", "")) or
-            ""
-        )
-        priority = _parse_priority(req_json.get("priority", req_json.get("prio", 5)))
-        ex = req_json.get("extras", {})
-        if isinstance(ex, dict):
-            extras = ex
+        # *arr webhook handling
+        if "eventType" in req_json:
+            event = req_json.get("eventType", "Event")
+
+            ua = headers.get("User-Agent", "").lower()
+            app = "App"
+            if "sonarr" in ua:
+                app = "Sonarr"
+            elif "radarr" in ua:
+                app = "Radarr"
+            elif "lidarr" in ua:
+                app = "Lidarr"
+            elif "readarr" in ua:
+                app = "Readarr"
+
+            # Try to extract title depending on app
+            obj_title = ""
+            if app == "Sonarr":
+                obj_title = req_json.get("series", {}).get("title", "")
+                eps = req_json.get("episodes", [])
+                if eps and isinstance(eps, list):
+                    ep = eps[0].get("title", "")
+                    if ep:
+                        message = f"Episode: {ep}"
+            elif app == "Radarr":
+                obj_title = req_json.get("movie", {}).get("title", "")
+            elif app == "Lidarr":
+                obj_title = req_json.get("artist", {}).get("artistName", "")
+                track = req_json.get("track", {}).get("title", "")
+                if track:
+                    message = f"Track: {track}"
+            elif app == "Readarr":
+                obj_title = req_json.get("author", {}).get("authorName", "")
+                book = req_json.get("book", {}).get("title", "")
+                if book:
+                    message = f"Book: {book}"
+
+            if obj_title:
+                title = f"{app} - {obj_title} ({event})"
+            else:
+                title = f"{app} - {event}"
+
+            if not message:
+                message = json.dumps(req_json, indent=2)
+
         else:
-            try:
-                extras = dict(ex)  # type: ignore
-            except Exception:
-                extras = {"raw_extras": _safe_str(ex)}
+            # Generic JSON payload
+            title   = _safe_str(req_json.get("title", "")) or _safe_str(req_json.get("subject", ""))
+            message = (
+                _safe_str(req_json.get("message", "")) or
+                _safe_str(req_json.get("body", "")) or
+                _safe_str(req_json.get("text", "")) or
+                _safe_str(req_json.get("msg", "")) or
+                ""
+            )
+            priority = _parse_priority(req_json.get("priority", req_json.get("prio", 5)))
+            ex = req_json.get("extras", {})
+            if isinstance(ex, dict):
+                extras = ex
+            else:
+                try:
+                    extras = dict(ex)  # type: ignore
+                except Exception:
+                    extras = {"raw_extras": _safe_str(ex)}
     else:
         message = (req_text or "").strip()
 
@@ -123,7 +175,13 @@ def _extract_payload(req_json: Optional[Dict[str, Any]], req_text: str, headers:
 
     return title, message, priority, extras
 
-def _emit_internal(title: str, body: str, priority: int = 5, source: str = "webhook", oid: str = "") -> Tuple[bool, int, str]:
+def _emit_internal(
+    title: str,
+    body: str,
+    priority: int = 5,
+    source: str = "webhook",
+    oid: str = ""
+) -> Tuple[bool, int, str]:
     """
     Forward to Jarvis core so the central beautify/LLM/riffs pipeline runs.
     """
