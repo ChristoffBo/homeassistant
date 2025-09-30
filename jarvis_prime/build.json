@@ -1,7 +1,7 @@
 {
   "build_from": {
-    "aarch64": "docker.io/library/debian:stable-slim",
-    "amd64": "docker.io/library/debian:stable-slim",
-    "armv7": "docker.io/library/debian:stable-slim"
+    "aarch64": "debian:stable-slim",
+    "amd64": "debian:stable-slim",
+    "armv7": "debian:stable-slim"
   }
 }
