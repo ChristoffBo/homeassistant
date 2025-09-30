@@ -1,1 +1,21 @@
-1
+{
+  "name": "Jarvis Prime",
+  "short_name": "Jarvis",
+  "description": "Self-Hosted Notification Orchestrator with AI Chat",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e27",
+  "theme_color": "#00d9ff",
+  "orientation": "any",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%2300d9ff'/><text x='50' y='70' font-size='60' text-anchor='middle'>🤖</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "productivity"],
+  "shortcuts": []
+}
