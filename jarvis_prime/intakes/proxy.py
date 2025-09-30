@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # /app/proxy.py
+
 import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -45,7 +46,13 @@ BOT_ICON = os.getenv("BOT_ICON", "🧠")
 INTERNAL_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
 def _emit_internal(title: str, body: str, priority: int = 5, source: str = "proxy", oid: str = ""):
-    payload = {"title": title or "Proxy", "body": body or "", "priority": int(priority), "source": source, "id": oid}
+    payload = {
+        "title": title or "Notification",
+        "body": body or "",
+        "priority": int(priority),
+        "source": source,
+        "id": oid
+    }
     r = requests.post(INTERNAL_EMIT_URL, json=payload, timeout=5)
     r.raise_for_status()
     return r.status_code
@@ -72,19 +79,24 @@ class H(BaseHTTPRequestHandler):
 
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length > 0 else b""
-            title = self.headers.get("X-Title") or "Proxy"
             ctype = (self.headers.get("Content-Type") or "").lower()
+
+            title = self.headers.get("X-Title") or ""
+            body = ""
 
             if "application/json" in ctype:
                 try:
                     data = json.loads(raw.decode("utf-8"))
                     body = data.get("message") or data.get("text") or data.get("body") or ""
                     if not title:
-                        title = data.get("title") or "Proxy"
+                        title = data.get("title") or ""
                 except Exception:
                     body = raw.decode("utf-8", "ignore")
             else:
                 body = raw.decode("utf-8", "ignore")
+
+            if not title:
+                title = "Notification"
 
             # Forward to Jarvis core
             _emit_internal(title, body, priority=5, source="proxy", oid="")
@@ -93,7 +105,7 @@ class H(BaseHTTPRequestHandler):
             if storage:
                 try:
                     storage.save_message(
-                        title=title or "Proxy",
+                        title=title,
                         body=body or "",
                         source="proxy_intake",
                         priority=5,
