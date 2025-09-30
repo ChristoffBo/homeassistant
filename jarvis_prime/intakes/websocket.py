@@ -4,14 +4,11 @@
 # Jarvis Prime — WebSocket Intake
 # Provides a persistent intake channel: /intake/ws
 #
-# - Clients connect: ws://<host>:<port>/intake/ws?token=<secret>
+# - Clients connect: ws://<host>:8765/intake/ws?token=<secret>
 # - Messages are JSON: {"title": "Backup complete", "message": "Radarr finished"}
 # - Each message is acked: {"status": "ok"}
 # - Multiple clients supported concurrently
-#
-# Normalization:
-#   - Always injects intake="notify", source="ws" if missing
-#   - Defaults title="WebSocket" if not provided
+# - Heartbeat: sends {"status": "alive"} every 30s
 
 import os
 import json
@@ -23,9 +20,9 @@ from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 # ======================================================
 # Config
 # ======================================================
-ENABLED = os.environ.get("INTAKE_WS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-INTAKE_PORT = int(os.environ.get("INTAKE_WS_PORT", 8765))
-AUTH_TOKEN = os.environ.get("INTAKE_WS_TOKEN", "changeme")
+INTAKE_ENABLED = os.environ.get("WS_ENABLED", "false").lower() in ("1", "true", "yes")
+INTAKE_PORT = int(os.environ.get("WS_PORT", 8765))
+AUTH_TOKEN = os.environ.get("WS_TOKEN", "changeme")  # set in options.json or env
 INTERNAL_EMIT = os.environ.get("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
 # ======================================================
@@ -33,14 +30,22 @@ INTERNAL_EMIT = os.environ.get("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:259
 # ======================================================
 async def process_intake(data: dict):
     """Forward intake payload into Jarvis via /internal/emit"""
+    # Normalize to Jarvis pipeline schema
+    normalized = {
+        "intake": data.get("intake", "notify"),
+        "source": data.get("source", "ws"),
+        "title": data.get("title", "WebSocket"),
+        "message": data.get("message") or data.get("msg") or "",
+        "extras": data.get("extras", {})
+    }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(INTERNAL_EMIT, json=data) as resp:
+            async with session.post(INTERNAL_EMIT, json=normalized) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     print(f"[WS] Forward failed: {resp.status} {text}")
                 else:
-                    print("[WS] Forwarded to Jarvis:", data)
+                    print("[WS] Forwarded to Jarvis:", normalized)
     except Exception as e:
         print("[WS] Error forwarding:", e)
 
@@ -49,10 +54,24 @@ async def process_intake(data: dict):
 # ======================================================
 connected_clients = set()
 
+async def heartbeat(ws):
+    """Send alive pings every 30s"""
+    try:
+        while True:
+            await asyncio.sleep(30)
+            if ws.closed:
+                break
+            try:
+                await ws.send(json.dumps({"status": "alive"}))
+            except Exception:
+                break
+    except Exception:
+        pass
+
 async def handler(ws, path):
     # --- auth ---
     try:
-        query = dict(pair.split("=", 1) for pair in path.split("?", 1)[1].split("&"))
+        query = dict(pair.split("=", 1) for pair in path.split("?")[1].split("&"))
     except Exception:
         query = {}
 
@@ -75,21 +94,13 @@ async def handler(ws, path):
     connected_clients.add(ws)
     print(f"[WS] Client connected ({len(connected_clients)} total)")
 
+    # launch heartbeat
+    asyncio.create_task(heartbeat(ws))
+
     try:
         async for msg in ws:
             try:
                 data = json.loads(msg)
-
-                # --- normalization ---
-                if "intake" not in data:
-                    data["intake"] = "notify"
-                if "source" not in data:
-                    data["source"] = "ws"
-                if "title" not in data:
-                    data["title"] = "WebSocket"
-                if "message" not in data:
-                    data["message"] = str(data)
-
                 await process_intake(data)
                 await ws.send(json.dumps({"status": "ok"}))
             except Exception as e:
@@ -106,11 +117,11 @@ async def handler(ws, path):
 # Main
 # ======================================================
 async def main():
-    if not ENABLED:
+    if not INTAKE_ENABLED:
         print("[WS] Intake disabled by config")
         return
     async with websockets.serve(handler, "0.0.0.0", INTAKE_PORT, ping_interval=20, ping_timeout=20):
-        print(f"[WS] Intake WebSocket running on port {INTAKE_PORT} (enabled)")
+        print(f"[WS] Intake WebSocket running on port {INTAKE_PORT}")
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
