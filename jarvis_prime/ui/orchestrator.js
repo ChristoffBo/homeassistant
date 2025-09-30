@@ -157,10 +157,16 @@
             Modified: ${new Date(p.modified).toLocaleString()}
           </div>
           <div class="playbook-actions">
+            <select class="playbook-target" id="target-${p.name.replace(/[^a-zA-Z0-9]/g, '_')}" style="margin-bottom: 8px;">
+              <option value="">All servers</option>
+            </select>
             <button class="btn primary" onclick="orchRunPlaybook('${p.name}')">▶ Run</button>
           </div>
         </div>
       `).join('');
+      
+      // Load servers to populate dropdowns
+      orchLoadServerOptionsForPlaybooks();
     } catch (e) {
       container.innerHTML = '<div class="text-center text-muted">Failed to load playbooks</div>';
       toast('Failed to load playbooks: ' + e.message, 'error');
@@ -169,20 +175,88 @@
 
   window.orchRefreshPlaybooks = orchLoadPlaybooks;
 
+  // Load server options for playbook dropdowns
+  async function orchLoadServerOptionsForPlaybooks() {
+    try {
+      const data = await jfetch(API('api/orchestrator/servers'));
+      if (!data.servers) return;
+      
+      // Get unique groups and individual servers
+      const groups = new Set();
+      const servers = [];
+      
+      data.servers.forEach(s => {
+        servers.push(s);
+        if (s.groups) {
+          s.groups.split(',').forEach(g => {
+            const trimmed = g.trim();
+            if (trimmed) groups.add(trimmed);
+          });
+        }
+      });
+      
+      // Populate all playbook target dropdowns
+      document.querySelectorAll('.playbook-target').forEach(select => {
+        let options = '<option value="">All servers</option>';
+        
+        if (groups.size > 0) {
+          options += '<optgroup label="Server Groups">';
+          groups.forEach(g => {
+            options += `<option value="group:${g}">${g} (group)</option>`;
+          });
+          options += '</optgroup>';
+        }
+        
+        if (servers.length > 0) {
+          options += '<optgroup label="Individual Servers">';
+          servers.forEach(s => {
+            options += `<option value="server:${s.name}">${s.name}</option>`;
+          });
+          options += '</optgroup>';
+        }
+        
+        select.innerHTML = options;
+      });
+    } catch (e) {
+      console.error('Failed to load server options:', e);
+    }
+  }
+
   window.orchRunPlaybook = async function(name) {
     try {
+      // Get selected target from dropdown
+      const targetSelect = document.getElementById(`target-${name.replace(/[^a-zA-Z0-9]/g, '_')}`);
+      const target = targetSelect ? targetSelect.value : '';
+      
+      // Parse target
+      let inventoryGroup = null;
+      if (target.startsWith('group:')) {
+        inventoryGroup = target.replace('group:', '');
+      } else if (target.startsWith('server:')) {
+        // For individual servers, use the server name as the group
+        inventoryGroup = target.replace('server:', '');
+      }
+      
       // Clear logs
       const logOutput = document.getElementById('orch-logs');
       if (logOutput) logOutput.innerHTML = '';
       
       const response = await jfetch(API(`api/orchestrator/run/${encodeURIComponent(name)}`), {
         method: 'POST',
-        body: JSON.stringify({ triggered_by: 'web_ui' })
+        body: JSON.stringify({ 
+          triggered_by: 'web_ui',
+          inventory_group: inventoryGroup
+        })
       });
       
       if (response.success) {
         currentJobId = response.job_id;
         appendLog(`[JARVIS] Starting playbook: ${name} (Job ID: ${response.job_id})`);
+        if (inventoryGroup) {
+          appendLog(`[JARVIS] Target: ${inventoryGroup}`);
+        } else {
+          appendLog(`[JARVIS] Target: All servers`);
+        }
         appendLog(`[JARVIS] Streaming output...\n`);
         toast(`Playbook "${name}" started`, 'success');
         
