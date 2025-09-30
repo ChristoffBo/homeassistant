@@ -4,7 +4,7 @@
 # Jarvis Prime — WebSocket Intake
 # Provides a persistent intake channel: /intake/ws
 #
-# - Clients connect: ws://<host>:<port>/intake/ws?token=<secret>
+# - Clients connect: ws://<host>:8765/intake/ws?token=<secret>
 # - Messages are JSON: {"title": "Backup complete", "message": "Radarr finished"}
 # - Each message is acked: {"status": "ok"}
 # - Multiple clients supported concurrently
@@ -16,24 +16,17 @@ import aiohttp
 import websockets
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-CONFIG_PATH = "/data/options.json"
-
 # ======================================================
-# Config loader
+# Config (reads from options.json via Supervisor → env)
 # ======================================================
-def load_config():
-    try:
-        with open(CONFIG_PATH) as f:
-            cfg = json.load(f)
-            return cfg.get("intake_websocket", {})
-    except Exception:
-        return {}
-
-cfg = load_config()
-ENABLED = str(cfg.get("enabled", os.environ.get("WS_ENABLED", "false"))).lower() in ("true", "1", "yes")
-INTAKE_PORT = int(cfg.get("port", os.environ.get("WS_PORT", 8765)))
-AUTH_TOKEN = cfg.get("token", os.environ.get("WS_TOKEN", "changeme"))
+INTAKE_PORT = int(os.environ.get("intake_ws_port", 8765))
+AUTH_TOKEN = os.environ.get("intake_ws_token", "changeme")
+ENABLED = os.environ.get("intake_ws_enabled", "false").lower() in ("1", "true", "yes")
 INTERNAL_EMIT = os.environ.get("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
+
+if not ENABLED:
+    print("[WS] Intake disabled by config")
+    exit(0)
 
 # ======================================================
 # Forward into Jarvis
@@ -57,9 +50,11 @@ async def process_intake(data: dict):
 connected_clients = set()
 
 async def handler(ws, path):
-    # --- auth ---
+    # --- parse query token ---
     try:
-        query = dict(pair.split("=", 1) for pair in path.split("?")[1].split("&"))
+        query = {}
+        if "?" in path:
+            query = dict(pair.split("=", 1) for pair in path.split("?")[1].split("&"))
     except Exception:
         query = {}
 
@@ -102,11 +97,8 @@ async def handler(ws, path):
 # Main
 # ======================================================
 async def main():
-    if not ENABLED:
-        print("[WS] Intake disabled by config")
-        return
     async with websockets.serve(handler, "0.0.0.0", INTAKE_PORT, ping_interval=20, ping_timeout=20):
-        print(f"[WS] Intake WebSocket running on port {INTAKE_PORT}, token={AUTH_TOKEN}")
+        print(f"[WS] Intake WebSocket running on port {INTAKE_PORT}")
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
