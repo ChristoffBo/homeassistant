@@ -28,9 +28,9 @@ def _load_json(path: str) -> Dict[str, Any]:
         return {}
 
 # Env & options
-BOT_NAME     = os.getenv("BOT_NAME", "Jarvis Prime")
-WEBHOOK_BIND = os.getenv("webhook_bind", os.getenv("WEBHOOK_BIND", "0.0.0.0"))
-WEBHOOK_PORT = int(os.getenv("webhook_port", os.getenv("WEBHOOK_PORT", "2590")))
+BOT_NAME      = os.getenv("BOT_NAME", "Jarvis Prime")
+WEBHOOK_BIND  = os.getenv("webhook_bind", os.getenv("WEBHOOK_BIND", "0.0.0.0"))
+WEBHOOK_PORT  = int(os.getenv("webhook_port", os.getenv("WEBHOOK_PORT", "2590")))
 WEBHOOK_TOKEN = os.getenv("webhook_token", os.getenv("WEBHOOK_TOKEN", ""))  # optional
 
 # Forward to Jarvis core (bot.py)
@@ -75,15 +75,12 @@ def _parse_priority(val: Any, default: int = 5) -> int:
     except Exception:
         return default
 
-def _mk_title_source(headers: "web.BaseRequest.headers") -> Tuple[str, Optional[str]]:
-    # GitHub
+def _mk_source(headers: "web.BaseRequest.headers") -> Optional[str]:
     if "X-GitHub-Event" in headers:
-        return (f"[GitHub] {headers.get('X-GitHub-Event')}", "github")
-    # Uptime/health-like
+        return "github"
     if "X-Health-Check" in headers:
-        return ("[HealthCheck] Event", "healthcheck")
-    # Generic
-    return ("Webhook Event", None)
+        return "healthcheck"
+    return None
 
 def _require_token(req: "web.Request") -> bool:
     if not WEBHOOK_TOKEN:
@@ -119,8 +116,8 @@ def _extract_payload(req_json: Optional[Dict[str, Any]], req_text: str, headers:
         message = (req_text or "").strip()
 
     if not title:
-        t_guess, src = _mk_title_source(headers)
-        title = t_guess
+        title = "Notification"  # neutral fallback
+        src = _mk_source(headers)
         if src:
             extras.setdefault("webhook::source", src)
 
@@ -133,11 +130,13 @@ def _emit_internal(title: str, body: str, priority: int = 5, source: str = "webh
     try:
         r = requests.post(
             INTERNAL_EMIT_URL,
-            json={"title": title or "Webhook Event",
-                  "body": body or "",
-                  "priority": int(priority),
-                  "source": source,
-                  "id": oid},
+            json={
+                "title": title or "Notification",
+                "body": body or "",
+                "priority": int(priority),
+                "source": source,
+                "id": oid
+            },
             timeout=5
         )
         ok = r.ok
@@ -173,8 +172,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
 
     title, message, priority, extras = _extract_payload(req_json, raw_text, request.headers)
 
-    # (Optional) We can still compute facts here for future use or logging;
-    # the internal emit currently only accepts title/body/priority/source/id.
+    # Metadata (not yet forwarded, but available if needed)
     _ = {
         "time": datetime.now().isoformat(timespec="seconds"),
         "subject": title,
@@ -186,8 +184,10 @@ async def handle_webhook(request: web.Request) -> web.Response:
     }
 
     ok, status, info = _emit_internal(title, message, priority, "webhook", "")
-    return web.json_response({"ok": bool(ok), "status": status, "info": info},
-                             status=(200 if ok else 502))
+    return web.json_response(
+        {"ok": bool(ok), "status": status, "info": info},
+        status=(200 if ok else 502)
+    )
 
 # ---------------------------
 # App bootstrap
