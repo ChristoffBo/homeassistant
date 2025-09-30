@@ -1,4 +1,46 @@
 (function () {
+  
+  // ============================================
+  // SERVICE WORKER REGISTRATION (PWA)
+  // ============================================
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then((registration) => {
+          console.log('✅ Jarvis Service Worker registered:', registration.scope);
+          
+          // Check for updates every minute
+          setInterval(() => {
+            registration.update();
+          }, 60000);
+
+          // Handle service worker updates
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                console.log('🔄 New version of Jarvis Prime available');
+                
+                // Show toast if available
+                if (typeof toast === 'function') {
+                  toast('New version available! Reload to update.', 'info');
+                }
+              }
+            });
+          });
+        })
+        .catch((error) => {
+          console.error('❌ Service Worker registration failed:', error);
+        });
+    });
+  }
+
+  // Request notification permission (for future push notifications)
+  if ('Notification' in window && Notification.permission === 'default') {
+    console.log('💬 Notification permission not yet granted');
+  }
+  
   /* =============== CORE UTILITIES =============== */
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
