@@ -35,9 +35,6 @@
         <button class="nav-tab active" data-tab="inbox">
           📥 Message Inbox
         </button>
-        <button class="nav-tab" data-tab="chat">
-          💬 AI Chat
-        </button>
         <button class="nav-tab" data-tab="wake">
           ⚡ System Commands
         </button>
@@ -53,7 +50,6 @@
   </header>
 
   <main class="system-main">
-    <!-- =============== INBOX TAB =============== -->
     <section id="inbox" class="tab-panel active">
       <div class="panel-header">
         <div class="panel-title">
@@ -96,6 +92,21 @@
             </select>
             <button id="purge-now" class="btn danger">Run</button>
           </div>
+        </div>
+      </div>
+
+      <div class="inbox-chat-box">
+        <div class="chat-box-header">
+          <span class="chat-box-title">💬 Ask Jarvis AI</span>
+          <span class="chat-box-status" id="chat-status">Ready</span>
+        </div>
+        <div class="chat-box-input-area">
+          <textarea 
+            id="chat-input" 
+            class="chat-box-input" 
+            placeholder="Type your message here... (Ctrl+Enter to send)"
+            rows="1"></textarea>
+          <button id="chat-send" class="btn primary">Send</button>
         </div>
       </div>
 
@@ -144,60 +155,6 @@
       </div>
     </section>
 
-    <!-- =============== CHAT TAB =============== -->
-    <section id="chat" class="tab-panel">
-      <div class="panel-header">
-        <div class="panel-title">
-          <h1>AI Chat Interface</h1>
-          <div class="panel-subtitle">Natural conversation with Jarvis AI • Messages auto-prefixed with "chat"</div>
-        </div>
-        <div class="metrics-grid" style="margin: 0; grid-template-columns: auto auto;">
-          <div class="metric-card cyan">
-            <div class="metric-header">
-              <div class="metric-label">Chat Status</div>
-            </div>
-            <div style="font-size: 14px; font-weight: 500;" id="chat-status">Ready</div>
-          </div>
-          <div class="metric-card purple">
-            <div class="metric-controls">
-              <button id="clear-chat" class="btn">Clear History</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="chat-container">
-        <div class="chat-header">
-          <div class="chat-title">💬 Conversation with Jarvis</div>
-          <div class="chat-status">
-            <div class="status-dot"></div>
-            <span>Neural Network Active</span>
-          </div>
-        </div>
-        
-        <div class="chat-messages" id="chat-messages">
-          <div class="chat-message bot">
-            <div class="message-content">
-              👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
-            </div>
-            <div class="message-time">System initialized</div>
-          </div>
-        </div>
-        
-        <div class="chat-input-area">
-          <textarea 
-            id="chat-input" 
-            class="chat-input" 
-            placeholder="Type your message here... (Press Ctrl+Enter to send)"
-            rows="1"></textarea>
-          <button id="chat-send" class="btn primary">
-            Send Message
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <!-- =============== WAKE TAB =============== -->
     <section id="wake" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
