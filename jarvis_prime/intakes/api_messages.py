@@ -53,7 +53,7 @@ async def _sse(request: web.Request):
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _listeners.add(q)
     try:
-        await resp.write(b": hello\\n\\n")
+        await resp.write(b": hello\n\n")
     except Exception:
         pass
     try:
@@ -61,7 +61,7 @@ async def _sse(request: web.Request):
             data = await q.get()
             payload = json.dumps(data, ensure_ascii=False).encode('utf-8')
             try:
-                await resp.write(b"data: " + payload + b"\\n\\n")
+                await resp.write(b"data: " + payload + b"\n\n")
             except (ConnectionResetError, RuntimeError, BrokenPipeError):
                 break
     except asyncio.CancelledError:
@@ -218,6 +218,25 @@ async def api_wake(request: web.Request):
         return _json({"ok": False, "error": str(e)})
     return _json({"ok": ok})
 
+# NEW: UI emit passthrough -> bot internal emit
+async def api_emit(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post("http://127.0.0.1:2599/internal/emit", json=data, timeout=10) as r:
+                body = await r.text()
+                try:
+                    parsed = json.loads(body)
+                except Exception:
+                    parsed = {"raw": body}
+                return _json(parsed, status=r.status)
+    except Exception as e:
+        return _json({"ok": False, "error": str(e)}, status=500)
+
 # ---- app ----
 def _make_app() -> web.Application:
     app = web.Application()
@@ -235,6 +254,7 @@ def _make_app() -> web.Application:
     app.router.add_post("/api/inbox/purge", api_purge)
     app.router.add_post("/api/wake", api_wake)
     app.router.add_post("/internal/wake", api_wake)
+    app.router.add_post("/internal/emit", api_emit)  # <-- NEW
 
     # ONE static root only
     async def _index(_):
