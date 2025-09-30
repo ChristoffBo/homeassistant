@@ -269,6 +269,14 @@ async def api_emit(request: web.Request):
 # ---- app ----
 def _make_app() -> web.Application:
     app = web.Application()
+    
+    # Startup hook to start orchestrator scheduler after event loop is running
+    async def start_background_tasks(app):
+        if orchestrator_module:
+            orchestrator_module.start_orchestrator_scheduler()
+    
+    app.on_startup.append(start_background_tasks)
+    
     # API routes
     app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
