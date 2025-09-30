@@ -522,8 +522,13 @@ def init_orchestrator(config, db_path, notify_callback=None, logger=None):
     """Initialize the orchestrator module"""
     global orchestrator
     orchestrator = Orchestrator(config, db_path, notify_callback, logger)
-    orchestrator.start_scheduler()  # Start the background scheduler
+    # Don't start scheduler here - will be started after event loop is running
     return orchestrator
+
+def start_orchestrator_scheduler():
+    """Start the scheduler background task (call this after event loop is running)"""
+    if orchestrator:
+        orchestrator.start_scheduler()
 
 # ---- aiohttp route handlers ----
 
