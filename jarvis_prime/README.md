@@ -1,6 +1,6 @@
 # 🧩 Jarvis Prime — Home Assistant Add-on
 
-Jarvis Prime is your standalone Notification Orchestrator and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality. Jarvis now also includes a Chat lane: a pure chat channel into your local LLM (no riffs, no personas) that works alongside notifications when the LLM is enabled.
+Jarvis Prime is your standalone Notification Orchestrator and Server. It centralizes, beautifies, and orchestrates notifications from across your homelab. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy, WebSocket), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality. Jarvis now also includes a Chat lane: a pure chat channel into your local LLM (no riffs, no personas) that works alongside notifications when the LLM is enabled.
 
 Features
 • Standalone Notification Orchestrator and Server.  
@@ -10,6 +10,7 @@ Features
 • HTTP Proxy Intake: accepts Gotify/ntfy POSTs and beautifies them  
 • Webhook Intake: accepts plain text or JSON from scripts, GitHub, health checks, etc.  
 • Apprise Intake: accepts Apprise client POSTs with token auth  
+• WebSocket Intake: persistent bi-directional intake channel with token auth  
 • Built-in dark-mode Web UI with inbox, filters, purge, retention, and live updates  
 • ARR Module: Radarr/Sonarr posters, episode/movie facts, upcoming releases  
 • DNS Module: Technitium DNS block stats, failures, totals  
@@ -18,8 +19,8 @@ Features
 • Multiple selectable personas: The Dude, Chick, Nerd, Rager, Comedian, Action, Ops  
 • EnviroGuard: adaptive LLM throttle adjusts CPU use based on ambient temperature  
 • Purge & Retention: configurable lifecycle for old messages  
-• Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled 
-• Chat Lane: Rag added, if you have set a long lived token and your homeasstiant url chat will now answer questions regarding your systems.
+• Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled  
+• Chat Lane: Rag added, if you have set a long lived token and your Home Assistant url chat will now answer questions regarding your systems.  
 
 Supported Sources
 • Radarr / Sonarr → Posters, runtime, SxxEyy, quality, size  
@@ -34,6 +35,7 @@ Supported Sources
 • Gotify / ntfy → Via proxy intake  
 • Webhooks → Generic POSTs  
 • Apprise → POSTs from any Apprise client  
+• WebSocket → Persistent WS connections for apps/agents  
 • Plain text → Beautified into sleek cards  
 • Chat → Direct LLM conversation (prefix with “chat …” or “talk …” in Gotify/ntfy or use Web UI chat tab)  
 
@@ -53,97 +55,44 @@ Intake Setup Details
   curl -X POST http://10.0.0.100:2590/webhook -H "Content-Type: text/plain" -d 'Backup finished'  
 • Example JSON:  
   curl -X POST http://10.0.0.100:2590/webhook -H "Content-Type: application/json" -d '{"title":"Backup Complete","message":"Node 1 finished","priority":7}'  
-• Step: Add this URL to any app that can POST webhook notifications (e.g., Uptime Kuma).  
 
 3. Apprise Intake  
 • URL: http://10.0.0.100:2591/intake/apprise/notify?token=YOUR_LONG_TOKEN  
-• Step 1: Generate a long random token (any string).  
-• Step 2: Place token into /data/options.json under "apprise_token".  
-• Step 3: From any host with Apprise installed, run:  
+• Place token into /data/options.json under "intake_apprise_token".  
+• Example:  
   curl -X POST "http://10.0.0.100:2591/intake/apprise/notify?token=yourtoken" -H "Content-Type: application/json" -d '{"title":"Apprise Test","body":"Hello","type":"info"}'  
 
 4. Gotify Intake (proxy)  
-• Step 1: Install Gotify server (docker gotify/server) and open its Web UI.  
-• Step 2: Login → Settings → Applications → Add Application → Give a name → Create.  
-• Step 3: Copy the application token shown.  
-• Step 4: Test with:  
+• URL: http://10.0.0.100:2580  
+• Example:  
   curl -X POST "http://10.0.0.100:2580/message?token=YOUR_GOTIFY_APP_TOKEN" -H "Content-Type: application/json" -d '{"title":"Gotify Direct","message":"Hello from Gotify","priority":5}'  
-• In mobile Gotify app: Settings → Add server → URL=http://10.0.0.100:2580 → Token=paste.  
 
 5. ntfy Intake (proxy)  
-• Step 1: Install ntfy app from Play Store or App Store.  
-• Step 2: In the app, add a subscription topic: "jarvis".  
-• Step 3: Test with:  
+• URL: http://10.0.0.100:2580/jarvis  
+• Example:  
   curl -X POST "http://10.0.0.100:2580/jarvis" -H "Content-Type: text/plain" -d 'Hello from ntfy direct push'  
-• Notifications will appear in the ntfy app subscribed to topic "jarvis".  
 
-6. Chat Intake (Gotify/ntfy or Web UI)  
-• Works automatically when LLM is enabled in Jarvis.  
-• Prefix your message with "chat" or "talk" (case-insensitive).  
-• Example with Gotify:  
+6. WebSocket Intake  
+• URL: ws://10.0.0.100:8765/intake/ws?token=YOUR_WS_TOKEN  
+• Configure your token in /data/options.json under "intake_ws_token".  
+• Example test with websocat:  
+  websocat "ws://10.0.0.100:8765/intake/ws?token=YOUR_WS_TOKEN"  
+  {"title":"WS Test","message":"Hello from WebSocket","priority":5}  
+• Jarvis will respond with {"status":"ok"} and forward to its pipeline.  
+• Multiple clients can stay connected simultaneously.  
+
+7. Chat Intake (Gotify/ntfy or Web UI)  
+• Prefix your message with "chat" or "talk".  
+• Example Gotify:  
   curl -X POST "http://10.0.0.100:2580/message?token=YOUR_GOTIFY_APP_TOKEN" -H "Content-Type: application/json" -d '{"title":"chat","message":"What is the difference between an i7 and i9 processor?"}'  
-• Example with ntfy:  
+• Example ntfy:  
   curl -X POST "http://10.0.0.100:2580/jarvis" -H "Content-Type: text/plain" -d 'chat Explain the plot of Interstellar'  
-• Example in Web UI: open the Chat tab and type directly.  
-
-EnviroGuard (Optional)  
-• Jarvis monitors temperature and dynamically adjusts LLM profiles.  
-• Two modes are supported:  
-  1. Open-Meteo API → uses outside temperature based on configured lat/lon.  
-  2. Home Assistant sensors → reads local temperature from any HA entity (e.g., sensor.living_room_temperature). Configure entity IDs in /data/options.json.  
-• Example config with HA sensors:  
-  {  
-    "llm_enviroguard_enabled": true,  
-    "llm_enviroguard_use_homeassistant": true,  
-    "llm_enviroguard_sensors": ["sensor.living_room_temperature","sensor.server_rack_temp"],  
-    "llm_enviroguard_hot_c": 30,  
-    "llm_enviroguard_cold_c": 10,  
-    "llm_enviroguard_profiles": {  
-      "manual": { "cpu_percent": 80, "ctx_tokens": 2048, "timeout_seconds": 15 },  
-      "hot":    { "cpu_percent": 50, "ctx_tokens": 1024, "timeout_seconds": 12 },  
-      "normal": { "cpu_percent": 80, "ctx_tokens": 2048, "timeout_seconds": 15 },  
-      "boost":  { "cpu_percent": 90, "ctx_tokens": 4096, "timeout_seconds": 20 }  
-    }  
-  }  
-• Jarvis announces state changes: “Ambient 31.2 °C → profile HOT (CPU=50%, ctx=1024, to=12s)”  
-
-LLM Defaults  
-• Context tokens: 2048 (~1500 words memory)  
-• Generation tokens: 150 (~110 words rewrite/riff)  
-• Riff lines: 30 tokens (≈20 words, punchy)  
-• Rewrite lines: 50 tokens (≈35 words, clear)  
-• Persona riffs: 100 tokens (≈70 words, multi-line personality quips)  
-
-Recommended LLMs  
-Jarvis Prime is tuned for Phi family models. Use GGUF quantized builds with llama.cpp or ollama.  
-
-1. Phi-3 Mini (3.8B)  
-• Fast, light, excellent for rewrites and riffs.  
-• Best option for Intel N100, N5105, or similar CPUs.  
-• Download: https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf  
-
-2. Phi-3.5 Mini (3.8B)  
-• Improved reasoning and stability over Phi-3.  
-• Runs fine on mid-range CPUs (i7, Ryzen) at Q4_K_M or Q5_K_M.  
-• Download: https://huggingface.co/microsoft/Phi-3.5-mini-instruct-gguf  
-
-3. Phi-4 (14B)  
-• Strongest reasoning, natural phrasing.  
-• Heavy — requires desktop-grade CPU or GPU offload.  
-• Good for users who want maximum polish in rewrites.  
-• Download: https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf  
-
-Performance Guide  
-• Intel N100: Phi-3 Q4 ~8–12 tok/s, Phi-3.5 Q4 ~6–10 tok/s.  
-• i7 desktop: Phi-3.5 Q4 ~15 tok/s, Phi-4 Q4 ~6–8 tok/s.  
-• With GPU offload: Phi-4 Q5 can reach ~20–30 tok/s.  
-• Recommended default: Phi-3 Mini (Q4) for balance of speed and polish.  
 
 Web UI Access  
 • Ingress via Home Assistant → Add-on → Jarvis Prime → OPEN WEB UI.  
-• Or direct browser: http://10.0.0.100:PORT (Ingress base path is auto-handled).  
+• Or direct browser: http://10.0.0.100:PORT.  
 • Inbox view shows beautified cards with filters, retention, purge, and live updates.  
-• Chat lane tab allows pure conversation with your LLM. If LLM is disabled, chat remains off automatically.  
+• Chat lane tab allows pure conversation with your LLM.  
 
 Self-Hosting Statement  
-Jarvis Prime is fully self-contained. Gotify or ntfy are optional — use them only if you want mobile push with history. The add-on runs standalone with its own intakes, Beautify Engine, personas, Chat lane, and dark-mode UI.
+Jarvis Prime is fully self-contained. Gotify, ntfy, and WebSocket are optional — use them only if you want push or persistent WS. The add-on runs standalone with its own intakes, Beautify Engine, personas, Chat lane, and dark-mode UI.
