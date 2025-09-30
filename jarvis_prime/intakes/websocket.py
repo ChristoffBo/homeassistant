@@ -5,13 +5,14 @@
 # Provides a persistent intake channel: /intake/ws
 #
 # - Clients connect: ws://<host>:8765/intake/ws?token=<secret>
-# - Messages are JSON: {"intake": "notify", "source": "radarr", "msg": "Backup complete"}
+# - Messages are JSON: {"title": "Backup complete", "message": "Radarr finished"}
 # - Each message is acked: {"status": "ok"}
 # - Multiple clients supported concurrently
 
 import os
 import json
 import asyncio
+import aiohttp
 import websockets
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
@@ -20,16 +21,23 @@ from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 # ======================================================
 INTAKE_PORT = int(os.environ.get("WS_PORT", 8765))
 AUTH_TOKEN = os.environ.get("WS_TOKEN", "changeme")  # set in options.json or env
+INTERNAL_EMIT = os.environ.get("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
 # ======================================================
-# Placeholder: wire into Jarvis intake pipeline
+# Forward into Jarvis
 # ======================================================
 async def process_intake(data: dict):
-    """
-    Stub: replace with call into Jarvis notify pipeline
-    e.g. from bot import handle_intake
-    """
-    print("[WS] Intake received:", data)
+    """Forward intake payload into Jarvis via /internal/emit"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(INTERNAL_EMIT, json=data) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    print(f"[WS] Forward failed: {resp.status} {text}")
+                else:
+                    print("[WS] Forwarded to Jarvis:", data)
+    except Exception as e:
+        print("[WS] Error forwarding:", e)
 
 # ======================================================
 # Connection manager
