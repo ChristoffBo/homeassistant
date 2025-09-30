@@ -50,7 +50,7 @@
   </header>
 
   <main class="system-main">
-    <!-- =============== INBOX TAB (WITH INTEGRATED CHAT) =============== -->
+    <!-- =============== INBOX TAB =============== -->
     <section id="inbox" class="tab-panel active">
       <div class="panel-header">
         <div class="panel-title">
@@ -103,8 +103,22 @@
         </div>
       </div>
 
+      <!-- AI CHAT INPUT - At the top -->
+      <div class="chat-input-panel">
+        <div class="chat-input-header">
+          <span>💬 AI Assistant</span>
+        </div>
+        <div class="chat-input-group">
+          <textarea 
+            id="chat-input" 
+            class="chat-input" 
+            placeholder="Type your message to Jarvis AI... (Ctrl+Enter to send)"
+            rows="1"></textarea>
+          <button id="chat-send" class="btn primary">Send</button>
+        </div>
+      </div>
+
       <div class="inbox-layout">
-        <!-- Messages Table -->
         <div class="panel">
           <div class="panel-head">
             <div class="flex gap-4">
@@ -135,47 +149,15 @@
           </table>
         </div>
 
-        <!-- Preview & Chat Panel -->
         <div class="preview-panel">
-          <!-- Message Preview Section -->
-          <div class="preview-section">
-            <div class="preview-header">
-              <div>
-                <div class="preview-title" id="pv-title">No message selected</div>
-                <div class="preview-meta" id="pv-meta">—</div>
-              </div>
-            </div>
-            <div class="preview-content" id="pv-body">
-              <div class="text-center text-muted">Select a message to preview its contents</div>
+          <div class="preview-header">
+            <div>
+              <div class="preview-title" id="pv-title">No message selected</div>
+              <div class="preview-meta" id="pv-meta">—</div>
             </div>
           </div>
-
-          <!-- Chat Section -->
-          <div class="chat-section">
-            <div class="chat-header">
-              <div class="chat-title">💬 AI Assistant</div>
-              <button id="clear-chat" class="btn" style="padding: 4px 12px; font-size: 12px;">Clear</button>
-            </div>
-            
-            <div class="chat-messages" id="chat-messages">
-              <div class="chat-message bot">
-                <div class="message-content">
-                  👋 Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
-                </div>
-                <div class="message-time">System initialized</div>
-              </div>
-            </div>
-            
-            <div class="chat-input-area">
-              <textarea 
-                id="chat-input" 
-                class="chat-input" 
-                placeholder="Type your message... (Ctrl+Enter to send)"
-                rows="1"></textarea>
-              <button id="chat-send" class="btn primary">
-                Send
-              </button>
-            </div>
+          <div class="preview-content" id="pv-body">
+            <div class="text-center text-muted">Select a message to preview its contents</div>
           </div>
         </div>
       </div>
