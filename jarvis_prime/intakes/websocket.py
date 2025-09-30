@@ -4,7 +4,7 @@
 # Jarvis Prime — WebSocket Intake
 # Provides a persistent intake channel: /intake/ws
 #
-# - Clients connect: ws://<host>:8765/intake/ws?token=<secret>
+# - Clients connect: ws://<host>:<port>/intake/ws?token=<secret>
 # - Messages are JSON: {"title": "Backup complete", "message": "Radarr finished"}
 # - Each message is acked: {"status": "ok"}
 # - Multiple clients supported concurrently
@@ -16,11 +16,23 @@ import aiohttp
 import websockets
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
+CONFIG_PATH = "/data/options.json"
+
 # ======================================================
-# Config
+# Config loader
 # ======================================================
-INTAKE_PORT = int(os.environ.get("WS_PORT", 8765))
-AUTH_TOKEN = os.environ.get("WS_TOKEN", "changeme")  # set in options.json or env
+def load_config():
+    try:
+        with open(CONFIG_PATH) as f:
+            cfg = json.load(f)
+            return cfg.get("intake_websocket", {})
+    except Exception:
+        return {}
+
+cfg = load_config()
+ENABLED = str(cfg.get("enabled", os.environ.get("WS_ENABLED", "false"))).lower() in ("true", "1", "yes")
+INTAKE_PORT = int(cfg.get("port", os.environ.get("WS_PORT", 8765)))
+AUTH_TOKEN = cfg.get("token", os.environ.get("WS_TOKEN", "changeme"))
 INTERNAL_EMIT = os.environ.get("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
 # ======================================================
@@ -90,8 +102,11 @@ async def handler(ws, path):
 # Main
 # ======================================================
 async def main():
+    if not ENABLED:
+        print("[WS] Intake disabled by config")
+        return
     async with websockets.serve(handler, "0.0.0.0", INTAKE_PORT, ping_interval=20, ping_timeout=20):
-        print(f"[WS] Intake WebSocket running on port {INTAKE_PORT}")
+        print(f"[WS] Intake WebSocket running on port {INTAKE_PORT}, token={AUTH_TOKEN}")
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
