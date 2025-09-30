@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # /app/smtp_server.py
+
 import os
 import asyncio
 from email.parser import BytesParser
@@ -40,7 +41,13 @@ BOT_ICON = os.getenv("BOT_ICON", "🧠")
 INTERNAL_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
 def _emit_internal(title: str, body: str, priority: int = 5, source: str = "smtp", oid: str = ""):
-    payload = {"title": title or "SMTP", "body": body or "", "priority": int(priority), "source": source, "id": oid}
+    payload = {
+        "title": title or "Notification",
+        "body": body or "",
+        "priority": int(priority),
+        "source": source,
+        "id": oid
+    }
     r = requests.post(INTERNAL_EMIT_URL, json=payload, timeout=5)
     r.raise_for_status()
     return r.status_code
@@ -50,8 +57,10 @@ class Handler:
         try:
             # Parse the email
             msg = BytesParser().parsebytes(envelope.original_content or envelope.content)
-            subject = msg.get("Subject", "SMTP")
-            title = f"[SMTP] {subject}"
+
+            # Use Subject if present, otherwise generic Notification
+            subject = msg.get("Subject", "").strip()
+            title = subject if subject else "Notification"
 
             # Extract a best-effort plain body
             body = ""
@@ -59,12 +68,14 @@ class Handler:
                 for part in msg.walk():
                     ctype = (part.get_content_type() or "").lower()
                     if ctype == "text/plain":
-                        body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8","ignore")
+                        body = part.get_payload(decode=True).decode(
+                            part.get_content_charset() or "utf-8", "ignore"
+                        )
                         break
                 if not body:
-                    body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
+                    body = (msg.get_payload(decode=True) or b"").decode("utf-8", "ignore")
             else:
-                body = (msg.get_payload(decode=True) or b"").decode("utf-8","ignore")
+                body = (msg.get_payload(decode=True) or b"").decode("utf-8", "ignore")
 
             # Forward to Jarvis core
             _emit_internal(title, body, priority=5, source="smtp", oid="")
