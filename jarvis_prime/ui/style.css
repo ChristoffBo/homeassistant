@@ -891,3 +891,54 @@ input:focus, select:focus, textarea:focus {
 .mb-4 { margin-bottom: 16px; }
 .mt-4 { margin-top: 16px; }
 .hidden { display: none; }
+/* Add these fixes to your existing style.css */
+
+/* Firefox Mobile Compatibility Fixes */
+
+/* Remove problematic backdrop-filter */
+.system-header {
+  background: var(--surface-primary);
+  border-bottom: 1px solid var(--border-primary);
+  padding: 16px 24px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  /* backdrop-filter: blur(20px); */ /* Remove this line */
+  box-shadow: var(--shadow-md);
+}
+
+/* Fix sticky positioning on mobile */
+@supports (-moz-appearance: none) {
+  .preview-panel {
+    position: relative; /* Change from sticky to relative for Firefox */
+    top: auto;
+  }
+}
+
+/* Ensure text rendering works */
+.brand-title {
+  font-size: 20px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent-blue), var(--text-primary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  /* Fallback for Firefox */
+  color: var(--accent-blue);
+}
+
+/* Fix flex gaps for older Firefox versions */
+@supports not (gap: 12px) {
+  .chat-input-group > * + * {
+    margin-left: 12px;
+  }
+  
+  .system-nav > * + * {
+    margin-left: 4px;
+  }
+  
+  .metrics-grid {
+    gap: 16px;
+    grid-gap: 16px; /* Fallback */
+  }
+}
