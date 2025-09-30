@@ -92,29 +92,7 @@
     });
   });
 
-  /* =============== CHAT FUNCTIONALITY (MERGED INTO INBOX) =============== */
-  let chatHistory = [];
-  let waitingForResponse = false;
-
-  function addChatMessage(content, isUser = false) {
-    const messagesContainer = $('#chat-messages');
-    if (!messagesContainer) return;
-    
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `chat-message ${isUser ? 'user' : 'bot'}`;
-    
-    const now = new Date().toLocaleTimeString();
-    messageDiv.innerHTML = `
-      <div class="message-content">${content}</div>
-      <div class="message-time">${now}</div>
-    `;
-    
-    messagesContainer.appendChild(messageDiv);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    
-    chatHistory.push({ content, isUser, timestamp: Date.now() });
-  }
-
+  /* =============== CHAT FUNCTIONALITY =============== */
   function updateChatStatus(status) {
     const statusEl = $('#chat-status');
     if (statusEl) statusEl.textContent = status;
@@ -133,104 +111,44 @@
       if (sendBtn) sendBtn.classList.add('loading');
       updateChatStatus('Processing...');
       
-      addChatMessage(text, true);
       input.value = '';
-      waitingForResponse = true;
       
-      // Send to internal/emit to trigger _process_incoming() which handles chat routing
-      try {
-        console.log('Sending chat message via emit endpoint:', `chat ${text}`);
-        
-        await jfetch(API('internal/emit'), {
-          method: 'POST',
-          body: JSON.stringify({ 
-            title: 'chat',
-            body: `chat ${text}`,  // Put "chat" prefix in body for _extract_chat_query()
-            source: 'webui-chat',
-            priority: 5
-          })
-        });
-        
-        updateChatStatus('Sent to AI...');
-        toast('Message sent to Jarvis AI', 'success');
-        
-        // Set timeout for response
-        const responseTimeout = setTimeout(() => {
-          if (waitingForResponse) {
-            console.log('Chat response timeout');
-            addChatMessage('No response received. Check the inbox for any new messages.', false);
-            waitingForResponse = false;
-            updateChatStatus('Ready');
-          }
-        }, 30000);
-        
-        window.lastChatTimeout = responseTimeout;
-        
-      } catch (apiError) {
-        console.error('Emit endpoint failed:', apiError);
-        waitingForResponse = false;
-        
-        addChatMessage(`API unavailable. Try using Gotify instead:`, false);
-        addChatMessage(`Send to Gotify: "chat ${text}"`, false);
-        
-        updateChatStatus('Use Gotify');
-        toast(`Send via Gotify: "chat ${text}"`, 'info');
-      }
+      console.log('Sending chat message via emit endpoint:', `chat ${text}`);
+      
+      await jfetch(API('internal/emit'), {
+        method: 'POST',
+        body: JSON.stringify({ 
+          title: 'chat',
+          body: `chat ${text}`,
+          source: 'webui-chat',
+          priority: 5
+        })
+      });
+      
+      updateChatStatus('Sent to AI...');
+      toast('Message sent to Jarvis AI', 'success');
+      
+      // Reset status after a delay
+      setTimeout(() => {
+        updateChatStatus('Ready');
+      }, 3000);
       
     } catch (e) {
-      console.error('Chat system error:', e);
-      waitingForResponse = false;
-      addChatMessage('Chat system error. Try using Gotify with "chat" prefix.', false);
+      console.error('Chat error:', e);
       updateChatStatus('Error');
-      toast('Chat system error', 'error');
+      toast('Chat failed: ' + e.message, 'error');
+      
+      setTimeout(() => {
+        updateChatStatus('Ready');
+      }, 3000);
     } finally {
       if (sendBtn) sendBtn.classList.remove('loading');
     }
   }
 
-  // Listen for chat responses in the SSE stream
-  function handleChatResponse(data) {
-    if (!waitingForResponse) return false;
-    
-    const title = (data.title || '').toLowerCase();
-    const source = (data.source || '').toLowerCase();
-    const message = data.message || data.body || '';
-    
-    console.log('Checking if chat response:', { title, source, message: message.substring(0, 100) });
-    
-    const isChatResponse = (
-      (source === 'jarvis_out' && title === 'chat') ||
-      title.includes('chat') ||
-      title.includes('response') ||
-      title.includes('assistant') ||
-      source.includes('chatbot') ||
-      source.includes('llm') ||
-      source.includes('openai') ||
-      source.includes('claude')
-    );
-    
-    if (isChatResponse && message.trim()) {
-      console.log('Chat response detected!', { title, source, messageLength: message.length });
-      
-      if (window.lastChatTimeout) {
-        clearTimeout(window.lastChatTimeout);
-        window.lastChatTimeout = null;
-      }
-      
-      addChatMessage(message.trim(), false);
-      waitingForResponse = false;
-      updateChatStatus('Ready');
-      toast('Response received from Jarvis', 'success');
-      return true;
-    }
-    
-    return false;
-  }
-
-  // Chat event listeners (check if elements exist first)
+  // Chat event listeners
   const chatSendBtn = $('#chat-send');
   const chatInput = $('#chat-input');
-  const clearChatBtn = $('#clear-chat');
 
   if (chatSendBtn) {
     chatSendBtn.addEventListener('click', sendChatMessage);
@@ -248,26 +166,6 @@
     chatInput.addEventListener('input', function() {
       this.style.height = 'auto';
       this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-    });
-  }
-
-  if (clearChatBtn) {
-    clearChatBtn.addEventListener('click', () => {
-      if (confirm('Clear all chat messages?')) {
-        const chatMessages = $('#chat-messages');
-        if (chatMessages) {
-          chatMessages.innerHTML = `
-            <div class="chat-message bot">
-              <div class="message-content">
-                Hello! I'm Jarvis, your AI assistant. I can help you with information, analysis, creative tasks, and general conversation. What would you like to talk about?
-              </div>
-              <div class="message-time">System initialized</div>
-            </div>
-          `;
-        }
-        chatHistory = [];
-        toast('Chat cleared', 'success');
-      }
     });
   }
 
@@ -565,15 +463,6 @@
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data || '{}');
-          
-          if (data.event === 'created') {
-            const isHandled = handleChatResponse(data);
-            if (isHandled) {
-              console.log('Chat response handled:', data);
-              loadInbox();
-              return;
-            }
-          }
           
           if (['created', 'deleted', 'deleted_all', 'saved', 'purged'].includes(data.event)) {
             loadInbox().then(() => {
