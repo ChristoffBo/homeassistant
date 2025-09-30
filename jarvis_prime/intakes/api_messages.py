@@ -14,6 +14,35 @@ assert spec and spec.loader, "Cannot load storage.py"
 spec.loader.exec_module(storage)  # type: ignore
 storage.init_db(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
 
+# ---- orchestrator ----
+_ORCHESTRATOR_FILE = _THIS_DIR / "orchestrator.py"
+orchestrator_spec = importlib.util.spec_from_file_location("jarvis_orchestrator", str(_ORCHESTRATOR_FILE))
+orchestrator_module = importlib.util.module_from_spec(orchestrator_spec)  # type: ignore
+if orchestrator_spec and orchestrator_spec.loader and _ORCHESTRATOR_FILE.exists():
+    orchestrator_spec.loader.exec_module(orchestrator_module)  # type: ignore
+    
+    def notify_via_inbox(data):
+        """Send orchestrator notifications through inbox"""
+        title = data.get("title", "Orchestrator")
+        message = data.get("message", "")
+        priority = 8 if data.get("priority") == "high" else 5
+        storage.save_message(title, message, "orchestrator", priority, {})  # type: ignore
+        _broadcast("created")
+    
+    orchestrator_module.init_orchestrator(
+        config={
+            "playbooks_path": "/share/jarvis_prime/playbooks",
+            "runner": "ansible"  # or "script" if you don't want Ansible
+        },
+        db_path=os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"),
+        notify_callback=notify_via_inbox,
+        logger=print
+    )
+    print("[orchestrator] Initialized")
+else:
+    orchestrator_module = None
+    print("[orchestrator] Not found or failed to load")
+
 # ---- choose ONE UI root ----
 CANDIDATES = [
     Path("/share/jarvis_prime/ui"),
@@ -254,7 +283,11 @@ def _make_app() -> web.Application:
     app.router.add_post("/api/inbox/purge", api_purge)
     app.router.add_post("/api/wake", api_wake)
     app.router.add_post("/internal/wake", api_wake)
-    app.router.add_post("/internal/emit", api_emit)  # <-- NEW
+    app.router.add_post("/internal/emit", api_emit)
+
+    # Register orchestrator routes if available
+    if orchestrator_module:
+        orchestrator_module.register_routes(app)
 
     # ONE static root only
     async def _index(_):
