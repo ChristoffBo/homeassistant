@@ -1,6 +1,6 @@
 ## latest (2025-09-30 12:00:00)
 Added Websocket Intake.
-Improved Apprise and other intake handeling.
+Improved Apprise and other intake handeling, all intakes should now look more uniform.
 ## latest (2025-09-29 12:00:00)
 UI Updated, still working on llm chat
 ## latest (2025-09-28 12:00:00)
