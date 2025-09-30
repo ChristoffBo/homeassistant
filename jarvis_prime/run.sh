@@ -234,4 +234,16 @@ else
   echo "[launcher] proxy disabled"
 fi
 
+# ===== WebSocket intake (ADDED) =====
+WS_ENABLED=$(jq -r '.intake_ws_enabled // false' "$CONFIG_PATH")
+WS_PORT=$(jq -r '.intake_ws_port // 8765' "$CONFIG_PATH")
+if [[ "${WS_ENABLED}" == "true" ]]; then
+  echo "[launcher] starting WebSocket intake (websocket.py) on :${WS_PORT}"
+  python3 /app/websocket.py &
+  WS_PID=$! || true
+  echo "[launcher] WebSocket intake started ✅"
+else
+  echo "[launcher] WebSocket intake disabled"
+fi
+
 wait "$API_PID"
