@@ -1,3 +1,7 @@
+## v0.107.67 (2025-09-30 04:00:09)
+- Update from v0.107.66 to v0.107.67
+- Docker Image: [adguard/adguardhome:v0.107.67](https://hub.docker.com/r/adguard/adguardhome/tags)
+
 ## v0.107.66 (2025-09-15 19:02:52)
 - Update from v0.107.65 to v0.107.66
 - Docker Image: [adguard/adguardhome:v0.107.66](https://hub.docker.com/r/adguard/adguardhome/tags)
