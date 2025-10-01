@@ -79,6 +79,7 @@ COPY /intakes/websocket.py  /app/websocket.py
 COPY /intakes/apprise.py  /app/apprise.py
 COPY /modules/heartbeat.py  /app/heartbeat.py
 COPY /modules/orchestrator.py  /app/orchestrator.py
+COPY /modules/analytics.py  /app/analytics.py
 
 # Place intake blueprint at the path bot.py expects
 RUN mkdir -p /app/intakes
