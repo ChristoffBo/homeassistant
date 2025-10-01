@@ -551,6 +551,20 @@ def init_analytics(db_path: str = "/data/jarvis.db"):
     monitor = HealthMonitor(db)
     return db, monitor
 
+# 🔥 automatically bootstrap monitoring
+    async def safe_start():
+        await asyncio.sleep(1)  # small delay to let aiohttp app boot
+        try:
+            await monitor.start_all_monitors()
+        except Exception as e:
+            logger.error(f"Failed to auto-start monitors: {e}")
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(safe_start())
+    except RuntimeError:
+        logger.warning("Event loop not ready, monitors will need manual start")
+
 
 def _json(data, status=200):
     return web.Response(
