@@ -307,7 +307,7 @@ function analyticsShowAddService() {
   document.getElementById('analytics-service-modal-title').textContent = 'Add Service';
   document.getElementById('analytics-service-form').reset();
   document.getElementById('analytics-service-id').value = '';
-  document.getElementById('analytics-service-modal').classList.add('show');
+  document.getElementById('analytics-service-modal').classList.add('active'); // fixed
   analyticsToggleStatusCode();
 }
 
@@ -328,7 +328,7 @@ async function analyticsEditService(id) {
     document.getElementById('analytics-service-enabled').checked = service.enabled;
 
     analyticsToggleStatusCode();
-    document.getElementById('analytics-service-modal').classList.add('show');
+    document.getElementById('analytics-service-modal').classList.add('active'); // fixed
   } catch (error) {
     console.error('Error loading service:', error);
     showToast('Failed to load service', 'error');
@@ -351,7 +351,7 @@ async function analyticsDeleteService(id, name) {
 
 // Close service modal
 function analyticsCloseServiceModal() {
-  document.getElementById('analytics-service-modal').classList.remove('show');
+  document.getElementById('analytics-service-modal').classList.remove('active'); // fixed
 }
 
 // Toggle status code field based on check type
