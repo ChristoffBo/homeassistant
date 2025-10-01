@@ -761,3 +761,146 @@ async def api_add_server(request):
         return _json({"success": True, "server_id": server_id})
     except Exception as e:
         return _json({"
+return _json({"success": True, "server_id": server_id})
+    except Exception as e:
+        return _json({"error": str(e)}, status=400)
+
+async def api_update_server(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    server_id = int(request.match_info["id"])
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    try:
+        success = orchestrator.update_server(server_id, **data)
+        if success:
+            return _json({"success": True})
+        return _json({"error": "Server not found"}, status=404)
+    except Exception as e:
+        return _json({"error": str(e)}, status=400)
+
+async def api_delete_server(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    server_id = int(request.match_info["id"])
+    
+    try:
+        success = orchestrator.delete_server(server_id)
+        if success:
+            return _json({"success": True})
+        return _json({"error": "Server not found"}, status=404)
+    except Exception as e:
+        return _json({"error": str(e)}, status=400)
+
+async def api_websocket(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    
+    if orchestrator:
+        orchestrator.ws_clients.add(ws)
+    
+    try:
+        async for msg in ws:
+            pass
+    finally:
+        if orchestrator:
+            orchestrator.ws_clients.discard(ws)
+    
+    return ws
+
+async def api_list_schedules(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    return _json({"schedules": orchestrator.list_schedules()})
+
+async def api_get_schedule(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    schedule_id = int(request.match_info["id"])
+    schedule = orchestrator.get_schedule(schedule_id)
+    
+    if schedule:
+        return _json(schedule)
+    return _json({"error": "Schedule not found"}, status=404)
+
+async def api_add_schedule(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    try:
+        schedule_id = orchestrator.add_schedule(
+            name=data.get("name", "Unnamed Schedule"),
+            playbook=data["playbook"],
+            cron=data["cron"],
+            inventory_group=data.get("inventory_group"),
+            enabled=data.get("enabled", True),
+            notify_on_completion=data.get("notify_on_completion", True)
+        )
+        return _json({"success": True, "schedule_id": schedule_id})
+    except Exception as e:
+        return _json({"error": str(e)}, status=400)
+
+async def api_update_schedule(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    schedule_id = int(request.match_info["id"])
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    try:
+        success = orchestrator.update_schedule(schedule_id, **data)
+        if success:
+            return _json({"success": True})
+        return _json({"error": "Schedule not found"}, status=404)
+    except Exception as e:
+        return _json({"error": str(e)}, status=400)
+
+async def api_delete_schedule(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    schedule_id = int(request.match_info["id"])
+    
+    try:
+        success = orchestrator.delete_schedule(schedule_id)
+        if success:
+            return _json({"success": True})
+        return _json({"error": "Schedule not found"}, status=404)
+    except Exception as e:
+        return _json({"error": str(e)}, status=400)
+
+def register_routes(app):
+    app.router.add_get("/api/orchestrator/playbooks", api_list_playbooks)
+    app.router.add_get("/api/orchestrator/playbooks/organized", api_list_playbooks_organized)
+    app.router.add_post("/api/orchestrator/run/{playbook:.*}", api_run_playbook)
+    app.router.add_get("/api/orchestrator/status/{id:\\d+}", api_get_status)
+    app.router.add_get("/api/orchestrator/history", api_history)
+    app.router.add_post("/api/orchestrator/history/purge", api_purge_history)
+    app.router.add_get("/api/orchestrator/history/stats", api_history_stats)
+    app.router.add_get("/api/orchestrator/servers", api_list_servers)
+    app.router.add_get("/api/orchestrator/servers/{id:\\d+}", api_get_server)
+    app.router.add_post("/api/orchestrator/servers", api_add_server)
+    app.router.add_put("/api/orchestrator/servers/{id:\\d+}", api_update_server)
+    app.router.add_delete("/api/orchestrator/servers/{id:\\d+}", api_delete_server)
+    app.router.add_get("/api/orchestrator/schedules", api_list_schedules)
+    app.router.add_get("/api/orchestrator/schedules/{id:\\d+}", api_get_schedule)
+    app.router.add_post("/api/orchestrator/schedules", api_add_schedule)
+    app.router.add_put("/api/orchestrator/schedules/{id:\\d+}", api_update_schedule)
+    app.router.add_delete("/api/orchestrator/schedules/{id:\\d+}", api_delete_schedule)
+    app.router.add_get("/api/orchestrator/ws", api_websocket)
