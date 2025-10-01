@@ -55,9 +55,6 @@
         <button class="nav-tab" data-tab="orchestrator">
           ⚙️ Orchestrator
         </button>
-        <button class="nav-tab" data-tab="analytics">
-          📊 Analytics
-        </button>
       </nav>
       
       <div class="system-status">
@@ -341,105 +338,6 @@
         </div>
       </div>
     </section>
-
-    <!-- =============== ANALYTICS TAB =============== -->
-    <section id="analytics" class="tab-panel">
-      <div class="panel-header">
-        <div class="panel-title">
-          <h1>Analytics & Uptime</h1>
-          <div class="panel-subtitle">Real-time homelab health monitoring and service uptime tracking</div>
-        </div>
-      </div>
-
-      <!-- Health Score Card -->
-      <div class="metrics-grid">
-        <div class="metric-card" style="grid-column: span 2;">
-          <div class="metric-header">
-            <div class="metric-label">Health Score</div>
-          </div>
-          <div class="metric-value" id="health-score" style="color: #22c55e;">99.8%</div>
-        </div>
-        
-        <div class="metric-card green">
-          <div class="metric-header">
-            <div class="metric-label">Services Online</div>
-          </div>
-          <div class="metric-value" id="services-up">0</div>
-        </div>
-        
-        <div class="metric-card red">
-          <div class="metric-header">
-            <div class="metric-label">Services Down</div>
-          </div>
-          <div class="metric-value" id="services-down">0</div>
-        </div>
-        
-        <div class="metric-card">
-          <div class="metric-header">
-            <div class="metric-label">Total Services</div>
-          </div>
-          <div class="metric-value" id="services-total">0</div>
-        </div>
-      </div>
-
-      <div class="orch-tabs">
-        <button class="orch-tab active" data-analytics-tab="dashboard">📊 Dashboard</button>
-        <button class="orch-tab" data-analytics-tab="services">⚙️ Services</button>
-        <button class="orch-tab" data-analytics-tab="incidents">📋 Incidents</button>
-      </div>
-
-      <!-- DASHBOARD PANEL -->
-      <div id="analytics-dashboard" class="orch-panel active">
-        <div class="panel">
-          <div class="panel-head">
-            <h3>Service Status</h3>
-            <button class="btn primary" onclick="analyticsRefresh()">🔄 Refresh</button>
-          </div>
-          <div id="analytics-services-grid" class="playbooks-grid">
-            <div class="text-center text-muted">Loading services...</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SERVICES PANEL -->
-      <div id="analytics-services" class="orch-panel">
-        <div class="panel">
-          <div class="panel-head">
-            <h3>Configured Services</h3>
-            <button class="btn primary" onclick="analyticsShowAddService()">➕ Add Service</button>
-          </div>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Service Name</th>
-                <th>Endpoint</th>
-                <th>Type</th>
-                <th>Interval</th>
-                <th>Status</th>
-                <th>Enabled</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="analytics-services-list">
-              <tr><td colspan="7" class="text-center text-muted">Loading services...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- INCIDENTS PANEL -->
-      <div id="analytics-incidents" class="orch-panel">
-        <div class="panel">
-          <div class="panel-head">
-            <h3>Recent Incidents</h3>
-            <span style="color: var(--text-muted); font-size: 14px;">Last 7 days</span>
-          </div>
-          <div id="analytics-incidents-list" style="padding: 20px;">
-            <div class="text-center text-muted">Loading incidents...</div>
-          </div>
-        </div>
-      </div>
-    </section>
   </main>
 
   <!-- ADD SERVER MODAL -->
@@ -630,47 +528,8 @@
     </div>
   </div>
 
-  <!-- ADD/EDIT SERVICE MODAL (ANALYTICS) -->
-  <div id="analytics-service-modal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 id="analytics-service-modal-title">Add Service</h2>
-        <button class="btn" onclick="analyticsCloseServiceModal()">✕</button>
-      </div>
-      <form id="analytics-service-form" onsubmit="analyticsSaveService(event)">
-        <input type="hidden" id="analytics-service-id">
-        
-        <div class="form-group">
-          <label class="form-label">Service Name *</label>
-          <input type="text" id="analytics-service-name" required placeholder="Home Assistant">
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-            Friendly name for this service
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Endpoint *</label>
-          <input type="text" id="analytics-service-endpoint" required placeholder="http://homeassistant.local:8123">
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-            HTTP: full URL • TCP: host:port
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Check Type *</label>
-          <select id="analytics-check-type" onchange="analyticsToggleStatusCode()">
-            <option value="http">HTTP/HTTPS</option>
-            <option value="tcp">TCP Port</option>
-          </select>
-        </div>
-
-        <div class="form-group" id="analytics-status-code-group">
-          <label class="form-label">Expected Status Code</label>
-          <input type="number" id="analytics-expected-status" value="200">
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-            200 = OK, 301/302 = Redirect
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form
+  <div id="toast"></div>
+  <script src="app.js?v=3.2"></script>
+  <script src="orchestrator.js?v=1.1"></script>
+</body>
+</html>
