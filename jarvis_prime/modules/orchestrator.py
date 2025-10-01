@@ -22,7 +22,7 @@ class Orchestrator:
         self.logger = logger or print
         self.playbooks_path = config.get("playbooks_path", "/share/jarvis_prime/playbooks")
         self.runner = config.get("runner", "script")
-        self.ws_clients = set()  # WebSocket clients for live logs
+        self.ws_clients = set()
         self._scheduler_task = None
         self.init_db()
         
@@ -36,7 +36,7 @@ class Orchestrator:
         """Background loop that checks for scheduled jobs every minute"""
         while True:
             try:
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(60)
                 await self._check_schedules()
             except Exception as e:
                 self.logger(f"[orchestrator] Scheduler error: {e}")
@@ -59,14 +59,12 @@ class Orchestrator:
             if next_run:
                 next_run_dt = datetime.fromisoformat(next_run)
                 if now >= next_run_dt:
-                    # Time to run this job
                     self.logger(f"[orchestrator] Triggering scheduled job: {schedule['playbook']}")
                     self.run_playbook(
                         schedule['playbook'], 
                         triggered_by=f"schedule_{schedule['id']}", 
                         inventory_group=schedule.get('inventory_group')
                     )
-                    # Update last_run and calculate next_run
                     self._update_schedule_run_time(schedule['id'], schedule['cron'])
 
     def init_db(self):
@@ -116,14 +114,12 @@ class Orchestrator:
                 )
             """)
             
-            # Auto-migration: Add notify_on_completion column if it doesn't exist
             try:
                 cursor.execute("SELECT notify_on_completion FROM orchestration_schedules LIMIT 1")
             except sqlite3.OperationalError:
                 self.logger("[orchestrator] Adding notify_on_completion column to schedules table")
                 cursor.execute("ALTER TABLE orchestration_schedules ADD COLUMN notify_on_completion INTEGER DEFAULT 1")
             
-            # Auto-migration: Add name column if it doesn't exist
             try:
                 cursor.execute("SELECT name FROM orchestration_schedules LIMIT 1")
             except sqlite3.OperationalError:
@@ -154,12 +150,9 @@ class Orchestrator:
                 return None
             
             minute, hour, day, month, weekday = parts
-            
-            # Start from next minute
             next_time = from_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
             
-            # Check up to 366 days in the future
-            for _ in range(525600):  # minutes in a year
+            for _ in range(525600):
                 if self._cron_matches(next_time, minute, hour, day, month, weekday):
                     return next_time
                 next_time += timedelta(minutes=1)
@@ -222,7 +215,6 @@ class Orchestrator:
         if not updates:
             return False
         
-        # Recalculate next_run if cron changed
         if "cron" in updates:
             next_run = self._calculate_next_run(updates["cron"], datetime.now())
             updates["next_run"] = next_run.isoformat() if next_run else None
@@ -246,7 +238,7 @@ class Orchestrator:
             return cursor.rowcount > 0
 
     def list_playbooks(self):
-        """List all available playbooks from the playbooks directory (flat list)"""
+        """List all available playbooks from the playbooks directory"""
         playbooks = []
         playbooks_dir = Path(self.playbooks_path)
 
@@ -268,7 +260,7 @@ class Orchestrator:
         return sorted(playbooks, key=lambda x: x["name"])
 
     def list_playbooks_organized(self):
-        """List all playbooks organized by subdirectory for the new UI"""
+        """List all playbooks organized by subdirectory"""
         playbooks_dir = Path(self.playbooks_path)
         
         if not playbooks_dir.exists():
@@ -278,31 +270,27 @@ class Orchestrator:
         organized = {}
         extensions = [".sh", ".py", ".yml", ".yaml"]
         
-        # Recursively scan directories
         for item in playbooks_dir.rglob("*"):
             if item.is_file() and item.suffix.lower() in extensions:
-                # Get relative path from playbooks root
                 rel_path = item.relative_to(playbooks_dir)
                 
-                # Determine category (parent directory name)
                 if len(rel_path.parts) > 1:
-                    category = rel_path.parts[0]  # e.g., "lxc", "debian"
+                    category = rel_path.parts[0]
                 else:
-                    category = "root"  # Files directly in playbooks/
+                    category = "root"
                 
                 if category not in organized:
                     organized[category] = []
                 
                 organized[category].append({
                     "name": item.name,
-                    "path": str(rel_path),  # Relative path for execution
+                    "path": str(rel_path),
                     "full_path": str(item),
                     "type": item.suffix[1:],
                     "size": item.stat().st_size,
                     "modified": datetime.fromtimestamp(item.stat().st_mtime).isoformat()
                 })
         
-        # Sort playbooks within each category
         for category in organized:
             organized[category].sort(key=lambda x: x["name"])
         
@@ -363,7 +351,6 @@ class Orchestrator:
             cursor.execute("SELECT MIN(started_at) as oldest FROM orchestration_jobs")
             oldest = cursor.fetchone()["oldest"]
             
-            # Estimate size (rough)
             cursor.execute("SELECT SUM(LENGTH(output)) as size FROM orchestration_jobs")
             size_bytes = cursor.fetchone()["size"] or 0
             size_mb = round(size_bytes / (1024 * 1024), 2)
@@ -422,7 +409,6 @@ class Orchestrator:
             else:
                 cursor.execute("SELECT * FROM orchestration_servers ORDER BY name")
             servers = [dict(row) for row in cursor.fetchall()]
-            # Don't expose passwords in list view
             for server in servers:
                 server["has_password"] = bool(server.get("password"))
                 server.pop("password", None)
@@ -441,7 +427,6 @@ class Orchestrator:
         """Generate Ansible inventory file content from servers"""
         servers = self.list_servers(group)
         
-        # Group servers by their groups
         groups_dict = {}
         for server in servers:
             server_groups = [g.strip() for g in server.get("groups", "").split(",") if g.strip()]
@@ -452,11 +437,9 @@ class Orchestrator:
                 if grp not in groups_dict:
                     groups_dict[grp] = []
                 
-                # Get full server details (with password)
                 full_server = self.get_server(server["id"])
                 groups_dict[grp].append(full_server)
         
-        # Build INI-style inventory
         inventory_lines = []
         for grp, servers in sorted(groups_dict.items()):
             inventory_lines.append(f"[{grp}]")
@@ -491,7 +474,6 @@ class Orchestrator:
             job_id = cursor.lastrowid
             conn.commit()
 
-        # Run in background asyncio task
         asyncio.create_task(self._execute_playbook(job_id, playbook_name, inventory_group, triggered_by))
 
         return job_id
@@ -501,7 +483,6 @@ class Orchestrator:
         base_path = Path(self.playbooks_path).resolve()
         playbook_path = (base_path / playbook_name).resolve()
 
-        # Path traversal guard
         if not str(playbook_path).startswith(str(base_path)):
             self._update_job(job_id, "failed", "Invalid playbook path", -1, None)
             return
@@ -513,9 +494,7 @@ class Orchestrator:
         try:
             ext = playbook_path.suffix.lower()
             
-            # For Ansible playbooks, generate inventory
             if ext in [".yml", ".yaml"] and self.runner == "ansible":
-                # Generate temporary inventory file
                 inventory_content = self.generate_ansible_inventory(inventory_group)
                 inventory_path = base_path / f".inventory_{job_id}.ini"
                 
@@ -542,7 +521,6 @@ class Orchestrator:
                 self._update_job(job_id, "failed", f"Unsupported file type: {ext}", -1, None)
                 return
 
-            # Execute using asyncio subprocess
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -550,7 +528,6 @@ class Orchestrator:
                 env=env
             )
 
-            # Store PID
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("UPDATE orchestration_jobs SET pid = ? WHERE id = ?", (process.pid, job_id))
@@ -558,7 +535,6 @@ class Orchestrator:
 
             output_lines = []
             
-            # Stream output
             while True:
                 line_bytes = await process.stdout.readline()
                 if not line_bytes:
@@ -566,7 +542,6 @@ class Orchestrator:
                 line = line_bytes.decode('utf-8', errors='replace').rstrip()
                 output_lines.append(line)
                 
-                # Broadcast to WebSocket clients
                 await self._broadcast_log(job_id, line)
 
             await process.wait()
@@ -577,7 +552,6 @@ class Orchestrator:
             self._update_job(job_id, status, output, exit_code, process.pid)
             self._send_notification(job_id, playbook_name, status, exit_code, triggered_by=triggered_by)
 
-            # Cleanup temporary inventory file
             if ext in [".yml", ".yaml"] and self.runner == "ansible":
                 try:
                     inventory_path.unlink()
@@ -622,7 +596,6 @@ class Orchestrator:
         if not self.notify_callback:
             return
         
-        # Check if this was triggered by a schedule and if notifications are disabled
         if triggered_by.startswith("schedule_"):
             try:
                 schedule_id = int(triggered_by.split("_")[1])
@@ -632,11 +605,10 @@ class Orchestrator:
                     cursor.execute("SELECT notify_on_completion FROM orchestration_schedules WHERE id = ?", (schedule_id,))
                     row = cursor.fetchone()
                     if row and not row["notify_on_completion"]:
-                        # Notifications disabled for this schedule, skip unless it failed
                         if status != "failed":
                             return
             except Exception:
-                pass  # If we can't check, send notification anyway
+                pass
 
         status_emoji = "✅" if status == "completed" else "❌"
         title = f"{status_emoji} Playbook {status.upper()}"
@@ -656,7 +628,6 @@ class Orchestrator:
         except Exception as e:
             self.logger(f"Failed to send notification: {e}")
 
-# Global instance
 orchestrator = None
 
 def init_orchestrator(config, db_path, notify_callback=None, logger=None):
@@ -666,11 +637,9 @@ def init_orchestrator(config, db_path, notify_callback=None, logger=None):
     return orchestrator
 
 def start_orchestrator_scheduler():
-    """Start the scheduler background task (call this after event loop is running)"""
+    """Start the scheduler background task"""
     if orchestrator:
         orchestrator.start_scheduler()
-
-# ---- aiohttp route handlers ----
 
 def _json(data, status=200):
     return web.Response(text=json.dumps(data, ensure_ascii=False), status=status, content_type="application/json")
@@ -791,144 +760,4 @@ async def api_add_server(request):
         )
         return _json({"success": True, "server_id": server_id})
     except Exception as e:
-        return _json({"error": str(e)}, status=400)
-
-async def api_update_server(request):
-    if not orchestrator:
-        return _json({"error": "Orchestrator not initialized"}, status=500)
-    
-    server_id = int(request.match_info["id"])
-    
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    try:
-        success = orchestrator.update_server(server_id, **data)
-        if success:
-            return _json({"success": True})
-        return _json({"error": "Server not found"}, status=404)
-    except Exception as e:
-        return _json({"error": str(e)}, status=400)
-
-async def api_delete_server(request):
-    if not orchestrator:
-        return _json({"error": "Orchestrator not initialized"}, status=500)
-    
-    server_id = int(request.match_info["id"])
-    
-    try:
-        success = orchestrator.delete_server(server_id)
-        if success:
-            return _json({"success": True})
-        return _json({"error": "Server not found"}, status=404)
-    except Exception as e:
-        return _json({"error": str(e)}, status=400)
-
-async def api_websocket(request):
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
-    
-    if orchestrator:
-        orchestrator.ws_clients.add(ws)
-    
-    try:
-        async for msg in ws:
-            pass
-    finally:
-        if orchestrator:
-            orchestrator.ws_clients.discard(ws)
-    
-    return ws
-
-async def api_list_schedules(request):
-    if not orchestrator:
-        return _json({"error": "Orchestrator not initialized"}, status=500)
-    return _json({"schedules": orchestrator.list_schedules()})
-
-async def api_get_schedule(request):
-    if not orchestrator:
-        return _json({"error": "Orchestrator not initialized"}, status=500)
-    
-    schedule_id = int(request.match_info["id"])
-    schedule = orchestrator.get_schedule(schedule_id)
-    
-    if schedule:
-        return _json(schedule)
-    return _json({"error": "Schedule not found"}, status=404)
-
-async def api_add_schedule(request):
-    if not orchestrator:
-        return _json({"error": "Orchestrator not initialized"}, status=500)
-    
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    try:
-        schedule_id = orchestrator.add_schedule(
-            name=data.get("name", "Unnamed Schedule"),
-            playbook=data["playbook"],
-            cron=data["cron"],
-            inventory_group=data.get("inventory_group"),
-            enabled=data.get("enabled", True),
-            notify_on_completion=data.get("notify_on_completion", True)
-        )
-        return _json({"success": True, "schedule_id": schedule_id})
-    except Exception as e:
-        return _json({"error": str(e)}, status=400)
-
-async def api_update_schedule(request):
-    if not orchestrator:
-        return _json({"error": "Orchestrator not initialized"}, status=500)
-    
-    schedule_id = int(request.match_info["id"])
-    
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    try:
-        success = orchestrator.update_schedule(schedule_id, **data)
-        if success:
-            return _json({"success": True})
-        return _json({"error": "Schedule not found"}, status=404)
-    except Exception as e:
-        return _json({"error": str(e)}, status=400)
-
-async def api_delete_schedule(request):
-    if not orchestrator:
-        return _json({"error": "Orchestrator not initialized"}, status=500)
-    
-    schedule_id = int(request.match_info["id"])
-    
-    try:
-        success = orchestrator.delete_schedule(schedule_id)
-        if success:
-            return _json({"success": True})
-        return _json({"error": "Schedule not found"}, status=404)
-    except Exception as e:
-        return _json({"error": str(e)}, status=400)
-
-def register_routes(app):
-    app.router.add_get("/api/orchestrator/playbooks", api_list_playbooks)
-    app.router.add_get("/api/orchestrator/playbooks/organized", api_list_playbooks_organized)
-    app.router.add_post("/api/orchestrator/run/{playbook:.*}", api_run_playbook)
-    app.router.add_get("/api/orchestrator/status/{id:\\d+}", api_get_status)
-    app.router.add_get("/api/orchestrator/history", api_history)
-    app.router.add_post("/api/orchestrator/history/purge", api_purge_history)
-    app.router.add_get("/api/orchestrator/history/stats", api_history_stats)
-    app.router.add_get("/api/orchestrator/servers", api_list_servers)
-    app.router.add_get("/api/orchestrator/servers/{id:\\d+}", api_get_server)
-    app.router.add_post("/api/orchestrator/servers", api_add_server)
-    app.router.add_put("/api/orchestrator/servers/{id:\\d+}", api_update_server)
-    app.router.add_delete("/api/orchestrator/servers/{id:\\d+}", api_delete_server)
-    app.router.add_get("/api/orchestrator/schedules", api_list_schedules)
-    app.router.add_get("/api/orchestrator/schedules/{id:\\d+}", api_get_schedule)
-    app.router.add_post("/api/orchestrator/schedules", api_add_schedule)
-    app.router.add_put("/api/orchestrator/schedules/{id:\\d+}", api_update_schedule)
-    app.router.add_delete("/api/orchestrator/schedules/{id:\\d+}", api_delete_schedule)
-    app.router.add_get("/api/orchestrator/ws", api_websocket)
+        return _json({"
