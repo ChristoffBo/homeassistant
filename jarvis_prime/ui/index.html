@@ -384,7 +384,480 @@
     </div>
   </div>
 
-  <!-- ADD SCHEDULE MODAL -->
+  <!-- EDIT SERVER MODAL -->
+  <div id="edit-server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Edit Server</h2>
+        <button class="btn" onclick="orchCloseEditServerModal()">✕</button>
+      </div>
+      <form id="edit-server-form" onsubmit="orchUpdateServer(event)">
+        <input type="hidden" id="edit-srv-id">
+        <div class="form-group">
+          <label class="form-label">Server Name *</label>
+          <input type="text" id="edit-srv-name" required placeholder="web-server-01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Address / Hostname *</label>
+          <input type="text" id="edit-srv-host" required placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="edit-srv-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="edit-srv-user" required placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="edit-srv-pass" placeholder="Leave blank to keep current password">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Only enter a new password if you want to change it
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Groups (comma-separated)</label>
+          <input type="text" id="edit-srv-groups" placeholder="web, production">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="edit-srv-desc" rows="3" placeholder="
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Jarvis Prime Control System</title>
+  
+  <script>window.JARVIS_API_BASE = window.JARVIS_API_BASE || null;</script>
+  
+  <script>
+    (function () {
+      var p = location.pathname;
+      if (p.endsWith('/index.html')) p = p.slice(0, -'index.html'.length);
+      var dir = p.endsWith('/') ? p : p.replace(/[^\/]*$/, '');
+      if (!dir.endsWith('/') && dir !== '') dir += '/';
+      document.write('<base href="' + dir + '">');
+    })();
+  </script>
+
+  <link rel="stylesheet" href="style.css?v=3.2" />
+  
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- Theme color for browser UI -->
+  <meta name="theme-color" content="#00d9ff">
+  
+  <!-- iOS specific meta tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Jarvis">
+  
+  <!-- Microsoft tiles -->
+  <meta name="msapplication-TileColor" content="#0a0e27">
+</head>
+
+<body>
+  <header class="system-header">
+    <div class="header-content">
+      <div class="system-brand">
+        <div class="brand-icon">🤖</div>
+        <div class="brand-text">
+          <div class="brand-title">Jarvis Prime</div>
+          <div class="brand-subtitle">Neural Control System</div>
+        </div>
+      </div>
+      
+      <nav class="system-nav">
+        <button class="nav-tab active" data-tab="inbox">
+          📥 Inbox & Chat
+        </button>
+        <button class="nav-tab" data-tab="wake">
+          ⚡ System Commands
+        </button>
+        <button class="nav-tab" data-tab="orchestrator">
+          ⚙️ Orchestrator
+        </button>
+      </nav>
+      
+      <div class="system-status">
+        <div class="status-indicator">
+          <div class="status-dot" id="connection-status"></div>
+          <span id="system-status-text">Connected</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="system-main">
+    <!-- =============== INBOX TAB =============== -->
+    <section id="inbox" class="tab-panel active">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Message Inbox & AI Chat</h1>
+          <div class="panel-subtitle">Centralized notification management with integrated AI assistant</div>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <div class="metric-label">Today</div>
+          </div>
+          <div class="metric-value" id="msg-today">0</div>
+        </div>
+        
+        <div class="metric-card green">
+          <div class="metric-header">
+            <div class="metric-label">Archived</div>
+          </div>
+          <div class="metric-value" id="msg-arch">0</div>
+        </div>
+        
+        <div class="metric-card red">
+          <div class="metric-header">
+            <div class="metric-label">Errors</div>
+          </div>
+          <div class="metric-value" id="msg-err">0</div>
+        </div>
+        
+        <div class="metric-card cyan">
+          <div class="metric-header">
+            <div class="metric-label">Chat Status</div>
+          </div>
+          <div style="font-size: 14px; font-weight: 500;" id="chat-status">Ready</div>
+        </div>
+        
+        <div class="metric-card orange">
+          <div class="metric-header">
+            <div class="metric-label">Auto-Purge</div>
+          </div>
+          <div class="metric-controls">
+            <select id="purge-select">
+              <option value="1">1 day</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+            </select>
+            <button id="purge-now" class="btn danger">Run</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI CHAT INPUT - At the top -->
+      <div class="chat-input-panel">
+        <div class="chat-input-header">
+          <span>💬 AI Assistant</span>
+        </div>
+        <div class="chat-input-group">
+          <textarea 
+            id="chat-input" 
+            class="chat-input" 
+            placeholder="Type your message to Jarvis AI... (Ctrl+Enter to send)"
+            rows="1"></textarea>
+          <button id="chat-send" class="btn primary">Send</button>
+        </div>
+      </div>
+
+      <div class="inbox-layout">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="flex gap-4">
+              <div class="checkbox-group">
+                <input type="checkbox" id="pv-follow" checked />
+                <label for="pv-follow">Auto-preview new messages</label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="keep-arch" />
+                <label for="keep-arch">Keep archived when deleting all</label>
+              </div>
+            </div>
+            <button id="del-all" class="btn danger">Delete All Messages</button>
+          </div>
+          
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Source</th>
+                <th>Title</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="msg-body">
+              <tr><td colspan="4" class="text-center text-muted">Loading messages...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="preview-panel">
+          <div class="preview-header">
+            <div>
+              <div class="preview-title" id="pv-title">No message selected</div>
+              <div class="preview-meta" id="pv-meta">—</div>
+            </div>
+          </div>
+          <div class="preview-content" id="pv-body">
+            <div class="text-center text-muted">Select a message to preview its contents</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== WAKE TAB =============== -->
+    <section id="wake" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>System Commands</h1>
+          <div class="panel-subtitle">Direct system control and automation • Commands auto-prefixed with "jarvis"</div>
+        </div>
+        <div class="metrics-grid" style="margin: 0; grid-template-columns: auto;">
+          <div class="metric-card purple">
+            <div class="metric-header">
+              <div class="metric-label">Last Command</div>
+            </div>
+            <div style="font-size: 14px; font-weight: 500;" id="last-wake">No commands sent</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wake-container">
+        <div class="wake-input-panel">
+          <h3 style="margin-bottom: 16px; color: var(--text-primary);">Send System Command</h3>
+          <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 20px;">
+            Commands are automatically prefixed with "jarvis" and sent to the system processor.
+          </p>
+          
+          <div class="wake-input-group">
+            <div class="wake-prefix">jarvis</div>
+            <input 
+              type="text" 
+              id="wake-input" 
+              class="wake-input"
+              placeholder="turn on lights, weather, digest, help..."
+            />
+            <button id="wake-send" class="btn primary">Execute</button>
+          </div>
+          
+          <div style="margin-top: 16px;">
+            <h4 style="color: var(--text-secondary); margin-bottom: 8px; font-size: 14px;">Common Commands:</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px;">
+              <button class="btn" onclick="document.getElementById('wake-input').value='weather'; document.getElementById('wake-send').click();">weather</button>
+              <button class="btn" onclick="document.getElementById('wake-input').value='digest'; document.getElementById('wake-send').click();">digest</button>
+              <button class="btn" onclick="document.getElementById('wake-input').value='help'; document.getElementById('wake-send').click();">help</button>
+              <button class="btn" onclick="document.getElementById('wake-input').value='kuma'; document.getElementById('wake-send').click();">uptime</button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="wake-input-panel">
+          <h3 style="margin-bottom: 16px; color: var(--text-primary);">Command History</h3>
+          <div class="wake-history" id="wake-history">
+            <div class="text-center text-muted">No commands executed yet</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== ORCHESTRATOR TAB =============== -->
+    <section id="orchestrator" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Automation Orchestrator</h1>
+          <div class="panel-subtitle">Manage servers, run playbooks, and schedule automated tasks</div>
+        </div>
+      </div>
+
+      <div class="orch-tabs">
+        <button class="orch-tab active" data-orch-tab="playbooks">📋 Playbooks</button>
+        <button class="orch-tab" data-orch-tab="servers">🖥️ Servers</button>
+        <button class="orch-tab" data-orch-tab="schedules">📅 Schedules</button>
+        <button class="orch-tab" data-orch-tab="history">📊 History</button>
+      </div>
+
+      <!-- PLAYBOOKS PANEL -->
+      <div id="orch-playbooks" class="orch-panel active">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Available Playbooks</h3>
+            <button class="btn primary" onclick="orchRefreshPlaybooks()">🔄 Refresh</button>
+          </div>
+          <div id="playbooks-list" class="playbooks-grid">
+            <div class="text-center text-muted">Loading playbooks...</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>📺 Live Output</h3>
+          </div>
+          <div class="log-output" id="orch-logs"></div>
+        </div>
+      </div>
+
+      <!-- SERVERS PANEL -->
+      <div id="orch-servers" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Server Inventory</h3>
+            <button class="btn primary" onclick="orchShowAddServer()">➕ Add Server</button>
+          </div>
+          <div id="servers-list">
+            <div class="text-center text-muted">Loading servers...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCHEDULES PANEL -->
+      <div id="orch-schedules" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Job Schedules</h3>
+            <button class="btn primary" onclick="orchShowAddSchedule()">➕ Add Schedule</button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Playbook</th>
+                <th>Schedule</th>
+                <th>Server Group</th>
+                <th>Last Run</th>
+                <th>Next Run</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="schedules-list">
+              <tr><td colspan="7" class="text-center text-muted">Loading schedules...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- HISTORY PANEL -->
+      <div id="orch-history" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Job History</h3>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn" onclick="orchLoadHistory()">🔄 Refresh</button>
+              <button class="btn" onclick="orchShowHistorySettings()">⚙️ Manage History</button>
+            </div>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Playbook</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Completed</th>
+                <th>Exit Code</th>
+                <th>Triggered By</th>
+              </tr>
+            </thead>
+            <tbody id="history-list">
+              <tr><td colspan="6" class="text-center text-muted">Loading history...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ADD SERVER MODAL -->
+  <div id="server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Add Server</h2>
+        <button class="btn" onclick="orchCloseServerModal()">✕</button>
+      </div>
+      <form id="server-form" onsubmit="orchSaveServer(event)">
+        <div class="form-group">
+          <label class="form-label">Server Name *</label>
+          <input type="text" id="srv-name" required placeholder="web-server-01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Address / Hostname *</label>
+          <input type="text" id="srv-host" required placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="srv-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="srv-user" required placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" id="srv-pass" required placeholder="Enter SSH password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Groups (comma-separated)</label>
+          <input type="text" id="srv-groups" placeholder="web, production">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="srv-desc" rows="3" placeholder="Production web server"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseServerModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- EDIT SERVER MODAL -->
+  <div id="edit-server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Edit Server</h2>
+        <button class="btn" onclick="orchCloseEditServerModal()">✕</button>
+      </div>
+      <form id="edit-server-form" onsubmit="orchUpdateServer(event)">
+        <input type="hidden" id="edit-srv-id">
+        <div class="form-group">
+          <label class="form-label">Server Name *</label>
+          <input type="text" id="edit-srv-name" required placeholder="web-server-01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Address / Hostname *</label>
+          <input type="text" id="edit-srv-host" required placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="edit-srv-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="edit-srv-user" required placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="edit-srv-pass" placeholder="Leave blank to keep current password">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Only enter a new password if you want to change it
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Groups (comma-separated)</label>
+          <input type="text" id="edit-srv-groups" placeholder="web, production">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="edit-srv-desc" rows="3" placeholder="Production web server"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseEditServerModal()">Cancel</button>
+          <button type="submit" class="btn primary">Update Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ADD/EDIT SCHEDULE MODAL -->
   <div id="schedule-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
@@ -419,6 +892,15 @@
           <input type="text" id="sched-cron" required placeholder="0 2 * * *" pattern="[0-9\*\-\,\/ ]+">
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
             Format: minute hour day month weekday (e.g., "0 2 * * *" = 2 AM daily)
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="sched-notify" checked />
+            <label for="sched-notify">Send notification when job completes</label>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Uncheck for frequently running jobs (hourly/minutely) to reduce notification spam. Failed jobs will always send notifications.
           </div>
         </div>
         <div class="modal-footer">
