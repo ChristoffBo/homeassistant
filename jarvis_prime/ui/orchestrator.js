@@ -500,7 +500,7 @@
     event.preventDefault();
     
     const data = {
-      name: document.getElementById('sched-playbook').value.split('/').pop(), // Use filename as default name
+      name: document.getElementById('sched-playbook').value.split('/').pop(),
       playbook: document.getElementById('sched-playbook').value,
       cron: document.getElementById('sched-cron').value,
       inventory_group: document.getElementById('sched-group').value || null,
@@ -585,6 +585,72 @@
     } catch (e) {
       tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Failed to load history</td></tr>';
       toast('Failed to load history: ' + e.message, 'error');
+    }
+  };
+
+  // ============================================
+  // HISTORY MANAGEMENT
+  // ============================================
+  window.orchShowHistorySettings = async function() {
+    const modal = document.getElementById('history-modal');
+    if (!modal) return;
+    
+    // Load history stats
+    try {
+      const stats = await jfetch(API('api/orchestrator/history/stats'));
+      document.getElementById('history-total').textContent = stats.total_entries || 0;
+    } catch (e) {
+      console.error('Failed to load history stats:', e);
+    }
+    
+    modal.classList.add('active');
+  };
+
+  window.orchCloseHistoryModal = function() {
+    const modal = document.getElementById('history-modal');
+    if (modal) modal.classList.remove('active');
+  };
+
+  window.orchPurgeHistory = async function(criteria) {
+    let confirmMsg = '';
+    
+    switch(criteria) {
+      case 'all':
+        confirmMsg = '⚠️ DELETE ALL HISTORY?\n\nThis will permanently delete all execution history and cannot be undone.\n\nAre you absolutely sure?';
+        break;
+      case 'failed':
+        confirmMsg = 'Delete all failed job executions?';
+        break;
+      case 'completed':
+        confirmMsg = 'Delete all successful job executions?';
+        break;
+      case 'older_than_30':
+        confirmMsg = 'Delete all history older than 30 days?';
+        break;
+      case 'older_than_90':
+        confirmMsg = 'Delete all history older than 90 days?';
+        break;
+    }
+    
+    if (!confirm(confirmMsg)) return;
+    
+    try {
+      const result = await jfetch(API('api/orchestrator/history/purge'), {
+        method: 'POST',
+        body: JSON.stringify({ criteria })
+      });
+      
+      toast(`Deleted ${result.deleted} entries`, 'success');
+      orchLoadHistory();
+      
+      if (criteria === 'all') {
+        orchCloseHistoryModal();
+      } else {
+        // Reload stats
+        orchShowHistorySettings();
+      }
+    } catch (e) {
+      toast('Failed to purge history: ' + e.message, 'error');
     }
   };
 
