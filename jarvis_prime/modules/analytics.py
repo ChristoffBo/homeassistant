@@ -7,6 +7,7 @@ import sqlite3
 import time
 import json
 import asyncio
+import subprocess
 import aiohttp
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -22,7 +23,7 @@ class HealthCheck:
     """Health check configuration"""
     service_name: str
     endpoint: str
-    check_type: str  # 'http' or 'tcp'
+    check_type: str  # 'http', 'tcp', or 'ping'
     expected_status: int = 200
     timeout: int = 5
     interval: int = 60
@@ -464,12 +465,61 @@ class HealthMonitor:
                 error_message=str(e)
             )
     
+    async def check_ping(self, service: HealthCheck) -> ServiceMetric:
+        """Perform ICMP ping check"""
+        start_time = time.time()
+        
+        try:
+            host = service.endpoint
+            # Use subprocess to call system ping (works in containers)
+            # -c 1 = count 1, -W = timeout in seconds
+            process = await asyncio.create_subprocess_exec(
+                'ping', '-c', '1', '-W', str(int(service.timeout)), host,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=service.timeout + 1
+            )
+            
+            response_time = time.time() - start_time
+            
+            if process.returncode == 0:
+                return ServiceMetric(
+                    service_name=service.service_name,
+                    timestamp=int(time.time()),
+                    status='up',
+                    response_time=response_time,
+                    error_message=None
+                )
+            else:
+                return ServiceMetric(
+                    service_name=service.service_name,
+                    timestamp=int(time.time()),
+                    status='down',
+                    response_time=response_time,
+                    error_message="Host unreachable"
+                )
+        
+        except Exception as e:
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='down',
+                response_time=time.time() - start_time,
+                error_message=str(e)
+            )
+    
     async def perform_check(self, service: HealthCheck) -> ServiceMetric:
         """Perform appropriate health check"""
         if service.check_type == 'http':
             return await self.check_http(service)
         elif service.check_type == 'tcp':
             return await self.check_tcp(service)
+        elif service.check_type == 'ping':
+            return await self.check_ping(service)
         else:
             return ServiceMetric(
                 service_name=service.service_name,
@@ -549,9 +599,8 @@ def init_analytics(db_path: str = "/data/jarvis.db"):
     global db, monitor
     db = AnalyticsDB(db_path)
     monitor = HealthMonitor(db)
-    return db, monitor
-
-# 🔥 automatically bootstrap monitoring
+    
+    # 🔥 automatically bootstrap monitoring
     async def safe_start():
         await asyncio.sleep(1)  # small delay to let aiohttp app boot
         try:
@@ -564,6 +613,8 @@ def init_analytics(db_path: str = "/data/jarvis.db"):
         loop.create_task(safe_start())
     except RuntimeError:
         logger.warning("Event loop not ready, monitors will need manual start")
+    
+    return db, monitor
 
 
 def _json(data, status=200):
@@ -685,6 +736,47 @@ async def get_incidents(request: web.Request):
     return _json(incidents)
 
 
+async def reset_health_score(request: web.Request):
+    """Reset health scores for all services"""
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cur = conn.cursor()
+        cur.execute('DELETE FROM analytics_metrics')
+        conn.commit()
+        conn.close()
+        return _json({'success': True, 'message': 'Health scores reset'})
+    except Exception as e:
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
+async def reset_incidents(request: web.Request):
+    """Clear all incidents"""
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cur = conn.cursor()
+        cur.execute('DELETE FROM analytics_incidents')
+        conn.commit()
+        conn.close()
+        return _json({'success': True, 'message': 'All incidents cleared'})
+    except Exception as e:
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
+async def reset_service_data(request: web.Request):
+    """Reset metrics and incidents for a specific service"""
+    service_name = request.match_info["service_name"]
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cur = conn.cursor()
+        cur.execute('DELETE FROM analytics_metrics WHERE service_name = ?', (service_name,))
+        cur.execute('DELETE FROM analytics_incidents WHERE service_name = ?', (service_name,))
+        conn.commit()
+        conn.close()
+        return _json({'success': True, 'message': f'Data reset for {service_name}'})
+    except Exception as e:
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
 def register_routes(app: web.Application):
     """Register analytics routes with aiohttp app"""
     app.router.add_get('/api/analytics/health-score', get_health_score)
@@ -695,3 +787,6 @@ def register_routes(app: web.Application):
     app.router.add_delete('/api/analytics/services/{service_id}', delete_service_route)
     app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
     app.router.add_get('/api/analytics/incidents', get_incidents)
+    app.router.add_post('/api/analytics/reset-health', reset_health_score)
+    app.router.add_post('/api/analytics/reset-incidents', reset_incidents)
+    app.router.add_post('/api/analytics/reset-service/{service_name}', reset_service_data)
