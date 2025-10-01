@@ -2,7 +2,7 @@
 
 **Jarvis Prime is a Unified Homelab Operations Platform**
 
-Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, and Command Center. It centralizes, beautifies, and orchestrates notifications from across your homelab while providing powerful job scheduling and playbook execution capabilities. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy, WebSocket), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality. Jarvis now also includes a Chat lane: a pure chat channel into your local LLM (no riffs, no personas) that works alongside notifications when the LLM is enabled.
+Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, Monitoring System, and Command Center. It centralizes, beautifies, and orchestrates notifications from across your homelab while providing powerful job scheduling, playbook execution, and real-time service monitoring capabilities. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy, WebSocket), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality. Jarvis now also includes a Chat lane: a pure chat channel into your local LLM (no riffs, no personas) that works alongside notifications when the LLM is enabled.
 
 ## Features
 
@@ -34,6 +34,17 @@ Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, an
 • **Manual Execution**: Run any playbook on-demand against any server or group  
 • **Notification Integration**: Optional notifications on job completion (can be disabled for frequent jobs)  
 • **Multi-Runner Support**: Execute Ansible playbooks (.yml), shell scripts (.sh), or Python scripts (.py)  
+
+### Analytics & Monitoring
+• **Service Health Monitoring**: Real-time HTTP and TCP endpoint checks  
+• **Uptime Tracking**: 24-hour uptime percentage and response time metrics  
+• **Incident Detection**: Automatic incident creation when services go down  
+• **Health Score Dashboard**: Overall homelab health percentage with visual status cards  
+• **Service Management**: Add, edit, enable/disable services via Web UI  
+• **Configurable Checks**: Set custom intervals, timeouts, and expected status codes  
+• **Multi-Protocol Support**: Monitor HTTP endpoints (with status code validation) or TCP ports  
+• **Incident History**: Track downtime incidents with duration and error details  
+• **Visual Dashboard**: Service status cards showing current state, uptime %, avg response time  
 
 ### Chat & Intelligence
 • Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled  
@@ -174,6 +185,54 @@ curl -X POST "http://10.0.0.100:2580/jarvis" \
 • Track execution duration and timestamps
 • Purge old history by criteria (all, failed, completed, older than 30/90 days)
 
+## Analytics & Monitoring Setup
+
+### Adding Services to Monitor
+1. Navigate to the **Analytics** tab in the Web UI
+2. Click **Services** sub-tab
+3. Click **Add Service** button
+4. Configure service:
+   - **Service Name**: Friendly name (e.g., "Home Assistant", "Plex", "Proxmox")
+   - **Endpoint**: Full URL for HTTP (http://homeassistant.local:8123) or host:port for TCP (192.168.1.100:22)
+   - **Check Type**: HTTP (web services) or TCP (port availability)
+   - **Expected Status Code**: For HTTP checks, specify expected code (default: 200)
+   - **Check Interval**: How often to check in seconds (minimum 10, recommended 60+)
+   - **Timeout**: How long to wait before marking as failed (1-30 seconds)
+   - **Enabled**: Toggle monitoring on/off
+5. Click **Save Service**
+
+### Monitoring Dashboard
+• **Health Score**: Overall homelab health percentage (99%+ = excellent, 95-99% = good, 90-95% = fair, <90% = poor)
+• **Service Cards**: Visual status cards showing:
+  - Current status (Up/Down/Degraded)
+  - Last check timestamp
+  - 24-hour uptime percentage
+  - Average response time
+  - Total checks performed
+• **Auto-Refresh**: Dashboard updates every 30 seconds automatically
+
+### Incident Management
+• **Automatic Detection**: Incidents are created automatically when services go down
+• **Auto-Resolution**: Incidents are resolved when services come back up
+• **Incident History**: View last 7 days of incidents with:
+  - Service name
+  - Start and end timestamps
+  - Duration of downtime
+  - Error message details
+• **Status Tracking**: Visual indicators for ongoing vs resolved incidents
+
+### Example Monitored Services
+```
+Home Assistant → http://homeassistant.local:8123 (HTTP)
+Plex Media Server → http://plex.local:32400 (HTTP)
+Proxmox → https://proxmox.local:8006 (HTTP, expects 200)
+SSH Server → 192.168.1.10:22 (TCP)
+Radarr → http://radarr.local:7878 (HTTP)
+Sonarr → http://sonarr.local:8989 (HTTP)
+PostgreSQL → 192.168.1.20:5432 (TCP)
+Redis → 192.168.1.20:6379 (TCP)
+```
+
 ## Web UI Access
 
 • Ingress via Home Assistant → Add-on → Jarvis Prime → OPEN WEB UI  
@@ -181,10 +240,11 @@ curl -X POST "http://10.0.0.100:2580/jarvis" \
 • **Inbox** tab: shows beautified cards with filters, retention, purge, and live updates  
 • **Chat** tab: pure conversation with your LLM  
 • **Orchestrator** tab: manage servers, playbooks, schedules, and view execution logs  
+• **Analytics** tab: monitor service health, view uptime stats, and track incidents  
 
 ## Self-Hosting Statement
 
-Jarvis Prime is fully self-contained. Gotify, ntfy, and WebSocket are optional — use them only if you want push or persistent WS. The add-on runs standalone with its own intakes, Beautify Engine, personas, Chat lane, Orchestration engine, and dark-mode UI. All functionality works offline without external dependencies.
+Jarvis Prime is fully self-contained. Gotify, ntfy, and WebSocket are optional — use them only if you want push or persistent WS. The add-on runs standalone with its own intakes, Beautify Engine, personas, Chat lane, Orchestration engine, Analytics monitoring, and dark-mode UI. All functionality works offline without external dependencies.
 
 ## Use Cases
 
@@ -200,11 +260,18 @@ Jarvis Prime is fully self-contained. Gotify, ntfy, and WebSocket are optional �
 • Execute maintenance tasks on cron schedules
 • Monitor job execution with detailed history and logs
 
+**Service Monitoring:**
+• Track uptime of critical homelab services (Home Assistant, Plex, NAS, databases)
+• Get real-time alerts when services go down (via notification system)
+• Monitor response times and performance metrics
+• View historical incident data and downtime patterns
+• Maintain visibility across HTTP and TCP services
+
 **Intelligent Operations:**
 • Chat with LLM about your Home Assistant entities
 • Get natural language answers about system state
-• Combine notifications with automation in one platform
+• Combine notifications, automation, and monitoring in one platform
 
 ---
 
-**Jarvis Prime**: Your homelab's unified notification hub and automation command center.
+**Jarvis Prime**: Your homelab's unified notification hub, automation command center, and monitoring dashboard.
