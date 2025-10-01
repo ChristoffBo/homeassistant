@@ -43,6 +43,20 @@ else:
     orchestrator_module = None
     print("[orchestrator] Not found or failed to load")
 
+# ---- analytics ----
+_ANALYTICS_FILE = _THIS_DIR / "analytics.py"
+analytics_spec = importlib.util.spec_from_file_location("jarvis_analytics", str(_ANALYTICS_FILE))
+analytics_module = importlib.util.module_from_spec(analytics_spec)  # type: ignore
+if analytics_spec and analytics_spec.loader and _ANALYTICS_FILE.exists():
+    analytics_spec.loader.exec_module(analytics_module)  # type: ignore
+    analytics_db, analytics_monitor = analytics_module.init_analytics(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
+    print("[analytics] Initialized")
+else:
+    analytics_module = None
+    analytics_db = None
+    analytics_monitor = None
+    print("[analytics] Not found or failed to load")
+
 # ---- choose ONE UI root ----
 CANDIDATES = [
     Path("/share/jarvis_prime/ui"),
@@ -270,10 +284,13 @@ async def api_emit(request: web.Request):
 def _make_app() -> web.Application:
     app = web.Application()
     
-    # Startup hook to start orchestrator scheduler after event loop is running
+    # Startup hook to start orchestrator scheduler and analytics monitors after event loop is running
     async def start_background_tasks(app):
         if orchestrator_module:
             orchestrator_module.start_orchestrator_scheduler()
+        if analytics_module and analytics_monitor:
+            await analytics_monitor.start_all_monitors()
+            print("[analytics] Monitoring started")
     
     app.on_startup.append(start_background_tasks)
     
@@ -296,6 +313,11 @@ def _make_app() -> web.Application:
     # Register orchestrator routes if available
     if orchestrator_module:
         orchestrator_module.register_routes(app)
+
+    # Register analytics routes if available
+    if analytics_module:
+        analytics_module.register_routes(app)
+        print("[analytics] Routes registered")
 
     # ONE static root only
     async def _index(_):
