@@ -1,6 +1,6 @@
 """
 Jarvis Prime - Analytics & Uptime Monitoring Module
-Integrates with existing Jarvis Prime infrastructure
+aiohttp-compatible version for Jarvis Prime
 """
 
 import sqlite3
@@ -10,14 +10,11 @@ import asyncio
 import aiohttp
 from datetime import datetime
 from typing import Dict, List, Optional
-from dataclasses import dataclass, asdict
-from flask import Blueprint, jsonify, request
+from dataclasses import dataclass
+from aiohttp import web
 import logging
 
 logger = logging.getLogger(__name__)
-
-# Create Flask Blueprint for API routes
-analytics_bp = Blueprint('analytics', __name__, url_prefix='/api/analytics')
 
 
 @dataclass
@@ -413,246 +410,6 @@ class HealthMonitor:
             return ServiceMetric(
                 service_name=service.service_name,
                 timestamp=int(time.time()),
-                status='up',
-                response_time=time.time() - start_time,
-                error_message=None
-            )
-        
-        except Exception as e:
-            return ServiceMetric(
-                service_name=service.service_name,
-                timestamp=int(time.time()),
-                status='down',
-                response_time=time.time() - start_time,
-                error_message=str(e)
-            )
-    
-    async def perform_check(self, service: HealthCheck) -> ServiceMetric:
-        """Perform appropriate health check"""
-        if service.check_type == 'http':
-            return await self.check_http(service)
-        elif service.check_type == 'tcp':
-            return await self.check_tcp(service)
-        else:
-            return ServiceMetric(
-                service_name=service.service_name,
-                timestamp=int(time.time()),
-                status='unknown',
-                response_time=0,
-                error_message=f"Unknown check type: {service.check_type}"
-            )
-    
-    async def monitor_service(self, service: HealthCheck):
-        """Continuously monitor a single service"""
-        logger.info(f"Starting monitor for {service.service_name}")
-        
-        while True:
-            try:
-                if not service.enabled:
-                    await asyncio.sleep(service.interval)
-                    continue
-                
-                # Perform health check
-                metric = await self.perform_check(service)
-                self.db.record_metric(metric)
-                
-                # Incident detection
-                prev_status = self.previous_status.get(service.service_name)
-                
-                if metric.status == 'down' and prev_status != 'down':
-                    # Service just went down - create incident
-                    self.db.create_incident(service.service_name, metric.error_message)
-                    logger.warning(f"{service.service_name} is DOWN: {metric.error_message}")
-                    
-                elif metric.status == 'up' and prev_status == 'down':
-                    # Service recovered - resolve incident
-                    self.db.resolve_incident(service.service_name)
-                    logger.info(f"{service.service_name} is back UP")
-                
-                self.previous_status[service.service_name] = metric.status
-                
-            except Exception as e:
-                logger.error(f"Error monitoring {service.service_name}: {e}")
-            
-            await asyncio.sleep(service.interval)
-    
-    async def start_all_monitors(self):
-        """Start monitoring all enabled services"""
-        await self.init_session()
-        
-        services = self.db.get_all_services()
-        
-        for svc_dict in services:
-            if svc_dict['enabled']:
-                service = HealthCheck(
-                    service_name=svc_dict['service_name'],
-                    endpoint=svc_dict['endpoint'],
-                    check_type=svc_dict['check_type'],
-                    expected_status=svc_dict['expected_status'],
-                    timeout=svc_dict['timeout'],
-                    interval=svc_dict['check_interval'],
-                    enabled=bool(svc_dict['enabled'])
-                )
-                
-                task = asyncio.create_task(self.monitor_service(service))
-                self.monitoring_tasks[service.service_name] = task
-        
-        logger.info(f"Started {len(self.monitoring_tasks)} monitoring tasks")
-
-
-# ============================================
-# API Routes (aiohttp)
-# ============================================
-
-# Global instances (initialize in your main app)
-db = None
-monitor = None
-
-
-def init_analytics(db_path: str = "/data/jarvis.db"):
-    """Initialize analytics module"""
-    global db, monitor
-    db = AnalyticsDB(db_path)
-    monitor = HealthMonitor(db)
-    return db, monitor
-
-
-def _json(data, status=200):
-    return web.Response(
-        text=json.dumps(data, ensure_ascii=False),
-        status=status,
-        content_type="application/json"
-    )
-
-
-async def get_health_score(request: web.Request):
-    """Get overall health score"""
-    score = db.get_health_score()
-    return _json(score)
-
-
-async def get_services(request: web.Request):
-    """Get all monitored services"""
-    services = db.get_all_services()
-    return _json(services)
-
-
-async def add_service(request: web.Request):
-    """Add a new service"""
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    service = HealthCheck(
-        service_name=data['service_name'],
-        endpoint=data['endpoint'],
-        check_type=data['check_type'],
-        expected_status=data.get('expected_status', 200),
-        timeout=data.get('timeout', 5),
-        interval=data.get('check_interval', 60),
-        enabled=data.get('enabled', True)
-    )
-    
-    service_id = db.add_service(service)
-    
-    # Restart monitoring for this service
-    if service.enabled and monitor:
-        task = asyncio.create_task(monitor.monitor_service(service))
-        monitor.monitoring_tasks[service.service_name] = task
-    
-    return _json({"success": True, "service_id": int(service_id)})
-
-
-async def get_service(request: web.Request):
-    """Get a single service"""
-    service_id = int(request.match_info["service_id"])
-    service = db.get_service(service_id)
-    if service:
-        return _json(service)
-    return _json({"error": "Service not found"}, status=404)
-
-
-async def update_service(request: web.Request):
-    """Update a service"""
-    service_id = int(request.match_info["service_id"])
-    
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    service = HealthCheck(
-        service_name=data['service_name'],
-        endpoint=data['endpoint'],
-        check_type=data['check_type'],
-        expected_status=data.get('expected_status', 200),
-        timeout=data.get('timeout', 5),
-        interval=data.get('check_interval', 60),
-        enabled=data.get('enabled', True)
-    )
-    
-    db.add_service(service)  # Uses UPSERT
-    
-    # Restart monitoring for this service
-    if service.enabled and monitor:
-        # Cancel old task if exists
-        if service.service_name in monitor.monitoring_tasks:
-            monitor.monitoring_tasks[service.service_name].cancel()
-        
-        # Start new task
-        task = asyncio.create_task(monitor.monitor_service(service))
-        monitor.monitoring_tasks[service.service_name] = task
-    
-    return _json({"success": True})
-
-
-async def delete_service_route(request: web.Request):
-    """Delete a service"""
-    service_id = int(request.match_info["service_id"])
-    
-    # Get service name before deleting
-    service = db.get_service(service_id)
-    if service and monitor:
-        service_name = service['service_name']
-        # Cancel monitoring task
-        if service_name in monitor.monitoring_tasks:
-            monitor.monitoring_tasks[service_name].cancel()
-            del monitor.monitoring_tasks[service_name]
-    
-    db.delete_service(service_id)
-    return _json({"success": True})
-
-
-async def get_uptime(request: web.Request):
-    """Get uptime stats for a service"""
-    service_name = request.match_info["service_name"]
-    hours = int(request.rel_url.query.get('hours', 24))
-    
-    stats = db.get_uptime_stats(service_name, hours)
-    if stats:
-        return _json(stats)
-    return _json({"error": "No data found"}, status=404)
-
-
-async def get_incidents(request: web.Request):
-    """Get recent incidents"""
-    days = int(request.rel_url.query.get('days', 7))
-    incidents = db.get_recent_incidents(days)
-    return _json(incidents)
-
-
-def register_routes(app: web.Application):
-    """Register analytics routes with aiohttp app"""
-    app.router.add_get('/api/analytics/health-score', get_health_score)
-    app.router.add_get('/api/analytics/services', get_services)
-    app.router.add_post('/api/analytics/services', add_service)
-    app.router.add_get('/api/analytics/services/{service_id}', get_service)
-    app.router.add_put('/api/analytics/services/{service_id}', update_service)
-    app.router.add_delete('/api/analytics/services/{service_id}', delete_service_route)
-    app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
-    app.router.add_get('/api/analytics/incidents', get_incidents)
-.time()),
                 status='down',
                 response_time=time.time() - start_time,
                 error_message="Timeout"
@@ -740,12 +497,10 @@ def register_routes(app: web.Application):
                 prev_status = self.previous_status.get(service.service_name)
                 
                 if metric.status == 'down' and prev_status != 'down':
-                    # Service just went down - create incident
                     self.db.create_incident(service.service_name, metric.error_message)
                     logger.warning(f"{service.service_name} is DOWN: {metric.error_message}")
                     
                 elif metric.status == 'up' and prev_status == 'down':
-                    # Service recovered - resolve incident
                     self.db.resolve_incident(service.service_name)
                     logger.info(f"{service.service_name} is back UP")
                 
@@ -781,10 +536,10 @@ def register_routes(app: web.Application):
 
 
 # ============================================
-# API Routes
+# API Routes (aiohttp)
 # ============================================
 
-# Global instances (initialize in your main app)
+# Global instances
 db = None
 monitor = None
 
@@ -797,24 +552,32 @@ def init_analytics(db_path: str = "/data/jarvis.db"):
     return db, monitor
 
 
-@analytics_bp.route('/health-score', methods=['GET'])
-def get_health_score():
+def _json(data, status=200):
+    return web.Response(
+        text=json.dumps(data, ensure_ascii=False),
+        status=status,
+        content_type="application/json"
+    )
+
+
+async def get_health_score(request: web.Request):
     """Get overall health score"""
     score = db.get_health_score()
-    return jsonify(score)
+    return _json(score)
 
 
-@analytics_bp.route('/services', methods=['GET'])
-def get_services():
+async def get_services(request: web.Request):
     """Get all monitored services"""
     services = db.get_all_services()
-    return jsonify(services)
+    return _json(services)
 
 
-@analytics_bp.route('/services', methods=['POST'])
-def add_service():
+async def add_service(request: web.Request):
     """Add a new service"""
-    data = request.json
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
     
     service = HealthCheck(
         service_name=data['service_name'],
@@ -828,24 +591,30 @@ def add_service():
     
     service_id = db.add_service(service)
     
-    # TODO: Restart monitoring task for this service
+    if service.enabled and monitor:
+        task = asyncio.create_task(monitor.monitor_service(service))
+        monitor.monitoring_tasks[service.service_name] = task
     
-    return jsonify({"success": True, "service_id": service_id})
+    return _json({"success": True, "service_id": int(service_id)})
 
 
-@analytics_bp.route('/services/<int:service_id>', methods=['GET'])
-def get_service(service_id):
+async def get_service(request: web.Request):
     """Get a single service"""
+    service_id = int(request.match_info["service_id"])
     service = db.get_service(service_id)
     if service:
-        return jsonify(service)
-    return jsonify({"error": "Service not found"}), 404
+        return _json(service)
+    return _json({"error": "Service not found"}, status=404)
 
 
-@analytics_bp.route('/services/<int:service_id>', methods=['PUT'])
-def update_service(service_id):
+async def update_service(request: web.Request):
     """Update a service"""
-    data = request.json
+    service_id = int(request.match_info["service_id"])
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
     
     service = HealthCheck(
         service_name=data['service_name'],
@@ -857,44 +626,58 @@ def update_service(service_id):
         enabled=data.get('enabled', True)
     )
     
-    db.add_service(service)  # Uses UPSERT
+    db.add_service(service)
     
-    return jsonify({"success": True})
+    if service.enabled and monitor:
+        if service.service_name in monitor.monitoring_tasks:
+            monitor.monitoring_tasks[service.service_name].cancel()
+        
+        task = asyncio.create_task(monitor.monitor_service(service))
+        monitor.monitoring_tasks[service.service_name] = task
+    
+    return _json({"success": True})
 
 
-@analytics_bp.route('/services/<int:service_id>', methods=['DELETE'])
-def delete_service_route(service_id):
+async def delete_service_route(request: web.Request):
     """Delete a service"""
+    service_id = int(request.match_info["service_id"])
+    
+    service = db.get_service(service_id)
+    if service and monitor:
+        service_name = service['service_name']
+        if service_name in monitor.monitoring_tasks:
+            monitor.monitoring_tasks[service_name].cancel()
+            del monitor.monitoring_tasks[service_name]
+    
     db.delete_service(service_id)
-    return jsonify({"success": True})
+    return _json({"success": True})
 
 
-@analytics_bp.route('/uptime/<service_name>', methods=['GET'])
-def get_uptime(service_name):
+async def get_uptime(request: web.Request):
     """Get uptime stats for a service"""
-    hours = request.args.get('hours', 24, type=int)
+    service_name = request.match_info["service_name"]
+    hours = int(request.rel_url.query.get('hours', 24))
+    
     stats = db.get_uptime_stats(service_name, hours)
     if stats:
-        return jsonify(stats)
-    return jsonify({"error": "No data found"}), 404
+        return _json(stats)
+    return _json({"error": "No data found"}, status=404)
 
 
-@analytics_bp.route('/incidents', methods=['GET'])
-def get_incidents():
+async def get_incidents(request: web.Request):
     """Get recent incidents"""
-    days = request.args.get('days', 7, type=int)
+    days = int(request.rel_url.query.get('days', 7))
     incidents = db.get_recent_incidents(days)
-    return jsonify(incidents)
+    return _json(incidents)
 
 
-# Example usage in your main Jarvis app:
-"""
-from analytics import analytics_bp, init_analytics, monitor
-
-# In your main app initialization:
-db, monitor = init_analytics("/data/jarvis.db")
-app.register_blueprint(analytics_bp)
-
-# Start monitoring (call this after your event loop starts):
-asyncio.create_task(monitor.start_all_monitors())
-"""
+def register_routes(app: web.Application):
+    """Register analytics routes with aiohttp app"""
+    app.router.add_get('/api/analytics/health-score', get_health_score)
+    app.router.add_get('/api/analytics/services', get_services)
+    app.router.add_post('/api/analytics/services', add_service)
+    app.router.add_get('/api/analytics/services/{service_id}', get_service)
+    app.router.add_put('/api/analytics/services/{service_id}', update_service)
+    app.router.add_delete('/api/analytics/services/{service_id}', delete_service_route)
+    app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
+    app.router.add_get('/api/analytics/incidents', get_incidents)
