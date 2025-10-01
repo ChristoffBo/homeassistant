@@ -673,3 +673,36 @@
           <label class="form-label">Check Interval (seconds)</label>
           <input type="number" id="analytics-check-interval" value="60" min="10" max="3600">
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+Minimum 10 seconds, recommended 60+ for production services
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Timeout (seconds)</label>
+          <input type="number" id="analytics-check-timeout" value="5" min="1" max="30">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            How long to wait before marking check as failed
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="analytics-service-enabled" checked />
+            <label for="analytics-service-enabled">Enable monitoring for this service</label>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="analyticsCloseServiceModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Service</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <script src="app.js?v=3.2"></script>
+  <script src="orchestrator.js?v=1.1"></script>
+  <script src="analytics.js?v=1.0"></script>
+</body>
+</html>
