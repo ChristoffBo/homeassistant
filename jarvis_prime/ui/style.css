@@ -1014,3 +1014,7 @@ input:focus, select:focus, textarea:focus {
 .mb-4 { margin-bottom: 16px; }
 .mt-4 { margin-top: 16px; }
 .hidden { display: none; }
+/* Fix for Analytics Add Service modal */
+.modal.show {
+  display: flex;
+}
