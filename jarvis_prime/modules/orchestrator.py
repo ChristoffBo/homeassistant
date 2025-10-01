@@ -10,7 +10,7 @@ import json
 import sqlite3
 import subprocess
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from aiohttp import web
 
@@ -103,6 +103,7 @@ class Orchestrator:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS orchestration_schedules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT,
                     playbook TEXT NOT NULL,
                     cron TEXT NOT NULL,
                     enabled INTEGER DEFAULT 1,
@@ -165,7 +166,7 @@ class Orchestrator:
             return False
         return True
     
-    def add_schedule(self, playbook, cron, inventory_group=None, enabled=True):
+    def add_schedule(self, name, playbook, cron, inventory_group=None, enabled=True):
         """Add a new schedule for a playbook"""
         now = datetime.now()
         next_run = self._calculate_next_run(cron, now)
@@ -174,9 +175,9 @@ class Orchestrator:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO orchestration_schedules 
-                (playbook, cron, enabled, inventory_group, next_run, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (playbook, cron, 1 if enabled else 0, inventory_group, 
+                (name, playbook, cron, enabled, inventory_group, next_run, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (name, playbook, cron, 1 if enabled else 0, inventory_group, 
                   next_run.isoformat() if next_run else None, now.isoformat(), now.isoformat()))
             conn.commit()
             return cursor.lastrowid
@@ -191,7 +192,7 @@ class Orchestrator:
     
     def update_schedule(self, schedule_id, **kwargs):
         """Update schedule details"""
-        allowed_fields = ["playbook", "cron", "enabled", "inventory_group"]
+        allowed_fields = ["name", "playbook", "cron", "enabled", "inventory_group"]
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
         if not updates:
             return False
@@ -220,7 +221,7 @@ class Orchestrator:
             return cursor.rowcount > 0
 
     def list_playbooks(self):
-        """List all available playbooks from the playbooks directory"""
+        """List all available playbooks from the playbooks directory (flat list)"""
         playbooks = []
         playbooks_dir = Path(self.playbooks_path)
 
@@ -241,13 +242,112 @@ class Orchestrator:
 
         return sorted(playbooks, key=lambda x: x["name"])
 
-    def get_job_history(self, limit=50):
-        """Get recent job execution history"""
+    def list_playbooks_organized(self):
+        """List all playbooks organized by subdirectory for the new UI"""
+        playbooks_dir = Path(self.playbooks_path)
+        
+        if not playbooks_dir.exists():
+            playbooks_dir.mkdir(parents=True, exist_ok=True)
+            return {}
+        
+        organized = {}
+        extensions = [".sh", ".py", ".yml", ".yaml"]
+        
+        # Recursively scan directories
+        for item in playbooks_dir.rglob("*"):
+            if item.is_file() and item.suffix.lower() in extensions:
+                # Get relative path from playbooks root
+                rel_path = item.relative_to(playbooks_dir)
+                
+                # Determine category (parent directory name)
+                if len(rel_path.parts) > 1:
+                    category = rel_path.parts[0]  # e.g., "lxc", "debian"
+                else:
+                    category = "root"  # Files directly in playbooks/
+                
+                if category not in organized:
+                    organized[category] = []
+                
+                organized[category].append({
+                    "name": item.name,
+                    "path": str(rel_path),  # Relative path for execution
+                    "full_path": str(item),
+                    "type": item.suffix[1:],
+                    "size": item.stat().st_size,
+                    "modified": datetime.fromtimestamp(item.stat().st_mtime).isoformat()
+                })
+        
+        # Sort playbooks within each category
+        for category in organized:
+            organized[category].sort(key=lambda x: x["name"])
+        
+        return organized
+
+    def get_job_history(self, limit=50, status=None, playbook=None):
+        """Get recent job execution history with optional filters"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM orchestration_jobs ORDER BY id DESC LIMIT ?", (limit,))
+            
+            query = "SELECT * FROM orchestration_jobs WHERE 1=1"
+            params = []
+            
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            
+            if playbook:
+                query += " AND playbook LIKE ?"
+                params.append(f"%{playbook}%")
+            
+            query += " ORDER BY id DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
+
+    def purge_history(self, criteria):
+        """Purge history based on criteria"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            if criteria == "all":
+                cursor.execute("DELETE FROM orchestration_jobs")
+            elif criteria == "failed":
+                cursor.execute("DELETE FROM orchestration_jobs WHERE status = 'failed'")
+            elif criteria == "successful":
+                cursor.execute("DELETE FROM orchestration_jobs WHERE status = 'completed'")
+            elif criteria.startswith("older_than_"):
+                days = int(criteria.split("_")[-1])
+                cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+                cursor.execute("DELETE FROM orchestration_jobs WHERE started_at < ?", (cutoff,))
+            
+            deleted = cursor.rowcount
+            conn.commit()
+            return deleted
+
+    def get_history_stats(self):
+        """Get statistics about job history"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) as count FROM orchestration_jobs")
+            total = cursor.fetchone()["count"]
+            
+            cursor.execute("SELECT MIN(started_at) as oldest FROM orchestration_jobs")
+            oldest = cursor.fetchone()["oldest"]
+            
+            # Estimate size (rough)
+            cursor.execute("SELECT SUM(LENGTH(output)) as size FROM orchestration_jobs")
+            size_bytes = cursor.fetchone()["size"] or 0
+            size_mb = round(size_bytes / (1024 * 1024), 2)
+            
+            return {
+                "total_entries": total,
+                "oldest_entry": oldest,
+                "size_mb": size_mb
+            }
 
     def add_server(self, name, hostname, username, password, port=22, groups="", description=""):
         """Add a new server to inventory"""
@@ -540,6 +640,12 @@ async def api_list_playbooks(request):
         return _json({"error": "Orchestrator not initialized"}, status=500)
     return _json({"playbooks": orchestrator.list_playbooks()})
 
+async def api_list_playbooks_organized(request):
+    """New endpoint for organized playbook tree"""
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    return _json({"playbooks": orchestrator.list_playbooks_organized()})
+
 async def api_run_playbook(request):
     if not orchestrator:
         return _json({"error": "Orchestrator not initialized"}, status=500)
@@ -576,10 +682,38 @@ async def api_history(request):
     
     try:
         limit = int(request.rel_url.query.get("limit", "50"))
+        status = request.rel_url.query.get("status")
+        playbook = request.rel_url.query.get("playbook")
     except Exception:
         limit = 50
+        status = None
+        playbook = None
     
-    return _json({"jobs": orchestrator.get_job_history(limit)})
+    return _json({"jobs": orchestrator.get_job_history(limit, status, playbook)})
+
+async def api_purge_history(request):
+    """Purge history based on criteria"""
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    try:
+        data = await request.json()
+        criteria = data.get("criteria", "all")
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    try:
+        deleted = orchestrator.purge_history(criteria)
+        return _json({"success": True, "deleted": deleted})
+    except Exception as e:
+        return _json({"error": str(e)}, status=500)
+
+async def api_history_stats(request):
+    """Get history statistics"""
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    return _json(orchestrator.get_history_stats())
 
 async def api_list_servers(request):
     if not orchestrator:
@@ -678,6 +812,7 @@ async def api_add_schedule(request):
     
     try:
         schedule_id = orchestrator.add_schedule(
+            name=data.get("name", "Unnamed Schedule"),
             playbook=data["playbook"],
             cron=data["cron"],
             inventory_group=data.get("inventory_group"),
@@ -722,16 +857,28 @@ async def api_delete_schedule(request):
 
 def register_routes(app):
     """Register orchestrator routes with aiohttp app"""
+    # Playbook management
     app.router.add_get("/api/orchestrator/playbooks", api_list_playbooks)
-    app.router.add_post("/api/orchestrator/run/{playbook}", api_run_playbook)
+    app.router.add_get("/api/orchestrator/playbooks/organized", api_list_playbooks_organized)
+    app.router.add_post("/api/orchestrator/run/{playbook:.*}", api_run_playbook)
+    
+    # Job status and history
     app.router.add_get("/api/orchestrator/status/{id:\\d+}", api_get_status)
     app.router.add_get("/api/orchestrator/history", api_history)
+    app.router.add_post("/api/orchestrator/history/purge", api_purge_history)
+    app.router.add_get("/api/orchestrator/history/stats", api_history_stats)
+    
+    # Server management
     app.router.add_get("/api/orchestrator/servers", api_list_servers)
     app.router.add_post("/api/orchestrator/servers", api_add_server)
     app.router.add_put("/api/orchestrator/servers/{id:\\d+}", api_update_server)
     app.router.add_delete("/api/orchestrator/servers/{id:\\d+}", api_delete_server)
+    
+    # Schedule management
     app.router.add_get("/api/orchestrator/schedules", api_list_schedules)
     app.router.add_post("/api/orchestrator/schedules", api_add_schedule)
     app.router.add_put("/api/orchestrator/schedules/{id:\\d+}", api_update_schedule)
     app.router.add_delete("/api/orchestrator/schedules/{id:\\d+}", api_delete_schedule)
+    
+    # WebSocket for live logs
     app.router.add_get("/api/orchestrator/ws", api_websocket)
