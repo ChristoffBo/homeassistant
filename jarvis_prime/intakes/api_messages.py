@@ -332,9 +332,9 @@ def _make_app() -> web.Application:
     if orchestrator_module:
         orchestrator_module.register_routes(app)
 
-    # Register analytics routes if available - NEW
+    # Register analytics routes if available - NEW (FIXED)
     if analytics_module:
-        app.router.add_route('*', '/api/analytics/{tail:.*}', analytics_module.analytics_bp.handle)
+        analytics_module.register_routes(app)
         print("[analytics] Routes registered")
 
     # ONE static root only
