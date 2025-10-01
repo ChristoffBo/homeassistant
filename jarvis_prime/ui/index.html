@@ -341,8 +341,7 @@
         </div>
       </div>
     </section>
-
-    <!-- =============== ANALYTICS TAB =============== -->
+<!-- =============== ANALYTICS TAB =============== -->
     <section id="analytics" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -380,6 +379,18 @@
           </div>
           <div class="metric-value" id="services-total">0</div>
         </div>
+      </div>
+
+      <!-- Reset Controls -->
+      <div style="margin: 20px 0; display: flex; gap: 12px; flex-wrap: wrap;">
+        <button class="btn" onclick="analyticsResetHealth()" 
+                style="background: rgba(255, 149, 0, 0.1); border: 1px solid rgba(255, 149, 0, 0.3); color: #fb923c;">
+          🔄 Reset Health Scores
+        </button>
+        <button class="btn" onclick="analyticsResetIncidents()" 
+                style="background: rgba(255, 69, 58, 0.1); border: 1px solid rgba(255, 69, 58, 0.3); color: #ef4444;">
+          🗑️ Clear All Incidents
+        </button>
       </div>
 
       <div class="orch-tabs">
@@ -629,8 +640,7 @@
       </div>
     </div>
   </div>
-
-  <!-- ANALYTICS ADD/EDIT SERVICE MODAL -->
+<!-- ANALYTICS ADD/EDIT SERVICE MODAL -->
   <div id="analytics-service-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
@@ -647,9 +657,9 @@
         
         <div class="form-group">
           <label class="form-label">Endpoint *</label>
-          <input type="text" id="analytics-service-endpoint" required placeholder="http://homeassistant.local:8123 or 192.168.1.100:22">
+          <input type="text" id="analytics-service-endpoint" required placeholder="http://homeassistant.local:8123 or 192.168.1.100:22 or 8.8.8.8">
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-            HTTP: Include full URL with protocol • TCP: host:port format
+            HTTP: Full URL with protocol • TCP: host:port • Ping: hostname or IP
           </div>
         </div>
         
@@ -658,6 +668,7 @@
           <select id="analytics-check-type" required onchange="analyticsToggleStatusCode()">
             <option value="http">HTTP - Web endpoint</option>
             <option value="tcp">TCP - Port check</option>
+            <option value="ping">ICMP Ping - Host reachability</option>
           </select>
         </div>
         
@@ -673,7 +684,7 @@
           <label class="form-label">Check Interval (seconds)</label>
           <input type="number" id="analytics-check-interval" value="60" min="10" max="3600">
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-Minimum 10 seconds, recommended 60+ for production services
+            Minimum 10 seconds, recommended 60+ for production services
           </div>
         </div>
         
