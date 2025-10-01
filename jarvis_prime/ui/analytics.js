@@ -395,18 +395,6 @@ async function analyticsSaveService(event) {
   }
 }
 
-// Initialize analytics when the analytics tab becomes active
-const originalSwitchTab = window.switchTab;
-if (originalSwitchTab) {
-  window.switchTab = function(tabName) {
-    originalSwitchTab(tabName);
-    if (tabName === 'analytics') {
-      analyticsLoadHealthScore();
-      analyticsLoadDashboard();
-    }
-  };
-}
-
 // Export functions to global scope
 window.analyticsRefresh = analyticsRefresh;
 window.analyticsShowAddService = analyticsShowAddService;
