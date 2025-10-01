@@ -55,6 +55,9 @@
         <button class="nav-tab" data-tab="orchestrator">
           ⚙️ Orchestrator
         </button>
+        <button class="nav-tab" data-tab="analytics">
+          📊 Analytics
+        </button>
       </nav>
       
       <div class="system-status">
@@ -338,6 +341,105 @@
         </div>
       </div>
     </section>
+
+    <!-- =============== ANALYTICS TAB =============== -->
+    <section id="analytics" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Analytics & Monitoring</h1>
+          <div class="panel-subtitle">Real-time homelab health monitoring and uptime tracking</div>
+        </div>
+      </div>
+
+      <!-- Health Score Metrics -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <div class="metric-label">Health Score</div>
+          </div>
+          <div class="metric-value" id="health-score" style="font-size: 48px;">0%</div>
+        </div>
+        
+        <div class="metric-card green">
+          <div class="metric-header">
+            <div class="metric-label">Services Up</div>
+          </div>
+          <div class="metric-value" id="services-up">0</div>
+        </div>
+        
+        <div class="metric-card red">
+          <div class="metric-header">
+            <div class="metric-label">Services Down</div>
+          </div>
+          <div class="metric-value" id="services-down">0</div>
+        </div>
+        
+        <div class="metric-card cyan">
+          <div class="metric-header">
+            <div class="metric-label">Total Monitored</div>
+          </div>
+          <div class="metric-value" id="services-total">0</div>
+        </div>
+      </div>
+
+      <div class="orch-tabs">
+        <button class="orch-tab active" data-analytics-tab="dashboard">📊 Dashboard</button>
+        <button class="orch-tab" data-analytics-tab="services">⚙️ Services</button>
+        <button class="orch-tab" data-analytics-tab="incidents">🚨 Incidents</button>
+      </div>
+
+      <!-- DASHBOARD PANEL -->
+      <div id="analytics-dashboard" class="orch-panel active">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Service Status Overview</h3>
+            <button class="btn primary" onclick="analyticsRefresh()">🔄 Refresh</button>
+          </div>
+          <div id="analytics-services-grid" class="playbooks-grid">
+            <div class="text-center text-muted">Loading services...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SERVICES MANAGEMENT PANEL -->
+      <div id="analytics-services" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Monitored Services</h3>
+            <button class="btn primary" onclick="analyticsShowAddService()">➕ Add Service</button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Service Name</th>
+                <th>Endpoint</th>
+                <th>Type</th>
+                <th>Interval</th>
+                <th>Status</th>
+                <th>Enabled</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="analytics-services-list">
+              <tr><td colspan="7" class="text-center text-muted">Loading services...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- INCIDENTS PANEL -->
+      <div id="analytics-incidents" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Recent Incidents (Last 7 Days)</h3>
+            <button class="btn primary" onclick="analyticsLoadIncidents()">🔄 Refresh</button>
+          </div>
+          <div id="analytics-incidents-list" style="margin-top: 16px;">
+            <div class="text-center text-muted">Loading incidents...</div>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <!-- ADD SERVER MODAL -->
@@ -528,8 +630,46 @@
     </div>
   </div>
 
-  <div id="toast"></div>
-  <script src="app.js?v=3.2"></script>
-  <script src="orchestrator.js?v=1.1"></script>
-</body>
-</html>
+  <!-- ANALYTICS ADD/EDIT SERVICE MODAL -->
+  <div id="analytics-service-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="analytics-service-modal-title">Add Service</h2>
+        <button class="btn" onclick="analyticsCloseServiceModal()">✕</button>
+      </div>
+      <form id="analytics-service-form" onsubmit="analyticsSaveService(event)">
+        <input type="hidden" id="analytics-service-id">
+        
+        <div class="form-group">
+          <label class="form-label">Service Name *</label>
+          <input type="text" id="analytics-service-name" required placeholder="Home Assistant">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Endpoint *</label>
+          <input type="text" id="analytics-service-endpoint" required placeholder="http://homeassistant.local:8123 or 192.168.1.100:22">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            HTTP: Include full URL with protocol • TCP: host:port format
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Type *</label>
+          <select id="analytics-check-type" required onchange="analyticsToggleStatusCode()">
+            <option value="http">HTTP - Web endpoint</option>
+            <option value="tcp">TCP - Port check</option>
+          </select>
+        </div>
+        
+        <div class="form-group" id="analytics-status-code-group">
+          <label class="form-label">Expected HTTP Status Code</label>
+          <input type="number" id="analytics-expected-status" value="200" min="100" max="599">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            200 = OK, 301 = Redirect, 401 = Auth Required
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Interval (seconds)</label>
+          <input type="number" id="analytics-check-interval" value="60" min="10" max="3600">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
