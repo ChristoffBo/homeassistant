@@ -134,7 +134,7 @@
   }
 
   // ============================================
-  // PLAYBOOKS
+  // PLAYBOOKS - ORGANIZED BY CATEGORY
   // ============================================
   window.orchLoadPlaybooks = async function() {
     const container = document.getElementById('playbooks-list');
@@ -142,28 +142,56 @@
     
     try {
       container.innerHTML = '<div class="text-center text-muted">Loading playbooks...</div>';
-      const data = await jfetch(API('api/orchestrator/playbooks'));
+      const data = await jfetch(API('api/orchestrator/playbooks/organized'));
       
-      if (!data.playbooks || data.playbooks.length === 0) {
+      if (!data.playbooks || Object.keys(data.playbooks).length === 0) {
         container.innerHTML = '<div class="text-center text-muted">No playbooks found. Add .sh, .py, or .yml files to /share/jarvis_prime/playbooks/</div>';
         return;
       }
       
-      container.innerHTML = data.playbooks.map(p => `
-        <div class="playbook-card">
-          <div class="playbook-name">${p.name}</div>
-          <div class="playbook-meta">
-            Type: ${p.type.toUpperCase()} | 
-            Modified: ${new Date(p.modified).toLocaleString()}
-          </div>
-          <div class="playbook-actions">
-            <select class="playbook-target" id="target-${p.name.replace(/[^a-zA-Z0-9]/g, '_')}" style="margin-bottom: 8px;">
-              <option value="">All servers</option>
-            </select>
-            <button class="btn primary" onclick="orchRunPlaybook('${p.name}')">▶ Run</button>
-          </div>
-        </div>
-      `).join('');
+      // Build organized playbook display
+      let html = '';
+      for (const [category, playbooks] of Object.entries(data.playbooks).sort()) {
+        const categoryName = category === 'root' ? 'Root' : category.charAt(0).toUpperCase() + category.slice(1);
+        const categoryIcon = {
+          'lxc': '📦',
+          'debian': '🐧',
+          'proxmox': '🔧',
+          'network': '🌐',
+          'docker': '🐳',
+          'security': '🔒',
+          'root': '📁'
+        }[category] || '📄';
+        
+        html += `<div class="playbook-category" style="margin-bottom: 24px;">
+          <h4 style="color: var(--text-primary); margin-bottom: 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+            ${categoryIcon} ${categoryName}
+          </h4>`;
+        
+        playbooks.forEach(p => {
+          const safeId = p.path.replace(/[^a-zA-Z0-9]/g, '_');
+          html += `
+            <div class="playbook-card">
+              <div class="playbook-name">${p.name}</div>
+              <div class="playbook-meta">
+                Type: ${p.type.toUpperCase()} | 
+                Path: ${p.path} | 
+                Modified: ${new Date(p.modified).toLocaleString()}
+              </div>
+              <div class="playbook-actions">
+                <select class="playbook-target" id="target-${safeId}" style="margin-bottom: 8px;">
+                  <option value="">All servers</option>
+                </select>
+                <button class="btn primary" onclick="orchRunPlaybook('${p.path.replace(/'/g, "\\'")}')">▶ Run</button>
+              </div>
+            </div>
+          `;
+        });
+        
+        html += '</div>';
+      }
+      
+      container.innerHTML = html;
       
       // Load servers to populate dropdowns
       orchLoadServerOptionsForPlaybooks();
@@ -225,7 +253,8 @@
   window.orchRunPlaybook = async function(name) {
     try {
       // Get selected target from dropdown
-      const targetSelect = document.getElementById(`target-${name.replace(/[^a-zA-Z0-9]/g, '_')}`);
+      const safeId = name.replace(/[^a-zA-Z0-9]/g, '_');
+      const targetSelect = document.getElementById(`target-${safeId}`);
       const target = targetSelect ? targetSelect.value : '';
       
       // Parse target
@@ -427,14 +456,24 @@
     const modal = document.getElementById('schedule-modal');
     if (!modal) return;
     
-    // Populate playbook dropdown
+    // Populate playbook dropdown with organized playbooks
     try {
-      const data = await jfetch(API('api/orchestrator/playbooks'));
+      const data = await jfetch(API('api/orchestrator/playbooks/organized'));
       const select = document.getElementById('sched-playbook');
       
       if (select && data.playbooks) {
-        select.innerHTML = '<option value="">Select a playbook...</option>' +
-          data.playbooks.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+        let options = '<option value="">Select a playbook...</option>';
+        
+        for (const [category, playbooks] of Object.entries(data.playbooks).sort()) {
+          const categoryName = category === 'root' ? 'Root' : category.charAt(0).toUpperCase() + category.slice(1);
+          options += `<optgroup label="${categoryName}">`;
+          playbooks.forEach(p => {
+            options += `<option value="${p.path}">${p.name}</option>`;
+          });
+          options += '</optgroup>';
+        }
+        
+        select.innerHTML = options;
       }
       
       modal.classList.add('active');
@@ -461,6 +500,7 @@
     event.preventDefault();
     
     const data = {
+      name: document.getElementById('sched-playbook').value.split('/').pop(), // Use filename as default name
       playbook: document.getElementById('sched-playbook').value,
       cron: document.getElementById('sched-cron').value,
       inventory_group: document.getElementById('sched-group').value || null,
