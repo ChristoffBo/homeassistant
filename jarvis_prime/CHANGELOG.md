@@ -1,3 +1,5 @@
+## latest (2025-10-1 12:00:00)
+Added Ansible
 ## latest (2025-09-30 12:00:00)
 Added Websocket Intake.
 Improved Apprise and other intake handeling, all intakes should now look more uniform.
