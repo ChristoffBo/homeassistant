@@ -758,8 +758,6 @@ async def api_add_server(request):
             groups=data.get("groups", ""),
             description=data.get("description", "")
         )
-        return _json({"success": True, "server_id": server_id})
-    except Exception as e:
         return _json({"
 return _json({"success": True, "server_id": server_id})
     except Exception as e:
