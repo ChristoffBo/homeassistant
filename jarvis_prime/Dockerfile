@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     python3 python3-pip curl jq ca-certificates tzdata pkg-config \
     build-essential cmake libopenblas-dev \
     ansible sshpass \
+    iputils-ping \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
