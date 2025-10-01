@@ -549,21 +549,6 @@ def init_analytics(db_path: str = "/data/jarvis.db"):
     global db, monitor
     db = AnalyticsDB(db_path)
     monitor = HealthMonitor(db)
-
-    # 🔥 automatically bootstrap monitoring
-    async def safe_start():
-        await asyncio.sleep(1)  # small delay to let aiohttp app boot
-        try:
-            await monitor.start_all_monitors()
-        except Exception as e:
-            logger.error(f"Failed to auto-start monitors: {e}")
-
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(safe_start())
-    except RuntimeError:
-        logger.warning("Event loop not ready, monitors will need manual start")
-
     return db, monitor
 
 
@@ -613,4 +598,86 @@ async def add_service(request: web.Request):
     return _json({"success": True, "service_id": int(service_id)})
 
 
-async def get_service(request
+async def get_service(request: web.Request):
+    """Get a single service"""
+    service_id = int(request.match_info["service_id"])
+    service = db.get_service(service_id)
+    if service:
+        return _json(service)
+    return _json({"error": "Service not found"}, status=404)
+
+
+async def update_service(request: web.Request):
+    """Update a service"""
+    service_id = int(request.match_info["service_id"])
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    service = HealthCheck(
+        service_name=data['service_name'],
+        endpoint=data['endpoint'],
+        check_type=data['check_type'],
+        expected_status=data.get('expected_status', 200),
+        timeout=data.get('timeout', 5),
+        interval=data.get('check_interval', 60),
+        enabled=data.get('enabled', True)
+    )
+    
+    db.add_service(service)
+    
+    if service.enabled and monitor:
+        if service.service_name in monitor.monitoring_tasks:
+            monitor.monitoring_tasks[service.service_name].cancel()
+        
+        task = asyncio.create_task(monitor.monitor_service(service))
+        monitor.monitoring_tasks[service.service_name] = task
+    
+    return _json({"success": True})
+
+
+async def delete_service_route(request: web.Request):
+    """Delete a service"""
+    service_id = int(request.match_info["service_id"])
+    
+    service = db.get_service(service_id)
+    if service and monitor:
+        service_name = service['service_name']
+        if service_name in monitor.monitoring_tasks:
+            monitor.monitoring_tasks[service_name].cancel()
+            del monitor.monitoring_tasks[service_name]
+    
+    db.delete_service(service_id)
+    return _json({"success": True})
+
+
+async def get_uptime(request: web.Request):
+    """Get uptime stats for a service"""
+    service_name = request.match_info["service_name"]
+    hours = int(request.rel_url.query.get('hours', 24))
+    
+    stats = db.get_uptime_stats(service_name, hours)
+    if stats:
+        return _json(stats)
+    return _json({"error": "No data found"}, status=404)
+
+
+async def get_incidents(request: web.Request):
+    """Get recent incidents"""
+    days = int(request.rel_url.query.get('days', 7))
+    incidents = db.get_recent_incidents(days)
+    return _json(incidents)
+
+
+def register_routes(app: web.Application):
+    """Register analytics routes with aiohttp app"""
+    app.router.add_get('/api/analytics/health-score', get_health_score)
+    app.router.add_get('/api/analytics/services', get_services)
+    app.router.add_post('/api/analytics/services', add_service)
+    app.router.add_get('/api/analytics/services/{service_id}', get_service)
+    app.router.add_put('/api/analytics/services/{service_id}', update_service)
+    app.router.add_delete('/api/analytics/services/{service_id}', delete_service_route)
+    app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
+    app.router.add_get('/api/analytics/incidents', get_incidents)
