@@ -315,7 +315,10 @@
         <div class="panel">
           <div class="panel-head">
             <h3>Job History</h3>
-            <button class="btn" onclick="orchLoadHistory()">🔄 Refresh</button>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn" onclick="orchLoadHistory()">🔄 Refresh</button>
+              <button class="btn" onclick="orchShowHistorySettings()">⚙️ Manage History</button>
+            </div>
           </div>
           <table class="data-table">
             <thead>
@@ -426,8 +429,50 @@
     </div>
   </div>
 
+  <!-- HISTORY SETTINGS MODAL -->
+  <div id="history-modal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2>Manage History</h2>
+        <button class="btn" onclick="orchCloseHistoryModal()">✕</button>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label">Quick Actions</label>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+          <button class="btn" onclick="orchPurgeHistory('failed')">Delete Failed Jobs</button>
+          <button class="btn" onclick="orchPurgeHistory('completed')">Delete Successful Jobs</button>
+          <button class="btn" onclick="orchPurgeHistory('older_than_30')">Delete Older Than 30 Days</button>
+          <button class="btn" onclick="orchPurgeHistory('older_than_90')">Delete Older Than 90 Days</button>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-tertiary); border-radius: 8px; padding: 16px; margin: 20px 0;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="color: var(--text-muted); font-size: 14px;">Total Entries:</span>
+          <span id="history-total" style="color: var(--text-primary); font-weight: 600;">—</span>
+        </div>
+      </div>
+
+      <div style="background: rgba(255, 59, 48, 0.1); border: 1px solid rgba(255, 59, 48, 0.3); border-radius: 8px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <span style="font-size: 24px;">⚠️</span>
+          <span style="color: #ff3b30; font-weight: 600;">Danger Zone</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+          Permanently delete all execution history. This action cannot be undone.
+        </p>
+        <button class="btn danger" style="width: 100%;" onclick="orchPurgeHistory('all')">Delete ALL History</button>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="orchCloseHistoryModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast"></div>
   <script src="app.js?v=3.2"></script>
-  <script src="orchestrator.js?v=1.0"></script>
+  <script src="orchestrator.js?v=1.1"></script>
 </body>
 </html>
