@@ -307,7 +307,7 @@ function analyticsShowAddService() {
   document.getElementById('analytics-service-modal-title').textContent = 'Add Service';
   document.getElementById('analytics-service-form').reset();
   document.getElementById('analytics-service-id').value = '';
-  document.getElementById('analytics-service-modal').classList.add('active'); // fixed
+  document.getElementById('analytics-service-modal').classList.add('active');
   analyticsToggleStatusCode();
 }
 
@@ -328,7 +328,7 @@ async function analyticsEditService(id) {
     document.getElementById('analytics-service-enabled').checked = service.enabled;
 
     analyticsToggleStatusCode();
-    document.getElementById('analytics-service-modal').classList.add('active'); // fixed
+    document.getElementById('analytics-service-modal').classList.add('active');
   } catch (error) {
     console.error('Error loading service:', error);
     showToast('Failed to load service', 'error');
@@ -351,7 +351,7 @@ async function analyticsDeleteService(id, name) {
 
 // Close service modal
 function analyticsCloseServiceModal() {
-  document.getElementById('analytics-service-modal').classList.remove('active'); // fixed
+  document.getElementById('analytics-service-modal').classList.remove('active');
 }
 
 // Toggle status code field based on check type
@@ -395,6 +395,78 @@ async function analyticsSaveService(event) {
   }
 }
 
+// Reset health scores
+async function analyticsResetHealth() {
+  if (!confirm('Reset all health scores? This will clear all metrics history and start fresh.')) return;
+
+  try {
+    const response = await fetch(`${ANALYTICS_API}/reset-health`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Health scores reset successfully', 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to reset: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error resetting health scores:', error);
+    showToast('Failed to reset health scores', 'error');
+  }
+}
+
+// Reset incidents
+async function analyticsResetIncidents() {
+  if (!confirm('Clear all incidents? This will permanently delete all incident history.')) return;
+
+  try {
+    const response = await fetch(`${ANALYTICS_API}/reset-incidents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('All incidents cleared', 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to clear: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error clearing incidents:', error);
+    showToast('Failed to clear incidents', 'error');
+  }
+}
+
+// Reset service data (optional - for per-service reset)
+async function analyticsResetServiceData(serviceName) {
+  if (!confirm(`Reset all data for ${serviceName}? This will clear metrics and incidents for this service only.`)) return;
+
+  try {
+    const response = await fetch(`${ANALYTICS_API}/reset-service/${encodeURIComponent(serviceName)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(`Data reset for ${serviceName}`, 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to reset: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error resetting service data:', error);
+    showToast('Failed to reset service data', 'error');
+  }
+}
+
 // Export functions to global scope
 window.analyticsRefresh = analyticsRefresh;
 window.analyticsShowAddService = analyticsShowAddService;
@@ -403,3 +475,6 @@ window.analyticsDeleteService = analyticsDeleteService;
 window.analyticsCloseServiceModal = analyticsCloseServiceModal;
 window.analyticsToggleStatusCode = analyticsToggleStatusCode;
 window.analyticsSaveService = analyticsSaveService;
+window.analyticsResetHealth = analyticsResetHealth;
+window.analyticsResetIncidents = analyticsResetIncidents;
+window.analyticsResetServiceData = analyticsResetServiceData;
