@@ -68,13 +68,16 @@
   const API = (path) => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
 
   // Toast notifications
-  function toast(msg, type = 'info') {
+  window.showToast = function(msg, type = 'info') {
     const d = document.createElement('div');
     d.className = `toast ${type}`;
     d.textContent = msg;
     $('#toast')?.appendChild(d);
     setTimeout(() => d.remove(), 4000);
-  }
+  };
+
+  // Alias for compatibility
+  const toast = window.showToast;
 
   // Enhanced fetch with better error handling
   async function jfetch(url, opts = {}) {
@@ -130,9 +133,25 @@
       btn.classList.add('active');
       $$('.tab-panel').forEach(t => t.classList.remove('active'));
       const pane = $('#' + btn.dataset.tab);
-      if (pane) pane.classList.add('active');
+      if (pane) {
+        pane.classList.add('active');
+        
+        // Load analytics data when analytics tab is opened
+        if (btn.dataset.tab === 'analytics') {
+          if (typeof analyticsLoadHealthScore === 'function') {
+            analyticsLoadHealthScore();
+            analyticsLoadDashboard();
+          }
+        }
+      }
     });
   });
+
+  // Expose switchTab globally for other modules
+  window.switchTab = function(tabName) {
+    const btn = $(`.nav-tab[data-tab="${tabName}"]`);
+    if (btn) btn.click();
+  };
 
   /* =============== CHAT FUNCTIONALITY =============== */
   function updateChatStatus(status) {
