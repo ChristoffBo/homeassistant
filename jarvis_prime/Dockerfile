@@ -14,6 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y \
     python3 python3-pip curl jq ca-certificates tzdata pkg-config \
     build-essential cmake libopenblas-dev \
+    ansible sshpass \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -77,7 +78,7 @@ COPY /intakes/webhook_server.py  /app/webhook_server.py
 COPY /intakes/websocket.py  /app/websocket.py
 COPY /intakes/apprise.py  /app/apprise.py
 COPY /modules/heartbeat.py  /app/heartbeat.py
-
+COPY /modules/orchestrator.py  /app/orchestrator.py
 
 # Place intake blueprint at the path bot.py expects
 RUN mkdir -p /app/intakes
