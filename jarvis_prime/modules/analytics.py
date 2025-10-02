@@ -1,6 +1,7 @@
 """
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
+PATCHED: Now includes notification integration via notify_error
 """
 
 import sqlite3
@@ -14,6 +15,11 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from aiohttp import web
 import logging
+
+# ============================================
+# NOTIFICATION PATCH - Import notify_error
+# ============================================
+from errors import notify_error
 
 logger = logging.getLogger(__name__)
 
@@ -360,10 +366,6 @@ class AnalyticsDB:
         conn.close()
         return incidents
     
-    # ============================================
-    # PURGE PATCH - Added methods
-    # ============================================
-    
     def purge_metrics_older_than(self, days: int) -> int:
         """Purge metrics older than specified days. Returns count of deleted rows."""
         conn = sqlite3.connect(self.db_path)
@@ -505,8 +507,6 @@ class HealthMonitor:
         
         try:
             host = service.endpoint
-            # Use subprocess to call system ping (works in containers)
-            # -c 1 = count 1, -W = timeout in seconds
             process = await asyncio.create_subprocess_exec(
                 'ping', '-c', '1', '-W', str(int(service.timeout)), host,
                 stdout=asyncio.subprocess.PIPE,
@@ -573,11 +573,9 @@ class HealthMonitor:
                     await asyncio.sleep(service.interval)
                     continue
                 
-                # Perform health check
                 metric = await self.perform_check(service)
                 self.db.record_metric(metric)
                 
-                # Incident detection
                 prev_status = self.previous_status.get(service.service_name)
                 
                 if metric.status == 'down' and prev_status != 'down':
@@ -631,33 +629,41 @@ class HealthMonitor:
         logger.info(f"Started {len(self.monitoring_tasks)} monitoring tasks")
 
 
-# ============================================
-# API Routes (aiohttp)
-# ============================================
-
-# Global instances
 db = None
 monitor = None
 
 
 def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
-    """Initialize analytics module"""
+    """Initialize analytics module with notification support"""
     global db, monitor
     db = AnalyticsDB(db_path)
-    monitor = HealthMonitor(db, notify_callback=notify_callback)
     
-    # ============================================
-    # PURGE PATCH - Auto-purge on startup
-    # ============================================
+    def analytics_notify(event):
+        """Handle analytics incident notifications"""
+        service = event['service']
+        status = event['status'].upper()
+        message = event['message']
+        
+        if status == "DOWN":
+            msg = f"🔴 [Analytics] {service} is DOWN — {message}"
+        else:
+            msg = f"🟢 [Analytics] {service} is UP — {message}"
+        
+        try:
+            notify_error(msg, context="analytics")
+        except Exception as e:
+            logger.error(f"Failed to send analytics notification: {e}")
+    
+    monitor = HealthMonitor(db, notify_callback=notify_callback or analytics_notify)
+    
     try:
-        deleted = db.purge_metrics_older_than(90)  # Auto-purge 3 months
+        deleted = db.purge_metrics_older_than(90)
         logger.info(f"Startup auto-purge: removed {deleted} metrics older than 90 days")
     except Exception as e:
         logger.error(f"Failed to auto-purge old metrics: {e}")
     
-    # automatically bootstrap monitoring
     async def safe_start():
-        await asyncio.sleep(1)  # small delay to let aiohttp app boot
+        await asyncio.sleep(1)
         try:
             await monitor.start_all_monitors()
         except Exception as e:
@@ -681,19 +687,16 @@ def _json(data, status=200):
 
 
 async def get_health_score(request: web.Request):
-    """Get overall health score"""
     score = db.get_health_score()
     return _json(score)
 
 
 async def get_services(request: web.Request):
-    """Get all monitored services"""
     services = db.get_all_services()
     return _json(services)
 
 
 async def add_service(request: web.Request):
-    """Add a new service"""
     try:
         data = await request.json()
     except Exception:
@@ -719,7 +722,6 @@ async def add_service(request: web.Request):
 
 
 async def get_service(request: web.Request):
-    """Get a single service"""
     service_id = int(request.match_info["service_id"])
     service = db.get_service(service_id)
     if service:
@@ -728,7 +730,6 @@ async def get_service(request: web.Request):
 
 
 async def update_service(request: web.Request):
-    """Update a service"""
     service_id = int(request.match_info["service_id"])
     
     try:
@@ -759,7 +760,6 @@ async def update_service(request: web.Request):
 
 
 async def delete_service_route(request: web.Request):
-    """Delete a service"""
     service_id = int(request.match_info["service_id"])
     
     service = db.get_service(service_id)
@@ -774,7 +774,6 @@ async def delete_service_route(request: web.Request):
 
 
 async def get_uptime(request: web.Request):
-    """Get uptime stats for a service"""
     service_name = request.match_info["service_name"]
     hours = int(request.rel_url.query.get('hours', 24))
     
@@ -785,14 +784,12 @@ async def get_uptime(request: web.Request):
 
 
 async def get_incidents(request: web.Request):
-    """Get recent incidents"""
     days = int(request.rel_url.query.get('days', 7))
     incidents = db.get_recent_incidents(days)
     return _json(incidents)
 
 
 async def reset_health_score(request: web.Request):
-    """Reset health scores for all services"""
     try:
         conn = sqlite3.connect(db.db_path)
         cur = conn.cursor()
@@ -805,7 +802,6 @@ async def reset_health_score(request: web.Request):
 
 
 async def reset_incidents(request: web.Request):
-    """Clear all incidents"""
     try:
         conn = sqlite3.connect(db.db_path)
         cur = conn.cursor()
@@ -818,7 +814,6 @@ async def reset_incidents(request: web.Request):
 
 
 async def reset_service_data(request: web.Request):
-    """Reset metrics and incidents for a specific service"""
     service_name = request.match_info["service_name"]
     try:
         conn = sqlite3.connect(db.db_path)
@@ -832,12 +827,7 @@ async def reset_service_data(request: web.Request):
         return _json({'success': False, 'error': str(e)}, status=500)
 
 
-# ============================================
-# PURGE PATCH - New API endpoints
-# ============================================
-
 async def purge_all_metrics(request: web.Request):
-    """Purge ALL analytics metrics"""
     try:
         deleted = db.purge_all_metrics()
         return _json({
@@ -851,7 +841,6 @@ async def purge_all_metrics(request: web.Request):
 
 
 async def purge_week_metrics(request: web.Request):
-    """Purge metrics older than 1 week (7 days)"""
     try:
         deleted = db.purge_metrics_older_than(7)
         return _json({
@@ -866,7 +855,6 @@ async def purge_week_metrics(request: web.Request):
 
 
 async def purge_month_metrics(request: web.Request):
-    """Purge metrics older than 1 month (30 days)"""
     try:
         deleted = db.purge_metrics_older_than(30)
         return _json({
@@ -892,11 +880,4 @@ def register_routes(app: web.Application):
     app.router.add_get('/api/analytics/incidents', get_incidents)
     app.router.add_post('/api/analytics/reset-health', reset_health_score)
     app.router.add_post('/api/analytics/reset-incidents', reset_incidents)
-    app.router.add_post('/api/analytics/reset-service/{service_name}', reset_service_data)
-    
-    # ============================================
-    # PURGE PATCH - Register purge routes
-    # ============================================
-    app.router.add_post('/api/analytics/purge/all', purge_all_metrics)
-    app.router.add_post('/api/analytics/purge/week', purge_week_metrics)
-    app.router.add_post('/api/analytics/purge/month', purge_month_metrics)
+    app.router.add_post('/api/analytics/reset-service/{service
