@@ -20,25 +20,15 @@ orchestrator_spec = importlib.util.spec_from_file_location("jarvis_orchestrator"
 orchestrator_module = importlib.util.module_from_spec(orchestrator_spec)  # type: ignore
 if orchestrator_spec and orchestrator_spec.loader and _ORCHESTRATOR_FILE.exists():
     orchestrator_spec.loader.exec_module(orchestrator_module)  # type: ignore
-
-    # 🔔 Notify function patched to broadcast to inbox + external notifiers
+    
     def notify_via_inbox(data):
-        """Send orchestrator notifications through inbox and optionally other notifiers"""
+        """Send orchestrator notifications through inbox"""
         title = data.get("title", "Orchestrator")
         message = data.get("message", "")
         priority = 8 if data.get("priority") == "high" else 5
-
-        # Save to inbox
         storage.save_message(title, message, "orchestrator", priority, {})  # type: ignore
         _broadcast("created")
-
-        # Fan-out to external notifiers if available
-        try:
-            import notify  # optional notify.py module
-            notify.send_all(title, message, priority)
-        except Exception as e:
-            print(f"[orchestrator notify] external fan-out skipped: {e}")
-
+    
     orchestrator_module.init_orchestrator(
         config={
             "playbooks_path": "/share/jarvis_prime/playbooks",
@@ -59,9 +49,7 @@ analytics_spec = importlib.util.spec_from_file_location("jarvis_analytics", str(
 analytics_module = importlib.util.module_from_spec(analytics_spec)  # type: ignore
 if analytics_spec and analytics_spec.loader and _ANALYTICS_FILE.exists():
     analytics_spec.loader.exec_module(analytics_module)  # type: ignore
-    analytics_db, analytics_monitor = analytics_module.init_analytics(
-        os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
-    )
+    analytics_db, analytics_monitor = analytics_module.init_analytics(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
     print("[analytics] Initialized")
 else:
     analytics_module = None
@@ -295,7 +283,7 @@ async def api_emit(request: web.Request):
 # ---- app ----
 def _make_app() -> web.Application:
     app = web.Application()
-
+    
     # Startup hook to start orchestrator scheduler and analytics monitors after event loop is running
     async def start_background_tasks(app):
         if orchestrator_module:
@@ -303,9 +291,9 @@ def _make_app() -> web.Application:
         if analytics_module and analytics_monitor:
             await analytics_monitor.start_all_monitors()
             print("[analytics] Monitoring started")
-
+    
     app.on_startup.append(start_background_tasks)
-
+    
     # API routes
     app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
