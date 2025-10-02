@@ -493,6 +493,83 @@ async function analyticsResetServiceData(serviceName) {
   }
 }
 
+// ============================================
+// PURGE PATCH - New purge functions
+// ============================================
+
+// Purge ALL metrics
+async function analyticsPurgeAll() {
+  if (!confirm('⚠️ DANGER: Purge ALL metrics history? This cannot be undone!')) return;
+  if (!confirm('Are you absolutely sure? This will delete EVERYTHING.')) return;
+
+  try {
+    const response = await fetch(ANALYTICS_API('purge/all'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(`Purged all ${result.deleted} metrics`, 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to purge: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error purging all metrics:', error);
+    showToast('Failed to purge metrics', 'error');
+  }
+}
+
+// Purge metrics older than 1 week
+async function analyticsPurgeWeek() {
+  if (!confirm('Purge metrics older than 1 week (7 days)?')) return;
+
+  try {
+    const response = await fetch(ANALYTICS_API('purge/week'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(`Purged ${result.deleted} metrics older than 1 week`, 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to purge: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error purging week metrics:', error);
+    showToast('Failed to purge metrics', 'error');
+  }
+}
+
+// Purge metrics older than 1 month
+async function analyticsPurgeMonth() {
+  if (!confirm('Purge metrics older than 1 month (30 days)?')) return;
+
+  try {
+    const response = await fetch(ANALYTICS_API('purge/month'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(`Purged ${result.deleted} metrics older than 1 month`, 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to purge: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error purging month metrics:', error);
+    showToast('Failed to purge metrics', 'error');
+  }
+}
+
 // Export functions to global scope
 window.analyticsRefresh = analyticsRefresh;
 window.analyticsLoadHealthScore = analyticsLoadHealthScore;
@@ -506,3 +583,6 @@ window.analyticsSaveService = analyticsSaveService;
 window.analyticsResetHealth = analyticsResetHealth;
 window.analyticsResetIncidents = analyticsResetIncidents;
 window.analyticsResetServiceData = analyticsResetServiceData;
+window.analyticsPurgeAll = analyticsPurgeAll;
+window.analyticsPurgeWeek = analyticsPurgeWeek;
+window.analyticsPurgeMonth = analyticsPurgeMonth;
