@@ -1,7 +1,7 @@
 // Analytics Module for Jarvis Prime
 // Handles all analytics UI interactions and API calls
 
-const ANALYTICS_API = API('api/analytics');
+const ANALYTICS_API = '/api/analytics';
 
 // Initialize analytics when tab is opened
 document.addEventListener('DOMContentLoaded', () => {
