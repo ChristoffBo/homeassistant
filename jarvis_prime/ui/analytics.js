@@ -2,13 +2,14 @@
 // Handles all analytics UI interactions and API calls
 
 // Use the API() helper from app.js for proper path resolution
-const ANALYTICS_API = (path) => {
-  // Get the API helper from app.js
+const ANALYTICS_API = (path = '') => {
   if (typeof API === 'function') {
-    return API('api/analytics' + (path ? '/' + path.replace(/^\/+/, '') : ''));
+    // Always prefix with analytics, remove leading slashes from path
+    return API('api/analytics/' + path.replace(/^\/+/, ''));
   }
-  // Fallback if API() not available
-  return '/api/analytics' + (path ? '/' + path.replace(/^\/+/, '') : '');
+  // Fallback: resolve against document.baseURI (Ingress-safe)
+  const base = new URL(document.baseURI);
+  return base.pathname.replace(/\/+$/, '') + '/api/analytics/' + path.replace(/^\/+/, '');
 };
 
 // Initialize analytics when tab is opened
