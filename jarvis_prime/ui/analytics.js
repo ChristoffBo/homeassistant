@@ -499,6 +499,7 @@ async function analyticsResetServiceData(serviceName) {
 
 // Purge ALL metrics
 async function analyticsPurgeAll() {
+  console.log('analyticsPurgeAll called');
   if (!confirm('⚠️ DANGER: Purge ALL metrics history? This cannot be undone!')) return;
   if (!confirm('Are you absolutely sure? This will delete EVERYTHING.')) return;
 
@@ -509,6 +510,7 @@ async function analyticsPurgeAll() {
     });
     
     const result = await response.json();
+    console.log('Purge all result:', result);
     
     if (result.success) {
       showToast(`Purged all ${result.deleted} metrics`, 'success');
@@ -524,6 +526,7 @@ async function analyticsPurgeAll() {
 
 // Purge metrics older than 1 week
 async function analyticsPurgeWeek() {
+  console.log('analyticsPurgeWeek called');
   if (!confirm('Purge metrics older than 1 week (7 days)?')) return;
 
   try {
@@ -533,6 +536,7 @@ async function analyticsPurgeWeek() {
     });
     
     const result = await response.json();
+    console.log('Purge week result:', result);
     
     if (result.success) {
       showToast(`Purged ${result.deleted} metrics older than 1 week`, 'success');
@@ -548,6 +552,7 @@ async function analyticsPurgeWeek() {
 
 // Purge metrics older than 1 month
 async function analyticsPurgeMonth() {
+  console.log('analyticsPurgeMonth called');
   if (!confirm('Purge metrics older than 1 month (30 days)?')) return;
 
   try {
@@ -557,6 +562,7 @@ async function analyticsPurgeMonth() {
     });
     
     const result = await response.json();
+    console.log('Purge month result:', result);
     
     if (result.success) {
       showToast(`Purged ${result.deleted} metrics older than 1 month`, 'success');
@@ -568,6 +574,17 @@ async function analyticsPurgeMonth() {
     console.error('Error purging month metrics:', error);
     showToast('Failed to purge metrics', 'error');
   }
+}
+
+// ============================================
+// TOAST FALLBACK - Ensures showToast exists
+// ============================================
+
+if (typeof window.showToast !== "function") {
+  window.showToast = function (msg, type = "info") {
+    console.log(`[TOAST ${type.toUpperCase()}] ${msg}`);
+    alert(`[${type}] ${msg}`);
+  };
 }
 
 // Export functions to global scope
