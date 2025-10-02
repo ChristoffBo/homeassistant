@@ -6,9 +6,27 @@ const ANALYTICS_API = (path = '') => {
   if (typeof API === 'function') {
     return API('api/analytics/' + path.replace(/^\/+/, ''));
   }
-  // Fallback - always use origin, works for both direct and ingress
-  const base = new URL(document.baseURI);
-  return base.origin + '/api/analytics/' + path.replace(/^\/+/, '');
+  
+  // Fallback: replicate apiRoot() + API() logic from app.js
+  try {
+    const u = new URL(document.baseURI);
+    let p = u.pathname;
+    
+    if (p.endsWith('/index.html')) {
+      p = p.slice(0, -'/index.html'.length);
+    }
+    
+    // Only strip /ui/ if NOT under ingress
+    if (!p.includes('/ingress/') && p.endsWith('/ui/')) {
+      p = p.slice(0, -4);
+    }
+    
+    if (!p.endsWith('/')) p += '/';
+    u.pathname = p + 'api/analytics/' + path.replace(/^\/+/, '');
+    return u.toString();
+  } catch (e) {
+    return '/api/analytics/' + path.replace(/^\/+/, '');
+  }
 };
 
 // Initialize analytics when tab is opened
