@@ -359,6 +359,39 @@ class AnalyticsDB:
         incidents = [dict(row) for row in cur.fetchall()]
         conn.close()
         return incidents
+    
+    # ============================================
+    # PURGE PATCH - Added methods
+    # ============================================
+    
+    def purge_metrics_older_than(self, days: int) -> int:
+        """Purge metrics older than specified days. Returns count of deleted rows."""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        cutoff = int(time.time()) - (days * 24 * 3600)
+        cur.execute("DELETE FROM analytics_metrics WHERE timestamp < ?", (cutoff,))
+        deleted = cur.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Purged {deleted} metrics older than {days} days")
+        return deleted
+    
+    def purge_all_metrics(self) -> int:
+        """Purge ALL metrics. Returns count of deleted rows."""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        cur.execute("DELETE FROM analytics_metrics")
+        deleted = cur.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Purged ALL {deleted} metrics")
+        return deleted
 
 
 class HealthMonitor:
@@ -613,6 +646,15 @@ def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
     db = AnalyticsDB(db_path)
     monitor = HealthMonitor(db, notify_callback=notify_callback)
     
+    # ============================================
+    # PURGE PATCH - Auto-purge on startup
+    # ============================================
+    try:
+        deleted = db.purge_metrics_older_than(90)  # Auto-purge 3 months
+        logger.info(f"Startup auto-purge: removed {deleted} metrics older than 90 days")
+    except Exception as e:
+        logger.error(f"Failed to auto-purge old metrics: {e}")
+    
     # automatically bootstrap monitoring
     async def safe_start():
         await asyncio.sleep(1)  # small delay to let aiohttp app boot
@@ -790,6 +832,54 @@ async def reset_service_data(request: web.Request):
         return _json({'success': False, 'error': str(e)}, status=500)
 
 
+# ============================================
+# PURGE PATCH - New API endpoints
+# ============================================
+
+async def purge_all_metrics(request: web.Request):
+    """Purge ALL analytics metrics"""
+    try:
+        deleted = db.purge_all_metrics()
+        return _json({
+            'success': True, 
+            'deleted': deleted,
+            'message': f'Purged all {deleted} metrics'
+        })
+    except Exception as e:
+        logger.error(f"Purge all failed: {e}")
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
+async def purge_week_metrics(request: web.Request):
+    """Purge metrics older than 1 week (7 days)"""
+    try:
+        deleted = db.purge_metrics_older_than(7)
+        return _json({
+            'success': True,
+            'deleted': deleted,
+            'days': 7,
+            'message': f'Purged {deleted} metrics older than 1 week'
+        })
+    except Exception as e:
+        logger.error(f"Purge week failed: {e}")
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
+async def purge_month_metrics(request: web.Request):
+    """Purge metrics older than 1 month (30 days)"""
+    try:
+        deleted = db.purge_metrics_older_than(30)
+        return _json({
+            'success': True,
+            'deleted': deleted,
+            'days': 30,
+            'message': f'Purged {deleted} metrics older than 1 month'
+        })
+    except Exception as e:
+        logger.error(f"Purge month failed: {e}")
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
 def register_routes(app: web.Application):
     """Register analytics routes with aiohttp app"""
     app.router.add_get('/api/analytics/health-score', get_health_score)
@@ -803,3 +893,10 @@ def register_routes(app: web.Application):
     app.router.add_post('/api/analytics/reset-health', reset_health_score)
     app.router.add_post('/api/analytics/reset-incidents', reset_incidents)
     app.router.add_post('/api/analytics/reset-service/{service_name}', reset_service_data)
+    
+    # ============================================
+    # PURGE PATCH - Register purge routes
+    # ============================================
+    app.router.add_post('/api/analytics/purge/all', purge_all_metrics)
+    app.router.add_post('/api/analytics/purge/week', purge_week_metrics)
+    app.router.add_post('/api/analytics/purge/month', purge_month_metrics)
