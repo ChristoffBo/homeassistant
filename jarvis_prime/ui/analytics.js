@@ -1,7 +1,15 @@
 // Analytics Module for Jarvis Prime
 // Handles all analytics UI interactions and API calls
 
-const ANALYTICS_API = '/api/analytics';
+// Use the API() helper from app.js for proper path resolution
+const ANALYTICS_API = (path) => {
+  // Get the API helper from app.js
+  if (typeof API === 'function') {
+    return API('api/analytics' + (path ? '/' + path.replace(/^\/+/, '') : ''));
+  }
+  // Fallback if API() not available
+  return '/api/analytics' + (path ? '/' + path.replace(/^\/+/, '') : '');
+};
 
 // Initialize analytics when tab is opened
 document.addEventListener('DOMContentLoaded', () => {
@@ -56,7 +64,7 @@ function analyticsRefresh() {
 // Load health score metrics
 async function analyticsLoadHealthScore() {
   try {
-    const response = await fetch(`${ANALYTICS_API}/health-score`);
+    const response = await fetch(ANALYTICS_API('health-score'));
     const data = await response.json();
 
     document.getElementById('health-score').textContent = data.health_score + '%';
@@ -85,7 +93,7 @@ async function analyticsLoadDashboard() {
   const grid = document.getElementById('analytics-services-grid');
   
   try {
-    const response = await fetch(`${ANALYTICS_API}/services`);
+    const response = await fetch(ANALYTICS_API('services'));
     const services = await response.json();
 
     if (services.length === 0) {
@@ -114,7 +122,7 @@ async function analyticsLoadDashboard() {
 // Get uptime stats for a service
 async function analyticsGetUptime(serviceName) {
   try {
-    const response = await fetch(`${ANALYTICS_API}/uptime/${encodeURIComponent(serviceName)}`);
+    const response = await fetch(ANALYTICS_API(`uptime/${encodeURIComponent(serviceName)}`));
     return await response.json();
   } catch {
     return null;
@@ -177,7 +185,7 @@ async function analyticsLoadServices() {
   const tbody = document.getElementById('analytics-services-list');
   
   try {
-    const response = await fetch(`${ANALYTICS_API}/services`);
+    const response = await fetch(ANALYTICS_API('services'));
     const services = await response.json();
 
     if (services.length === 0) {
@@ -236,7 +244,7 @@ async function analyticsLoadIncidents() {
   const list = document.getElementById('analytics-incidents-list');
   
   try {
-    const response = await fetch(`${ANALYTICS_API}/incidents?days=7`);
+    const response = await fetch(ANALYTICS_API('incidents?days=7'));
     const incidents = await response.json();
 
     if (incidents.length === 0) {
@@ -314,7 +322,7 @@ function analyticsShowAddService() {
 // Show edit service modal
 async function analyticsEditService(id) {
   try {
-    const response = await fetch(`${ANALYTICS_API}/services/${id}`);
+    const response = await fetch(ANALYTICS_API(`services/${id}`));
     const service = await response.json();
 
     document.getElementById('analytics-service-modal-title').textContent = 'Edit Service';
@@ -340,7 +348,7 @@ async function analyticsDeleteService(id, name) {
   if (!confirm(`Are you sure you want to delete ${name}?`)) return;
 
   try {
-    await fetch(`${ANALYTICS_API}/services/${id}`, { method: 'DELETE' });
+    await fetch(ANALYTICS_API(`services/${id}`), { method: 'DELETE' });
     showToast('Service deleted', 'success');
     analyticsRefresh();
   } catch (error) {
@@ -377,7 +385,7 @@ async function analyticsSaveService(event) {
   };
 
   try {
-    const url = serviceId ? `${ANALYTICS_API}/services/${serviceId}` : `${ANALYTICS_API}/services`;
+    const url = serviceId ? ANALYTICS_API(`services/${serviceId}`) : ANALYTICS_API('services');
     const method = serviceId ? 'PUT' : 'POST';
 
     await fetch(url, {
@@ -400,7 +408,7 @@ async function analyticsResetHealth() {
   if (!confirm('Reset all health scores? This will clear all metrics history and start fresh.')) return;
 
   try {
-    const response = await fetch(`${ANALYTICS_API}/reset-health`, {
+    const response = await fetch(ANALYTICS_API('reset-health'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -424,7 +432,7 @@ async function analyticsResetIncidents() {
   if (!confirm('Clear all incidents? This will permanently delete all incident history.')) return;
 
   try {
-    const response = await fetch(`${ANALYTICS_API}/reset-incidents`, {
+    const response = await fetch(ANALYTICS_API('reset-incidents'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -448,7 +456,7 @@ async function analyticsResetServiceData(serviceName) {
   if (!confirm(`Reset all data for ${serviceName}? This will clear metrics and incidents for this service only.`)) return;
 
   try {
-    const response = await fetch(`${ANALYTICS_API}/reset-service/${encodeURIComponent(serviceName)}`, {
+    const response = await fetch(ANALYTICS_API(`reset-service/${encodeURIComponent(serviceName)}`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -469,6 +477,8 @@ async function analyticsResetServiceData(serviceName) {
 
 // Export functions to global scope
 window.analyticsRefresh = analyticsRefresh;
+window.analyticsLoadHealthScore = analyticsLoadHealthScore;
+window.analyticsLoadDashboard = analyticsLoadDashboard;
 window.analyticsShowAddService = analyticsShowAddService;
 window.analyticsEditService = analyticsEditService;
 window.analyticsDeleteService = analyticsDeleteService;
