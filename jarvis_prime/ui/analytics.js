@@ -4,12 +4,18 @@
 // Use the API() helper from app.js for proper path resolution
 const ANALYTICS_API = (path = '') => {
   if (typeof API === 'function') {
-    // Always prefix with analytics, remove leading slashes from path
     return API('api/analytics/' + path.replace(/^\/+/, ''));
   }
-  // Fallback: resolve against document.baseURI (Ingress-safe)
+  // Fallback with ingress detection
   const base = new URL(document.baseURI);
-  return base.pathname.replace(/\/+$/, '') + '/api/analytics/' + path.replace(/^\/+/, '');
+  let p = base.pathname;
+  
+  // Only strip /ui/ if NOT under ingress
+  if (!p.includes('/ingress/') && p.endsWith('/ui/')) {
+    p = p.slice(0, -4);
+  }
+  
+  return p.replace(/\/+$/, '') + '/api/analytics/' + path.replace(/^\/+/, '');
 };
 
 // Initialize analytics when tab is opened
