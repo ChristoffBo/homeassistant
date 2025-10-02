@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import os, json, asyncio, smtplib, ssl
-from email.mime.text import MIMEText
+import os, json, asyncio
 from pathlib import Path
 from aiohttp import web
 import importlib.util
@@ -15,80 +14,35 @@ assert spec and spec.loader, "Cannot load storage.py"
 spec.loader.exec_module(storage)  # type: ignore
 storage.init_db(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
 
-# ---- notifier fan-out ----
-import aiohttp
-
-async def fanout_notify(title: str, message: str, source: str = "system", priority: int = 5):
-    """Send orchestrator/analytics notifications to external intakes if configured."""
-    # Gotify
-    gotify_url = os.getenv("GOTIFY_URL")
-    gotify_token = os.getenv("GOTIFY_TOKEN")
-    if gotify_url and gotify_token:
-        try:
-            async with aiohttp.ClientSession() as session:
-                await session.post(
-                    f"{gotify_url}/message?token={gotify_token}",
-                    json={"title": title, "message": message, "priority": priority}
-                )
-        except Exception as e:
-            print(f"[notify] Gotify error: {e}")
-
-    # ntfy
-    ntfy_url = os.getenv("NTFY_URL")
-    ntfy_topic = os.getenv("NTFY_TOPIC")
-    if ntfy_url:
-        try:
-            endpoint = ntfy_url.rstrip("/")
-            if ntfy_topic:
-                endpoint += f"/{ntfy_topic}"
-            async with aiohttp.ClientSession() as session:
-                await session.post(endpoint, data=message.encode("utf-8"), headers={"Title": title})
-        except Exception as e:
-            print(f"[notify] ntfy error: {e}")
-
-    # SMTP
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASS")
-    smtp_to = os.getenv("SMTP_TO")
-    if smtp_host and smtp_to:
-        try:
-            msg = MIMEText(message)
-            msg["Subject"] = title
-            msg["From"] = smtp_user or "jarvis@example.com"
-            msg["To"] = smtp_to
-
-            context = ssl.create_default_context()
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                server.starttls(context=context)
-                if smtp_user and smtp_pass:
-                    server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
-        except Exception as e:
-            print(f"[notify] SMTP error: {e}")
-
 # ---- orchestrator ----
 _ORCHESTRATOR_FILE = _THIS_DIR / "orchestrator.py"
 orchestrator_spec = importlib.util.spec_from_file_location("jarvis_orchestrator", str(_ORCHESTRATOR_FILE))
 orchestrator_module = importlib.util.module_from_spec(orchestrator_spec)  # type: ignore
 if orchestrator_spec and orchestrator_spec.loader and _ORCHESTRATOR_FILE.exists():
     orchestrator_spec.loader.exec_module(orchestrator_module)  # type: ignore
-    
+
+    # 🔔 Notify function patched to broadcast to inbox + external notifiers
     def notify_via_inbox(data):
-        """Send orchestrator notifications through inbox + fan-out"""
+        """Send orchestrator notifications through inbox and optionally other notifiers"""
         title = data.get("title", "Orchestrator")
         message = data.get("message", "")
         priority = 8 if data.get("priority") == "high" else 5
+
+        # Save to inbox
         storage.save_message(title, message, "orchestrator", priority, {})  # type: ignore
         _broadcast("created")
-        # fan-out async
-        asyncio.create_task(fanout_notify(title, message, "orchestrator", priority))
-    
+
+        # Fan-out to external notifiers if available
+        try:
+            import notify  # optional notify.py module
+            notify.send_all(title, message, priority)
+        except Exception as e:
+            print(f"[orchestrator notify] external fan-out skipped: {e}")
+
     orchestrator_module.init_orchestrator(
         config={
             "playbooks_path": "/share/jarvis_prime/playbooks",
-            "runner": "ansible"  # or "script"
+            "runner": "ansible"  # or "script" if you don't want Ansible
         },
         db_path=os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"),
         notify_callback=notify_via_inbox,
@@ -106,18 +60,7 @@ analytics_module = importlib.util.module_from_spec(analytics_spec)  # type: igno
 if analytics_spec and analytics_spec.loader and _ANALYTICS_FILE.exists():
     analytics_spec.loader.exec_module(analytics_module)  # type: ignore
     analytics_db, analytics_monitor = analytics_module.init_analytics(
-        os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"),
-        notify_callback=lambda data: (
-            storage.save_message(
-                data.get("title", "Analytics"),
-                data.get("message", ""),
-                "analytics",
-                5,
-                {}
-            ),
-            _broadcast("created"),
-            asyncio.create_task(fanout_notify(data.get("title", "Analytics"), data.get("message", ""), "analytics"))
-        )
+        os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
     )
     print("[analytics] Initialized")
 else:
@@ -139,6 +82,7 @@ def pick_ui_root():
         idx = d / "index.html"
         if d.is_dir() and idx.exists():
             return d, idx
+    # last resort: first existing dir even if index missing
     for d in CANDIDATES:
         if d.is_dir():
             return d, d / "index.html"
@@ -351,16 +295,17 @@ async def api_emit(request: web.Request):
 # ---- app ----
 def _make_app() -> web.Application:
     app = web.Application()
-    
+
+    # Startup hook to start orchestrator scheduler and analytics monitors after event loop is running
     async def start_background_tasks(app):
         if orchestrator_module:
             orchestrator_module.start_orchestrator_scheduler()
         if analytics_module and analytics_monitor:
             await analytics_monitor.start_all_monitors()
             print("[analytics] Monitoring started")
-    
+
     app.on_startup.append(start_background_tasks)
-    
+
     # API routes
     app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
@@ -377,12 +322,16 @@ def _make_app() -> web.Application:
     app.router.add_post("/internal/wake", api_wake)
     app.router.add_post("/internal/emit", api_emit)
 
+    # Register orchestrator routes if available
     if orchestrator_module:
         orchestrator_module.register_routes(app)
+
+    # Register analytics routes if available
     if analytics_module:
         analytics_module.register_routes(app)
         print("[analytics] Routes registered")
 
+    # ONE static root only
     async def _index(_):
         if UI_INDEX.exists():
             return web.FileResponse(path=str(UI_INDEX))
@@ -393,6 +342,7 @@ def _make_app() -> web.Application:
     app.router.add_static("/ui/", str(UI_ROOT))
     app.router.add_static("/", str(UI_ROOT))
 
+    # diagnostics
     async def _debug_ui_root(_):
         return _json({"ui_root": str(UI_ROOT), "index_exists": UI_INDEX.exists()})
     app.router.add_get("/debug/ui-root", _debug_ui_root)
