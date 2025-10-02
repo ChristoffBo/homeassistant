@@ -45,7 +45,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-  // API configuration
+  // API configuration - FIXED FOR INGRESS
   function apiRoot() {
     if (window.JARVIS_API_BASE) {
       let v = String(window.JARVIS_API_BASE);
@@ -54,9 +54,16 @@
     try {
       const u = new URL(document.baseURI);
       let p = u.pathname;
-      if (p.endsWith('/index.html')) p = p.slice(0, -'/index.html'.length);
-      if (p.endsWith('/ui/')) p = p.slice(0, -4);
+      
+      // Strip index.html if present
+      if (p.endsWith('/index.html')) {
+        p = p.slice(0, -'/index.html'.length);
+      }
+      
+      // 🔥 Do NOT strip /ui/ if running under Ingress
+      // Just ensure trailing slash
       if (!p.endsWith('/')) p += '/';
+      
       u.pathname = p;
       return u.toString();
     } catch (e) {
