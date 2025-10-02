@@ -364,11 +364,12 @@ class AnalyticsDB:
 class HealthMonitor:
     """Performs health checks on services"""
     
-    def __init__(self, db: AnalyticsDB):
+    def __init__(self, db: AnalyticsDB, notify_callback=None):
         self.db = db
         self.session = None
         self.monitoring_tasks = {}
         self.previous_status = {}
+        self.notify_callback = notify_callback
     
     async def init_session(self):
         """Initialize aiohttp session"""
@@ -549,10 +550,22 @@ class HealthMonitor:
                 if metric.status == 'down' and prev_status != 'down':
                     self.db.create_incident(service.service_name, metric.error_message)
                     logger.warning(f"{service.service_name} is DOWN: {metric.error_message}")
+                    if self.notify_callback:
+                        self.notify_callback({
+                            "service": service.service_name,
+                            "status": "down",
+                            "message": metric.error_message or "Service unreachable"
+                        })
                     
                 elif metric.status == 'up' and prev_status == 'down':
                     self.db.resolve_incident(service.service_name)
                     logger.info(f"{service.service_name} is back UP")
+                    if self.notify_callback:
+                        self.notify_callback({
+                            "service": service.service_name,
+                            "status": "up",
+                            "message": "Service recovered"
+                        })
                 
                 self.previous_status[service.service_name] = metric.status
                 
@@ -594,13 +607,13 @@ db = None
 monitor = None
 
 
-def init_analytics(db_path: str = "/data/jarvis.db"):
+def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
     """Initialize analytics module"""
     global db, monitor
     db = AnalyticsDB(db_path)
-    monitor = HealthMonitor(db)
+    monitor = HealthMonitor(db, notify_callback=notify_callback)
     
-    # 🔥 automatically bootstrap monitoring
+    # automatically bootstrap monitoring
     async def safe_start():
         await asyncio.sleep(1)  # small delay to let aiohttp app boot
         try:
