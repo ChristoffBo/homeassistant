@@ -341,7 +341,8 @@
         </div>
       </div>
     </section>
-<!-- =============== ANALYTICS TAB =============== -->
+
+    <!-- =============== ANALYTICS TAB =============== -->
     <section id="analytics" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -381,7 +382,7 @@
         </div>
       </div>
 
-      <!-- Reset Controls -->
+      <!-- Reset & Purge Controls -->
       <div style="margin: 20px 0; display: flex; gap: 12px; flex-wrap: wrap;">
         <button class="btn" onclick="analyticsResetHealth()" 
                 style="background: rgba(255, 149, 0, 0.1); border: 1px solid rgba(255, 149, 0, 0.3); color: #fb923c;">
@@ -390,6 +391,20 @@
         <button class="btn" onclick="analyticsResetIncidents()" 
                 style="background: rgba(255, 69, 58, 0.1); border: 1px solid rgba(255, 69, 58, 0.3); color: #ef4444;">
           🗑️ Clear All Incidents
+        </button>
+        
+        <!-- PURGE PATCH - Three new purge buttons -->
+        <button class="btn" onclick="analyticsPurgeWeek()" 
+                style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); color: #8b5cf6;">
+          🗑️ Purge 1 Week
+        </button>
+        <button class="btn" onclick="analyticsPurgeMonth()" 
+                style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); color: #8b5cf6;">
+          🗑️ Purge 1 Month
+        </button>
+        <button class="btn" onclick="analyticsPurgeAll()" 
+                style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #ef4444;">
+          ⚠️ Purge ALL
         </button>
       </div>
 
@@ -640,7 +655,8 @@
       </div>
     </div>
   </div>
-<!-- ANALYTICS ADD/EDIT SERVICE MODAL -->
+
+  <!-- ANALYTICS ADD/EDIT SERVICE MODAL -->
   <div id="analytics-service-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
