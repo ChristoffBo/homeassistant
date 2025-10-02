@@ -49,7 +49,22 @@ analytics_spec = importlib.util.spec_from_file_location("jarvis_analytics", str(
 analytics_module = importlib.util.module_from_spec(analytics_spec)  # type: ignore
 if analytics_spec and analytics_spec.loader and _ANALYTICS_FILE.exists():
     analytics_spec.loader.exec_module(analytics_module)  # type: ignore
-    analytics_db, analytics_monitor = analytics_module.init_analytics(os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"))
+
+    def notify_via_analytics(event):
+        """Send analytics service UP/DOWN events through inbox + broadcasts"""
+        service = event.get("service", "unknown")
+        status = event.get("status", "unknown")
+        message = event.get("message", "")
+        title = f"Analytics: {service}"
+        body = f"Service {service} is {status.upper()} — {message}"
+        priority = 8 if status == "down" else 5
+        storage.save_message(title, body, "analytics", priority, {})  # type: ignore
+        _broadcast("created")
+
+    analytics_db, analytics_monitor = analytics_module.init_analytics(
+        os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"),
+        notify_callback=notify_via_analytics
+    )
     print("[analytics] Initialized")
 else:
     analytics_module = None
