@@ -45,23 +45,14 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-  // API configuration
+  // ✅ FIXED: API configuration
   function apiRoot() {
     if (window.JARVIS_API_BASE) {
       let v = String(window.JARVIS_API_BASE);
       return v.endsWith('/') ? v : v + '/';
     }
-    try {
-      const u = new URL(document.baseURI);
-      let p = u.pathname;
-      if (p.endsWith('/index.html')) p = p.slice(0, -'/index.html'.length);
-      if (p.endsWith('/ui/')) p = p.slice(0, -4);
-      if (!p.endsWith('/')) p += '/';
-      u.pathname = p;
-      return u.toString();
-    } catch (e) {
-      return document.baseURI;
-    }
+    // Always fall back to absolute origin, not document.baseURI
+    return window.location.origin + '/';
   }
   
   const ROOT = apiRoot();
