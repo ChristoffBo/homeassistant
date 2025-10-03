@@ -657,18 +657,6 @@ def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
             except Exception:
                 pass
         
-        # 2. ALSO call legacy notify_callback if it was provided
-        if notify_callback:
-            try:
-                notify_callback({
-                    "title": title,
-                    "message": body,
-                    "priority": "high",
-                    "tags": ["analytics", service]
-                })
-            except Exception as e:
-                logger.error(f"Legacy notify_callback failed: {e}")
-    
     monitor = HealthMonitor(db, notify_callback=notify_callback or analytics_notify)
     
     try:
