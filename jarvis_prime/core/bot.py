@@ -503,7 +503,57 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         except Exception as e:
             print(f"[bot] storage save failed: {e}")
 
+# --- ADD: fan-out to ntfy (optional, via env) ---
+    try:
+        ntfy_url   = os.getenv("NTFY_URL", "").rstrip("/")
+        ntfy_topic = os.getenv("NTFY_TOPIC", "").strip()
+        ntfy_token = os.getenv("NTFY_TOKEN", "").strip()
+        if ntfy_url and ntfy_topic:
+            ntfy_headers = {
+                "Title": f"{BOT_ICON} {BOT_NAME}: {title}",
+                "Priority": str(int(priority)),
+            }
+            if ntfy_token:
+                ntfy_headers["Authorization"] = f"Bearer {ntfy_token}"
+            requests.post(
+                f"{ntfy_url}/{ntfy_topic}",
+                data=(message or "").encode("utf-8"),
+                headers=ntfy_headers,
+                timeout=5,
+            )
+    except Exception as e:
+        print(f"[bot] ntfy push failed: {e}")
+
+    # --- ADD: fan-out to SMTP (optional, via env) ---
+    try:
+        smtp_host = os.getenv("SMTP_OUT_HOST", "").strip()
+        smtp_port = int(os.getenv("SMTP_OUT_PORT", "587"))
+        smtp_user = os.getenv("SMTP_OUT_USER", "").strip()
+        smtp_pass = os.getenv("SMTP_OUT_PASS", "").strip()
+        smtp_from = os.getenv("SMTP_FROM", smtp_user or "jarvis@localhost").strip()
+        smtp_to   = [r.strip() for r in os.getenv("SMTP_RECIPIENTS", "").split(",") if r.strip()]
+
+        if smtp_host and smtp_to:
+            import smtplib
+            from email.mime.text import MIMEText
+
+            msg = MIMEText(message or "", _charset="utf-8")
+            msg["Subject"] = f"{BOT_ICON} {BOT_NAME}: {title}"
+            msg["From"] = smtp_from
+            msg["To"] = ", ".join(smtp_to)
+
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=6) as s:
+                try: s.starttls()
+                except Exception: pass
+                if smtp_user:
+                    try: s.login(smtp_user, smtp_pass)
+                    except Exception as e: print(f"[bot] smtp login failed: {e}")
+                s.sendmail(smtp_from, smtp_to, msg.as_string())
+    except Exception as e:
+        print(f"[bot] smtp outbound failed: {e}")
+
     return True
+
 def delete_original_message(msg_id: int):
     try:
         if not (msg_id and GOTIFY_URL and CLIENT_TOKEN):
@@ -1328,6 +1378,9 @@ async def _run_forever():
 
     while True:
         await asyncio.sleep(60)
+
+# Export for orchestrator/analytics to import
+process_incoming = _process_incoming
 
 if __name__ == "__main__":
     main()
