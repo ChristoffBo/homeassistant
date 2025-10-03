@@ -2,6 +2,7 @@
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
 PATCHED: Now includes dual notification support (process_incoming fan-out + legacy callback)
+PATCHED: get_incidents now returns consistent { "incidents": [...] } format
 """
 
 import sqlite3
@@ -787,9 +788,21 @@ async def get_uptime(request: web.Request):
 
 
 async def get_incidents(request: web.Request):
-    days = int(request.rel_url.query.get('days', 7))
-    incidents = db.get_recent_incidents(days)
-    return _json(incidents)
+    """
+    Get recent incidents for analytics dashboard.
+    Always returns JSON with 'incidents' key for consistency.
+    """
+    try:
+        days = int(request.rel_url.query.get('days', 7))
+    except Exception:
+        days = 7
+    
+    try:
+        incidents = db.get_recent_incidents(days)
+        return _json({"incidents": incidents})
+    except Exception as e:
+        logger.error(f"Failed to fetch incidents: {e}")
+        return _json({"incidents": [], "error": str(e)}, status=500)
 
 
 async def reset_health_score(request: web.Request):
@@ -887,5 +900,3 @@ def register_routes(app: web.Application):
     app.router.add_post('/api/analytics/purge-all', purge_all_metrics)
     app.router.add_post('/api/analytics/purge-week', purge_week_metrics)
     app.router.add_post('/api/analytics/purge-month', purge_month_metrics)
-
-
