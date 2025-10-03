@@ -1,7 +1,7 @@
 """
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
-PATCHED: Now includes notification integration via notify_error
+PATCHED: Now includes notification integration via process_incoming fan-out
 """
 
 import sqlite3
@@ -15,11 +15,6 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from aiohttp import web
 import logging
-
-# ============================================
-# NOTIFICATION PATCH - Import notify_error
-# ============================================
-from errors import notify_error
 
 logger = logging.getLogger(__name__)
 
@@ -639,20 +634,32 @@ def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
     db = AnalyticsDB(db_path)
     
     def analytics_notify(event):
-        """Handle analytics incident notifications"""
+        """Handle analytics incident notifications via Jarvis fan-out"""
+        # Import inside the function to avoid startup import-order issues
+        try:
+            from bot import process_incoming
+        except Exception as e:
+            logger.error(f"Jarvis fan-out not available: {e}")
+            # Fall back to error overlay if bot module unavailable
+            try:
+                from errors import notify_error
+                notify_error(f"[Analytics] {event.get('service')} {event.get('status')} — {event.get('message')}", context="analytics")
+            except Exception:
+                pass
+            return
+        
         service = event['service']
         status = event['status'].upper()
         message = event['message']
+        title = "Analytics"
         
         if status == "DOWN":
-            msg = f"🔴 [Analytics] {service} is DOWN — {message}"
+            body = f"🔴 {service} is DOWN — {message}"
         else:
-            msg = f"🟢 [Analytics] {service} is UP — {message}"
+            body = f"🟢 {service} is UP — {message}"
         
-        try:
-            notify_error(msg, context="analytics")
-        except Exception as e:
-            logger.error(f"Failed to send analytics notification: {e}")
+        # Push into Inbox + all fan-outs (Gotify/ntfy/SMTP/etc.)
+        process_incoming(title, body, source="analytics", priority=5)
     
     monitor = HealthMonitor(db, notify_callback=notify_callback or analytics_notify)
     
@@ -880,4 +887,7 @@ def register_routes(app: web.Application):
     app.router.add_get('/api/analytics/incidents', get_incidents)
     app.router.add_post('/api/analytics/reset-health', reset_health_score)
     app.router.add_post('/api/analytics/reset-incidents', reset_incidents)
-    app.router.add_post('/api/analytics/reset-service/{service
+    app.router.add_post('/api/analytics/reset-service/{service_name}', reset_service_data)
+    app.router.add_post('/api/analytics/purge-all', purge_all_metrics)
+    app.router.add_post('/api/analytics/purge-week', purge_week_metrics)
+    app.router.add_post('/api/analytics/purge-month', purge_month_metrics)
