@@ -19,10 +19,20 @@
 
   <link rel="stylesheet" href="style.css?v=3.2" />
   
-  <!-- PWA Manifest -->
-  <link rel="manifest" href="manifest.json">
+  <!-- Favicon / Browser tab icons -->
+  <link rel="icon" href="/icons/icon-16x16.png" sizes="16x16" type="image/png">
+  <link rel="icon" href="/icons/icon-32x32.png" sizes="32x32" type="image/png">
   
-  <!-- Theme color for browser UI -->
+  <!-- Android/Chrome PWA -->
+  <link rel="icon" href="/icons/icon-192x192.png" sizes="192x192" type="image/png">
+  
+  <!-- Apple Touch Icon (iOS home screen) -->
+  <link rel="apple-touch-icon" href="/icons/icon-512x512.png">
+  
+  <!-- Web App Manifest -->
+  <link rel="manifest" href="/manifest.json">
+  
+  <!-- Theme color (for PWA splash / tab coloring) -->
   <meta name="theme-color" content="#00d9ff">
   
   <!-- iOS specific meta tags -->
@@ -46,18 +56,10 @@
       </div>
       
       <nav class="system-nav">
-        <button class="nav-tab active" data-tab="inbox">
-          📥 Inbox & Chat
-        </button>
-        <button class="nav-tab" data-tab="wake">
-          ⚡ System Commands
-        </button>
-        <button class="nav-tab" data-tab="orchestrator">
-          ⚙️ Orchestrator
-        </button>
-        <button class="nav-tab" data-tab="analytics">
-          📊 Analytics
-        </button>
+        <button class="nav-tab active" data-tab="inbox">📥 Inbox & Chat</button>
+        <button class="nav-tab" data-tab="wake">⚡ System Commands</button>
+        <button class="nav-tab" data-tab="orchestrator">⚙️ Orchestrator</button>
+        <button class="nav-tab" data-tab="analytics">📊 Analytics</button>
       </nav>
       
       <div class="system-status">
@@ -613,8 +615,7 @@
       </form>
     </div>
   </div>
-
-  <!-- HISTORY SETTINGS MODAL -->
+<!-- HISTORY SETTINGS MODAL -->
   <div id="history-modal" class="modal">
     <div class="modal-content" style="max-width: 600px;">
       <div class="modal-header">
