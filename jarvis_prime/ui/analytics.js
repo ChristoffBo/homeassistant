@@ -1,5 +1,6 @@
 // Analytics Module for Jarvis Prime
 // Handles all analytics UI interactions and API calls
+// PATCHED: analyticsLoadIncidents now handles { "incidents": [...] } format consistently
 
 // Use the API() helper from app.js for proper path resolution
 const ANALYTICS_API = (path = '') => {
@@ -257,13 +258,16 @@ async function analyticsLoadServices() {
   }
 }
 
-// Load incidents
+// Load incidents - PATCHED to handle both array and object responses
 async function analyticsLoadIncidents() {
   const list = document.getElementById('analytics-incidents-list');
   
   try {
     const response = await fetch(ANALYTICS_API('incidents?days=7'));
-    const incidents = await response.json();
+    const data = await response.json();
+    
+    // Handle both array response and object with incidents key
+    const incidents = Array.isArray(data) ? data : (data.incidents || []);
 
     if (incidents.length === 0) {
       list.innerHTML = `
