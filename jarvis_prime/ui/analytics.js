@@ -494,24 +494,21 @@ async function analyticsResetServiceData(serviceName) {
 }
 
 // ============================================
-// PURGE PATCH - New purge functions
+// PURGE FUNCTIONS - FIXED ROUTES
 // ============================================
 
 // Purge ALL metrics
 async function analyticsPurgeAll() {
-  console.log('analyticsPurgeAll called');
   if (!confirm('⚠️ DANGER: Purge ALL metrics history? This cannot be undone!')) return;
   if (!confirm('Are you absolutely sure? This will delete EVERYTHING.')) return;
 
   try {
-    const response = await fetch(ANALYTICS_API('purge/all'), {
+    const response = await fetch(ANALYTICS_API('purge-all'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
     
     const result = await response.json();
-    console.log('Purge all result:', result);
-    
     if (result.success) {
       showToast(`Purged all ${result.deleted} metrics`, 'success');
       analyticsRefresh();
@@ -526,18 +523,15 @@ async function analyticsPurgeAll() {
 
 // Purge metrics older than 1 week
 async function analyticsPurgeWeek() {
-  console.log('analyticsPurgeWeek called');
   if (!confirm('Purge metrics older than 1 week (7 days)?')) return;
 
   try {
-    const response = await fetch(ANALYTICS_API('purge/week'), {
+    const response = await fetch(ANALYTICS_API('purge-week'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
     
     const result = await response.json();
-    console.log('Purge week result:', result);
-    
     if (result.success) {
       showToast(`Purged ${result.deleted} metrics older than 1 week`, 'success');
       analyticsRefresh();
@@ -552,18 +546,15 @@ async function analyticsPurgeWeek() {
 
 // Purge metrics older than 1 month
 async function analyticsPurgeMonth() {
-  console.log('analyticsPurgeMonth called');
   if (!confirm('Purge metrics older than 1 month (30 days)?')) return;
 
   try {
-    const response = await fetch(ANALYTICS_API('purge/month'), {
+    const response = await fetch(ANALYTICS_API('purge-month'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
     
     const result = await response.json();
-    console.log('Purge month result:', result);
-    
     if (result.success) {
       showToast(`Purged ${result.deleted} metrics older than 1 month`, 'success');
       analyticsRefresh();
