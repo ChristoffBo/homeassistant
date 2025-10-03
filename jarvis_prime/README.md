@@ -50,6 +50,20 @@ Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, Mo
 • Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled  
 • RAG Integration: if you have set a long lived token and your Home Assistant URL, chat will now answer questions regarding your systems  
 
+### Progressive Web App (PWA) Support
+Jarvis Prime includes support for installation as a Progressive Web App (PWA). This allows you to add Jarvis directly to your home screen or desktop and run it like a native application with its own window and icon. The PWA includes offline caching, automatic updates via service worker, and notification support.  
+**Setup Instructions:**  
+1. Ensure Jarvis is served over **HTTPS** (via Home Assistant Ingress or a reverse proxy with a valid certificate).  
+2. Confirm that the included `manifest.json` and `service-worker.js` are being served from the Jarvis web root.  
+3. Open Jarvis in Chrome/Edge/Android/iOS Safari. You should see an “Install App” or “Add to Home Screen” option.  
+4. After installation, Jarvis runs as a standalone app with its own icon (using `logo.png`).  
+**Benefits:**  
+• Secure HTTPS app-like access from any device  
+• One-click launch with persistent login  
+• Offline fallback support via caching  
+• Automatic background updates  
+• Push notification support for future expansion  
+
 ## Supported Sources
 
 • Radarr / Sonarr → Posters, runtime, SxxEyy, quality, size  
