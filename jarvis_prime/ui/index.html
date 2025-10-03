@@ -237,8 +237,7 @@
         </div>
       </div>
     </section>
-
-    <!-- =============== ORCHESTRATOR TAB =============== -->
+<!-- =============== ORCHESTRATOR TAB =============== -->
     <section id="orchestrator" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -259,7 +258,11 @@
         <div class="panel">
           <div class="panel-head">
             <h3>Available Playbooks</h3>
-            <button class="btn primary" onclick="orchRefreshPlaybooks()">🔄 Refresh</button>
+            <!-- UPDATED: Added Upload button -->
+            <div style="display: flex; gap: 8px;">
+              <button class="btn primary" onclick="orchShowUploadPlaybook()">📤 Upload</button>
+              <button class="btn primary" onclick="orchRefreshPlaybooks()">🔄 Refresh</button>
+            </div>
           </div>
           <div id="playbooks-list" class="playbooks-grid">
             <div class="text-center text-muted">Loading playbooks...</div>
@@ -341,8 +344,7 @@
         </div>
       </div>
     </section>
-
-    <!-- =============== ANALYTICS TAB =============== -->
+<!-- =============== ANALYTICS TAB =============== -->
     <section id="analytics" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -466,8 +468,7 @@
       </div>
     </section>
   </main>
-
-  <!-- ADD SERVER MODAL -->
+<!-- ADD SERVER MODAL -->
   <div id="server-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
@@ -567,6 +568,15 @@
         <button class="btn" onclick="orchCloseScheduleModal()">✕</button>
       </div>
       <form id="schedule-form" onsubmit="orchSaveSchedule(event)">
+        <!-- NEW: Schedule Name Field -->
+        <div class="form-group">
+          <label class="form-label">Schedule Name *</label>
+          <input type="text" id="sched-name" required placeholder="Daily Backup Check">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Give this schedule a descriptive name
+          </div>
+        </div>
+        
         <div class="form-group">
           <label class="form-label">Playbook *</label>
           <select id="sched-playbook" required>
@@ -651,6 +661,36 @@
       <div class="modal-footer">
         <button type="button" class="btn" onclick="orchCloseHistoryModal()">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- NEW: UPLOAD PLAYBOOK MODAL -->
+  <div id="upload-playbook-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Upload Playbook</h2>
+        <button class="btn" onclick="orchCloseUploadModal()">✕</button>
+      </div>
+      <form id="upload-playbook-form" onsubmit="orchUploadPlaybook(event)">
+        <div class="form-group">
+          <label class="form-label">Select File *</label>
+          <input type="file" id="upload-file" accept=".yml,.yaml,.sh,.py,.json" required>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Supported: .yml, .yaml, .sh, .py, .json
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Category (optional)</label>
+          <input type="text" id="upload-category" placeholder="monitoring, backups, etc.">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Leave blank to upload to root directory
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseUploadModal()">Cancel</button>
+          <button type="submit" class="btn primary">Upload</button>
+        </div>
+      </form>
     </div>
   </div>
 
