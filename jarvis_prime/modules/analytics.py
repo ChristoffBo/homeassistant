@@ -1,7 +1,7 @@
 """
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
-PATCHED: Now includes notification integration via process_incoming fan-out
+PATCHED: Now includes dual notification support (process_incoming fan-out + legacy callback)
 """
 
 import sqlite3
@@ -629,25 +629,12 @@ monitor = None
 
 
 def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
-    """Initialize analytics module with notification support"""
+    """Initialize analytics module with dual notification support"""
     global db, monitor
     db = AnalyticsDB(db_path)
     
     def analytics_notify(event):
-        """Handle analytics incident notifications via Jarvis fan-out"""
-        # Import inside the function to avoid startup import-order issues
-        try:
-            from bot import process_incoming
-        except Exception as e:
-            logger.error(f"Jarvis fan-out not available: {e}")
-            # Fall back to error overlay if bot module unavailable
-            try:
-                from errors import notify_error
-                notify_error(f"[Analytics] {event.get('service')} {event.get('status')} — {event.get('message')}", context="analytics")
-            except Exception:
-                pass
-            return
-        
+        """Handle analytics incident notifications via Jarvis fan-out and legacy callback"""
         service = event['service']
         status = event['status'].upper()
         message = event['message']
@@ -658,8 +645,29 @@ def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
         else:
             body = f"🟢 {service} is UP — {message}"
         
-        # Push into Inbox + all fan-outs (Gotify/ntfy/SMTP/etc.)
-        process_incoming(title, body, source="analytics", priority=5)
+        # 1. Try Jarvis fan-out (process_incoming)
+        try:
+            from bot import process_incoming
+            process_incoming(title, body, source="analytics", priority=5)
+        except Exception as e:
+            logger.error(f"process_incoming not available: {e}")
+            try:
+                from errors import notify_error
+                notify_error(f"[Analytics] {body}", context="analytics")
+            except Exception:
+                pass
+        
+        # 2. ALSO call legacy notify_callback if it was provided
+        if notify_callback:
+            try:
+                notify_callback({
+                    "title": title,
+                    "message": body,
+                    "priority": "high",
+                    "tags": ["analytics", service]
+                })
+            except Exception as e:
+                logger.error(f"Legacy notify_callback failed: {e}")
     
     monitor = HealthMonitor(db, notify_callback=notify_callback or analytics_notify)
     
