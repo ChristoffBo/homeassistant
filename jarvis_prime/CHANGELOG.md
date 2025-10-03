@@ -1,3 +1,5 @@
+## latest (2025-10-2 11:00:00)
+Added Analytycs, think uptime monitor.
 ## latest (2025-10-1 11:00:00)
 Ansible bugs squashed.
 ## latest (2025-10-1 7:00:00)
