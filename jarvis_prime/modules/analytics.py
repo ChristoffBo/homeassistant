@@ -3,6 +3,7 @@ Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
 PATCHED: Now includes dual notification support (process_incoming fan-out + legacy callback)
 PATCHED: get_incidents now returns consistent { "incidents": [...] } format
+PATCHED: analytics_notify is now always used as the primary callback
 """
 
 import sqlite3
@@ -658,7 +659,12 @@ def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
             except Exception:
                 pass
         
-    monitor = HealthMonitor(db, notify_callback=notify_callback or analytics_notify)
+        # 2. Call legacy callback if provided
+        if notify_callback:
+            notify_callback(event)
+    
+    # FIXED: Always use analytics_notify as the primary callback
+    monitor = HealthMonitor(db, notify_callback=analytics_notify)
     
     try:
         deleted = db.purge_metrics_older_than(90)
@@ -680,7 +686,6 @@ def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
         logger.warning("Event loop not ready, monitors will need manual start")
     
     return db, monitor
-
 
 def _json(data, status=200):
     return web.Response(
