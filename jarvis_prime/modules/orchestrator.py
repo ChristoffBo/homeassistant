@@ -4,6 +4,7 @@
 # Orchestrator: Lightweight automation module for Jarvis Prime
 # Runs playbooks/scripts, manages servers, logs results, notifies on completion
 # Built for aiohttp
+# PATCHED: Now uses process_incoming fan-out for notifications
 
 import os
 import json
@@ -13,13 +14,17 @@ import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from aiohttp import web
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class Orchestrator:
-    def __init__(self, config, db_path, notify_callback=None, logger=None):
+    def __init__(self, config, db_path, notify_callback=None, logger_func=None):
         self.config = config
         self.db_path = db_path
         self.notify_callback = notify_callback
-        self.logger = logger or print
+        self.logger = logger_func or print
         self.playbooks_path = config.get("playbooks_path", "/share/jarvis_prime/playbooks")
         self.runner = config.get("runner", "script")
         self.ws_clients = set()
@@ -592,10 +597,8 @@ class Orchestrator:
             conn.commit()
 
     def _send_notification(self, job_id, playbook_name, status, exit_code, triggered_by="manual", error=None):
-        """Send notification via existing notify system"""
-        if not self.notify_callback:
-            return
-        
+        """Send notification via Jarvis fan-out"""
+        # Check if we should skip notification for successful scheduled jobs
         if triggered_by.startswith("schedule_"):
             try:
                 schedule_id = int(triggered_by.split("_")[1])
@@ -609,31 +612,46 @@ class Orchestrator:
                             return
             except Exception:
                 pass
-
-        status_emoji = "✅" if status == "completed" else "❌"
-        title = f"{status_emoji} Playbook {status.upper()}"
-
-        if error:
-            message = f"Playbook: {playbook_name}\nStatus: {status}\nError: {error}"
-        else:
-            message = f"Playbook: {playbook_name}\nStatus: {status}\nExit Code: {exit_code}"
-
+        
+        # Import inside the function to avoid startup import-order issues
         try:
-            self.notify_callback({
-                "title": title,
-                "message": message,
-                "priority": "high" if status == "failed" else "normal",
-                "tags": ["orchestration", playbook_name]
-            })
+            from bot import process_incoming
         except Exception as e:
-            self.logger(f"Failed to send notification: {e}")
+            logger.error(f"Jarvis fan-out not available: {e}")
+            # Fall back to error overlay if bot module unavailable
+            try:
+                from errors import notify_error
+                notify_error(f"[Orchestrator] {playbook_name} {status} — Exit Code: {exit_code}", context="orchestrator")
+            except Exception:
+                pass
+            return
+        
+        # Build notification
+        title = "Orchestrator"
+        
+        if status == "completed":
+            body = f"✅ {playbook_name} completed successfully (exit code: {exit_code})"
+            priority = 3
+        else:
+            if error:
+                body = f"❌ {playbook_name} FAILED — {error}"
+            else:
+                body = f"❌ {playbook_name} FAILED (exit code: {exit_code})"
+            priority = 5
+        
+        # Push into Inbox + all fan-outs (Gotify/ntfy/SMTP/etc.)
+        try:
+            process_incoming(title, body, source="orchestrator", priority=priority)
+        except Exception as e:
+            logger.error(f"Failed to send orchestrator notification: {e}")
+
 
 orchestrator = None
 
-def init_orchestrator(config, db_path, notify_callback=None, logger=None):
+def init_orchestrator(config, db_path, notify_callback=None, logger_func=None):
     """Initialize the orchestrator module"""
     global orchestrator
-    orchestrator = Orchestrator(config, db_path, notify_callback, logger)
+    orchestrator = Orchestrator(config, db_path, notify_callback, logger_func)
     return orchestrator
 
 def start_orchestrator_scheduler():
@@ -758,6 +776,7 @@ async def api_add_server(request):
             groups=data.get("groups", ""),
             description=data.get("description", "")
         )
+        return _json({"success": True, "server_id": server_id})
     except Exception as e:
         return _json({"error": str(e)}, status=400)
 
