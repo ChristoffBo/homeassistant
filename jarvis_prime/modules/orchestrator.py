@@ -4,7 +4,7 @@
 # Orchestrator: Lightweight automation module for Jarvis Prime
 # Runs playbooks/scripts, manages servers, logs results, notifies on completion
 # Built for aiohttp
-# PATCHED: Now uses process_incoming fan-out for notifications
+# PATCHED: Now uses process_incoming fan-out AND legacy notify_callback
 
 import os
 import json
@@ -597,7 +597,7 @@ class Orchestrator:
             conn.commit()
 
     def _send_notification(self, job_id, playbook_name, status, exit_code, triggered_by="manual", error=None):
-        """Send notification via Jarvis fan-out"""
+        """Send notification via Jarvis fan-out and legacy callback"""
         # Check if we should skip notification for successful scheduled jobs
         if triggered_by.startswith("schedule_"):
             try:
@@ -613,19 +613,6 @@ class Orchestrator:
             except Exception:
                 pass
         
-        # Import inside the function to avoid startup import-order issues
-        try:
-            from bot import process_incoming
-        except Exception as e:
-            logger.error(f"Jarvis fan-out not available: {e}")
-            # Fall back to error overlay if bot module unavailable
-            try:
-                from errors import notify_error
-                notify_error(f"[Orchestrator] {playbook_name} {status} — Exit Code: {exit_code}", context="orchestrator")
-            except Exception:
-                pass
-            return
-        
         # Build notification
         title = "Orchestrator"
         
@@ -639,11 +626,29 @@ class Orchestrator:
                 body = f"❌ {playbook_name} FAILED (exit code: {exit_code})"
             priority = 5
         
-        # Push into Inbox + all fan-outs (Gotify/ntfy/SMTP/etc.)
+        # 1. Try Jarvis fan-out (process_incoming)
         try:
+            from bot import process_incoming
             process_incoming(title, body, source="orchestrator", priority=priority)
         except Exception as e:
-            logger.error(f"Failed to send orchestrator notification: {e}")
+            logger.error(f"process_incoming not available: {e}")
+            try:
+                from errors import notify_error
+                notify_error(f"[Orchestrator] {body}", context="orchestrator")
+            except Exception:
+                pass
+        
+        # 2. ALSO call legacy notify_callback if provided (for inbox)
+        if self.notify_callback:
+            try:
+                self.notify_callback({
+                    "title": title,
+                    "message": body,
+                    "priority": "high" if status == "failed" else "normal",
+                    "tags": ["orchestration", playbook_name]
+                })
+            except Exception as e:
+                logger.error(f"Legacy notify_callback failed: {e}")
 
 
 orchestrator = None
