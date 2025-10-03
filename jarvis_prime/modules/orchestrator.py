@@ -301,8 +301,7 @@ class Orchestrator:
             organized[category].sort(key=lambda x: x["name"])
         
         return organized
-
-# ... (continued from Part 1)
+# Continued from Part 1
 
     def get_job_history(self, limit=50, status=None, playbook=None):
         """Get recent job execution history with optional filters"""
@@ -601,7 +600,6 @@ class Orchestrator:
 
     def _send_notification(self, job_id, playbook_name, status, exit_code, triggered_by="manual", error=None):
         """Send notification via Jarvis fan-out and legacy callback"""
-        # Check if we should skip notification for successful scheduled jobs
         if triggered_by.startswith("schedule_"):
             try:
                 schedule_id = int(triggered_by.split("_")[1])
@@ -616,7 +614,6 @@ class Orchestrator:
             except Exception:
                 pass
         
-        # Build notification
         title = "Orchestrator"
         
         if status == "completed":
@@ -629,7 +626,6 @@ class Orchestrator:
                 body = f"❌ {playbook_name} FAILED (exit code: {exit_code})"
             priority = 5
         
-        # 1. Try Jarvis fan-out (process_incoming)
         try:
             from bot import process_incoming
             process_incoming(title, body, source="orchestrator", priority=priority)
@@ -668,7 +664,6 @@ async def api_list_playbooks_organized(request):
         return _json({"error": "Orchestrator not initialized"}, status=500)
     return _json({"playbooks": orchestrator.list_playbooks_organized()})
 
-# NEW: Download playbook endpoint
 async def api_download_playbook(request):
     """Download a playbook file"""
     if not orchestrator:
@@ -679,7 +674,6 @@ async def api_download_playbook(request):
         base_path = Path(orchestrator.playbooks_path).resolve()
         full_path = (base_path / playbook_path).resolve()
         
-        # Security check
         if not str(full_path).startswith(str(base_path)):
             return _json({"error": "Invalid file path"}, status=403)
         
@@ -695,7 +689,6 @@ async def api_download_playbook(request):
     except Exception as e:
         return _json({"error": str(e)}, status=500)
 
-# NEW: Upload playbook endpoint
 async def api_upload_playbook(request):
     """Upload a playbook file"""
     if not orchestrator:
@@ -704,7 +697,6 @@ async def api_upload_playbook(request):
     try:
         reader = await request.multipart()
         
-        # Read file field
         file_field = await reader.next()
         if not file_field or file_field.name != 'file':
             return _json({"error": "No file provided"}, status=400)
@@ -713,7 +705,6 @@ async def api_upload_playbook(request):
         if not filename:
             return _json({"error": "No filename provided"}, status=400)
         
-        # Validate extension
         allowed_extensions = ['.yml', '.yaml', '.sh', '.py', '.json']
         ext = os.path.splitext(filename)[1].lower()
         
@@ -722,13 +713,11 @@ async def api_upload_playbook(request):
                 "error": f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
             }, status=400)
         
-        # Read category field (optional)
         category = None
         category_field = await reader.next()
         if category_field and category_field.name == 'category':
             category = (await category_field.read()).decode('utf-8').strip()
         
-        # Determine save path
         base_path = Path(orchestrator.playbooks_path).resolve()
         if category and category != 'root':
             save_dir = base_path / category
@@ -738,16 +727,12 @@ async def api_upload_playbook(request):
         
         filepath = save_dir / filename
         
-        # Check if file exists
         if filepath.exists():
             return _json({
                 "error": "File already exists. Delete it first or rename your upload."
             }, status=409)
         
-        # Save file
-        with open(filepath, 'wb') as f
-
-# Save file (continued from Part 2)
+        # FIXED: Complete with statement with proper indentation
         with open(filepath, 'wb') as f:
             while True:
                 chunk = await file_field.read_chunk()
@@ -755,7 +740,6 @@ async def api_upload_playbook(request):
                     break
                 f.write(chunk)
         
-        # Make scripts executable
         if ext in ['.sh', '.py']:
             os.chmod(filepath, 0o755)
         
@@ -765,7 +749,7 @@ async def api_upload_playbook(request):
             "success": True,
             "message": f"Playbook '{filename}' uploaded successfully",
             "filename": filename,
-            "category": category if category != 'root' else None
+"category": category if category != 'root' else None
         })
         
     except Exception as e:
@@ -1003,8 +987,8 @@ async def api_delete_schedule(request):
 def register_routes(app):
     app.router.add_get("/api/orchestrator/playbooks", api_list_playbooks)
     app.router.add_get("/api/orchestrator/playbooks/organized", api_list_playbooks_organized)
-    app.router.add_get("/api/orchestrator/playbooks/download/{playbook:.*}", api_download_playbook)  # NEW
-    app.router.add_post("/api/orchestrator/playbooks/upload", api_upload_playbook)  # NEW
+    app.router.add_get("/api/orchestrator/playbooks/download/{playbook:.*}", api_download_playbook)
+    app.router.add_post("/api/orchestrator/playbooks/upload", api_upload_playbook)
     app.router.add_post("/api/orchestrator/run/{playbook:.*}", api_run_playbook)
     app.router.add_get("/api/orchestrator/status/{id:\\d+}", api_get_status)
     app.router.add_get("/api/orchestrator/history", api_history)
