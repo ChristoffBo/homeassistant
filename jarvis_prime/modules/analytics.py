@@ -899,3 +899,18 @@ def register_routes(app: web.Application):
     app.router.add_post('/api/analytics/purge-all', purge_all_metrics)
     app.router.add_post('/api/analytics/purge-week', purge_week_metrics)
     app.router.add_post('/api/analytics/purge-month', purge_month_metrics)
+
+# ---- FAN-OUT PATCH ----
+try:
+    from bot import process_incoming
+    def fanout_notify(title: str, message: str, source="analytics", priority=5):
+        try:
+            process_incoming(title, message, source=source, priority=priority)
+            logger.info(f"[fan-out] delivered → {source}: {title}")
+        except Exception as e:
+            logger.error(f"[fan-out] failed: {e}")
+except Exception as e:
+    logger.warning(f"[fan-out] process_incoming not available: {e}")
+    def fanout_notify(*args, **kwargs):
+        pass
+
