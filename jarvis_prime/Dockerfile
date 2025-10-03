@@ -75,6 +75,7 @@ COPY /modules/storage.py      /app/storage.py
 COPY /intakes/ntfy_client.py  /app/ntfy_client.py
 COPY /intakes/smtp_client.py  /app/smtp_client.py
 COPY ui/ /app/ui/
+COPY /ui/icon /app/
 COPY /intakes/webhook_server.py  /app/webhook_server.py
 COPY /intakes/websocket.py  /app/websocket.py
 COPY /intakes/apprise.py  /app/apprise.py
