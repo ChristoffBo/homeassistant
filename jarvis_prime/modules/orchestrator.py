@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    def __init__(self, config, db_path, notify_callback=None, logger_func=None):
+    def __init__(self, config, db_path, notify_callback=None, logger=None):
         self.config = config
         self.db_path = db_path
         self.notify_callback = notify_callback
-        self.logger = logger_func or print
+        self.logger = logger or print
         self.playbooks_path = config.get("playbooks_path", "/share/jarvis_prime/playbooks")
         self.runner = config.get("runner", "script")
         self.ws_clients = set()
@@ -648,10 +648,10 @@ class Orchestrator:
 
 orchestrator = None
 
-def init_orchestrator(config, db_path, notify_callback=None, logger_func=None):
+def init_orchestrator(config, db_path, notify_callback=None, logger=None):
     """Initialize the orchestrator module"""
     global orchestrator
-    orchestrator = Orchestrator(config, db_path, notify_callback, logger_func)
+    orchestrator = Orchestrator(config, db_path, notify_callback, logger)
     return orchestrator
 
 def start_orchestrator_scheduler():
