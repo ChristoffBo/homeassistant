@@ -638,19 +638,7 @@ class Orchestrator:
             except Exception:
                 pass
         
-        # 2. ALSO call legacy notify_callback if provided (for inbox)
-        if self.notify_callback:
-            try:
-                self.notify_callback({
-                    "title": title,
-                    "message": body,
-                    "priority": "high" if status == "failed" else "normal",
-                    "tags": ["orchestration", playbook_name]
-                })
-            except Exception as e:
-                logger.error(f"Legacy notify_callback failed: {e}")
-
-
+        
 orchestrator = None
 
 def init_orchestrator(config, db_path, notify_callback=None, logger=None):
