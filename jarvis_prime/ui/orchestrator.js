@@ -1,5 +1,4 @@
 // orchestrator.js - Orchestrator tab functionality for Jarvis Prime
-// UPDATED: Added upload/download playbooks + schedule name support
 
 (function() {
   'use strict';
@@ -185,7 +184,6 @@
                   <option value="">All servers</option>
                 </select>
                 <button class="btn primary" onclick="orchRunPlaybook('${p.path.replace(/'/g, "\\'")}')">▶ Run</button>
-                <button class="btn" onclick="orchDownloadPlaybook('${p.path.replace(/'/g, "\\'")}')" style="background: #60a5fa; color: white;">⬇ Download</button>
               </div>
             </div>
           `;
@@ -320,74 +318,6 @@
   }
 
   // ============================================
-  // NEW: PLAYBOOK UPLOAD/DOWNLOAD
-  // ============================================
-  window.orchShowUploadPlaybook = function() {
-    const modal = document.getElementById('upload-playbook-modal');
-    if (modal) {
-      modal.classList.add('active');
-      document.getElementById('upload-playbook-form').reset();
-    }
-  };
-
-  window.orchCloseUploadModal = function() {
-    const modal = document.getElementById('upload-playbook-modal');
-    if (modal) modal.classList.remove('active');
-  };
-
-  window.orchUploadPlaybook = async function(event) {
-    event.preventDefault();
-    
-    const fileInput = document.getElementById('upload-file');
-    const categoryInput = document.getElementById('upload-category');
-    
-    if (!fileInput.files || fileInput.files.length === 0) {
-      toast('Please select a file', 'error');
-      return;
-    }
-    
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
-    formData.append('category', categoryInput.value.trim());
-    
-    try {
-      const btn = event.submitter;
-      btn.classList.add('loading');
-      btn.disabled = true;
-      
-      const response = await fetch(API('api/orchestrator/playbooks/upload'), {
-        method: 'POST',
-        body: formData
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        toast(result.message, 'success');
-        orchCloseUploadModal();
-        orchLoadPlaybooks();
-      } else {
-        toast('Upload failed: ' + (result.error || 'Unknown error'), 'error');
-      }
-    } catch (e) {
-      toast('Upload failed: ' + e.message, 'error');
-    } finally {
-      const btn = event.submitter;
-      if (btn) {
-        btn.classList.remove('loading');
-        btn.disabled = false;
-      }
-    }
-  };
-
-  window.orchDownloadPlaybook = function(playbookPath) {
-    const url = API(`api/orchestrator/playbooks/download/${encodeURIComponent(playbookPath)}`);
-    window.open(url, '_blank');
-  };
-
-// (Continued from Part 1)
-
-  // ============================================
   // SERVERS
   // ============================================
   window.orchLoadServers = async function() {
@@ -472,11 +402,13 @@
     }
   };
 
+  // Edit Server Functions
   window.orchEditServer = async function(serverId) {
     const modal = document.getElementById('edit-server-modal');
     if (!modal) return;
     
     try {
+      // Fetch full server details (includes password)
       const server = await jfetch(API(`api/orchestrator/servers/${serverId}`));
       
       if (!server) {
@@ -484,12 +416,13 @@
         return;
       }
       
+      // Populate form
       document.getElementById('edit-srv-id').value = server.id;
       document.getElementById('edit-srv-name').value = server.name;
       document.getElementById('edit-srv-host').value = server.hostname;
       document.getElementById('edit-srv-port').value = server.port;
       document.getElementById('edit-srv-user').value = server.username;
-      document.getElementById('edit-srv-pass').value = '';
+      document.getElementById('edit-srv-pass').value = ''; // Don't show existing password
       document.getElementById('edit-srv-groups').value = server.groups || '';
       document.getElementById('edit-srv-desc').value = server.description || '';
       
@@ -519,6 +452,7 @@
       description: document.getElementById('edit-srv-desc').value
     };
     
+    // Only include password if it was changed
     if (password) {
       data.password = password;
     }
@@ -559,7 +493,7 @@
   };
 
   // ============================================
-  // SCHEDULES (UPDATED: Now supports custom names)
+  // SCHEDULES
   // ============================================
   window.orchLoadSchedules = async function() {
     const tbody = document.getElementById('schedules-list');
@@ -576,7 +510,7 @@
       
       tbody.innerHTML = data.schedules.map(s => `
         <tr>
-          <td>${s.name || s.playbook}</td>
+          <td>${s.playbook}</td>
           <td><code style="background: var(--surface-tertiary); padding: 2px 6px; border-radius: 4px;">${s.cron}</code></td>
           <td>${s.inventory_group || 'all'}</td>
           <td>${s.last_run ? new Date(s.last_run).toLocaleString() : 'Never'}</td>
@@ -588,7 +522,7 @@
           <td>
             <button class="btn" onclick="orchEditSchedule(${s.id})">✏️ Edit</button>
             <button class="btn" onclick="orchToggleSchedule(${s.id}, ${s.enabled})">${s.enabled ? 'Disable' : 'Enable'}</button>
-            <button class="btn danger" onclick="orchDeleteSchedule(${s.id}, '${(s.name || s.playbook).replace(/'/g, "\\'")}')">Delete</button>
+            <button class="btn danger" onclick="orchDeleteSchedule(${s.id}, '${s.playbook.replace(/'/g, "\\'")}')">Delete</button>
           </td>
         </tr>
       `).join('');
@@ -602,10 +536,12 @@
     const modal = document.getElementById('schedule-modal');
     if (!modal) return;
     
+    // Reset editing mode
     editingScheduleId = null;
     const modalTitle = modal.querySelector('h2');
     if (modalTitle) modalTitle.textContent = 'Create Schedule';
     
+    // Populate playbook dropdown with organized playbooks
     try {
       const data = await jfetch(API('api/orchestrator/playbooks/organized'));
       const select = document.getElementById('sched-playbook');
@@ -627,8 +563,7 @@
       
       modal.classList.add('active');
       document.getElementById('schedule-form').reset();
-      document.getElementById('sched-name').value = '';
-      document.getElementById('sched-notify').checked = true;
+      document.getElementById('sched-notify').checked = true; // Default to notifications enabled
     } catch (e) {
       toast('Failed to load playbooks: ' + e.message, 'error');
     }
@@ -639,10 +574,12 @@
     if (!modal) return;
     
     try {
+      // Set editing mode
       editingScheduleId = scheduleId;
       const modalTitle = modal.querySelector('h2');
       if (modalTitle) modalTitle.textContent = 'Edit Schedule';
       
+      // Fetch schedule details
       const schedule = await jfetch(API(`api/orchestrator/schedules/${scheduleId}`));
       
       if (!schedule) {
@@ -650,6 +587,7 @@
         return;
       }
       
+      // Load playbooks into dropdown
       const playbooksData = await jfetch(API('api/orchestrator/playbooks/organized'));
       const select = document.getElementById('sched-playbook');
       
@@ -666,8 +604,7 @@
         select.innerHTML = options;
       }
       
-      // UPDATED: Populate name field
-      document.getElementById('sched-name').value = schedule.name || schedule.playbook.split('/').pop();
+      // Populate form with schedule data
       document.getElementById('sched-playbook').value = schedule.playbook;
       document.getElementById('sched-group').value = schedule.inventory_group || '';
       document.getElementById('sched-cron').value = schedule.cron;
@@ -696,9 +633,8 @@
   window.orchSaveSchedule = async function(event) {
     event.preventDefault();
     
-    // UPDATED: Read name from input field
     const data = {
-      name: document.getElementById('sched-name').value.trim(),
+      name: document.getElementById('sched-playbook').value.split('/').pop(),
       playbook: document.getElementById('sched-playbook').value,
       cron: document.getElementById('sched-cron').value,
       inventory_group: document.getElementById('sched-group').value || null,
@@ -711,12 +647,14 @@
       btn.classList.add('loading');
       
       if (editingScheduleId) {
+        // Update existing schedule
         await jfetch(API(`api/orchestrator/schedules/${editingScheduleId}`), {
           method: 'PUT',
           body: JSON.stringify(data)
         });
         toast('Schedule updated successfully', 'success');
       } else {
+        // Create new schedule
         await jfetch(API('api/orchestrator/schedules'), {
           method: 'POST',
           body: JSON.stringify(data)
@@ -748,8 +686,8 @@
     }
   };
 
-  window.orchDeleteSchedule = async function(scheduleId, scheduleName) {
-    if (!confirm(`Delete schedule "${scheduleName}"?`)) return;
+  window.orchDeleteSchedule = async function(scheduleId, playbookName) {
+    if (!confirm(`Delete schedule for "${playbookName}"?`)) return;
     
     try {
       await jfetch(API(`api/orchestrator/schedules/${scheduleId}`), {
@@ -762,7 +700,6 @@
       toast('Failed to delete schedule: ' + e.message, 'error');
     }
   };
-// (Continued from Part 2)
 
   // ============================================
   // HISTORY
@@ -803,6 +740,7 @@
     const modal = document.getElementById('history-modal');
     if (!modal) return;
     
+    // Load history stats
     try {
       const stats = await jfetch(API('api/orchestrator/history/stats'));
       document.getElementById('history-total').textContent = stats.total_entries || 0;
@@ -853,6 +791,7 @@
       if (criteria === 'all') {
         orchCloseHistoryModal();
       } else {
+        // Reload stats
         orchShowHistorySettings();
       }
     } catch (e) {
@@ -864,12 +803,16 @@
   // INITIALIZATION
   // ============================================
   function initOrchestrator() {
+    // Connect WebSocket for live logs
     connectWebSocket();
+    
+    // Load initial data
     orchLoadPlaybooks();
     
     console.log('[Orchestrator] Frontend initialized');
   }
 
+  // Wait for DOM to be ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initOrchestrator);
   } else {
