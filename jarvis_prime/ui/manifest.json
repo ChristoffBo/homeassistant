@@ -1,6 +1,7 @@
 {
   "name": "Jarvis Prime",
   "short_name": "Jarvis",
+  "version": "1",
   "description": "Self-Hosted Notification Orchestrator with AI Chat",
   "start_url": "/",
   "display": "standalone",
