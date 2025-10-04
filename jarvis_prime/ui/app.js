@@ -76,6 +76,9 @@
   const ROOT = apiRoot();
   const API = (path) => new URL(String(path).replace(/^\/+/, ''), ROOT).toString();
 
+  // Expose API helper globally for other modules
+  window.API = API;
+
   // Toast notifications
   window.showToast = function(msg, type = 'info') {
     const d = document.createElement('div');
@@ -145,12 +148,16 @@
       if (pane) {
         pane.classList.add('active');
         
-        // Load analytics data when analytics tab is opened
+        // Load data when switching to specific tabs
         if (btn.dataset.tab === 'analytics') {
           if (typeof analyticsLoadHealthScore === 'function') {
             analyticsLoadHealthScore();
             analyticsLoadDashboard();
           }
+        }
+        
+        if (btn.dataset.tab === 'dashboard') {
+          updateDashboardMetrics();
         }
       }
     });
@@ -162,10 +169,161 @@
     if (btn) btn.click();
   };
 
+  /* =============== DASHBOARD METRICS =============== */
+  function updateDashboardMetrics() {
+    // Update inbox metrics
+    if (INBOX_ITEMS && INBOX_ITEMS.length !== undefined) {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+      const todayCount = INBOX_ITEMS.filter(i => (i.created_at || 0) >= start).length;
+      
+      const dashInboxTotal = $('#dash-inbox-total');
+      const dashInboxToday = $('#dash-inbox-today');
+      
+      if (dashInboxTotal) dashInboxTotal.textContent = INBOX_ITEMS.length;
+      if (dashInboxToday) dashInboxToday.textContent = todayCount;
+    }
+    
+    // Update chat status
+    const chatStatus = $('#chat-status');
+    const dashChatStatus = $('#dash-chat-status');
+    if (chatStatus && dashChatStatus) {
+      dashChatStatus.textContent = chatStatus.textContent || 'Ready';
+    }
+    
+    // Update commands count
+    const dashCommands = $('#dash-commands');
+    const dashLastCommand = $('#dash-last-command');
+    
+    if (dashCommands && wakeHistory) {
+      dashCommands.textContent = wakeHistory.length;
+    }
+    
+    const lastWake = $('#last-wake');
+    if (dashLastCommand && lastWake) {
+      dashLastCommand.textContent = lastWake.textContent || 'No commands sent';
+    }
+    
+    // Update health score from analytics if available
+    const healthScore = $('#health-score');
+    const dashHealth = $('#dash-health');
+    if (healthScore && dashHealth) {
+      dashHealth.textContent = healthScore.textContent || '95.2%';
+      
+      // Color code based on health
+      const score = parseFloat(healthScore.textContent) || 95;
+      if (score >= 99) {
+        dashHealth.style.color = '#00ff88';
+      } else if (score >= 95) {
+        dashHealth.style.color = '#00e5ff';
+      } else if (score >= 90) {
+        dashHealth.style.color = '#ffaa00';
+      } else {
+        dashHealth.style.color = '#ff4444';
+      }
+    }
+    
+    // Update activity feed
+    updateDashboardActivity();
+  }
+
+  // Expose globally
+  window.updateDashboardMetrics = updateDashboardMetrics;
+
+  function updateDashboardActivity() {
+    const activityList = $('#dash-activity');
+    if (!activityList) return;
+    
+    const activities = [];
+    
+    // Add recent inbox messages (last 3)
+    if (INBOX_ITEMS && INBOX_ITEMS.length > 0) {
+      const recentMessages = INBOX_ITEMS.slice(-3).reverse();
+      recentMessages.forEach(msg => {
+        const timeAgo = getTimeAgo(msg.created_at);
+        activities.push({
+          icon: '📬',
+          color: 'rgba(0, 255, 136, 0.12)',
+          iconColor: '#00ff88',
+          title: `New message: ${msg.title || 'Untitled'}`,
+          time: timeAgo,
+          timestamp: msg.created_at
+        });
+      });
+    }
+    
+    // Add recent wake commands (last 2)
+    if (wakeHistory && wakeHistory.length > 0) {
+      const recentCommands = wakeHistory.slice(0, 2);
+      recentCommands.forEach(cmd => {
+        const timeAgo = getTimeAgo(cmd.timestamp / 1000);
+        activities.push({
+          icon: '⚡',
+          color: 'rgba(77, 184, 255, 0.12)',
+          iconColor: '#4db8ff',
+          title: `Command executed: jarvis ${cmd.command}`,
+          time: timeAgo,
+          timestamp: cmd.timestamp / 1000
+        });
+      });
+    }
+    
+    // Sort by timestamp (newest first)
+    activities.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    
+    // Limit to 4 most recent
+    const limitedActivities = activities.slice(0, 4);
+    
+    if (limitedActivities.length === 0) {
+      activityList.innerHTML = `
+        <li class="activity-item">
+          <div class="activity-icon" style="background: rgba(0, 229, 255, 0.12); color: #00e5ff;">
+            <svg class="icon" fill="none" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+              <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="activity-content">
+            <div class="activity-title">System initialized</div>
+            <div class="activity-time">Just now</div>
+          </div>
+        </li>
+      `;
+      return;
+    }
+    
+    activityList.innerHTML = limitedActivities.map(activity => `
+      <li class="activity-item">
+        <div class="activity-icon" style="background: ${activity.color}; color: ${activity.iconColor};">
+          ${activity.icon}
+        </div>
+        <div class="activity-content">
+          <div class="activity-title">${activity.title}</div>
+          <div class="activity-time">${activity.time}</div>
+        </div>
+      </li>
+    `).join('');
+  }
+
+  function getTimeAgo(timestamp) {
+    if (!timestamp) return 'Just now';
+    
+    const now = Date.now() / 1000;
+    const seconds = Math.floor(now - timestamp);
+    
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+    return `${Math.floor(seconds / 86400)} days ago`;
+  }
+
   /* =============== CHAT FUNCTIONALITY =============== */
   function updateChatStatus(status) {
     const statusEl = $('#chat-status');
-    if (statusEl) statusEl.textContent = status;
+    if (statusEl) {
+      statusEl.textContent = status;
+      updateDashboardMetrics();
+    }
   }
 
   async function sendChatMessage() {
@@ -294,6 +452,7 @@
         updateCounters([]);
         renderPreview(null);
         updateSystemStatus('', 'Connected');
+        updateDashboardMetrics();
         return;
       }
 
@@ -328,6 +487,7 @@
       }
       
       updateSystemStatus('', 'Connected');
+      updateDashboardMetrics();
     } catch (e) {
       console.error('Inbox load error:', e);
       tb.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Failed to load messages</td></tr>';
@@ -407,11 +567,17 @@
     }
     
     updateWakeHistory();
-    $('#last-wake').textContent = new Date().toLocaleTimeString();
+    const lastWakeEl = $('#last-wake');
+    if (lastWakeEl) {
+      lastWakeEl.textContent = new Date().toLocaleTimeString();
+    }
+    updateDashboardMetrics();
   }
 
   function updateWakeHistory() {
     const historyDiv = $('#wake-history');
+    if (!historyDiv) return;
+    
     if (wakeHistory.length === 0) {
       historyDiv.innerHTML = '<div class="text-center text-muted">No commands executed yet</div>';
       return;
@@ -452,8 +618,8 @@
     }
   }
 
-  $('#wake-send').addEventListener('click', sendWake);
-  $('#wake-input').addEventListener('keydown', (e) => {
+  $('#wake-send')?.addEventListener('click', sendWake);
+  $('#wake-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       sendWake();
@@ -554,7 +720,9 @@
   loadInbox();
   updateWakeHistory();
   
+  // Initial dashboard update after a short delay
   setTimeout(() => {
+    updateDashboardMetrics();
     toast('Jarvis Prime Control System initialized successfully', 'success');
   }, 1000);
 })();
