@@ -170,18 +170,27 @@
   };
 
   /* =============== DASHBOARD METRICS =============== */
-  function updateDashboardMetrics() {
+  async function updateDashboardMetrics() {
     // Update inbox metrics
     if (INBOX_ITEMS && INBOX_ITEMS.length !== undefined) {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
       const todayCount = INBOX_ITEMS.filter(i => (i.created_at || 0) >= start).length;
       
+      // Total messages
       const dashInboxTotal = $('#dash-inbox-total');
-      const dashInboxToday = $('#dash-inbox-today');
-      
       if (dashInboxTotal) dashInboxTotal.textContent = INBOX_ITEMS.length;
+      
+      // Messages today
+      const dashInboxToday = $('#dash-inbox-today');
       if (dashInboxToday) dashInboxToday.textContent = todayCount;
+      
+      // Error messages
+      const errorCount = INBOX_ITEMS.filter(i => 
+        /error|fail|exception/i.test(`${i.title || ''} ${i.body || i.message || ''}`)
+      ).length;
+      const dashInboxErrors = $('#dash-inbox-errors');
+      if (dashInboxErrors) dashInboxErrors.textContent = errorCount;
     }
     
     // Update chat status
@@ -204,14 +213,17 @@
       dashLastCommand.textContent = lastWake.textContent || 'No commands sent';
     }
     
+    // Update playbooks/schedules counts
+    await updateOrchestrationMetrics();
+    
     // Update health score from analytics if available
     const healthScore = $('#health-score');
     const dashHealth = $('#dash-health');
     if (healthScore && dashHealth) {
-      dashHealth.textContent = healthScore.textContent || '95.2%';
+      dashHealth.textContent = healthScore.textContent || '0%';
       
       // Color code based on health
-      const score = parseFloat(healthScore.textContent) || 95;
+      const score = parseFloat(healthScore.textContent) || 0;
       if (score >= 99) {
         dashHealth.style.color = '#00ff88';
       } else if (score >= 95) {
@@ -225,6 +237,45 @@
     
     // Update activity feed
     updateDashboardActivity();
+  }
+
+  // Update orchestration metrics
+  async function updateOrchestrationMetrics() {
+    try {
+      // Get playbooks count
+      const playbooksData = await jfetch(API('api/orchestrator/playbooks/organized')).catch(() => null);
+      if (playbooksData && playbooksData.playbooks) {
+        let totalPlaybooks = 0;
+        for (const category in playbooksData.playbooks) {
+          totalPlaybooks += playbooksData.playbooks[category].length;
+        }
+        const dashPlaybooks = $('#dash-playbooks');
+        if (dashPlaybooks) dashPlaybooks.textContent = totalPlaybooks;
+      }
+      
+      // Get schedules count
+      const schedulesData = await jfetch(API('api/orchestrator/schedules')).catch(() => null);
+      if (schedulesData && schedulesData.schedules) {
+        const enabledSchedules = schedulesData.schedules.filter(s => s.enabled).length;
+        const dashSchedules = $('#dash-schedules');
+        if (dashSchedules) dashSchedules.textContent = `${enabledSchedules} scheduled`;
+      }
+      
+      // Get job history for success/error counts
+      const historyData = await jfetch(API('api/orchestrator/history?limit=100')).catch(() => null);
+      if (historyData && historyData.jobs) {
+        const successCount = historyData.jobs.filter(j => j.status === 'completed' && j.exit_code === 0).length;
+        const errorCount = historyData.jobs.filter(j => j.status === 'failed' || j.exit_code !== 0).length;
+        
+        const dashOrchSuccess = $('#dash-orch-success');
+        const dashOrchErrors = $('#dash-orch-errors');
+        
+        if (dashOrchSuccess) dashOrchSuccess.textContent = successCount;
+        if (dashOrchErrors) dashOrchErrors.textContent = errorCount;
+      }
+    } catch (e) {
+      console.error('Failed to update orchestration metrics:', e);
+    }
   }
 
   // Expose globally
