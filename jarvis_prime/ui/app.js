@@ -298,7 +298,9 @@
           iconColor: '#00ff88',
           title: `New message: ${msg.title || 'Untitled'}`,
           time: timeAgo,
-          timestamp: msg.created_at
+          timestamp: msg.created_at,
+          type: 'message',
+          messageId: msg.id
         });
       });
     }
@@ -314,7 +316,8 @@
           iconColor: '#4db8ff',
           title: `Command executed: jarvis ${cmd.command}`,
           time: timeAgo,
-          timestamp: cmd.timestamp / 1000
+          timestamp: cmd.timestamp / 1000,
+          type: 'command'
         });
       });
     }
@@ -343,8 +346,8 @@
       return;
     }
     
-    activityList.innerHTML = limitedActivities.map(activity => `
-      <li class="activity-item">
+    activityList.innerHTML = limitedActivities.map((activity, index) => `
+      <li class="activity-item" data-activity-type="${activity.type}" data-message-id="${activity.messageId || ''}" style="cursor: pointer;">
         <div class="activity-icon" style="background: ${activity.color}; color: ${activity.iconColor};">
           ${activity.icon}
         </div>
@@ -354,6 +357,24 @@
         </div>
       </li>
     `).join('');
+    
+    // Add click handlers to activity items
+    $('#dash-activity .activity-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const type = item.dataset.activityType;
+        const messageId = item.dataset.messageId;
+        
+        if (type === 'message' && messageId) {
+          // Switch to inbox tab
+          switchTab('inbox');
+          
+          // Wait a bit for the tab to load, then select the message
+          setTimeout(() => {
+            selectRowById(messageId);
+          }, 200);
+        }
+      });
+    });
   }
 
   function getTimeAgo(timestamp) {
