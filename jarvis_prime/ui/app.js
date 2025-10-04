@@ -79,6 +79,42 @@
   // Expose API helper globally for other modules
   window.API = API;
 
+  /* =============== THEME TOGGLE =============== */
+  const THEME_KEY = 'jarvis_theme_mode';
+  
+  // Load saved theme on startup
+  function loadTheme() {
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme === 'dark') {
+      document.body.classList.add('dark-mode');
+      updateThemeIcon(true);
+    }
+  }
+  
+  // Toggle theme
+  function toggleTheme() {
+    const isDark = document.body.classList.toggle('dark-mode');
+    localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+    updateThemeIcon(isDark);
+  }
+  
+  // Update icon based on theme
+  function updateThemeIcon(isDark) {
+    const icon = $('#theme-icon');
+    if (icon) {
+      icon.textContent = isDark ? '☀️' : '🌙';
+    }
+  }
+  
+  // Setup theme toggle button
+  const themeToggle = $('#theme-toggle');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', toggleTheme);
+  }
+  
+  // Load theme immediately
+  loadTheme();
+
   // Toast notifications
   window.showToast = function(msg, type = 'info') {
     const d = document.createElement('div');
@@ -359,7 +395,7 @@
     `).join('');
     
     // Add click handlers to activity items
-    $('#dash-activity .activity-item').forEach(item => {
+    $$('#dash-activity .activity-item').forEach(item => {
       item.addEventListener('click', () => {
         const type = item.dataset.activityType;
         const messageId = item.dataset.messageId;
