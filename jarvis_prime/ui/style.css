@@ -694,7 +694,7 @@ body {
    =============================================== */
 .inbox-layout {
   display: grid;
-  grid-template-columns: 1fr 400px;
+  grid-template-columns: 1fr 1fr;
   gap: 24px;
   margin-top: 24px;
 }
