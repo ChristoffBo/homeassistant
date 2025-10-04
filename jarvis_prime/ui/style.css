@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
+/* Default theme (current blue/cyan) */
 :root {
   /* Dark backgrounds */
   --bg-primary: #0a0e27;
@@ -31,6 +32,44 @@
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
   --glow-cyan: 0 0 20px rgba(0, 229, 255, 0.15);
   --glow-blue: 0 0 20px rgba(77, 184, 255, 0.15);
+}
+
+/* Dark mode theme (pure black/gray) */
+body.dark-mode {
+  /* Pure black backgrounds */
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --surface-primary: #1a1a1a;
+  --surface-secondary: #242424;
+  --surface-tertiary: #2d2d2d;
+  
+  /* Subtle borders */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.15);
+  
+  /* Text colors */
+  --text-primary: #ffffff;
+  --text-secondary: #b8b8b8;
+  --text-muted: #6b6b6b;
+  
+  /* Accent colors stay the same */
+  --cyan-electric: #00e5ff;
+  --blue-light: #4db8ff;
+  --green-neon: #00ff88;
+  --purple-glow: #8b5cf6;
+  --orange-warn: #ffaa00;
+  --red-alert: #ff4466;
+  
+  /* Darker shadows */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.8);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.9);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.95);
+  --glow-cyan: 0 0 20px rgba(0, 229, 255, 0.2);
+  --glow-blue: 0 0 20px rgba(77, 184, 255, 0.2);
+}
+
+body.dark-mode {
+  background: linear-gradient(135deg, #000000 0%, #0a0a0a 100%);
 }
 
 * {
