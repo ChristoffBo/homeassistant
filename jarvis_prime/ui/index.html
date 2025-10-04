@@ -37,7 +37,6 @@
   <nav class="glass-nav">
     <div class="nav-container">
       <div class="nav-brand">
-        <!-- REPLACE THIS IMG SRC WITH YOUR JARVIS ICON PATH -->
         <div class="brand-icon">
           <img src="/icon/icon-512x512.png" alt="Jarvis" />
         </div>
@@ -73,9 +72,9 @@
         <p class="page-subtitle">Real-time metrics from all modules</p>
       </div>
       
-      <!-- Metrics Grid -->
+      <!-- Metrics Grid - 8 Cards -->
       <div class="metrics-grid-dashboard">
-        <!-- Inbox Metrics -->
+        <!-- 1. Total Messages -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -88,13 +87,39 @@
               </svg>
             </div>
           </div>
-          <div class="metric-change positive">
-            <span id="dash-inbox-today">0</span>
-            <span style="color: var(--text-muted);">today</span>
+        </div>
+        
+        <!-- 2. Messages Today -->
+        <div class="metric-card" onclick="switchTab('inbox')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-inbox-today">0</div>
+              <div class="metric-label">Messages Today</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(0, 229, 255, 0.12); color: #00e5ff;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
           </div>
         </div>
         
-        <!-- Chat Activity -->
+        <!-- 3. Error Messages -->
+        <div class="metric-card" onclick="switchTab('inbox')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-inbox-errors">0</div>
+              <div class="metric-label">Error Messages</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(239, 68, 68, 0.12); color: #ef4444;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 4. Chat Status -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -112,7 +137,7 @@
           </div>
         </div>
         
-        <!-- Commands -->
+        <!-- 5. Commands -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -130,11 +155,11 @@
           </div>
         </div>
         
-        <!-- Orchestrator -->
+        <!-- 6. Active Playbooks -->
         <div class="metric-card" onclick="switchTab('orchestrator')">
           <div class="metric-header">
             <div>
-              <div class="metric-value">12</div>
+              <div class="metric-value" id="dash-playbooks">0</div>
               <div class="metric-label">Active Playbooks</div>
             </div>
             <div class="metric-icon" style="background: rgba(255, 170, 0, 0.12); color: #ffaa00;">
@@ -145,15 +170,15 @@
             </div>
           </div>
           <div class="metric-change">
-            <span style="color: var(--text-muted);">3 scheduled</span>
+            <span style="color: var(--text-muted);" id="dash-schedules">0 scheduled</span>
           </div>
         </div>
         
-        <!-- Analytics Health -->
+        <!-- 7. System Health -->
         <div class="metric-card" onclick="switchTab('analytics')">
           <div class="metric-header">
             <div>
-              <div class="metric-value" id="dash-health">95.2%</div>
+              <div class="metric-value" id="dash-health">0%</div>
               <div class="metric-label">System Health</div>
             </div>
             <div class="metric-icon" style="background: rgba(0, 255, 136, 0.12); color: #00ff88;">
@@ -171,23 +196,26 @@
           </div>
         </div>
         
-        <!-- System Uptime -->
-        <div class="metric-card">
+        <!-- 8. Orchestration Success/Errors -->
+        <div class="metric-card" onclick="switchTab('orchestrator')">
           <div class="metric-header">
             <div>
-              <div class="metric-value">99.8%</div>
-              <div class="metric-label">Uptime</div>
+              <div class="metric-value">
+                <span id="dash-orch-success" style="color: #00ff88;">0</span> / 
+                <span id="dash-orch-errors" style="color: #ef4444;">0</span>
+              </div>
+              <div class="metric-label">Orchestration Jobs</div>
             </div>
-            <div class="metric-icon" style="background: rgba(0, 229, 255, 0.12); color: var(--cyan-electric);">
+            <div class="metric-icon" style="background: rgba(139, 92, 246, 0.12); color: #8b5cf6;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
-                <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/>
-                <path d="M8 21h8M12 17v4" stroke="currentColor" stroke-width="2"/>
+                <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/>
               </svg>
             </div>
           </div>
-          <div class="metric-change positive">
-            <span>23 days</span>
-            <span style="color: var(--text-muted);">no incidents</span>
+          <div class="metric-change">
+            <span style="color: #00ff88;">Success</span>
+            <span style="color: var(--text-muted);">/</span>
+            <span style="color: #ef4444;">Failed</span>
           </div>
         </div>
       </div>
@@ -365,9 +393,7 @@
       </div>
     </section>
 
-    <!-- ========================================
-         ORCHESTRATOR TAB (UNCHANGED)
-         ======================================== -->
+    <!-- ORCHESTRATOR TAB -->
     <section id="orchestrator" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -471,9 +497,7 @@
       </div>
     </section>
 
-    <!-- ========================================
-         ANALYTICS TAB (UNCHANGED)
-         ======================================== -->
+    <!-- ANALYTICS TAB -->
     <section id="analytics" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -598,7 +622,7 @@
     </section>
   </main>
 
-  <!-- MODALS (unchanged from original) -->
+  <!-- MODALS -->
   <div id="server-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
