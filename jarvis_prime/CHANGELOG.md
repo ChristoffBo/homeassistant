@@ -1,3 +1,6 @@
+## latest (2025-10-3 11:00:00)
+Updated UI.
+Added a Dashboard.
 ## latest (2025-10-2 11:00:00)
 Added Analytycs, think uptime monitor.
 ## latest (2025-10-1 11:00:00)
