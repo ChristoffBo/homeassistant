@@ -261,13 +261,13 @@
       // Color code based on health
       const score = parseFloat(healthScore.textContent) || 0;
       if (score >= 99) {
-        dashHealth.style.color = '#00ff88';
+        dashHealth.style.color = '#10b981';
       } else if (score >= 95) {
-        dashHealth.style.color = '#00e5ff';
+        dashHealth.style.color = '#0ea5e9';
       } else if (score >= 90) {
-        dashHealth.style.color = '#ffaa00';
+        dashHealth.style.color = '#f59e0b';
       } else {
-        dashHealth.style.color = '#ff4444';
+        dashHealth.style.color = '#ef4444';
       }
     }
     
@@ -330,8 +330,8 @@
         const timeAgo = getTimeAgo(msg.created_at);
         activities.push({
           icon: '📬',
-          color: 'rgba(0, 255, 136, 0.12)',
-          iconColor: '#00ff88',
+          color: 'rgba(16, 185, 129, 0.12)',
+          iconColor: '#10b981',
           title: `New message: ${msg.title || 'Untitled'}`,
           time: timeAgo,
           timestamp: msg.created_at,
@@ -348,8 +348,8 @@
         const timeAgo = getTimeAgo(cmd.timestamp / 1000);
         activities.push({
           icon: '⚡',
-          color: 'rgba(77, 184, 255, 0.12)',
-          iconColor: '#4db8ff',
+          color: 'rgba(56, 189, 248, 0.12)',
+          iconColor: '#38bdf8',
           title: `Command executed: jarvis ${cmd.command}`,
           time: timeAgo,
           timestamp: cmd.timestamp / 1000,
@@ -367,7 +367,7 @@
     if (limitedActivities.length === 0) {
       activityList.innerHTML = `
         <li class="activity-item">
-          <div class="activity-icon" style="background: rgba(0, 229, 255, 0.12); color: #00e5ff;">
+          <div class="activity-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9;">
             <svg class="icon" fill="none" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
               <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2"/>
