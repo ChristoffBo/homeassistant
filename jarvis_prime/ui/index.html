@@ -436,7 +436,10 @@
         <div class="panel">
           <div class="panel-head">
             <h3>Available Playbooks</h3>
-            <button class="btn primary" onclick="orchRefreshPlaybooks()">Refresh</button>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="playbook-search" placeholder="Search playbooks..." style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--surface-secondary); color: var(--text-primary); width: 300px;" />
+              <button class="btn primary" onclick="orchRefreshPlaybooks()">Refresh</button>
+            </div>
           </div>
           <div id="playbooks-list" class="playbooks-grid">
             <div class="text-center text-muted">Loading playbooks...</div>
@@ -504,16 +507,17 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th>Playbook</th>
+                <th>Name / Playbook</th>
                 <th>Status</th>
                 <th>Started</th>
                 <th>Completed</th>
                 <th>Exit Code</th>
                 <th>Triggered By</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="history-list">
-              <tr><td colspan="6" class="text-center text-muted">Loading history...</td></tr>
+              <tr><td colspan="7" class="text-center text-muted">Loading history...</td></tr>
             </tbody>
           </table>
         </div>
@@ -840,6 +844,45 @@
     </div>
   </div>
 
+  <!-- JOB OUTPUT MODAL -->
+  <div id="job-output-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px;">
+      <div class="modal-header">
+        <h2 id="job-output-title">Job Output</h2>
+        <button class="btn" onclick="orchCloseJobOutputModal()">✕</button>
+      </div>
+      <div style="margin-bottom: 16px;">
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 12px; background: var(--surface-tertiary); border-radius: 8px;">
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Status</div>
+            <div id="job-output-status">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Exit Code</div>
+            <div id="job-output-exit-code">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Started</div>
+            <div id="job-output-started">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Completed</div>
+            <div id="job-output-completed">—</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Output</label>
+        <div class="log-output" id="job-output-content" style="max-height: 500px; min-height: 200px;">
+          <div class="text-center text-muted">No output</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="orchCloseJobOutputModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="analytics-service-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
@@ -903,7 +946,7 @@
 
   <div id="toast"></div>
   <script src="app.js?v=5.0"></script>
-  <script src="orchestrator.js?v=1.2"></script>
+  <script src="orchestrator.js?v=1.3"></script>
   <script src="analytics.js?v=1.0"></script>
 </body>
 </html>
