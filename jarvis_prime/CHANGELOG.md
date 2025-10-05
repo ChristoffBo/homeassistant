@@ -1,3 +1,6 @@
+## latest (2025-10-5 8:21:00)
+Updated UI again, fixed dark mode.
+Added QOL changes to orhcestrator, upload download playbooks naming schedules.
 ## latest (2025-10-3 11:00:00)
 Updated UI.
 Added a Dashboard.
