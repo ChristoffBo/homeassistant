@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # /app/orchestrator.py
 # Sprint 4: Cancel jobs, job names in history, retry support
+# FIXED: Notification flag handling + Multiple group support
 
 import os
 import json
@@ -417,8 +418,39 @@ class Orchestrator:
             return dict(row) if row else None
 
     def generate_ansible_inventory(self, group=None):
-        servers = self.list_servers(group)
+        """Generate Ansible inventory, supporting comma-separated groups"""
         
+        # Handle multiple comma-separated groups (FIXED)
+        if group and ',' in group:
+            groups_to_search = [g.strip() for g in group.split(',') if g.strip()]
+            servers_set = {}  # Use dict to avoid duplicates by ID
+            
+            # Get servers from each group
+            for single_group in groups_to_search:
+                group_servers = self.list_servers(single_group)
+                for s in group_servers:
+                    if s['id'] not in servers_set:
+                        # Get full server object with password
+                        full_server = self.get_server(s['id'])
+                        if full_server:
+                            servers_set[s['id']] = full_server
+            
+            servers = list(servers_set.values())
+        else:
+            # Single group or all servers
+            servers_list = self.list_servers(group)
+            # Get full server objects with passwords
+            servers = []
+            for s in servers_list:
+                full_server = self.get_server(s['id'])
+                if full_server:
+                    servers.append(full_server)
+        
+        if not servers:
+            self.logger(f"[orchestrator] No servers found for group: {group}")
+            return ""  # Empty inventory
+        
+        # Build groups dictionary
         groups_dict = {}
         for server in servers:
             server_groups = [g.strip() for g in server.get("groups", "").split(",") if g.strip()]
@@ -428,21 +460,22 @@ class Orchestrator:
             for grp in server_groups:
                 if grp not in groups_dict:
                     groups_dict[grp] = []
-                
-                full_server = self.get_server(server["id"])
-                groups_dict[grp].append(full_server)
+                groups_dict[grp].append(server)
         
+        # Generate inventory
         inventory_lines = []
-        for grp, servers in sorted(groups_dict.items()):
+        for grp, srvs in sorted(groups_dict.items()):
             inventory_lines.append(f"[{grp}]")
-            for srv in servers:
+            for srv in srvs:
                 line = f"{srv['name']} ansible_host={srv['hostname']} ansible_port={srv['port']} ansible_user={srv['username']}"
                 if srv.get("password"):
                     line += f" ansible_ssh_pass={srv['password']}"
                 inventory_lines.append(line)
             inventory_lines.append("")
         
-        return "\n".join(inventory_lines)
+        inventory_text = "\n".join(inventory_lines)
+        self.logger(f"[orchestrator] Generated inventory for {len(servers)} servers in {len(groups_dict)} groups")
+        return inventory_text
 
     def get_job_status(self, job_id):
         with sqlite3.connect(self.db_path) as conn:
@@ -512,10 +545,17 @@ class Orchestrator:
             
             if ext in [".yml", ".yaml"] and self.runner == "ansible":
                 inventory_content = self.generate_ansible_inventory(inventory_group)
+                
+                if not inventory_content:
+                    self._update_job(job_id, "failed", f"No hosts matched for group: {inventory_group}", -1, None)
+                    return
+                
                 inventory_path = base_path / f".inventory_{job_id}.ini"
                 
                 with open(inventory_path, "w") as f:
                     f.write(inventory_content)
+                
+                self.logger(f"[orchestrator] Inventory file created: {inventory_path}")
                 
                 cmd = [
                     "ansible-playbook",
@@ -606,6 +646,9 @@ class Orchestrator:
             conn.commit()
 
     def _send_notification(self, job_id, playbook_name, status, exit_code, triggered_by="manual", error=None):
+        """Send notification respecting the notify_on_completion flag (FIXED)"""
+        
+        # Check if this is a scheduled job with notifications disabled
         if triggered_by.startswith("schedule_"):
             try:
                 schedule_id = int(triggered_by.split("_")[1])
@@ -614,12 +657,24 @@ class Orchestrator:
                     cursor = conn.cursor()
                     cursor.execute("SELECT notify_on_completion FROM orchestration_schedules WHERE id = ?", (schedule_id,))
                     row = cursor.fetchone()
-                    if row and not row["notify_on_completion"]:
-                        if status != "failed":
+                    if row:
+                        # Explicit int conversion to handle SQLite boolean storage
+                        notify_flag = int(row["notify_on_completion"]) if row["notify_on_completion"] is not None else 1
+                        
+                        if notify_flag == 0:
+                            # OPTION 1: Skip ALL notifications when flag is disabled
+                            self.logger(f"[orchestrator] Skipping notification for job {job_id} (notify_on_completion=False)")
                             return
-            except Exception:
-                pass
+                            
+                            # OPTION 2: Only skip successful notifications, always notify on failure
+                            # Uncomment below and comment out the return above to use this option:
+                            # if status != "failed":
+                            #     self.logger(f"[orchestrator] Skipping success notification for job {job_id}")
+                            #     return
+            except Exception as e:
+                self.logger(f"[orchestrator] Error checking notification flag: {e}")
         
+        # Build notification message
         title = "Orchestrator"
         
         if status == "completed":
@@ -627,14 +682,16 @@ class Orchestrator:
             priority = 3
         else:
             if error:
-                body = f"❌ {playbook_name} FAILED — {error}"
+                body = f"❌ {playbook_name} FAILED – {error}"
             else:
                 body = f"❌ {playbook_name} FAILED (exit code: {exit_code})"
             priority = 5
         
+        # Send notification
         try:
             from bot import process_incoming
             process_incoming(title, body, source="orchestrator", priority=priority)
+            self.logger(f"[orchestrator] Notification sent for job {job_id}: {status}")
         except Exception as e:
             logger.error(f"process_incoming not available: {e}")
             try:
@@ -994,7 +1051,7 @@ def register_routes(app):
     app.router.add_get("/api/orchestrator/playbooks/download/{playbook:.*}", api_download_playbook)
     app.router.add_post("/api/orchestrator/run/{playbook:.*}", api_run_playbook)
     app.router.add_get("/api/orchestrator/status/{id:\\d+}", api_get_status)
-    app.router.add_post("/api/orchestrator/jobs/{id:\\d+}/cancel", api_cancel_job)  # NEW
+    app.router.add_post("/api/orchestrator/jobs/{id:\\d+}/cancel", api_cancel_job)
     app.router.add_get("/api/orchestrator/history", api_history)
     app.router.add_post("/api/orchestrator/history/purge", api_purge_history)
     app.router.add_get("/api/orchestrator/history/stats", api_history_stats)
