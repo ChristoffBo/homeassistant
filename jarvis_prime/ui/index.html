@@ -51,6 +51,7 @@
         <li class="nav-tab" data-tab="inbox">Inbox</li>
         <li class="nav-tab" data-tab="orchestrator">Orchestrator</li>
         <li class="nav-tab" data-tab="analytics">Analytics</li>
+        <li class="nav-tab" data-tab="settings">Settings</li>
       </ul>
       
       <div class="system-status">
@@ -66,18 +67,14 @@
   </nav>
 
   <main class="main-container">
-    <!-- ========================================
-         DASHBOARD TAB
-         ======================================== -->
+    <!-- DASHBOARD TAB -->
     <section id="dashboard" class="tab-panel active">
       <div class="page-header">
         <h2 class="page-title">System Overview</h2>
         <p class="page-subtitle">Real-time metrics from all modules</p>
       </div>
       
-      <!-- Metrics Grid - 8 Cards -->
       <div class="metrics-grid-dashboard">
-        <!-- 1. Total Messages -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -92,7 +89,6 @@
           </div>
         </div>
         
-        <!-- 2. Messages Today -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -107,7 +103,6 @@
           </div>
         </div>
         
-        <!-- 3. Error Messages -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -122,7 +117,6 @@
           </div>
         </div>
         
-        <!-- 4. Chat Status -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -140,7 +134,6 @@
           </div>
         </div>
         
-        <!-- 5. Commands -->
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
@@ -158,7 +151,6 @@
           </div>
         </div>
         
-        <!-- 6. Active Playbooks -->
         <div class="metric-card" onclick="switchTab('orchestrator')">
           <div class="metric-header">
             <div>
@@ -177,7 +169,6 @@
           </div>
         </div>
         
-        <!-- 7. System Health -->
         <div class="metric-card" onclick="switchTab('analytics')">
           <div class="metric-header">
             <div>
@@ -199,7 +190,6 @@
           </div>
         </div>
         
-        <!-- 8. Orchestration Success/Errors -->
         <div class="metric-card" onclick="switchTab('orchestrator')">
           <div class="metric-header">
             <div>
@@ -223,7 +213,6 @@
         </div>
       </div>
       
-      <!-- Recent Activity -->
       <div class="glass-card" style="margin-top: 32px;">
         <div class="card-header">
           <h3 class="card-title">Recent Activity</h3>
@@ -250,9 +239,7 @@
       </div>
     </section>
 
-    <!-- ========================================
-         INBOX TAB (MERGED: Messages + Chat + Commands)
-         ======================================== -->
+    <!-- INBOX TAB -->
     <section id="inbox" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -261,7 +248,6 @@
         </div>
       </div>
 
-      <!-- Metrics -->
       <div class="metrics-grid">
         <div class="metric-card">
           <div class="metric-header">
@@ -306,9 +292,7 @@
         </div>
       </div>
 
-      <!-- Chat & Command Input -->
       <div class="inbox-comms-grid">
-        <!-- AI Chat -->
         <div class="glass-card">
           <div class="card-header">
             <h3 class="card-title">AI Assistant</h3>
@@ -326,7 +310,6 @@
           </div>
         </div>
 
-        <!-- System Commands -->
         <div class="glass-card">
           <div class="card-header">
             <h3 class="card-title">System Commands</h3>
@@ -350,7 +333,6 @@
         </div>
       </div>
 
-      <!-- Messages Table -->
       <div class="inbox-layout">
         <div class="panel">
           <div class="panel-head">
@@ -395,8 +377,7 @@
         </div>
       </div>
     </section>
-
-    <!-- ORCHESTRATOR TAB -->
+    <!-- ORCHESTRATOR TAB - Keeping existing content -->
     <section id="orchestrator" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -412,9 +393,7 @@
         <button class="orch-tab" data-orch-tab="history">History</button>
       </div>
 
-      <!-- PLAYBOOKS PANEL -->
       <div id="orch-playbooks" class="orch-panel active">
-        <!-- Upload Zone -->
         <div class="panel" style="margin-bottom: 24px;">
           <div class="panel-head">
             <h3>Upload Playbooks</h3>
@@ -454,7 +433,6 @@
         </div>
       </div>
 
-      <!-- SERVERS PANEL -->
       <div id="orch-servers" class="orch-panel">
         <div class="panel">
           <div class="panel-head">
@@ -467,7 +445,6 @@
         </div>
       </div>
 
-      <!-- SCHEDULES PANEL -->
       <div id="orch-schedules" class="orch-panel">
         <div class="panel">
           <div class="panel-head">
@@ -494,7 +471,6 @@
         </div>
       </div>
 
-      <!-- HISTORY PANEL -->
       <div id="orch-history" class="orch-panel">
         <div class="panel">
           <div class="panel-head">
@@ -524,7 +500,7 @@
       </div>
     </section>
 
-    <!-- ANALYTICS TAB -->
+    <!-- ANALYTICS TAB - Keeping existing content -->
     <section id="analytics" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -533,7 +509,6 @@
         </div>
       </div>
 
-      <!-- Health Score Metrics -->
       <div class="metrics-grid">
         <div class="metric-card">
           <div class="metric-header">
@@ -564,7 +539,6 @@
         </div>
       </div>
 
-      <!-- Reset & Purge Controls -->
       <div style="margin: 20px 0; display: flex; gap: 12px; flex-wrap: wrap;">
         <button class="btn" onclick="analyticsResetHealth()" 
                 style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b;">
@@ -595,7 +569,6 @@
         <button class="orch-tab" data-analytics-tab="incidents">Incidents</button>
       </div>
 
-      <!-- DASHBOARD PANEL -->
       <div id="analytics-dashboard" class="orch-panel active">
         <div class="panel">
           <div class="panel-head">
@@ -608,7 +581,6 @@
         </div>
       </div>
 
-      <!-- SERVICES MANAGEMENT PANEL -->
       <div id="analytics-services" class="orch-panel">
         <div class="panel">
           <div class="panel-head">
@@ -634,7 +606,6 @@
         </div>
       </div>
 
-      <!-- INCIDENTS PANEL -->
       <div id="analytics-incidents" class="orch-panel">
         <div class="panel">
           <div class="panel-head">
@@ -647,9 +618,635 @@
         </div>
       </div>
     </section>
+
+    <!-- NEW: SETTINGS TAB -->
+    <section id="settings" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>System Settings</h1>
+          <div class="panel-subtitle">Configure Jarvis Prime modules and features</div>
+        </div>
+      </div>
+
+      <!-- HA Readonly Banner -->
+      <div id="settings-readonly-banner" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 24px;">⚠️</span>
+          <div>
+            <div style="color: #f59e0b; font-weight: 600; margin-bottom: 4px;">Home Assistant Mode - Read Only</div>
+            <div style="color: var(--text-muted); font-size: 14px;">
+              Settings are managed through the Home Assistant addon configuration UI. These values are displayed for reference only.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Sub-tabs -->
+      <div class="orch-tabs">
+        <button class="settings-tab active" data-settings-tab="general">General</button>
+        <button class="settings-tab" data-settings-tab="llm">LLM & AI</button>
+        <button class="settings-tab" data-settings-tab="personality">Personality</button>
+        <button class="settings-tab" data-settings-tab="integrations">Integrations</button>
+        <button class="settings-tab" data-settings-tab="communications">Communications</button>
+        <button class="settings-tab" data-settings-tab="monitoring">Monitoring</button>
+        <button class="settings-tab" data-settings-tab="push">Push Notifications</button>
+      </div>
+
+      <!-- GENERAL PANEL -->
+      <div id="settings-general-panel" class="settings-panel orch-panel active">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>General Settings</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <label class="form-label">Bot Name</label>
+              <input type="text" id="set-bot-name" placeholder="Jarvis Prime">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Bot Icon</label>
+              <input type="text" id="set-bot-icon" placeholder="🧠">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Jarvis App Name</label>
+              <input type="text" id="set-jarvis-app-name" placeholder="Jarvis">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-beautify-enabled" />
+                <label for="set-beautify-enabled">Enable message beautification</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-beautify-inline-images" />
+                <label for="set-beautify-inline-images">Show inline images in messages</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-silent-repost" />
+                <label for="set-silent-repost">Silent repost (delete original messages after processing)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-greeting-enabled" />
+                <label for="set-greeting-enabled">Enable greeting messages</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Retention Days</label>
+              <input type="number" id="set-retention-days" min="1" placeholder="30">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Number of days to keep messages in inbox
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Retention Hours (for hourly cleanup)</label>
+              <input type="number" id="set-retention-hours" min="1" placeholder="24">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Auto-Purge Policy</label>
+              <select id="set-auto-purge-policy">
+                <option value="off">Off</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LLM & AI PANEL -->
+      <div id="settings-llm-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>LLM & AI Configuration</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-enabled" />
+                <label for="set-llm-enabled">Enable LLM processing</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-persona-riffs-enabled" />
+                <label for="set-llm-persona-riffs-enabled">Enable persona riffs (personality-based responses)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-rewrite-enabled" />
+                <label for="set-llm-rewrite-enabled">Enable message rewriting</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Models Directory</label>
+              <input type="text" id="set-llm-models-dir" placeholder="/share/jarvis_prime/models">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Timeout (seconds)</label>
+              <input type="number" id="set-llm-timeout-seconds" min="1" placeholder="20">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Max CPU %</label>
+              <input type="number" id="set-llm-max-cpu-percent" min="1" max="100" placeholder="80">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Context Tokens</label>
+              <input type="number" id="set-llm-ctx-tokens" min="1" placeholder="6096">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Generation Tokens</label>
+              <input type="number" id="set-llm-gen-tokens" min="1" placeholder="300">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Threads</label>
+              <input type="number" id="set-llm-threads" min="1" placeholder="3">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Models Priority</label>
+              <input type="text" id="set-llm-models-priority" placeholder="phi35_q5_uncensored,phi35_q5,phi35_q4,phi3">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Comma-separated list of model names in priority order
+              </div>
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">EnviroGuard</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-enviroguard-enabled" />
+                <label for="set-llm-enviroguard-enabled">Enable EnviroGuard (temperature-based performance adjustment)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Poll Interval (minutes)</label>
+              <input type="number" id="set-llm-enviroguard-poll-minutes" min="1" placeholder="30">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Hot Temperature Threshold (°C)</label>
+              <input type="number" id="set-llm-enviroguard-hot-c" placeholder="30">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Normal Temperature (°C)</label>
+              <input type="number" id="set-llm-enviroguard-normal-c" placeholder="22">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Cold Temperature Threshold (°C)</label>
+              <input type="number" id="set-llm-enviroguard-cold-c" placeholder="10">
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- PERSONALITY PANEL -->
+      <div id="settings-personality-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Personality Settings</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-personality-enabled" />
+                <label for="set-personality-enabled">Enable personality system</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Active Persona</label>
+              <select id="set-active-persona">
+                <option value="auto">Auto</option>
+                <option value="ops">Ops</option>
+                <option value="dude">Dude</option>
+                <option value="chick">Chick</option>
+                <option value="nerd">Nerd</option>
+                <option value="rager">Rager</option>
+                <option value="comedian">Comedian</option>
+                <option value="action">Action</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Min Interval Between Riffs (minutes)</label>
+              <input type="number" id="set-personality-min-interval-minutes" min="1" placeholder="90">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Interval Jitter %</label>
+              <input type="number" id="set-personality-interval-jitter-pct" min="0" max="100" placeholder="20">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Daily Max Riffs</label>
+              <input type="number" id="set-personality-daily-max" min="1" placeholder="6">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Quiet Hours</label>
+              <input type="text" id="set-personality-quiet-hours" placeholder="23:00-06:00">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Format: HH:MM-HH:MM (e.g., 23:00-06:00)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-chat-enabled" />
+                <label for="set-chat-enabled">Enable chat functionality</label>
+              </div>
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Enabled Personas</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-dude" />
+                <label for="set-enable-dude">Enable Dude persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-chick" />
+                <label for="set-enable-chick">Enable Chick persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-nerd" />
+                <label for="set-enable-nerd">Enable Nerd persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-rager" />
+                <label for="set-enable-rager">Enable Rager persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-comedian" />
+                <label for="set-enable-comedian">Enable Comedian persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-action" />
+                <label for="set-enable-action">Enable Action persona</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- INTEGRATIONS PANEL -->
+      <div id="settings-integrations-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Integration Settings</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">Weather</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-weather-enabled" />
+                <label for="set-weather-enabled">Enable weather reports</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Latitude</label>
+              <input type="number" id="set-weather-lat" step="0.0001" placeholder="-26.2041">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Longitude</label>
+              <input type="number" id="set-weather-lon" step="0.0001" placeholder="28.0473">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">City Name</label>
+              <input type="text" id="set-weather-city" placeholder="Odendaalsrus">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Report Time</label>
+              <input type="text" id="set-weather-time" placeholder="07:00">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Daily Digest</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-digest-enabled" />
+                <label for="set-digest-enabled">Enable daily digest</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Digest Time</label>
+              <input type="text" id="set-digest-time" placeholder="08:00">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Heartbeat</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-heartbeat-enabled" />
+                <label for="set-heartbeat-enabled">Enable heartbeat messages</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Interval (minutes)</label>
+              <input type="number" id="set-heartbeat-interval-minutes" min="1" placeholder="120">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Start Time</label>
+              <input type="text" id="set-heartbeat-start" placeholder="06:00">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">End Time</label>
+              <input type="text" id="set-heartbeat-end" placeholder="20:00">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Radarr</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-radarr-enabled" />
+                <label for="set-radarr-enabled">Enable Radarr integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Radarr URL</label>
+              <input type="text" id="set-radarr-url" placeholder="http://192.168.1.100:7878">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-radarr-api-key" placeholder="Enter API key">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Sonarr</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-sonarr-enabled" />
+                <label for="set-sonarr-enabled">Enable Sonarr integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Sonarr URL</label>
+              <input type="text" id="set-sonarr-url" placeholder="http://192.168.1.100:8989">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-sonarr-api-key" placeholder="Enter API key">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- COMMUNICATIONS PANEL -->
+      <div id="settings-communications-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Communication Channels</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">SMTP Intake</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-enabled" />
+                <label for="set-smtp-enabled">Enable SMTP server</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Port</label>
+              <input type="number" id="set-smtp-port" min="1" placeholder="2525">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-smtp-enabled" />
+                <label for="set-ingest-smtp-enabled">Enable SMTP message ingestion</label>
+              </div>
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Proxy</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-proxy-enabled" />
+                <label for="set-proxy-enabled">Enable proxy intake</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Proxy Port</label>
+              <input type="number" id="set-proxy-port" min="1" placeholder="2580">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Webhook</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-webhook-enabled" />
+                <label for="set-webhook-enabled">Enable webhook intake</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Webhook Port</label>
+              <input type="number" id="set-webhook-port" min="1" placeholder="2590">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Apprise</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-intake-apprise-enabled" />
+                <label for="set-intake-apprise-enabled">Enable Apprise intake server</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Apprise Port</label>
+              <input type="number" id="set-intake-apprise-port" min="1" placeholder="2591">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-apprise-enabled" />
+                <label for="set-ingest-apprise-enabled">Enable Apprise message ingestion</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MONITORING PANEL -->
+      <div id="settings-monitoring-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Monitoring Services</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">Uptime Kuma</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-uptimekuma-enabled" />
+                <label for="set-uptimekuma-enabled">Enable Uptime Kuma integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Uptime Kuma URL</label>
+              <input type="text" id="set-uptimekuma-url" placeholder="http://192.168.1.100:3001">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-uptimekuma-api-key" placeholder="Enter API key">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Technitium DNS</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-technitium-enabled" />
+                <label for="set-technitium-enabled">Enable Technitium DNS integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Technitium URL</label>
+              <input type="text" id="set-technitium-url" placeholder="http://192.168.1.100:5380">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-technitium-api-key" placeholder="Enter API key">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PUSH NOTIFICATIONS PANEL -->
+      <div id="settings-push-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Push Notification Services</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">Gotify</h4>
+            
+            <div class="form-group">
+              <label class="form-label">Gotify URL</label>
+              <input type="text" id="set-gotify-url" placeholder="http://192.168.1.100:8091">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Client Token</label>
+              <input type="text" id="set-gotify-client-token" placeholder="Enter client token">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">App Token</label>
+              <input type="text" id="set-gotify-app-token" placeholder="Enter app token">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-push-gotify-enabled" />
+                <label for="set-push-gotify-enabled">Enable Gotify push notifications</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-gotify-enabled" />
+                <label for="set-ingest-gotify-enabled">Enable Gotify message ingestion</label>
+              </div>
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">ntfy</h4>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy URL</label>
+              <input type="text" id="set-ntfy-url" placeholder="http://192.168.1.100:8080">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Topic</label>
+              <input type="text" id="set-ntfy-topic" placeholder="jarvis">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-push-ntfy-enabled" />
+                <label for="set-push-ntfy-enabled">Enable ntfy push notifications</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save Button (only visible in Docker mode) -->
+      <div style="margin-top: 24px; padding: 20px; background: var(--surface-secondary); border-radius: 8px; display: flex; justify-content: flex-end; gap: 12px;">
+        <button id="settings-save-btn" class="btn primary" onclick="settingsSaveConfig()">Save Settings</button>
+      </div>
+    </section>
   </main>
 
-  <!-- MODALS -->
+  <!-- ALL EXISTING MODALS (unchanged) -->
   <div id="server-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
@@ -844,7 +1441,6 @@
     </div>
   </div>
 
-  <!-- JOB OUTPUT MODAL -->
   <div id="job-output-modal" class="modal">
     <div class="modal-content" style="max-width: 900px;">
       <div class="modal-header">
@@ -945,8 +1541,11 @@
   </div>
 
   <div id="toast"></div>
+  
+  <!-- Scripts -->
   <script src="app.js?v=5.0"></script>
   <script src="orchestrator.js?v=1.3"></script>
   <script src="analytics.js?v=1.0"></script>
+  <script src="settings.js?v=1.0"></script>
 </body>
 </html>
