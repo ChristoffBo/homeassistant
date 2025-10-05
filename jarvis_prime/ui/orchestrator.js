@@ -1,4 +1,5 @@
 // orchestrator.js - Orchestrator tab functionality for Jarvis Prime
+// Sprint 3: Upload/Download Playbooks + Job Naming
 
 (function() {
   'use strict';
@@ -88,6 +89,117 @@
   });
 
   // ============================================
+  // PLAYBOOK UPLOAD (SPRINT 3)
+  // ============================================
+  function initPlaybookUpload() {
+    const uploadZone = document.getElementById('playbook-upload-zone');
+    const fileInput = document.getElementById('playbook-file-input');
+    
+    if (!uploadZone || !fileInput) return;
+    
+    // Click to browse
+    uploadZone.addEventListener('click', () => {
+      fileInput.click();
+    });
+    
+    // Drag and drop
+    uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadZone.style.borderColor = 'var(--accent-primary)';
+      uploadZone.style.background = 'rgba(14, 165, 233, 0.05)';
+    });
+    
+    uploadZone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      uploadZone.style.borderColor = 'var(--border-color)';
+      uploadZone.style.background = 'var(--surface-secondary)';
+    });
+    
+    uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadZone.style.borderColor = 'var(--border-color)';
+      uploadZone.style.background = 'var(--surface-secondary)';
+      
+      const files = Array.from(e.dataTransfer.files);
+      uploadPlaybookFiles(files);
+    });
+    
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      uploadPlaybookFiles(files);
+      fileInput.value = ''; // Reset input
+    });
+  }
+
+  async function uploadPlaybookFiles(files) {
+    if (!files || files.length === 0) return;
+    
+    const validExtensions = ['.yml', '.yaml', '.sh', '.py'];
+    const validFiles = files.filter(f => {
+      const ext = '.' + f.name.split('.').pop().toLowerCase();
+      return validExtensions.includes(ext);
+    });
+    
+    if (validFiles.length === 0) {
+      toast('No valid playbook files selected (.yml, .yaml, .sh, .py)', 'error');
+      return;
+    }
+    
+    for (const file of validFiles) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const response = await fetch(API('api/orchestrator/playbooks/upload'), {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || 'Upload failed');
+        }
+        
+        const result = await response.json();
+        toast(`✓ ${file.name} uploaded successfully`, 'success');
+      } catch (e) {
+        toast(`✗ Failed to upload ${file.name}: ${e.message}`, 'error');
+      }
+    }
+    
+    // Reload playbooks
+    orchLoadPlaybooks();
+  }
+
+  // ============================================
+  // PLAYBOOK DOWNLOAD (SPRINT 3)
+  // ============================================
+  window.orchDownloadPlaybook = async function(playbookPath, playbookName) {
+    try {
+      const response = await fetch(API(`api/orchestrator/playbooks/download/${encodeURIComponent(playbookPath)}`));
+      
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = playbookName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      toast(`Downloaded ${playbookName}`, 'success');
+    } catch (e) {
+      toast('Failed to download playbook: ' + e.message, 'error');
+    }
+  };
+
+  // ============================================
   // WEBSOCKET FOR LIVE LOGS
   // ============================================
   function connectWebSocket() {
@@ -146,7 +258,7 @@
       const data = await jfetch(API('api/orchestrator/playbooks/organized'));
       
       if (!data.playbooks || Object.keys(data.playbooks).length === 0) {
-        container.innerHTML = '<div class="text-center text-muted">No playbooks found. Add .sh, .py, or .yml files to /share/jarvis_prime/playbooks/</div>';
+        container.innerHTML = '<div class="text-center text-muted">No playbooks found. Upload .sh, .py, or .yml files above.</div>';
         return;
       }
       
@@ -183,7 +295,10 @@
                 <select class="playbook-target" id="target-${safeId}" style="margin-bottom: 8px;">
                   <option value="">All servers</option>
                 </select>
-                <button class="btn primary" onclick="orchRunPlaybook('${p.path.replace(/'/g, "\\'")}')">▶ Run</button>
+                <div style="display: flex; gap: 8px;">
+                  <button class="btn primary" onclick="orchRunPlaybook('${p.path.replace(/'/g, "\\'")}')">▶ Run</button>
+                  <button class="btn" onclick="orchDownloadPlaybook('${p.path.replace(/'/g, "\\'")}', '${p.name.replace(/'/g, "\\'")}')">⬇ Download</button>
+                </div>
               </div>
             </div>
           `;
@@ -493,41 +608,42 @@
   };
 
   // ============================================
-  // SCHEDULES
+  // SCHEDULES (SPRINT 3: JOB NAMING)
   // ============================================
   window.orchLoadSchedules = async function() {
     const tbody = document.getElementById('schedules-list');
     if (!tbody) return;
     
     try {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Loading schedules...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Loading schedules...</td></tr>';
       const data = await jfetch(API('api/orchestrator/schedules'));
       
       if (!data.schedules || data.schedules.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No schedules configured. Click "Add Schedule" to create one.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No schedules configured. Click "Add Schedule" to create one.</td></tr>';
         return;
       }
       
       tbody.innerHTML = data.schedules.map(s => `
         <tr>
-          <td>${s.playbook}</td>
-          <td><code style="background: var(--surface-tertiary); padding: 2px 6px; border-radius: 4px;">${s.cron}</code></td>
+          <td><strong style="color: var(--accent-primary);">${s.name || s.playbook.split('/').pop()}</strong></td>
+          <td style="font-size: 12px; color: var(--text-muted);">${s.playbook}</td>
+          <td><code style="background: var(--surface-tertiary); padding: 2px 6px; border-radius: 4px; font-size: 11px;">${s.cron}</code></td>
           <td>${s.inventory_group || 'all'}</td>
-          <td>${s.last_run ? new Date(s.last_run).toLocaleString() : 'Never'}</td>
-          <td>${s.next_run ? new Date(s.next_run).toLocaleString() : '—'}</td>
+          <td style="font-size: 12px;">${s.last_run ? new Date(s.last_run).toLocaleString() : 'Never'}</td>
+          <td style="font-size: 12px;">${s.next_run ? new Date(s.next_run).toLocaleString() : '—'}</td>
           <td>
             <span class="status-badge ${s.enabled ? 'completed' : 'disabled'}">${s.enabled ? 'Enabled' : 'Disabled'}</span>
             ${s.notify_on_completion ? '' : '<span class="status-badge disabled" style="margin-left: 4px;">🔕</span>'}
           </td>
           <td>
-            <button class="btn" onclick="orchEditSchedule(${s.id})">✏️ Edit</button>
+            <button class="btn" onclick="orchEditSchedule(${s.id})">✏️</button>
             <button class="btn" onclick="orchToggleSchedule(${s.id}, ${s.enabled})">${s.enabled ? 'Disable' : 'Enable'}</button>
-            <button class="btn danger" onclick="orchDeleteSchedule(${s.id}, '${s.playbook.replace(/'/g, "\\'")}')">Delete</button>
+            <button class="btn danger" onclick="orchDeleteSchedule(${s.id}, '${(s.name || s.playbook).replace(/'/g, "\\'")}')">Delete</button>
           </td>
         </tr>
       `).join('');
     } catch (e) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Failed to load schedules</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Failed to load schedules</td></tr>';
       toast('Failed to load schedules: ' + e.message, 'error');
     }
   };
@@ -563,7 +679,7 @@
       
       modal.classList.add('active');
       document.getElementById('schedule-form').reset();
-      document.getElementById('sched-notify').checked = true; // Default to notifications enabled
+      document.getElementById('sched-notify').checked = true;
     } catch (e) {
       toast('Failed to load playbooks: ' + e.message, 'error');
     }
@@ -605,6 +721,7 @@
       }
       
       // Populate form with schedule data
+      document.getElementById('sched-name').value = schedule.name || '';
       document.getElementById('sched-playbook').value = schedule.playbook;
       document.getElementById('sched-group').value = schedule.inventory_group || '';
       document.getElementById('sched-cron').value = schedule.cron;
@@ -633,9 +750,12 @@
   window.orchSaveSchedule = async function(event) {
     event.preventDefault();
     
+    const jobName = document.getElementById('sched-name').value.trim();
+    const playbookPath = document.getElementById('sched-playbook').value;
+    
     const data = {
-      name: document.getElementById('sched-playbook').value.split('/').pop(),
-      playbook: document.getElementById('sched-playbook').value,
+      name: jobName || playbookPath.split('/').pop(),
+      playbook: playbookPath,
       cron: document.getElementById('sched-cron').value,
       inventory_group: document.getElementById('sched-group').value || null,
       notify_on_completion: document.getElementById('sched-notify').checked,
@@ -686,8 +806,8 @@
     }
   };
 
-  window.orchDeleteSchedule = async function(scheduleId, playbookName) {
-    if (!confirm(`Delete schedule for "${playbookName}"?`)) return;
+  window.orchDeleteSchedule = async function(scheduleId, jobName) {
+    if (!confirm(`Delete schedule "${jobName}"?`)) return;
     
     try {
       await jfetch(API(`api/orchestrator/schedules/${scheduleId}`), {
@@ -791,7 +911,6 @@
       if (criteria === 'all') {
         orchCloseHistoryModal();
       } else {
-        // Reload stats
         orchShowHistorySettings();
       }
     } catch (e) {
@@ -806,10 +925,13 @@
     // Connect WebSocket for live logs
     connectWebSocket();
     
+    // Initialize upload functionality
+    initPlaybookUpload();
+    
     // Load initial data
     orchLoadPlaybooks();
     
-    console.log('[Orchestrator] Frontend initialized');
+    console.log('[Orchestrator] Frontend initialized - Sprint 3 features active');
   }
 
   // Wait for DOM to be ready
