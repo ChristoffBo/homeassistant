@@ -414,6 +414,25 @@
 
       <!-- PLAYBOOKS PANEL -->
       <div id="orch-playbooks" class="orch-panel active">
+        <!-- Upload Zone -->
+        <div class="panel" style="margin-bottom: 24px;">
+          <div class="panel-head">
+            <h3>Upload Playbooks</h3>
+          </div>
+          <div class="upload-zone" id="playbook-upload-zone">
+            <input type="file" id="playbook-file-input" accept=".yml,.yaml,.sh,.py" multiple style="display: none;" />
+            <svg class="icon" style="width: 48px; height: 48px; color: var(--accent-primary); margin-bottom: 12px;" fill="none" viewBox="0 0 24 24">
+              <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div style="font-size: 16px; font-weight: 500; margin-bottom: 8px; color: var(--text-primary);">
+              Drop playbook files here or click to browse
+            </div>
+            <div style="font-size: 13px; color: var(--text-muted);">
+              Supports .yml, .yaml, .sh, .py files
+            </div>
+          </div>
+        </div>
+
         <div class="panel">
           <div class="panel-head">
             <h3>Available Playbooks</h3>
@@ -455,6 +474,7 @@
           <table class="data-table">
             <thead>
               <tr>
+                <th>Job Name</th>
                 <th>Playbook</th>
                 <th>Schedule</th>
                 <th>Server Group</th>
@@ -465,7 +485,7 @@
               </tr>
             </thead>
             <tbody id="schedules-list">
-              <tr><td colspan="7" class="text-center text-muted">Loading schedules...</td></tr>
+              <tr><td colspan="8" class="text-center text-muted">Loading schedules...</td></tr>
             </tbody>
           </table>
         </div>
@@ -625,7 +645,7 @@
     </section>
   </main>
 
-  <!-- MODALS (Unchanged) -->
+  <!-- MODALS -->
   <div id="server-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
@@ -724,15 +744,25 @@
       </div>
       <form id="schedule-form" onsubmit="orchSaveSchedule(event)">
         <div class="form-group">
+          <label class="form-label">Job Name *</label>
+          <input type="text" id="sched-name" required placeholder="Weekly Apt Update">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Give this schedule a friendly name (e.g., "Daily Backup", "Weekly Update")
+          </div>
+        </div>
+        
+        <div class="form-group">
           <label class="form-label">Playbook *</label>
           <select id="sched-playbook" required>
             <option value="">Select a playbook...</option>
           </select>
         </div>
+        
         <div class="form-group">
           <label class="form-label">Server Group</label>
           <input type="text" id="sched-group" placeholder="web, all (optional)">
         </div>
+        
         <div class="form-group">
           <label class="form-label">Schedule Preset</label>
           <select id="sched-preset" onchange="orchApplyPreset()">
@@ -745,6 +775,7 @@
             <option value="*/15 * * * *">Every 15 minutes</option>
           </select>
         </div>
+        
         <div class="form-group">
           <label class="form-label">Cron Expression *</label>
           <input type="text" id="sched-cron" required placeholder="0 2 * * *" pattern="[0-9\*\-\,\/ ]+">
@@ -752,15 +783,17 @@
             Format: minute hour day month weekday (e.g., "0 2 * * *" = 2 AM daily)
           </div>
         </div>
+        
         <div class="form-group">
           <div class="checkbox-group">
             <input type="checkbox" id="sched-notify" checked />
             <label for="sched-notify">Send notification when job completes</label>
           </div>
         </div>
+        
         <div class="modal-footer">
           <button type="button" class="btn" onclick="orchCloseScheduleModal()">Cancel</button>
-          <button type="submit" class="btn primary">Create Schedule</button>
+          <button type="submit" class="btn primary">Save Schedule</button>
         </div>
       </form>
     </div>
@@ -870,7 +903,7 @@
 
   <div id="toast"></div>
   <script src="app.js?v=5.0"></script>
-  <script src="orchestrator.js?v=1.1"></script>
+  <script src="orchestrator.js?v=1.2"></script>
   <script src="analytics.js?v=1.0"></script>
 </body>
 </html>
