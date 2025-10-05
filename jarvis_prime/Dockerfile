@@ -70,7 +70,7 @@ COPY /llm/rag.py /app/rag.py
 COPY /llm/rag_facts.json /app/rag_facts.json
 
 # Inbox server + UI + storage + fan-out clients
-COPY /intakes/api_messages.py /app/api_messages.py
+COPY /core/api_messages.py /app/api_messages.py
 COPY /modules/storage.py      /app/storage.py
 COPY /intakes/ntfy_client.py  /app/ntfy_client.py
 COPY /intakes/smtp_client.py  /app/smtp_client.py
