@@ -4,7 +4,7 @@
 # Orchestrator: Lightweight automation module for Jarvis Prime
 # Runs playbooks/scripts, manages servers, logs results, notifies on completion
 # Built for aiohttp
-# PATCHED: Now uses process_incoming fan-out AND legacy notify_callback
+# Sprint 3: Added upload/download playbook endpoints
 
 import os
 import json
@@ -665,6 +665,82 @@ async def api_list_playbooks_organized(request):
         return _json({"error": "Orchestrator not initialized"}, status=500)
     return _json({"playbooks": orchestrator.list_playbooks_organized()})
 
+# SPRINT 3: UPLOAD PLAYBOOK
+async def api_upload_playbook(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    try:
+        reader = await request.multipart()
+        field = await reader.next()
+        
+        if field.name != 'file':
+            return _json({"error": "Expected 'file' field"}, status=400)
+        
+        filename = field.filename
+        if not filename:
+            return _json({"error": "No filename provided"}, status=400)
+        
+        # Validate extension
+        valid_extensions = ['.yml', '.yaml', '.sh', '.py']
+        ext = Path(filename).suffix.lower()
+        if ext not in valid_extensions:
+            return _json({"error": f"Invalid file type. Allowed: {', '.join(valid_extensions)}"}, status=400)
+        
+        # Sanitize filename
+        safe_filename = Path(filename).name
+        playbooks_dir = Path(orchestrator.playbooks_path)
+        playbooks_dir.mkdir(parents=True, exist_ok=True)
+        
+        file_path = playbooks_dir / safe_filename
+        
+        # Save file
+        size = 0
+        with open(file_path, 'wb') as f:
+            while True:
+                chunk = await field.read_chunk()
+                if not chunk:
+                    break
+                size += len(chunk)
+                f.write(chunk)
+        
+        return _json({
+            "success": True, 
+            "filename": safe_filename,
+            "size": size,
+            "path": str(file_path.relative_to(playbooks_dir))
+        })
+    
+    except Exception as e:
+        return _json({"error": str(e)}, status=500)
+
+# SPRINT 3: DOWNLOAD PLAYBOOK
+async def api_download_playbook(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    try:
+        playbook_path = request.match_info["playbook"]
+        base_path = Path(orchestrator.playbooks_path).resolve()
+        full_path = (base_path / playbook_path).resolve()
+        
+        # Security: ensure path is within playbooks directory
+        if not str(full_path).startswith(str(base_path)):
+            return _json({"error": "Invalid path"}, status=400)
+        
+        if not full_path.exists() or not full_path.is_file():
+            return _json({"error": "File not found"}, status=404)
+        
+        return web.FileResponse(
+            path=str(full_path),
+            headers={
+                'Content-Disposition': f'attachment; filename="{full_path.name}"'
+            }
+        )
+    
+    except Exception as e:
+        return _json({"error": str(e)}, status=500)
+
 async def api_run_playbook(request):
     if not orchestrator:
         return _json({"error": "Orchestrator not initialized"}, status=500)
@@ -896,6 +972,8 @@ async def api_delete_schedule(request):
 def register_routes(app):
     app.router.add_get("/api/orchestrator/playbooks", api_list_playbooks)
     app.router.add_get("/api/orchestrator/playbooks/organized", api_list_playbooks_organized)
+    app.router.add_post("/api/orchestrator/playbooks/upload", api_upload_playbook)  # SPRINT 3
+    app.router.add_get("/api/orchestrator/playbooks/download/{playbook:.*}", api_download_playbook)  # SPRINT 3
     app.router.add_post("/api/orchestrator/run/{playbook:.*}", api_run_playbook)
     app.router.add_get("/api/orchestrator/status/{id:\\d+}", api_get_status)
     app.router.add_get("/api/orchestrator/history", api_history)
