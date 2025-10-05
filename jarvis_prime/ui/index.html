@@ -17,7 +17,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=4.1" />
+  <link rel="stylesheet" href="style.css?v=5.0" />
   
   <!-- Favicon / Browser tab icons -->
   <link rel="icon" href="/icon/icon-16x16.png" sizes="16x16" type="image/png">
@@ -25,15 +25,15 @@
   <link rel="apple-touch-icon" href="/icon/icon-192x192.png" sizes="192x192">
   <link rel="apple-touch-icon" href="/icon/icon-512x512.png" sizes="512x512">
   <link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#00e5ff">
+  <meta name="theme-color" content="#0ea5e9">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Jarvis">
-  <meta name="msapplication-TileColor" content="#001224">
+  <meta name="msapplication-TileColor" content="#0f1419">
 </head>
 
 <body>
-  <!-- ULTRA GLASS NAVIGATION -->
+  <!-- PREMIUM GLASSMORPHIC NAVIGATION -->
   <nav class="glass-nav">
     <div class="nav-container">
       <div class="nav-brand">
@@ -84,7 +84,7 @@
               <div class="metric-value" id="dash-inbox-total">0</div>
               <div class="metric-label">Total Messages</div>
             </div>
-            <div class="metric-icon" style="background: rgba(0, 255, 136, 0.12); color: #00ff88;">
+            <div class="metric-icon" style="background: rgba(16, 185, 129, 0.12); color: #10b981;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
                 <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke="currentColor" stroke-width="2"/>
               </svg>
@@ -99,7 +99,7 @@
               <div class="metric-value" id="dash-inbox-today">0</div>
               <div class="metric-label">Messages Today</div>
             </div>
-            <div class="metric-icon" style="background: rgba(0, 229, 255, 0.12); color: #00e5ff;">
+            <div class="metric-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
                 <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke="currentColor" stroke-width="2"/>
               </svg>
@@ -126,10 +126,10 @@
         <div class="metric-card" onclick="switchTab('inbox')">
           <div class="metric-header">
             <div>
-              <div class="metric-value" id="dash-chat-status">Ready</div>
+              <div class="metric-value" id="dash-chat-status" style="font-size: 24px;">Ready</div>
               <div class="metric-label">Chat Status</div>
             </div>
-            <div class="metric-icon" style="background: rgba(0, 229, 255, 0.12); color: var(--cyan-electric);">
+            <div class="metric-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
                 <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z" stroke="currentColor" stroke-width="2"/>
               </svg>
@@ -147,7 +147,7 @@
               <div class="metric-value" id="dash-commands">0</div>
               <div class="metric-label">Commands</div>
             </div>
-            <div class="metric-icon" style="background: rgba(77, 184, 255, 0.12); color: var(--blue-light);">
+            <div class="metric-icon" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2"/>
               </svg>
@@ -165,7 +165,7 @@
               <div class="metric-value" id="dash-playbooks">0</div>
               <div class="metric-label">Active Playbooks</div>
             </div>
-            <div class="metric-icon" style="background: rgba(255, 170, 0, 0.12); color: #ffaa00;">
+            <div class="metric-icon" style="background: rgba(245, 158, 11, 0.12); color: #f59e0b;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
                 <path d="M12 1v6m0 6v6m8.66-15.66l-4.24 4.24m-8.48 8.48l-4.24 4.24M23 12h-6M7 12H1m16.66 8.66l-4.24-4.24m-8.48-8.48L.34 3.34" stroke="currentColor" stroke-width="2"/>
@@ -184,7 +184,7 @@
               <div class="metric-value" id="dash-health">0%</div>
               <div class="metric-label">System Health</div>
             </div>
-            <div class="metric-icon" style="background: rgba(0, 255, 136, 0.12); color: #00ff88;">
+            <div class="metric-icon" style="background: rgba(16, 185, 129, 0.12); color: #10b981;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
                 <path d="M3 3v18h18M7 16l4-4 4 4 6-6" stroke="currentColor" stroke-width="2"/>
               </svg>
@@ -203,8 +203,8 @@
         <div class="metric-card" onclick="switchTab('orchestrator')">
           <div class="metric-header">
             <div>
-              <div class="metric-value">
-                <span id="dash-orch-success" style="color: #00ff88;">0</span> / 
+              <div class="metric-value" style="font-size: 32px;">
+                <span id="dash-orch-success" style="color: #10b981;">0</span> / 
                 <span id="dash-orch-errors" style="color: #ef4444;">0</span>
               </div>
               <div class="metric-label">Orchestration Jobs</div>
@@ -216,7 +216,7 @@
             </div>
           </div>
           <div class="metric-change">
-            <span style="color: #00ff88;">Success</span>
+            <span style="color: #10b981;">Success</span>
             <span style="color: var(--text-muted);">/</span>
             <span style="color: #ef4444;">Failed</span>
           </div>
@@ -235,7 +235,7 @@
         <div class="card-body">
           <ul class="activity-list" id="dash-activity">
             <li class="activity-item">
-              <div class="activity-icon" style="background: rgba(0, 255, 136, 0.12); color: #00ff88;">
+              <div class="activity-icon" style="background: rgba(16, 185, 129, 0.12); color: #10b981;">
                 <svg class="icon" fill="none" viewBox="0 0 24 24">
                   <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke="currentColor" stroke-width="2"/>
                 </svg>
@@ -312,7 +312,7 @@
         <div class="glass-card">
           <div class="card-header">
             <h3 class="card-title">AI Assistant</h3>
-            <svg class="icon" fill="none" viewBox="0 0 24 24" style="color: var(--cyan-electric);">
+            <svg class="icon" fill="none" viewBox="0 0 24 24" style="color: var(--accent-primary);">
               <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z" stroke="currentColor" stroke-width="2"/>
             </svg>
           </div>
@@ -330,7 +330,7 @@
         <div class="glass-card">
           <div class="card-header">
             <h3 class="card-title">System Commands</h3>
-            <svg class="icon" fill="none" viewBox="0 0 24 24" style="color: var(--blue-light);">
+            <svg class="icon" fill="none" viewBox="0 0 24 24" style="color: var(--accent-primary);">
               <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2"/>
             </svg>
           </div>
@@ -543,11 +543,11 @@
       <!-- Reset & Purge Controls -->
       <div style="margin: 20px 0; display: flex; gap: 12px; flex-wrap: wrap;">
         <button class="btn" onclick="analyticsResetHealth()" 
-                style="background: rgba(255, 149, 0, 0.1); border: 1px solid rgba(255, 149, 0, 0.3); color: #fb923c;">
+                style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b;">
           Reset Health Scores
         </button>
         <button class="btn" onclick="analyticsResetIncidents()" 
-                style="background: rgba(255, 69, 58, 0.1); border: 1px solid rgba(255, 69, 58, 0.3); color: #ef4444;">
+                style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444;">
           Clear All Incidents
         </button>
         
@@ -625,7 +625,7 @@
     </section>
   </main>
 
-  <!-- MODALS -->
+  <!-- MODALS (Unchanged) -->
   <div id="server-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
@@ -790,10 +790,10 @@
         </div>
       </div>
 
-      <div style="background: rgba(255, 59, 48, 0.1); border: 1px solid rgba(255, 59, 48, 0.3); border-radius: 8px; padding: 16px;">
+      <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px;">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
           <span style="font-size: 24px;">⚠️</span>
-          <span style="color: #ff3b30; font-weight: 600;">Danger Zone</span>
+          <span style="color: #ef4444; font-weight: 600;">Danger Zone</span>
         </div>
         <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
           Permanently delete all execution history. This action cannot be undone.
@@ -869,7 +869,7 @@
   </div>
 
   <div id="toast"></div>
-  <script src="app.js?v=4.1"></script>
+  <script src="app.js?v=5.0"></script>
   <script src="orchestrator.js?v=1.1"></script>
   <script src="analytics.js?v=1.0"></script>
 </body>
