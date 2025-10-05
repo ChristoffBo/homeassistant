@@ -1,3 +1,6 @@
+## latest (2025-10-5 14:21:00)
+Added settings into ui and backup.
+backup currently inactive.
 ## latest (2025-10-5 8:21:00)
 Updated UI again, fixed dark mode.
 Added QOL changes to orhcestrator, upload download playbooks naming schedules.
