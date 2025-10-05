@@ -619,7 +619,7 @@
       </div>
     </section>
 
-    <!-- NEW: SETTINGS TAB -->
+    <!-- SETTINGS TAB - FIXED -->
     <section id="settings" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -641,15 +641,16 @@
         </div>
       </div>
 
-      <!-- Settings Sub-tabs -->
+      <!-- Settings Sub-tabs - FIXED: Changed settings-tab to orch-tab -->
       <div class="orch-tabs">
-        <button class="settings-tab active" data-settings-tab="general">General</button>
-        <button class="settings-tab" data-settings-tab="llm">LLM & AI</button>
-        <button class="settings-tab" data-settings-tab="personality">Personality</button>
-        <button class="settings-tab" data-settings-tab="integrations">Integrations</button>
-        <button class="settings-tab" data-settings-tab="communications">Communications</button>
-        <button class="settings-tab" data-settings-tab="monitoring">Monitoring</button>
-        <button class="settings-tab" data-settings-tab="push">Push Notifications</button>
+        <button class="orch-tab active" data-settings-tab="general">General</button>
+        <button class="orch-tab" data-settings-tab="llm">LLM & AI</button>
+        <button class="orch-tab" data-settings-tab="personality">Personality</button>
+        <button class="orch-tab" data-settings-tab="integrations">Integrations</button>
+        <button class="orch-tab" data-settings-tab="communications">Communications</button>
+        <button class="orch-tab" data-settings-tab="monitoring">Monitoring</button>
+        <button class="orch-tab" data-settings-tab="push">Push Notifications</button>
+        <button class="orch-tab" data-settings-tab="backup">Backup & Restore</button>
       </div>
 
       <!-- GENERAL PANEL -->
@@ -1234,6 +1235,58 @@
                 <input type="checkbox" id="set-push-ntfy-enabled" />
                 <label for="set-push-ntfy-enabled">Enable ntfy push notifications</label>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- NEW: BACKUP & RESTORE PANEL -->
+      <div id="settings-backup-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Backup & Restore</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div style="background: rgba(14, 165, 233, 0.1); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <span style="font-size: 24px;">💾</span>
+                <span style="color: #0ea5e9; font-weight: 600;">Full System Backup</span>
+              </div>
+              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
+                Create a complete backup of your Jarvis Prime installation including database, playbooks, models, and configuration.
+              </p>
+            </div>
+            
+            <div style="margin-bottom: 32px;">
+              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Create Backup</h4>
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                Download a complete backup archive (.tar.gz) containing all system data.
+              </p>
+              <button id="backup-download-btn" class="btn primary" style="width: 100%;">
+                📥 Download Full Backup
+              </button>
+            </div>
+            
+            <div style="padding-top: 24px; border-top: 1px solid var(--surface-border);">
+              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Restore Backup</h4>
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                Upload a backup archive to restore your system. <strong style="color: var(--accent-primary);">This will overwrite all current data.</strong>
+              </p>
+              
+              <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 18px;">⚠️</span>
+                  <span style="color: #f59e0b; font-size: 13px; font-weight: 500;">
+                    Jarvis will automatically restart after restore completes
+                  </span>
+                </div>
+              </div>
+              
+              <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
+              <button id="backup-restore-btn" class="btn" style="width: 100%;">
+                📤 Select Backup File to Restore
+              </button>
             </div>
           </div>
         </div>
