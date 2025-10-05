@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 # /app/orchestrator.py
-#
-# Orchestrator: Lightweight automation module for Jarvis Prime
-# Runs playbooks/scripts, manages servers, logs results, notifies on completion
-# Built for aiohttp
-# Sprint 3: Added upload/download playbook endpoints
+# Sprint 4: Cancel jobs, job names in history, retry support
 
 import os
 import json
 import sqlite3
 import subprocess
 import asyncio
+import signal
 from datetime import datetime, timedelta
 from pathlib import Path
 from aiohttp import web
@@ -32,13 +29,11 @@ class Orchestrator:
         self.init_db()
         
     def start_scheduler(self):
-        """Start the background scheduler task"""
         if self._scheduler_task is None:
             self._scheduler_task = asyncio.create_task(self._scheduler_loop())
             self.logger("[orchestrator] Scheduler started")
     
     async def _scheduler_loop(self):
-        """Background loop that checks for scheduled jobs every minute"""
         while True:
             try:
                 await asyncio.sleep(60)
@@ -47,16 +42,12 @@ class Orchestrator:
                 self.logger(f"[orchestrator] Scheduler error: {e}")
     
     async def _check_schedules(self):
-        """Check if any scheduled jobs should run now"""
         now = datetime.now()
         
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM orchestration_schedules 
-                WHERE enabled = 1
-            """)
+            cursor.execute("SELECT * FROM orchestration_schedules WHERE enabled = 1")
             schedules = [dict(row) for row in cursor.fetchall()]
         
         for schedule in schedules:
@@ -68,17 +59,18 @@ class Orchestrator:
                     self.run_playbook(
                         schedule['playbook'], 
                         triggered_by=f"schedule_{schedule['id']}", 
-                        inventory_group=schedule.get('inventory_group')
+                        inventory_group=schedule.get('inventory_group'),
+                        job_name=schedule.get('name')
                     )
                     self._update_schedule_run_time(schedule['id'], schedule['cron'])
 
     def init_db(self):
-        """Initialize database tables for job tracking"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS orchestration_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_name TEXT,
                     playbook TEXT NOT NULL,
                     status TEXT DEFAULT 'pending',
                     started_at TEXT,
@@ -86,6 +78,7 @@ class Orchestrator:
                     output TEXT,
                     exit_code INTEGER,
                     triggered_by TEXT,
+                    inventory_group TEXT,
                     pid INTEGER
                 )
             """)
@@ -119,22 +112,34 @@ class Orchestrator:
                 )
             """)
             
+            # Add missing columns if they don't exist
             try:
                 cursor.execute("SELECT notify_on_completion FROM orchestration_schedules LIMIT 1")
             except sqlite3.OperationalError:
-                self.logger("[orchestrator] Adding notify_on_completion column to schedules table")
+                self.logger("[orchestrator] Adding notify_on_completion column")
                 cursor.execute("ALTER TABLE orchestration_schedules ADD COLUMN notify_on_completion INTEGER DEFAULT 1")
             
             try:
                 cursor.execute("SELECT name FROM orchestration_schedules LIMIT 1")
             except sqlite3.OperationalError:
-                self.logger("[orchestrator] Adding name column to schedules table")
+                self.logger("[orchestrator] Adding name column to schedules")
                 cursor.execute("ALTER TABLE orchestration_schedules ADD COLUMN name TEXT")
+            
+            try:
+                cursor.execute("SELECT job_name FROM orchestration_jobs LIMIT 1")
+            except sqlite3.OperationalError:
+                self.logger("[orchestrator] Adding job_name column to jobs")
+                cursor.execute("ALTER TABLE orchestration_jobs ADD COLUMN job_name TEXT")
+            
+            try:
+                cursor.execute("SELECT inventory_group FROM orchestration_jobs LIMIT 1")
+            except sqlite3.OperationalError:
+                self.logger("[orchestrator] Adding inventory_group column to jobs")
+                cursor.execute("ALTER TABLE orchestration_jobs ADD COLUMN inventory_group TEXT")
             
             conn.commit()
 
     def _update_schedule_run_time(self, schedule_id, cron_expr):
-        """Update last_run and calculate next_run based on cron expression"""
         now = datetime.now()
         next_run = self._calculate_next_run(cron_expr, now)
         
@@ -148,7 +153,6 @@ class Orchestrator:
             conn.commit()
     
     def _calculate_next_run(self, cron_expr, from_time):
-        """Simple cron parser - supports: minute hour day month weekday"""
         try:
             parts = cron_expr.strip().split()
             if len(parts) != 5:
@@ -167,7 +171,6 @@ class Orchestrator:
             return None
     
     def _cron_matches(self, dt, minute, hour, day, month, weekday):
-        """Check if datetime matches cron expression"""
         if minute != '*' and int(minute) != dt.minute:
             return False
         if hour != '*' and int(hour) != dt.hour:
@@ -181,7 +184,6 @@ class Orchestrator:
         return True
     
     def add_schedule(self, name, playbook, cron, inventory_group=None, enabled=True, notify_on_completion=True):
-        """Add a new schedule for a playbook"""
         now = datetime.now()
         next_run = self._calculate_next_run(cron, now)
         
@@ -197,7 +199,6 @@ class Orchestrator:
             return cursor.lastrowid
     
     def list_schedules(self):
-        """List all schedules"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -205,7 +206,6 @@ class Orchestrator:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_schedule(self, schedule_id):
-        """Get a specific schedule by ID"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -214,7 +214,6 @@ class Orchestrator:
             return dict(row) if row else None
     
     def update_schedule(self, schedule_id, **kwargs):
-        """Update schedule details"""
         allowed_fields = ["name", "playbook", "cron", "enabled", "notify_on_completion", "inventory_group"]
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
         if not updates:
@@ -235,7 +234,6 @@ class Orchestrator:
             return cursor.rowcount > 0
     
     def delete_schedule(self, schedule_id):
-        """Delete a schedule"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM orchestration_schedules WHERE id = ?", (schedule_id,))
@@ -243,7 +241,6 @@ class Orchestrator:
             return cursor.rowcount > 0
 
     def list_playbooks(self):
-        """List all available playbooks from the playbooks directory"""
         playbooks = []
         playbooks_dir = Path(self.playbooks_path)
 
@@ -265,7 +262,6 @@ class Orchestrator:
         return sorted(playbooks, key=lambda x: x["name"])
 
     def list_playbooks_organized(self):
-        """List all playbooks organized by subdirectory"""
         playbooks_dir = Path(self.playbooks_path)
         
         if not playbooks_dir.exists():
@@ -302,7 +298,6 @@ class Orchestrator:
         return organized
 
     def get_job_history(self, limit=50, status=None, playbook=None):
-        """Get recent job execution history with optional filters"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -325,7 +320,6 @@ class Orchestrator:
             return [dict(row) for row in cursor.fetchall()]
 
     def purge_history(self, criteria):
-        """Purge history based on criteria"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -345,7 +339,6 @@ class Orchestrator:
             return deleted
 
     def get_history_stats(self):
-        """Get statistics about job history"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -367,7 +360,6 @@ class Orchestrator:
             }
 
     def add_server(self, name, hostname, username, password, port=22, groups="", description=""):
-        """Add a new server to inventory"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             now = datetime.now().isoformat()
@@ -380,7 +372,6 @@ class Orchestrator:
             return cursor.lastrowid
 
     def update_server(self, server_id, **kwargs):
-        """Update server details"""
         allowed_fields = ["name", "hostname", "port", "username", "password", "groups", "description"]
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
         if not updates:
@@ -397,7 +388,6 @@ class Orchestrator:
             return cursor.rowcount > 0
 
     def delete_server(self, server_id):
-        """Delete a server from inventory"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM orchestration_servers WHERE id = ?", (server_id,))
@@ -405,7 +395,6 @@ class Orchestrator:
             return cursor.rowcount > 0
 
     def list_servers(self, group=None):
-        """List all servers, optionally filtered by group"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -420,7 +409,6 @@ class Orchestrator:
             return servers
 
     def get_server(self, server_id):
-        """Get a specific server by ID (includes password)"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -429,7 +417,6 @@ class Orchestrator:
             return dict(row) if row else None
 
     def generate_ansible_inventory(self, group=None):
-        """Generate Ansible inventory file content from servers"""
         servers = self.list_servers(group)
         
         groups_dict = {}
@@ -458,7 +445,6 @@ class Orchestrator:
         return "\n".join(inventory_lines)
 
     def get_job_status(self, job_id):
-        """Get status of a specific job"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -466,16 +452,42 @@ class Orchestrator:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def run_playbook(self, playbook_name, triggered_by="manual", inventory_group=None):
+    def cancel_job(self, job_id, pid):
+        """Cancel a running job by killing its process"""
+        try:
+            if pid and pid > 0:
+                os.kill(pid, signal.SIGTERM)
+                self.logger(f"[orchestrator] Sent SIGTERM to job {job_id} (PID: {pid})")
+                
+                # Update job status
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE orchestration_jobs
+                        SET status = 'cancelled', completed_at = ?, exit_code = -1
+                        WHERE id = ?
+                    """, (datetime.now().isoformat(), job_id))
+                    conn.commit()
+                
+                return True
+            return False
+        except ProcessLookupError:
+            self.logger(f"[orchestrator] Process {pid} not found")
+            return False
+        except Exception as e:
+            self.logger(f"[orchestrator] Error cancelling job: {e}")
+            return False
+
+    def run_playbook(self, playbook_name, triggered_by="manual", inventory_group=None, job_name=None):
         """Execute a playbook asynchronously"""
         started_at = datetime.now().isoformat()
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO orchestration_jobs (playbook, status, started_at, triggered_by)
-                VALUES (?, 'running', ?, ?)
-            """, (playbook_name, started_at, triggered_by))
+                INSERT INTO orchestration_jobs (job_name, playbook, status, started_at, triggered_by, inventory_group)
+                VALUES (?, ?, 'running', ?, ?, ?)
+            """, (job_name, playbook_name, started_at, triggered_by, inventory_group))
             job_id = cursor.lastrowid
             conn.commit()
 
@@ -484,7 +496,6 @@ class Orchestrator:
         return job_id
 
     async def _execute_playbook(self, job_id, playbook_name, inventory_group=None, triggered_by="manual"):
-        """Internal method to execute playbook and capture output"""
         base_path = Path(self.playbooks_path).resolve()
         playbook_path = (base_path / playbook_name).resolve()
 
@@ -569,7 +580,6 @@ class Orchestrator:
             self._send_notification(job_id, playbook_name, "failed", -1, triggered_by=triggered_by, error=msg)
 
     async def _broadcast_log(self, job_id, line):
-        """Broadcast log line to all connected WebSocket clients"""
         if not self.ws_clients:
             return
         
@@ -586,7 +596,6 @@ class Orchestrator:
             self.ws_clients.discard(ws)
 
     def _update_job(self, job_id, status, output, exit_code, pid):
-        """Update job record in database"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -597,8 +606,6 @@ class Orchestrator:
             conn.commit()
 
     def _send_notification(self, job_id, playbook_name, status, exit_code, triggered_by="manual", error=None):
-        """Send notification via Jarvis fan-out and legacy callback"""
-        # Check if we should skip notification for successful scheduled jobs
         if triggered_by.startswith("schedule_"):
             try:
                 schedule_id = int(triggered_by.split("_")[1])
@@ -613,7 +620,6 @@ class Orchestrator:
             except Exception:
                 pass
         
-        # Build notification
         title = "Orchestrator"
         
         if status == "completed":
@@ -626,7 +632,6 @@ class Orchestrator:
                 body = f"❌ {playbook_name} FAILED (exit code: {exit_code})"
             priority = 5
         
-        # 1. Try Jarvis fan-out (process_incoming)
         try:
             from bot import process_incoming
             process_incoming(title, body, source="orchestrator", priority=priority)
@@ -642,13 +647,11 @@ class Orchestrator:
 orchestrator = None
 
 def init_orchestrator(config, db_path, notify_callback=None, logger=None):
-    """Initialize the orchestrator module"""
     global orchestrator
     orchestrator = Orchestrator(config, db_path, notify_callback, logger)
     return orchestrator
 
 def start_orchestrator_scheduler():
-    """Start the scheduler background task"""
     if orchestrator:
         orchestrator.start_scheduler()
 
@@ -665,7 +668,6 @@ async def api_list_playbooks_organized(request):
         return _json({"error": "Orchestrator not initialized"}, status=500)
     return _json({"playbooks": orchestrator.list_playbooks_organized()})
 
-# SPRINT 3: UPLOAD PLAYBOOK
 async def api_upload_playbook(request):
     if not orchestrator:
         return _json({"error": "Orchestrator not initialized"}, status=500)
@@ -681,20 +683,17 @@ async def api_upload_playbook(request):
         if not filename:
             return _json({"error": "No filename provided"}, status=400)
         
-        # Validate extension
         valid_extensions = ['.yml', '.yaml', '.sh', '.py']
         ext = Path(filename).suffix.lower()
         if ext not in valid_extensions:
             return _json({"error": f"Invalid file type. Allowed: {', '.join(valid_extensions)}"}, status=400)
         
-        # Sanitize filename
         safe_filename = Path(filename).name
         playbooks_dir = Path(orchestrator.playbooks_path)
         playbooks_dir.mkdir(parents=True, exist_ok=True)
         
         file_path = playbooks_dir / safe_filename
         
-        # Save file
         size = 0
         with open(file_path, 'wb') as f:
             while True:
@@ -714,7 +713,6 @@ async def api_upload_playbook(request):
     except Exception as e:
         return _json({"error": str(e)}, status=500)
 
-# SPRINT 3: DOWNLOAD PLAYBOOK
 async def api_download_playbook(request):
     if not orchestrator:
         return _json({"error": "Orchestrator not initialized"}, status=500)
@@ -724,7 +722,6 @@ async def api_download_playbook(request):
         base_path = Path(orchestrator.playbooks_path).resolve()
         full_path = (base_path / playbook_path).resolve()
         
-        # Security: ensure path is within playbooks directory
         if not str(full_path).startswith(str(base_path)):
             return _json({"error": "Invalid path"}, status=400)
         
@@ -753,10 +750,31 @@ async def api_run_playbook(request):
     
     triggered_by = data.get("triggered_by", "manual")
     inventory_group = data.get("inventory_group")
+    job_name = data.get("job_name")
     
     try:
-        job_id = orchestrator.run_playbook(playbook, triggered_by, inventory_group)
+        job_id = orchestrator.run_playbook(playbook, triggered_by, inventory_group, job_name)
         return _json({"success": True, "job_id": job_id, "message": f"Playbook {playbook} started"})
+    except Exception as e:
+        return _json({"error": str(e)}, status=500)
+
+async def api_cancel_job(request):
+    if not orchestrator:
+        return _json({"error": "Orchestrator not initialized"}, status=500)
+    
+    job_id = int(request.match_info["id"])
+    
+    try:
+        data = await request.json()
+        pid = data.get("pid", 0)
+    except Exception:
+        pid = 0
+    
+    try:
+        success = orchestrator.cancel_job(job_id, pid)
+        if success:
+            return _json({"success": True, "message": "Job cancelled"})
+        return _json({"error": "Failed to cancel job"}, status=400)
     except Exception as e:
         return _json({"error": str(e)}, status=500)
 
@@ -972,10 +990,11 @@ async def api_delete_schedule(request):
 def register_routes(app):
     app.router.add_get("/api/orchestrator/playbooks", api_list_playbooks)
     app.router.add_get("/api/orchestrator/playbooks/organized", api_list_playbooks_organized)
-    app.router.add_post("/api/orchestrator/playbooks/upload", api_upload_playbook)  # SPRINT 3
-    app.router.add_get("/api/orchestrator/playbooks/download/{playbook:.*}", api_download_playbook)  # SPRINT 3
+    app.router.add_post("/api/orchestrator/playbooks/upload", api_upload_playbook)
+    app.router.add_get("/api/orchestrator/playbooks/download/{playbook:.*}", api_download_playbook)
     app.router.add_post("/api/orchestrator/run/{playbook:.*}", api_run_playbook)
     app.router.add_get("/api/orchestrator/status/{id:\\d+}", api_get_status)
+    app.router.add_post("/api/orchestrator/jobs/{id:\\d+}/cancel", api_cancel_job)  # NEW
     app.router.add_get("/api/orchestrator/history", api_history)
     app.router.add_post("/api/orchestrator/history/purge", api_purge_history)
     app.router.add_get("/api/orchestrator/history/stats", api_history_stats)
