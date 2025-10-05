@@ -1,5 +1,5 @@
 // orchestrator.js - Orchestrator tab functionality for Jarvis Prime
-// Sprint 3: Upload/Download Playbooks + Job Naming
+// Sprint 4: QoL Features - Search, Cancel, Retry, Pause, Run Now, View Output
 
 (function() {
   'use strict';
@@ -65,6 +65,7 @@
   let currentJobId = null;
   let wsConnection = null;
   let editingScheduleId = null;
+  let allPlaybooks = {}; // Store for filtering
 
   // ============================================
   // ORCHESTRATOR SUB-TAB SWITCHING
@@ -89,7 +90,41 @@
   });
 
   // ============================================
-  // PLAYBOOK UPLOAD (SPRINT 3)
+  // PLAYBOOK SEARCH (QOL)
+  // ============================================
+  function initPlaybookSearch() {
+    const searchInput = document.getElementById('playbook-search');
+    if (!searchInput) return;
+    
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      filterPlaybooks(query);
+    });
+  }
+
+  function filterPlaybooks(query) {
+    if (!query) {
+      renderPlaybooks(allPlaybooks);
+      return;
+    }
+    
+    const filtered = {};
+    for (const [category, playbooks] of Object.entries(allPlaybooks)) {
+      const matchingPlaybooks = playbooks.filter(p => 
+        p.name.toLowerCase().includes(query) || 
+        p.path.toLowerCase().includes(query)
+      );
+      
+      if (matchingPlaybooks.length > 0) {
+        filtered[category] = matchingPlaybooks;
+      }
+    }
+    
+    renderPlaybooks(filtered);
+  }
+
+  // ============================================
+  // PLAYBOOK UPLOAD
   // ============================================
   function initPlaybookUpload() {
     const uploadZone = document.getElementById('playbook-upload-zone');
@@ -97,12 +132,10 @@
     
     if (!uploadZone || !fileInput) return;
     
-    // Click to browse
     uploadZone.addEventListener('click', () => {
       fileInput.click();
     });
     
-    // Drag and drop
     uploadZone.addEventListener('dragover', (e) => {
       e.preventDefault();
       uploadZone.style.borderColor = 'var(--accent-primary)';
@@ -124,11 +157,10 @@
       uploadPlaybookFiles(files);
     });
     
-    // File input change
     fileInput.addEventListener('change', (e) => {
       const files = Array.from(e.target.files);
       uploadPlaybookFiles(files);
-      fileInput.value = ''; // Reset input
+      fileInput.value = '';
     });
   }
 
@@ -168,12 +200,11 @@
       }
     }
     
-    // Reload playbooks
     orchLoadPlaybooks();
   }
 
   // ============================================
-  // PLAYBOOK DOWNLOAD (SPRINT 3)
+  // PLAYBOOK DOWNLOAD
   // ============================================
   window.orchDownloadPlaybook = async function(playbookPath, playbookName) {
     try {
@@ -262,54 +293,8 @@
         return;
       }
       
-      // Build organized playbook display
-      let html = '';
-      for (const [category, playbooks] of Object.entries(data.playbooks).sort()) {
-        const categoryName = category === 'root' ? 'Root' : category.charAt(0).toUpperCase() + category.slice(1);
-        const categoryIcon = {
-          'lxc': '📦',
-          'debian': '🐧',
-          'proxmox': '🔧',
-          'network': '🌐',
-          'docker': '🐳',
-          'security': '🔒',
-          'root': '📁'
-        }[category] || '📄';
-        
-        html += `<div class="playbook-category" style="margin-bottom: 24px;">
-          <h4 style="color: var(--text-primary); margin-bottom: 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
-            ${categoryIcon} ${categoryName}
-          </h4>`;
-        
-        playbooks.forEach(p => {
-          const safeId = p.path.replace(/[^a-zA-Z0-9]/g, '_');
-          html += `
-            <div class="playbook-card">
-              <div class="playbook-name">${p.name}</div>
-              <div class="playbook-meta">
-                Type: ${p.type.toUpperCase()} | 
-                Path: ${p.path} | 
-                Modified: ${new Date(p.modified).toLocaleString()}
-              </div>
-              <div class="playbook-actions">
-                <select class="playbook-target" id="target-${safeId}" style="margin-bottom: 8px;">
-                  <option value="">All servers</option>
-                </select>
-                <div style="display: flex; gap: 8px;">
-                  <button class="btn primary" onclick="orchRunPlaybook('${p.path.replace(/'/g, "\\'")}')">▶ Run</button>
-                  <button class="btn" onclick="orchDownloadPlaybook('${p.path.replace(/'/g, "\\'")}', '${p.name.replace(/'/g, "\\'")}')">⬇ Download</button>
-                </div>
-              </div>
-            </div>
-          `;
-        });
-        
-        html += '</div>';
-      }
-      
-      container.innerHTML = html;
-      
-      // Load servers to populate dropdowns
+      allPlaybooks = data.playbooks;
+      renderPlaybooks(allPlaybooks);
       orchLoadServerOptionsForPlaybooks();
     } catch (e) {
       container.innerHTML = '<div class="text-center text-muted">Failed to load playbooks</div>';
@@ -317,15 +302,69 @@
     }
   };
 
+  function renderPlaybooks(playbooks) {
+    const container = document.getElementById('playbooks-list');
+    if (!container) return;
+    
+    if (!playbooks || Object.keys(playbooks).length === 0) {
+      container.innerHTML = '<div class="text-center text-muted">No playbooks match your search</div>';
+      return;
+    }
+    
+    let html = '';
+    for (const [category, playbookList] of Object.entries(playbooks).sort()) {
+      const categoryName = category === 'root' ? 'Root' : category.charAt(0).toUpperCase() + category.slice(1);
+      const categoryIcon = {
+        'lxc': '📦',
+        'debian': '🐧',
+        'proxmox': '🔧',
+        'network': '🌐',
+        'docker': '🐳',
+        'security': '🔒',
+        'root': '📁'
+      }[category] || '📄';
+      
+      html += `<div class="playbook-category" style="margin-bottom: 24px;">
+        <h4 style="color: var(--text-primary); margin-bottom: 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+          ${categoryIcon} ${categoryName}
+        </h4>`;
+      
+      playbookList.forEach(p => {
+        const safeId = p.path.replace(/[^a-zA-Z0-9]/g, '_');
+        html += `
+          <div class="playbook-card">
+            <div class="playbook-name">${p.name}</div>
+            <div class="playbook-meta">
+              Type: ${p.type.toUpperCase()} | 
+              Path: ${p.path} | 
+              Modified: ${new Date(p.modified).toLocaleString()}
+            </div>
+            <div class="playbook-actions">
+              <select class="playbook-target" id="target-${safeId}" style="margin-bottom: 8px;">
+                <option value="">All servers</option>
+              </select>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn primary" onclick="orchRunPlaybook('${p.path.replace(/'/g, "\\'")}')">▶ Run</button>
+                <button class="btn" onclick="orchDownloadPlaybook('${p.path.replace(/'/g, "\\'")}', '${p.name.replace(/'/g, "\\'")}')">⬇ Download</button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+      
+      html += '</div>';
+    }
+    
+    container.innerHTML = html;
+  }
+
   window.orchRefreshPlaybooks = orchLoadPlaybooks;
 
-  // Load server options for playbook dropdowns
   async function orchLoadServerOptionsForPlaybooks() {
     try {
       const data = await jfetch(API('api/orchestrator/servers'));
       if (!data.servers) return;
       
-      // Get unique groups and individual servers
       const groups = new Set();
       const servers = [];
       
@@ -339,7 +378,6 @@
         }
       });
       
-      // Populate all playbook target dropdowns
       document.querySelectorAll('.playbook-target').forEach(select => {
         let options = '<option value="">All servers</option>';
         
@@ -368,12 +406,10 @@
 
   window.orchRunPlaybook = async function(name) {
     try {
-      // Get selected target from dropdown
       const safeId = name.replace(/[^a-zA-Z0-9]/g, '_');
       const targetSelect = document.getElementById(`target-${safeId}`);
       const target = targetSelect ? targetSelect.value : '';
       
-      // Parse target
       let inventoryGroup = null;
       if (target.startsWith('group:')) {
         inventoryGroup = target.replace('group:', '');
@@ -381,7 +417,6 @@
         inventoryGroup = target.replace('server:', '');
       }
       
-      // Clear logs
       const logOutput = document.getElementById('orch-logs');
       if (logOutput) logOutput.innerHTML = '';
       
@@ -404,7 +439,6 @@
         appendLog(`[JARVIS] Streaming output...\n`);
         toast(`Playbook "${name}" started`, 'success');
         
-        // Poll for completion
         pollJobStatus(response.job_id);
       } else {
         appendLog(`[ERROR] Failed to start playbook: ${response.error || 'Unknown error'}`);
@@ -517,13 +551,11 @@
     }
   };
 
-  // Edit Server Functions
   window.orchEditServer = async function(serverId) {
     const modal = document.getElementById('edit-server-modal');
     if (!modal) return;
     
     try {
-      // Fetch full server details (includes password)
       const server = await jfetch(API(`api/orchestrator/servers/${serverId}`));
       
       if (!server) {
@@ -531,13 +563,12 @@
         return;
       }
       
-      // Populate form
       document.getElementById('edit-srv-id').value = server.id;
       document.getElementById('edit-srv-name').value = server.name;
       document.getElementById('edit-srv-host').value = server.hostname;
       document.getElementById('edit-srv-port').value = server.port;
       document.getElementById('edit-srv-user').value = server.username;
-      document.getElementById('edit-srv-pass').value = ''; // Don't show existing password
+      document.getElementById('edit-srv-pass').value = '';
       document.getElementById('edit-srv-groups').value = server.groups || '';
       document.getElementById('edit-srv-desc').value = server.description || '';
       
@@ -567,7 +598,6 @@
       description: document.getElementById('edit-srv-desc').value
     };
     
-    // Only include password if it was changed
     if (password) {
       data.password = password;
     }
@@ -608,7 +638,7 @@
   };
 
   // ============================================
-  // SCHEDULES (SPRINT 3: JOB NAMING)
+  // SCHEDULES (QOL: PAUSE, RUN NOW)
   // ============================================
   window.orchLoadSchedules = async function() {
     const tbody = document.getElementById('schedules-list');
@@ -632,12 +662,13 @@
           <td style="font-size: 12px;">${s.last_run ? new Date(s.last_run).toLocaleString() : 'Never'}</td>
           <td style="font-size: 12px;">${s.next_run ? new Date(s.next_run).toLocaleString() : '—'}</td>
           <td>
-            <span class="status-badge ${s.enabled ? 'completed' : 'disabled'}">${s.enabled ? 'Enabled' : 'Disabled'}</span>
+            <span class="status-badge ${s.enabled ? 'completed' : 'disabled'}">${s.enabled ? 'Active' : 'Paused'}</span>
             ${s.notify_on_completion ? '' : '<span class="status-badge disabled" style="margin-left: 4px;">🔕</span>'}
           </td>
           <td>
+            <button class="btn" onclick="orchRunScheduleNow(${s.id}, '${s.playbook.replace(/'/g, "\\'")}', '${(s.inventory_group || '').replace(/'/g, "\\'")}')">▶ Run Now</button>
+            <button class="btn" onclick="orchToggleSchedule(${s.id}, ${s.enabled})">${s.enabled ? '⏸ Pause' : '▶ Resume'}</button>
             <button class="btn" onclick="orchEditSchedule(${s.id})">✏️</button>
-            <button class="btn" onclick="orchToggleSchedule(${s.id}, ${s.enabled})">${s.enabled ? 'Disable' : 'Enable'}</button>
             <button class="btn danger" onclick="orchDeleteSchedule(${s.id}, '${(s.name || s.playbook).replace(/'/g, "\\'")}')">Delete</button>
           </td>
         </tr>
@@ -648,16 +679,46 @@
     }
   };
 
+  // QOL: Run schedule immediately
+  window.orchRunScheduleNow = async function(scheduleId, playbook, inventoryGroup) {
+    try {
+      const response = await jfetch(API(`api/orchestrator/run/${encodeURIComponent(playbook)}`), {
+        method: 'POST',
+        body: JSON.stringify({ 
+          triggered_by: `manual_schedule_${scheduleId}`,
+          inventory_group: inventoryGroup || null
+        })
+      });
+      
+      if (response.success) {
+        toast('Schedule triggered successfully', 'success');
+        orchLoadHistory();
+        
+        // Switch to playbooks tab to see live output
+        document.querySelector('[data-orch-tab="playbooks"]').click();
+        currentJobId = response.job_id;
+        const logOutput = document.getElementById('orch-logs');
+        if (logOutput) {
+          logOutput.innerHTML = '';
+          appendLog(`[JARVIS] Manually triggered schedule (Job ID: ${response.job_id})`);
+          appendLog(`[JARVIS] Playbook: ${playbook}`);
+          appendLog(`[JARVIS] Streaming output...\n`);
+        }
+        pollJobStatus(response.job_id);
+      }
+    } catch (e) {
+      toast('Failed to trigger schedule: ' + e.message, 'error');
+    }
+  };
+
   window.orchShowAddSchedule = async function() {
     const modal = document.getElementById('schedule-modal');
     if (!modal) return;
     
-    // Reset editing mode
     editingScheduleId = null;
     const modalTitle = modal.querySelector('h2');
     if (modalTitle) modalTitle.textContent = 'Create Schedule';
     
-    // Populate playbook dropdown with organized playbooks
     try {
       const data = await jfetch(API('api/orchestrator/playbooks/organized'));
       const select = document.getElementById('sched-playbook');
@@ -690,12 +751,10 @@
     if (!modal) return;
     
     try {
-      // Set editing mode
       editingScheduleId = scheduleId;
       const modalTitle = modal.querySelector('h2');
       if (modalTitle) modalTitle.textContent = 'Edit Schedule';
       
-      // Fetch schedule details
       const schedule = await jfetch(API(`api/orchestrator/schedules/${scheduleId}`));
       
       if (!schedule) {
@@ -703,7 +762,6 @@
         return;
       }
       
-      // Load playbooks into dropdown
       const playbooksData = await jfetch(API('api/orchestrator/playbooks/organized'));
       const select = document.getElementById('sched-playbook');
       
@@ -720,7 +778,6 @@
         select.innerHTML = options;
       }
       
-      // Populate form with schedule data
       document.getElementById('sched-name').value = schedule.name || '';
       document.getElementById('sched-playbook').value = schedule.playbook;
       document.getElementById('sched-group').value = schedule.inventory_group || '';
@@ -767,14 +824,12 @@
       btn.classList.add('loading');
       
       if (editingScheduleId) {
-        // Update existing schedule
         await jfetch(API(`api/orchestrator/schedules/${editingScheduleId}`), {
           method: 'PUT',
           body: JSON.stringify(data)
         });
         toast('Schedule updated successfully', 'success');
       } else {
-        // Create new schedule
         await jfetch(API('api/orchestrator/schedules'), {
           method: 'POST',
           body: JSON.stringify(data)
@@ -800,7 +855,7 @@
       });
       
       orchLoadSchedules();
-      toast(`Schedule ${!currentlyEnabled ? 'enabled' : 'disabled'}`, 'success');
+      toast(`Schedule ${!currentlyEnabled ? 'resumed' : 'paused'}`, 'success');
     } catch (e) {
       toast('Failed to toggle schedule: ' + e.message, 'error');
     }
@@ -822,34 +877,139 @@
   };
 
   // ============================================
-  // HISTORY
+  // HISTORY (QOL: VIEW OUTPUT, RETRY, CANCEL)
   // ============================================
   window.orchLoadHistory = async function() {
     const tbody = document.getElementById('history-list');
     if (!tbody) return;
     
     try {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Loading history...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Loading history...</td></tr>';
       const data = await jfetch(API('api/orchestrator/history?limit=20'));
       
       if (!data.jobs || data.jobs.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No job history yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No job history yet</td></tr>';
         return;
       }
       
-      tbody.innerHTML = data.jobs.map(j => `
-        <tr>
-          <td>${j.playbook}</td>
+      tbody.innerHTML = data.jobs.map(j => {
+        const displayName = j.job_name || j.playbook.split('/').pop();
+        const isRunning = j.status === 'running';
+        
+        return `
+        <tr onclick="orchViewJobOutput(${j.id})" style="cursor: pointer;">
+          <td>
+            <strong style="color: var(--accent-primary);">${displayName}</strong>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${j.playbook}</div>
+          </td>
           <td><span class="status-badge ${j.status}">${j.status.toUpperCase()}</span></td>
-          <td>${new Date(j.started_at).toLocaleString()}</td>
-          <td>${j.completed_at ? new Date(j.completed_at).toLocaleString() : '—'}</td>
+          <td style="font-size: 12px;">${new Date(j.started_at).toLocaleString()}</td>
+          <td style="font-size: 12px;">${j.completed_at ? new Date(j.completed_at).toLocaleString() : '—'}</td>
           <td>${j.exit_code !== null ? j.exit_code : '—'}</td>
-          <td>${j.triggered_by}</td>
+          <td style="font-size: 12px;">${j.triggered_by}</td>
+          <td onclick="event.stopPropagation()">
+            ${isRunning ? 
+              `<button class="btn danger" onclick="orchCancelJob(${j.id}, ${j.pid || 0})">✕ Cancel</button>` :
+              j.status === 'failed' ? 
+              `<button class="btn" onclick="orchRetryJob('${j.playbook.replace(/'/g, "\\'")}', '${(j.inventory_group || '').replace(/'/g, "\\'")}')">↻ Retry</button>` :
+              ''
+            }
+          </td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
     } catch (e) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Failed to load history</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Failed to load history</td></tr>';
       toast('Failed to load history: ' + e.message, 'error');
+    }
+  };
+
+  // QOL: View job output
+  window.orchViewJobOutput = async function(jobId) {
+    try {
+      const job = await jfetch(API(`api/orchestrator/status/${jobId}`));
+      
+      if (!job) {
+        toast('Job not found', 'error');
+        return;
+      }
+      
+      const modal = document.getElementById('job-output-modal');
+      if (!modal) return;
+      
+      const displayName = job.job_name || job.playbook.split('/').pop();
+      document.getElementById('job-output-title').textContent = displayName;
+      document.getElementById('job-output-status').innerHTML = `<span class="status-badge ${job.status}">${job.status.toUpperCase()}</span>`;
+      document.getElementById('job-output-exit-code').textContent = job.exit_code !== null ? job.exit_code : '—';
+      document.getElementById('job-output-started').textContent = new Date(job.started_at).toLocaleString();
+      document.getElementById('job-output-completed').textContent = job.completed_at ? new Date(job.completed_at).toLocaleString() : '—';
+      
+      const outputContainer = document.getElementById('job-output-content');
+      if (job.output) {
+        const lines = job.output.split('\n');
+        outputContainer.innerHTML = lines.map(line => 
+          `<div class="log-line">${line || ' '}</div>`
+        ).join('');
+      } else {
+        outputContainer.innerHTML = '<div class="text-center text-muted">No output available</div>';
+      }
+      
+      modal.classList.add('active');
+    } catch (e) {
+      toast('Failed to load job output: ' + e.message, 'error');
+    }
+  };
+
+  window.orchCloseJobOutputModal = function() {
+    const modal = document.getElementById('job-output-modal');
+    if (modal) modal.classList.remove('active');
+  };
+
+  // QOL: Retry failed job
+  window.orchRetryJob = async function(playbook, inventoryGroup) {
+    try {
+      const response = await jfetch(API(`api/orchestrator/run/${encodeURIComponent(playbook)}`), {
+        method: 'POST',
+        body: JSON.stringify({ 
+          triggered_by: 'retry',
+          inventory_group: inventoryGroup || null
+        })
+      });
+      
+      if (response.success) {
+        toast('Job retried successfully', 'success');
+        orchLoadHistory();
+        
+        // Switch to playbooks tab
+        document.querySelector('[data-orch-tab="playbooks"]').click();
+        currentJobId = response.job_id;
+        const logOutput = document.getElementById('orch-logs');
+        if (logOutput) {
+          logOutput.innerHTML = '';
+          appendLog(`[JARVIS] Retrying job (Job ID: ${response.job_id})`);
+          appendLog(`[JARVIS] Streaming output...\n`);
+        }
+        pollJobStatus(response.job_id);
+      }
+    } catch (e) {
+      toast('Failed to retry job: ' + e.message, 'error');
+    }
+  };
+
+  // QOL: Cancel running job
+  window.orchCancelJob = async function(jobId, pid) {
+    if (!confirm('Cancel this running job?')) return;
+    
+    try {
+      await jfetch(API(`api/orchestrator/jobs/${jobId}/cancel`), {
+        method: 'POST',
+        body: JSON.stringify({ pid })
+      });
+      
+      toast('Job cancelled', 'success');
+      orchLoadHistory();
+    } catch (e) {
+      toast('Failed to cancel job: ' + e.message, 'error');
     }
   };
 
@@ -860,7 +1020,6 @@
     const modal = document.getElementById('history-modal');
     if (!modal) return;
     
-    // Load history stats
     try {
       const stats = await jfetch(API('api/orchestrator/history/stats'));
       document.getElementById('history-total').textContent = stats.total_entries || 0;
@@ -922,19 +1081,14 @@
   // INITIALIZATION
   // ============================================
   function initOrchestrator() {
-    // Connect WebSocket for live logs
     connectWebSocket();
-    
-    // Initialize upload functionality
     initPlaybookUpload();
-    
-    // Load initial data
+    initPlaybookSearch();
     orchLoadPlaybooks();
     
-    console.log('[Orchestrator] Frontend initialized - Sprint 3 features active');
+    console.log('[Orchestrator] Frontend initialized - Sprint 4 QoL features active');
   }
 
-  // Wait for DOM to be ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initOrchestrator);
   } else {
