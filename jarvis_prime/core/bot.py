@@ -356,21 +356,21 @@ def start_sidecars():
     # proxy
     if PROXY_ENABLED:
         if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
-            print("[bot] proxy.py already running on :2580 — skipping sidecar")
+            print("[bot] proxy.py already running on :2580 – skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/proxy.py"], "proxy.py", env=_forward_env())
 
     # smtp
     if SMTP_ENABLED and INGEST_SMTP_ENABLED:
         if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
-            print("[bot] smtp_server.py already running on :2525 — skipping sidecar")
+            print("[bot] smtp_server.py already running on :2525 – skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/smtp_server.py"], "smtp_server.py", env=_forward_env())
 
     # webhook
     if WEBHOOK_ENABLED:
         if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
-            print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar")
+            print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} – skipping sidecar")
         else:
             env = _forward_env({"webhook_bind": WEBHOOK_BIND, "webhook_port": str(WEBHOOK_PORT)})
             _start_sidecar(["python3", "/app/webhook_server.py"], "webhook_server.py", env=env)
@@ -378,7 +378,7 @@ def start_sidecars():
     # apprise
     if INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED:
         if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-            print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skipping sidecar")
+            print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} – skipping sidecar")
         else:
             # ensure internal is up before starting
             if not _port_in_use("127.0.0.1", 2599):
@@ -607,7 +607,8 @@ def _footer(used_llm: bool, used_beautify: bool) -> str:
     if not tags: tags.append("Relay Path")
     return "— " + " · ".join(tags)
 
-def _llm_then_beautify(title: str, message: str):
+# === THREAD POOL FIX: Make this async ===
+async def _llm_then_beautify(title: str, message: str):
     # Reflect LLM state in footer tag
     used_llm = bool(merged.get("llm_enabled")) or bool(merged.get("llm_rewrite_enabled")) or LLM_REWRITE_ENABLED
     used_beautify = True if _beautify else False
@@ -626,12 +627,17 @@ def _llm_then_beautify(title: str, message: str):
 
     try:
         if _beautify and hasattr(_beautify, "beautify_message"):
-            final, extras = _beautify.beautify_message(
-                title,
-                final,
-                mood=ACTIVE_PERSONA,
-                persona=ACTIVE_PERSONA,
-                persona_quip=True  # <— enable persona riffs for all intakes
+            # === THREAD POOL FIX: Run blocking LLM call in thread pool ===
+            loop = asyncio.get_event_loop()
+            final, extras = await loop.run_in_executor(
+                None,  # Use default thread pool
+                lambda: _beautify.beautify_message(
+                    title,
+                    final,
+                    mood=ACTIVE_PERSONA,
+                    persona=ACTIVE_PERSONA,
+                    persona_quip=True  # <— enable persona riffs for all intakes
+                )
             )
     except Exception as e:
         print(f"[bot] Beautify failed: {e}")
@@ -709,7 +715,7 @@ def post_startup_card():
         f"🔀 Proxy Intake — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
         f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
         f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
-        f"📮 Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
+        f"🔮 Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
 f"📡 WebSocket Intake — {'ACTIVE' if bool(merged.get('intake_ws_enabled', False)) else 'OFF'}",
         _env_status_line(),
         "",
@@ -996,7 +1002,8 @@ def _route_chat_freeform(source: str, query: str) -> bool:
     return True
 # --- end additive ---
 
-def _process_incoming(title: str, body: str, source: str = "intake", original_id: Optional[str] = None, priority: int = 5):
+# === THREAD POOL FIX: Make async and schedule with create_task ===
+async def _process_incoming_async(title: str, body: str, source: str = "intake", original_id: Optional[str] = None, priority: int = 5):
     if _seen_recent(title or "", body or "", source, original_id or ""):
         return
 
@@ -1026,7 +1033,7 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             set_active_persona(persona_switch)
             global ACTIVE_PERSONA, PERSONA_TOD
             ACTIVE_PERSONA, PERSONA_TOD = _pstate.get_active_persona()
-            # strip the wakeword phrases so they don’t clutter messages
+            # strip the wakeword phrases so they don't clutter messages
             for phrase in [
                 "jarvis tappit", "jarvis welkom", "fok",
                 "jarvis nerd", "jarvis dude", "jarvis chick",
@@ -1064,7 +1071,8 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             pass
         return
 
-    final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
+    # === THREAD POOL FIX: await the async LLM call ===
+    final, extras, used_llm, used_beautify = await _llm_then_beautify(title or "Notification", body or "")
     send_message(title or "Notification", final, priority=priority, extras=extras)
 
     try:
@@ -1072,6 +1080,12 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             _purge_after(int(original_id))
     except Exception:
         pass
+
+# === THREAD POOL FIX: Sync wrapper that schedules async version ===
+def _process_incoming(title: str, body: str, source: str = "intake", original_id: Optional[str] = None, priority: int = 5):
+    """Synchronous wrapper - schedules async version as a task"""
+    asyncio.create_task(_process_incoming_async(title, body, source, original_id, priority))
+
 # ============================
 # Gotify WebSocket intake
 # ============================
@@ -1092,7 +1106,8 @@ async def listen_gotify():
                         msg_id = data.get("id")
                         title = data.get("title") or ""
                         message = data.get("message") or ""
-                        _process_incoming(
+                        # === THREAD POOL FIX: Call async version directly ===
+                        await _process_incoming_async(
                             title,
                             message,
                             source="gotify",
@@ -1276,7 +1291,8 @@ async def _internal_emit(request):
     source = str(data.get("source") or "internal")
     oid = str(data.get("id") or "")
     try:
-        _process_incoming(title, body, source=source, original_id=oid, priority=prio)
+        # === THREAD POOL FIX: Schedule async version ===
+        asyncio.create_task(_process_incoming_async(title, body, source=source, original_id=oid, priority=prio))
         return web.json_response({"ok": True})
     except Exception as e:
         print(f"[bot] internal emit error: {e}")
