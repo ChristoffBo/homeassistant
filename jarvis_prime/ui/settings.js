@@ -371,16 +371,18 @@
     if (!panel) return;
     
     // Disable all inputs in this panel
-    $$('input, select, textarea', panel).forEach(el => {
-      el.disabled = true;
+    $$('input, select, textarea').forEach(el => {
+      if (panel.contains(el)) {
+        el.disabled = true;
+      }
     });
   }
 
   // ===== SUB-TAB SWITCHING =====
   function settingsInitSubTabs() {
-    $$('.settings-tab').forEach(btn => {
+    $$('[data-settings-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
-        $$('.settings-tab').forEach(x => x.classList.remove('active'));
+        $$('[data-settings-tab]').forEach(x => x.classList.remove('active'));
         btn.classList.add('active');
         
         $$('.settings-panel').forEach(p => p.classList.remove('active'));
@@ -390,14 +392,120 @@
       });
     });
   }
+  // ===== BACKUP & RESTORE FUNCTIONS =====
+  
+  async function backupDownloadNow() {
+    try {
+      const btn = $('#backup-download-btn');
+      if (btn) btn.classList.add('loading');
+
+      const response = await fetch(window.API('api/backup/create'), {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        throw new Error('Backup creation failed');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `jarvis_backup_${new Date().toISOString().split('T')[0]}.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      window.showToast('Backup downloaded successfully', 'success');
+
+    } catch (e) {
+      console.error('[backup] Download failed:', e);
+      window.showToast('Failed to create backup: ' + e.message, 'error');
+    } finally {
+      const btn = $('#backup-download-btn');
+      if (btn) btn.classList.remove('loading');
+    }
+  }
+
+  async function backupRestoreFromFile() {
+    const input = $('#backup-file-input');
+    if (input) input.click();
+  }
+
+  async function backupHandleFileUpload(file) {
+    if (IS_READONLY) {
+      window.showToast('Restore is not available in Home Assistant mode', 'error');
+      return;
+    }
+
+    if (!confirm('Restore from this backup?\n\nThis will overwrite your current configuration, database, and files.\n\nJarvis will restart after restore.')) {
+      return;
+    }
+
+    try {
+      const btn = $('#backup-restore-btn');
+      if (btn) {
+        btn.classList.add('loading');
+        btn.disabled = true;
+      }
+
+      const formData = new FormData();
+      formData.append('backup', file);
+
+      const response = await fetch(window.API('api/backup/restore'), {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await response.json();
+
+      if (result.ok) {
+        window.showToast('Backup restored successfully. Restarting...', 'success');
+        
+        // Reload page after 3 seconds
+        setTimeout(() => {
+          window.location.reload();
+        }, 3000);
+      } else {
+        throw new Error(result.error || 'Restore failed');
+      }
+
+    } catch (e) {
+      console.error('[backup] Restore failed:', e);
+      window.showToast('Failed to restore backup: ' + e.message, 'error');
+      
+      const btn = $('#backup-restore-btn');
+      if (btn) {
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+    }
+  }
+
+  function backupInitFileInput() {
+    const input = $('#backup-file-input');
+    if (input) {
+      input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          backupHandleFileUpload(file);
+          input.value = '';
+        }
+      });
+    }
+  }
 
   // ===== GLOBAL FUNCTIONS =====
   window.settingsLoadConfig = settingsLoadConfig;
   window.settingsSaveConfig = settingsSaveConfig;
+  window.backupDownloadNow = backupDownloadNow;
+  window.backupRestoreFromFile = backupRestoreFromFile;
 
   // Initialize when settings tab is shown
   document.addEventListener('DOMContentLoaded', () => {
     settingsInitSubTabs();
+    backupInitFileInput();
     
     // Load config when settings tab is clicked
     const settingsNavTab = document.querySelector('.nav-tab[data-tab="settings"]');
@@ -411,6 +519,18 @@
     const saveBtn = $('#settings-save-btn');
     if (saveBtn) {
       saveBtn.addEventListener('click', settingsSaveConfig);
+    }
+
+    // Backup download button
+    const backupDownloadBtn = $('#backup-download-btn');
+    if (backupDownloadBtn) {
+      backupDownloadBtn.addEventListener('click', backupDownloadNow);
+    }
+
+    // Backup restore button
+    const backupRestoreBtn = $('#backup-restore-btn');
+    if (backupRestoreBtn) {
+      backupRestoreBtn.addEventListener('click', backupRestoreFromFile);
     }
   });
 })();
