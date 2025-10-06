@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Jarvis Prime — Add-on image (updated with llama-cpp-python 0.3.16 for Phi-4 support)
+# Jarvis Prime — Add-on image (updated for Debian 13 / Python 3.13)
 #
 FROM debian:stable-slim
 
@@ -24,19 +24,18 @@ WORKDIR /app
 # Python deps
 # ----------------------------
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir --ignore-installed -r /app/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 
 # Apprise intake server deps
-RUN pip3 install --no-cache-dir --ignore-installed flask waitress
+RUN pip3 install --no-cache-dir --break-system-packages flask waitress
 
 # NumPy + modern llama-cpp-python (build from source, K-quants enabled)
 ENV CMAKE_ARGS="-DLLAMA_NATIVE=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS"
-RUN pip3 install --no-cache-dir --ignore-installed --upgrade numpy \
- && pip3 install --no-cache-dir --ignore-installed --no-binary=:all: \
-      "llama-cpp-python==0.3.16"
+RUN pip3 install --no-cache-dir --break-system-packages --upgrade numpy \
+ && pip3 install --no-cache-dir --break-system-packages --no-binary=:all: "llama-cpp-python==0.3.16"
 
 # EXTRA: ddgs (for chatbot web search, replaces old duckduckgo-search)
-RUN pip3 install --no-cache-dir --ignore-installed ddgs requests
+RUN pip3 install --no-cache-dir --break-system-packages ddgs requests
 
 # ----------------------------
 # App content
@@ -72,16 +71,16 @@ COPY /llm/rag_facts.json /app/rag_facts.json
 
 # Inbox server + UI + storage + fan-out clients
 COPY /core/api_messages.py /app/api_messages.py
-COPY /modules/storage.py      /app/storage.py
-COPY /intakes/ntfy_client.py  /app/ntfy_client.py
-COPY /intakes/smtp_client.py  /app/smtp_client.py
+COPY /modules/storage.py /app/storage.py
+COPY /intakes/ntfy_client.py /app/ntfy_client.py
+COPY /intakes/smtp_client.py /app/smtp_client.py
 COPY ui/ /app/ui/
-COPY /intakes/webhook_server.py  /app/webhook_server.py
-COPY /intakes/websocket.py  /app/websocket.py
-COPY /intakes/apprise.py  /app/apprise.py
-COPY /modules/heartbeat.py  /app/heartbeat.py
-COPY /modules/orchestrator.py  /app/orchestrator.py
-COPY /modules/analytics.py  /app/analytics.py
+COPY /intakes/webhook_server.py /app/webhook_server.py
+COPY /intakes/websocket.py /app/websocket.py
+COPY /intakes/apprise.py /app/apprise.py
+COPY /modules/heartbeat.py /app/heartbeat.py
+COPY /modules/orchestrator.py /app/orchestrator.py
+COPY /modules/analytics.py /app/analytics.py
 
 # Place intake blueprint at the path bot.py expects
 RUN mkdir -p /app/intakes
@@ -107,3 +106,11 @@ CMD [ "/run.sh" ]
 # Defaults (can be overridden via options.json -> env)
 ENV BOT_INPUT_SSE=true BOT_INPUT_GOTIFY=true BOT_INPUT_NTFY=false \
     JARVIS_BASE=http://127.0.0.1:2581 DEDUPE_TTL_SECONDS=120 WORKERS=2
+
+# ----------------------------
+# Optional: Virtual Environment Approach (uncomment if preferred)
+# ----------------------------
+# RUN python3 -m venv /opt/venv
+# ENV PATH="/opt/venv/bin:$PATH"
+# COPY requirements.txt /app/requirements.txt
+# RUN pip install --no-cache-dir -r /app/requirements.txt
