@@ -65,7 +65,6 @@ Jarvis Prime includes support for installation as a Progressive Web App (PWA). T
 • Push notification support for future expansion  
 
 ## Supported Sources
-
 • Radarr / Sonarr → Posters, runtime, SxxEyy, quality, size  
 • QNAP / Unraid → System/storage notices normalized  
 • Watchtower → Container update summaries  
@@ -82,6 +81,35 @@ Jarvis Prime includes support for installation as a Progressive Web App (PWA). T
 • Plain text → Beautified into sleek cards  
 • Chat → Direct LLM conversation (prefix with "chat …" or "talk …" in Gotify/ntfy or use Web UI chat tab)  
 
+## LLM Best Practices & Tested Settings
+
+Jarvis Prime supports Phi‑3.5, Phi‑4 Q4, Q5, Q6, Q8 for chat, riffs, and message beautification. These settings balance **performance, coherence, memory use, and response length**.
+
+### Recommended Settings by Model
+
+| Model       | Context Window (CTX) | Riff Max Tokens | Riff Cutoff Tokens | Message Rewrite Max Tokens | Notes |
+|------------|--------------------|----------------|-----------------|---------------------------|------|
+| Phi‑3.5    | 4,096              | 50             | 45              | 45                        | Lightweight, good for smaller systems; less context retention. |
+| Phi‑4 Q4   | 8,000              | 55             | 50              | 50                        | Better context than 3.5; slightly slower on CPU. |
+| Phi‑4 Q5   | 12,000             | 60             | 55              | 50                        | Recommended sweet spot: fast, coherent, large context. |
+| Phi‑4 Q6   | 12,000             | 60             | 55              | 50                        | Slightly higher memory usage than Q5; similar output quality. |
+| Phi‑4 Q8   | 12,000             | 60             | 55              | 50                        | Highest memory usage; may slow on low-resource systems. |
+
+### What Each Setting Does
+- **Context Window (CTX)**: Number of prior tokens the model “remembers”; larger CTX preserves more conversation/notification history.  
+- **Riff Max Tokens**: Maximum tokens for generated riffs; model stops naturally if fewer are needed.  
+- **Cutoff Tokens**: Optional buffer to avoid mid-thought truncation.  
+- **Message Rewrite Max Tokens**: Limits length of rewrites; ensures concise, polished output.  
+
+### Middle-Ground Recommendation
+For most users on moderate hardware:  
+- **Model**: Phi‑4 Q5  
+- **CTX**: 12,000  
+- **Riff Max Tokens**: 60  
+- **Cutoff Tokens**: 55  
+- **Message Rewrite Max Tokens**: 50  
+
+This combination provides **good performance, coherent responses, and avoids excessive CPU/memory use**.
 ## Intake Setup Details
 
 ### 1. SMTP Intake (Mailrise replacement)
@@ -112,7 +140,7 @@ Jarvis Prime includes support for installation as a Progressive Web App (PWA). T
 ## Orchestration Setup
 
 ### Server Management
-1. Navigate to the **Orchestrator** tab in the Web UI
+1. Navigate to the **Orchestrator** tab in the Web UI  
 2. Add SSH-enabled servers, groups, and test connectivity  
 
 ### Playbook Management
@@ -141,7 +169,7 @@ Jarvis Prime includes support for installation as a Progressive Web App (PWA). T
    - **Check Interval**: How often to check in seconds (minimum 10, recommended 60+)  
    - **Timeout**: How long to wait before marking as failed (1-30 seconds)  
    - **Enabled**: Toggle monitoring on/off  
-5. Click **Save Service**
+5. Click **Save Service**  
 
 ### Monitoring Dashboard
 • **Health Score**: Overall homelab health percentage (99%+ = excellent, 95-99% = good, 90-95% = fair, <90% = poor)  
