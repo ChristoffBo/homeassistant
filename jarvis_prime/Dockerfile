@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Jarvis Prime — Add-on image (updated for Python 3.13 + llama-cpp-python 0.3.16 for Phi-4)
+# Jarvis Prime — Add-on image (updated with llama-cpp-python 0.3.16 for Phi-4 support)
 #
 FROM debian:stable-slim
 
@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # System deps
 # ----------------------------
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip python3-venv curl jq ca-certificates tzdata pkg-config \
+    python3 python3-pip curl jq ca-certificates tzdata pkg-config \
     build-essential cmake libopenblas-dev \
     ansible sshpass \
     iputils-ping \
@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # ----------------------------
-# Python deps (using --break-system-packages for Debian Python 3.13)
+# Python deps
 # ----------------------------
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
@@ -35,7 +35,7 @@ RUN pip3 install --no-cache-dir --break-system-packages --upgrade numpy \
  && pip3 install --no-cache-dir --break-system-packages --no-binary=:all: \
       "llama-cpp-python==0.3.16"
 
-# EXTRA: ddgs (for chatbot web search)
+# EXTRA: ddgs (for chatbot web search, replaces old duckduckgo-search)
 RUN pip3 install --no-cache-dir --break-system-packages ddgs requests
 
 # ----------------------------
