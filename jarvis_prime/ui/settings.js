@@ -19,10 +19,10 @@
     }
   }
 
-  // Load configuration
+  // ===== SETTINGS LOAD =====
   async function settingsLoadConfig() {
     try {
-      const response = await fetch(window.API('api/config'));
+      const response = await fetch(getApiUrl('config'));
       const data = await response.json();
 
       CURRENT_CONFIG = data.config || {};
@@ -48,7 +48,7 @@
     }
   }
 
-  // Save configuration (Docker mode only)
+  // ===== SETTINGS SAVE =====
   async function settingsSaveConfig() {
     if (IS_READONLY) {
       window.showToast('Settings are read-only in Home Assistant mode', 'error');
@@ -69,7 +69,7 @@
         ...settingsGatherPush()
       };
 
-      const response = await fetch(window.API('api/config'), {
+      const response = await fetch(getApiUrl('config'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
@@ -90,6 +90,14 @@
       const saveBtn = $('#settings-save-btn');
       if (saveBtn) saveBtn.classList.remove('loading');
     }
+  }
+
+  // ===== READONLY HANDLER =====
+  function setReadonly(panelSelector) {
+    if (!IS_READONLY) return;
+    const panel = $(panelSelector);
+    if (!panel) return;
+    $$(panelSelector + ' input, ' + panelSelector + ' select, ' + panelSelector + ' textarea').forEach(el => el.disabled = true);
   }
 
   // ===== GENERAL SETTINGS =====
@@ -140,7 +148,6 @@
     if ($('#set-llm-threads')) $('#set-llm-threads').value = get('llm_threads', 3);
     if ($('#set-llm-models-priority')) $('#set-llm-models-priority').value = get('llm_models_priority', 'phi35_q5_uncensored,phi35_q5,phi35_q4,phi3');
 
-    // EnviroGuard
     if ($('#set-llm-enviroguard-enabled')) $('#set-llm-enviroguard-enabled').checked = get('llm_enviroguard_enabled', true);
     if ($('#set-llm-enviroguard-poll-minutes')) $('#set-llm-enviroguard-poll-minutes').value = get('llm_enviroguard_poll_minutes', 30);
     if ($('#set-llm-enviroguard-hot-c')) $('#set-llm-enviroguard-hot-c').value = get('llm_enviroguard_hot_c', 30);
@@ -169,81 +176,249 @@
       llm_enviroguard_cold_c: parseInt($('#set-llm-enviroguard-cold-c')?.value || '10')
     };
   }
-
-  // ===== PERSONALITY SETTINGS =====
+// ===== PERSONALITY / PERSONAS =====
   function settingsPopulatePersonality() {
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
 
-    if ($('#set-personality-enabled')) $('#set-personality-enabled').checked = get('personality_enabled', true);
-    if ($('#set-active-persona')) $('#set-active-persona').value = get('active_persona', 'auto');
-    if ($('#set-personality-min-interval-minutes')) $('#set-personality-min-interval-minutes').value = get('personality_min_interval_minutes', 90);
-    if ($('#set-personality-interval-jitter-pct')) $('#set-personality-interval-jitter-pct').value = get('personality_interval_jitter_pct', 20);
-    if ($('#set-personality-daily-max')) $('#set-personality-daily-max').value = get('personality_daily_max', 6);
-    if ($('#set-personality-quiet-hours')) $('#set-personality-quiet-hours').value = get('personality_quiet_hours', '23:00-06:00');
-    if ($('#set-chat-enabled')) $('#set-chat-enabled').checked = get('chat_enabled', true);
-
-    // Enabled personas
-    if ($('#set-enable-dude')) $('#set-enable-dude').checked = get('enable_dude', true);
-    if ($('#set-enable-chick')) $('#set-enable-chick').checked = get('enable_chick', false);
-    if ($('#set-enable-nerd')) $('#set-enable-nerd').checked = get('enable_nerd', false);
-    if ($('#set-enable-rager')) $('#set-enable-rager').checked = get('enable_rager', false);
-    if ($('#set-enable-comedian')) $('#set-enable-comedian').checked = get('enable_comedian', false);
-    if ($('#set-enable-action')) $('#set-enable-action').checked = get('enable_action', false);
+    if ($('#set-persona-enabled')) $('#set-persona-enabled').checked = get('persona_enabled', true);
+    if ($('#set-persona-default')) $('#set-persona-default').value = get('persona_default', 'Jarvis');
+    if ($('#set-persona-override')) $('#set-persona-override').value = get('persona_override', '');
+    if ($('#set-persona-riff-max-length')) $('#set-persona-riff-max-length').value = get('persona_riff_max_length', 400);
 
     setReadonly('#settings-personality-panel');
   }
 
   function settingsGatherPersonality() {
     return {
-      personality_enabled: $('#set-personality-enabled')?.checked || false,
-      active_persona: $('#set-active-persona')?.value || 'auto',
-      personality_min_interval_minutes: parseInt($('#set-personality-min-interval-minutes')?.value || '90'),
-      personality_interval_jitter_pct: parseInt($('#set-personality-interval-jitter-pct')?.value || '20'),
-      personality_daily_max: parseInt($('#set-personality-daily-max')?.value || '6'),
-      personality_quiet_hours: $('#set-personality-quiet-hours')?.value || '23:00-06:00',
-      chat_enabled: $('#set-chat-enabled')?.checked || false,
-      enable_dude: $('#set-enable-dude')?.checked || false,
-      enable_chick: $('#set-enable-chick')?.checked || false,
-      enable_nerd: $('#set-enable-nerd')?.checked || false,
-      enable_rager: $('#set-enable-rager')?.checked || false,
-      enable_comedian: $('#set-enable-comedian')?.checked || false,
-      enable_action: $('#set-enable-action')?.checked || false
+      persona_enabled: $('#set-persona-enabled')?.checked || false,
+      persona_default: $('#set-persona-default')?.value || 'Jarvis',
+      persona_override: $('#set-persona-override')?.value || '',
+      persona_riff_max_length: parseInt($('#set-persona-riff-max-length')?.value || '400')
     };
   }
 
-  // ===== INTEGRATIONS SETTINGS =====
+  // ===== INTEGRATIONS =====
   function settingsPopulateIntegrations() {
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
 
-    if ($('#set-weather-enabled')) $('#set-weather-enabled').checked = get('weather_enabled', true);
-    if ($('#set-weather-lat')) $('#set-weather-lat').value = get('weather_lat', -26.2041);
-    if ($('#set-weather-lon')) $('#set-weather-lon').value = get('weather_lon', 28.0473);
-    if ($('#set-weather-city')) $('#set-weather-city').value = get('weather_city', 'Odendaalsrus');
-    if ($('#set-weather-time')) $('#set-weather-time').value = get('weather_time', '07:00');
-
-    if ($('#set-digest-enabled')) $('#set-digest-enabled').checked = get('digest_enabled', true);
-    if ($('#set-digest-time')) $('#set-digest-time').value = get('digest_time', '08:00');
-
-    if ($('#set-heartbeat-enabled')) $('#set-heartbeat-enabled').checked = get('heartbeat_enabled', true);
-    if ($('#set-heartbeat-interval-minutes')) $('#set-heartbeat-interval-minutes').value = get('heartbeat_interval_minutes', 120);
-    if ($('#set-heartbeat-start')) $('#set-heartbeat-start').value = get('heartbeat_start', '06:00');
-    if ($('#set-heartbeat-end')) $('#set-heartbeat-end').value = get('heartbeat_end', '20:00');
-
-    if ($('#set-radarr-enabled')) $('#set-radarr-enabled').checked = get('radarr_enabled', true);
-    if ($('#set-radarr-url')) $('#set-radarr-url').value = get('radarr_url', '');
-    if ($('#set-radarr-api-key')) $('#set-radarr-api-key').value = get('radarr_api_key', '');
-
-    if ($('#set-sonarr-enabled')) $('#set-sonarr-enabled').checked = get('sonarr_enabled', true);
-    if ($('#set-sonarr-url')) $('#set-sonarr-url').value = get('sonarr_url', '');
-    if ($('#set-sonarr-api-key')) $('#set-sonarr-api-key').value = get('sonarr_api_key', '');
+    if ($('#set-gotify-url')) $('#set-gotify-url').value = get('gotify_url', '');
+    if ($('#set-gotify-token')) $('#set-gotify-token').value = get('gotify_token', '');
+    if ($('#set-ntfy-url')) $('#set-ntfy-url').value = get('ntfy_url', '');
+    if ($('#set-ntfy-topic')) $('#set-ntfy-topic').value = get('ntfy_topic', '');
+    if ($('#set-smtp-server')) $('#set-smtp-server').value = get('smtp_server', '');
+    if ($('#set-smtp-port')) $('#set-smtp-port').value = get('smtp_port', 587);
+    if ($('#set-smtp-user')) $('#set-smtp-user').value = get('smtp_user', '');
+    if ($('#set-smtp-pass')) $('#set-smtp-pass').value = get('smtp_pass', '');
 
     setReadonly('#settings-integrations-panel');
   }
 
   function settingsGatherIntegrations() {
     return {
-      weather_enabled: $('#set-weather-enabled')?.checked || false,
-      weather_lat: parseFloat($('#set-weather-lat')?.value || '-26.2041'),
-      weather_lon: parseFloat($('#set-weather-lon')?.value || '28.0473'),
-      weather_city: $('#set-weather-city')?.value || 'Odendaalsrus',
-      weather_time: $('#set-weather-time')?.value
+      gotify_url: $('#set-gotify-url')?.value || '',
+      gotify_token: $('#set-gotify-token')?.value || '',
+      ntfy_url: $('#set-ntfy-url')?.value || '',
+      ntfy_topic: $('#set-ntfy-topic')?.value || '',
+      smtp_server: $('#set-smtp-server')?.value || '',
+      smtp_port: parseInt($('#set-smtp-port')?.value || '587'),
+      smtp_user: $('#set-smtp-user')?.value || '',
+      smtp_pass: $('#set-smtp-pass')?.value || ''
+    };
+  }
+
+  // ===== COMMUNICATION SETTINGS =====
+  function settingsPopulateCommunications() {
+    const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
+
+    if ($('#set-msg-max-length')) $('#set-msg-max-length').value = get('msg_max_length', 2000);
+    if ($('#set-msg-chunk-size')) $('#set-msg-chunk-size').value = get('msg_chunk_size', 500);
+    if ($('#set-msg-auto-scroll')) $('#set-msg-auto-scroll').checked = get('msg_auto_scroll', true);
+
+    setReadonly('#settings-communications-panel');
+  }
+
+  function settingsGatherCommunications() {
+    return {
+      msg_max_length: parseInt($('#set-msg-max-length')?.value || '2000'),
+      msg_chunk_size: parseInt($('#set-msg-chunk-size')?.value || '500'),
+      msg_auto_scroll: $('#set-msg-auto-scroll')?.checked || false
+    };
+  }
+
+  // ===== MONITORING / LOGGING =====
+  function settingsPopulateMonitoring() {
+    const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
+
+    if ($('#set-monitoring-enabled')) $('#set-monitoring-enabled').checked = get('monitoring_enabled', true);
+    if ($('#set-monitoring-interval')) $('#set-monitoring-interval').value = get('monitoring_interval', 60);
+    if ($('#set-monitoring-loglevel')) $('#set-monitoring-loglevel').value = get('monitoring_loglevel', 'INFO');
+
+    setReadonly('#settings-monitoring-panel');
+  }
+
+  function settingsGatherMonitoring() {
+    return {
+      monitoring_enabled: $('#set-monitoring-enabled')?.checked || false,
+      monitoring_interval: parseInt($('#set-monitoring-interval')?.value || '60'),
+      monitoring_loglevel: $('#set-monitoring-loglevel')?.value || 'INFO'
+    };
+  }
+
+  // ===== PUSH NOTIFICATIONS =====
+  function settingsPopulatePush() {
+    const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
+
+    if ($('#set-push-enabled')) $('#set-push-enabled').checked = get('push_enabled', true);
+    if ($('#set-push-channels')) $('#set-push-channels').value = get('push_channels', 'gotify,ntfy,smtp');
+
+    setReadonly('#settings-push-panel');
+  }
+
+  function settingsGatherPush() {
+    return {
+      push_enabled: $('#set-push-enabled')?.checked || false,
+      push_channels: $('#set-push-channels')?.value || ''
+    };
+  }
+
+  // ===== INIT =====
+  function settingsInit() {
+    $('#settings-save-btn')?.addEventListener('click', settingsSaveConfig);
+
+    settingsLoadConfig();
+  }
+
+  document.addEventListener('DOMContentLoaded', settingsInit);
+})();
+// ===== BACKUP & RESTORE =====
+async function backupDownloadNow() {
+  try {
+    const btn = $('#backup-download-btn');
+    if (btn) btn.classList.add('loading');
+
+    let endpoint = 'api/backup/create';
+    if (IS_READONLY) {
+      // In Home Assistant, use supervisor proxy endpoint if needed
+      endpoint = '/api/jarvis/backup/create';
+    }
+
+    const response = await fetch(window.API(endpoint), {
+      method: 'POST'
+    });
+
+    if (!response.ok) {
+      throw new Error('Backup creation failed: ' + response.statusText);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `jarvis_backup_${new Date().toISOString().split('T')[0]}.tar.gz`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    window.showToast('Backup downloaded successfully', 'success');
+  } catch (e) {
+    console.error('[backup] Download failed:', e);
+    window.showToast('Failed to create backup: ' + e.message, 'error');
+  } finally {
+    const btn = $('#backup-download-btn');
+    if (btn) btn.classList.remove('loading');
+  }
+}
+
+async function backupRestoreFromFile() {
+  const input = $('#backup-file-input');
+  if (input) input.click();
+}
+
+async function backupHandleFileUpload(file) {
+  if (IS_READONLY) {
+    window.showToast('Restore is not available in Home Assistant mode', 'error');
+    return;
+  }
+
+  if (!confirm('Restore from this backup?\n\nThis will overwrite your current configuration, database, and files.\n\nJarvis will restart after restore.')) {
+    return;
+  }
+
+  try {
+    const btn = $('#backup-restore-btn');
+    if (btn) {
+      btn.classList.add('loading');
+      btn.disabled = true;
+    }
+
+    const formData = new FormData();
+    formData.append('backup', file);
+
+    let endpoint = 'api/backup/restore';
+    if (IS_READONLY) {
+      endpoint = '/api/jarvis/backup/restore';
+    }
+
+    const response = await fetch(window.API(endpoint), {
+      method: 'POST',
+      body: formData
+    });
+
+    const result = await response.json();
+
+    if (result.ok) {
+      window.showToast('Backup restored successfully. Restarting...', 'success');
+
+      setTimeout(() => {
+        window.location.reload();
+      }, 3000);
+    } else {
+      throw new Error(result.error || 'Restore failed');
+    }
+  } catch (e) {
+    console.error('[backup] Restore failed:', e);
+    window.showToast('Failed to restore backup: ' + e.message, 'error');
+
+    const btn = $('#backup-restore-btn');
+    if (btn) {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  }
+}
+
+function backupInitFileInput() {
+  const input = $('#backup-file-input');
+  if (input) {
+    input.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        backupHandleFileUpload(file);
+        input.value = '';
+      }
+    });
+  }
+}
+
+// ===== FINAL INIT =====
+document.addEventListener('DOMContentLoaded', () => {
+  settingsInitSubTabs();
+  backupInitFileInput();
+
+  const settingsNavTab = document.querySelector('.nav-tab[data-tab="settings"]');
+  if (settingsNavTab) {
+    settingsNavTab.addEventListener('click', () => {
+      settingsLoadConfig();
+    });
+  }
+
+  const saveBtn = $('#settings-save-btn');
+  if (saveBtn) saveBtn.addEventListener('click', settingsSaveConfig);
+
+  const backupDownloadBtn = $('#backup-download-btn');
+  if (backupDownloadBtn) backupDownloadBtn.addEventListener('click', backupDownloadNow);
+
+  const backupRestoreBtn = $('#backup-restore-btn');
+  if (backupRestoreBtn) backupRestoreBtn.addEventListener('click', backupRestoreFromFile);
+});
