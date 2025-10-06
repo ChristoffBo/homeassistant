@@ -24,19 +24,19 @@ WORKDIR /app
 # Python deps
 # ----------------------------
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
+RUN pip3 install --no-cache-dir --ignore-installed -r /app/requirements.txt
 
 # Apprise intake server deps
-RUN pip3 install --no-cache-dir --break-system-packages flask waitress
+RUN pip3 install --no-cache-dir --ignore-installed flask waitress
 
 # NumPy + modern llama-cpp-python (build from source, K-quants enabled)
 ENV CMAKE_ARGS="-DLLAMA_NATIVE=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS"
-RUN pip3 install --no-cache-dir --break-system-packages --upgrade numpy \
- && pip3 install --no-cache-dir --break-system-packages --no-binary=:all: \
+RUN pip3 install --no-cache-dir --ignore-installed --upgrade numpy \
+ && pip3 install --no-cache-dir --ignore-installed --no-binary=:all: \
       "llama-cpp-python==0.3.16"
 
 # EXTRA: ddgs (for chatbot web search, replaces old duckduckgo-search)
-RUN pip3 install --no-cache-dir --break-system-packages ddgs requests
+RUN pip3 install --no-cache-dir --ignore-installed ddgs requests
 
 # ----------------------------
 # App content
