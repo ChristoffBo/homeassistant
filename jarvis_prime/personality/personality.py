@@ -896,6 +896,8 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subje
                 out.append(line)
             if len(out) >= n:
                 break
+# Strip any accidental "Lexi" signatures (e.g. "– Lexi", "Lexi," etc.)
+        out = [re.sub(r'\s*[-–—]?\s*lexi[\.,;:!\)]*\s*$', '', x, flags=re.I) for x in out]
         
         return out
     except:
