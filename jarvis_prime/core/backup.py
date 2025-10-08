@@ -62,7 +62,11 @@ async def create_backup(request):
 
         # Create permanent backups directory
         permanent_path = Path("/share/jarvis_prime/backups")
+        if not permanent_path.exists():
         permanent_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"[backup] Created backups directory at {permanent_path}")
+
+       
 
         # Create tar.gz archive
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
