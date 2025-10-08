@@ -1065,14 +1065,16 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
         return
 
 	
-	# Offload the LLM + beautify work to a background thread so UI never freezes
+# Offload the LLM + beautify work to a background thread so UI never freezes
     try:
-    final, extras, used_llm, used_beautify = await asyncio.to_thread(
-        _llm_then_beautify, title or "Notification", body or ""
-    )
+        import asyncio
+        final, extras, used_llm, used_beautify = asyncio.run_coroutine_threadsafe(
+            asyncio.to_thread(_llm_then_beautify, title or "Notification", body or ""), 
+            asyncio.get_event_loop()
+        ).result()
     except Exception as e:
-    print(f"[bot] background LLM thread error: {e}")
-    final, extras, used_llm, used_beautify = (body or "", None, False, False)
+        print(f"[bot] background LLM thread error: {e}")
+        final, extras, used_llm, used_beautify = (body or "", None, False, False)
 
     send_message(title or "Notification", final, priority=priority, extras=extras)
 
