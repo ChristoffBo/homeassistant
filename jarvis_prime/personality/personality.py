@@ -860,6 +860,9 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subje
     """Enhanced lexi riffs with context awareness"""
     try:
         persona = _canon(persona_name)
+# Prevent 'lexi' literal from ever being used as a phrase
+        if persona_name.strip().lower() == "lexi":
+            persona = "jarvis"  # use clean neutral vocabulary
         subj = strip_transport_tags((subject or "Update").strip().replace("\n"," "))[:120]
         body = strip_transport_tags((body or "").strip())
         
