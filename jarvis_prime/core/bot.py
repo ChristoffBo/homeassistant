@@ -1065,28 +1065,37 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
         return
 
 # Offload the LLM + beautify work to a background thread so UI never freezes
-    import threading, traceback
+ import threading, traceback
 
-    def _start_llm_thread(_title, _body, _priority):
-        def _llm_worker():
-            try:
-                final, extras, used_llm, used_beautify = _llm_then_beautify(_title or "Notification", _body or "")
-                send_message(_title or "Notification", final, priority=_priority, extras=extras)
-            except Exception as e:
-                print(f"[bot] LLM worker failed: {e}\n{traceback.format_exc()}")
-                try:
-                    send_message(_title or "Notification", _body or "", priority=_priority)
-                except Exception as e2:
-                    print(f"[bot] fallback send failed: {e2}")
-
+def _start_llm_thread(_title, _body, _priority):
+    def _llm_worker():
         try:
-            t = threading.Thread(target=_llm_worker, daemon=True)
-            t.start()
-        except Exception as e:
-            print(f"[bot] thread spawn failed: {e}")
+            # ensure _llm runs before beautify so Neural Core fires
+            if _llm and hasattr(_llm, "generate_reply"):
+                try:
+                    raw = _llm.generate_reply(_body or "", merged)
+                    _body_local = raw if raw else _body
+                except Exception as e:
+                    print(f"[bot] LLM pre-pass failed: {e}")
+                    _body_local = _body
+            else:
+                _body_local = _body
 
-    # start worker thread
-    _start_llm_thread(title, body, priority)
+            # now pass result into Beautify/LLM chain
+            final, extras, used_llm, used_beautify = _llm_then_beautify(_title or "Notification", _body_local or "")
+            send_message(_title or "Notification", final, priority=_priority, extras=extras)
+        except Exception as e:
+            print(f"[bot] LLM worker failed: {e}\n{traceback.format_exc()}")
+            try:
+                send_message(_title or "Notification", _body or "", priority=_priority)
+            except Exception as e2:
+                print(f"[bot] fallback send failed: {e2}")
+
+    try:
+        t = threading.Thread(target=_llm_worker, daemon=True)
+        t.start()
+    except Exception as e:
+        print(f"[bot] thread spawn failed: {e}")
 # ============================
 # Gotify WebSocket intake
 # ============================
