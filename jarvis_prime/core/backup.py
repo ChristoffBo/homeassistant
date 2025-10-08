@@ -40,7 +40,7 @@ async def create_backup(request):
         playbooks_dir = share_dir / "playbooks"
         if playbooks_dir.exists():
             shutil.copytree(playbooks_dir, backup_root / "playbooks", dirs_exist_ok=True)
-            logger.info(f"[backup] Added playbooks directory")
+            logger.info("[backup] Added playbooks directory")
         else:
             logger.info(f"[backup] Skipped missing directory: {playbooks_dir}")
 
@@ -48,7 +48,7 @@ async def create_backup(request):
         models_dir = share_dir / "models"
         if models_dir.exists():
             shutil.copytree(models_dir, backup_root / "models", dirs_exist_ok=True)
-            logger.info(f"[backup] Added models directory")
+            logger.info("[backup] Added models directory")
         else:
             logger.info(f"[backup] Skipped missing directory: {models_dir}")
 
@@ -56,17 +56,15 @@ async def create_backup(request):
         config_file = share_dir / "config.yaml"
         if config_file.exists():
             shutil.copy2(config_file, backup_root / "config.yaml")
-            logger.info(f"[backup] Added config file")
+            logger.info("[backup] Added config file")
         else:
             logger.info(f"[backup] Skipped missing config file: {config_file}")
 
         # Create permanent backups directory
         permanent_path = Path("/share/jarvis_prime/backups")
         if not permanent_path.exists():
-        permanent_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"[backup] Created backups directory at {permanent_path}")
-
-       
+            permanent_path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"[backup] Created backups directory at {permanent_path}")
 
         # Create tar.gz archive
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -81,8 +79,8 @@ async def create_backup(request):
         return web.FileResponse(
             path=str(tar_path),
             headers={
-                'Content-Type': 'application/gzip',
-                'Content-Disposition': f'attachment; filename=\"jarvis-prime-backup-{timestamp}.tar.gz\"'
+                "Content-Type": "application/gzip",
+                "Content-Disposition": f'attachment; filename="jarvis-prime-backup-{timestamp}.tar.gz"'
             }
         )
 
@@ -105,17 +103,16 @@ async def restore_backup(request):
         reader = await request.multipart()
         field = await reader.next()
 
-        if not field or field.name != 'backup':
+        if not field or field.name != "backup":
             return web.json_response(
                 {"error": "No backup file provided"},
                 status=400
             )
 
         # Save uploaded file to temp location
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.tar.gz') as tmp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp_file:
             tmp_path = Path(tmp_file.name)
 
-            # Write uploaded data
             size = 0
             while True:
                 chunk = await field.read_chunk()
@@ -130,13 +127,11 @@ async def restore_backup(request):
         with tempfile.TemporaryDirectory() as tmpdir:
             extract_dir = Path(tmpdir)
 
-            # Extract tar.gz
             with tarfile.open(tmp_path, "r:gz") as tar:
                 tar.extractall(extract_dir)
 
             logger.info(f"[backup] Extracted backup to {extract_dir}")
 
-            # Find the backup root directory
             backup_root = extract_dir / "jarvis_prime_backup"
             if not backup_root.exists():
                 subdirs = list(extract_dir.iterdir())
@@ -150,9 +145,9 @@ async def restore_backup(request):
             db_target = Path("/data/jarvis.db")
             if db_backup.exists():
                 if db_target.exists():
-                    shutil.copy2(db_target, db_target.with_suffix('.db.bak'))
+                    shutil.copy2(db_target, db_target.with_suffix(".db.bak"))
                 shutil.copy2(db_backup, db_target)
-                logger.info(f"[backup] Restored database")
+                logger.info("[backup] Restored database")
 
             # Restore playbooks
             playbooks_backup = backup_root / "playbooks"
@@ -161,28 +156,26 @@ async def restore_backup(request):
                 if playbooks_target.exists():
                     shutil.rmtree(playbooks_target)
                 shutil.copytree(playbooks_backup, playbooks_target, dirs_exist_ok=True)
-                logger.info(f"[backup] Restored playbooks")
+                logger.info("[backup] Restored playbooks")
 
-            # Restore models (if exists)
+            # Restore models
             models_backup = backup_root / "models"
             models_target = Path("/share/jarvis_prime/models")
             if models_backup.exists():
                 if models_target.exists():
                     shutil.rmtree(models_target)
                 shutil.copytree(models_backup, models_target, dirs_exist_ok=True)
-                logger.info(f"[backup] Restored models")
+                logger.info("[backup] Restored models")
 
-            # Restore config (if exists)
+            # Restore config
             config_backup = backup_root / "config.yaml"
             config_target = Path("/share/jarvis_prime/config.yaml")
             if config_backup.exists():
                 shutil.copy2(config_backup, config_target)
-                logger.info(f"[backup] Restored config")
+                logger.info("[backup] Restored config")
 
-        # Clean up temp file
         tmp_path.unlink(missing_ok=True)
-
-        logger.info(f"[backup] Restore completed successfully")
+        logger.info("[backup] Restore completed successfully")
         return web.json_response({"success": True, "message": "Backup restored successfully"})
 
     except Exception as e:
