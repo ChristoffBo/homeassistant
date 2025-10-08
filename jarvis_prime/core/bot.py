@@ -1064,14 +1064,21 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             pass
         return
 
-    final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
-    send_message(title or "Notification", final, priority=priority, extras=extras)
+ # Offload the LLM + beautify work to a background thread so UI never freezes
+try:
+    import threading
 
-    try:
-        if source == "gotify" and original_id:
-            _purge_after(int(original_id))
-    except Exception:
-        pass
+    def _run_llm_thread():
+        try:
+            final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
+        except Exception as e:
+            print(f"[bot] background LLM thread error: {e}")
+            final, extras, used_llm, used_beautify = (body or "", None, False, False)
+        send_message(title or "Notification", final, priority=priority, extras=extras)
+
+    threading.Thread(target=_run_llm_thread, daemon=True).start()
+except Exception as e:
+    print(f"[bot] thread spawn failed: {e}")
 # ============================
 # Gotify WebSocket intake
 # ============================
