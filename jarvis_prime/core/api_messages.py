@@ -380,6 +380,14 @@ def _make_app() -> web.Application:
         analytics_module.register_routes(app)
         print("[analytics] Routes registered")
 
+# Register backup routes if available
+    try:
+        from backup import register_routes as register_backup
+        register_backup(app)
+        print("[backup] Routes registered")
+    except Exception as e:
+        print(f"[backup] Failed to register routes: {e}")
+
     # ONE static root only
     async def _index(_):
         if UI_INDEX.exists():
