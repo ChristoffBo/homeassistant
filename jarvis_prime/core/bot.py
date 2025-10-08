@@ -1064,7 +1064,7 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             pass
         return
 
- # Offload the LLM + beautify work to a background thread so UI never freezes
+# Offload the LLM + beautify work to a background thread so UI never freezes
 import threading, traceback
 
 def _start_llm_thread(_title, _body, _priority):
