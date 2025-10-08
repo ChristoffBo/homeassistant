@@ -639,7 +639,6 @@ def _llm_then_beautify(title: str, message: str):
     foot = _footer(used_llm, used_beautify)
     if final and not final.rstrip().endswith(foot):
         final = f"{final.rstrip()}\n\n{foot}"
-final = re.sub(r'\b(Lexi|Chick|Rager|Comedian|Nerd|Dude|Tappit|Ops)[\.\s]*$', '', final.strip(), flags=re.I)
     return final, extras, used_llm, used_beautify
 # ============================
 # Commands
