@@ -1067,22 +1067,26 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
  # Offload the LLM + beautify work to a background thread so UI never freezes
 import threading, traceback
 
-def _llm_worker():
-    try:
-        final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
-        send_message(title or "Notification", final, priority=priority, extras=extras)
-    except Exception as e:
-        print(f"[bot] LLM worker failed: {e}\n{traceback.format_exc()}")
+def _start_llm_thread(_title, _body, _priority):
+    def _llm_worker():
         try:
-            send_message(title or "Notification", body or "", priority=priority)
-        except Exception as e2:
-            print(f"[bot] fallback send failed: {e2}")
+            final, extras, used_llm, used_beautify = _llm_then_beautify(_title or "Notification", _body or "")
+            send_message(_title or "Notification", final, priority=_priority, extras=extras)
+        except Exception as e:
+            print(f"[bot] LLM worker failed: {e}\n{traceback.format_exc()}")
+            try:
+                send_message(_title or "Notification", _body or "", priority=_priority)
+            except Exception as e2:
+                print(f"[bot] fallback send failed: {e2}")
 
-try:
-    t = threading.Thread(target=_llm_worker, daemon=True)
-    t.start()
-except Exception as e:
-    print(f"[bot] thread spawn failed: {e}")
+    try:
+        t = threading.Thread(target=_llm_worker, daemon=True)
+        t.start()
+    except Exception as e:
+        print(f"[bot] thread spawn failed: {e}")
+
+# start worker thread
+_start_llm_thread(title, body, priority)
 # ============================
 # Gotify WebSocket intake
 # ============================
