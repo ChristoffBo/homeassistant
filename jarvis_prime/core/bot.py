@@ -1064,8 +1064,18 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             pass
         return
 
-    final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
+	
+	# Offload the LLM + beautify work to a background thread so UI never freezes
+    try:
+    final, extras, used_llm, used_beautify = await asyncio.to_thread(
+        _llm_then_beautify, title or "Notification", body or ""
+    )
+    except Exception as e:
+    print(f"[bot] background LLM thread error: {e}")
+    final, extras, used_llm, used_beautify = (body or "", None, False, False)
+
     send_message(title or "Notification", final, priority=priority, extras=extras)
+
 
     try:
         if source == "gotify" and original_id:
