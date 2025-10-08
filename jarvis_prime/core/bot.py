@@ -1065,18 +1065,22 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
         return
 
  # Offload the LLM + beautify work to a background thread so UI never freezes
-try:
-    import threading
+import threading, traceback
 
-    def _run_llm_thread():
-        try:
-            final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
-        except Exception as e:
-            print(f"[bot] background LLM thread error: {e}")
-            final, extras, used_llm, used_beautify = (body or "", None, False, False)
+def _llm_worker():
+    try:
+        final, extras, used_llm, used_beautify = _llm_then_beautify(title or "Notification", body or "")
         send_message(title or "Notification", final, priority=priority, extras=extras)
+    except Exception as e:
+        print(f"[bot] LLM worker failed: {e}\n{traceback.format_exc()}")
+        try:
+            send_message(title or "Notification", body or "", priority=priority)
+        except Exception as e2:
+            print(f"[bot] fallback send failed: {e2}")
 
-    threading.Thread(target=_run_llm_thread, daemon=True).start()
+try:
+    t = threading.Thread(target=_llm_worker, daemon=True)
+    t.start()
 except Exception as e:
     print(f"[bot] thread spawn failed: {e}")
 # ============================
