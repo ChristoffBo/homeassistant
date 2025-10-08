@@ -920,6 +920,10 @@ def build_header_and_riffs(persona_name: str, subject: str = "", body: str = "",
             lines = lexi_riffs(persona_name, n=max_riff_lines, with_emoji=False, subject=subject, body=body)
         # Ensure riffs contain no emoji
         lines = [re.sub(r"[\U0001F300-\U0001FAFF]", "", ln).strip() for ln in lines]
+
+# Global Lexi scrub (final failsafe)
+lines = [re.sub(r'\bLexi[\.!\s]*$', '', ln, flags=re.I) for ln in lines]
+header = re.sub(r'\bLexi[\.!\s]*$', '', header, flags=re.I)
         return header, lines
     except:
         return f"{subject or 'Update'}: ok.", ["noted.", "done."]
