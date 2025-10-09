@@ -291,29 +291,41 @@ def _bool_from_env(*names: str, default: bool = False) -> bool:
         if v in ("0","false","no","off"): return False
     return default
 
-def _bool_from_options(opt: Dict[str, Any], key: str, default: bool = False) -> bool:
+def _bool_from_options(opt: Dict[str, Any], key: str, default: Optional[bool] = None) -> Optional[bool]:
+    """Returns True/False/None to distinguish explicit false from missing key"""
+    if key not in opt:
+        return default
     try:
         v = str(opt.get(key, default)).strip().lower()
         return v in ("1","true","yes","on")
     except Exception:
         return default
 
-# >>> FIXED: Riffs respect master llm_enabled switch
 def _llm_riffs_enabled() -> bool:
-    """Riffs require BOTH llm_enabled=true AND llm_persona_riffs_enabled=true"""
+    """Check if riffs are enabled (respects master llm_enabled switch)"""
     opt = _read_options()
     
-    # Master switch: if llm_enabled is explicitly false, riffs are OFF
+    # Check riffs-specific toggle first
+    opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
+    if opt_riffs is False:
+        return False
+    
+    # If riffs explicitly enabled or not set, check master switch
     llm_master = _bool_from_options(opt, "llm_enabled", default=None)
     if llm_master is False:
         return False
     
-    # Check riffs-specific toggle
+    # Default: enabled
     env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
-    opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
-    if opt_riffs is not None:
-        return opt_riffs
-    return _bool_from_options(opt, "llm_enabled", default=env_enabled)
+    return _bool_from_options(opt, "llm_enabled", default=env_enabled) if opt_riffs is None else True
+
+def _llm_enabled() -> bool:
+    """Check if LLM itself is enabled (master switch)"""
+    opt = _read_options()
+    llm_master = _bool_from_options(opt, "llm_enabled", default=None)
+    if llm_master is not None:
+        return llm_master
+    return _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
 
 def _personality_enabled() -> bool:
     opt = _read_options()
@@ -325,7 +337,6 @@ def _ui_persona_header_enabled() -> bool:
     env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)
     return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
 
-# >>> FIXED: Rewrites respect master llm_enabled switch
 def _llm_message_rewrite_enabled() -> bool:
     """Rewrites require BOTH llm_enabled=true AND llm_rewrite_enabled=true"""
     opt = _read_options()
@@ -338,7 +349,6 @@ def _llm_message_rewrite_enabled() -> bool:
     # Check rewrite-specific toggle (default false, must be explicitly enabled)
     return _bool_from_options(opt, "llm_rewrite_enabled", default=False)
 
-# >>> CHANGED: default cap = 350; sourced from config.json if present
 def _llm_message_rewrite_max_chars() -> int:
     opt = _read_options()
     try:
@@ -347,36 +357,65 @@ def _llm_message_rewrite_max_chars() -> int:
         return 350
 
 # ============================
-# Riffs (FIXED to use llm_client first)
+# Riffs (FIXED: Lexi fallback when LLM off)
 # ============================
 def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
+    """
+    FIXED: Returns LLM riffs if LLM enabled, Lexi riffs if LLM disabled but riffs enabled.
+    """
     if not persona:
         return []
+    
+    # Check if riffs are enabled at all
     if not _llm_riffs_enabled():
         return []
-    # Prefer cleaned path from llm_client first
-    try:
-        import importlib
-        llm = importlib.import_module("llm_client")
-        llm = importlib.reload(llm)
-        out = llm.persona_riff(persona=persona, context=context)
-        if isinstance(out, list) and out:
-            return [s.strip() for s in out if s and s.strip()]
-        if isinstance(out, str) and out.strip():
-            return [out.strip()]
-    except Exception:
-        pass
-    # Fallback to personality.llm_quips if llm_client failed
-    try:
-        mod = importlib.import_module("personality")
-        mod = importlib.reload(mod)
-        if hasattr(mod, "llm_quips"):
-            max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
-            out = mod.llm_quips(persona, context=context, max_lines=max_lines)
-            if isinstance(out, list):
-                return [str(x).strip() for x in out if str(x).strip()]
-    except Exception:
-        pass
+    
+    # NEW: Check if LLM is enabled
+    llm_on = _llm_enabled()
+    
+    if llm_on:
+        # LLM is ON → try LLM riffs via llm_client
+        try:
+            import importlib
+            llm = importlib.import_module("llm_client")
+            llm = importlib.reload(llm)
+            out = llm.persona_riff(persona=persona, context=context)
+            if isinstance(out, list) and out:
+                return [s.strip() for s in out if s and s.strip()]
+            if isinstance(out, str) and out.strip():
+                return [out.strip()]
+        except Exception:
+            pass
+        
+        # Fallback to personality.llm_quips if llm_client failed
+        try:
+            mod = importlib.import_module("personality")
+            mod = importlib.reload(mod)
+            if hasattr(mod, "llm_quips"):
+                max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
+                out = mod.llm_quips(persona, context=context, max_lines=max_lines)
+                if isinstance(out, list):
+                    return [str(x).strip() for x in out if str(x).strip()]
+        except Exception:
+            pass
+    else:
+        # LLM is OFF, riffs ON → use Lexi fallback
+        try:
+            mod = importlib.import_module("personality")
+            mod = importlib.reload(mod)
+            if hasattr(mod, "lexi_riffs"):
+                max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
+                # Extract subject from context
+                subj = context
+                m = re.search(r"Subject:\s*(.+)", context, flags=re.I)
+                if m:
+                    subj = m.group(1).strip()
+                out = mod.lexi_riffs(persona, n=max_lines, subject=subj, body=context)
+                if isinstance(out, list):
+                    return [str(x).strip() for x in out if str(x).strip()]
+        except Exception:
+            pass
+    
     return []
 
 # >>> NEW: neutral LLM rewrite (no persona), respects only config.json toggle
