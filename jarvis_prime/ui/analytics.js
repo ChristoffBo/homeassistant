@@ -1,5 +1,6 @@
 // Analytics Module for Jarvis Prime
 // Handles all analytics UI interactions and API calls
+// UPGRADED: Added retry and flap protection features
 // PATCHED: analyticsLoadIncidents now handles { "incidents": [...] } format consistently
 
 // Use the API() helper from app.js for proper path resolution
@@ -165,9 +166,23 @@ function analyticsCreateServiceCard(service, uptime) {
     ? new Date(service.last_check * 1000).toLocaleString()
     : 'Never';
 
+  // NEW: Flap protection indicators
+  const flapBadge = service.is_suppressed 
+    ? `<span style="padding: 4px 8px; background: rgba(245, 158, 11, 0.2); color: #f59e0b; border-radius: 6px; font-size: 10px; font-weight: 600; margin-left: 8px;">
+         🔇 SUPPRESSED
+       </span>`
+    : service.flap_count > 0
+    ? `<span style="padding: 4px 8px; background: rgba(245, 158, 11, 0.1); color: #f59e0b; border-radius: 6px; font-size: 10px; margin-left: 8px;">
+         ${service.flap_count} flaps
+       </span>`
+    : '';
+
   card.innerHTML = `
     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-      <h3 style="margin: 0; font-size: 18px;">${service.service_name}</h3>
+      <div style="flex: 1;">
+        <h3 style="margin: 0; font-size: 18px;">${service.service_name}</h3>
+        ${flapBadge}
+      </div>
       <span style="padding: 4px 12px; background: ${statusColors[status]}22; color: ${statusColors[status]}; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase;">
         ${status}
       </span>
@@ -176,7 +191,7 @@ function analyticsCreateServiceCard(service, uptime) {
       ${service.endpoint}
     </div>
     <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;">
-      Last check: ${lastCheck} • ${service.check_type.toUpperCase()}
+      Last check: ${lastCheck} • ${service.check_type.toUpperCase()} • ${service.retries || 3} retries
     </div>
     ${uptime ? `
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
@@ -228,11 +243,21 @@ async function analyticsLoadServices() {
         unknown: '#6b7280'
       };
       
+      // NEW: Add flap indicators
+      const flapIndicator = service.is_suppressed 
+        ? `<div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">🔇 Suppressed</div>`
+        : service.flap_count > 0
+        ? `<div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">${service.flap_count} flaps</div>`
+        : '';
+      
       row.innerHTML = `
-        <td>${service.service_name}</td>
+        <td>
+          ${service.service_name}
+          ${flapIndicator}
+        </td>
         <td style="font-family: monospace; font-size: 12px;">${service.endpoint}</td>
         <td>${service.check_type.toUpperCase()}</td>
-        <td>${service.check_interval}s</td>
+        <td>${service.check_interval}s / ${service.retries || 3}x</td>
         <td>
           <span style="padding: 4px 12px; background: ${statusColors[status]}22; color: ${statusColors[status]}; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase;">
             ${status}
@@ -337,6 +362,13 @@ function analyticsShowAddService() {
   document.getElementById('analytics-service-modal-title').textContent = 'Add Service';
   document.getElementById('analytics-service-form').reset();
   document.getElementById('analytics-service-id').value = '';
+  
+  // Set default values for new services
+  document.getElementById('analytics-retries').value = 3;
+  document.getElementById('analytics-flap-window').value = 3600;
+  document.getElementById('analytics-flap-threshold').value = 5;
+  document.getElementById('analytics-suppression-duration').value = 3600;
+  
   document.getElementById('analytics-service-modal').classList.add('active');
   analyticsToggleStatusCode();
 }
@@ -356,6 +388,12 @@ async function analyticsEditService(id) {
     document.getElementById('analytics-check-interval').value = service.check_interval;
     document.getElementById('analytics-check-timeout').value = service.timeout;
     document.getElementById('analytics-service-enabled').checked = service.enabled;
+    
+    // NEW: Load retry and flap protection values
+    document.getElementById('analytics-retries').value = service.retries || 3;
+    document.getElementById('analytics-flap-window').value = service.flap_window || 3600;
+    document.getElementById('analytics-flap-threshold').value = service.flap_threshold || 5;
+    document.getElementById('analytics-suppression-duration').value = service.suppression_duration || 3600;
 
     analyticsToggleStatusCode();
     document.getElementById('analytics-service-modal').classList.add('active');
@@ -391,7 +429,7 @@ function analyticsToggleStatusCode() {
   statusGroup.style.display = checkType === 'http' ? 'block' : 'none';
 }
 
-// Save service
+// Save service - UPDATED to include retry and flap protection
 async function analyticsSaveService(event) {
   event.preventDefault();
 
@@ -403,7 +441,13 @@ async function analyticsSaveService(event) {
     expected_status: parseInt(document.getElementById('analytics-expected-status').value),
     timeout: parseInt(document.getElementById('analytics-check-timeout').value),
     check_interval: parseInt(document.getElementById('analytics-check-interval').value),
-    enabled: document.getElementById('analytics-service-enabled').checked
+    enabled: document.getElementById('analytics-service-enabled').checked,
+    
+    // NEW: Include retry and flap protection fields
+    retries: parseInt(document.getElementById('analytics-retries').value) || 3,
+    flap_window: parseInt(document.getElementById('analytics-flap-window').value) || 3600,
+    flap_threshold: parseInt(document.getElementById('analytics-flap-threshold').value) || 5,
+    suppression_duration: parseInt(document.getElementById('analytics-suppression-duration').value) || 3600
   };
 
   try {
