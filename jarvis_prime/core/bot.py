@@ -633,6 +633,9 @@ def _llm_then_beautify(title: str, message: str):
                 persona=ACTIVE_PERSONA,
                 persona_quip=True  # <— enable persona riffs for all intakes
             )
+# --- FIX: Ensure Lexi riffs (lists) render visibly ---
+        if isinstance(final, list):
+            final = "\n".join(str(x).strip() for x in final if x)
     except Exception as e:
         print(f"[bot] Beautify failed: {e}")
 
