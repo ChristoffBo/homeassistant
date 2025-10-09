@@ -302,22 +302,28 @@ def _bool_from_options(opt: Dict[str, Any], key: str, default: Optional[bool] = 
         return default
 
 def _llm_riffs_enabled() -> bool:
-    """Check if riffs are enabled (respects master llm_enabled switch)"""
+    """Allow Lexi riffs when LLM is off but persona riffs are enabled."""
     opt = _read_options()
-    
-    # Check riffs-specific toggle first
-    opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
-    if opt_riffs is False:
+
+    # Persona riffs explicitly disabled → OFF
+    riffs_opt = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
+    if riffs_opt is False:
         return False
-    
-    # If riffs explicitly enabled or not set, check master switch
-    llm_master = _bool_from_options(opt, "llm_enabled", default=None)
-    if llm_master is False:
-        return False
-    
-    # Default: enabled
-    env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
-    return _bool_from_options(opt, "llm_enabled", default=env_enabled) if opt_riffs is None else True
+
+    # Master toggle
+    llm_opt = _bool_from_options(opt, "llm_enabled", default=None)
+
+    # ✅ FIX: If LLM is OFF but riffs enabled → still allow Lexi
+    if llm_opt is False:
+        return True
+
+    # ✅ If LLM is ON → allow riffs
+    if llm_opt is True:
+        return True
+
+    # Fallback to env or default True
+    _ = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
+    return True
 
 def _llm_enabled() -> bool:
     """Check if LLM itself is enabled (master switch)"""
