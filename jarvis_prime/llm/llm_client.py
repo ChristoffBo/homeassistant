@@ -1234,6 +1234,12 @@ def persona_riff(
     ctx_tokens: int = 4096,
     hf_token: Optional[str] = None
 ) -> List[str]:
+    """
+    FIXED: Now checks llm_enabled UPFRONT to decide riff engine:
+      - llm_enabled=false + riffs=true  → Lexi riff
+      - llm_enabled=true + riffs=true   → LLM riff
+      - riffs=false                     → No riff
+    """
     if allow_profanity is None:
         allow_profanity = (
             (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
@@ -1241,43 +1247,55 @@ def persona_riff(
         )
 
     context = _sanitize_context_subject(context)
-
     opts = _read_options()
+    
+    # Read both flags
     llm_enabled = bool(opts.get("llm_enabled", True))
     riffs_enabled = bool(opts.get("llm_persona_riffs_enabled", True))
-
-    riff_max_tokens = _get_int_opt(opts, "llm_riff_max_tokens", 32)
-    _log(f"persona_riff: effective max_tokens={riff_max_tokens}")
-
+    
     subj = _extract_subject_from_context(context or "")
-    if not llm_enabled and riffs_enabled:
+    
+    # Decision logic (FIXED)
+    if not riffs_enabled:
+        # Riffs disabled → return empty
+        _log("persona_riff: riffs disabled → no riff")
+        return []
+    
+    if not llm_enabled:
+        # LLM off, riffs on → Lexi
+        _log("persona_riff: llm_enabled=false + riffs=true → using Lexi")
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
-
+    
+    # LLM on, riffs on → try LLM riff
+    _log("persona_riff: llm_enabled=true + riffs=true → using LLM")
+    
+    riff_max_tokens = _get_int_opt(opts, "llm_riff_max_tokens", 32)
     prof_name, prof_cpu, prof_ctx, prof_timeout = _current_profile()
     ctx_tokens = prof_ctx
     cpu_limit = prof_cpu
     timeout = prof_timeout
 
     with _GenCritical(timeout):
+        # Ensure LLM is loaded
         if LLM_MODE == "none":
-            if llm_enabled:
-                ok = ensure_loaded(
-                    model_url=model_url,
-                    model_path=model_path,
-                    model_sha256=model_sha256,
-                    ctx_tokens=ctx_tokens,
-                    cpu_limit=cpu_limit,
-                    hf_token=hf_token,
-                    base_url=base_url
-                )
-                if not ok:
-                    return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
-            else:
-                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
+            ok = ensure_loaded(
+                model_url=model_url,
+                model_path=model_path,
+                model_sha256=model_sha256,
+                ctx_tokens=ctx_tokens,
+                cpu_limit=cpu_limit,
+                hf_token=hf_token,
+                base_url=base_url
+            )
+            if not ok:
+                _log("persona_riff: LLM load failed → fallback to Lexi")
+                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
         if LLM_MODE not in ("llama", "ollama"):
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
+            _log("persona_riff: LLM_MODE invalid → fallback to Lexi")
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
+        # Build LLM prompt
         persona_line = f"Persona style: { _persona_descriptor(persona) }"
         sys_parts = [
             persona_line,
@@ -1301,7 +1319,6 @@ def persona_riff(
         else:
             prompt = f"<s>[INST] <<SYS>>{sys_prompt}<</SYS>>\n{user} [/INST]"
 
-        _log(f"persona_riff: effective timeout={timeout}s")
         try:
             n_in = len(LLM.tokenize(prompt.encode("utf-8"), add_bos=True))
             _log(f"persona_riff: prompt_tokens={n_in}")
@@ -1310,8 +1327,8 @@ def persona_riff(
             n_in = _estimate_tokens(prompt)
 
         if _would_overflow(n_in, riff_max_tokens, ctx_tokens, reserve=256):
-            _log(f"persona_riff: ctx precheck overflow (prompt={n_in}, out={riff_max_tokens}, ctx={ctx_tokens}) → Lexi")
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
+            _log(f"persona_riff: ctx overflow → fallback to Lexi")
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
         raw = _do_generate(
             prompt,
@@ -1322,9 +1339,12 @@ def persona_riff(
             max_tokens=riff_max_tokens,
             with_grammar_auto=False
         )
+        
         if not raw:
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity) if riffs_enabled else []
+            _log("persona_riff: LLM returned empty → fallback to Lexi")
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
+    # Clean LLM output
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     lines = _clean_riff_lines(lines)
     cleaned: List[str] = []
@@ -1344,8 +1364,10 @@ def persona_riff(
         if len(cleaned) >= max(1, int(max_lines or 3)):
             break
 
-    if not cleaned and riffs_enabled:
+    if not cleaned:
+        _log("persona_riff: LLM output empty after cleaning → fallback to Lexi")
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+    
     return cleaned
 
 # ============================
@@ -1371,7 +1393,6 @@ def persona_riff_ex(
     Extended riff that also reports its source:
       - source == "llm"     → generated by the LLM
       - source == "lexicon" → generated by Lexi fallback
-    (Non-breaking: original persona_riff(...) remains unchanged and still returns List[str].)
     """
     opts = _read_options()
     llm_enabled = bool(opts.get("llm_enabled", True))
@@ -1379,7 +1400,10 @@ def persona_riff_ex(
     context = _sanitize_context_subject(context)
     subj = _extract_subject_from_context(context or "")
 
-    if not llm_enabled and riffs_enabled:
+    if not riffs_enabled:
+        return [], "none"
+    
+    if not llm_enabled:
         return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity if allow_profanity is not None else False), "lexicon"
 
     lines = persona_riff(
@@ -1397,6 +1421,8 @@ def persona_riff_ex(
         ctx_tokens=ctx_tokens,
         hf_token=hf_token
     )
+    
+    # Determine source based on whether LLM was actually used
     source = "lexicon" if not lines else "llm"
     return lines, source
 
@@ -1482,7 +1508,7 @@ def chat_generate(
             if not ok:
                 return ""
 
-        # >>> RAG injection: add a tiny Context block to the system prompt
+        # RAG injection
         messages, system_prompt = _build_prompt_with_rag_messages(messages, system_preamble=system_prompt)
 
         prompt = _build_prompt(messages, system_prompt)
