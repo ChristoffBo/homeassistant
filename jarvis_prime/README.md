@@ -45,8 +45,6 @@ Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, Mo
 • **Multi-Protocol Support**: Monitor HTTP endpoints (with status code validation), TCP ports, or ICMP Ping hosts  
 • **Incident History**: Track downtime incidents with duration and error details  
 • **Visual Dashboard**: Service status cards showing current state, uptime %, avg response time  
-
-### Advanced Reliability Logic (Anti-Flap & Retries)
 • **Retries** – Each service must fail a configurable number of consecutive checks before being marked **DOWN**, filtering out temporary timeouts or network hiccups.  
 • **Flap Window** – Defines the time window (in seconds) used to detect service instability; older state changes automatically expire outside this period.  
 • **Flap Threshold** – Sets how many up/down flips are allowed within the flap window before the service is considered “flapping.”  
