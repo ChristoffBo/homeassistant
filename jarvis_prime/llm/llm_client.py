@@ -8,6 +8,8 @@
 #   rewrite(...)
 #   riff(...)         → routes to persona_riff()
 #   persona_riff(...)
+#   submit_task(...)  → async task submission
+#   get_task_status(...)
 
 from __future__ import annotations
 import os
@@ -23,8 +25,10 @@ import http.client
 import re
 import threading
 import signal
+import uuid
 from typing import Optional, Dict, Any, Tuple, List
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 # ---- RAG (optional) ----
 try:
@@ -53,6 +57,45 @@ _MODEL_NAME_HINT = ""
 # Global reentrant lock so multiple incoming messages don't collide
 _GEN_LOCK = threading.RLock()
 
+# ============================
+# Async Task Queue (NEW)
+# ============================
+# Single worker = only 1 LLM call at a time (prevents CPU overheating)
+_LLM_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_TASK_RESULTS: Dict[str, Dict[str, Any]] = {}
+_TASK_LOCK = threading.Lock()
+
+def submit_task(func, *args, **kwargs) -> str:
+    """
+    Submit LLM task to background worker. Returns task_id immediately.
+    UI can poll get_task_status(task_id) for results.
+    """
+    task_id = str(uuid.uuid4())
+    
+    def _run():
+        try:
+            result = func(*args, **kwargs)
+            with _TASK_LOCK:
+                _TASK_RESULTS[task_id] = {'status': 'complete', 'result': result}
+        except Exception as e:
+            with _TASK_LOCK:
+                _TASK_RESULTS[task_id] = {'status': 'error', 'error': str(e)}
+    
+    with _TASK_LOCK:
+        _TASK_RESULTS[task_id] = {'status': 'processing'}
+    
+    _LLM_EXECUTOR.submit(_run)
+    _log(f"task submitted: {task_id}")
+    return task_id
+
+def get_task_status(task_id: str) -> Dict[str, Any]:
+    """Get status of submitted task."""
+    with _TASK_LOCK:
+        return _TASK_RESULTS.get(task_id, {'status': 'not_found'})
+
+# ============================
+# Lock timeout and critical section
+# ============================
 def _lock_timeout() -> int:
     try:
         v = int(os.getenv("LLM_LOCK_TIMEOUT_SECONDS", "300").strip())
@@ -131,7 +174,7 @@ def _scrub_persona_tokens(s: str) -> str:
 
 # ----------------------------
 # NEW: transport tag stripper
-# ----------------------------
+# ---------------------------
 _TRANSPORT_TAG_RX = re.compile(
     r'^\s*(?:\[(?:smtp|proxy|http|https|gotify|webhook|apprise|ntfy|email|mailer|forward|poster)\]\s*)+',
     flags=re.I
@@ -248,7 +291,7 @@ def _current_profile() -> Tuple[str, int, int, int]:
             source = "flat/nested"
 
     # 3) Global knobs fallback
-    if not profiles:
+if not profiles:
         cpu = opts.get("llm_max_cpu_percent")
         ctx = opts.get("llm_ctx_tokens")
         to  = opts.get("llm_timeout_seconds")
@@ -599,7 +642,7 @@ def _ollama_generate(base_url: str, model_name: str, prompt: str, timeout: int =
     try:
         url = base_url.rstrip("/") + "/api/generate"
         payload = {
-            "model": model,
+            "model": model_name,
             "prompt": prompt,
             "stream": False,
             "options": {
@@ -1025,7 +1068,6 @@ def _resolve_model_from_options(
             _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path='{os.path.basename(p)}'")
             return u, p, token
     return url, path, token
-
 # ============================
 # Prompt builders
 # ============================
