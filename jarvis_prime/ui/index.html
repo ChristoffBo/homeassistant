@@ -1578,6 +1578,44 @@
           <input type="number" id="analytics-check-timeout" value="5" min="1" max="30">
         </div>
         
+        <!-- NEW: RETRY & FLAP PROTECTION SECTION -->
+        <div style="margin: 24px 0; padding: 16px; background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.2); border-radius: 8px;">
+          <h4 style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px; font-weight: 600;">⚡ Retry & Flap Protection</h4>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Retries</label>
+            <input type="number" id="analytics-retries" value="3" min="1" max="10">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Number of consecutive failures before marking service DOWN
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Flap Window (seconds)</label>
+            <input type="number" id="analytics-flap-window" value="3600" min="60" max="86400">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Time period to monitor flaps (default: 3600 = 1 hour)
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Flap Threshold</label>
+            <input type="number" id="analytics-flap-threshold" value="5" min="2" max="50">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Number of status changes to trigger alert suppression
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Suppression Duration (seconds)</label>
+            <input type="number" id="analytics-suppression-duration" value="3600" min="60" max="86400">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              How long to suppress alerts after flap threshold exceeded (default: 3600 = 1 hour)
+            </div>
+          </div>
+        </div>
+        
+        
         <div class="form-group">
           <div class="checkbox-group">
             <input type="checkbox" id="analytics-service-enabled" checked />
