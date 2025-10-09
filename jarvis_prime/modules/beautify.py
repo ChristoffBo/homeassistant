@@ -298,8 +298,17 @@ def _bool_from_options(opt: Dict[str, Any], key: str, default: bool = False) -> 
     except Exception:
         return default
 
+# >>> FIXED: Riffs respect master llm_enabled switch
 def _llm_riffs_enabled() -> bool:
+    """Riffs require BOTH llm_enabled=true AND llm_persona_riffs_enabled=true"""
     opt = _read_options()
+    
+    # Master switch: if llm_enabled is explicitly false, riffs are OFF
+    llm_master = _bool_from_options(opt, "llm_enabled", default=None)
+    if llm_master is False:
+        return False
+    
+    # Check riffs-specific toggle
     env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
     opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
     if opt_riffs is not None:
@@ -316,9 +325,17 @@ def _ui_persona_header_enabled() -> bool:
     env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)
     return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
 
-# >>> CHANGED: rewrite toggle reads ONLY config.json; default False
+# >>> FIXED: Rewrites respect master llm_enabled switch
 def _llm_message_rewrite_enabled() -> bool:
+    """Rewrites require BOTH llm_enabled=true AND llm_rewrite_enabled=true"""
     opt = _read_options()
+    
+    # Master switch: if llm_enabled is explicitly false, rewrites are OFF
+    llm_master = _bool_from_options(opt, "llm_enabled", default=None)
+    if llm_master is False:
+        return False
+    
+    # Check rewrite-specific toggle (default false, must be explicitly enabled)
     return _bool_from_options(opt, "llm_rewrite_enabled", default=False)
 
 # >>> CHANGED: default cap = 350; sourced from config.json if present
@@ -462,7 +479,7 @@ def _beautify_is_disabled() -> bool:
 _WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
 _WT_UPDATED_RXES = [
     re.compile(
-        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
         re.I),
     re.compile(
         r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
@@ -674,7 +691,7 @@ def _clean_subject(raw_title: str, body: str) -> str:
     t = (raw_title or "").strip()
     if not t:
         t = ""
-    t = re.sub(r'^\s*(?:(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*)+', '', t, flags=re.I)
+    t = re.sub(r'^\s*(?:(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*)+', '', t, flags=re.I)
     t = re.sub(r'^\s*(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*[:\-]\s*', '', t, flags=re.I)
     if t.strip().lower() in INTAKE_NAMES or t.strip().lower() in {"message","notification","test"}:
         new_t = _infer_subject_from_body(body)
@@ -811,7 +828,7 @@ _META_LINE_RX = re.compile(
     re.I
 )
 # >>> CHANGED: also strip plain [SYSTEM]/[INPUT]/[OUTPUT] tags, not just special markers.
-_META_TAG_RX = re.compile(r'\s*(?:(?:SYSTEM|INPUT|OUTPUT)|(?:SYSTEM|INPUT|OUTPUT))\s*', re.I)
+_META_TAG_RX = re.compile(r'\s*(?:(?:SYSTEM|INPUT|OUTPUT)|(?:SYSTEM|INPUT|OUTPUT))\s*', re.I)
 
 def _scrub_meta(text: str) -> str:
     if not text:
