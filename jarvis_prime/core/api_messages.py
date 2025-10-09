@@ -4,6 +4,9 @@ from pathlib import Path
 from aiohttp import web
 import importlib.util
 
+# Import LLM client
+import llm_client
+
 _THIS_DIR = Path(__file__).resolve().parent
 
 # ---- storage ----
@@ -337,6 +340,84 @@ async def api_save_config(request: web.Request):
     except Exception as e:
         return _json({"error": str(e)}, status=500)
 
+# ---- LLM API ----
+async def api_llm_rewrite(request: web.Request):
+    """POST /api/llm/rewrite - submit rewrite task"""
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    text = str(data.get("text", ""))
+    if not text:
+        return _json({"error": "text required"}, status=400)
+    
+    mood = str(data.get("mood", "neutral"))
+    timeout = int(data.get("timeout", 12))
+    
+    task_id = llm_client.submit_task(
+        llm_client.rewrite,
+        text=text,
+        mood=mood,
+        timeout=timeout,
+        allow_profanity=False
+    )
+    
+    return _json({"task_id": task_id, "status": "processing"})
+
+async def api_llm_riff(request: web.Request):
+    """POST /api/llm/riff - submit persona riff task"""
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    persona = str(data.get("persona", "neutral"))
+    context = str(data.get("context", ""))
+    max_lines = int(data.get("max_lines", 3))
+    timeout = int(data.get("timeout", 8))
+    
+    task_id = llm_client.submit_task(
+        llm_client.persona_riff,
+        persona=persona,
+        context=context,
+        max_lines=max_lines,
+        timeout=timeout
+    )
+    
+    return _json({"task_id": task_id, "status": "processing"})
+
+async def api_llm_chat(request: web.Request):
+    """POST /api/llm/chat - submit chat task"""
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    messages = data.get("messages", [])
+    if not messages:
+        return _json({"error": "messages required"}, status=400)
+    
+    system_prompt = str(data.get("system_prompt", ""))
+    max_tokens = int(data.get("max_tokens", 384))
+    timeout = int(data.get("timeout", 20))
+    
+    task_id = llm_client.submit_task(
+        llm_client.chat_generate,
+        messages=messages,
+        system_prompt=system_prompt,
+        max_new_tokens=max_tokens,
+        timeout=timeout
+    )
+    
+    return _json({"task_id": task_id, "status": "processing"})
+
+async def api_llm_task_status(request: web.Request):
+    """GET /api/llm/task/{task_id} - get task status"""
+    task_id = request.match_info["task_id"]
+    status = llm_client.get_task_status(task_id)
+    return _json(status)
+
 # ---- app ----
 def _make_app() -> web.Application:
     app = web.Application()
@@ -370,6 +451,12 @@ def _make_app() -> web.Application:
     # Config API
     app.router.add_get("/api/config", api_get_config)
     app.router.add_post("/api/config", api_save_config)
+
+    # LLM routes
+    app.router.add_post("/api/llm/rewrite", api_llm_rewrite)
+    app.router.add_post("/api/llm/riff", api_llm_riff)
+    app.router.add_post("/api/llm/chat", api_llm_chat)
+    app.router.add_get("/api/llm/task/{task_id}", api_llm_task_status)
 
     # Register orchestrator routes if available
     if orchestrator_module:
