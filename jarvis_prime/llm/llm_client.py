@@ -1370,9 +1370,17 @@ def persona_riff(
 
     if not cleaned:
         _log("persona_riff: LLM output empty after cleaning → fallback to Lexi")
-        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+        # Lexi fallback fix: ensure list not empty
+        lines = _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+        if not lines:
+            lines = [f"{subj or 'Update'} completed."]
+        return lines
+
+    # Add safe return type for all cases
+    if isinstance(cleaned, str):
+        return [cleaned]
+    return cleaned or [f"{subj or 'Update'} acknowledged."]
     
-    return cleaned
 
 # ============================
 # Extended riff (with source flag) — ADDITIVE ONLY
