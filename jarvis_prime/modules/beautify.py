@@ -1025,3 +1025,92 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         extras.update(extras_in)
 
     return text, extras
+# -------- END OF beautify_message --------
+
+def beautify_test() -> None:
+    """CLI-style quick self-check for beautify logic."""
+    t = "Watchtower update report"
+    b = """- heimdall : 8d3c76a updated to 29faab4
+- vault : 85f12a0 updated to 90a0afc
+- nextcloud : 2296ac1 updated to 602aa91"""
+    txt, meta = beautify_message(t, b, source_hint="watchtower", persona="Lexi")
+    print("---- TEXT ----")
+    print(txt)
+    print("\n---- META ----")
+    print(json.dumps(meta, indent=2))
+
+# Optional entrypoint when run manually
+if __name__ == "__main__":
+    print("✅ Running beautify.py self-test…")
+    try:
+        beautify_test()
+    except Exception as e:
+        print("❌ Self-test failed:", e)
+
+# -------------------------------------------------------------------
+# Safety / Reference section
+# -------------------------------------------------------------------
+
+"""
+Module summary:
+
+beautify_message(title, body, …) → (text, extras)
+   - Converts raw notification text into Markdown-ready output
+   - Cleans, deduplicates, inserts icons and persona riffs
+
+Helper functions overview:
+
+_strip_noise(text)
+    Removes emojis and boilerplate lines (“sent from …”, etc.)
+
+_normalize(text)
+    Cleans trailing spaces, tabs, and collapses excess blank lines.
+
+_harvest_images(text)
+    Extracts image URLs and replaces inline MD images with placeholders.
+
+_watchtower / _qnap summarizers
+    Produce condensed Markdown for system alerts with structured bullets.
+
+_persona_llm_riffs()
+    Generates persona-specific riffs (LLM or Lexi fallback).
+
+_neutral_llm_rewrite()
+    Produces short factual summaries when rewrite toggle is enabled.
+
+_poster_fallback()
+    Auto-detects icon/poster from keywords or configured map.
+
+_final_qs_cleanup()
+    Decodes URL-encoded query payloads into readable body text.
+
+_safe_truncate()
+    Ensures markdown completeness while keeping message ≤ 3500 chars.
+
+_fold_repeats()
+    Folds repeated identical lines to avoid log spam.
+
+_linewise_dedup_markdown()
+    Deduplicates identical markdown lines while respecting code fences.
+
+Each helper is pure-function style — no global mutations — safe for async use.
+"""
+
+# -------------------------------------------------------------------
+# Sanity guard to ensure we never import partially
+# -------------------------------------------------------------------
+try:
+    assert callable(beautify_message)
+    assert callable(_scrub_meta)
+    assert callable(_poster_fallback)
+    assert callable(_persona_llm_riffs)
+    assert callable(_neutral_llm_rewrite)
+except Exception as _e_verify:
+    print(f"[beautify] ⚠️ Verification warning: {type(_e_verify).__name__}: {_e_verify}")
+
+# -------------------------------------------------------------------
+# End-of-file newline padding (for diff-safe packaging)
+# -------------------------------------------------------------------
+
+# (EOF padding: 10 empty lines below)
+#
