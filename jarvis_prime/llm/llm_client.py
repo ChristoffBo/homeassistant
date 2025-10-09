@@ -1263,12 +1263,12 @@ def persona_riff(
     
     if not llm_enabled:
         _log("persona_riff: llm_enabled=false → calling personality.lexi_riffs()")
-         try:
-    import personality
-        return personality.lexi_riffs(persona_name=persona, n=max_lines, with_emoji=False, subject=subj, body=context or "")
-    except Exception as e:
-        _log(f"personality.lexi_riffs failed: {e}")
-        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+        try:
+          import personality
+          return personality.lexi_riffs(persona_name=persona, n=max_lines, with_emoji=False, subject=subj, body=context or "")
+         except Exception as e:
+          _log(f"personality.lexi_riffs failed: {e}")
+          return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
     
     # LLM on, riffs on → try LLM riff
     _log("persona_riff: llm_enabled=true + riffs=true → using LLM")
