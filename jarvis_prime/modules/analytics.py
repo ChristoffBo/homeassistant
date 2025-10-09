@@ -1,23 +1,25 @@
-#!/usr/bin/env python3
 """
-Jarvis Prime Analytics Module
-Health monitoring with retries, flap protection, and alerting
+Jarvis Prime - Analytics & Uptime Monitoring Module
+aiohttp-compatible version for Jarvis Prime
+PATCHED: Now includes dual notification support (process_incoming fan-out + legacy callback)
+PATCHED: get_incidents now returns consistent { "incidents": [...] } format
+PATCHED: analytics_notify is now always used as the primary callback
+UPGRADED: Added retries and flap protection features
+FIXED: Removed external dependencies (errors module)
 """
 
 import sqlite3
+import time
 import json
 import asyncio
 import subprocess
 import aiohttp
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from datetime import datetime
+from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 from aiohttp import web
-import logging
 from collections import deque
-
-# Import notify_error for alerting
-from errors import notify_error
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,10 @@ class ServiceMetric:
 @dataclass
 class FlapTracker:
     """Track flapping behavior for a service"""
-    flap_times: deque = field(default_factory=deque)  # timestamps of status changes
-    suppressed_until: Optional[float] = None  # timestamp when suppression ends
-    last_status: Optional[str] = None  # last known status
-    consecutive_failures: int = 0  # track consecutive failures for retries
+    flap_times: deque = field(default_factory=deque)
+    suppressed_until: Optional[float] = None
+    last_status: Optional[str] = None
+    consecutive_failures: int = 0
 
 
 class AnalyticsDB:
@@ -65,7 +67,7 @@ class AnalyticsDB:
         self.init_db()
     
     def init_db(self):
-        """Initialize analytics tables with new columns"""
+        """Initialize analytics tables"""
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
@@ -84,11 +86,12 @@ class AnalyticsDB:
                 flap_window INTEGER DEFAULT 3600,
                 flap_threshold INTEGER DEFAULT 5,
                 suppression_duration INTEGER DEFAULT 3600,
-                created_at INTEGER DEFAULT (strftime('%s', 'now'))
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
             )
         """)
         
-        # Metrics table
+        # Service metrics (health check results)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS analytics_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,11 +99,11 @@ class AnalyticsDB:
                 timestamp INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 response_time REAL,
-                error_message TEXT,
-                FOREIGN KEY (service_name) REFERENCES analytics_services(service_name)
+                error_message TEXT
             )
         """)
         
+        # Create index for faster queries
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_metrics_service_time 
             ON analytics_metrics(service_name, timestamp DESC)
@@ -111,183 +114,123 @@ class AnalyticsDB:
             CREATE TABLE IF NOT EXISTS analytics_incidents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 service_name TEXT NOT NULL,
-                incident_start INTEGER NOT NULL,
-                incident_end INTEGER,
-                status TEXT NOT NULL,
-                error_message TEXT,
-                FOREIGN KEY (service_name) REFERENCES analytics_services(service_name)
+                start_time INTEGER NOT NULL,
+                end_time INTEGER,
+                duration INTEGER,
+                status TEXT DEFAULT 'ongoing',
+                error_message TEXT
             )
         """)
         
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_incidents_service_time 
-            ON analytics_incidents(service_name, incident_start DESC)
-        """)
-        
-        # Migrate existing tables if needed
+        # Migrate existing tables
         self._migrate_tables(cur)
         
         conn.commit()
         conn.close()
+        logger.info("Analytics database initialized")
     
     def _migrate_tables(self, cur):
         """Add new columns to existing tables if they don't exist"""
         try:
-            # Check if retries column exists
             cur.execute("PRAGMA table_info(analytics_services)")
             columns = [col[1] for col in cur.fetchall()]
             
             if 'retries' not in columns:
-                logger.info("Migrating analytics_services table: adding retry columns")
+                logger.info("Migrating: adding retries column")
                 cur.execute("ALTER TABLE analytics_services ADD COLUMN retries INTEGER DEFAULT 3")
             
             if 'flap_window' not in columns:
+                logger.info("Migrating: adding flap_window column")
                 cur.execute("ALTER TABLE analytics_services ADD COLUMN flap_window INTEGER DEFAULT 3600")
             
             if 'flap_threshold' not in columns:
+                logger.info("Migrating: adding flap_threshold column")
                 cur.execute("ALTER TABLE analytics_services ADD COLUMN flap_threshold INTEGER DEFAULT 5")
             
             if 'suppression_duration' not in columns:
+                logger.info("Migrating: adding suppression_duration column")
                 cur.execute("ALTER TABLE analytics_services ADD COLUMN suppression_duration INTEGER DEFAULT 3600")
                 
         except Exception as e:
             logger.error(f"Migration error: {e}")
     
-    def add_service(self, service: HealthCheck):
-        """Add a new service to monitor"""
+    def add_service(self, service: HealthCheck) -> int:
+        """Add or update a service configuration"""
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
         cur.execute("""
             INSERT INTO analytics_services 
-            (service_name, endpoint, check_type, expected_status, timeout, check_interval, enabled, 
+            (service_name, endpoint, check_type, expected_status, timeout, check_interval, enabled,
              retries, flap_window, flap_threshold, suppression_duration)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            service.service_name, service.endpoint, service.check_type,
-            service.expected_status, service.timeout, service.interval, 
-            1 if service.enabled else 0, service.retries, service.flap_window,
-            service.flap_threshold, service.suppression_duration
-        ))
+            ON CONFLICT(service_name) DO UPDATE SET
+                endpoint=excluded.endpoint,
+                check_type=excluded.check_type,
+                expected_status=excluded.expected_status,
+                timeout=excluded.timeout,
+                check_interval=excluded.check_interval,
+                enabled=excluded.enabled,
+                retries=excluded.retries,
+                flap_window=excluded.flap_window,
+                flap_threshold=excluded.flap_threshold,
+                suppression_duration=excluded.suppression_duration,
+                updated_at=strftime('%s', 'now')
+        """, (service.service_name, service.endpoint, service.check_type,
+              service.expected_status, service.timeout, service.interval,
+              int(service.enabled), service.retries, service.flap_window,
+              service.flap_threshold, service.suppression_duration))
         
+        service_id = cur.lastrowid
         conn.commit()
         conn.close()
+        return service_id
     
-    def update_service(self, service_id: int, data: Dict[str, Any]):
-        """Update service configuration"""
+    def get_all_services(self) -> List[Dict]:
+        """Get all configured services"""
         conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        
-        fields = []
-        values = []
-        
-        if 'service_name' in data:
-            fields.append('service_name = ?')
-            values.append(data['service_name'])
-        if 'endpoint' in data:
-            fields.append('endpoint = ?')
-            values.append(data['endpoint'])
-        if 'check_type' in data:
-            fields.append('check_type = ?')
-            values.append(data['check_type'])
-        if 'expected_status' in data:
-            fields.append('expected_status = ?')
-            values.append(data['expected_status'])
-        if 'timeout' in data:
-            fields.append('timeout = ?')
-            values.append(data['timeout'])
-        if 'check_interval' in data:
-            fields.append('check_interval = ?')
-            values.append(data['check_interval'])
-        if 'enabled' in data:
-            fields.append('enabled = ?')
-            values.append(1 if data['enabled'] else 0)
-        if 'retries' in data:
-            fields.append('retries = ?')
-            values.append(data['retries'])
-        if 'flap_window' in data:
-            fields.append('flap_window = ?')
-            values.append(data['flap_window'])
-        if 'flap_threshold' in data:
-            fields.append('flap_threshold = ?')
-            values.append(data['flap_threshold'])
-        if 'suppression_duration' in data:
-            fields.append('suppression_duration = ?')
-            values.append(data['suppression_duration'])
-        
-        if fields:
-            values.append(service_id)
-            query = f"UPDATE analytics_services SET {', '.join(fields)} WHERE id = ?"
-            cur.execute(query, values)
-        
-        conn.commit()
-        conn.close()
-    
-    def get_services(self) -> List[Dict]:
-        """Get all services"""
-        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
         cur.execute("""
-            SELECT id, service_name, endpoint, check_type, expected_status, timeout, 
-                   check_interval, enabled, retries, flap_window, flap_threshold, 
-                   suppression_duration, created_at
+            SELECT 
+                id,
+                service_name,
+                endpoint,
+                check_type,
+                expected_status,
+                timeout,
+                check_interval,
+                enabled,
+                retries,
+                flap_window,
+                flap_threshold,
+                suppression_duration,
+                (SELECT status FROM analytics_metrics 
+                 WHERE service_name = analytics_services.service_name 
+                 ORDER BY timestamp DESC LIMIT 1) as current_status,
+                (SELECT timestamp FROM analytics_metrics 
+                 WHERE service_name = analytics_services.service_name 
+                 ORDER BY timestamp DESC LIMIT 1) as last_check
             FROM analytics_services
+            ORDER BY service_name
         """)
         
-        services = []
-        for row in cur.fetchall():
-            services.append({
-                'id': row[0],
-                'service_name': row[1],
-                'endpoint': row[2],
-                'check_type': row[3],
-                'expected_status': row[4],
-                'timeout': row[5],
-                'check_interval': row[6],
-                'enabled': bool(row[7]),
-                'retries': row[8],
-                'flap_window': row[9],
-                'flap_threshold': row[10],
-                'suppression_duration': row[11],
-                'created_at': row[12]
-            })
-        
+        services = [dict(row) for row in cur.fetchall()]
         conn.close()
         return services
     
     def get_service(self, service_id: int) -> Optional[Dict]:
-        """Get single service by ID"""
+        """Get a single service by ID"""
         conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
-        cur.execute("""
-            SELECT id, service_name, endpoint, check_type, expected_status, timeout, 
-                   check_interval, enabled, retries, flap_window, flap_threshold, 
-                   suppression_duration, created_at
-            FROM analytics_services WHERE id = ?
-        """, (service_id,))
-        
+        cur.execute("SELECT * FROM analytics_services WHERE id = ?", (service_id,))
         row = cur.fetchone()
         conn.close()
         
-        if row:
-            return {
-                'id': row[0],
-                'service_name': row[1],
-                'endpoint': row[2],
-                'check_type': row[3],
-                'expected_status': row[4],
-                'timeout': row[5],
-                'check_interval': row[6],
-                'enabled': bool(row[7]),
-                'retries': row[8],
-                'flap_window': row[9],
-                'flap_threshold': row[10],
-                'suppression_duration': row[11],
-                'created_at': row[12]
-            }
-        return None
+        return dict(row) if row else None
     
     def delete_service(self, service_id: int):
         """Delete a service and its metrics"""
@@ -300,15 +243,18 @@ class AnalyticsDB:
         
         if row:
             service_name = row[0]
+            # Delete metrics
             cur.execute("DELETE FROM analytics_metrics WHERE service_name = ?", (service_name,))
+            # Delete incidents
             cur.execute("DELETE FROM analytics_incidents WHERE service_name = ?", (service_name,))
+            # Delete service
             cur.execute("DELETE FROM analytics_services WHERE id = ?", (service_id,))
         
         conn.commit()
         conn.close()
     
     def record_metric(self, metric: ServiceMetric):
-        """Record a health check metric"""
+        """Record a health check result"""
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
@@ -316,302 +262,216 @@ class AnalyticsDB:
             INSERT INTO analytics_metrics 
             (service_name, timestamp, status, response_time, error_message)
             VALUES (?, ?, ?, ?, ?)
-        """, (
-            metric.service_name, metric.timestamp, metric.status,
-            metric.response_time, metric.error_message
-        ))
-        
-        conn.commit()
-        conn.close()
-    
-    def record_incident(self, service_name: str, status: str, error_message: Optional[str] = None):
-        """Record a new incident"""
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        
-        timestamp = int(datetime.now().timestamp())
-        
-        cur.execute("""
-            INSERT INTO analytics_incidents 
-            (service_name, incident_start, status, error_message)
-            VALUES (?, ?, ?, ?)
-        """, (service_name, timestamp, status, error_message))
-        
-        conn.commit()
-        conn.close()
-    
-    def close_incident(self, service_name: str):
-        """Close the most recent open incident"""
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        
-        timestamp = int(datetime.now().timestamp())
-        
-        cur.execute("""
-            UPDATE analytics_incidents 
-            SET incident_end = ? 
-            WHERE service_name = ? AND incident_end IS NULL
-            ORDER BY incident_start DESC
-            LIMIT 1
-        """, (timestamp, service_name))
+        """, (metric.service_name, metric.timestamp, metric.status,
+              metric.response_time, metric.error_message))
         
         conn.commit()
         conn.close()
     
     def get_uptime_stats(self, service_name: str, hours: int = 24) -> Optional[Dict]:
-        """Calculate uptime statistics"""
+        """Calculate uptime percentage for a service"""
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
-        cutoff = int(datetime.now().timestamp()) - (hours * 3600)
+        cutoff = int(time.time()) - (hours * 3600)
         
         cur.execute("""
-            SELECT status, COUNT(*) as count
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'up' THEN 1 ELSE 0 END) as up_count,
+                AVG(response_time) as avg_response,
+                MIN(response_time) as min_response,
+                MAX(response_time) as max_response
             FROM analytics_metrics
-            WHERE service_name = ? AND timestamp >= ?
-            GROUP BY status
+            WHERE service_name = ? AND timestamp > ?
         """, (service_name, cutoff))
         
-        stats = {'up': 0, 'down': 0, 'degraded': 0}
-        total = 0
+        row = cur.fetchone()
+        conn.close()
         
-        for row in cur.fetchall():
-            stats[row[0]] = row[1]
-            total += row[1]
+        if row and row[0] > 0:
+            total, up_count, avg_resp, min_resp, max_resp = row
+            uptime_pct = (up_count / total) * 100
+            return {
+                "service_name": service_name,
+                "period_hours": hours,
+                "total_checks": total,
+                "successful_checks": up_count,
+                "uptime_percentage": round(uptime_pct, 2),
+                "avg_response_time": round(avg_resp, 3) if avg_resp else None,
+                "min_response_time": round(min_resp, 3) if min_resp else None,
+                "max_response_time": round(max_resp, 3) if max_resp else None
+            }
+        return None
+    
+    def get_health_score(self) -> Dict:
+        """Calculate overall homelab health score"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        cutoff = int(time.time()) - (24 * 3600)
+        
+        # Get all services and their current status
+        cur.execute("""
+            SELECT DISTINCT service_name,
+                (SELECT status FROM analytics_metrics m 
+                 WHERE m.service_name = analytics_metrics.service_name 
+                 ORDER BY timestamp DESC LIMIT 1) as current_status
+            FROM analytics_metrics
+            WHERE timestamp > ?
+        """, (cutoff,))
+        
+        services = cur.fetchall()
+        total_services = len(services)
+        up_services = sum(1 for s in services if s[1] == 'up')
+        down_services = sum(1 for s in services if s[1] == 'down')
+        
+        # Calculate average uptime
+        cur.execute("""
+            SELECT AVG(CASE WHEN status = 'up' THEN 1.0 ELSE 0.0 END) * 100
+            FROM analytics_metrics
+            WHERE timestamp > ?
+        """, (cutoff,))
+        
+        avg_uptime = cur.fetchone()[0] or 0
         
         conn.close()
         
-        if total == 0:
-            return None
-        
-        uptime_pct = (stats['up'] / total) * 100
+        # Determine status
+        if avg_uptime >= 99:
+            status = "excellent"
+        elif avg_uptime >= 95:
+            status = "good"
+        elif avg_uptime >= 90:
+            status = "fair"
+        else:
+            status = "poor"
         
         return {
-            'service_name': service_name,
-            'hours': hours,
-            'uptime_percentage': round(uptime_pct, 2),
-            'total_checks': total,
-            'up_count': stats['up'],
-            'down_count': stats['down'],
-            'degraded_count': stats['degraded']
+            "health_score": round(avg_uptime, 2),
+            "status": status,
+            "total_services": total_services,
+            "up_services": up_services,
+            "down_services": down_services
         }
+    
+    def create_incident(self, service_name: str, error_message: str) -> int:
+        """Create a new incident"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        # Check if there's already an ongoing incident
+        cur.execute("""
+            SELECT id FROM analytics_incidents 
+            WHERE service_name = ? AND status = 'ongoing'
+            ORDER BY start_time DESC LIMIT 1
+        """, (service_name,))
+        
+        existing = cur.fetchone()
+        if existing:
+            conn.close()
+            return existing[0]
+        
+        # Create new incident
+        cur.execute("""
+            INSERT INTO analytics_incidents (service_name, start_time, error_message)
+            VALUES (?, ?, ?)
+        """, (service_name, int(time.time()), error_message))
+        
+        incident_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return incident_id
+    
+    def resolve_incident(self, service_name: str):
+        """Resolve an ongoing incident"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        now = int(time.time())
+        
+        cur.execute("""
+            UPDATE analytics_incidents 
+            SET end_time = ?,
+                duration = ? - start_time,
+                status = 'resolved'
+            WHERE service_name = ? AND status = 'ongoing'
+        """, (now, now, service_name))
+        
+        conn.commit()
+        conn.close()
     
     def get_recent_incidents(self, days: int = 7) -> List[Dict]:
         """Get recent incidents"""
         conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
-        cutoff = int(datetime.now().timestamp()) - (days * 86400)
+        cutoff = int(time.time()) - (days * 24 * 3600)
         
         cur.execute("""
-            SELECT service_name, incident_start, incident_end, status, error_message
-            FROM analytics_incidents
-            WHERE incident_start >= ?
-            ORDER BY incident_start DESC
+            SELECT * FROM analytics_incidents
+            WHERE start_time > ?
+            ORDER BY start_time DESC
+            LIMIT 50
         """, (cutoff,))
         
-        incidents = []
-        for row in cur.fetchall():
-            duration = None
-            if row[2]:  # incident_end
-                duration = row[2] - row[1]
-            
-            incidents.append({
-                'service_name': row[0],
-                'incident_start': row[1],
-                'incident_end': row[2],
-                'duration': duration,
-                'status': row[3],
-                'error_message': row[4]
-            })
-        
+        incidents = [dict(row) for row in cur.fetchall()]
         conn.close()
         return incidents
     
-    def get_health_score(self) -> Dict:
-        """Calculate overall health score"""
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        
-        # Get latest status for each service
-        cur.execute("""
-            SELECT DISTINCT service_name FROM analytics_services WHERE enabled = 1
-        """)
-        
-        services = [row[0] for row in cur.fetchall()]
-        total_services = len(services)
-        
-        if total_services == 0:
-            conn.close()
-            return {
-                'health_score': 0,
-                'total_services': 0,
-                'services_up': 0,
-                'services_down': 0,
-                'services_degraded': 0
-            }
-        
-        up_count = 0
-        down_count = 0
-        degraded_count = 0
-        
-        for service_name in services:
-            cur.execute("""
-                SELECT status FROM analytics_metrics
-                WHERE service_name = ?
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """, (service_name,))
-            
-            row = cur.fetchone()
-            if row:
-                status = row[0]
-                if status == 'up':
-                    up_count += 1
-                elif status == 'down':
-                    down_count += 1
-                else:
-                    degraded_count += 1
-        
-        conn.close()
-        
-        health_score = (up_count / total_services) * 100 if total_services > 0 else 0
-        
-        return {
-            'health_score': round(health_score, 2),
-            'total_services': total_services,
-            'services_up': up_count,
-            'services_down': down_count,
-            'services_degraded': degraded_count
-        }
-    
     def purge_metrics_older_than(self, days: int) -> int:
-        """Delete metrics older than specified days"""
+        """Purge metrics older than specified days. Returns count of deleted rows."""
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
-        cutoff = int(datetime.now().timestamp()) - (days * 86400)
-        
+        cutoff = int(time.time()) - (days * 24 * 3600)
         cur.execute("DELETE FROM analytics_metrics WHERE timestamp < ?", (cutoff,))
         deleted = cur.rowcount
         
         conn.commit()
         conn.close()
         
+        logger.info(f"Purged {deleted} metrics older than {days} days")
         return deleted
     
-    def reset_health_scores(self):
-        """Reset all health metrics"""
+    def purge_all_metrics(self) -> int:
+        """Purge ALL metrics. Returns count of deleted rows."""
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
         cur.execute("DELETE FROM analytics_metrics")
+        deleted = cur.rowcount
         
         conn.commit()
         conn.close()
-    
-    def clear_incidents(self):
-        """Clear all incident records"""
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
         
-        cur.execute("DELETE FROM analytics_incidents")
-        
-        conn.commit()
-        conn.close()
+        logger.info(f"Purged ALL {deleted} metrics")
+        return deleted
 
 
 class HealthMonitor:
-    """Service health monitoring with retries and flap protection"""
+    """Performs health checks on services with retry and flap protection"""
     
     def __init__(self, db: AnalyticsDB, notify_callback=None):
         self.db = db
+        self.session = None
+        self.monitoring_tasks = {}
+        self.previous_status = {}
         self.notify_callback = notify_callback
-        self.monitoring_tasks: Dict[str, asyncio.Task] = {}
         self.flap_trackers: Dict[str, FlapTracker] = {}
     
-    async def check_http(self, endpoint: str, expected_status: int, timeout: int) -> tuple[bool, float, Optional[str]]:
-        """Perform HTTP health check"""
-        start_time = datetime.now()
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(endpoint, timeout=aiohttp.ClientTimeout(total=timeout)) as response:
-                    response_time = (datetime.now() - start_time).total_seconds()
-                    
-                    if response.status == expected_status:
-                        return True, response_time, None
-                    else:
-                        return False, response_time, f"HTTP {response.status} (expected {expected_status})"
-        
-        except asyncio.TimeoutError:
-            response_time = (datetime.now() - start_time).total_seconds()
-            return False, response_time, "Timeout"
-        except Exception as e:
-            response_time = (datetime.now() - start_time).total_seconds()
-            return False, response_time, str(e)
+    async def init_session(self):
+        """Initialize aiohttp session"""
+        if not self.session:
+            timeout = aiohttp.ClientTimeout(total=30)
+            self.session = aiohttp.ClientSession(timeout=timeout)
     
-    async def check_tcp(self, endpoint: str, timeout: int) -> tuple[bool, float, Optional[str]]:
-        """Perform TCP health check"""
-        start_time = datetime.now()
-        
-        try:
-            # Parse host:port
-            if ':' in endpoint:
-                host, port = endpoint.rsplit(':', 1)
-                port = int(port)
-            else:
-                return False, 0, "Invalid TCP endpoint (use host:port)"
-            
-            # Remove protocol if present
-            host = host.replace('http://', '').replace('https://', '')
-            
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port),
-                timeout=timeout
-            )
-            
-            writer.close()
-            await writer.wait_closed()
-            
-            response_time = (datetime.now() - start_time).total_seconds()
-            return True, response_time, None
-        
-        except asyncio.TimeoutError:
-            response_time = (datetime.now() - start_time).total_seconds()
-            return False, response_time, "Timeout"
-        except Exception as e:
-            response_time = (datetime.now() - start_time).total_seconds()
-            return False, response_time, str(e)
-    
-    async def check_ping(self, endpoint: str, timeout: int) -> tuple[bool, float, Optional[str]]:
-        """Perform ICMP ping check"""
-        start_time = datetime.now()
-        
-        try:
-            # Remove protocol if present
-            host = endpoint.replace('http://', '').replace('https://', '').split(':')[0]
-            
-            proc = await asyncio.create_subprocess_exec(
-                'ping', '-c', '1', '-W', str(timeout), host,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout + 1)
-            response_time = (datetime.now() - start_time).total_seconds()
-            
-            if proc.returncode == 0:
-                return True, response_time, None
-            else:
-                return False, response_time, "Ping failed"
-        
-        except asyncio.TimeoutError:
-            response_time = (datetime.now() - start_time).total_seconds()
-            return False, response_time, "Timeout"
-        except Exception as e:
-            response_time = (datetime.now() - start_time).total_seconds()
-            return False, response_time, str(e)
+    async def close_session(self):
+        """Close aiohttp session"""
+        if self.session:
+            await self.session.close()
     
     def is_flapping(self, service_name: str, service: HealthCheck) -> bool:
         """Check if service is currently flapping"""
@@ -620,7 +480,7 @@ class HealthMonitor:
             return False
         
         # Check if currently suppressed
-        now = datetime.now().timestamp()
+        now = time.time()
         if tracker.suppressed_until and now < tracker.suppressed_until:
             return True
         
@@ -650,36 +510,169 @@ class HealthMonitor:
         
         # Only count as flap if status actually changed
         if tracker.last_status and tracker.last_status != new_status:
-            tracker.flap_times.append(datetime.now().timestamp())
+            tracker.flap_times.append(time.time())
         
         tracker.last_status = new_status
     
-    async def perform_check(self, service: HealthCheck) -> tuple[bool, float, Optional[str]]:
-        """Perform health check with retries"""
+    async def check_http(self, service: HealthCheck) -> ServiceMetric:
+        """Perform HTTP health check"""
+        start_time = time.time()
+        
+        try:
+            async with self.session.get(
+                service.endpoint,
+                timeout=aiohttp.ClientTimeout(total=service.timeout)
+            ) as resp:
+                response_time = time.time() - start_time
+                
+                if resp.status == service.expected_status:
+                    status = 'up'
+                    error = None
+                else:
+                    status = 'degraded'
+                    error = f"HTTP {resp.status}"
+                
+                return ServiceMetric(
+                    service_name=service.service_name,
+                    timestamp=int(time.time()),
+                    status=status,
+                    response_time=response_time,
+                    error_message=error
+                )
+        
+        except asyncio.TimeoutError:
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='down',
+                response_time=time.time() - start_time,
+                error_message="Timeout"
+            )
+        except Exception as e:
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='down',
+                response_time=time.time() - start_time,
+                error_message=str(e)
+            )
+    
+    async def check_tcp(self, service: HealthCheck) -> ServiceMetric:
+        """Perform TCP port check"""
+        start_time = time.time()
+        
+        try:
+            host, port = service.endpoint.split(":")
+            port = int(port)
+        except ValueError:
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='down',
+                response_time=0,
+                error_message="Invalid endpoint format"
+            )
+        
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=service.timeout
+            )
+            writer.close()
+            await writer.wait_closed()
+            
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='up',
+                response_time=time.time() - start_time,
+                error_message=None
+            )
+        
+        except Exception as e:
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='down',
+                response_time=time.time() - start_time,
+                error_message=str(e)
+            )
+    
+    async def check_ping(self, service: HealthCheck) -> ServiceMetric:
+        """Perform ICMP ping check"""
+        start_time = time.time()
+        
+        try:
+            host = service.endpoint
+            process = await asyncio.create_subprocess_exec(
+                'ping', '-c', '1', '-W', str(int(service.timeout)), host,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=service.timeout + 1
+            )
+            
+            response_time = time.time() - start_time
+            
+            if process.returncode == 0:
+                return ServiceMetric(
+                    service_name=service.service_name,
+                    timestamp=int(time.time()),
+                    status='up',
+                    response_time=response_time,
+                    error_message=None
+                )
+            else:
+                return ServiceMetric(
+                    service_name=service.service_name,
+                    timestamp=int(time.time()),
+                    status='down',
+                    response_time=response_time,
+                    error_message="Host unreachable"
+                )
+        
+        except Exception as e:
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='down',
+                response_time=time.time() - start_time,
+                error_message=str(e)
+            )
+    
+    async def perform_check(self, service: HealthCheck) -> ServiceMetric:
+        """Perform appropriate health check"""
+        if service.check_type == 'http':
+            return await self.check_http(service)
+        elif service.check_type == 'tcp':
+            return await self.check_tcp(service)
+        elif service.check_type == 'ping':
+            return await self.check_ping(service)
+        else:
+            return ServiceMetric(
+                service_name=service.service_name,
+                timestamp=int(time.time()),
+                status='unknown',
+                response_time=0,
+                error_message=f"Unknown check type: {service.check_type}"
+            )
+    
+    async def perform_check_with_retries(self, service: HealthCheck) -> ServiceMetric:
+        """Perform health check with retry logic"""
         service_name = service.service_name
         tracker = self.flap_trackers.get(service_name)
         if not tracker:
             self.flap_trackers[service_name] = FlapTracker()
             tracker = self.flap_trackers[service_name]
         
-        # Perform check based on type
-        if service.check_type == 'http':
-            success, response_time, error = await self.check_http(
-                service.endpoint, service.expected_status, service.timeout
-            )
-        elif service.check_type == 'tcp':
-            success, response_time, error = await self.check_tcp(
-                service.endpoint, service.timeout
-            )
-        elif service.check_type == 'ping':
-            success, response_time, error = await self.check_ping(
-                service.endpoint, service.timeout
-            )
-        else:
-            return False, 0, f"Unknown check type: {service.check_type}"
+        # Perform the check
+        metric = await self.perform_check(service)
         
         # Handle retries for failures
-        if not success:
+        if metric.status != 'up':
             tracker.consecutive_failures += 1
             
             # Only mark as DOWN after exceeding retries
@@ -688,139 +681,154 @@ class HealthMonitor:
                     f"Service {service_name} failed {tracker.consecutive_failures} consecutive checks "
                     f"(threshold: {service.retries})"
                 )
-                return False, response_time, error
+                return metric
             else:
                 # Still in retry window, don't mark as DOWN yet
                 logger.debug(
                     f"Service {service_name} check failed ({tracker.consecutive_failures}/{service.retries}), retrying..."
                 )
-                return True, response_time, None  # Treat as UP during retry window
+                # Return UP status during retry window
+                metric.status = 'up'
+                return metric
         else:
             # Success - reset failure counter
             tracker.consecutive_failures = 0
         
-        return success, response_time, error
+        return metric
     
     async def monitor_service(self, service: HealthCheck):
-        """Monitor a single service continuously"""
-        service_name = service.service_name
-        logger.info(f"Starting health monitor for {service_name}")
+        """Continuously monitor a single service"""
+        logger.info(f"Starting monitor for {service.service_name}")
         
         while True:
             try:
-                # Perform health check with retries
-                success, response_time, error = await self.perform_check(service)
+                if not service.enabled:
+                    await asyncio.sleep(service.interval)
+                    continue
                 
-                # Determine status
-                status = 'up' if success else 'down'
-                
-                # Record metric
-                metric = ServiceMetric(
-                    service_name=service_name,
-                    timestamp=int(datetime.now().timestamp()),
-                    status=status,
-                    response_time=response_time,
-                    error_message=error
-                )
+                metric = await self.perform_check_with_retries(service)
                 self.db.record_metric(metric)
                 
-                # Check for status change
-                tracker = self.flap_trackers.get(service_name)
-                if tracker and tracker.last_status != status:
-                    self.record_status_change(service_name, status)
-                    
-                    # Check if flapping
-                    is_flapping = self.is_flapping(service_name, service)
-                    
-                    # Send notification if not suppressed
-                    if not is_flapping:
-                        if status == 'down':
-                            self.db.record_incident(service_name, status, error)
-                            if self.notify_callback:
-                                self.notify_callback({
-                                    'service': service_name,
-                                    'status': 'down',
-                                    'message': error or 'Service check failed'
-                                })
-                        elif status == 'up' and tracker.last_status == 'down':
-                            self.db.close_incident(service_name)
-                            if self.notify_callback:
-                                self.notify_callback({
-                                    'service': service_name,
-                                    'status': 'up',
-                                    'message': 'Service recovered'
-                                })
-                    else:
-                        logger.debug(f"Alert suppressed for {service_name} (flapping)")
+                prev_status = self.previous_status.get(service.service_name)
                 
-                # Wait for next check
-                await asyncio.sleep(service.interval)
-            
-            except asyncio.CancelledError:
-                logger.info(f"Stopping health monitor for {service_name}")
-                break
+                # Record status change for flap detection
+                if prev_status != metric.status:
+                    self.record_status_change(service.service_name, metric.status)
+                
+                # Check if flapping
+                is_flapping = self.is_flapping(service.service_name, service)
+                
+                if metric.status == 'down' and prev_status != 'down':
+                    self.db.create_incident(service.service_name, metric.error_message)
+                    logger.warning(f"{service.service_name} is DOWN: {metric.error_message}")
+                    
+                    # Only send notification if not suppressed
+                    if not is_flapping and self.notify_callback:
+                        self.notify_callback({
+                            "service": service.service_name,
+                            "status": "down",
+                            "message": metric.error_message or "Service unreachable"
+                        })
+                    elif is_flapping:
+                        logger.debug(f"Alert suppressed for {service.service_name} (flapping)")
+                    
+                elif metric.status == 'up' and prev_status == 'down':
+                    self.db.resolve_incident(service.service_name)
+                    logger.info(f"{service.service_name} is back UP")
+                    
+                    # Only send notification if not suppressed
+                    if not is_flapping and self.notify_callback:
+                        self.notify_callback({
+                            "service": service.service_name,
+                            "status": "up",
+                            "message": "Service recovered"
+                        })
+                    elif is_flapping:
+                        logger.debug(f"Recovery alert suppressed for {service.service_name} (flapping)")
+                
+                self.previous_status[service.service_name] = metric.status
+                
             except Exception as e:
-                logger.error(f"Error monitoring {service_name}: {e}")
-                await asyncio.sleep(service.interval)
+                logger.error(f"Error monitoring {service.service_name}: {e}")
+            
+            await asyncio.sleep(service.interval)
     
     async def start_all_monitors(self):
         """Start monitoring all enabled services"""
-        services = self.db.get_services()
+        await self.init_session()
         
-        for service_data in services:
-            if service_data['enabled']:
+        services = self.db.get_all_services()
+        
+        for svc_dict in services:
+            if svc_dict['enabled']:
                 service = HealthCheck(
-                    service_name=service_data['service_name'],
-                    endpoint=service_data['endpoint'],
-                    check_type=service_data['check_type'],
-                    expected_status=service_data['expected_status'],
-                    timeout=service_data['timeout'],
-                    interval=service_data['check_interval'],
-                    enabled=service_data['enabled'],
-                    retries=service_data.get('retries', 3),
-                    flap_window=service_data.get('flap_window', 3600),
-                    flap_threshold=service_data.get('flap_threshold', 5),
-                    suppression_duration=service_data.get('suppression_duration', 3600)
+                    service_name=svc_dict['service_name'],
+                    endpoint=svc_dict['endpoint'],
+                    check_type=svc_dict['check_type'],
+                    expected_status=svc_dict['expected_status'],
+                    timeout=svc_dict['timeout'],
+                    interval=svc_dict['check_interval'],
+                    enabled=bool(svc_dict['enabled']),
+                    retries=svc_dict.get('retries', 3),
+                    flap_window=svc_dict.get('flap_window', 3600),
+                    flap_threshold=svc_dict.get('flap_threshold', 5),
+                    suppression_duration=svc_dict.get('suppression_duration', 3600)
                 )
                 
                 task = asyncio.create_task(self.monitor_service(service))
                 self.monitoring_tasks[service.service_name] = task
         
-        logger.info(f"Started monitoring {len(self.monitoring_tasks)} services")
+        logger.info(f"Started {len(self.monitoring_tasks)} monitoring tasks")
 
 
-# Global instances
-db: Optional[AnalyticsDB] = None
-monitor: Optional[HealthMonitor] = None
+db = None
+monitor = None
 
 
 def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
-    """Initialize analytics module"""
+    """Initialize analytics module with dual notification support"""
     global db, monitor
     db = AnalyticsDB(db_path)
     
-    # Default notify handler
     def analytics_notify(event):
-        msg = f"[Analytics] {event['service']} is {event['status'].upper()} — {event['message']}"
-        notify_error(msg, context="analytics")
+        """Handle analytics incident notifications via Jarvis fan-out and legacy callback"""
+        service = event['service']
+        status = event['status'].upper()
+        message = event['message']
+        title = "Analytics"
+        
+        if status == "DOWN":
+            body = f"🔴 {service} is DOWN — {message}"
+        else:
+            body = f"🟢 {service} is UP — {message}"
+        
+        # 1. Try Jarvis fan-out (process_incoming)
+        try:
+            from bot import process_incoming
+            process_incoming(title, body, source="analytics", priority=5)
+        except Exception as e:
+            logger.warning(f"process_incoming not available: {e}")
+        
+        # 2. Call legacy callback if provided
+        if notify_callback:
+            notify_callback(event)
     
-    monitor = HealthMonitor(db, notify_callback=notify_callback or analytics_notify)
+    # FIXED: Always use analytics_notify as the primary callback
+    monitor = HealthMonitor(db, notify_callback=analytics_notify)
     
-    # Auto-purge old metrics on startup
     try:
         deleted = db.purge_metrics_older_than(90)
         logger.info(f"Startup auto-purge: removed {deleted} metrics older than 90 days")
     except Exception as e:
         logger.error(f"Failed to auto-purge old metrics: {e}")
     
-    # Auto-start monitoring
     async def safe_start():
         await asyncio.sleep(1)
         try:
             await monitor.start_all_monitors()
         except Exception as e:
             logger.error(f"Failed to auto-start monitors: {e}")
-    
+
     try:
         loop = asyncio.get_event_loop()
         loop.create_task(safe_start())
@@ -829,25 +837,21 @@ def init_analytics(db_path: str = "/data/jarvis.db", notify_callback=None):
     
     return db, monitor
 
-
-# ============================================
-# HTTP API Routes (aiohttp)
-# ============================================
-
 def _json(data, status=200):
-    """Helper to create JSON response"""
-    return web.json_response(data, status=status)
+    return web.Response(
+        text=json.dumps(data, ensure_ascii=False),
+        status=status,
+        content_type="application/json"
+    )
 
 
 async def get_health_score(request: web.Request):
-    """Get overall health score"""
     score = db.get_health_score()
     return _json(score)
 
 
 async def get_services(request: web.Request):
-    """Get all services with flap status"""
-    services = db.get_services()
+    services = db.get_all_services()
     
     # Add flap status to each service
     for service in services:
@@ -855,10 +859,10 @@ async def get_services(request: web.Request):
         tracker = monitor.flap_trackers.get(service_name) if monitor else None
         
         if tracker:
-            now = datetime.now().timestamp()
+            now = time.time()
             
             # Clean old flaps
-            cutoff = now - service['flap_window']
+            cutoff = now - service.get('flap_window', 3600)
             flap_times = [t for t in tracker.flap_times if t >= cutoff]
             
             service['flap_count'] = len(flap_times)
@@ -872,19 +876,50 @@ async def get_services(request: web.Request):
     return _json(services)
 
 
+async def add_service(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    service = HealthCheck(
+        service_name=data['service_name'],
+        endpoint=data['endpoint'],
+        check_type=data['check_type'],
+        expected_status=data.get('expected_status', 200),
+        timeout=data.get('timeout', 5),
+        interval=data.get('check_interval', 60),
+        enabled=data.get('enabled', True),
+        retries=data.get('retries', 3),
+        flap_window=data.get('flap_window', 3600),
+        flap_threshold=data.get('flap_threshold', 5),
+        suppression_duration=data.get('suppression_duration', 3600)
+    )
+    
+    service_id = db.add_service(service)
+    
+    if service.enabled and monitor:
+        task = asyncio.create_task(monitor.monitor_service(service))
+        monitor.monitoring_tasks[service.service_name] = task
+    
+    return _json({"success": True, "service_id": int(service_id)})
+
+
 async def get_service(request: web.Request):
-    """Get single service by ID"""
     service_id = int(request.match_info["service_id"])
     service = db.get_service(service_id)
-    
     if service:
         return _json(service)
     return _json({"error": "Service not found"}, status=404)
 
 
-async def add_service(request: web.Request):
-    """Add a new service"""
-    data = await request.json()
+async def update_service(request: web.Request):
+    service_id = int(request.match_info["service_id"])
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
     
     service = HealthCheck(
         service_name=data['service_name'],
@@ -902,7 +937,6 @@ async def add_service(request: web.Request):
     
     db.add_service(service)
     
-    # Start monitoring if enabled
     if service.enabled and monitor:
         if service.service_name in monitor.monitoring_tasks:
             monitor.monitoring_tasks[service.service_name].cancel()
@@ -913,42 +947,7 @@ async def add_service(request: web.Request):
     return _json({"success": True})
 
 
-async def update_service(request: web.Request):
-    """Update a service"""
-    service_id = int(request.match_info["service_id"])
-    data = await request.json()
-    
-    db.update_service(service_id, data)
-    
-    # Restart monitoring if enabled
-    service_dict = db.get_service(service_id)
-    if service_dict and monitor:
-        service = HealthCheck(
-            service_name=service_dict['service_name'],
-            endpoint=service_dict['endpoint'],
-            check_type=service_dict['check_type'],
-            expected_status=service_dict['expected_status'],
-            timeout=service_dict['timeout'],
-            interval=service_dict['check_interval'],
-            enabled=service_dict['enabled'],
-            retries=service_dict.get('retries', 3),
-            flap_window=service_dict.get('flap_window', 3600),
-            flap_threshold=service_dict.get('flap_threshold', 5),
-            suppression_duration=service_dict.get('suppression_duration', 3600)
-        )
-        
-        if service.service_name in monitor.monitoring_tasks:
-            monitor.monitoring_tasks[service.service_name].cancel()
-        
-        if service.enabled:
-            task = asyncio.create_task(monitor.monitor_service(service))
-            monitor.monitoring_tasks[service.service_name] = task
-    
-    return _json({"success": True})
-
-
 async def delete_service_route(request: web.Request):
-    """Delete a service"""
     service_id = int(request.match_info["service_id"])
     
     service = db.get_service(service_id)
@@ -965,7 +964,6 @@ async def delete_service_route(request: web.Request):
 
 
 async def get_uptime(request: web.Request):
-    """Get uptime stats for a service"""
     service_name = request.match_info["service_name"]
     hours = int(request.rel_url.query.get('hours', 24))
     
@@ -976,29 +974,100 @@ async def get_uptime(request: web.Request):
 
 
 async def get_incidents(request: web.Request):
-    """Get recent incidents"""
-    days = int(request.rel_url.query.get('days', 7))
-    incidents = db.get_recent_incidents(days)
-    return _json(incidents)
+    """
+    Get recent incidents for analytics dashboard.
+    Always returns JSON with 'incidents' key for consistency.
+    """
+    try:
+        days = int(request.rel_url.query.get('days', 7))
+    except Exception:
+        days = 7
+    
+    try:
+        incidents = db.get_recent_incidents(days)
+        return _json({"incidents": incidents})
+    except Exception as e:
+        logger.error(f"Failed to fetch incidents: {e}")
+        return _json({"incidents": [], "error": str(e)}, status=500)
 
 
-async def reset_health(request: web.Request):
-    """Reset health scores"""
-    db.reset_health_scores()
-    return _json({"success": True})
+async def reset_health_score(request: web.Request):
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cur = conn.cursor()
+        cur.execute('DELETE FROM analytics_metrics')
+        conn.commit()
+        conn.close()
+        return _json({'success': True, 'message': 'Health scores reset'})
+    except Exception as e:
+        return _json({'success': False, 'error': str(e)}, status=500)
 
 
 async def reset_incidents(request: web.Request):
-    """Clear all incidents"""
-    db.clear_incidents()
-    return _json({"success": True})
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cur = conn.cursor()
+        cur.execute('DELETE FROM analytics_incidents')
+        conn.commit()
+        conn.close()
+        return _json({'success': True, 'message': 'All incidents cleared'})
+    except Exception as e:
+        return _json({'success': False, 'error': str(e)}, status=500)
 
 
-async def purge_metrics(request: web.Request):
-    """Purge old metrics"""
-    days = int(request.rel_url.query.get('days', 7))
-    deleted = db.purge_metrics_older_than(days)
-    return _json({"success": True, "deleted": deleted})
+async def reset_service_data(request: web.Request):
+    service_name = request.match_info["service_name"]
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cur = conn.cursor()
+        cur.execute('DELETE FROM analytics_metrics WHERE service_name = ?', (service_name,))
+        cur.execute('DELETE FROM analytics_incidents WHERE service_name = ?', (service_name,))
+        conn.commit()
+        conn.close()
+        return _json({'success': True, 'message': f'Data reset for {service_name}'})
+    except Exception as e:
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
+async def purge_all_metrics(request: web.Request):
+    try:
+        deleted = db.purge_all_metrics()
+        return _json({
+            'success': True, 
+            'deleted': deleted,
+            'message': f'Purged all {deleted} metrics'
+        })
+    except Exception as e:
+        logger.error(f"Purge all failed: {e}")
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
+async def purge_week_metrics(request: web.Request):
+    try:
+        deleted = db.purge_metrics_older_than(7)
+        return _json({
+            'success': True,
+            'deleted': deleted,
+            'days': 7,
+            'message': f'Purged {deleted} metrics older than 1 week'
+        })
+    except Exception as e:
+        logger.error(f"Purge week failed: {e}")
+        return _json({'success': False, 'error': str(e)}, status=500)
+
+
+async def purge_month_metrics(request: web.Request):
+    try:
+        deleted = db.purge_metrics_older_than(30)
+        return _json({
+            'success': True,
+            'deleted': deleted,
+            'days': 30,
+            'message': f'Purged {deleted} metrics older than 1 month'
+        })
+    except Exception as e:
+        logger.error(f"Purge month failed: {e}")
+        return _json({'success': False, 'error': str(e)}, status=500)
 
 
 def register_routes(app: web.Application):
@@ -1011,6 +1080,9 @@ def register_routes(app: web.Application):
     app.router.add_delete('/api/analytics/services/{service_id}', delete_service_route)
     app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
     app.router.add_get('/api/analytics/incidents', get_incidents)
-    app.router.add_post('/api/analytics/reset-health', reset_health)
+    app.router.add_post('/api/analytics/reset-health', reset_health_score)
     app.router.add_post('/api/analytics/reset-incidents', reset_incidents)
-    app.router.add_post('/api/analytics/purge-metrics', purge_metrics)
+    app.router.add_post('/api/analytics/reset-service/{service_name}', reset_service_data)
+    app.router.add_post('/api/analytics/purge-all', purge_all_metrics)
+    app.router.add_post('/api/analytics/purge-week', purge_week_metrics)
+    app.router.add_post('/api/analytics/purge-month', purge_month_metrics)
