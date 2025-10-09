@@ -1266,7 +1266,7 @@ def persona_riff(
         try:
           import personality
           return personality.lexi_riffs(persona_name=persona, n=max_lines, with_emoji=False, subject=subj, body=context or "")
-         except Exception as e:
+          except Exception as e:
           _log(f"personality.lexi_riffs failed: {e}")
           return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
     
