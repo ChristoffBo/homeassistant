@@ -776,10 +776,10 @@ def _lexi_phrase_banks(allow_profanity: bool) -> Dict[str, List[str]]:
 
 def _lexi_templates() -> List[str]:
     return [
-        "{subj}: {ack}. {status}. Lexi.",
-        "{subj}: {status}. {action}. Lexi.",
-        "{subj}: {ack} — {status}. Lexi.",
-        "{subj}: {status}. Lexi."
+        "{subj}: {ack}. {status}.",
+        "{subj}: {status}. {action}.",
+        "{subj}: {ack} — {status}.",
+        "{subj}: {status}."
     ]
 
 def _lexi_weight_for_subject(subj: str) -> Dict[str, float]:
