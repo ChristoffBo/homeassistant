@@ -1261,9 +1261,9 @@ def persona_riff(
         _log("persona_riff: riffs disabled → no riff")
         return []
     
- if not llm_enabled:
-    _log("persona_riff: llm_enabled=false → calling personality.lexi_riffs()")
-    try:
+    if not llm_enabled:
+        _log("persona_riff: llm_enabled=false → calling personality.lexi_riffs()")
+        try:
         import personality
         return personality.lexi_riffs(persona_name=persona, n=max_lines, with_emoji=False, subject=subj, body=context or "")
     except Exception as e:
