@@ -174,7 +174,7 @@ def _scrub_persona_tokens(s: str) -> str:
 
 # ----------------------------
 # NEW: transport tag stripper
-# ---------------------------
+# ----------------------------
 _TRANSPORT_TAG_RX = re.compile(
     r'^\s*(?:\[(?:smtp|proxy|http|https|gotify|webhook|apprise|ntfy|email|mailer|forward|poster)\]\s*)+',
     flags=re.I
@@ -291,7 +291,7 @@ def _current_profile() -> Tuple[str, int, int, int]:
             source = "flat/nested"
 
     # 3) Global knobs fallback
-if not profiles:
+    if not profiles:
         cpu = opts.get("llm_max_cpu_percent")
         ctx = opts.get("llm_ctx_tokens")
         to  = opts.get("llm_timeout_seconds")
@@ -744,7 +744,7 @@ def _strip_meta_markers(s: str) -> str:
     out = re.sub(r'^\s*rewrite neutrally:.*$', '', out, flags=re.I | re.M)
     out = re.sub(r'(?mi)^[^\w\n]*message\b.*\byou\s+are\b.*\bneutral\b.*\bterse\b.*\brewriter\b.*$', '', out)
     out = re.sub(r'(?mi)^\s*rewrite\s+neutrally\s*:.*$', '', out, flags=re.I | re.M)
-# Extra safety: catch leaks anywhere in the string
+    # Extra safety: catch leaks anywhere in the string
     out = re.sub(r'you\s+are\s+a?\s*neutral.*?terse\s*rewriter\.?', '', out, flags=re.I | re.M)
     out = re.sub(r'message\s+you\s+are\s+a?\s*neutral.*?terse\s*rewriter\.?', '', out, flags=re.I | re.M)
     out = re.sub(r'rewrite\s+neutrally\s*:.*', '', out, flags=re.I | re.M)
@@ -1068,6 +1068,7 @@ def _resolve_model_from_options(
             _log(f"options resolver -> choice={choice or 'auto'} url={os.path.basename(u) if u else ''} path='{os.path.basename(p)}'")
             return u, p, token
     return url, path, token
+
 # ============================
 # Prompt builders
 # ============================
