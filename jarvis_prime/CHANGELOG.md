@@ -1,3 +1,5 @@
+## latest (2025-10-8 14:21:00)
+Added retries and flap protection to the Analytics.
 ## latest (2025-10-5 14:21:00)
 Added settings into ui and backup.
 backup currently inactive.
