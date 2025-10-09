@@ -301,23 +301,14 @@ def _bool_from_options(opt: Dict[str, Any], key: str, default: Optional[bool] = 
     except Exception:
         return default
 
-def _llm_riffs_enabled() -> bool:
-    """Check if riffs are enabled (respects master llm_enabled switch)"""
+def _riffs_enabled() -> bool:
+    """Check if riffs are enabled at all (Lexi OR LLM) - does NOT check llm_enabled"""
     opt = _read_options()
-    
-    # Check riffs-specific toggle first
     opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
-    if opt_riffs is False:
-        return False
-    
-    # If riffs explicitly enabled or not set, check master switch
-    llm_master = _bool_from_options(opt, "llm_enabled", default=None)
-    if llm_master is False:
-        return False
-    
+    if opt_riffs is not None:
+        return opt_riffs
     # Default: enabled
-    env_enabled = _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
-    return _bool_from_options(opt, "llm_enabled", default=env_enabled) if opt_riffs is None else True
+    return True
 
 def _llm_enabled() -> bool:
     """Check if LLM itself is enabled (master switch)"""
@@ -367,10 +358,10 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
         return []
     
     # Check if riffs are enabled at all
-    if not _llm_riffs_enabled():
+    if not _riffs_enabled():
         return []
     
-    # NEW: Check if LLM is enabled
+    # NEW: Check if LLM is enabled to decide which riff engine
     llm_on = _llm_enabled()
     
     if llm_on:
@@ -970,7 +961,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
         lines.append(raw_body)
 
         # Optional riffs
-        if _llm_riffs_enabled() and eff_persona:
+        if _riffs_enabled() and eff_persona:
             riff_ctx = _scrub_meta(raw_body if isinstance(raw_body, str) else "")
             riffs = _persona_llm_riffs(riff_ctx, eff_persona)
             real_riffs = [(r or "").replace("\r","").strip() for r in (riffs or [])]
@@ -1045,7 +1036,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
         riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
-        if riff_hint and _llm_riffs_enabled() and eff_persona:
+        if riff_hint and _riffs_enabled() and eff_persona:
             ctx = _scrub_meta(body_wo_imgs)
             if clean_subject:
                 ctx = (ctx + "\n\nSubject: " + clean_subject).strip()
@@ -1102,7 +1093,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
 
         riff_hint = _global_riff_hint(extras_in, source_hint)
         riffs: List[str] = []
-        if riff_hint and _llm_riffs_enabled() and eff_persona:
+        if riff_hint and _riffs_enabled() and eff_persona:
             ctx = _scrub_meta(body_wo_imgs)
             if clean_subject:
                 ctx = (ctx + "\n\nSubject: " + clean_subject).strip()
@@ -1193,7 +1184,7 @@ def beautify_message(title: str, body: str, *, mood: str = "neutral",
     riffs: List[str] = []
     riff_hint = _global_riff_hint(extras_in, source_hint)
     _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
-    if riff_hint and _llm_riffs_enabled() and eff_persona:
+    if riff_hint and _riffs_enabled() and eff_persona:
         ctx = _scrub_meta(message_snip)
         if subj:
             ctx = (ctx + "\n\nSubject: " + subj).strip()
