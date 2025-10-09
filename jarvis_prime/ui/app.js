@@ -1,3 +1,4 @@
+
 (function () {
   
   // ============================================
@@ -447,27 +448,56 @@
       if (sendBtn) sendBtn.classList.add('loading');
       updateChatStatus('Processing...');
       
+      const userMessage = text;
       input.value = '';
       
-      console.log('Sending chat message via emit endpoint:', `chat ${text}`);
+      console.log('Sending chat message to LLM:', userMessage);
       
-      await jfetch(API('internal/emit'), {
-        method: 'POST',
-        body: JSON.stringify({ 
-          title: 'chat',
-          body: `chat ${text}`,
-          source: 'webui-chat',
-          priority: 5
-        })
-      });
+      // Submit to LLM chat endpoint
+      await submitLLMTask(
+        'api/llm/chat',
+        {
+          messages: [
+            { role: 'user', content: userMessage }
+          ],
+          max_tokens: 384,
+          timeout: 20
+        },
+        (result) => {
+          // Success callback
+          console.log('LLM response:', result);
+          updateChatStatus('Complete');
+          
+          // Create inbox message with the response
+          jfetch(API('api/messages'), {
+            method: 'POST',
+            body: JSON.stringify({
+              title: 'AI Response',
+              body: result || '(empty response)',
+              source: 'llm-chat',
+              priority: 5
+            })
+          }).catch(e => console.error('Failed to save response:', e));
+          
+          toast('AI responded successfully', 'success');
+          
+          setTimeout(() => {
+            updateChatStatus('Ready');
+          }, 2000);
+        },
+        (error) => {
+          // Error callback
+          console.error('LLM error:', error);
+          updateChatStatus('Error');
+          toast('Chat failed: ' + error.message, 'error');
+          
+          setTimeout(() => {
+            updateChatStatus('Ready');
+          }, 3000);
+        }
+      );
       
-      updateChatStatus('Sent to AI...');
-      toast('Message sent to Jarvis AI', 'success');
-      
-      // Reset status after a delay
-      setTimeout(() => {
-        updateChatStatus('Ready');
-      }, 3000);
+      updateChatStatus('Waiting for AI...');
       
     } catch (e) {
       console.error('Chat error:', e);
@@ -481,6 +511,107 @@
       if (sendBtn) sendBtn.classList.remove('loading');
     }
   }
+
+  /* =============== LLM TASK POLLING =============== */
+  const LLM_POLL_INTERVAL = 2000; // Poll every 2 seconds
+  const activeLLMTasks = new Map(); // task_id -> interval
+
+  /**
+   * Submit LLM task and poll for result
+   * @param {string} endpoint - API endpoint (e.g., 'api/llm/rewrite')
+   * @param {object} payload - Request body
+   * @param {function} onComplete - Callback when task completes: (result) => {}
+   * @param {function} onError - Callback on error: (error) => {}
+   */
+  async function submitLLMTask(endpoint, payload, onComplete, onError) {
+    try {
+      const response = await jfetch(API(endpoint), {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.task_id) {
+        throw new Error('No task_id returned from server');
+      }
+      
+      // Start polling for this task
+      pollLLMTask(response.task_id, onComplete, onError);
+      
+      return response.task_id;
+    } catch (error) {
+      console.error('LLM task submission error:', error);
+      if (onError) onError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Poll for LLM task status
+   */
+  function pollLLMTask(taskId, onComplete, onError) {
+    let attempts = 0;
+    const maxAttempts = 60; // 2 seconds * 60 = 2 minutes max wait
+    
+    const interval = setInterval(async () => {
+      attempts++;
+      
+      try {
+        const status = await jfetch(API(`api/llm/task/${taskId}`));
+        
+        if (status.status === 'complete') {
+          clearInterval(interval);
+          activeLLMTasks.delete(taskId);
+          if (onComplete) onComplete(status.result);
+        } else if (status.status === 'error') {
+          clearInterval(interval);
+          activeLLMTasks.delete(taskId);
+          if (onError) onError(new Error(status.error || 'Task failed'));
+        } else if (status.status === 'not_found') {
+          clearInterval(interval);
+          activeLLMTasks.delete(taskId);
+          if (onError) onError(new Error('Task not found'));
+        } else if (attempts >= maxAttempts) {
+          clearInterval(interval);
+          activeLLMTasks.delete(taskId);
+          if (onError) onError(new Error('Task timeout'));
+        }
+        // else: status === 'processing', keep polling
+        
+      } catch (error) {
+        console.error('LLM polling error:', error);
+        // Don't stop polling on network errors, just log them
+      }
+    }, LLM_POLL_INTERVAL);
+    
+    // Store interval so we can cancel it if needed
+    activeLLMTasks.set(taskId, interval);
+  }
+
+  /**
+   * Cancel polling for a specific task
+   */
+  function cancelLLMTask(taskId) {
+    const interval = activeLLMTasks.get(taskId);
+    if (interval) {
+      clearInterval(interval);
+      activeLLMTasks.delete(taskId);
+    }
+  }
+
+  /**
+   * Cancel all active LLM tasks
+   */
+  function cancelAllLLMTasks() {
+    activeLLMTasks.forEach((interval, taskId) => {
+      clearInterval(interval);
+    });
+    activeLLMTasks.clear();
+  }
+
+  // Expose globally for other modules
+  window.submitLLMTask = submitLLMTask;
+  window.cancelLLMTask = cancelLLMTask;
+  window.cancelAllLLMTasks = cancelAllLLMTasks;
 
   // Chat event listeners
   const chatSendBtn = $('#chat-send');
