@@ -3,8 +3,6 @@
 #
 # Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi-family chat format, Lexi fallback riffs)
 #
-# FIXED: persona_riff() now calls personality.lexi_riffs() when llm_enabled=false
-#
 # Public entry points:
 #   ensure_loaded(...)
 #   rewrite(...)
@@ -774,6 +772,7 @@ def _maybe_with_grammar(kwargs: dict, use_grammar: bool):
     except Exception as e:
         _log(f"grammar setup failed; skipping: {e}")
     return kwargs
+
 def _clean_riff_lines(lines: List[str]) -> List[str]:
     cleaned = []
     for ln in lines:
@@ -1237,7 +1236,7 @@ def persona_riff(
 ) -> List[str]:
     """
     FIXED: Now checks llm_enabled UPFRONT to decide riff engine:
-      - llm_enabled=false + riffs=true  → personality.lexi_riffs()
+      - llm_enabled=false + riffs=true  → Lexi riff
       - llm_enabled=true + riffs=true   → LLM riff
       - riffs=false                     → No riff
     """
@@ -1263,20 +1262,9 @@ def persona_riff(
         return []
     
     if not llm_enabled:
-        # LLM off, riffs on → use personality.lexi_riffs() for full context awareness
-        _log("persona_riff: llm_enabled=false + riffs=true → using personality.lexi_riffs()")
-        try:
-            import personality
-            return personality.lexi_riffs(
-                persona_name=persona,
-                n=max_lines,
-                with_emoji=False,
-                subject=subj,
-                body=context or ""
-            )
-        except Exception as e:
-            _log(f"persona_riff: personality.lexi_riffs failed: {e} → using internal fallback")
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+        # LLM off, riffs on → Lexi
+        _log("persona_riff: llm_enabled=false + riffs=true → using Lexi")
+        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
     
     # LLM on, riffs on → try LLM riff
     _log("persona_riff: llm_enabled=true + riffs=true → using LLM")
@@ -1300,34 +1288,12 @@ def persona_riff(
                 base_url=base_url
             )
             if not ok:
-                _log("persona_riff: LLM load failed → fallback to personality.lexi_riffs()")
-                try:
-                    import personality
-                    return personality.lexi_riffs(
-                        persona_name=persona,
-                        n=max_lines,
-                        with_emoji=False,
-                        subject=subj,
-                        body=context or ""
-                    )
-                except Exception as e:
-                    _log(f"persona_riff: personality.lexi_riffs fallback failed: {e} → using internal fallback")
-                    return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+                _log("persona_riff: LLM load failed → fallback to Lexi")
+                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
         if LLM_MODE not in ("llama", "ollama"):
-            _log("persona_riff: LLM_MODE invalid → fallback to personality.lexi_riffs()")
-            try:
-                import personality
-                return personality.lexi_riffs(
-                    persona_name=persona,
-                    n=max_lines,
-                    with_emoji=False,
-                    subject=subj,
-                    body=context or ""
-                )
-            except Exception as e:
-                _log(f"persona_riff: personality.lexi_riffs fallback failed: {e} → using internal fallback")
-                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+            _log("persona_riff: LLM_MODE invalid → fallback to Lexi")
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
         # Build LLM prompt
         persona_line = f"Persona style: { _persona_descriptor(persona) }"
@@ -1361,19 +1327,8 @@ def persona_riff(
             n_in = _estimate_tokens(prompt)
 
         if _would_overflow(n_in, riff_max_tokens, ctx_tokens, reserve=256):
-            _log(f"persona_riff: ctx overflow → fallback to personality.lexi_riffs()")
-            try:
-                import personality
-                return personality.lexi_riffs(
-                    persona_name=persona,
-                    n=max_lines,
-                    with_emoji=False,
-                    subject=subj,
-                    body=context or ""
-                )
-            except Exception as e:
-                _log(f"persona_riff: personality.lexi_riffs fallback failed: {e} → using internal fallback")
-                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+            _log(f"persona_riff: ctx overflow → fallback to Lexi")
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
         raw = _do_generate(
             prompt,
@@ -1386,19 +1341,8 @@ def persona_riff(
         )
         
         if not raw:
-            _log("persona_riff: LLM returned empty → fallback to personality.lexi_riffs()")
-            try:
-                import personality
-                return personality.lexi_riffs(
-                    persona_name=persona,
-                    n=max_lines,
-                    with_emoji=False,
-                    subject=subj,
-                    body=context or ""
-                )
-            except Exception as e:
-                _log(f"persona_riff: personality.lexi_riffs fallback failed: {e} → using internal fallback")
-                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+            _log("persona_riff: LLM returned empty → fallback to Lexi")
+            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
     # Clean LLM output
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
@@ -1421,19 +1365,8 @@ def persona_riff(
             break
 
     if not cleaned:
-        _log("persona_riff: LLM output empty after cleaning → fallback to personality.lexi_riffs()")
-        try:
-            import personality
-            return personality.lexi_riffs(
-                persona_name=persona,
-                n=max_lines,
-                with_emoji=False,
-                subject=subj,
-                body=context or ""
-            )
-        except Exception as e:
-            _log(f"persona_riff: personality.lexi_riffs fallback failed: {e} → using internal fallback")
-            return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+        _log("persona_riff: LLM output empty after cleaning → fallback to Lexi")
+        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
     
     return cleaned
 
@@ -1471,19 +1404,7 @@ def persona_riff_ex(
         return [], "none"
     
     if not llm_enabled:
-        try:
-            import personality
-            lines = personality.lexi_riffs(
-                persona_name=persona,
-                n=max_lines,
-                with_emoji=False,
-                subject=subj,
-                body=context or ""
-            )
-            return lines, "lexicon"
-        except Exception:
-            lines = _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity if allow_profanity is not None else False)
-            return lines, "lexicon"
+        return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity if allow_profanity is not None else False), "lexicon"
 
     lines = persona_riff(
         persona=persona,
