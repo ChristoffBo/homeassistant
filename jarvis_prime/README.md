@@ -46,6 +46,14 @@ Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, Mo
 • **Incident History**: Track downtime incidents with duration and error details  
 • **Visual Dashboard**: Service status cards showing current state, uptime %, avg response time  
 
+### Advanced Reliability Logic (Anti-Flap & Retries)
+• **Retries** – Each service must fail a configurable number of consecutive checks before being marked **DOWN**, filtering out temporary timeouts or network hiccups.  
+• **Flap Window** – Defines the time window (in seconds) used to detect service instability; older state changes automatically expire outside this period.  
+• **Flap Threshold** – Sets how many up/down flips are allowed within the flap window before the service is considered “flapping.”  
+• **Suppression Duration** – When flapping exceeds the threshold, alerts for that service are automatically muted for a defined duration while metrics continue to be recorded.  
+• **Flap Tracking & Recovery** – The system tracks every state change, applies suppression intelligently, and resumes normal alerting once the suppression window ends.  
+• **Result:** clean, noise-free uptime data with zero false positives — enterprise-grade stability built in.  
+
 ### Chat & Intelligence
 • Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled  
 • RAG Integration: if you have set a long lived token and your Home Assistant URL, chat will now answer questions regarding your systems  
@@ -82,18 +90,16 @@ Jarvis Prime includes support for installation as a Progressive Web App (PWA). T
 • Chat → Direct LLM conversation (prefix with "chat …" or "talk …" in Gotify/ntfy or use Web UI chat tab)  
 
 ## LLM Best Practices & Tested Settings
-
-Jarvis Prime supports Phi‑3.5, Phi‑4 Q4, Q5, Q6, Q8 for chat, riffs, and message beautification. These settings balance **performance, coherence, memory use, and response length**.
+Jarvis Prime supports Phi-3.5, Phi-4 Q4, Q5, Q6, Q8 for chat, riffs, and message beautification. These settings balance **performance, coherence, memory use, and response length**.
 
 ### Recommended Settings by Model
-
 | Model       | Context Window (CTX) | Riff Max Tokens | Riff Cutoff Tokens | Message Rewrite Max Tokens | Notes |
 |------------|--------------------|----------------|-----------------|---------------------------|------|
-| Phi‑3.5    | 4,096              | 50             | 45              | 45                        | Lightweight, good for smaller systems; less context retention. |
-| Phi‑4 Q4   | 8,000              | 55             | 50              | 50                        | Better context than 3.5; slightly slower on CPU. |
-| Phi‑4 Q5   | 12,000             | 60             | 55              | 50                        | Recommended sweet spot: fast, coherent, large context. |
-| Phi‑4 Q6   | 12,000             | 60             | 55              | 50                        | Slightly higher memory usage than Q5; similar output quality. |
-| Phi‑4 Q8   | 12,000             | 60             | 55              | 50                        | Highest memory usage; may slow on low-resource systems. |
+| Phi-3.5    | 4,096              | 50             | 45              | 45                        | Lightweight, good for smaller systems; less context retention. |
+| Phi-4 Q4   | 8,000              | 55             | 50              | 50                        | Better context than 3.5; slightly slower on CPU. |
+| Phi-4 Q5   | 12,000             | 60             | 55              | 50                        | Recommended sweet spot: fast, coherent, large context. |
+| Phi-4 Q6   | 12,000             | 60             | 55              | 50                        | Slightly higher memory usage than Q5; similar output quality. |
+| Phi-4 Q8   | 12,000             | 60             | 55              | 50                        | Highest memory usage; may slow on low-resource systems. |
 
 ### What Each Setting Does
 - **Context Window (CTX)**: Number of prior tokens the model “remembers”; larger CTX preserves more conversation/notification history.  
@@ -103,15 +109,15 @@ Jarvis Prime supports Phi‑3.5, Phi‑4 Q4, Q5, Q6, Q8 for chat, riffs, and mes
 
 ### Middle-Ground Recommendation
 For most users on moderate hardware:  
-- **Model**: Phi‑4 Q5  
+- **Model**: Phi-4 Q5  
 - **CTX**: 12,000  
 - **Riff Max Tokens**: 60  
 - **Cutoff Tokens**: 55  
 - **Message Rewrite Max Tokens**: 50  
 
 This combination provides **good performance, coherent responses, and avoids excessive CPU/memory use**.
-## Intake Setup Details
 
+## Intake Setup Details
 ### 1. SMTP Intake (Mailrise replacement)
 • Start Jarvis Prime and note the SMTP port (default 2525)  
 • In your app (Duplicati, Proxmox, etc.), set SMTP server to 10.0.0.100 and port 2525  
@@ -138,7 +144,6 @@ This combination provides **good performance, coherent responses, and avoids exc
 • Prefix your message with "chat" or "talk"  
 
 ## Orchestration Setup
-
 ### Server Management
 1. Navigate to the **Orchestrator** tab in the Web UI  
 2. Add SSH-enabled servers, groups, and test connectivity  
@@ -153,7 +158,6 @@ This combination provides **good performance, coherent responses, and avoids exc
 • View executions, status, logs, durations, purge old history  
 
 ## Analytics & Monitoring Setup
-
 ### Adding Services to Monitor
 1. Navigate to the **Analytics** tab in the Web UI  
 2. Click **Services** sub-tab  
