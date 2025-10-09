@@ -2,6 +2,9 @@
 # /app/personality.py  — rebuilt per Christoff's spec with ENHANCED CONTEXT
 # Persona quip + Lexi engine for Jarvis Prime
 #
+# ENHANCED: Smarter Lexi with deep context awareness and intelligent phrase generation
+# Makes Lexi sound more natural and LLM-like without actual LLM calls
+#
 # Public API (unchanged entry points):
 #   - quip(persona_name: str, *, with_emoji: bool = True) -> str
 #   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]
@@ -14,12 +17,6 @@
 #   - BOTTOM LINES: LLM riffs (no emoji); Lexi-only fallback if LLM is off/unavailable
 #   - Strip transport tags like [SMTP]/[Proxy]/[Gotify]/... from inputs and outputs
 #   - Expanded lexicons & sharper templates; Rager swears (meaningful), Tappit SA slang (no "rev-rev")
-#
-# ENHANCED FEATURES:
-#   - Context-aware vocabulary expansion based on message content
-#   - Smart template selection based on urgency/routine/completion patterns
-#   - Time-of-day and weekend awareness
-#   - System type detection (docker, database, backup, etc.)
 
 import random, os, importlib, re, time
 from typing import List, Dict, Optional, Tuple
@@ -88,6 +85,196 @@ def _get_context_hints(subject: str = "", body: str = "") -> Dict[str, bool]:
             "has_network": False, "is_weekend": False, "is_night": False
         }
 
+# ============================================================================
+# NEW: SMART CONTEXT ANALYSIS FOR INTELLIGENT LEXI
+# ============================================================================
+
+def _extract_smart_context(subject: str = "", body: str = "") -> Dict:
+    """
+    Advanced context extraction for intelligent Lexi responses
+    Analyzes patterns, numbers, services, and actions for natural language generation
+    """
+    try:
+        text = f"{subject} {body}".lower()
+        
+        # Service/system detection with specificity
+        services = {
+            "sonarr": "sonarr" in text,
+            "radarr": "radarr" in text,
+            "plex": "plex" in text or "jellyfin" in text,
+            "homeassistant": "home assistant" in text or "homeassistant" in text or "ha " in text,
+            "docker": "docker" in text or "container" in text or "pod" in text,
+            "database": any(db in text for db in ["mysql", "postgres", "mariadb", "mongodb", "sql", "database"]),
+            "backup": "backup" in text or "snapshot" in text or "archive" in text,
+            "network": any(net in text for net in ["network", "dns", "proxy", "nginx", "firewall", "vpn"]),
+            "storage": any(stor in text for stor in ["disk", "storage", "mount", "volume", "raid", "zfs"]),
+            "monitoring": any(mon in text for mon in ["uptime", "monitor", "health", "check", "ping", "analytics"]),
+        }
+        active_services = [k for k, v in services.items() if v]
+        
+        # Extract numbers and percentages
+        numbers = re.findall(r'\b\d+(?:\.\d+)?%?\b', text)
+        has_percentage = any('%' in n for n in numbers)
+        has_large_number = any(int(re.sub(r'[^\d]', '', n)) > 1000 for n in numbers if re.sub(r'[^\d]', '', n))
+        
+        # Action/status detection
+        actions = {
+            "completed": any(word in text for word in ["completed", "finished", "done", "success", "passed", "ok"]),
+            "started": any(word in text for word in ["started", "beginning", "initiated", "launching", "starting"]),
+            "failed": any(word in text for word in ["failed", "error", "failure", "unsuccessful", "crashed"]),
+            "warning": any(word in text for word in ["warning", "caution", "attention", "degraded", "slow"]),
+            "updated": any(word in text for word in ["updated", "upgraded", "patched", "modified", "refreshed"]),
+            "restarted": any(word in text for word in ["restarted", "rebooted", "cycled", "bounced", "restart"]),
+            "connected": any(word in text for word in ["connected", "online", "up", "available", "restored"]),
+            "disconnected": any(word in text for word in ["disconnected", "offline", "down", "unavailable", "lost"]),
+        }
+        active_action = next((k for k, v in actions.items() if v), "generic")
+        
+        # Urgency scoring (0-10)
+        urgency_score = 0
+        if any(word in text for word in ["critical", "emergency", "urgent", "immediate"]):
+            urgency_score += 5
+        if any(word in text for word in ["down", "offline", "failed", "error"]):
+            urgency_score += 3
+        if any(word in text for word in ["warning", "degraded", "slow"]):
+            urgency_score += 2
+        if any(word in text for word in ["success", "completed", "healthy", "ok"]):
+            urgency_score -= 2
+        urgency_score = max(0, min(10, urgency_score))
+        
+        # Pattern detection
+        is_test = "test" in text
+        is_notification = "notification" in text
+        is_automated = any(auto in text for auto in ["scheduled", "automatic", "cron", "daily", "weekly"])
+        
+        return {
+            "services": active_services,
+            "primary_service": active_services[0] if active_services else None,
+            "action": active_action,
+            "urgency_score": urgency_score,
+            "has_numbers": bool(numbers),
+            "has_percentage": has_percentage,
+            "has_large_number": has_large_number,
+            "is_test": is_test,
+            "is_notification": is_notification,
+            "is_automated": is_automated,
+            "numbers": numbers[:3],  # Keep first 3 numbers
+        }
+    except:
+        return {
+            "services": [], "primary_service": None, "action": "generic",
+            "urgency_score": 0, "has_numbers": False, "has_percentage": False,
+            "has_large_number": False, "is_test": False, "is_notification": False,
+            "is_automated": False, "numbers": []
+        }
+
+def _generate_intelligent_phrase(persona: str, smart_context: Dict, slot: str = "a") -> str:
+    """
+    Generate contextually intelligent phrases based on deep analysis
+    Makes Lexi sound more natural and LLM-like without actual LLM calls
+    """
+    try:
+        service = smart_context.get("primary_service")
+        action = smart_context.get("action", "generic")
+        urgency = smart_context.get("urgency_score", 0)
+        
+        # Service-specific intelligent response patterns
+        service_patterns = {
+            "sonarr": {
+                "completed": ["episode indexed", "series catalogued", "library synced", "metadata current", "queue cleared"],
+                "updated": ["metadata refreshed", "episodes scanned", "queue processed", "series updated", "catalog synced"],
+                "failed": ["download stalled", "import blocked", "source unavailable", "indexer timeout", "queue stuck"],
+                "restarted": ["service cycled", "queue reset", "indexers reconnected", "monitoring resumed"],
+                "generic": ["tv automation active", "series monitored", "queue managed", "episodes tracked", "library maintained"]
+            },
+            "radarr": {
+                "completed": ["film archived", "movie indexed", "collection updated", "catalog current", "library complete"],
+                "updated": ["catalog refreshed", "library synced", "metadata current", "movies scanned", "posters updated"],
+                "failed": ["acquisition blocked", "import failed", "source missing", "indexer down", "download stalled"],
+                "restarted": ["service restored", "indexers reconnected", "queue reloaded", "automation resumed"],
+                "generic": ["movie automation live", "films tracked", "queue active", "collection managed", "catalog monitored"]
+            },
+            "plex": {
+                "completed": ["media scanned", "library updated", "thumbnails generated", "transcode finished"],
+                "updated": ["metadata refreshed", "posters synced", "library indexed", "database optimized"],
+                "failed": ["scan failed", "database locked", "transcode error", "server unreachable"],
+                "restarted": ["server cycled", "services restored", "streams reconnected", "plex reloaded"],
+                "generic": ["streaming ready", "media served", "library accessible", "playback stable"]
+            },
+            "homeassistant": {
+                "completed": ["automation executed", "scene applied", "devices synced", "entities updated"],
+                "updated": ["config reloaded", "integrations synced", "entities refreshed", "dashboard current"],
+                "failed": ["automation blocked", "device offline", "integration failed", "entity unavailable"],
+                "restarted": ["core reloaded", "automations reset", "devices reconnected", "ha cycled"],
+                "generic": ["home controlled", "automations active", "devices monitored", "scenes ready"]
+            },
+            "docker": {
+                "completed": ["container stable", "orchestration complete", "stack healthy", "services aligned"],
+                "restarted": ["services cycled", "containers refreshed", "runtime reset", "pods rescheduled"],
+                "failed": ["container crashed", "pod failed", "orchestration blocked", "healthcheck timeout"],
+                "updated": ["images pulled", "stack updated", "containers patched", "compose synced"],
+                "generic": ["containers managed", "runtime stable", "orchestration active", "stack monitored"]
+            },
+            "database": {
+                "completed": ["queries optimized", "transactions committed", "integrity verified", "indexes rebuilt"],
+                "updated": ["schema synced", "indexes rebuilt", "tables optimized", "stats refreshed"],
+                "failed": ["connection lost", "query blocked", "transaction failed", "deadlock detected"],
+                "restarted": ["connections reset", "pools refreshed", "service cycled", "replicas synced"],
+                "generic": ["data layer stable", "queries responsive", "connections pooled", "transactions flowing"]
+            },
+            "backup": {
+                "completed": ["archives sealed", "snapshots verified", "retention applied", "backup validated"],
+                "started": ["backup initiated", "snapshot capturing", "data securing", "archive building"],
+                "failed": ["backup blocked", "snapshot failed", "retention missed", "destination unreachable"],
+                "generic": ["backup cycle active", "archives managed", "snapshots current", "retention enforced"]
+            },
+            "network": {
+                "completed": ["routes updated", "firewall synced", "dns propagated", "traffic flowing"],
+                "connected": ["link established", "gateway reachable", "routes stable", "connectivity restored"],
+                "disconnected": ["link down", "gateway lost", "route unreachable", "connectivity failed"],
+                "updated": ["rules applied", "config synced", "zones updated", "policies refreshed"],
+                "generic": ["network stable", "traffic routed", "connections managed", "firewall active"]
+            },
+            "storage": {
+                "completed": ["volumes mounted", "raid synced", "quotas applied", "pool healthy"],
+                "warning": ["space low", "degraded array", "smart warning", "quota approaching"],
+                "failed": ["mount failed", "disk error", "raid degraded", "pool unavailable"],
+                "generic": ["storage healthy", "volumes accessible", "arrays stable", "capacity managed"]
+            },
+            "monitoring": {
+                "completed": ["checks passed", "metrics collected", "alerts cleared", "health confirmed"],
+                "failed": ["check failed", "timeout exceeded", "endpoint down", "probe unsuccessful"],
+                "updated": ["metrics refreshed", "alerts synced", "thresholds updated", "dashboards current"],
+                "generic": ["monitoring active", "metrics flowing", "health tracked", "alerts configured"]
+            },
+        }
+        
+        # Get service-specific patterns or fall back to generic
+        patterns = service_patterns.get(service, {})
+        phrases = patterns.get(action, patterns.get("generic", ["status nominal", "system stable"]))
+        
+        # Urgency modifiers
+        if urgency >= 7:
+            urgency_mods = ["immediate", "critical", "urgent", "priority"]
+        elif urgency >= 4:
+            urgency_mods = ["attention", "check", "review", "monitor"]
+        else:
+            urgency_mods = []
+        
+        # Combine intelligently
+        base_phrase = random.choice(phrases)
+        if urgency_mods and slot == "a" and urgency >= 5:
+            return f"{random.choice(urgency_mods)} {base_phrase}"
+        
+        return base_phrase
+        
+    except:
+        return "status nominal"
+
+# ============================================================================
+# END SMART CONTEXT ADDITIONS
+# ============================================================================
+
 def _intensity() -> float:
     try:
         v = float(os.getenv("PERSONALITY_INTENSITY", "1.0"))
@@ -134,7 +321,7 @@ def _maybe_emoji(key: str, with_emoji: bool) -> str:
         return ""
 
 # ----------------------------------------------------------------------------
-# CANNED QUIPS (kept for compatibility; not used for header after this rebuild)
+# CANNED QUIPS (kept for compatibility)
 # ----------------------------------------------------------------------------
 QUIPS = {
     "ops": ["ack.","done.","noted.","executed.","received.","stable.","running.","applied.","synced.","completed."],
@@ -426,7 +613,7 @@ def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> Li
         return []
 
 # ----------------------------------------------------------------------------
-# === ENHANCED LEXI ENGINE ===================================================
+# === ENHANCED LEXI ENGINE WITH INTELLIGENT CONTEXT ===========================
 # ----------------------------------------------------------------------------
 # Persona→bank key mapping for headers
 _PERSONA_BANK_KEY = {
@@ -441,214 +628,65 @@ _PERSONA_BANK_KEY = {
     "nerd": "line",
 }
 
-# Enhanced lexicons with context-aware additions
+# Base lexicons (kept for fallback)
 _LEX: Dict[str, Dict[str, List[str]]] = {
     "ops": {
         "ack": [
             "ack","done","noted","executed","received","stable","running","applied","synced","completed",
             "success","confirmed","ready","scheduled","queued","accepted","active","closed","green","healthy",
-            "rolled back","rolled forward","muted","paged","silenced","deferred","escalated","contained","optimized",
-            "ratelimited","rotated","restarted","reloaded","validated","archived","reconciled","cleared","holding","watching",
-            "backfilled","indexed","pruned","compacted","sealed","mirrored","snapshotted","scaled","throttled","hydrated",
-            "drained","fenced","provisioned","retired","quarantined","sharded","replicated","promoted","demoted","cordoned",
-            "untainted","gc run","scrubbed","checkpointed","rebased","fast-forwarded","replayed","rolled","mounted","unmounted",
-            "attached","detached","invalidated","revoked","renewed","trimmed","balanced","resynced","realigned","rekeyed",
-            "reindexed","retuned","patched"
         ]
     },
     "jarvis": {
         "line": [
             "archived; assured","telemetry aligned; noise filtered","graceful rollback prepared; confidence high",
             "housekeeping complete; logs polished","secrets vaulted; protocol upheld","latency escorted; budgets intact",
-            "artifacts catalogued; reports curated","dashboards presentable; metrics aligned","after-hours service; composure steady",
-            "failover rehearsal passed; perimeter calm","cache generous; etiquette maintained","encryption verified; perimeter secure",
-            "uptime curated; boredom exemplary","trace polished; journals logged","alerts domesticated; only signal remains",
-            "confidence exceeds risk; proceed","maintenance passed unnoticed; records immaculate","graceful nudge applied; daemon compliant",
-            "quiet mitigation; impact nil","indexes tidy; archives in order","change window honored; optics clean",
-            "handover elegant; notes precise","backpressure civilized; queues courteous","fail-safe primed; decorum intact",
-            "replicas attentive; quorum polite","rate limits gentlemanly; costs discreet","noise quarantined; signal escorted",
-            "cadence even; posture composed","rollouts courteous; guardrails present","backfills mannered; histories neat",
-            "concurrency tamed; threads well-behaved","latency chauffeured; jitter brief","budget respected; refinement visible",
-            "orchestration poised; choreography exact","secrets rotated; memories short","observability curated; dashboards dapper",
-            "incidents domesticated; pages rare","degradations declined; polish ascendant","resilience rehearsed; etiquette immaculate",
-            "audit trails luminous; paperwork minimal","artifacts dusted; indexes fragrant","drift corrected; symmetry restored",
-            "telemetry monogrammed; graphs tailored","uptime framed; silence intentional","handoff seamless; provenance clear",
-            "compliance effortless; posture impeccable","cache refreshed; manners intact","locks courteous; contention modest",
-            "footprint light; impact negligible","availability tailored; elegance constant",
-            # Context-aware additions
-            "containers orchestrated; pods aligned","database integrity maintained; queries optimized","backup verified; restoration elegant",
-            "network topology secured; traffic routed","weekend service; protocols maintained","emergency response; composure intact"
         ]
     },
     "nerd": {
         "line": [
             "validated; consistent","checksums aligned; assertions hold","p99 stabilized; invariants preserved",
             "error rate bounded; throughput acceptable","deterministic; idempotent by design","schema respected; contract satisfied",
-            "graph confirms; model agrees","SLA satisfied; telemetry coherent","unit tests pass; coverage sane",
-            "retry with jitter; backpressure OK","NTP aligned; time monotonic","GC pauses low; alloc rate steady",
-            "argmin reached; variance small","latency within CI; budgets safe","tail risk negligible; outliers trimmed",
-            "refactor proven; complexity down","DRY upheld; duplication removed","entropy reduced; order restored",
-            "cache locality improved; misses down","branch prediction friendly; stalls rare","O(n) achieved; constants trimmed",
-            "deadlocks absent; liveness holds","heap pressure stable; fragmentation low","index selectivity high; scans minimal",
-            "AP chose availability; consistency eventual","CAP respected; trade-offs explicit","Amdahl smiles; parallelism sane",
-            "cold starts amortized; warm paths preferred","hash distribution uniform; collisions rare",
-            "cardinality understood; histograms honest","idempotence intact; retries cheap","time-series compact; deltas tidy",
-            "throughput linear; headroom visible","latency histogram civilized; tails cut","variance explained; R² smug",
-            "feature flags gated; blast radius tiny","circuit closed; fallback asleep","read-after-write coherent enough",
-            "bounded queues; fair scheduling","causal order preserved; replays exact","roll-forward safe; rollbacks rehearsed",
-            "mutexes minimal; contention mapped","allocations pooled; GC naps","vectorized path wins; scalar retires",
-            "cache warm; TLB polite","TLS fast; handshakes trimmed","telemetry cardinality bounded; cost sane",
-            "SLO met; error budget plush","kanban flow; WIP low","postmortem short; learnings long",
-            # Context-aware additions
-            "container orchestration validated; YAML parsed","ACID properties confirmed; transactions atomic","backup checksums verified; restoration tested",
-            "DNS resolution optimized; queries cached","weekend batch processing; cron validated","emergency algorithm executed; complexity linear"
         ]
     },
     "action": {
         "line": [
             "targets green; advance approved","threat neutralized; perimeter holds","payload verified; proceed",
             "rollback vector armed; safety on","triage fast; stabilize faster","deploy quiet; results loud",
-            "guard the SLO; hold the line","extract successful; area safe","scope trimmed; blast radius minimal",
-            "contact light; switch traffic","mission first; ego last","abort gracefully; re-attack smarter",
-            "eyes up; logs live","stack locked; breach denied","move silent; ship violent",
-            "path clear; burn down","patch hot; risk cold","cutover clean; chatter zero",
-            "tempo high; friction low","signal up; noise down","defuse page; secure core",
-            "map terrain; flank failure","pin the root; pull the weed","toggle flag; steer fate",
-            "breach sealed; assets safe","hit window; exit crisp","ops steady; hands calm",
-            "lean scope; lethal focus","pressure on; panic off","hold discipline; win uptime",
-            "smoke tested; doors open","grid stable; threat boxed","air cover ready; roll",
-            "recon done; execute clean","no drama; just shipping","armor up; regressions down",
-            "route traffic; trace truth","calm voice; sharp actions","contain blast; save face",
-            "clear runway; punch it","patch discipline; posture strong","reload services; hold axis",
-            "compartmentalize risk; breathe","hand-off tight; mission intact","drill paid off; ops sings",
-            "suppress alarms; track targets","eyes on gauges; trust plan","exfil logs; lock vault",
-            # Context-aware additions
-            "containers deployed; pods secured","database secured; access controlled","backup mission complete; data extracted",
-            "network perimeter secured; traffic filtered","weekend ops; skeleton crew","emergency protocols active; all hands"
         ]
     },
-            "comedian": {
+    "comedian": {
         "quip": [
             "remarkably unremarkable; thrillingly boring","adequate; save your applause","green and seen; don't clap at once",
             "plot twist: stable; credits roll quietly","laugh track muted; uptime refuses drama","peak normal; show cancelled",
-            "retro skipped; nothing exploded","applause optional; graphs yawn","jokes aside; it actually works",
-            "deadpan OK; try not to faint","boring graphs win; sequels delayed","we did it; Jenkins takes the bow",
-            "thrilling news: nothing is wrong","latency on time; comedy off","confetti in staging; not here",
-            "no cliffhangers; just commits","punchline withheld; service delivered","pilot renewed; drama not",
-            "laughs in monotony; cries in errors","green bars—audience left early","credits rolled; pager slept",
-            "build so dull it's beautiful","the bug cancelled itself","SRE: the silent comedians",
-            "silence is my laugh track","our outage arc was cut","spoiler: it's fine","bloopers only in dev",
-            "slapstick-free deploy","stand-up for uptime","bananas not on the floor","cue cards say 'boring'",
-            "clowns off-duty; graphs beige","insert laugh; remove alert","sitcom rerun: stability",
-            "punch-up cancelled; prod safe","tight five on reliability","heckler muted; 200 OK",
-            "open mic closed; SLA met","callback landed; queues drained","slow clap saved for later",
-            "kill the laugh track; keep the SLO","bit killed; bug too","props to caching; no acting",
-            "crowd left; uptime stayed","one-liners only; zero fires","low effort; high effect",
-            "final joke: nothing broke",
-            # Context-aware additions
-            "container comedy; pod cast cancelled","database sitcom; queries boring","backup special; restore routine",
-            "network comedy; packets predictable","weekend rerun; same old stable","emergency drama; anticlimactic ending"
         ]
     },
     "dude": {
         "line": [
             "verified; keep it mellow","queues breathe; vibes stable","roll with it; no drama",
             "green checks; take it easy","cache hits high; chill intact","latency surfed; tide calm",
-            "nap secured; alerts low","ride the wave; ship small","be water; flow steady",
-            "friction low; sandals on","pager quiet; hammock loud","steady flow; no whitecaps",
-            "easy does it; deploy smooth","logs zen; noise gone","coffee warm; ops cool",
-            "cruise control; hands light","steady stoke; bugs smoked","float mode; errors sunk",
-            "cool breeze; hotfix cold","vibes aligned; graphs kind","mellow merge; drama nil",
-            "calm seas; green buoys","flow state; stress late","good karma; clean schema",
-            "no sweat; just set","lazy river; quick commits","keep it loose; checks tight",
-            "low tide errors; high tide wins","sand between toes; not gears","latency chilled; surf up",
-            "cozy cache; sunny CI","flip-flop deploys; barefoot ops","chill pipeline; brisk results",
-            "dawn patrol; build glassy","easy paddle; quick ride","stoked on SLOs; mellow on egos",
-            "zen master of retries","soft landings; soft pretzels","keep rolling; keep cool",
-            "laid back; locked in","margarita metrics; salt rim","vibe check: all green",
-            "fog lifts; logs clear","waves small; smiles big","ship tiny; sleep heavy",
-            "go with the flow; glow","drama-free zone; zone in","light breeze; heavy uptime",
-            "good juju; clean deploy",
-            # Context-aware additions
-            "containers flowing; pods chilling","database cruising; queries smooth","backup surfed; restore easy",
-            "network flowing; packets riding","weekend vibes; systems coasting","emergency handled; still zen"
         ]
     },
     "chick": {
         "line": [
             "QA-clean; runway-ready","zero-downtime; she's grace","polish applied; ship with shine",
             "alerts commitment-ready; logs tasteful","secure defaults; couture correct","green across; camera-ready",
-            "perf smooth; silk finish","refactor = self-care; release worthy","gatekept prod; VIPs only",
-            "makeup on; bugs off","latency sleek; heels higher","wardrobe change; no costume drama",
-            "hair did; graphs did too","lip gloss popping; errors dropping","fit checked; build checked",
-            "playlist vibing; deploy sliding","eyeliner sharp; cuts cleaner","couture cache; chic checks",
-            "uptime glows; pager dozes","staging flirted; prod committed","heels steady; metrics petty",
-            "smudge-proof SLA; kiss-proof deploy","catwalk to prod; trip-free","couture config; zero cringe",
-            "silk rollback; velvet rollout","accessories minimal; impact maximal","bottled polish; uncorked ship",
-            "pearls on; rough edges off","seamless seams; spotless logs","mascara dry; code crisp",
-            "mirror checks; alert checks","velvet ropes; tight scopes","dewy graphs; matte risks",
-            "clean palette; clean pipeline","gold hoops; zero loops","high gloss; low noise",
-            "tucked edges; tight cadence","sleek silhouette; slim latencies","shine on; bugs gone",
-            "dramatic liner; calm deploy","mood board says 'ship'","fit for prod; fit for print",
-            "couture cadence; error-free","capsule release; timeless","no smears; no smolders",
-            "tasteful trims; tasteful logs","glam yes; outages no","cat-eye sharp; rollback soft",
-            "silhouette strong; incidents weak",
-            # Context-aware additions
-            "containers styled; pods polished","database glamour; queries elegant","backup couture; restore chic",
-            "network fashion; traffic flowing","weekend glow-up; systems fresh","emergency makeup; still flawless"
         ]
     },
     "rager": {
         "rage": [
             "kill the flake; ship the fix","stop the damn noise; own the pager","sorted; now piss off",
             "you mother fucker you; done","fuckin' prick; fix merged","piece of shit; rollback clean",
-            "asshole alert; silenced","dumb fuck bug; dead","fuck face error; crushed",
-            "prick bastard test; unflaked","shit stain retry; throttled","goddamn punk alarm; gagged",
-            "what the fuck spike; cooled","latency leashed; back to baseline","blast radius contained; move",
-            "talk less; ship more","root cause or bust; do it now","ffs patch; deploy hot",
-            "own it; stop guessing","pager sings; you dance","green or gone; pick",
-            "no more cowboy deploys; grow up","fix the root; not my mood","stop click-opsing prod; read the runbook",
-            "feature flag it; or I flag you","silence the alert; or I silence your access",
-            "cut the crap; merge clean","ship or shut it","slam the gate; hold the line",
-            "stop the thrash; pick a plan","quit hand-waving; bring data","patch the leak; not the story",
-            "burn the flake; freeze the scope","no tourists in prod; badge up","alerts are rent; pay them",
-            "shock the cache; cool the heat","tighten blast radius; grow spine","ship small; swear less",
-            "argue later; page now","we fix fast; we don't whine","dogpile the root; starve the noise",
-            "no mystery meat; label it","switch traffic; stop panic","own the rollback; own the win",
-            "push the patch; pull the risk","turn off hero mode; turn on discipline","ban chaos; invite repeatability",
-            "your excuse crashed; mine shipped","risk is loud; rigor is louder","hold the standard; hold your tongue",
-            # Context-aware additions
-            "containers unfucked; pods working","database shit fixed; queries fast","backup bullshit done; restore ready",
-            "network crap sorted; traffic moving","weekend duty; deal with it","emergency chaos; I'll handle it"
         ]
     },
     "tappit": {
         "line": [
             "sorted bru; lekker clean","sharp-sharp; no kak","howzit bru; all green",
             "pipeline smooth; keep it tidy","idling lekker; don't stall","give it horns; not drama",
-            "latency chilled; budgets safe","jol still smooth; nothing dodgy","no kak here; bru it's mint",
-            "solid like a boerie roll; carry on","lekker tidy; keep the wheels straight","netjies man; pipeline in gear",
-            "all gees; no grease","voetsek to noise; keep signal","shaya small; ship neat",
-            "graphs skoon; vibes dop","moer-alert quiet; ops calm","lekker pull; clean push",
-            "bakkie packed; no rattles","boet, stable; jy weet","tjop done; salad cool",
-            "line lekker; queue short","no jang; just jol","bundu bash bugs; leave prod",
-            "braai smoke off; alarms off","gear engaged; no clutch slip","no nonsense; just lekker",
-            "SLA gesort; pager slaap","moenie stress; alles fine","tjoepstil errors; groot smile",
-            "boerie budget; chips cheap","kan nie kla; graphs mooi","kiff ship; safe trip",
-            "don't kak around; release","dop cold; deploy cooler","bakkie clean; cargo safe",
-            "lines netjies; ops strak","tune the cache; drop the kak","skrik vir niks; just ship",
-            "keep it local; no kak","bru, green; laat dit gaan","lekker graphs; jol on",
-            "skoon merge; stout bugs out","dop die logs; dance the deploy","bietsie latency; baie chill",
-            "laaitie queues; oubaas uptime","groot jol; klein change","mooi man; klaar gestuur",
-            "braai later; ship nou",
-            # Context-aware additions
-            "containers lekker; pods sharp","database tidy; queries quick","backup solid; restore ready",
-            "network clean; traffic flowing","weekend lekker; systems rest","emergency sorted; no stress bru"
         ]
     }
 }
 
-# Enhanced templates with context awareness
+# Enhanced templates
 _TEMPLATES: Dict[str, List[str]] = {
     "default": [
         "{subj}: {a}. {b}.",
@@ -712,106 +750,32 @@ _TEMPLATES: Dict[str, List[str]] = {
     ],
 }
 
-# Enhanced context-aware template selection
-def _get_smart_templates(persona: str, context_hints: Dict) -> List[str]:
-    """Get templates based on context hints"""
-    try:
-        base_templates = _TEMPLATES.get(persona, _TEMPLATES["default"])
-        
-        # Add context-specific templates
-        if context_hints.get("is_urgent"):
-            urgent_templates = [
-                "{subj}: urgent {a}; {b} now.",
-                "{subj} — critical {a}; {b}!",
-                "{subj}: immediate {a}; {b}."
-            ]
-            return base_templates + urgent_templates
-        
-        if context_hints.get("is_routine"):
-            routine_templates = [
-                "{subj}: routine {a}; {b} scheduled.",
-                "{subj}: {a} per plan; {b}.",
-                "{subj} — scheduled {a}; {b}."
-            ]
-            return base_templates + routine_templates
-        
-        if context_hints.get("is_completion"):
-            completion_templates = [
-                "{subj}: {a} complete; {b}.",
-                "{subj}: mission {a}; result {b}.",
-                "{subj} — {a} delivered; {b}."
-            ]
-            return base_templates + completion_templates
-        
-        return base_templates
-    except:
-        return _TEMPLATES.get("default", [])
-
-def _expand_bank_with_context(persona: str, base_bank: List[str], context_hints: Dict) -> List[str]:
-    """Expand vocabulary based on context hints"""
-    try:
-        expanded = base_bank.copy()
-        
-        # Add context-specific terms
-        if context_hints.get("has_docker"):
-            docker_terms = {
-                "nerd": ["containerized", "orchestrated", "pods scaled"],
-                "jarvis": ["containers aligned", "orchestration complete"],
-                "action": ["containers deployed", "pods secured"],
-                "dude": ["containers flowing", "pods chilling"]
-            }
-            expanded.extend(docker_terms.get(persona, []))
-        
-        if context_hints.get("has_database"):
-            db_terms = {
-                "nerd": ["ACID compliant", "transactions committed"],
-                "jarvis": ["data integrity maintained", "queries optimized"],
-                "action": ["database secured", "queries locked"],
-                "dude": ["database cruising", "queries smooth"]
-            }
-            expanded.extend(db_terms.get(persona, []))
-        
-        if context_hints.get("has_backup"):
-            backup_terms = {
-                "nerd": ["checksummed", "integrity verified"],
-                "jarvis": ["archived gracefully", "preservation complete"],
-                "action": ["backup secured", "recovery verified"],
-                "dude": ["backup surfed", "restore easy"]
-            }
-            expanded.extend(backup_terms.get(persona, []))
-        
-        # Weekend additions
-        if context_hints.get("is_weekend"):
-            weekend_terms = {
-                "jarvis": ["weekend service", "off-hours protocol"],
-                "dude": ["weekend vibes", "sunday cruise"],
-                "rager": ["weekend duty", "saturday bullshit"]
-            }
-            expanded.extend(weekend_terms.get(persona, []))
-        
-        return list(set(expanded))  # Remove duplicates
-    except:
-        return base_bank
-
-def _bank_for(persona: str, context_hints: Dict = None) -> List[str]:
-    """Get vocabulary bank with context expansion"""
+def _bank_for(persona: str, smart_context: Dict = None) -> List[str]:
+    """Get vocabulary bank with intelligent context expansion"""
     try:
         key = _PERSONA_BANK_KEY.get(persona, "ack")
         base_bank = _LEX.get(persona, {}).get(key, [])
         if not base_bank:
             base_bank = _LEX.get("ops", {}).get("ack", ["ok","noted"])
         
-        if context_hints:
-            return _expand_bank_with_context(persona, base_bank, context_hints)
+        # If smart context available, use intelligent phrase generation
+        if smart_context and smart_context.get("primary_service"):
+            # Generate 2 intelligent phrases
+            intelligent_phrases = [
+                _generate_intelligent_phrase(persona, smart_context, "a"),
+                _generate_intelligent_phrase(persona, smart_context, "b")
+            ]
+            # Mix with base bank (70% intelligent, 30% base)
+            combined = intelligent_phrases + intelligent_phrases + intelligent_phrases + base_bank
+            return combined
+        
         return base_bank
     except:
         return ["ok", "noted"]
 
-def _templates_for(persona: str, context_hints: Dict = None) -> List[str]:
-    """Get templates with context awareness"""
+def _templates_for(persona: str) -> List[str]:
+    """Get templates"""
     try:
-        if context_hints:
-            return _get_smart_templates(persona, context_hints)
         return _TEMPLATES.get(persona, _TEMPLATES.get("default", []))
     except:
         return _TEMPLATES.get("default", [])
@@ -827,19 +791,20 @@ def _choose_two(bank: List[str]) -> Tuple[str, str]:
     except:
         return ("ok", "noted")
 
-# --- Public: Enhanced Lexi header quip (emoji allowed, no "Lexi." suffix) ---
+# --- Public: Enhanced Lexi header quip with intelligent context ---
 def lexi_quip(persona_name: str, *, with_emoji: bool = True, subject: str = "", body: str = "") -> str:
-    """Enhanced lexi quip with context awareness"""
+    """Enhanced lexi quip with intelligent context awareness"""
     try:
         persona = _canon(persona_name)
         subj = strip_transport_tags((subject or "Update").strip().replace("\n"," "))[:120]
         
-        # Get context hints
+        # Get smart context for intelligent phrase generation
+        smart_context = _extract_smart_context(subject, body)
         context_hints = _get_context_hints(subject, body)
         
         # Get contextual vocabulary and templates
-        bank = _bank_for(persona, context_hints)
-        templates = _templates_for(persona, context_hints)
+        bank = _bank_for(persona, smart_context)
+        templates = _templates_for(persona)
         
         # Choose template and phrases
         tmpl = random.choice(templates)
@@ -855,25 +820,22 @@ def lexi_quip(persona_name: str, *, with_emoji: bool = True, subject: str = "", 
     except:
         return f"{subject or 'Update'}: ok. noted."
 
-# --- Public: Enhanced Lexi riffs (fallback; NO emoji) -----------------------
+# --- Public: Enhanced Lexi riffs with intelligent context ---
 def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subject: str = "", body: str = "") -> List[str]:
-    """Enhanced lexi riffs with context awareness"""
+    """Enhanced lexi riffs with intelligent context awareness"""
     try:
         persona = _canon(persona_name)
         subj = strip_transport_tags((subject or "Update").strip().replace("\n"," "))[:120]
-        body = strip_transport_tags((body or "").strip())
+        body_clean = strip_transport_tags((body or "").strip())
         
+        # Get smart context for intelligent phrase generation
+        smart_context = _extract_smart_context(subject, body)
         context_hints = _get_context_hints(subject, body)
-        templates = _templates_for(persona, context_hints)
-        bank = _bank_for(persona, context_hints)
+        
+        templates = _templates_for(persona)
+        bank = _bank_for(persona, smart_context)
         
         out: List[str] = []
-        
-        # Try to echo a key body phrase if available (simple heuristic)
-        key_phrase = ""
-        m = re.search(r"(integrity check passed|latency .*? (spike|back to baseline)|retention rotated|snapshot(s)? (done|archived)|no action required|error rate .*?bounded)", body, flags=re.I)
-        if m:
-            key_phrase = m.group(0).strip().rstrip(".")
         
         for _ in range(max(6, n*3)):  # oversample for uniqueness
             tmpl = random.choice(templates)
@@ -881,11 +843,6 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subje
             base = tmpl.format(subj=subj, a=a, b=b, time="{time}")
             base = _apply_daypart_flavor_inline(persona, base, context_hints)
             line = base
-            
-            if key_phrase:
-                if not line.endswith("."):
-                    line += "."
-                line += f" {key_phrase.lower()}."
             
             # Hard cap length and strip emoji (no emoji for riffs)
             line = re.sub(r"[\U0001F300-\U0001FAFF]", "", line)  # remove emojis
@@ -903,12 +860,12 @@ def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subje
 
 # --- Convenience header generator used by caller for the TOP line ------------
 def persona_header(persona_name: str, subject: str = "", body: str = "") -> str:
-    """Generate enhanced context-aware persona header"""
+    """Generate enhanced intelligent context-aware persona header"""
     return lexi_quip(persona_name, with_emoji=True, subject=subject, body=body)
 
 # --- Helper to build full message: header + riffs (LLM primary) --------------
 def build_header_and_riffs(persona_name: str, subject: str = "", body: str = "", max_riff_lines: int = 3) -> Tuple[str, List[str]]:
-    """Build enhanced header and riffs with full context awareness"""
+    """Build enhanced header and riffs with full intelligent context awareness"""
     try:
         header = persona_header(persona_name, subject=subject, body=body)
         # Bottom lines: LLM first (no emoji), Lexi fallback
