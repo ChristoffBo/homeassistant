@@ -1,880 +1,1135 @@
-#!/usr/bin/env python3
-# /app/personality.py  — rebuilt per Christoff's spec with ENHANCED CONTEXT
-# Persona quip + Lexi engine for Jarvis Prime
-#
-# ENHANCED: Smarter Lexi with deep context awareness and intelligent phrase generation
-# Makes Lexi sound more natural and LLM-like without actual LLM calls
-#
-# Public API (unchanged entry points):
-#   - quip(persona_name: str, *, with_emoji: bool = True) -> str
-#   - llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> list[str]
-#   - lexi_quip(persona_name: str, *, with_emoji: bool = True, subject: str = "", body: str = "") -> str
-#   - lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subject: str = "", body: str = "") -> list[str]
-#   - persona_header(persona_name: str, subject: str = "", body: str = "") -> str
-#
-# Behavior per spec:
-#   - TOP LINE: always Lexi (NOT LLM), time-aware, emoji allowed, NO "Lexi." suffix
-#   - BOTTOM LINES: LLM riffs (no emoji); Lexi-only fallback if LLM is off/unavailable
-#   - Strip transport tags like [SMTP]/[Proxy]/[Gotify]/... from inputs and outputs
-#   - Expanded lexicons & sharper templates; Rager swears (meaningful), Tappit SA slang (no "rev-rev")
+from __future__ import annotations
+import re, json, importlib, random, html, os
+from typing import List, Tuple, Optional, Dict, Any
+from urllib.parse import unquote_plus, parse_qs  # ADD
 
-import random, os, importlib, re, time
-from typing import List, Dict, Optional, Tuple
+# -------- Regex library --------
+IMG_URL_RE = re.compile(r'(https?://[^\s)]+?\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s)]*)?)', re.I)
+# tolerate spaces/newlines between ] and (, and angle-bracketed URLs
+# CAPTURE ALT (group 1) + URL (group 2)
+MD_IMG_RE  = re.compile(r'!\[([^\]]*)\]\s*\(\s*<?\s*(https?://[^\s)]+?)\s*>?\s*\)', re.I | re.S)
+KV_RE      = re.compile(r'^\s*([A-Za-z0-9 _\-\/\.]+?)\s*[:=]\s*(.+)$', re.M)
 
-# ----------------------------------------------------------------------------
-# Transport / source tag scrubber
-# ----------------------------------------------------------------------------
-_TRANSPORT_TAG_RE = re.compile(
-    r'^(?:\s*\[(?:smtp|proxy|gotify|apprise|email|poster|webhook|imap|ntfy|pushover|telegram)\]\s*)+',
-    flags=re.IGNORECASE
+# timestamps and types
+TS_RE = re.compile(r'(?:(?:date(?:/time)?|time)\s*[:\-]\s*)?(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)', re.I)
+DATE_ONLY_RE = re.compile(r'\b(?:\d{4}[-/]\d{1,2}[-{1,2}]|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b')
+TIME_ONLY_RE = re.compile(r'\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?(?:AM|PM|am|pm))?\b')
+
+# Strict IPv4: each octet 0-255
+IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{2})\b')
+HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
+VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
+
+EMOJI_RE = re.compile("[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]", flags=re.UNICODE)
+
+LIKELY_POSTER_HOSTS = (
+    "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
 )
-def strip_transport_tags(text: str) -> str:
+
+# === NEW: universal finish helpers (non-destructive) ===
+CODE_FENCE_RE = re.compile(r'```.*?```', re.S)
+LINK_RE       = re.compile(r'\[[^\]]+?\]\([^)]+?\)')
+
+def _fold_repeats(text: str, threshold: int = 3) -> str:
+    """Collapse runs of identical lines into a single line with ×N, keep head/tail if huge."""
+    lines = text.splitlines()
+    out, i = [], 0
+    while i < len(lines):
+        j = i + 1
+        while j < len(lines) and lines[j] == lines[i]:
+            j += 1
+        n = j - i
+        if n > threshold:
+            out.append(f"{lines[i]}  ×{n}")
+        else:
+            out.extend(lines[i:j])
+        i = j
+    if len(out) > 1200:
+        return "\n".join(out[:700] + ["…(folded)"] + out[-300:])
+    return "\n".join(out)
+def _safe_truncate(s: str, max_len: int = 3500) -> str:
+    """
+    Non-destructive truncation: never cuts inside code fences, markdown links/images, or raw image URLs.
+    Applies only if the final message is extremely long.
+    """
+    if len(s) <= max_len:
+        return s
+    protected = []
+    for rx in (CODE_FENCE_RE, MD_IMG_RE, LINK_RE, IMG_URL_RE):
+        for m in rx.finditer(s):
+            protected.append((m.start(), m.end()))
+    protected.sort()
+    out, pos, used, budget = [], 0, 0, max_len
+    for a, b in protected:
+        if a > pos:
+            chunk = s[pos:a]
+            if used + len(chunk) > budget:
+                room = max(0, budget - used - 8)
+                sub  = chunk[:room]
+                cut  = max(sub.rfind("\n"), sub.rfind(" "), sub.rfind("\t"))
+                if cut < room * 0.6:
+                    cut = room
+                out.append(sub[:cut].rstrip() + "\n\n…(truncated)")
+                return "".join(out)
+            out.append(chunk); used += len(chunk)
+        seg = s[a:b]
+        if used + len(seg) > budget:
+            out.append("\n\n…(truncated)")
+            return "".join(out)
+        out.append(seg); used += len(seg); pos = b
+    if pos < len(s):
+        tail = s[pos:]
+        if used + len(tail) > budget:
+            room = max(0, budget - used - 8)
+            sub  = tail[:room]
+            cut  = max(sub.rfind("\n"), sub.rfind(" "), sub.rfind("\t"))
+            if cut < room * 0.6:
+                cut = room
+            out.append(sub[:cut].rstrip() + "\n\n…(truncated)")
+            return "".join(out)
+        out.append(tail)
+    return "".join(out)
+
+# -------- NEW: key/value to bullets --------
+def _kv_to_bullets(text: str) -> Optional[str]:
+    """Turn key: value lines into neat bullets for readability."""
     if not text:
-        return ""
+        return None
+    kvs = []
+    for ln in text.splitlines():
+        m = KV_RE.match(ln)
+        if m:
+            key, val = m.group(1).strip(), m.group(2).strip()
+            if key.lower() not in {"title", "message", "topic", "tags", "priority"}:
+                kvs.append(f"- **{key}:** {val}")
+    if kvs:
+        return "\n".join(kvs)
+    return None
+
+# -------- Helpers --------
+def _prefer_host_key(url: str) -> int:
     try:
-        t = _TRANSPORT_TAG_RE.sub("", text)
-        t = re.sub(r'\s*\[(?:smtp|proxy|gotify|apprise|email|poster|webhook|imap|ntfy|pushover|telegram)\]\s*', ' ', t, flags=re.I)
-        return re.sub(r'\s{2,}', ' ', t).strip()
-    except:
-        return text
-
-# ----------------------------------------------------------------------------
-# Enhanced time and context awareness
-# ----------------------------------------------------------------------------
-def _daypart(now_ts: Optional[float] = None) -> str:
-    try:
-        t = time.localtime(now_ts or time.time())
-        h = t.tm_hour
-        if 0 <= h < 5:
-            return "early_morning"
-        if 5 <= h < 11:
-            return "morning"
-        if 11 <= h < 17:
-            return "afternoon"
-        if 17 <= h < 21:
-            return "evening"
-        return "late_night"
-    except:
-        return "afternoon"
-
-def _get_context_hints(subject: str = "", body: str = "") -> Dict[str, bool]:
-    """Extract safe context hints from message content"""
-    try:
-        text = f"{subject} {body}".lower()
-        
-        return {
-            # Urgency indicators
-            "is_urgent": any(word in text for word in ["critical", "down", "failed", "error", "urgent", "emergency"]),
-            "is_routine": any(word in text for word in ["backup", "scheduled", "daily", "weekly", "routine", "maintenance"]),
-            "is_completion": any(word in text for word in ["completed", "finished", "done", "success", "passed"]),
-            
-            # System type hints
-            "has_docker": any(word in text for word in ["docker", "container", "pod", "k8s", "kubernetes"]),
-            "has_database": any(word in text for word in ["mysql", "postgres", "database", "db", "sql", "mongodb"]),
-            "has_backup": any(word in text for word in ["backup", "restore", "snapshot", "archive"]),
-            "has_network": any(word in text for word in ["network", "dns", "firewall", "proxy", "nginx"]),
-            
-            # Time context
-            "is_weekend": time.localtime().tm_wday in [5, 6],
-            "is_night": time.localtime().tm_hour < 6 or time.localtime().tm_hour > 22
-        }
-    except:
-        return {
-            "is_urgent": False, "is_routine": False, "is_completion": False,
-            "has_docker": False, "has_database": False, "has_backup": False, 
-            "has_network": False, "is_weekend": False, "is_night": False
-        }
-
-# ============================================================================
-# NEW: SMART CONTEXT ANALYSIS FOR INTELLIGENT LEXI
-# ============================================================================
-
-def _extract_smart_context(subject: str = "", body: str = "") -> Dict:
-    """
-    Advanced context extraction for intelligent Lexi responses
-    Analyzes patterns, numbers, services, and actions for natural language generation
-    """
-    try:
-        text = f"{subject} {body}".lower()
-        
-        # Service/system detection with specificity
-        services = {
-            "sonarr": "sonarr" in text,
-            "radarr": "radarr" in text,
-            "plex": "plex" in text or "jellyfin" in text,
-            "homeassistant": "home assistant" in text or "homeassistant" in text or "ha " in text,
-            "docker": "docker" in text or "container" in text or "pod" in text,
-            "database": any(db in text for db in ["mysql", "postgres", "mariadb", "mongodb", "sql", "database"]),
-            "backup": "backup" in text or "snapshot" in text or "archive" in text,
-            "network": any(net in text for net in ["network", "dns", "proxy", "nginx", "firewall", "vpn"]),
-            "storage": any(stor in text for stor in ["disk", "storage", "mount", "volume", "raid", "zfs"]),
-            "monitoring": any(mon in text for mon in ["uptime", "monitor", "health", "check", "ping", "analytics"]),
-        }
-        active_services = [k for k, v in services.items() if v]
-        
-        # Extract numbers and percentages
-        numbers = re.findall(r'\b\d+(?:\.\d+)?%?\b', text)
-        has_percentage = any('%' in n for n in numbers)
-        has_large_number = any(int(re.sub(r'[^\d]', '', n)) > 1000 for n in numbers if re.sub(r'[^\d]', '', n))
-        
-        # Action/status detection
-        actions = {
-            "completed": any(word in text for word in ["completed", "finished", "done", "success", "passed", "ok"]),
-            "started": any(word in text for word in ["started", "beginning", "initiated", "launching", "starting"]),
-            "failed": any(word in text for word in ["failed", "error", "failure", "unsuccessful", "crashed"]),
-            "warning": any(word in text for word in ["warning", "caution", "attention", "degraded", "slow"]),
-            "updated": any(word in text for word in ["updated", "upgraded", "patched", "modified", "refreshed"]),
-            "restarted": any(word in text for word in ["restarted", "rebooted", "cycled", "bounced", "restart"]),
-            "connected": any(word in text for word in ["connected", "online", "up", "available", "restored"]),
-            "disconnected": any(word in text for word in ["disconnected", "offline", "down", "unavailable", "lost"]),
-        }
-        active_action = next((k for k, v in actions.items() if v), "generic")
-        
-        # Urgency scoring (0-10)
-        urgency_score = 0
-        if any(word in text for word in ["critical", "emergency", "urgent", "immediate"]):
-            urgency_score += 5
-        if any(word in text for word in ["down", "offline", "failed", "error"]):
-            urgency_score += 3
-        if any(word in text for word in ["warning", "degraded", "slow"]):
-            urgency_score += 2
-        if any(word in text for word in ["success", "completed", "healthy", "ok"]):
-            urgency_score -= 2
-        urgency_score = max(0, min(10, urgency_score))
-        
-        # Pattern detection
-        is_test = "test" in text
-        is_notification = "notification" in text
-        is_automated = any(auto in text for auto in ["scheduled", "automatic", "cron", "daily", "weekly"])
-        
-        return {
-            "services": active_services,
-            "primary_service": active_services[0] if active_services else None,
-            "action": active_action,
-            "urgency_score": urgency_score,
-            "has_numbers": bool(numbers),
-            "has_percentage": has_percentage,
-            "has_large_number": has_large_number,
-            "is_test": is_test,
-            "is_notification": is_notification,
-            "is_automated": is_automated,
-            "numbers": numbers[:3],  # Keep first 3 numbers
-        }
-    except:
-        return {
-            "services": [], "primary_service": None, "action": "generic",
-            "urgency_score": 0, "has_numbers": False, "has_percentage": False,
-            "has_large_number": False, "is_test": False, "is_notification": False,
-            "is_automated": False, "numbers": []
-        }
-
-def _generate_intelligent_phrase(persona: str, smart_context: Dict, slot: str = "a") -> str:
-    """
-    Generate contextually intelligent phrases based on deep analysis
-    Makes Lexi sound more natural and LLM-like without actual LLM calls
-    """
-    try:
-        service = smart_context.get("primary_service")
-        action = smart_context.get("action", "generic")
-        urgency = smart_context.get("urgency_score", 0)
-        
-        # Service-specific intelligent response patterns
-        service_patterns = {
-            "sonarr": {
-                "completed": ["episode indexed", "series catalogued", "library synced", "metadata current", "queue cleared"],
-                "updated": ["metadata refreshed", "episodes scanned", "queue processed", "series updated", "catalog synced"],
-                "failed": ["download stalled", "import blocked", "source unavailable", "indexer timeout", "queue stuck"],
-                "restarted": ["service cycled", "queue reset", "indexers reconnected", "monitoring resumed"],
-                "generic": ["tv automation active", "series monitored", "queue managed", "episodes tracked", "library maintained"]
-            },
-            "radarr": {
-                "completed": ["film archived", "movie indexed", "collection updated", "catalog current", "library complete"],
-                "updated": ["catalog refreshed", "library synced", "metadata current", "movies scanned", "posters updated"],
-                "failed": ["acquisition blocked", "import failed", "source missing", "indexer down", "download stalled"],
-                "restarted": ["service restored", "indexers reconnected", "queue reloaded", "automation resumed"],
-                "generic": ["movie automation live", "films tracked", "queue active", "collection managed", "catalog monitored"]
-            },
-            "plex": {
-                "completed": ["media scanned", "library updated", "thumbnails generated", "transcode finished"],
-                "updated": ["metadata refreshed", "posters synced", "library indexed", "database optimized"],
-                "failed": ["scan failed", "database locked", "transcode error", "server unreachable"],
-                "restarted": ["server cycled", "services restored", "streams reconnected", "plex reloaded"],
-                "generic": ["streaming ready", "media served", "library accessible", "playback stable"]
-            },
-            "homeassistant": {
-                "completed": ["automation executed", "scene applied", "devices synced", "entities updated"],
-                "updated": ["config reloaded", "integrations synced", "entities refreshed", "dashboard current"],
-                "failed": ["automation blocked", "device offline", "integration failed", "entity unavailable"],
-                "restarted": ["core reloaded", "automations reset", "devices reconnected", "ha cycled"],
-                "generic": ["home controlled", "automations active", "devices monitored", "scenes ready"]
-            },
-            "docker": {
-                "completed": ["container stable", "orchestration complete", "stack healthy", "services aligned"],
-                "restarted": ["services cycled", "containers refreshed", "runtime reset", "pods rescheduled"],
-                "failed": ["container crashed", "pod failed", "orchestration blocked", "healthcheck timeout"],
-                "updated": ["images pulled", "stack updated", "containers patched", "compose synced"],
-                "generic": ["containers managed", "runtime stable", "orchestration active", "stack monitored"]
-            },
-            "database": {
-                "completed": ["queries optimized", "transactions committed", "integrity verified", "indexes rebuilt"],
-                "updated": ["schema synced", "indexes rebuilt", "tables optimized", "stats refreshed"],
-                "failed": ["connection lost", "query blocked", "transaction failed", "deadlock detected"],
-                "restarted": ["connections reset", "pools refreshed", "service cycled", "replicas synced"],
-                "generic": ["data layer stable", "queries responsive", "connections pooled", "transactions flowing"]
-            },
-            "backup": {
-                "completed": ["archives sealed", "snapshots verified", "retention applied", "backup validated"],
-                "started": ["backup initiated", "snapshot capturing", "data securing", "archive building"],
-                "failed": ["backup blocked", "snapshot failed", "retention missed", "destination unreachable"],
-                "generic": ["backup cycle active", "archives managed", "snapshots current", "retention enforced"]
-            },
-            "network": {
-                "completed": ["routes updated", "firewall synced", "dns propagated", "traffic flowing"],
-                "connected": ["link established", "gateway reachable", "routes stable", "connectivity restored"],
-                "disconnected": ["link down", "gateway lost", "route unreachable", "connectivity failed"],
-                "updated": ["rules applied", "config synced", "zones updated", "policies refreshed"],
-                "generic": ["network stable", "traffic routed", "connections managed", "firewall active"]
-            },
-            "storage": {
-                "completed": ["volumes mounted", "raid synced", "quotas applied", "pool healthy"],
-                "warning": ["space low", "degraded array", "smart warning", "quota approaching"],
-                "failed": ["mount failed", "disk error", "raid degraded", "pool unavailable"],
-                "generic": ["storage healthy", "volumes accessible", "arrays stable", "capacity managed"]
-            },
-            "monitoring": {
-                "completed": ["checks passed", "metrics collected", "alerts cleared", "health confirmed"],
-                "failed": ["check failed", "timeout exceeded", "endpoint down", "probe unsuccessful"],
-                "updated": ["metrics refreshed", "alerts synced", "thresholds updated", "dashboards current"],
-                "generic": ["monitoring active", "metrics flowing", "health tracked", "alerts configured"]
-            },
-        }
-        
-        # Get service-specific patterns or fall back to generic
-        patterns = service_patterns.get(service, {})
-        phrases = patterns.get(action, patterns.get("generic", ["status nominal", "system stable"]))
-        
-        # Urgency modifiers
-        if urgency >= 7:
-            urgency_mods = ["immediate", "critical", "urgent", "priority"]
-        elif urgency >= 4:
-            urgency_mods = ["attention", "check", "review", "monitor"]
-        else:
-            urgency_mods = []
-        
-        # Combine intelligently
-        base_phrase = random.choice(phrases)
-        if urgency_mods and slot == "a" and urgency >= 5:
-            return f"{random.choice(urgency_mods)} {base_phrase}"
-        
-        return base_phrase
-        
-    except:
-        return "status nominal"
-
-# ============================================================================
-# END SMART CONTEXT ADDITIONS
-# ============================================================================
-
-def _intensity() -> float:
-    try:
-        v = float(os.getenv("PERSONALITY_INTENSITY", "1.0"))
-        return max(0.6, min(2.0, v))
+        from urllib.parse import urlparse
+        host = (urlparse(url).netloc or "").lower()
+        return 0 if any(k in host for k in LIKELY_POSTER_HOSTS) else 1
     except Exception:
-        return 1.0
+        return 1
 
-# ----------------------------------------------------------------------------
-# Personas, aliases, emojis (unchanged)
-# ----------------------------------------------------------------------------
-PERSONAS = ["dude", "chick", "nerd", "rager", "comedian", "action", "jarvis", "ops", "tappit"]
+def _strip_noise(text: str) -> str:
+    if not text: return ""
+    s = EMOJI_RE.sub("", text)
+    NOISE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
+    kept = [ln for ln in s.splitlines() if not NOISE.match(ln)]
+    return "\n".join(kept)
 
-ALIASES: Dict[str, str] = {
-    "the dude":"dude","lebowski":"dude","bill":"dude","ted":"dude","dude":"dude",
-    "paris":"chick","paris hilton":"chick","chick":"chick","glam":"chick","elle":"chick","elle woods":"chick",
-    "nerd":"nerd","sheldon":"nerd","sheldon cooper":"nerd","cooper":"nerd","moss":"nerd","it crowd":"nerd",
-    "rager":"rager","angry":"rager","rage":"rager","sam":"rager","joe":"rager","pesci":"rager","jackson":"rager",
-    "comedian":"comedian","leslie":"comedian","deadpan":"comedian","nielsen":"comedian","meta":"comedian",
-    "action":"action","sly":"action","arnie":"action","arnold":"action","schwarzenegger":"action","willis":"action",
-    "jarvis":"jarvis","ai":"jarvis","majordomo":"jarvis","hal":"jarvis","hal 9000":"jarvis",
-    "ops":"ops","neutral":"ops","no persona":"ops",
-    "tappit":"tappit","tapit":"tappit","rev":"tappit","ref":"tappit","ref-ref":"tappit"
-}
-
-EMOJIS = {
-    "dude": ["🌴","🕶️","🍹","🎳","🧘","🤙"],
-    "chick":["💅","✨","💖","👛","🛍️","💋"],
-    "nerd":["🤓","📐","🧪","🧠","⌨️","📚"],
-    "rager":["🤬","🔥","💥","🗯️","⚡","🚨"],
-    "comedian":["😑","😂","🎭","🙃","🃏","🥸"],
-    "action":["💪","🧨","🛡️","🚁","🏹","🗡️"],
-    "jarvis":["🤖","🧠","🎩","🪄","📊","🛰️"],
-    "ops":["⚙️","📊","🧰","✅","📎","🗂️"],
-    "tappit":["🏁","🛠️","🚗","🔧","🛞","🇿🇦"]
-}
-
-def _maybe_emoji(key: str, with_emoji: bool) -> str:
-    if not with_emoji:
-        return ""
-    try:
-        bank = EMOJIS.get(key) or []
-        return f" {random.choice(bank)}" if bank else ""
-    except:
-        return ""
-
-# ----------------------------------------------------------------------------
-# CANNED QUIPS (kept for compatibility)
-# ----------------------------------------------------------------------------
-QUIPS = {
-    "ops": ["ack.","done.","noted.","executed.","received.","stable.","running.","applied.","synced.","completed."],
-    "jarvis": [
-        "As always, sir, a great pleasure watching you work.",
-        "Status synchronized, sir; elegance maintained.",
-        "I've taken the liberty of tidying the logs.",
-        "Telemetry aligned; do proceed.",
-        "Your request has been executed impeccably.",
-        "All signals nominal; shall I fetch tea?",
-        "Diagnostics complete; no anomalies worth your time.",
-        "I archived the artifacts; future-you will approve.",
-        "Quiet nights are my love letter to ops.",
-    ],
-    "dude": ["The Dude abides; the logs can, like, chill.","Party on, pipelines. CI is totally non-bogus."],
-    "chick":["That's hot—ship it with sparkle.","Zero-downtime? She's beauty, she's grace."],
-    "nerd":["This is the optimal outcome. Bazinga.","Measured twice; compiled once."],
-    "rager":["Say downtime again. I fucking dare you.","Push it now or I'll lose my goddamn mind."],
-    "comedian":["Remarkably unremarkable—my favorite kind of uptime.","Doing nothing is hard; you never know when you're finished."],
-    "action":["Consider it deployed.","System secure. Threat neutralized."],
-    "tappit":["Howzit bru—green lights all round.","Lekker clean; keep it sharp-sharp."],
-}
-
-def _apply_daypart_flavor_inline(persona: str, text: str, context_hints: Dict = None) -> str:
-    """Enhanced context-aware flavor injection"""
-    try:
-        dp = _daypart()
-        
-        # Enhanced time-based flavor table
-        table = {
-            "early_morning": {
-                "rager": "too early for this shit",
-                "jarvis": "pre-dawn service, discreet",
-                "chick": "first-light polish",
-                "dude": "quiet boot cycle",
-                "tappit": "early start, sharp-sharp",
-                "action": "dawn ops, silent",
-                "nerd": "early batch processing",
-                "comedian": "sunrise comedy, nobody laughing"
-            },
-            "morning": {
-                "rager": "coffee then chaos, not now",
-                "jarvis": "morning throughput aligned",
-                "chick": "daylight-ready glam",
-                "dude": "fresh-cache hours",
-                "tappit": "morning run, no kak",
-                "action": "morning brief, proceed",
-                "nerd": "daily standup validated",
-                "comedian": "morning show, still boring"
-            },
-            "afternoon": {
-                "rager": "peak-traffic nonsense trimmed",
-                "jarvis": "prime-time cadence",
-                "chick": "runway hours",
-                "dude": "cruising altitude",
-                "tappit": "midday jol, keep it tidy",
-                "action": "afternoon ops, steady",
-                "nerd": "optimal processing window",
-                "comedian": "matinee performance, empty seats"
-            },
-            "evening": {
-                "rager": "golden hour, don't start",
-                "jarvis": "twilight shift, composed",
-                "chick": "prime-time glam",
-                "dude": "dusk patrol vibes",
-                "tappit": "evening cruise, no drama",
-                "action": "evening watch, alert",
-                "nerd": "end-of-day validation",
-                "comedian": "evening news, nobody watching"
-            },
-            "late_night": {
-                "rager": "too late for your bullshit",
-                "jarvis": "after-hours, immaculate",
-                "chick": "after-party polish",
-                "dude": "midnight mellow",
-                "tappit": "graveyard calm, bru",
-                "action": "night watch, silent",
-                "nerd": "overnight processing",
-                "comedian": "late night, audience asleep"
-            }
-        }
-        
-        # Context-based flavor overrides
-        if context_hints:
-            if context_hints.get("is_urgent"):
-                urgent_flavors = {
-                    "jarvis": "immediate attention required",
-                    "rager": "urgent shit needs fixing",
-                    "action": "critical mission status",
-                    "dude": "emergency, but chill"
-                }
-                flavor = urgent_flavors.get(persona, "")
-            elif context_hints.get("is_weekend"):
-                weekend_flavors = {
-                    "jarvis": "weekend service protocols",
-                    "rager": "weekend duty bullshit",
-                    "dude": "weekend vibes active",
-                    "tappit": "weekend jol mode"
-                }
-                flavor = weekend_flavors.get(persona, "")
-            else:
-                flavor = table.get(dp, {}).get(persona, "")
-        else:
-            flavor = table.get(dp, {}).get(persona, "")
-        
-        if not flavor:
-            return text
-        
-        # Replace {time} token if present
-        if "{time}" in text:
-            return text.replace("{time}", flavor)
-        return text
-    except:
-        return text.replace("{time}", "") if "{time}" in text else text
-
-# ----------------------------------------------------------------------------
-# Public API: canned quip (kept; not used for header post-rebuild)
-# ----------------------------------------------------------------------------
-def quip(persona_name: str, *, with_emoji: bool = True) -> str:
-    try:
-        key = ALIASES.get((persona_name or "").strip().lower(), (persona_name or "").strip().lower()) or "ops"
-        if key not in QUIPS:
-            key = "ops"
-        bank = QUIPS.get(key, QUIPS["ops"])
-        line = random.choice(bank) if bank else ""
-        if _intensity() > 1.25 and line and line[-1] in ".!?":
-            line = line[:-1] + random.choice([".", "!", "!!"])
-        line = _apply_daypart_flavor_inline(key, line + " {time}").replace(" {time}", "")
-        return f"{line}{_maybe_emoji(key, with_emoji)}"
-    except:
-        return "ack."
-
-# ----------------------------------------------------------------------------
-# Helper: canonicalize persona key
-# ----------------------------------------------------------------------------
-def _canon(name: str) -> str:
-    try:
-        n = (name or "").strip().lower()
-        key = ALIASES.get(n, n)
-        return key if key in PERSONAS else "ops"
-    except:
-        return "ops"
-
-# ----------------------------------------------------------------------------
-# LLM plumbing (enhanced with context awareness)
-# ----------------------------------------------------------------------------
-_PROF_RE = re.compile(r"(?i)\b(fuck|shit|damn|asshole|bitch|bastard|dick|pussy|cunt)\b")
-
-def _soft_censor(s: str) -> str:
-    return _PROF_RE.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), s)
-
-def _post_clean(lines: List[str], persona_key: str, allow_prof: bool) -> List[str]:
-    if not lines:
-        return []
+def _normalize(text: str) -> str:
+    s = (text or "").replace("\t","  ")
+    s = re.sub(r'[ \t]+$', "", s, flags=re.M)
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    return s.strip()
+def _linewise_dedup_markdown(text: str, protect_message: bool = False) -> str:
+    """Safe de-dup that never splits on '.' and can protect the 📝 Message block."""
+    lines = text.splitlines()
     out: List[str] = []
-    BAD = ("persona","rules","rule:","instruction","instruct","guideline","system prompt","style hint",
-           "lines:","respond with","produce only","you are","jarvis prime","[system]","[input]","[output]")
-    seen = set()
-    for ln in lines:
-        t = strip_transport_tags(ln.strip())
-        if not t:
-            continue
-        low = t.lower()
-        if any(b in low for b in BAD):
-            continue
-        if len(t) > 140:
-            t = t[:140].rstrip()
-        if persona_key != "rager" and not allow_prof:
-            t = _soft_censor(t)
-        k = t.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(t)
-        if len(out) >= int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3):
-            break
-    return out
+    seen: set = set()
+    in_code = False
+    in_msg  = False
 
-def llm_quips(persona_name: str, *, context: str = "", max_lines: int = 3) -> List[str]:
-    if os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() not in ("1","true","yes"):
+    for ln in lines:
+        t = ln.rstrip()
+
+        # code fences pass-through
+        if t.strip().startswith("```"):
+            in_code = not in_code
+            out.append(t); continue
+        if in_code:
+            out.append(t); continue
+
+        # Message block protection
+        if protect_message:
+            if t.strip().startswith("📝 Message"):
+                in_msg = True
+                out.append(t); continue
+            if in_msg and (t.strip().startswith("📄 ") or t.strip().startswith("🧠 ") or t.strip().startswith("![") or t.strip().startswith("📟 ")):
+                in_msg = False
+
+        if protect_message and in_msg:
+            out.append(t)
+            continue
+
+        key = re.sub(r'\s+', ' ', t.strip()).lower()
+        if key and key not in seen:
+            seen.add(key); out.append(t)
+        elif t.strip() == "":
+            if out and out[-1].strip() != "":
+                out.append(t)
+
+    return "\n".join(out).strip()
+
+def _harvest_images(text: str) -> Tuple[str, List[str], List[str]]:
+    """Strip images from body but keep meaning: retain ALT as [image: ALT]."""
+    if not text: return "", [], []
+    urls: List[str] = []
+    alts: List[str] = []
+
+    def _md(m):
+        alt = (m.group(1) or "").strip()
+        url = m.group(2)
+        alts.append(alt)
+        urls.append(url)
+        return f"[image: {alt}]" if alt else "[image]"
+
+    def _bare(m):
+        u = m.group(1).rstrip('.,;:)]>"\'')
+        urls.append(u)
+        return ""  # remove bare URL
+
+    text = MD_IMG_RE.sub(_md, text)
+    text = IMG_URL_RE.sub(_bare, text)
+
+    uniq=[]; seen=set()
+    for u in sorted(urls, key=_prefer_host_key):
+        if u not in seen: seen.add(u); uniq.append(u)
+    return text.strip(), uniq, alts
+
+def _find_ips(*texts: str) -> List[str]:
+    ips=[]; seen=set()
+    for t in texts:
+        if not t: continue
+        for m in IP_RE.finditer(t):
+            ip = m.group(0)
+            if ip not in seen: seen.add(ip); ips.append(ip)
+    return ips
+
+def _repair_ipv4(val: str, *contexts: str) -> str:
+    cand = re.sub(r'\s*\.\s*', '.', (val or '').strip())
+    m = IP_RE.search(cand)
+    if m: return m.group(0)
+    parts = re.findall(r'\d{1,3}', cand)
+    if len(parts) == 4:
+        j = '.'.join(parts)
+        if IP_RE.fullmatch(j): return j
+    for ctx in contexts:
+        m = IP_RE.search(ctx or "")
+        if m: return m.group(0)
+    return val.strip()
+
+def _first_nonempty_line(s: str) -> str:
+    for ln in (s or "").splitlines():
+        t = ln.strip()
+        if t: return t
+    return ""
+
+def _fmt_kv(label: str, value: str) -> str:
+    v = value.strip()
+    if re.search(r'\d', v):  # emphasize numeric values
+        v = f"`{v}`"
+    return f"- **{label.strip()}:** {v}"
+# -------- Persona overlay --------
+def _persona_overlay_line(persona: Optional[str]) -> Optional[str]:
+    if not persona: return None
+    try:
+        mod = importlib.import_module("personality")
+        mod = importlib.reload(mod)
+        quip = ""
+        if hasattr(mod, "quip"):
+            try: quip = str(mod.quip(persona) or "").strip()
+            except Exception: quip = ""
+        return f"💬 {persona} says: {'— ' + quip if quip else ''}".rstrip()
+    except Exception:
+        return f"💬 {persona} says:"
+
+# -------- Minimal header (no dash bars) --------
+def _header(kind: str, badge: str = "") -> List[str]:
+    return [f"📟 Jarvis Prime {badge}".rstrip()]
+
+def _severity_badge(text: str) -> str:
+    low = text.lower()
+    if re.search(r'\b(error|failed|critical)\b', low): return "❌"
+    if re.search(r'\b(warn|warning)\b', low): return "⚠️"
+    if re.search(r'\b(success|ok|online|completed|pass|finished)\b', low): return "✅"
+    return ""
+
+def _looks_json(body: str) -> bool:
+    try: json.loads(body); return True
+    except Exception: return False
+
+def _detect_type(title: str, body: str) -> str:
+    tb = (title + " " + body).lower()
+    if "speedtest" in tb: return "SpeedTest"
+    if "apt" in tb or "dpkg" in tb: return "APT Update"
+    if "watchtower" in tb: return "Watchtower"
+    if "qnap" in tb or "qts" in tb: return "QNAP"
+    if "sonarr" in tb: return "Sonarr"
+    if "radarr" in tb: return "Radarr"
+    if _looks_json(body): return "JSON"
+    if "error" in tb or "warning" in tb or "failed" in tb: return "Log Event"
+    return "Message"
+
+def _harvest_timestamp(title: str, body: str) -> Optional[str]:
+    for src in (title or "", body or ""):
+        for rx in (TS_RE, DATE_ONLY_RE, TIME_ONLY_RE):
+            m = rx.search(src)
+            if m: return m.group(0).strip()
+    return None
+
+# ====== Options & toggles ======
+def _read_options() -> Dict[str, Any]:
+    try:
+        with open("/data/options.json", "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+def _bool_from_env(*names: str, default: bool = False) -> bool:
+    for n in names:
+        v = (os.getenv(n) or "").strip().lower()
+        if v in ("1","true","yes","on"):  return True
+        if v in ("0","false","no","off"): return False
+    return default
+
+def _bool_from_options(opt: Dict[str, Any], key: str, default: Optional[bool] = None) -> Optional[bool]:
+    """Returns True/False/None to distinguish explicit false from missing key"""
+    if key not in opt:
+        return default
+    try:
+        v = str(opt.get(key, default)).strip().lower()
+        return v in ("1","true","yes","on")
+    except Exception:
+        return default
+def _riffs_enabled() -> bool:
+    """Check if riffs are enabled at all (Lexi OR LLM) - does NOT check llm_enabled"""
+    opt = _read_options()
+    opt_riffs = _bool_from_options(opt, "llm_persona_riffs_enabled", default=None)
+    if opt_riffs is not None:
+        return opt_riffs
+    # Default: enabled
+    return True
+
+def _llm_enabled() -> bool:
+    """Check if LLM itself is enabled (master switch)"""
+    opt = _read_options()
+    llm_master = _bool_from_options(opt, "llm_enabled", default=None)
+    if llm_master is not None:
+        return llm_master
+    return _bool_from_env("BEAUTIFY_LLM_ENABLED", "llm_enabled", default=True)
+
+def _personality_enabled() -> bool:
+    opt = _read_options()
+    env_enabled = _bool_from_env("PERSONALITY_ENABLED", default=True)
+    return _bool_from_options(opt, "personality_enabled", default=env_enabled)
+
+def _ui_persona_header_enabled() -> bool:
+    opt = _read_options()
+    env_enabled = _bool_from_env("UI_PERSONA_HEADER", default=True)
+    return _bool_from_options(opt, "ui_persona_header", default=env_enabled)
+
+def _llm_message_rewrite_enabled() -> bool:
+    """Rewrites require BOTH llm_enabled=true AND llm_rewrite_enabled=true"""
+    opt = _read_options()
+    
+    # Master switch: if llm_enabled is explicitly false, rewrites are OFF
+    llm_master = _bool_from_options(opt, "llm_enabled", default=None)
+    if llm_master is False:
+        return False
+    
+    # Check rewrite-specific toggle (default false, must be explicitly enabled)
+    return _bool_from_options(opt, "llm_rewrite_enabled", default=False)
+
+def _llm_message_rewrite_max_chars() -> int:
+    opt = _read_options()
+    try:
+        return int(opt.get("llm_message_rewrite_max_chars", 350))
+    except Exception:
+        return 350
+
+# ============================
+# Riffs (FIXED: Proper Lexi fallback when LLM off)
+# ============================
+def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
+    """
+    FIXED: Returns LLM riffs if LLM enabled, Lexi riffs if LLM disabled but riffs enabled.
+    """
+    if not persona:
         return []
     
-    try:
-        key = _canon(persona_name)
-        context = strip_transport_tags((context or "").strip())
-        if not context:
-            return []
-        allow_prof = (key == "rager") or (os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes"))
+    # Check if riffs are enabled at all
+    if not _riffs_enabled():
+        return []
+    
+    # Check if LLM is enabled to decide which riff engine
+    llm_on = _llm_enabled()
+    
+    if llm_on:
+        # LLM is ON → try LLM riffs via llm_client
+        try:
+            import importlib
+            llm = importlib.import_module("llm_client")
+            llm = importlib.reload(llm)
+            out = llm.persona_riff(persona=persona, context=context)
+            if isinstance(out, list) and out:
+                return [s.strip() for s in out if s and s.strip()]
+            if isinstance(out, str) and out.strip():
+                return [out.strip()]
+        except Exception:
+            pass
         
+        # Fallback to personality.llm_quips if llm_client failed
+        try:
+            mod = importlib.import_module("personality")
+            mod = importlib.reload(mod)
+            if hasattr(mod, "llm_quips"):
+                max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
+                out = mod.llm_quips(persona, context=context, max_lines=max_lines)
+                if isinstance(out, list):
+                    return [str(x).strip() for x in out if str(x).strip()]
+        except Exception:
+            pass
+    else:
+        # LLM is OFF, riffs ON → use Lexi fallback (FIXED)
+        try:
+            mod = importlib.import_module("personality")
+            mod = importlib.reload(mod)
+            if hasattr(mod, "lexi_riffs"):
+                max_lines = int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or "3")
+                
+                # FIXED: Extract subject properly for better Lexi context
+                subj = ""
+                body_text = context or ""
+                
+                # Try to extract subject from context
+                m = re.search(r"(?:^|\n)Subject:\s*(.+?)(?:\n|$)", context, flags=re.I)
+                if m:
+                    subj = m.group(1).strip()
+                    # Remove subject line from body
+                    body_text = re.sub(r"(?:^|\n)Subject:\s*.+?(?:\n|$)", "\n", context, flags=re.I).strip()
+                
+                # If no subject found, use first meaningful line
+                if not subj:
+                    for line in (context or "").splitlines():
+                        clean_line = line.strip()
+                        if clean_line and len(clean_line) > 5:
+                            subj = clean_line[:120]
+                            break
+                
+                # Default subject if still empty
+                if not subj:
+                    subj = "Update"
+                
+                # Call lexi_riffs with proper parameters
+                out = mod.lexi_riffs(
+                    persona_name=persona,
+                    n=max_lines,
+                    with_emoji=False,  # No emoji in riffs
+                    subject=subj,
+                    body=body_text
+                )
+                
+                if isinstance(out, list) and out:
+                    # Clean and return
+                    cleaned = [str(x).strip() for x in out if str(x).strip()]
+                    return cleaned[:max_lines]
+        except Exception as e:
+            # Debug: print the error if in debug mode
+            if os.getenv("BEAUTIFY_DEBUG", "").lower() in ("1","true","yes"):
+                print(f"[beautify] Lexi riffs error: {e}")
+            pass
+    
+    return []
+# >>> NEW: neutral LLM rewrite (no persona), respects only config.json toggle
+def _neutral_llm_rewrite(context: str, max_chars: int = 350) -> Optional[str]:
+    """
+    Neutral, terse rewrite to keep key facts. No persona. Returns None to keep original.
+    """
+    if not _llm_message_rewrite_enabled():
+        return None
+    try:
         llm = importlib.import_module("llm_client")
-        
-        # Enhanced context-aware persona descriptions
-        context_hints = _get_context_hints("", context)
-        daypart = _daypart()
-        
-        # Build enhanced persona tone with context
-        base_tones = {
-            "dude": "Laid-back slacker-zen; mellow, cheerful, kind. Keep it short, breezy, and confident.",
-            "chick":"Glamorous couture sass; bubbly but razor-sharp. Supportive, witty, stylish, high standards.",
-            "nerd":"Precise, pedantic, dry wit; obsessed with correctness, determinism, graphs, and tests.",
-            "rager":"Intense, profane, street-tough cadence. Blunt, kinetic, zero patience for nonsense.",
-            "comedian":"Deadpan spoof meets irreverent meta—fourth-wall pokes, concise and witty.",
-            "action":"Terse macho one-liners; tactical, sardonic; mission-focused and decisive.",
-            "jarvis":"Polished valet AI with calm, clinical machine logic. Courteous, anticipatory.",
-            "ops":"Neutral SRE acks; laconic, minimal flourish.",
-            "tappit": "South African bru/lekker slang; cheeky but clear; no filler.",
-        }
-        
-        persona_tone = base_tones.get(key, "Short, clean, persona-true one-liners.")
-        
-        # Add context enhancements
-        context_additions = []
-        if context_hints["is_urgent"]:
-            context_additions.append(f"{daypart} emergency response mode")
-        elif context_hints["is_weekend"]:
-            context_additions.append(f"{daypart} weekend operations")
-        else:
-            context_additions.append(f"{daypart} operations")
-        
-        if context_hints["has_docker"]:
-            context_additions.append("container environment")
-        if context_hints["has_database"]:
-            context_additions.append("database operations")
-        if context_hints["has_backup"]:
-            context_additions.append("backup/restore context")
-        
-        enhanced_tone = persona_tone
-        if context_additions:
-            enhanced_tone += f" Context: {', '.join(context_additions)}."
-        
-        style_hint = f"daypart={daypart}, intensity={_intensity():.2f}, persona={key}"
-        
-        # Primary persona_riff
-        if hasattr(llm, "persona_riff"):
-            try:
-                lines = llm.persona_riff(
-                    persona=key,
-                    context=context,
-                    max_lines=int(max_lines or int(os.getenv("LLM_PERSONA_LINES_MAX", "3") or 3)),
-                    timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
-                    cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
-                    models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
-                    base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
-                    model_url=os.getenv("LLM_MODEL_URL", ""),
-                    model_path=os.getenv("LLM_MODEL_PATH", "")
-                )
-                lines = _post_clean(lines, key, allow_prof)
-                if lines:
-                    return lines
-            except Exception:
-                pass
-        
-        # Fallback rewrite
+    except Exception:
+        return None
+    try:
+        # Keep it neutral + short; no formatting, no lists, no emojis.
+        sys_prompt = (
+            "YOU ARE A NEUTRAL, TERSE REWRITER.\n"
+            f"Rules: Preserve key facts, remove fluff, <= {max_chars} chars, no bullets, no markdown, no emojis, no persona."
+        )
+        user_prompt = "Rewrite neutrally:\n" + (context or "").strip()
         if hasattr(llm, "rewrite"):
-            try:
-                sys_prompt = (
-                    "YOU ARE A PITHY ONE-LINER ENGINE.\n"
-                    f"Persona: {key}.\n"
-                    f"Tone: {enhanced_tone}\n"
-                    f"Context flavor: {style_hint}.\n"
-                    f"Rules: Produce ONLY {min(3, max(1, int(max_lines or 3)))} lines; each under 140 chars.\n"
-                    "No lists, no numbers, no JSON, no labels."
-                )
-                user_prompt = "Context (for vibes only):\n" + context + "\n\nWrite the lines now:"
-                raw = llm.rewrite(
-                    text=f"""[SYSTEM]
-{sys_prompt}
-[INPUT]
-{user_prompt}
-[OUTPUT]
-""",
-                    mood=key,
-                    timeout=int(os.getenv("LLM_TIMEOUT_SECONDS", "8")),
-                    cpu_limit=int(os.getenv("LLM_MAX_CPU_PERCENT", "70")),
-                    models_priority=os.getenv("LLM_MODELS_PRIORITY", "").split(",") if os.getenv("LLM_MODELS_PRIORITY") else None,
-                    base_url=os.getenv("LLM_OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", ""),
-                    model_url=os.getenv("LLM_MODEL_URL", ""),
-                    model_path=os.getenv("LLM_MODEL_PATH", ""),
-                    allow_profanity=True if key == "rager" else bool(os.getenv("PERSONALITY_ALLOW_PROFANITY", "false").lower() in ("1","true","yes")),
-                )
-                lines = [ln.strip(" -*\t") for ln in (raw or "").splitlines() if ln.strip()]
-                lines = _post_clean(lines, key, allow_prof)
-                return lines
-            except Exception:
-                pass
-        
-        return []
-    except:
-        return []
+            raw = llm.rewrite(
+                text=f"[SYSTEM]\n{sys_prompt}\n[INPUT]\n{user_prompt}\n[OUTPUT]\n",
+                mood="neutral",
+                timeout=8,
+                cpu_limit=70,
+                allow_profanity=False,
+            )
+            s = (raw or "").strip()
+            if s:
+                return s[:max_chars].strip()
+    except Exception:
+        pass
+    return None
 
-# ----------------------------------------------------------------------------
-# === ENHANCED LEXI ENGINE WITH INTELLIGENT CONTEXT ===========================
-# ----------------------------------------------------------------------------
-# Persona→bank key mapping for headers
-_PERSONA_BANK_KEY = {
-    "ops": "ack",
-    "rager": "rage",
-    "comedian": "quip",
-    "action": "line",
-    "jarvis": "line",
-    "tappit": "line",
-    "dude": "line",
-    "chick": "line",
-    "nerd": "line",
-}
+# --------- global helpers for riffs & persona ----------
+def _effective_persona(passed_persona: Optional[str]) -> Optional[str]:
+    if passed_persona:
+        return passed_persona
+    try:
+        with open("/data/personality_state.json", "r", encoding="utf-8") as f:
+            st = json.load(f)
+            p = (st.get("current_persona") or "").strip()
+            if p:
+                return p
+    except Exception:
+        pass
+    try:
+        with open("/data/options.json", "r", encoding="utf-8") as f:
+            opt = json.load(f)
+            p = (opt.get("default_persona") or "").strip()
+            if p:
+                return p
+    except Exception:
+        pass
+    p = (os.getenv("DEFAULT_PERSONA") or "").strip()
+    return p or None
 
-# Base lexicons (kept for fallback)
-_LEX: Dict[str, Dict[str, List[str]]] = {
-    "ops": {
-        "ack": [
-            "ack","done","noted","executed","received","stable","running","applied","synced","completed",
-            "success","confirmed","ready","scheduled","queued","accepted","active","closed","green","healthy",
-        ]
-    },
-    "jarvis": {
-        "line": [
-            "archived; assured","telemetry aligned; noise filtered","graceful rollback prepared; confidence high",
-            "housekeeping complete; logs polished","secrets vaulted; protocol upheld","latency escorted; budgets intact",
-        ]
-    },
-    "nerd": {
-        "line": [
-            "validated; consistent","checksums aligned; assertions hold","p99 stabilized; invariants preserved",
-            "error rate bounded; throughput acceptable","deterministic; idempotent by design","schema respected; contract satisfied",
-        ]
-    },
-    "action": {
-        "line": [
-            "targets green; advance approved","threat neutralized; perimeter holds","payload verified; proceed",
-            "rollback vector armed; safety on","triage fast; stabilize faster","deploy quiet; results loud",
-        ]
-    },
-    "comedian": {
-        "quip": [
-            "remarkably unremarkable; thrillingly boring","adequate; save your applause","green and seen; don't clap at once",
-            "plot twist: stable; credits roll quietly","laugh track muted; uptime refuses drama","peak normal; show cancelled",
-        ]
-    },
-    "dude": {
-        "line": [
-            "verified; keep it mellow","queues breathe; vibes stable","roll with it; no drama",
-            "green checks; take it easy","cache hits high; chill intact","latency surfed; tide calm",
-        ]
-    },
-    "chick": {
-        "line": [
-            "QA-clean; runway-ready","zero-downtime; she's grace","polish applied; ship with shine",
-            "alerts commitment-ready; logs tasteful","secure defaults; couture correct","green across; camera-ready",
-        ]
-    },
-    "rager": {
-        "rage": [
-            "kill the flake; ship the fix","stop the damn noise; own the pager","sorted; now piss off",
-            "you mother fucker you; done","fuckin' prick; fix merged","piece of shit; rollback clean",
-        ]
-    },
-    "tappit": {
-        "line": [
-            "sorted bru; lekker clean","sharp-sharp; no kak","howzit bru; all green",
-            "pipeline smooth; keep it tidy","idling lekker; don't stall","give it horns; not drama",
-        ]
+def _global_riff_hint(extras_in: Optional[Dict[str, Any]], source_hint: Optional[str]) -> bool:
+    if isinstance(extras_in, dict) and "riff_hint" in extras_in:
+        try:
+            return bool(extras_in.get("riff_hint"))
+        except Exception:
+            return True
+    src = (source_hint or "").strip().lower()
+    auto_sources = {
+        "smtp","proxy","webhook","webhooks","apprise","gotify","ntfy",
+        "sonarr","radarr","watchtower","speedtest","apt","syslog","qnap"
     }
-}
+    if src in auto_sources:
+        return True
+    default_on = os.getenv("BEAUTIFY_RIFFS_DEFAULT", "true").lower() in ("1","true","yes")
+    return default_on
 
-# Enhanced templates
-_TEMPLATES: Dict[str, List[str]] = {
-    "default": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a} and {b}.",
-        "{subj}: {a}; {b}."
-    ],
-    "nerd": [
-        "{subj}: {a}; {b}.",
-        "{subj}: formally {a}, technically {b}.",
-        "{subj}: {a} — {time}; {b}.",
-        "{subj}: {a}; invariants hold; {b}."
-    ],
-    "jarvis": [
-        "{subj}: {a}. {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a} — {time}; {b}.",
-        "{subj}: {a}; {b}. As you wish."
-    ],
-    "rager": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}, {b}.",
-        "{subj}? {a}. {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "tappit": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "ops": [
-        "{subj}: {a}. {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj} — {a}. {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "dude": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "chick": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "comedian": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-    "action": [
-        "{subj}: {a}. {b}.",
-        "{subj} — {a}; {b}.",
-        "{subj}: {a}; {b}.",
-        "{subj}: {a}. {b}."
-    ],
-}
+def _debug(msg: str) -> None:
+    if os.getenv("BEAUTIFY_DEBUG", "").lower() in ("1","true","yes"):
+        try:
+            print(f"[beautify] {msg}")
+        except Exception:
+            pass
 
-def _bank_for(persona: str, smart_context: Dict = None) -> List[str]:
-    """Get vocabulary bank with intelligent context expansion"""
+# ===== global OFF switch =====
+def _beautify_is_disabled() -> bool:
+    env = (os.getenv("BEAUTIFY_ENABLED") or "").strip().lower()
+    if env in ("0","false","no","off","disabled"):
+        return True
     try:
-        key = _PERSONA_BANK_KEY.get(persona, "ack")
-        base_bank = _LEX.get(persona, {}).get(key, [])
-        if not base_bank:
-            base_bank = _LEX.get("ops", {}).get("ack", ["ok","noted"])
-        
-        # If smart context available, use intelligent phrase generation
-        if smart_context and smart_context.get("primary_service"):
-            # Generate 2 intelligent phrases
-            intelligent_phrases = [
-                _generate_intelligent_phrase(persona, smart_context, "a"),
-                _generate_intelligent_phrase(persona, smart_context, "b")
-            ]
-            # Mix with base bank (70% intelligent, 30% base)
-            combined = intelligent_phrases + intelligent_phrases + intelligent_phrases + base_bank
-            return combined
-        
-        return base_bank
-    except:
-        return ["ok", "noted"]
+        with open("/data/options.json","r",encoding="utf-8") as f:
+            opt = json.load(f)
+            v = str(opt.get("beautify_enabled","true")).strip().lower()
+            if v in ("0","false","no","off","disabled"):
+                return True
+    except Exception:
+        pass
+    return False
+# ============================
+# Watchtower-aware summarizer (LESS AGGRESSIVE)
+# ============================
+_WT_HOST_RX = re.compile(r'\bupdates?\s+on\s+([A-Za-z0-9._-]+)', re.I)
+_WT_UPDATED_RXES = [
+    re.compile(
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*(?P<img>[^)]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        re.I),
+    re.compile(
+        r'^\s*[-*]\s*(?P<name>/?[A-Za-z0-9._-]+)\s*:\s*(?P<old>[0-9a-f]{7,64})\s+updated\s+to\s+(?P<new>[0-9a-f]{7,64})\s*$',
+        re.I),
+]
+_WT_FRESH_RX = re.compile(r':\s*Fresh\s*$', re.I)
 
-def _templates_for(persona: str) -> List[str]:
-    """Get templates"""
-    try:
-        return _TEMPLATES.get(persona, _TEMPLATES.get("default", []))
-    except:
-        return _TEMPLATES.get("default", [])
+def _watchtower_host_from_title(title: str) -> Optional[str]:
+    m = _WT_HOST_RX.search(title or "")
+    if m:
+        return m.group(1).strip()
+    return None
 
-def _choose_two(bank: List[str]) -> Tuple[str, str]:
+def _opt_int(name: str, default: int) -> int:
+    opt = _read_options()
     try:
-        if len(bank) < 2:
-            return (bank[0] if bank else "ok", "noted")
-        a = random.choice(bank)
-        b_choices = [x for x in bank if x != a]
-        b = random.choice(b_choices) if b_choices else a
-        return a, b
-    except:
-        return ("ok", "noted")
+        return int(opt.get(name, default))
+    except Exception:
+        return default
 
-# --- Public: Enhanced Lexi header quip with intelligent context ---
-def lexi_quip(persona_name: str, *, with_emoji: bool = True, subject: str = "", body: str = "") -> str:
-    """Enhanced lexi quip with intelligent context awareness"""
+def _opt_bool(name: str, default: bool) -> bool:
+    opt = _read_options()
     try:
-        persona = _canon(persona_name)
-        subj = strip_transport_tags((subject or "Update").strip().replace("\n"," "))[:120]
-        
-        # Get smart context for intelligent phrase generation
-        smart_context = _extract_smart_context(subject, body)
-        context_hints = _get_context_hints(subject, body)
-        
-        # Get contextual vocabulary and templates
-        bank = _bank_for(persona, smart_context)
-        templates = _templates_for(persona)
-        
-        # Choose template and phrases
-        tmpl = random.choice(templates)
-        a, b = _choose_two(bank)
-        
-        # Format and apply context
-        line = tmpl.format(subj=subj, a=a, b=b, time="{time}")
-        line = _apply_daypart_flavor_inline(persona, line, context_hints)
-        
-        # Add emoji
-        line = f"{line}{_maybe_emoji(persona, with_emoji)}"
-        return line
-    except:
-        return f"{subject or 'Update'}: ok. noted."
+        v = str(opt.get(name, default)).strip().lower()
+        return v in ("1","true","yes","on")
+    except Exception:
+        return default
 
-# --- Public: Enhanced Lexi riffs with intelligent context ---
-def lexi_riffs(persona_name: str, n: int = 3, *, with_emoji: bool = False, subject: str = "", body: str = "") -> List[str]:
-    """Enhanced lexi riffs with intelligent context awareness"""
-    try:
-        persona = _canon(persona_name)
-        subj = strip_transport_tags((subject or "Update").strip().replace("\n"," "))[:120]
-        body_clean = strip_transport_tags((body or "").strip())
-        
-        # Get smart context for intelligent phrase generation
-        smart_context = _extract_smart_context(subject, body)
-        context_hints = _get_context_hints(subject, body)
-        
-        templates = _templates_for(persona)
-        bank = _bank_for(persona, smart_context)
-        
-        out: List[str] = []
-        
-        for _ in range(max(6, n*3)):  # oversample for uniqueness
-            tmpl = random.choice(templates)
-            a, b = _choose_two(bank)
-            base = tmpl.format(subj=subj, a=a, b=b, time="{time}")
-            base = _apply_daypart_flavor_inline(persona, base, context_hints)
-            line = base
-            
-            # Hard cap length and strip emoji (no emoji for riffs)
-            line = re.sub(r"[\U0001F300-\U0001FAFF]", "", line)  # remove emojis
-            line = line.strip()
-            if len(line) > 140:
-                line = line[:140].rstrip()
-            if line not in out:
-                out.append(line)
-            if len(out) >= n:
+def _summarize_watchtower(title: str, body: str, limit: int = 50) -> Tuple[str, Dict[str, Any]]:
+    lines = (body or "").splitlines()
+    updated: List[Tuple[str, str, str, str]] = []
+    raw_kept: List[str] = []
+    for ln in lines:
+        if _WT_FRESH_RX.search(ln):
+            continue
+        matched = False
+        for rx in _WT_UPDATED_RXES:
+            m = rx.match(ln)
+            if m:
+                name = (m.groupdict().get("name") or "").strip()
+                img  = (m.groupdict().get("img") or "").strip()
+                old  = (m.groupdict().get("old") or "").strip()
+                new  = (m.groupdict().get("new") or "").strip()
+                if not img:
+                    img = name
+                updated.append((name, img, old, new))
+                matched = True
                 break
-        
-        return out
-    except:
-        return [f"{subject or 'Update'}: ok.", "noted.", "done."][:n]
+        if not matched:
+            raw_kept.append(ln)
 
-# --- Convenience header generator used by caller for the TOP line ------------
-def persona_header(persona_name: str, subject: str = "", body: str = "") -> str:
-    """Generate enhanced intelligent context-aware persona header"""
-    return lexi_quip(persona_name, with_emoji=True, subject=subject, body=body)
+    host = _watchtower_host_from_title(title) or "unknown"
+    meta: Dict[str, Any] = {"watchtower::host": host, "watchtower::updated_count": len(updated)}
 
-# --- Helper to build full message: header + riffs (LLM primary) --------------
-def build_header_and_riffs(persona_name: str, subject: str = "", body: str = "", max_riff_lines: int = 3) -> Tuple[str, List[str]]:
-    """Build enhanced header and riffs with full intelligent context awareness"""
+    if not updated:
+        md = f"**Host:** `{host}`\n\n_No updates (all images fresh)._"
+        return md, meta
+
+    if len(updated) > max(1, limit):
+        updated = updated[:limit]
+        meta["watchtower::truncated"] = True
+
+    bullets = "\n".join([
+        f"• `{name}` → `{img}`\n   old: `{old}` → new: `{new}`"
+        for name, img, old, new in updated
+    ])
+    md_lines = [f"**Host:** `{host}`", "", f"**Updated ({len(updated)}):**", bullets]
+
+    # Optional raw tail
+    raw_tail_n = _opt_int("watchtower_raw_tail_lines", 0)
+    if raw_tail_n > 0 and raw_kept:
+        tail = "\n".join(raw_kept[-raw_tail_n:]).strip()
+        if tail:
+            md_lines += ["", "<details><summary>Raw</summary>", "", "```", tail, "```", "</details>"]
+
+    return "\n".join(md_lines), meta
+
+# ============================
+# QNAP summarizer (LESS AGGRESSIVE)
+# ============================
+_QNAP_DISK_RX = re.compile(r'\b(?:disk|drive)\s*(\d+)\b', re.I)
+_QNAP_VOL_RX  = re.compile(r'\bvol(?:ume)?\s*([A-Za-z0-9_-]+)', re.I)
+
+def _summarize_qnap(title: str, body: str, limit_kv: int = 20) -> Tuple[str, Dict[str, Any]]:
+    """
+    Keep the headline, extract useful key:value pairs, and optionally append a raw tail.
+    """
+    lines = [ln for ln in (body or "").splitlines() if ln.strip()]
+    kvs: List[str] = []
+    others: List[str] = []
+
+    disk = None
+    vol  = None
+
+    # First pass: collect KV and try to detect disk/volume
+    for ln in lines:
+        m = KV_RE.match(ln.strip())
+        if m:
+            k, v = m.group(1).strip(), m.group(2).strip()
+            if k.lower() not in {"title","message","topic","tags","priority"}:
+                kvs.append((k, v))
+        else:
+            others.append(ln)
+
+        if disk is None:
+            dm = _QNAP_DISK_RX.search(ln)
+            if dm:
+                disk = dm.group(1)
+        if vol is None:
+            vm = _QNAP_VOL_RX.search(ln)
+            if vm:
+                vol = vm.group(1)
+
+    # Build tidy bullets (cap to avoid spam)
+    bullets = []
+    header_bits = []
+    if disk: header_bits.append(f"Disk `{disk}`")
+    if vol:  header_bits.append(f"Vol `{vol}`")
+
+    if header_bits:
+        bullets.append(f"- **Scope:** " + ", ".join(header_bits))
+
+    for i, (k, v) in enumerate(kvs[:max(1, limit_kv)]):
+        bullets.append(f"- **{k}:** {v}")
+
+    # If no KV at all, fall back to generic bullets from remaining lines
+    if not kvs and others:
+        for ln in others[:10]:
+            bullets.append(f"- {ln.strip()}")
+
+    md_lines = []
+    md_lines.append("**QNAP Alert:**")
+    if bullets:
+        md_lines += bullets
+
+    # Optional raw tail
+    raw_tail_n = _opt_int("qnap_raw_tail_lines", 0)
+    if raw_tail_n > 0 and lines:
+        tail = "\n".join(lines[-raw_tail_n:]).strip()
+        if tail:
+            md_lines += ["", "<details><summary>Raw</summary>", "", "```", tail, "```", "</details>"]
+
+    meta: Dict[str, Any] = {"qnap::kv_count": len(kvs), "qnap::has_disk": bool(disk), "qnap::has_vol": bool(vol)}
+    return "\n".join(md_lines), meta
+# -------- querystring detection & body cleanup helpers --------
+_QS_TRIGGER_KEYS = {"title","message","priority","topic","tags"}
+
+def _maybe_parse_query_payload(s: Optional[str]) -> Optional[Dict[str, str]]:
+    """If the string looks like a URL-encoded querystring, parse and return {k:v} (first values)."""
+    if not s:
+        return None
+    txt = s.strip().strip(' \t\r\n?')
+    if "=" not in txt or "&" not in txt:
+        return None
+    dec = unquote_plus(txt)
+    if not any((k + "=") in dec for k in _QS_TRIGGER_KEYS):
+        return None
     try:
-        header = persona_header(persona_name, subject=subject, body=body)
-        # Bottom lines: LLM first (no emoji), Lexi fallback
-        context = strip_transport_tags(" ".join([subject or "", body or ""]).strip())
-        lines = llm_quips(persona_name, context=context, max_lines=max_riff_lines)
-        if not lines:
-            lines = lexi_riffs(persona_name, n=max_riff_lines, with_emoji=False, subject=subject, body=body)
-        # Ensure riffs contain no emoji
-        lines = [re.sub(r"[\U0001F300-\U0001FAFF]", "", ln).strip() for ln in lines]
-        return header, lines
-    except:
-        return f"{subject or 'Update'}: ok.", ["noted.", "done."]
+        parsed = parse_qs(dec, keep_blank_values=True, strict_parsing=False)
+        return {k: (v[0] if isinstance(v, list) and v else "") for k, v in parsed.items()}
+    except Exception:
+        return None
+
+_ACTION_SAYS_RX = re.compile(r'^\s*action\s+says:\s*.*$', re.I | re.M)
+
+def _strip_action_says(text: str) -> str:
+    """Remove any 'action says:' lines from visible body (riffs/personas untouched elsewhere)."""
+    if not text:
+        return ""
+    out = _ACTION_SAYS_RX.sub("", text)
+    return re.sub(r'\n{3,}', '\n\n', out).strip()
+
+# MIME header stripping (SMTP / proxy leakage)
+_MIME_HEADER_RX = re.compile(r'^\s*Content-(?:Disposition|Type|Length|Transfer-Encoding)\s*:.*$', re.I | re.M)
+def _strip_mime_headers(text: str) -> str:
+    if not text:
+        return ""
+    s = _MIME_HEADER_RX.sub("", text)
+    return re.sub(r'\n{3,}', '\n\n', s).strip()
+
+# --- SUBJECT CLEANUP & CARD TITLE -------------------------------------------------
+INTAKE_NAMES = {"proxy","smtp","apprise","gotify","ntfy","webhook","webhooks"}
+
+def _infer_subject_from_body(body: str) -> Optional[str]:
+    """Try to infer a friendly subject from common test and status texts."""
+    b = (body or "").strip()
+    for ln in b.splitlines():
+        m = re.match(r'\s*Subject\s*:\s*(.+?)\s*$', ln, re.I)
+        if m:
+            return m.group(1).strip()
+    m = re.search(r'\btest message from\s+(sonarr|radarr|lidarr|prowlarr|readarr)\b', b, re.I)
+    if m:
+        svc = m.group(1).title()
+        return f"{svc} - Test Notification"
+    if re.search(r'\bspeedtest\b', b, re.I):
+        return "SpeedTest Result"
+    for ln in b.splitlines():
+        t = ln.strip()
+        if not t:
+            continue
+        if re.match(r'^(?:subject|title|message)\s*[:=]', t, re.I):
+            continue
+        return t[:120]
+    return None
+
+def _clean_subject(raw_title: str, body: str) -> str:
+    """Remove intake tags, duplicate 'Jarvis Prime:' prefixes, and fallback to better subject."""
+    t = (raw_title or "").strip()
+    if not t:
+        t = ""
+    t = re.sub(r'^\s*(?:(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*)+', '', t, flags=re.I)
+    t = re.sub(r'^\s*(?:smtp|proxy|gotify|ntfy|apprise|webhooks?)\s*[:\-]\s*', '', t, flags=re.I)
+    if t.strip().lower() in INTAKE_NAMES or t.strip().lower() in {"message","notification","test"}:
+        new_t = _infer_subject_from_body(body)
+        if new_t:
+            t = new_t
+    t = re.sub(r'^\s*(?:jarvis\s*prime\s*:?\s*)+', '', t, flags=re.I)
+    return (t or "").strip()
+
+def _build_client_title(subject: str) -> str:
+    subj = (subject or "").strip()
+    return f"Jarvis Prime: {subj}" if subj else "Jarvis Prime"
+
+def _remove_kv_lines(text: str) -> str:
+    """
+    Keep human 'key: value' content (e.g., CPU: 68%). Only drop transport noise:
+    - Content-* MIME lines
+    - pure transport fields: title/message/topic/tags/priority (when alone)
+    """
+    if not text:
+        return ""
+    kept = []
+    for ln in text.splitlines():
+        t = ln.strip()
+        if t.lower().startswith("content-"):
+            continue
+        m = KV_RE.match(t)
+        if m:
+            k = m.group(1).strip().lower()
+            if k in {"title","message","topic","tags","priority"}:
+                continue
+        kept.append(ln)
+    s = "\n".join(kept)
+    s = re.sub(r'\n{3,}', '\n\n', s).strip()
+    return s
+
+def _final_qs_cleanup(text: str) -> str:
+    """If the *visible* message still looks like a querystring, decode and keep only human text."""
+    if not text:
+        return ""
+    maybe = _maybe_parse_query_payload(text)
+    if maybe:
+        for k in ("message","text","body","m"):
+            if k in maybe and maybe[k].strip():
+                return maybe[k].strip()
+        parts = []
+        for k,v in maybe.items():
+            if k.lower() in {"title","topic","tags","priority"}:
+                continue
+            parts.append(f"{k}: {v}")
+        return "\n".join(parts).strip() or text
+    return text
+
+# -------- Meta/prompt scrubber (prevents visible "Tone/Rules" leakage) --------
+_META_LINE_RX = re.compile(
+    r'^\s*(?:tone|rule|rules|guidelines?|style(?:\s*hint)?|instruction|instructions|system(?:\s*prompt)?|persona|respond(?:\s*with)?|produce\s*only)\s*[:\-]',
+    re.I
+)
+_META_TAG_RX = re.compile(r'\s*(?:(?:SYSTEM|INPUT|OUTPUT)|(?:SYSTEM|INPUT|OUTPUT))\s*', re.I)
+
+def _scrub_meta(text: str) -> str:
+    if not text:
+        return ""
+    s = _META_TAG_RX.sub(" ", text)
+    keep: List[str] = []
+    for ln in s.splitlines():
+        if _META_LINE_RX.search(ln):
+            continue
+        keep.append(ln)
+    s = "\n".join(keep)
+    s = re.sub(r'\n{3,}', '\n\n', s).strip()
+    return s
+# --- Poster/icon fallback ---------------------------------------------------------
+def _icon_map_from_options() -> Dict[str,str]:
+    try:
+        with open("/data/options.json","r",encoding="utf-8") as f:
+            opt = json.load(f) or {}
+            m = opt.get("icon_map") or {}
+            if isinstance(m, dict):
+                return {str(k).lower(): str(v) for k,v in m.items() if v}
+    except Exception:
+        pass
+    return {}
+
+def _builtin_icon_map() -> Dict[str,str]:
+    base = "https://raw.githubusercontent.com/walkxcode/dashboard-icons/master/png"
+    return {
+        "sonarr": f"{base}/sonarr.png",
+        "radarr": f"{base}/radarr.png",
+        "lidarr": f"{base}/lidarr.png",
+        "prowlarr": f"{base}/prowlarr.png",
+        "readarr": f"{base}/readarr.png",
+        "bazarr": f"{base}/bazarr.png",
+        "qbittorrent": f"{base}/qbittorrent.png",
+        "transmission": f"{base}/transmission.png",
+        "jellyfin": f"{base}/jellyfin.png",
+        "plex": f"{base}/plex.png",
+        "emby": f"{base}/emby.png",
+        "sabnzbd": f"{base}/sabnzbd.png",
+        "overseerr": f"{base}/overseerr.png",
+        "gluetun": f"{base}/gluetun.png",
+        "pihole": f"{base}/pi-hole.png",
+        "unifi": f"{base}/unifi-network.png",
+        "portainer": f"{base}/portainer.png",
+        "watchtower": f"{base}/watchtower.png",
+        "docker": f"{base}/docker.png",
+        "homeassistant": f"{base}/home-assistant.png",
+        "speedtest": f"{base}/speedtest.png",
+        "apt": f"{base}/debian.png",
+        "smtp": f"{base}/mail.png",
+        "apprise": f"{base}/bell.png",
+        "gotify": f"{base}/bell.png",
+        "ntfy": f"{base}/bell.png",
+        "proxy": f"{base}/reverse-proxy.png",
+        "qnap": f"{base}/nas.png",
+        "unraid": f"{base}/unraid.png",
+    }
+
+def _icon_from_env(keyword: str) -> Optional[str]:
+    key = f"ICON_{keyword.upper()}_URL"
+    v = os.getenv(key) or ""
+    return v.strip() or None
+
+def _default_icon() -> Optional[str]:
+    try:
+        with open("/data/options.json","r",encoding="utf-8") as f:
+            opt = json.load(f) or {}
+            d = opt.get("default_icon") or ""
+            if str(d).strip():
+                return str(d).strip()
+    except Exception:
+        pass
+    v = os.getenv("ICON_DEFAULT_URL") or ""
+    return v.strip() or None
+
+def _poster_fallback(title: str, body: str) -> Optional[str]:
+    """Pick a poster icon if the intake didn't provide one, using keywords."""
+    keywords = ["sonarr","radarr","lidarr","prowlarr","readarr","bazarr",
+                "qbittorrent","transmission","jellyfin","plex","emby",
+                "sabnzbd","overseerr","gluetun","pihole","unifi","portainer",
+                "watchtower","docker","homeassistant","speedtest","apt",
+                "smtp","apprise","gotify","ntfy","proxy","qnap","unraid"]
+    text = f"{title} {body}".lower()
+    opt_map = _icon_map_from_options()
+    builtin = _builtin_icon_map()
+    for word in keywords:
+        if word in text:
+            return opt_map.get(word) or _icon_from_env(word) or builtin.get(word)
+    return _default_icon()
+
+# -------- Intake preprocessors --------
+def _preprocess_smtp(title: str, body: str) -> Tuple[str, str]:
+    body = _strip_mime_headers(body or "")
+    body = re.sub(r'\n{2,}', '\n\n', body).strip()
+    return (title or "").strip(), body
+
+def _preprocess_gotify_like(title: str, body: str) -> Tuple[str, str]:
+    qs = _maybe_parse_query_payload(body)
+    if qs:
+        t = qs.get("title", title)
+        m = qs.get("message", body)
+        return (t or "").strip(), (m or "").strip()
+    return (title or "").strip(), (body or "").strip()
+
+def _preprocess_proxy(title: str, body: str) -> Tuple[str, str]:
+    t = title or ""
+    b = body or ""
+    blocks = re.findall(r'(?is)name="(title|message)"\s*\r?\n\r?\n(.*?)(?:\r?\n--|$)', b)
+    fields = {k.lower(): v.strip() for k,v in blocks}
+    qs = _maybe_parse_query_payload(b)
+    if qs:
+        fields.update({k.lower(): v for k,v in qs.items()})
+    if fields.get("title"): t = fields["title"]
+    if fields.get("message"): b = fields["message"]
+    b = re.sub(r'(?im)^content-disposition.*name="[^"]+"\s*', '', b)
+    b = _strip_mime_headers(b)
+    b = re.sub(r'\n{2,}', '\n\n', b).strip()
+    return (t or "").strip(), b
+
+def _preprocess_generic(title: str, body: str) -> Tuple[str, str]:
+    return (title or "").strip(), (body or "").strip()
+
+def _normalize_intake(source: str, title: str, body: str) -> Tuple[str, str]:
+    src = (source or "").lower()
+    if src == "smtp":
+        return _preprocess_smtp(title, body)
+    if src in ("gotify","ntfy","apprise"):
+        return _preprocess_gotify_like(title, body)
+    if src == "proxy":
+        return _preprocess_proxy(title, body)
+    return _preprocess_generic(title, body)
+# -------- Public API --------
+def beautify_message(title: str, body: str, *, mood: str = "neutral",
+                     source_hint: Optional[str] = None, mode: str = "standard",
+                     persona: Optional[str] = None, persona_quip: bool = True,
+                     extras_in: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
+
+    # >>> ADDITIVE: Hard-skip ALL processing for Joke messages
+    if isinstance(title, str) and "joke" in title.lower():
+        text = body if isinstance(body, str) else ("" if body is None else str(body))
+        extras: Dict[str, Any] = {
+            "client::display": {"contentType": "text/markdown"},
+            "client::title": (title.strip() or "Jarvis Prime: Joke"),
+            "jarvis::beautified": False,
+            "jarvis::raw_joke": True,
+            "riff_hint": False,
+        }
+        return (text or "").strip(), extras
+
+    # NEW: Skip beautifying/persona riffs if personality marked it as 'raw'.
+    if isinstance(extras_in, dict) and extras_in.get("jarvis::raw_persona"):
+        text = body if isinstance(body, str) else ("" if body is None else str(body))
+        extras: Dict[str, Any] = {
+            "client::display": {"contentType": "text/markdown"},
+            "client::title": _build_client_title(_clean_subject(title or "", text)),
+            "jarvis::beautified": False,
+            "jarvis::raw_persona": True,
+        }
+        return text, extras
+
+    # RAW passthrough if beautifier is OFF:
+    if _beautify_is_disabled():
+        raw_title = title if title is not None else ""
+        raw_body  = body  if body  is not None else ""
+
+        lines: List[str] = []
+
+        eff_persona = _effective_persona(persona)
+        if _personality_enabled() and not _ui_persona_header_enabled():
+            pol = _persona_overlay_line(eff_persona)
+            if pol:
+                lines.append(pol)
+
+        # Show raw body untouched
+        lines.append(raw_body)
+
+        # Optional riffs
+        if _riffs_enabled() and eff_persona:
+            riff_ctx = _scrub_meta(raw_body if isinstance(raw_body, str) else "")
+            riffs = _persona_llm_riffs(riff_ctx, eff_persona)
+            real_riffs = [(r or "").replace("\r","").strip() for r in (riffs or [])]
+            real_riffs = [r for r in real_riffs if r]
+            if real_riffs:
+                lines += ["", f"🧠 {eff_persona} riff"]
+                for r in real_riffs:
+                    lines.append("> " + r)
+
+        text = "\n".join(lines)
+        extras: Dict[str, Any] = {
+            "client::display": {"contentType": "text/markdown"},
+            "jarvis::beautified": False
+        }
+        return text, extras
+
+    # --------- Beautifier ON path ---------
+    stripped = _strip_noise(body)
+    normalized = _normalize(stripped)
+    normalized = html.unescape(normalized)
+
+    title, normalized = _normalize_intake(source_hint or "", title, normalized)
+
+    # --- Querystring normalization ---
+    qs_title = _maybe_parse_query_payload(title)
+    qs_body  = _maybe_parse_query_payload(normalized)
+
+    if qs_title and "title" in qs_title:
+        title = unquote_plus(qs_title.get("title") or "") or title
+    if qs_body and "title" in qs_body:
+        title = unquote_plus(qs_body.get("title") or "") or title
+
+    if qs_title and "message" in qs_title:
+        normalized = unquote_plus(qs_title.get("message") or "") or normalized
+    if qs_body and "message" in qs_body:
+        normalized = unquote_plus(qs_body.get("message") or "") or normalized
+
+    if (title or "").strip() and (qs_title or qs_body):
+        try:
+            title_decoded = unquote_plus(title.strip())
+            if qs_title and "title" in qs_title:
+                title = unquote_plus(qs_title.get("title") or "").strip() or title_decoded
+            else:
+                title = title_decoded
+        except Exception:
+            pass
+
+    # remove 'action says:' lines and MIME junk
+    normalized = _strip_action_says(normalized)
+    normalized = _strip_mime_headers(normalized)
+
+    # images (keep meaning via ALT placeholders)
+    body_wo_imgs, images, image_alts = _harvest_images(normalized)
+
+    kind = _detect_type(title, body_wo_imgs)
+    badge = _severity_badge(title + " " + body_wo_imgs)
+
+    clean_subject = _clean_subject(title, body_wo_imgs)
+
+    # Continue to Piece 10B for Watchtower, QNAP, and Standard message handling...
+    # ===== Standard path (Message-only layout) =====
+    # (Watchtower and QNAP special cases omitted for brevity - see original file)
+    
+    lines: List[str] = []
+    lines += _header(kind, badge)
+
+    eff_persona = _effective_persona(persona)
+    if persona_quip and _personality_enabled() and not _ui_persona_header_enabled():
+        pol = _persona_overlay_line(eff_persona)
+        if pol: lines += [pol]
+
+    subj = (clean_subject or "").strip()
+    if subj:
+        lines += ["", f"**Subject:** {subj}"]
+
+    # Always keep human content visible (entire body); drop only transport kv/mime noise
+    raw_message = (body_wo_imgs or "").strip() or normalized.strip()
+    message_snip = _remove_kv_lines(raw_message).strip()
+    if not message_snip:
+        message_snip = (raw_message or normalized or "No message provided.").strip()
+
+    # Decode leftover querystrings
+    message_snip = _final_qs_cleanup(message_snip)
+
+    # === NEW: Convert Key:Value lines to bullets (non-destructive) ===
+    kv_bullets = _kv_to_bullets(message_snip)
+    if kv_bullets:
+        message_snip = kv_bullets
+
+    # ---- OPTIONAL LLM MESSAGE REWRITE (neutral, toggleable) ----
+    try:
+        if _llm_message_rewrite_enabled():
+            max_chars = _llm_message_rewrite_max_chars()
+            rewrite_ctx = _scrub_meta(message_snip)
+            rewritten = _neutral_llm_rewrite(rewrite_ctx, max_chars=max_chars)
+            if isinstance(rewritten, str) and rewritten.strip():
+                message_snip = _scrub_meta(rewritten.strip())
+    except Exception:
+        pass
+
+    if message_snip:
+        lines += ["", "📝 Message", message_snip]
+
+    poster = None
+    if images:
+        poster = images[0]
+    else:
+        poster = _poster_fallback(title, body_wo_imgs) or _default_icon()
+        if poster:
+            images = [poster]
+    if poster:
+        lines += ["", f"![poster]({poster})"]
+
+    riffs: List[str] = []
+    riff_hint = _global_riff_hint(extras_in, source_hint)
+    _debug(f"persona={eff_persona}, riff_hint={riff_hint}, src={source_hint}, images={len(images)}")
+    if riff_hint and _riffs_enabled() and eff_persona:
+        ctx = _scrub_meta(message_snip)
+        if subj:
+            ctx = (ctx + "\n\nSubject: " + subj).strip()
+        riffs = _persona_llm_riffs(ctx, eff_persona)
+
+    real_riffs = [ (r or "").replace("\r","").strip() for r in (riffs or []) ]
+    real_riffs = [ r for r in real_riffs if r ]
+    if real_riffs:
+        lines += ["", f"🧠 {eff_persona} riff"]
+        for r in real_riffs:
+            lines.append("> " + r)
+
+    text = "\n".join(lines).strip()
+    text = _linewise_dedup_markdown(text, protect_message=True)
+    text = _fold_repeats(text)
+    max_len = int(os.getenv("BEAUTIFY_MAX_LEN", "3500") or "3500")
+    text = _safe_truncate(text, max_len=max_len)
+
+    extras: Dict[str, Any] = {
+        "client::display": {"contentType": "text/markdown"},
+        "client::title": _build_client_title(clean_subject),
+        "jarvis::beautified": True,
+        "jarvis::allImageUrls": images,
+        "jarvis::llm_riff_lines": len(real_riffs or []),
+    }
+    if images:
+        extras["client::notification"] = {"bigImageUrl": images[0]}
+    if isinstance(extras_in, dict):
+        extras.update(extras_in)
+
+    return text, extras
+
