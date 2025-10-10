@@ -556,7 +556,8 @@ class Sentinel:
     # ===========================
     # Quiet Hours
     # ===========================
-def load_quiet_hours(self):
+
+    def load_quiet_hours(self):
         """Load quiet hours configuration"""
         filepath = os.path.join(self.data_path, "quiet_hours.json")
         try:
@@ -1293,8 +1294,7 @@ def load_quiet_hours(self):
     # ===========================
     # Purge System
     # ===========================
-
-    async def auto_purge(self):
+async def auto_purge(self):
         """Auto-purge old logs (runs daily)"""
         while True:
             try:
