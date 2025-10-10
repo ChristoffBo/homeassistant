@@ -1,3 +1,7 @@
+## v3.2.7 (2025-10-10 04:02:28)
+- Update from v3.2.6 to v3.2.7
+- Docker Image: [zoraxydocker/zoraxy:v3.2.7](https://hub.docker.com/r/zoraxydocker/zoraxy/tags)
+
 ## v3.2.6 (2025-09-17 04:02:20)
 - Update from v3.2.5 to v3.2.6
 - Docker Image: [zoraxydocker/zoraxy:v3.2.6](https://hub.docker.com/r/zoraxydocker/zoraxy/tags)
