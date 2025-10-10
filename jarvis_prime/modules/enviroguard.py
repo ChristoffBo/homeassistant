@@ -169,7 +169,7 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
         _state["forced_off"] = True
         merged["llm_enabled"] = False
         merged["llm_rewrite_enabled"] = False
-        os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
+        # os.environ["BEAUTIFY_LLM_ENABLED"] = "false"
     else:
         if _state.get("forced_off"):
             merged["llm_enabled"] = True
