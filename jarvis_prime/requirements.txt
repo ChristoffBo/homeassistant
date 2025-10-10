@@ -17,3 +17,4 @@ schedule>=1.2.1
 PyYAML>=6.0.1
 aiosmtpd>=1.4.4.post2
 ctransformers==0.2.27
+paramiko>=3.0.0
