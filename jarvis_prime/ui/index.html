@@ -50,6 +50,7 @@
         <li class="nav-tab active" data-tab="dashboard">Dashboard</li>
         <li class="nav-tab" data-tab="inbox">Inbox</li>
         <li class="nav-tab" data-tab="orchestrator">Orchestrator</li>
+        <li class="nav-tab" data-tab="sentinel">Sentinel</li>
         <li class="nav-tab" data-tab="analytics">Analytics</li>
         <li class="nav-tab" data-tab="settings">Settings</li>
       </ul>
@@ -238,7 +239,6 @@
         </div>
       </div>
     </section>
-
     <!-- INBOX TAB -->
     <section id="inbox" class="tab-panel">
       <div class="panel-header">
@@ -496,6 +496,174 @@
               <tr><td colspan="7" class="text-center text-muted">Loading history...</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SENTINEL TAB - NEW -->
+    <section id="sentinel" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Sentinel Monitoring</h1>
+          <div class="panel-subtitle">Autonomous SSH-based service monitoring and self-healing</div>
+        </div>
+      </div>
+
+      <div class="orch-tabs">
+        <button class="orch-tab sentinel-subnav-btn active" data-view="dashboard">Dashboard</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="servers">Servers</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="templates">Templates</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="monitoring">Monitoring</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="logs">Logs</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="settings">Settings</button>
+      </div>
+
+      <!-- DASHBOARD SUBVIEW -->
+      <div class="sentinel-subview orch-panel active" data-view="dashboard">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Total Checks</div>
+            </div>
+            <div class="metric-value" id="sentinel-total-checks">0</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-checks-today">0</span> today
+            </div>
+          </div>
+          
+          <div class="metric-card green">
+            <div class="metric-header">
+              <div class="metric-label">Services Monitored</div>
+            </div>
+            <div class="metric-value" id="sentinel-services-monitored">0</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-servers-monitored">0</span> servers
+            </div>
+          </div>
+          
+          <div class="metric-card red">
+            <div class="metric-header">
+              <div class="metric-label">Services Down</div>
+            </div>
+            <div class="metric-value" id="sentinel-services-down">0</div>
+          </div>
+          
+          <div class="metric-card cyan">
+            <div class="metric-header">
+              <div class="metric-label">Uptime (24h)</div>
+            </div>
+            <div class="metric-value" id="sentinel-uptime">100%</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-avg-response">0.000s</span> avg
+            </div>
+          </div>
+          
+          <div class="metric-card orange">
+            <div class="metric-header">
+              <div class="metric-label">Repairs Made</div>
+            </div>
+            <div class="metric-value" id="sentinel-repairs-all">0</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-repairs-today">0</span> today
+            </div>
+          </div>
+          
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Failed Repairs</div>
+            </div>
+            <div class="metric-value" id="sentinel-failed-repairs">0</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>Live Service Status</h3>
+            <button class="btn primary" onclick="sentinelUI.loadLiveStatus()">Refresh</button>
+          </div>
+          <div id="sentinel-live-status" style="padding: 16px;">
+            <div class="text-center text-muted">Loading service status...</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>Recent Activity</h3>
+          </div>
+          <div id="sentinel-recent-activity" style="padding: 16px;">
+            <div class="text-center text-muted">Loading activity...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SERVERS SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="servers">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>SSH Server Inventory</h3>
+            <button class="btn primary" onclick="sentinelUI.showAddServerModal()">Add Server</button>
+          </div>
+          <div id="sentinel-servers-list" style="padding: 16px;">
+            <div class="text-center text-muted">Loading servers...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TEMPLATES SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="templates">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Service Check Templates</h3>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn primary" onclick="sentinelUI.syncTemplates()">🔄 Sync from GitHub</button>
+              <button class="btn primary" onclick="sentinelUI.showUploadTemplateModal()">⬆️ Upload</button>
+              <button class="btn primary" onclick="sentinelUI.showCreateTemplateModal()">➕ Create</button>
+            </div>
+          </div>
+          <div id="sentinel-templates-list" style="padding: 16px;">
+            <div class="text-center text-muted">Loading templates...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MONITORING SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="monitoring">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Monitoring Configurations</h3>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn primary" onclick="sentinelUI.showAddMonitoringModal()">➕ Add Monitoring</button>
+              <button class="btn success" onclick="sentinelUI.startAllMonitoring()">▶️ Start All</button>
+            </div>
+          </div>
+          <div id="sentinel-monitoring-list" style="padding: 16px;">
+            <div class="text-center text-muted">Loading monitoring configs...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LOGS SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="logs">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Execution History</h3>
+            <button class="btn primary" onclick="sentinelUI.renderLogHistory()">Refresh</button>
+          </div>
+          <div id="sentinel-log-history" style="padding: 16px;">
+            <div class="text-center text-muted">Loading logs...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETTINGS SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="settings">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Sentinel Settings</h3>
+          </div>
+          <div id="sentinel-settings-container" style="padding: 16px;">
+            <div class="text-center text-muted">Loading settings...</div>
+          </div>
         </div>
       </div>
     </section>
@@ -1178,8 +1346,7 @@
           </div>
         </div>
       </div>
-
-      <!-- PUSH NOTIFICATIONS PANEL -->
+     <!-- PUSH NOTIFICATIONS PANEL -->
       <div id="settings-push-panel" class="settings-panel orch-panel">
         <div class="panel">
           <div class="panel-head">
@@ -1631,11 +1798,263 @@
     </div>
   </div>
 
+  <!-- SENTINEL MODALS - NEW -->
+  <div id="sentinel-add-server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Add SSH Server</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <form id="sentinel-add-server-form" onsubmit="event.preventDefault(); sentinelUI.addServer(sentinelUI.getFormData('sentinel-add-server-form'));">
+        <div class="form-group">
+          <label class="form-label">Server ID *</label>
+          <input type="text" name="id" required placeholder="web-server-01">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Unique identifier (letters, numbers, hyphens only)
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Hostname / IP *</label>
+          <input type="text" name="host" required placeholder="192.168.1.100">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" name="port" value="22" min="1" max="65535">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" name="username" required placeholder="root">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" name="password" required placeholder="SSH password">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input type="text" name="description" placeholder="Production web server">
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn primary">Add Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="sentinel-edit-server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Edit Server</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <form id="sentinel-edit-server-form" onsubmit="event.preventDefault(); sentinelUI.updateServer(document.getElementById('sentinel-edit-server-id').value, sentinelUI.getFormData('sentinel-edit-server-form'));">
+        <input type="hidden" id="sentinel-edit-server-id" name="id">
+        
+        <div class="form-group">
+          <label class="form-label">Hostname / IP *</label>
+          <input type="text" name="host" required>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" name="port" min="1" max="65535">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" name="username" required>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" name="password" placeholder="Leave blank to keep current">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input type="text" name="description">
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn primary">Update Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="sentinel-log-stream-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Live Execution</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <div class="log-output log-stream-container" style="max-height: 500px; min-height: 300px;">
+        <div class="text-center text-muted">Connecting...</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sentinel-view-execution-logs-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px;">
+      <div class="modal-header">
+        <h2>Execution Details</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <div id="sentinel-view-execution-logs-content" style="padding: 20px;">
+        <div class="text-center text-muted">Loading...</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sentinel-add-monitoring-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Configure Monitoring</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <form id="sentinel-add-monitoring-form" onsubmit="event.preventDefault(); console.log('TODO: Add monitoring');">
+        <div class="form-group">
+          <label class="form-label">Server *</label>
+          <select name="server_id" id="sentinel-mon-server-select" required>
+            <option value="">Select a server...</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Services to Monitor *</label>
+          <div id="sentinel-mon-services-checkboxes" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 12px;">
+            <div class="text-center text-muted">Select a server first</div>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Interval (seconds)</label>
+          <input type="number" name="check_interval" value="300" min="60" max="86400">
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Monitoring</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="sentinel-upload-template-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Upload Template</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <div style="padding: 20px;">
+        <input type="file" id="sentinel-template-file-input" accept=".json" style="display: none;">
+        <div class="upload-zone" onclick="document.getElementById('sentinel-template-file-input').click();" style="cursor: pointer; text-align: center; padding: 40px; border: 2px dashed var(--border-color); border-radius: 8px;">
+          <svg class="icon" style="width: 48px; height: 48px; color: var(--accent-primary); margin: 0 auto 12px;" fill="none" viewBox="0 0 24 24">
+            <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          <div style="font-size: 16px; font-weight: 500; margin-bottom: 8px;">
+            Click to select template file
+          </div>
+          <div style="font-size: 13px; color: var(--text-muted);">
+            JSON format only
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sentinel-create-template-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h2>Create Custom Template</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <form id="sentinel-create-template-form" onsubmit="event.preventDefault(); console.log('TODO: Create template');">
+        <div class="form-group">
+          <label class="form-label">Template ID *</label>
+          <input type="text" name="id" required placeholder="nginx_custom">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Name *</label>
+          <input type="text" name="name" required placeholder="Nginx Web Server">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Command *</label>
+          <textarea name="check_cmd" required rows="2" placeholder="systemctl is-active nginx"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Fix Command *</label>
+          <textarea name="fix_cmd" required rows="2" placeholder="systemctl restart nginx"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Verify Command</label>
+          <textarea name="verify_cmd" rows="2" placeholder="Leave blank to use check command"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Expected Output</label>
+          <input type="text" name="expected_output" placeholder="active">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Retry Count</label>
+          <input type="number" name="retry_count" value="2" min="1" max="10">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Retry Delay (seconds)</label>
+          <input type="number" name="retry_delay" value="30" min="5" max="300">
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn primary">Create Template</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="sentinel-view-template-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h2>Template Details</h2>
+        <button class="btn" onclick="closeModal()">✕</button>
+      </div>
+      <div id="sentinel-view-template-content" style="padding: 20px;">
+        <pre style="background: var(--surface-tertiary); padding: 16px; border-radius: 6px; overflow-x: auto;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast"></div>
   
   <!-- Scripts -->
   <script src="app.js?v=5.0"></script>
   <script src="orchestrator.js?v=1.3"></script>
+  <script src="sentinel.js?v=1.0"></script>
   <script src="analytics.js?v=1.0"></script>
   <script src="settings.js?v=1.0"></script>
 </body>
