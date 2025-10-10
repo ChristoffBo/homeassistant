@@ -1,1 +1,1318 @@
-1
+#!/usr/bin/env python3
+# /app/sentinel.py
+#
+# Sentinel: Autonomous self-healing module for Jarvis Prime
+# Monitors services via SSH, auto-repairs failures, manages templates
+# Built for aiohttp
+
+import os
+import json
+import sqlite3
+import asyncio
+import paramiko
+from datetime import datetime, timedelta
+from pathlib import Path
+from aiohttp import web
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class Sentinel:
+    def __init__(self, config, db_path, notify_callback=None, logger_func=None):
+        self.config = config
+        self.db_path = db_path
+        self.notify_callback = notify_callback
+        self.logger = logger_func or print
+        self.data_path = config.get("data_path", "/share/jarvis_prime/sentinel")
+        self.templates_path = os.path.join(os.path.dirname(__file__), "sentinel_templates")
+        self.custom_templates_path = os.path.join(self.data_path, "custom_templates")
+        self._monitor_tasks = {}
+        self._service_states = {}  # Track current service states
+        self._failure_counts = {}  # Track consecutive failures for escalation
+        self.init_storage()
+        self.init_db()
+
+    def init_storage(self):
+        """Initialize storage directories and files"""
+        os.makedirs(self.data_path, exist_ok=True)
+        os.makedirs(self.custom_templates_path, exist_ok=True)
+        os.makedirs(self.templates_path, exist_ok=True)
+        
+        # Initialize JSON config files if they don't exist
+        for filename in ["servers.json", "monitoring.json", "maintenance_windows.json", "quiet_hours.json"]:
+            filepath = os.path.join(self.data_path, filename)
+            if not os.path.exists(filepath):
+                with open(filepath, "w") as f:
+                    json.dump([], f)
+
+    def init_db(self):
+        """Initialize SQLite database for logging"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        # Check logs table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sentinel_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                service_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                response_time REAL,
+                output TEXT
+            )
+        """)
+        
+        # Repair attempts table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sentinel_repairs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                service_name TEXT NOT NULL,
+                success INTEGER NOT NULL,
+                attempts INTEGER NOT NULL,
+                output TEXT
+            )
+        """)
+        
+        # Failure events table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sentinel_failures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                service_name TEXT NOT NULL,
+                reason TEXT,
+                notified INTEGER DEFAULT 0
+            )
+        """)
+        
+        # Metrics history table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sentinel_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                total_checks INTEGER,
+                services_monitored INTEGER,
+                services_down INTEGER,
+                repairs_made INTEGER,
+                failed_repairs INTEGER
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+
+    # ===========================
+    # Server Management
+    # ===========================
+
+    def load_servers(self):
+        """Load server configurations"""
+        filepath = os.path.join(self.data_path, "servers.json")
+        try:
+            with open(filepath, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            self.logger(f"Error loading servers: {e}")
+            return []
+
+    def save_servers(self, servers):
+        """Save server configurations"""
+        filepath = os.path.join(self.data_path, "servers.json")
+        try:
+            with open(filepath, "w") as f:
+                json.dump(servers, f, indent=2)
+            return True
+        except Exception as e:
+            self.logger(f"Error saving servers: {e}")
+            return False
+
+    def add_server(self, server_id, host, port, username, password, description=""):
+        """Add a new server"""
+        servers = self.load_servers()
+        
+        # Check if server already exists
+        if any(s["id"] == server_id for s in servers):
+            return {"success": False, "error": "Server ID already exists"}
+        
+        servers.append({
+            "id": server_id,
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+            "description": description,
+            "added": datetime.now().isoformat()
+        })
+        
+        if self.save_servers(servers):
+            return {"success": True}
+        return {"success": False, "error": "Failed to save server"}
+
+    def update_server(self, server_id, updates):
+        """Update server configuration"""
+        servers = self.load_servers()
+        for server in servers:
+            if server["id"] == server_id:
+                server.update(updates)
+                if self.save_servers(servers):
+                    return {"success": True}
+                return {"success": False, "error": "Failed to save changes"}
+        return {"success": False, "error": "Server not found"}
+
+    def delete_server(self, server_id):
+        """Delete a server"""
+        servers = self.load_servers()
+        servers = [s for s in servers if s["id"] != server_id]
+        if self.save_servers(servers):
+            # Also remove monitoring config for this server
+            monitoring = self.load_monitoring()
+            monitoring = [m for m in monitoring if m["server_id"] != server_id]
+            self.save_monitoring(monitoring)
+            return {"success": True}
+        return {"success": False, "error": "Failed to delete server"}
+
+    # ===========================
+    # Template Management
+    # ===========================
+
+    def load_templates(self):
+        """Load all templates (default + custom)"""
+        templates = []
+        
+        # Load default templates
+        if os.path.exists(self.templates_path):
+            for filename in os.listdir(self.templates_path):
+                if filename.endswith(".json"):
+                    filepath = os.path.join(self.templates_path, filename)
+                    try:
+                        with open(filepath, "r") as f:
+                            template = json.load(f)
+                            template["source"] = "default"
+                            template["filename"] = filename
+                            templates.append(template)
+                    except Exception as e:
+                        self.logger(f"Error loading template {filename}: {e}")
+        
+        # Load custom templates
+        if os.path.exists(self.custom_templates_path):
+            for filename in os.listdir(self.custom_templates_path):
+                if filename.endswith(".json"):
+                    filepath = os.path.join(self.custom_templates_path, filename)
+                    try:
+                        with open(filepath, "r") as f:
+                            template = json.load(f)
+                            template["source"] = "custom"
+                            template["filename"] = filename
+                            templates.append(template)
+                    except Exception as e:
+                        self.logger(f"Error loading custom template {filename}: {e}")
+        
+        return templates
+
+    def get_template(self, template_name):
+        """Get a specific template by name"""
+        templates = self.load_templates()
+        for t in templates:
+            if t.get("id") == template_name or t.get("name") == template_name:
+                return t
+        return None
+
+    def save_template(self, template_data, filename=None):
+        """Save a custom template"""
+        if not filename:
+            filename = f"{template_data.get('id', 'custom')}.json"
+        
+        if not filename.endswith(".json"):
+            filename += ".json"
+        
+        filepath = os.path.join(self.custom_templates_path, filename)
+        try:
+            with open(filepath, "w") as f:
+                json.dump(template_data, f, indent=2)
+            return {"success": True, "filename": filename}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_template(self, filename):
+        """Delete a custom template"""
+        filepath = os.path.join(self.custom_templates_path, filename)
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+                return {"success": True}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Template not found"}
+
+    def upload_template(self, content, filename):
+        """Upload a template file"""
+        if not filename.endswith(".json"):
+            return {"success": False, "error": "Template must be a .json file"}
+        
+        try:
+            # Validate JSON
+            template_data = json.loads(content)
+            required_fields = ["id", "name", "check_cmd"]
+            if not all(field in template_data for field in required_fields):
+                return {"success": False, "error": "Template missing required fields"}
+            
+            return self.save_template(template_data, filename)
+        except json.JSONDecodeError:
+            return {"success": False, "error": "Invalid JSON format"}
+
+    def download_template(self, filename):
+        """Get template content for download"""
+        # Check custom templates first
+        filepath = os.path.join(self.custom_templates_path, filename)
+        if not os.path.exists(filepath):
+            # Check default templates
+            filepath = os.path.join(self.templates_path, filename)
+        
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r") as f:
+                    return {"success": True, "content": f.read()}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Template not found"}
+
+    # ===========================
+    # Monitoring Configuration
+    # ===========================
+
+    def load_monitoring(self):
+        """Load monitoring configurations"""
+        filepath = os.path.join(self.data_path, "monitoring.json")
+        try:
+            with open(filepath, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            self.logger(f"Error loading monitoring config: {e}")
+            return []
+
+    def save_monitoring(self, monitoring):
+        """Save monitoring configurations"""
+        filepath = os.path.join(self.data_path, "monitoring.json")
+        try:
+            with open(filepath, "w") as f:
+                json.dump(monitoring, f, indent=2)
+            return True
+        except Exception as e:
+            self.logger(f"Error saving monitoring config: {e}")
+            return False
+
+    def add_monitoring(self, server_id, services, check_interval=300):
+        """Add monitoring configuration for a server"""
+        monitoring = self.load_monitoring()
+        
+        # Remove existing config for this server
+        monitoring = [m for m in monitoring if m["server_id"] != server_id]
+        
+        monitoring.append({
+            "server_id": server_id,
+            "services": services,  # List of service template IDs
+            "check_interval": check_interval,
+            "enabled": True,
+            "dependencies": {},  # service_id: [parent_service_ids]
+            "disabled_until": None  # For one-click disable
+        })
+        
+        if self.save_monitoring(monitoring):
+            return {"success": True}
+        return {"success": False, "error": "Failed to save monitoring config"}
+
+    def update_monitoring(self, server_id, updates):
+        """Update monitoring configuration"""
+        monitoring = self.load_monitoring()
+        for mon in monitoring:
+            if mon["server_id"] == server_id:
+                mon.update(updates)
+                if self.save_monitoring(monitoring):
+                    return {"success": True}
+                return {"success": False, "error": "Failed to save changes"}
+        return {"success": False, "error": "Monitoring config not found"}
+
+    def disable_service_temporarily(self, server_id, service_id, duration_hours=2):
+        """Temporarily disable monitoring for a specific service"""
+        monitoring = self.load_monitoring()
+        for mon in monitoring:
+            if mon["server_id"] == server_id:
+                if "disabled_services" not in mon:
+                    mon["disabled_services"] = {}
+                
+                until = (datetime.now() + timedelta(hours=duration_hours)).isoformat()
+                mon["disabled_services"][service_id] = until
+                
+                if self.save_monitoring(monitoring):
+                    return {"success": True, "disabled_until": until}
+                return {"success": False, "error": "Failed to save changes"}
+        return {"success": False, "error": "Monitoring config not found"}
+
+    # ===========================
+    # Maintenance Windows
+    # ===========================
+
+    def load_maintenance_windows(self):
+        """Load maintenance window configurations"""
+        filepath = os.path.join(self.data_path, "maintenance_windows.json")
+        try:
+            with open(filepath, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            self.logger(f"Error loading maintenance windows: {e}")
+            return []
+
+    def save_maintenance_windows(self, windows):
+        """Save maintenance window configurations"""
+        filepath = os.path.join(self.data_path, "maintenance_windows.json")
+        try:
+            with open(filepath, "w") as f:
+                json.dump(windows, f, indent=2)
+            return True
+        except Exception as e:
+            self.logger(f"Error saving maintenance windows: {e}")
+            return False
+
+    def is_in_maintenance_window(self, server_id=None):
+        """Check if currently in a maintenance window"""
+        windows = self.load_maintenance_windows()
+        now = datetime.now()
+        current_time = now.time()
+        current_day = now.strftime("%A").lower()
+        
+        for window in windows:
+            if not window.get("enabled", True):
+                continue
+            
+            # Check if window applies to this server (or all servers)
+            if server_id and window.get("server_id") and window["server_id"] != server_id:
+                continue
+            
+            # Check day of week
+            days = window.get("days", [])
+            if days and current_day not in [d.lower() for d in days]:
+                continue
+            
+            # Check time range
+            start_time = datetime.strptime(window["start_time"], "%H:%M").time()
+            end_time = datetime.strptime(window["end_time"], "%H:%M").time()
+            
+            if start_time <= current_time <= end_time:
+                return True
+        
+        return False
+
+    # ===========================
+    # Quiet Hours
+    # ===========================
+
+    def load_quiet_hours(self):
+        """Load quiet hours configuration"""
+        filepath = os.path.join(self.data_path, "quiet_hours.json")
+        try:
+            with open(filepath, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            self.logger(f"Error loading quiet hours: {e}")
+            return {"enabled": False, "start": "22:00", "end": "08:00"}
+
+    def is_quiet_hours(self):
+        """Check if currently in quiet hours"""
+        config = self.load_quiet_hours()
+        if not config.get("enabled", False):
+            return False
+        
+        now = datetime.now().time()
+        start = datetime.strptime(config["start"], "%H:%M").time()
+        end = datetime.strptime(config["end"], "%H:%M").time()
+        
+        if start <= end:
+            return start <= now <= end
+        else:  # Crosses midnight
+            return now >= start or now <= end
+
+    # ===========================
+    # SSH Execution
+    # ===========================
+
+    async def ssh_execute(self, server, command):
+        """Execute command via SSH"""
+        try:
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: client.connect(
+                    hostname=server["host"],
+                    port=server["port"],
+                    username=server["username"],
+                    password=server["password"],
+                    timeout=10
+                )
+            )
+            
+            stdin, stdout, stderr = client.exec_command(command)
+            output = stdout.read().decode().strip()
+            error = stderr.read().decode().strip()
+            exit_code = stdout.channel.recv_exit_status()
+            
+            client.close()
+            
+            return {
+                "success": exit_code == 0,
+                "output": output if output else error,
+                "exit_code": exit_code
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "output": str(e),
+                "exit_code": -1
+            }
+
+    # ===========================
+    # Health Checking
+    # ===========================
+
+    async def check_service(self, server, service_template):
+        """Check if a service is healthy"""
+        start_time = datetime.now()
+        
+        result = await self.ssh_execute(server, service_template["check_cmd"])
+        
+        response_time = (datetime.now() - start_time).total_seconds()
+        
+        # Check if output matches expected
+        expected = service_template.get("expected_output", "")
+        is_healthy = result["success"] and (not expected or expected in result["output"])
+        
+        # Log check to database
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO sentinel_checks (timestamp, server_id, service_name, status, response_time, output)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now().isoformat(),
+            server["id"],
+            service_template["name"],
+            "healthy" if is_healthy else "unhealthy",
+            response_time,
+            result["output"]
+        ))
+        conn.commit()
+        conn.close()
+        
+        return {
+            "healthy": is_healthy,
+            "output": result["output"],
+            "response_time": response_time
+        }
+
+    async def repair_service(self, server, service_template):
+        """Attempt to repair a failed service"""
+        max_attempts = service_template.get("retry_count", 2)
+        retry_delay = service_template.get("retry_delay", 30)
+        
+        for attempt in range(1, max_attempts + 1):
+            self.logger(f"Repair attempt {attempt}/{max_attempts} for {service_template['name']} on {server['id']}")
+            
+            # Run fix command
+            fix_result = await self.ssh_execute(server, service_template["fix_cmd"])
+            
+            # Wait before verifying
+            await asyncio.sleep(retry_delay)
+            
+            # Run verify command
+            verify_cmd = service_template.get("verify_cmd", service_template["check_cmd"])
+            verify_result = await self.ssh_execute(server, verify_cmd)
+            
+            expected = service_template.get("expected_output", "")
+            is_fixed = verify_result["success"] and (not expected or expected in verify_result["output"])
+            
+            if is_fixed:
+                # Log successful repair
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO sentinel_repairs (timestamp, server_id, service_name, success, attempts, output)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    datetime.now().isoformat(),
+                    server["id"],
+                    service_template["name"],
+                    1,
+                    attempt,
+                    verify_result["output"]
+                ))
+                conn.commit()
+                conn.close()
+                
+                return {"success": True, "attempts": attempt, "output": verify_result["output"]}
+            
+            # If not fixed and more attempts remain, wait before next attempt
+            if attempt < max_attempts:
+                await asyncio.sleep(retry_delay)
+        
+        # All attempts failed
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO sentinel_repairs (timestamp, server_id, service_name, success, attempts, output)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now().isoformat(),
+            server["id"],
+            service_template["name"],
+            0,
+            max_attempts,
+            "All repair attempts failed"
+        ))
+        c.execute("""
+            INSERT INTO sentinel_failures (timestamp, server_id, service_name, reason, notified)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            datetime.now().isoformat(),
+            server["id"],
+            service_template["name"],
+            "Failed to repair after multiple attempts",
+            0
+        ))
+        conn.commit()
+        conn.close()
+        
+        return {"success": False, "attempts": max_attempts}
+
+    async def monitor_service(self, server, service_template, monitoring_config):
+        """Monitor a single service with full recovery flow"""
+        server_id = server["id"]
+        service_id = service_template["id"]
+        service_name = service_template["name"]
+        state_key = f"{server_id}:{service_id}"
+        
+        # Check if service is temporarily disabled
+        disabled_services = monitoring_config.get("disabled_services", {})
+        if service_id in disabled_services:
+            until = datetime.fromisoformat(disabled_services[service_id])
+            if datetime.now() < until:
+                self.logger(f"Service {service_name} on {server_id} is disabled until {until}")
+                return
+            else:
+                # Re-enable service
+                del disabled_services[service_id]
+                self.save_monitoring(self.load_monitoring())
+        
+        # Check maintenance window
+        if self.is_in_maintenance_window(server_id):
+            self.logger(f"Server {server_id} is in maintenance window, skipping checks")
+            return
+        
+        # Check service dependencies
+        dependencies = monitoring_config.get("dependencies", {}).get(service_id, [])
+        for parent_service in dependencies:
+            parent_state_key = f"{server_id}:{parent_service}"
+            if self._service_states.get(parent_state_key) == "down":
+                self.logger(f"Skipping {service_name} on {server_id} - parent service {parent_service} is down")
+                return
+        
+        # Perform health check
+        check_result = await self.check_service(server, service_template)
+        
+        if check_result["healthy"]:
+            # Service is healthy
+            self._service_states[state_key] = "up"
+            self._failure_counts[state_key] = 0
+            
+            # If service was previously down, notify recovery
+            if self._service_states.get(f"{state_key}:was_down"):
+                await self._send_notification(
+                    f"✅ Service Recovered: {service_name}",
+                    f"Service {service_name} on {server_id} is now healthy",
+                    priority=3
+                )
+                del self._service_states[f"{state_key}:was_down"]
+        else:
+            # Service is unhealthy - double check for network issues
+            self.logger(f"Service {service_name} on {server_id} appears down, double-checking...")
+            await asyncio.sleep(30)
+            
+            recheck_result = await self.check_service(server, service_template)
+            
+            if recheck_result["healthy"]:
+                # False alarm - network blip
+                self.logger(f"Service {service_name} on {server_id} recovered on recheck")
+                self._service_states[state_key] = "up"
+                return
+            
+            # Service is definitely down
+            self._service_states[state_key] = "down"
+            self._service_states[f"{state_key}:was_down"] = True
+            self._failure_counts[state_key] = self._failure_counts.get(state_key, 0) + 1
+            failure_count = self._failure_counts[state_key]
+            
+            # Escalation logic
+            if failure_count == 1:
+                # First failure - attempt repair silently
+                self.logger(f"First failure for {service_name} on {server_id}, attempting repair...")
+                repair_result = await self.repair_service(server, service_template)
+                
+                if repair_result["success"]:
+                    await self._send_notification(
+                        f"✅ Auto-Repair Successful: {service_name}",
+                        f"Service {service_name} on {server_id} was down and has been repaired automatically",
+                        priority=3
+                    )
+                    self._service_states[state_key] = "up"
+                    self._failure_counts[state_key] = 0
+                    del self._service_states[f"{state_key}:was_down"]
+                
+            elif failure_count == 2:
+                # Second failure - low priority notification
+                if not self.is_quiet_hours():
+                    await self._send_notification(
+                        f"⚠️ Service Down: {service_name}",
+                        f"Service {service_name} on {server_id} is down (2nd failure). Auto-repair in progress...",
+                        priority=5
+                    )
+                repair_result = await self.repair_service(server, service_template)
+                
+            else:
+                # Third+ failure - urgent notification (even during quiet hours)
+                await self._send_notification(
+                    f"❌ CRITICAL: {service_name}",
+                    f"Service {service_name} on {server_id} has failed {failure_count} times and cannot be repaired automatically",
+                    priority=8
+                )
+
+    async def _send_notification(self, title, body, priority=5):
+        """Send notification via Jarvis notify system"""
+        if self.notify_callback:
+            try:
+                # Use process_incoming for fan-out to all configured channels
+                await self.notify_callback(
+                    title=title,
+                    body=body,
+                    source="sentinel",
+                    priority=priority
+                )
+            except Exception as e:
+                self.logger(f"Failed to send notification: {e}")
+
+    # ===========================
+    # Monitor Loop
+    # ===========================
+
+    async def monitor_loop(self, server_id):
+        """Main monitoring loop for a server"""
+        while True:
+            try:
+                servers = self.load_servers()
+                server = next((s for s in servers if s["id"] == server_id), None)
+                
+                if not server:
+                    self.logger(f"Server {server_id} not found, stopping monitor")
+                    break
+                
+                monitoring = self.load_monitoring()
+                mon_config = next((m for m in monitoring if m["server_id"] == server_id), None)
+                
+                if not mon_config or not mon_config.get("enabled", True):
+                    self.logger(f"Monitoring disabled for {server_id}")
+                    await asyncio.sleep(60)
+                    continue
+                
+                check_interval = mon_config.get("check_interval", 300)
+                services = mon_config.get("services", [])
+                
+                # Load templates for each service
+                for service_id in services:
+                    template = self.get_template(service_id)
+                    if template:
+                        await self.monitor_service(server, template, mon_config)
+                    else:
+                        self.logger(f"Template {service_id} not found")
+                
+                await asyncio.sleep(check_interval)
+                
+            except Exception as e:
+                self.logger(f"Error in monitor loop for {server_id}: {e}")
+                await asyncio.sleep(60)
+
+    def start_monitoring(self, server_id):
+        """Start monitoring for a server"""
+        if server_id not in self._monitor_tasks:
+            task = asyncio.create_task(self.monitor_loop(server_id))
+            self._monitor_tasks[server_id] = task
+            self.logger(f"Started monitoring for {server_id}")
+
+    def stop_monitoring(self, server_id):
+        """Stop monitoring for a server"""
+        if server_id in self._monitor_tasks:
+            self._monitor_tasks[server_id].cancel()
+            del self._monitor_tasks[server_id]
+            self.logger(f"Stopped monitoring for {server_id}")
+
+    def start_all_monitoring(self):
+        """Start monitoring for all enabled servers"""
+        monitoring = self.load_monitoring()
+        for mon_config in monitoring:
+            if mon_config.get("enabled", True):
+                self.start_monitoring(mon_config["server_id"])
+
+    # ===========================
+    # Dashboard Metrics
+    # ===========================
+
+    def get_dashboard_metrics(self):
+        """Get dashboard metrics"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        # Total checks
+        c.execute("SELECT COUNT(*) FROM sentinel_checks")
+        total_checks = c.fetchone()[0]
+        
+        # Checks today
+        today = datetime.now().date().isoformat()
+        c.execute("SELECT COUNT(*) FROM sentinel_checks WHERE DATE(timestamp) = ?", (today,))
+        checks_today = c.fetchone()[0]
+        
+        # Services monitored
+        monitoring = self.load_monitoring()
+        services_monitored = sum(len(m.get("services", [])) for m in monitoring if m.get("enabled", True))
+        
+        # Services currently down
+        services_down = sum(1 for state in self._service_states.values() if state == "down")
+        
+        # Repairs made (all time and today)
+        c.execute("SELECT COUNT(*) FROM sentinel_repairs WHERE success = 1")
+        repairs_all_time = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM sentinel_repairs WHERE success = 1 AND DATE(timestamp) = ?", (today,))
+        repairs_today = c.fetchone()[0]
+        
+        # Failed repairs
+        c.execute("SELECT COUNT(*) FROM sentinel_repairs WHERE success = 0")
+        failed_repairs = c.fetchone()[0]
+        
+        # Uptime percentage (last 24 hours)
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+        c.execute("SELECT COUNT(*) FROM sentinel_checks WHERE timestamp > ?", (yesterday,))
+        recent_checks = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM sentinel_checks WHERE timestamp > ? AND status = 'healthy'", (yesterday,))
+        healthy_checks = c.fetchone()[0]
+        
+        uptime_percent = (healthy_checks / recent_checks * 100) if recent_checks > 0 else 100
+        
+        # Average response time (last 24 hours)
+        c.execute("SELECT AVG(response_time) FROM sentinel_checks WHERE timestamp > ?", (yesterday,))
+        avg_response_time = c.fetchone()[0] or 0
+        
+        # Most repaired service
+        c.execute("""
+            SELECT service_name, COUNT(*) as repair_count 
+            FROM sentinel_repairs 
+            WHERE success = 1 
+            GROUP BY service_name 
+            ORDER BY repair_count DESC 
+            LIMIT 1
+        """)
+        most_repaired = c.fetchone()
+        
+        # Servers monitored
+        servers_monitored = len([m for m in monitoring if m.get("enabled", True)])
+        
+        # Active schedules
+        active_schedules = len(monitoring)
+        
+        # Last check time
+        c.execute("SELECT MAX(timestamp) FROM sentinel_checks")
+        last_check = c.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            "total_checks": total_checks,
+            "checks_today": checks_today,
+            "services_monitored": services_monitored,
+            "services_down": services_down,
+            "repairs_all_time": repairs_all_time,
+            "repairs_today": repairs_today,
+            "failed_repairs": failed_repairs,
+            "uptime_percent": round(uptime_percent, 2),
+            "avg_response_time": round(avg_response_time, 3),
+            "most_repaired_service": most_repaired[0] if most_repaired else "None",
+            "most_repaired_count": most_repaired[1] if most_repaired else 0,
+            "servers_monitored": servers_monitored,
+            "active_schedules": active_schedules,
+            "last_check": last_check
+        }
+
+    def get_live_status(self):
+        """Get live status of all monitored services"""
+        servers = self.load_servers()
+        monitoring = self.load_monitoring()
+        status_list = []
+        
+        for mon_config in monitoring:
+            if not mon_config.get("enabled", True):
+                continue
+            
+            server = next((s for s in servers if s["id"] == mon_config["server_id"]), None)
+            if not server:
+                continue
+            
+            for service_id in mon_config.get("services", []):
+                template = self.get_template(service_id)
+                if not template:
+                    continue
+                
+                state_key = f"{server['id']}:{service_id}"
+                status = self._service_states.get(state_key, "unknown")
+                
+                # Get last check from DB
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute("""
+                    SELECT timestamp, status, response_time 
+                    FROM sentinel_checks 
+                    WHERE server_id = ? AND service_name = ? 
+                    ORDER BY timestamp DESC LIMIT 1
+                """, (server["id"], template["name"]))
+                last_check = c.fetchone()
+                conn.close()
+                
+                # Calculate uptime for this service
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+                c.execute("""
+                    SELECT COUNT(*) FROM sentinel_checks 
+                    WHERE server_id = ? AND service_name = ? AND timestamp > ?
+                """, (server["id"], template["name"], yesterday))
+                total = c.fetchone()[0]
+                
+                c.execute("""
+                    SELECT COUNT(*) FROM sentinel_checks 
+                    WHERE server_id = ? AND service_name = ? AND timestamp > ? AND status = 'healthy'
+                """, (server["id"], template["name"], yesterday))
+                healthy = c.fetchone()[0]
+                conn.close()
+                
+                uptime = (healthy / total * 100) if total > 0 else 0
+                
+                status_list.append({
+                    "server_id": server["id"],
+                    "server_name": server.get("description", server["id"]),
+                    "service_name": template["name"],
+                    "status": status,
+                    "last_check": last_check[0] if last_check else None,
+                    "response_time": last_check[2] if last_check else None,
+                    "uptime_24h": round(uptime, 2)
+                })
+        
+        return status_list
+
+    def get_recent_activity(self, limit=20):
+        """Get recent activity log"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        # Combine checks, repairs, and failures
+        c.execute("""
+            SELECT 'check' as type, timestamp, server_id, service_name, status as message, NULL as attempts
+            FROM sentinel_checks
+            WHERE status = 'unhealthy'
+            UNION ALL
+            SELECT 'repair' as type, timestamp, server_id, service_name, 
+                   CASE WHEN success = 1 THEN 'repaired' ELSE 'failed' END as message,
+                   attempts
+            FROM sentinel_repairs
+            UNION ALL
+            SELECT 'failure' as type, timestamp, server_id, service_name, reason as message, NULL as attempts
+            FROM sentinel_failures
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,))
+        
+        activity = []
+        for row in c.fetchall():
+            activity.append({
+                "type": row[0],
+                "timestamp": row[1],
+                "server_id": row[2],
+                "service_name": row[3],
+                "message": row[4],
+                "attempts": row[5]
+            })
+        
+        conn.close()
+        return activity
+
+    def get_health_score(self, server_id):
+        """Calculate health score for a server (0-100)"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        # Get checks from last 7 days
+        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        c.execute("""
+            SELECT COUNT(*) FROM sentinel_checks 
+            WHERE server_id = ? AND timestamp > ?
+        """, (server_id, week_ago))
+        total_checks = c.fetchone()[0]
+        
+        if total_checks == 0:
+            conn.close()
+            return 100  # No data = assume healthy
+        
+        c.execute("""
+            SELECT COUNT(*) FROM sentinel_checks 
+            WHERE server_id = ? AND timestamp > ? AND status = 'healthy'
+        """, (server_id, week_ago))
+        healthy_checks = c.fetchone()[0]
+        
+        # Get failed repairs (penalty)
+        c.execute("""
+            SELECT COUNT(*) FROM sentinel_repairs 
+            WHERE server_id = ? AND timestamp > ? AND success = 0
+        """, (server_id, week_ago))
+        failed_repairs = c.fetchone()[0]
+        
+        conn.close()
+        
+        # Calculate score
+        uptime_score = (healthy_checks / total_checks) * 100
+        repair_penalty = min(failed_repairs * 5, 20)  # Max 20 point penalty
+        
+        health_score = max(0, uptime_score - repair_penalty)
+        return round(health_score, 1)
+
+    # ===========================
+    # Purge System
+    # ===========================
+
+    async def auto_purge(self):
+        """Auto-purge old logs (runs daily)"""
+        while True:
+            try:
+                await asyncio.sleep(86400)  # 24 hours
+                
+                cutoff_date = (datetime.now() - timedelta(days=90)).isoformat()
+                
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                
+                c.execute("DELETE FROM sentinel_checks WHERE timestamp < ?", (cutoff_date,))
+                checks_deleted = c.rowcount
+                
+                c.execute("DELETE FROM sentinel_repairs WHERE timestamp < ?", (cutoff_date,))
+                repairs_deleted = c.rowcount
+                
+                c.execute("DELETE FROM sentinel_failures WHERE timestamp < ?", (cutoff_date,))
+                failures_deleted = c.rowcount
+                
+                c.execute("DELETE FROM sentinel_metrics WHERE timestamp < ?", (cutoff_date,))
+                metrics_deleted = c.rowcount
+                
+                conn.commit()
+                conn.close()
+                
+                self.logger(f"Auto-purge completed: {checks_deleted} checks, {repairs_deleted} repairs, {failures_deleted} failures, {metrics_deleted} metrics deleted")
+                
+            except Exception as e:
+                self.logger(f"Error in auto-purge: {e}")
+
+    def manual_purge(self, days=None, server_id=None, service_name=None, successful_only=False):
+        """Manual purge with filters"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        total_deleted = 0
+        
+        if days:
+            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            if server_id:
+                c.execute("DELETE FROM sentinel_checks WHERE timestamp < ? AND server_id = ?", 
+                         (cutoff_date, server_id))
+                total_deleted += c.rowcount
+                
+                c.execute("DELETE FROM sentinel_repairs WHERE timestamp < ? AND server_id = ?", 
+                         (cutoff_date, server_id))
+                total_deleted += c.rowcount
+                
+                c.execute("DELETE FROM sentinel_failures WHERE timestamp < ? AND server_id = ?", 
+                         (cutoff_date, server_id))
+                total_deleted += c.rowcount
+            
+            elif service_name:
+                c.execute("DELETE FROM sentinel_checks WHERE timestamp < ? AND service_name = ?", 
+                         (cutoff_date, service_name))
+                total_deleted += c.rowcount
+                
+                c.execute("DELETE FROM sentinel_repairs WHERE timestamp < ? AND service_name = ?", 
+                         (cutoff_date, service_name))
+                total_deleted += c.rowcount
+                
+                c.execute("DELETE FROM sentinel_failures WHERE timestamp < ? AND service_name = ?", 
+                         (cutoff_date, service_name))
+                total_deleted += c.rowcount
+            
+            elif successful_only:
+                c.execute("DELETE FROM sentinel_checks WHERE timestamp < ? AND status = 'healthy'", 
+                         (cutoff_date,))
+                total_deleted += c.rowcount
+            
+            else:
+                c.execute("DELETE FROM sentinel_checks WHERE timestamp < ?", (cutoff_date,))
+                total_deleted += c.rowcount
+                
+                c.execute("DELETE FROM sentinel_repairs WHERE timestamp < ?", (cutoff_date,))
+                total_deleted += c.rowcount
+                
+                c.execute("DELETE FROM sentinel_failures WHERE timestamp < ?", (cutoff_date,))
+                total_deleted += c.rowcount
+                
+                c.execute("DELETE FROM sentinel_metrics WHERE timestamp < ?", (cutoff_date,))
+                total_deleted += c.rowcount
+        
+        else:
+            # Nuclear option - purge everything
+            c.execute("DELETE FROM sentinel_checks")
+            total_deleted += c.rowcount
+            
+            c.execute("DELETE FROM sentinel_repairs")
+            total_deleted += c.rowcount
+            
+            c.execute("DELETE FROM sentinel_failures")
+            total_deleted += c.rowcount
+            
+            c.execute("DELETE FROM sentinel_metrics")
+            total_deleted += c.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "deleted": total_deleted}
+
+    # ===========================
+    # API Routes
+    # ===========================
+
+    def setup_routes(self, app):
+        """Setup aiohttp routes"""
+        
+        # Server management
+        app.router.add_get("/api/sentinel/servers", self.api_get_servers)
+        app.router.add_post("/api/sentinel/servers", self.api_add_server)
+        app.router.add_put("/api/sentinel/servers/{server_id}", self.api_update_server)
+        app.router.add_delete("/api/sentinel/servers/{server_id}", self.api_delete_server)
+        
+        # Template management
+        app.router.add_get("/api/sentinel/templates", self.api_get_templates)
+        app.router.add_get("/api/sentinel/templates/{filename}", self.api_download_template)
+        app.router.add_post("/api/sentinel/templates", self.api_upload_template)
+        app.router.add_put("/api/sentinel/templates/{filename}", self.api_update_template)
+        app.router.add_delete("/api/sentinel/templates/{filename}", self.api_delete_template)
+        
+        # Monitoring configuration
+        app.router.add_get("/api/sentinel/monitoring", self.api_get_monitoring)
+        app.router.add_post("/api/sentinel/monitoring", self.api_add_monitoring)
+        app.router.add_put("/api/sentinel/monitoring/{server_id}", self.api_update_monitoring)
+        app.router.add_post("/api/sentinel/monitoring/{server_id}/disable/{service_id}", self.api_disable_service)
+        
+        # Maintenance windows
+        app.router.add_get("/api/sentinel/maintenance", self.api_get_maintenance)
+        app.router.add_post("/api/sentinel/maintenance", self.api_add_maintenance)
+        app.router.add_put("/api/sentinel/maintenance/{window_id}", self.api_update_maintenance)
+        app.router.add_delete("/api/sentinel/maintenance/{window_id}", self.api_delete_maintenance)
+        
+        # Quiet hours
+        app.router.add_get("/api/sentinel/quiet-hours", self.api_get_quiet_hours)
+        app.router.add_put("/api/sentinel/quiet-hours", self.api_update_quiet_hours)
+        
+        # Dashboard
+        app.router.add_get("/api/sentinel/dashboard", self.api_dashboard)
+        app.router.add_get("/api/sentinel/status", self.api_live_status)
+        app.router.add_get("/api/sentinel/activity", self.api_recent_activity)
+        app.router.add_get("/api/sentinel/health/{server_id}", self.api_health_score)
+        
+        # Control
+        app.router.add_post("/api/sentinel/start/{server_id}", self.api_start_monitoring)
+        app.router.add_post("/api/sentinel/stop/{server_id}", self.api_stop_monitoring)
+        app.router.add_post("/api/sentinel/start-all", self.api_start_all)
+        
+        # Purge
+        app.router.add_post("/api/sentinel/purge", self.api_manual_purge)
+
+    # API Handlers
+    async def api_get_servers(self, request):
+        servers = self.load_servers()
+        return web.json_response({"servers": servers})
+
+    async def api_add_server(self, request):
+        data = await request.json()
+        result = self.add_server(
+            data["id"],
+            data["host"],
+            data.get("port", 22),
+            data["username"],
+            data["password"],
+            data.get("description", "")
+        )
+        return web.json_response(result)
+
+    async def api_update_server(self, request):
+        server_id = request.match_info["server_id"]
+        data = await request.json()
+        result = self.update_server(server_id, data)
+        return web.json_response(result)
+
+    async def api_delete_server(self, request):
+        server_id = request.match_info["server_id"]
+        result = self.delete_server(server_id)
+        return web.json_response(result)
+
+    async def api_get_templates(self, request):
+        templates = self.load_templates()
+        return web.json_response({"templates": templates})
+
+    async def api_download_template(self, request):
+        filename = request.match_info["filename"]
+        result = self.download_template(filename)
+        if result["success"]:
+            return web.Response(text=result["content"], content_type="application/json")
+        return web.json_response(result, status=404)
+
+    async def api_upload_template(self, request):
+        data = await request.json()
+        result = self.upload_template(data["content"], data["filename"])
+        return web.json_response(result)
+
+    async def api_update_template(self, request):
+        filename = request.match_info["filename"]
+        data = await request.json()
+        result = self.save_template(data, filename)
+        return web.json_response(result)
+
+    async def api_delete_template(self, request):
+        filename = request.match_info["filename"]
+        result = self.delete_template(filename)
+        return web.json_response(result)
+
+    async def api_get_monitoring(self, request):
+        monitoring = self.load_monitoring()
+        return web.json_response({"monitoring": monitoring})
+
+    async def api_add_monitoring(self, request):
+        data = await request.json()
+        result = self.add_monitoring(
+            data["server_id"],
+            data["services"],
+            data.get("check_interval", 300)
+        )
+        return web.json_response(result)
+
+    async def api_update_monitoring(self, request):
+        server_id = request.match_info["server_id"]
+        data = await request.json()
+        result = self.update_monitoring(server_id, data)
+        return web.json_response(result)
+
+    async def api_disable_service(self, request):
+        server_id = request.match_info["server_id"]
+        service_id = request.match_info["service_id"]
+        data = await request.json()
+        duration = data.get("duration_hours", 2)
+        result = self.disable_service_temporarily(server_id, service_id, duration)
+        return web.json_response(result)
+
+    async def api_get_maintenance(self, request):
+        windows = self.load_maintenance_windows()
+        return web.json_response({"windows": windows})
+
+    async def api_add_maintenance(self, request):
+        data = await request.json()
+        windows = self.load_maintenance_windows()
+        windows.append(data)
+        self.save_maintenance_windows(windows)
+        return web.json_response({"success": True})
+
+    async def api_update_maintenance(self, request):
+        window_id = int(request.match_info["window_id"])
+        data = await request.json()
+        windows = self.load_maintenance_windows()
+        if 0 <= window_id < len(windows):
+            windows[window_id] = data
+            self.save_maintenance_windows(windows)
+            return web.json_response({"success": True})
+        return web.json_response({"success": False, "error": "Window not found"}, status=404)
+
+    async def api_delete_maintenance(self, request):
+        window_id = int(request.match_info["window_id"])
+        windows = self.load_maintenance_windows()
+        if 0 <= window_id < len(windows):
+            windows.pop(window_id)
+            self.save_maintenance_windows(windows)
+            return web.json_response({"success": True})
+        return web.json_response({"success": False, "error": "Window not found"}, status=404)
+
+    async def api_get_quiet_hours(self, request):
+        config = self.load_quiet_hours()
+        return web.json_response(config)
+
+    async def api_update_quiet_hours(self, request):
+        data = await request.json()
+        filepath = os.path.join(self.data_path, "quiet_hours.json")
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=2)
+        return web.json_response({"success": True})
+
+    async def api_dashboard(self, request):
+        metrics = self.get_dashboard_metrics()
+        return web.json_response(metrics)
+
+    async def api_live_status(self, request):
+        status = self.get_live_status()
+        return web.json_response({"status": status})
+
+    async def api_recent_activity(self, request):
+        limit = int(request.query.get("limit", 20))
+        activity = self.get_recent_activity(limit)
+        return web.json_response({"activity": activity})
+
+    async def api_health_score(self, request):
+        server_id = request.match_info["server_id"]
+        score = self.get_health_score(server_id)
+        return web.json_response({"server_id": server_id, "health_score": score})
+
+    async def api_start_monitoring(self, request):
+        server_id = request.match_info["server_id"]
+        self.start_monitoring(server_id)
+        return web.json_response({"success": True})
+
+    async def api_stop_monitoring(self, request):
+        server_id = request.match_info["server_id"]
+        self.stop_monitoring(server_id)
+        return web.json_response({"success": True})
+
+    async def api_start_all(self, request):
+        self.start_all_monitoring()
+        return web.json_response({"success": True})
+
+    async def api_manual_purge(self, request):
+        data = await request.json()
+        result = self.manual_purge(
+            days=data.get("days"),
+            server_id=data.get("server_id"),
+            service_name=data.get("service_name"),
+            successful_only=data.get("successful_only", False)
+        )
+        return web.json_response(result)
