@@ -358,6 +358,8 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
     """
     FIXED: Returns LLM riffs if LLM enabled, Lexi riffs if LLM disabled but riffs enabled.
     """
+    import importlib  # Import at function level for both branches
+    
     if not persona:
         return []
     
@@ -371,7 +373,6 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
     if llm_on:
         # LLM is ON → try LLM riffs via llm_client
         try:
-            import importlib
             llm = importlib.import_module("llm_client")
             llm = importlib.reload(llm)
             out = llm.persona_riff(persona=persona, context=context)
@@ -405,10 +406,13 @@ def _persona_llm_riffs(context: str, persona: Optional[str]) -> List[str]:
                 m = re.search(r"Subject:\s*(.+)", context, flags=re.I)
                 if m:
                     subj = m.group(1).strip()
-                out = mod.lexi_riffs(persona, n=max_lines, subject=subj, body=context)
+                out = mod.lexi_riffs(persona_name=persona, n=max_lines, subject=subj, body=context)
                 if isinstance(out, list):
                     return [str(x).strip() for x in out if str(x).strip()]
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"[beautify] Lexi riff failed: {e}")
+            traceback.print_exc()
             pass
     
     return []
