@@ -1,5 +1,6 @@
 // /app/www/js/sentinel.js
 // Frontend for Sentinel autonomous monitoring system
+// Integrates with Jarvis Prime UI
 
 class SentinelUI {
     constructor() {
@@ -11,17 +12,31 @@ class SentinelUI {
         this.liveStatusInterval = null;
         this.dashboardInterval = null;
         this.activeLogStreams = new Map();
-        this.currentView = 'dashboard';
-        
-        this.init();
+        this.isActive = false;
     }
 
     async init() {
         console.log('[Sentinel] Initializing...');
         await this.loadInitialData();
         this.setupEventListeners();
-        this.showView('dashboard');
+    }
+
+    async activate() {
+        if (this.isActive) return;
+        this.isActive = true;
+        
+        console.log('[Sentinel] Activating...');
+        await this.loadInitialData();
+        this.loadDashboard();
+        this.loadLiveStatus();
+        this.loadRecentActivity(10);
         this.startAutoRefresh();
+    }
+
+    deactivate() {
+        this.isActive = false;
+        this.stopAutoRefresh();
+        this.closeAllLogStreams();
     }
 
     async loadInitialData() {
@@ -35,7 +50,7 @@ class SentinelUI {
             ]);
         } catch (error) {
             console.error('[Sentinel] Error loading initial data:', error);
-            this.showNotification('Failed to load Sentinel data', 'error');
+            showNotification('Sentinel', 'Failed to load data', 'error');
         }
     }
 
@@ -123,48 +138,42 @@ class SentinelUI {
     }
 
     // ===========================
-    // View Management
+    // Event Listeners
     // ===========================
 
     setupEventListeners() {
-        // Navigation
-        document.querySelectorAll('[data-sentinel-nav]').forEach(btn => {
+        // Sub-navigation within Sentinel
+        const subNavButtons = document.querySelectorAll('.sentinel-subnav-btn');
+        subNavButtons.forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const view = e.target.dataset.sentinelNav;
-                this.showView(view);
+                const view = e.target.dataset.view;
+                this.showSubView(view);
             });
-        });
-
-        // Modal close buttons
-        document.querySelectorAll('[data-close-modal]').forEach(btn => {
-            btn.addEventListener('click', () => this.closeAllModals());
         });
     }
 
-    showView(viewName) {
-        this.currentView = viewName;
-        
-        // Hide all views
-        document.querySelectorAll('[data-sentinel-view]').forEach(view => {
+    showSubView(viewName) {
+        // Hide all sub-views
+        document.querySelectorAll('.sentinel-subview').forEach(view => {
             view.style.display = 'none';
         });
 
-        // Show selected view
-        const view = document.querySelector(`[data-sentinel-view="${viewName}"]`);
+        // Show selected sub-view
+        const view = document.querySelector(`.sentinel-subview[data-view="${viewName}"]`);
         if (view) {
             view.style.display = 'block';
         }
 
-        // Update nav
-        document.querySelectorAll('[data-sentinel-nav]').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.sentinelNav === viewName);
+        // Update sub-nav
+        document.querySelectorAll('.sentinel-subnav-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === viewName);
         });
 
         // Load view data
-        this.loadViewData(viewName);
+        this.loadSubViewData(viewName);
     }
 
-    async loadViewData(viewName) {
+    async loadSubViewData(viewName) {
         switch(viewName) {
             case 'dashboard':
                 await this.loadDashboard();
@@ -179,9 +188,6 @@ class SentinelUI {
                 break;
             case 'monitoring':
                 this.renderMonitoring();
-                break;
-            case 'maintenance':
-                this.renderMaintenanceWindows();
                 break;
             case 'logs':
                 await this.renderLogHistory();
@@ -422,14 +428,9 @@ class SentinelUI {
     }
 
     showAddServerModal() {
-        this.showModal('add-server-modal', {
-            id: '',
-            host: '',
-            port: 22,
-            username: '',
-            password: '',
-            description: ''
-        });
+        showModal('add-server-modal');
+        // Reset form
+        document.getElementById('add-server-form').reset();
     }
 
     async addServer(formData) {
@@ -443,16 +444,16 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification('Server added successfully', 'success');
+                showNotification('Sentinel', 'Server added successfully', 'success');
                 await this.loadServers();
                 this.renderServers();
-                this.closeAllModals();
+                closeModal();
             } else {
-                this.showNotification(result.error || 'Failed to add server', 'error');
+                showNotification('Sentinel', result.error || 'Failed to add server', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error adding server:', error);
-            this.showNotification('Failed to add server', 'error');
+            showNotification('Sentinel', 'Failed to add server', 'error');
         }
     }
 
@@ -460,7 +461,8 @@ class SentinelUI {
         const server = this.servers.find(s => s.id === serverId);
         if (!server) return;
 
-        this.showModal('edit-server-modal', server);
+        showModal('edit-server-modal');
+        this.populateForm('edit-server-form', server);
     }
 
     async updateServer(serverId, updates) {
@@ -474,16 +476,16 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification('Server updated successfully', 'success');
+                showNotification("Sentinel", ('Server updated successfully', 'success');
                 await this.loadServers();
                 this.renderServers();
-                this.closeAllModals();
+                closeModal();
             } else {
-                this.showNotification(result.error || 'Failed to update server', 'error');
+                showNotification("Sentinel", (result.error || 'Failed to update server', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error updating server:', error);
-            this.showNotification('Failed to update server', 'error');
+            showNotification("Sentinel", ('Failed to update server', 'error');
         }
     }
 
@@ -500,15 +502,15 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification('Server deleted successfully', 'success');
+                showNotification("Sentinel", ('Server deleted successfully', 'success');
                 await this.loadServers();
                 this.renderServers();
             } else {
-                this.showNotification(result.error || 'Failed to delete server', 'error');
+                showNotification("Sentinel", (result.error || 'Failed to delete server', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error deleting server:', error);
-            this.showNotification('Failed to delete server', 'error');
+            showNotification("Sentinel", ('Failed to delete server', 'error');
         }
     }
 
@@ -605,7 +607,7 @@ class SentinelUI {
     }
 
     async syncTemplates() {
-        this.showNotification('Syncing templates from GitHub...', 'info');
+        showNotification("Sentinel", ('Syncing templates from GitHub...', 'info');
         
         try {
             const response = await fetch('/api/sentinel/templates/sync', {
@@ -616,15 +618,15 @@ class SentinelUI {
             
             if (result.success) {
                 const total = result.total || 0;
-                this.showNotification(`Synced ${total} templates successfully`, 'success');
+                showNotification("Sentinel", (`Synced ${total} templates successfully`, 'success');
                 await this.loadTemplates();
                 this.renderTemplates();
             } else {
-                this.showNotification(result.error || 'Failed to sync templates', 'error');
+                showNotification("Sentinel", (result.error || 'Failed to sync templates', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error syncing templates:', error);
-            this.showNotification('Failed to sync templates', 'error');
+            showNotification("Sentinel", ('Failed to sync templates', 'error');
         }
     }
 
@@ -642,11 +644,11 @@ class SentinelUI {
                 a.click();
                 URL.revokeObjectURL(url);
             } else {
-                this.showNotification(result.error || 'Failed to download template', 'error');
+                showNotification("Sentinel", (result.error || 'Failed to download template', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error downloading template:', error);
-            this.showNotification('Failed to download template', 'error');
+            showNotification("Sentinel", ('Failed to download template', 'error');
         }
     }
 
@@ -657,13 +659,13 @@ class SentinelUI {
             
             if (result.success) {
                 const template = JSON.parse(result.content);
-                this.showModal('view-template-modal', template);
+                showModal('view-template-modal', template);
             } else {
-                this.showNotification(result.error || 'Failed to load template', 'error');
+                showNotification("Sentinel", (result.error || 'Failed to load template', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error viewing template:', error);
-            this.showNotification('Failed to view template', 'error');
+            showNotification("Sentinel", ('Failed to view template', 'error');
         }
     }
 
@@ -680,24 +682,24 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification('Template deleted successfully', 'success');
+                showNotification("Sentinel", ('Template deleted successfully', 'success');
                 await this.loadTemplates();
                 this.renderTemplates();
             } else {
-                this.showNotification(result.error || 'Failed to delete template', 'error');
+                showNotification("Sentinel", (result.error || 'Failed to delete template', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error deleting template:', error);
-            this.showNotification('Failed to delete template', 'error');
+            showNotification("Sentinel", ('Failed to delete template', 'error');
         }
     }
 
     showUploadTemplateModal() {
-        this.showModal('upload-template-modal');
+        showModal('upload-template-modal');
     }
 
     showCreateTemplateModal() {
-        this.showModal('create-template-modal', {
+        showModal('create-template-modal', {
             id: '',
             name: '',
             check_cmd: '',
@@ -789,7 +791,7 @@ class SentinelUI {
     }
 
     showAddMonitoringModal() {
-        this.showModal('add-monitoring-modal', {
+        showModal('add-monitoring-modal', {
             server_id: '',
             services: [],
             check_interval: 300
@@ -800,7 +802,7 @@ class SentinelUI {
         const mon = this.monitoring.find(m => m.server_id === serverId);
         if (!mon) return;
 
-        this.showModal('edit-monitoring-modal', mon);
+        showModal('edit-monitoring-modal', mon);
     }
 
     async toggleMonitoring(serverId, enabled) {
@@ -814,7 +816,7 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification(`Monitoring ${enabled ? 'enabled' : 'disabled'}`, 'success');
+                showNotification("Sentinel", (`Monitoring ${enabled ? 'enabled' : 'disabled'}`, 'success');
                 await this.loadMonitoring();
                 this.renderMonitoring();
                 
@@ -825,11 +827,11 @@ class SentinelUI {
                     await this.stopMonitoring(serverId);
                 }
             } else {
-                this.showNotification(result.error || 'Failed to update monitoring', 'error');
+                showNotification("Sentinel", (result.error || 'Failed to update monitoring', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error toggling monitoring:', error);
-            this.showNotification('Failed to update monitoring', 'error');
+            showNotification("Sentinel", ('Failed to update monitoring', 'error');
         }
     }
 
@@ -855,13 +857,13 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification('All monitoring started', 'success');
+                showNotification("Sentinel", ('All monitoring started', 'success');
             } else {
-                this.showNotification('Failed to start monitoring', 'error');
+                showNotification("Sentinel", ('Failed to start monitoring', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error starting all monitoring:', error);
-            this.showNotification('Failed to start monitoring', 'error');
+            showNotification("Sentinel", ('Failed to start monitoring', 'error');
         }
     }
 
@@ -873,7 +875,7 @@ class SentinelUI {
         // Find service ID from name
         const template = this.templates.find(t => t.name === serviceName);
         if (!template) {
-            this.showNotification('Service template not found', 'error');
+            showNotification("Sentinel", ('Service template not found', 'error');
             return;
         }
 
@@ -892,11 +894,11 @@ class SentinelUI {
             if (result.execution_id) {
                 this.showLogStreamModal(result.execution_id, `Check: ${serviceName}`);
             } else {
-                this.showNotification('Failed to start check', 'error');
+                showNotification("Sentinel", ('Failed to start check', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error starting manual check:', error);
-            this.showNotification('Failed to start check', 'error');
+            showNotification("Sentinel", ('Failed to start check', 'error');
         }
     }
 
@@ -908,7 +910,7 @@ class SentinelUI {
         // Find service ID from name
         const template = this.templates.find(t => t.name === serviceName);
         if (!template) {
-            this.showNotification('Service template not found', 'error');
+            showNotification("Sentinel", ('Service template not found', 'error');
             return;
         }
 
@@ -927,11 +929,11 @@ class SentinelUI {
             if (result.execution_id) {
                 this.showLogStreamModal(result.execution_id, `Repair: ${serviceName}`);
             } else {
-                this.showNotification('Failed to start repair', 'error');
+                showNotification("Sentinel", ('Failed to start repair', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error starting manual repair:', error);
-            this.showNotification('Failed to start repair', 'error');
+            showNotification("Sentinel", ('Failed to start repair', 'error');
         }
     }
 
@@ -1076,13 +1078,13 @@ class SentinelUI {
             const data = await response.json();
 
             if (data.logs) {
-                this.showModal('view-execution-logs-modal', data);
+                showModal('view-execution-logs-modal', data);
             } else {
-                this.showNotification('Execution logs not found', 'error');
+                showNotification("Sentinel", ('Execution logs not found', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error loading execution logs:', error);
-            this.showNotification('Failed to load logs', 'error');
+            showNotification("Sentinel", ('Failed to load logs', 'error');
         }
     }
 
@@ -1177,19 +1179,19 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification('Quiet hours updated', 'success');
+                showNotification("Sentinel", ('Quiet hours updated', 'success');
                 await this.loadQuietHours();
             } else {
-                this.showNotification('Failed to update quiet hours', 'error');
+                showNotification("Sentinel", ('Failed to update quiet hours', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error saving quiet hours:', error);
-            this.showNotification('Failed to save quiet hours', 'error');
+            showNotification("Sentinel", ('Failed to save quiet hours', 'error');
         }
     }
 
     addMaintenanceWindow() {
-        this.showModal('add-maintenance-window-modal', {
+        showModal('add-maintenance-window-modal', {
             start_time: '22:00',
             end_time: '06:00',
             days: [],
@@ -1209,20 +1211,20 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification('Maintenance window deleted', 'success');
+                showNotification("Sentinel", ('Maintenance window deleted', 'success');
                 await this.loadMaintenanceWindows();
                 this.renderSettings();
             } else {
-                this.showNotification('Failed to delete maintenance window', 'error');
+                showNotification("Sentinel", ('Failed to delete maintenance window', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error deleting maintenance window:', error);
-            this.showNotification('Failed to delete maintenance window', 'error');
+            showNotification("Sentinel", ('Failed to delete maintenance window', 'error');
         }
     }
 
     showPurgeModal() {
-        this.showModal('purge-logs-modal', {
+        showModal('purge-logs-modal', {
             days: 90,
             server_id: null,
             service_name: null,
@@ -1243,14 +1245,14 @@ class SentinelUI {
             const result = await response.json();
             
             if (result.success) {
-                this.showNotification(`Purged ${result.deleted} log entries`, 'success');
-                this.closeAllModals();
+                showNotification("Sentinel", (`Purged ${result.deleted} log entries`, 'success');
+                closeModal();
             } else {
-                this.showNotification('Failed to purge logs', 'error');
+                showNotification("Sentinel", ('Failed to purge logs', 'error');
             }
         } catch (error) {
             console.error('[Sentinel] Error purging logs:', error);
-            this.showNotification('Failed to purge logs', 'error');
+            showNotification("Sentinel", ('Failed to purge logs', 'error');
         }
     }
 
@@ -1261,14 +1263,14 @@ class SentinelUI {
     startAutoRefresh() {
         // Refresh dashboard every 30 seconds
         this.dashboardInterval = setInterval(() => {
-            if (this.currentView === 'dashboard') {
+            if (this.isActive) {
                 this.loadDashboard();
             }
         }, 30000);
 
         // Refresh live status every 10 seconds
         this.liveStatusInterval = setInterval(() => {
-            if (this.currentView === 'dashboard') {
+            if (this.isActive) {
                 this.loadLiveStatus();
             }
         }, 10000);
@@ -1283,55 +1285,52 @@ class SentinelUI {
         }
     }
 
-    // ===========================
-    // UI Helpers
-    // ===========================
-
-    showModal(modalId, data = null) {
-        const modal = document.getElementById(modalId);
-        if (!modal) return;
-
-        if (data) {
-            // Populate modal with data
-            Object.keys(data).forEach(key => {
-                const input = modal.querySelector(`[name="${key}"]`);
-                if (input) {
-                    if (input.type === 'checkbox') {
-                        input.checked = data[key];
-                    } else {
-                        input.value = data[key];
-                    }
-                }
-            });
-        }
-
-        modal.style.display = 'flex';
-    }
-
-    closeAllModals() {
-        document.querySelectorAll('.sentinel-modal').forEach(modal => {
-            modal.style.display = 'none';
-        });
-
-        // Close all log streams
+    closeAllLogStreams() {
         this.activeLogStreams.forEach(stream => stream.close());
         this.activeLogStreams.clear();
     }
 
-    showNotification(message, type = 'info') {
-        // Use Jarvis notify system if available
-        if (window.jarvisNotify) {
-            const priority = type === 'error' ? 7 : type === 'warning' ? 5 : 3;
-            window.jarvisNotify({
-                title: 'Sentinel',
-                body: message,
-                source: 'sentinel',
-                priority
-            });
-        } else {
-            console.log(`[Sentinel ${type}]`, message);
-            alert(message);
+    // ===========================
+    // UI Helpers
+    // ===========================
+
+    populateForm(formId, data) {
+        const form = document.getElementById(formId);
+        if (!form || !data) return;
+
+        Object.keys(data).forEach(key => {
+            const input = form.querySelector(`[name="${key}"]`);
+            if (input) {
+                if (input.type === 'checkbox') {
+                    input.checked = data[key];
+                } else if (input.tagName === 'SELECT') {
+                    input.value = data[key];
+                } else {
+                    input.value = data[key];
+                }
+            }
+        });
+    }
+
+    getFormData(formId) {
+        const form = document.getElementById(formId);
+        if (!form) return {};
+
+        const formData = new FormData(form);
+        const data = {};
+        
+        for (let [key, value] of formData.entries()) {
+            const input = form.querySelector(`[name="${key}"]`);
+            if (input && input.type === 'checkbox') {
+                data[key] = input.checked;
+            } else if (input && input.type === 'number') {
+                data[key] = parseFloat(value);
+            } else {
+                data[key] = value;
+            }
         }
+        
+        return data;
     }
 
     // ===========================
@@ -1370,8 +1369,10 @@ class SentinelUI {
     }
 }
 
-// Initialize Sentinel UI
-let sentinelUI;
+// Initialize Sentinel UI instance (but don't activate)
+const sentinelUI = new SentinelUI();
+
+// Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    sentinelUI = new SentinelUI();
+    sentinelUI.init();
 });
