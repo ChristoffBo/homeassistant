@@ -1,4 +1,3 @@
-
 (function () {
   
   // ============================================
@@ -178,6 +177,18 @@
   /* =============== TAB MANAGEMENT =============== */
   $$('.nav-tab').forEach(btn => {
     btn.addEventListener('click', () => {
+      // Store previous tab for deactivation
+      const previousTab = $('.nav-tab.active');
+      const previousTabName = previousTab ? previousTab.dataset.tab : null;
+      
+      // Deactivate previous tab modules
+      if (previousTabName === 'sentinel') {
+        if (typeof sentinelUI !== 'undefined' && sentinelUI.deactivate) {
+          sentinelUI.deactivate();
+        }
+      }
+      
+      // Switch tabs
       $$('.nav-tab').forEach(x => x.classList.remove('active'));
       btn.classList.add('active');
       $$('.tab-panel').forEach(t => t.classList.remove('active'));
@@ -195,6 +206,13 @@
         
         if (btn.dataset.tab === 'dashboard') {
           updateDashboardMetrics();
+        }
+        
+        // Activate Sentinel when tab is opened
+        if (btn.dataset.tab === 'sentinel') {
+          if (typeof sentinelUI !== 'undefined' && sentinelUI.activate) {
+            sentinelUI.activate();
+          }
         }
       }
     });
