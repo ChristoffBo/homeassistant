@@ -16,8 +16,36 @@ from pathlib import Path
 from aiohttp import web
 import logging
 
+import json, os
+
+def ensure_sentinel_defaults(base="/share/jarvis_prime/sentinel"):
+    os.makedirs(base, exist_ok=True)
+    defaults = {
+        "settings.json": {
+            "check_interval": 300,
+            "notify_on_failure": True,
+            "notify_recovery": True,
+            "auto_reload_templates": True
+        },
+        "servers.json": [],
+        "templates.json": [],
+        "monitoring.json": [],
+        "maintenance.json": [],
+        "quiet_hours.json": {
+            "enabled": False,
+            "start": "22:00",
+            "end": "08:00"
+        }
+    }
+    for name, content in defaults.items():
+        path = os.path.join(base, name)
+        if not os.path.exists(path) or os.path.getsize(path) < 10:
+            with open(path, "w") as f:
+                json.dump(content, f, indent=2)
+
 logger = logging.getLogger(__name__)
 
+ensure_sentinel_defaults()
 
 class Sentinel:
     def __init__(self, config, db_path, notify_callback=None, logger_func=None):
