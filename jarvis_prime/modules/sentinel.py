@@ -1150,8 +1150,7 @@ class Sentinel:
             "active_schedules": active_schedules,
             "last_check": last_check
         }
-
-    def get_live_status(self):
+def get_live_status(self):
         """Get live status of all monitored services"""
         servers = self.load_servers()
         monitoring = self.load_monitoring()
@@ -1294,7 +1293,8 @@ class Sentinel:
     # ===========================
     # Purge System
     # ===========================
-async def auto_purge(self):
+
+    async def auto_purge(self):
         """Auto-purge old logs (runs daily)"""
         while True:
             try:
