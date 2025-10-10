@@ -75,6 +75,34 @@ else:
     analytics_monitor = None
     print("[analytics] Not found or failed to load")
 
+# ---- sentinel ----
+_SENTINEL_FILE = _THIS_DIR / "sentinel.py"
+sentinel_spec = importlib.util.spec_from_file_location("jarvis_sentinel", str(_SENTINEL_FILE))
+sentinel_module = importlib.util.module_from_spec(sentinel_spec)  # type: ignore
+if sentinel_spec and sentinel_spec.loader and _SENTINEL_FILE.exists():
+    sentinel_spec.loader.exec_module(sentinel_module)  # type: ignore
+    
+    def notify_via_sentinel(event):
+        """Send sentinel health/recovery events through inbox"""
+        service = event.get("service", "unknown")
+        status = event.get("status", "unknown")
+        message = event.get("message", "")
+        title = f"Sentinel: {service}"
+        body = f"Service {service} is {status.upper()} — {message}"
+        priority = 8 if status in ("down", "failed") else 5
+        storage.save_message(title, body, "sentinel", priority, {})  # type: ignore
+        _broadcast("created")
+    
+    sentinel_module.init_sentinel(
+        db_path=os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"),
+        notify_callback=notify_via_sentinel,
+        logger=print
+    )
+    print("[sentinel] Initialized")
+else:
+    sentinel_module = None
+    print("[sentinel] Not found or failed to load")
+
 # ---- choose ONE UI root ----
 CANDIDATES = [
     Path("/share/jarvis_prime/ui"),
@@ -422,13 +450,16 @@ async def api_llm_task_status(request: web.Request):
 def _make_app() -> web.Application:
     app = web.Application()
     
-    # Startup hook to start orchestrator scheduler and analytics monitors after event loop is running
+    # Startup hook to start orchestrator scheduler, analytics monitors, and sentinel monitors after event loop is running
     async def start_background_tasks(app):
         if orchestrator_module:
             orchestrator_module.start_orchestrator_scheduler()
         if analytics_module and analytics_monitor:
             await analytics_monitor.start_all_monitors()
             print("[analytics] Monitoring started")
+        if sentinel_module:
+            await sentinel_module.start_sentinel_monitors()
+            print("[sentinel] Monitoring started")
     
     app.on_startup.append(start_background_tasks)
     
@@ -466,6 +497,11 @@ def _make_app() -> web.Application:
     if analytics_module:
         analytics_module.register_routes(app)
         print("[analytics] Routes registered")
+
+    # Register sentinel routes if available
+    if sentinel_module:
+        sentinel_module.register_routes(app)
+        print("[sentinel] Routes registered")
 
     # Register backup routes if available
     try:
