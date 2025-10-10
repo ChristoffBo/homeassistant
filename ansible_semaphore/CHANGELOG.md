@@ -1,3 +1,7 @@
+## v2.16.33 (2025-10-10 13:55:41)
+- Update from v2.16.31 to v2.16.33
+- Docker Image: [semaphoreui/semaphore:v2.16.33](https://hub.docker.com/r/semaphoreui/semaphore/tags)
+
 ## v2.16.31 (2025-09-18 04:00:22)
 - Removed BoltDB, Now runs SQLITE only.
 ## v2.16.31 (2025-09-18 04:00:22)

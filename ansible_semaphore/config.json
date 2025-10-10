@@ -1,15 +1,25 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.16.31",
+  "version": "v2.16.33",
   "slug": "ansible_semaphore",
   "description": "Semaphore UI inside Home Assistant (official upstream image).",
-  "arch": ["aarch64", "amd64", "armv7"],
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armv7"
+  ],
   "startup": "services",
   "boot": "auto",
-  "map": ["share:rw"],
+  "map": [
+    "share:rw"
+  ],
   "image": "semaphoreui/semaphore",
-  "ports": { "8055/tcp": 8055 },
-  "ports_description": { "8055/tcp": "Semaphore Web UI" },
+  "ports": {
+    "8055/tcp": 8055
+  },
+  "ports_description": {
+    "8055/tcp": "Semaphore Web UI"
+  },
   "webui": "http://[HOST]:[PORT:8055]",
   "environment": {
     "SEMAPHORE_PORT": "8055",
@@ -17,12 +27,10 @@
     "SEMAPHORE_DB_HOST": "/share/ansible_semaphore/semaphore.db",
     "SEMAPHORE_TMP_PATH": "/tmp/semaphore",
     "SEMAPHORE_PLAYBOOK_PATH": "/share/ansible_semaphore/playbooks",
-
     "SEMAPHORE_ADMIN": "admin",
     "SEMAPHORE_ADMIN_NAME": "Admin",
     "SEMAPHORE_ADMIN_EMAIL": "admin@example.com",
     "SEMAPHORE_ADMIN_PASSWORD": "ChangeMe!123",
-
     "SEMAPHORE_COOKIE_HASH": "9c3b2f0b7d4f4e4ea1f8d8d2c5e6a1b2",
     "SEMAPHORE_COOKIE_ENCRYPTION": "b1f2c3d4e5f6a7b89c0d1e2f3a4b5c6d",
     "SEMAPHORE_ACCESS_KEY_ENCRYPTION": "d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1"
