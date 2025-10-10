@@ -1,3 +1,6 @@
+## latest (2025-10-10 14:21:00)
+Updated Lexicons, made them more context aware and fixed a nasty no Riff bug.
+Updated Core, Jarvis now uses threading, UI should not become inactive while LLM runs anymore.
 ## latest (2025-10-8 14:21:00)
 Added retries and flap protection to the Analytics.
 ## latest (2025-10-5 14:21:00)
