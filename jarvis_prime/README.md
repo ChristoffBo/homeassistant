@@ -52,6 +52,99 @@ Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, Mo
 • **Flap Tracking & Recovery** – The system tracks every state change, applies suppression intelligently, and resumes normal alerting once the suppression window ends.  
 • **Result:** clean, noise-free uptime data with zero false positives — enterprise-grade stability built in.  
 
+## 🛡️ Sentinel — Self-Healing Monitoring Engine
+
+**Sentinel** is the autonomous self-healing and service-monitoring subsystem inside Jarvis Prime. It runs scheduled checks, performs automatic repairs, and tracks every action in a live dashboard.
+
+### How Sentinel Works
+Sentinel is a **manual-configuration monitoring system** — it only monitors what you tell it to.
+
+1. **Add Servers (Servers Tab)**  
+   - Add each SSH-enabled server you want monitored.  
+   - Provide hostname/IP, port, and credentials.  
+   - Example: “Production Server,” “Media Server,” “Database Server.”
+
+2. **Review Templates (Templates Tab)**  
+   - Templates define how to **check**, **repair**, and **verify** services.  
+   - Pre-configured templates include Docker, Plex, Nginx, MySQL, Disk Usage, etc.  
+   - You can create or upload custom templates as needed.
+
+3. **Configure Monitoring (Monitoring Tab)**  
+   - Assign specific templates to each server.  
+   - Example:  
+     - *Media Server*: Plex + Docker + Disk Usage  
+     - *Web Server*: Nginx + Docker  
+     - *Database Server*: MySQL only  
+
+4. **Scheduling**  
+   - Each check runs at your defined interval (default: 300 s).  
+   - Sentinel retries failed checks before escalating.
+
+### What Sentinel Does
+- Executes service checks via SSH on schedule.  
+- Runs automatic repair commands when failures are detected.  
+- Verifies results and logs outcomes.  
+- Maintains full execution history (checks, repairs, durations, results).  
+- Integrates with Jarvis Prime notifications for alerts and summaries.
+
+### Smart Features
+- **Retry Logic** – Waits before rechecking to avoid false negatives.  
+- **Escalation** – Progressive repair/alert sequence.  
+- **Quiet Hours** – Suppresses low-priority alerts overnight.  
+- **Maintenance Windows** – Temporarily pauses checks.  
+- **Flap Detection** – Filters noisy up/down toggles.  
+- **Dashboard Metrics** – Displays uptime %, failed repairs, and total checks.  
+
+### Quick Start
+1. Go to **Sentinel → Servers** → add your first server.  
+2. Go to **Templates** → click **Sync from GitHub** to load default templates.  
+3. Go to **Monitoring** → click **Add Monitoring**.  
+4. Select the server, choose templates, set check interval (e.g. 300 s).  
+5. Click **Start Monitoring**.  
+6. Open the **Dashboard** for live service status and uptime stats.
+
+### Example Setup
+**Server 1: Media Server (192.168.1.100)**  
+- ✅ Plex Media Server  
+- ✅ Docker Engine  
+- ✅ Disk Usage  
+
+**Server 2: Web Server (192.168.1.101)**  
+- ✅ Nginx  
+- ✅ Docker Engine  
+
+**Server 3: Database Server (192.168.1.102)**  
+- ✅ MySQL  
+
+### Common Questions
+**Does Sentinel auto-detect installed services?**  
+No — you choose which templates apply.  
+
+**What if I monitor a service that isn’t installed?**  
+That check will fail every time; deselect unused templates.  
+
+**Can I make my own templates?**  
+Yes — click *Create Template* to define custom `check`, `fix`, and `verify` commands.  
+
+**Can I test a check immediately?**  
+Yes — on the Dashboard, click **Check Now** beside any service.
+
+### Monitor Packs
+You can import the ready-to-use **Sentinel Monitor Pack** for 18+ essential checks:
+- Disk & inode usage, log cleanup  
+- Docker, Plex, SSH, Nginx  
+- SMART, ZFS, RAID, Memory, Swap, CPU Load, Temperature  
+- APT updates, WireGuard, Proxmox core services, `/var` usage  
+Download: `sentinel_monitor_pack.json` and import via *Templates → Upload Template*.  
+
+### File Locations
+Replace these in your Jarvis add-on build if updating manually:
+- `/app/www/js/sentinel.js` – UI logic  
+- `/app/www/index.html` – monitor-form bindings  
+
+### Summary
+Sentinel adds **automated self-healing**, **manual service selection**, and a **real-time dark-mode dashboard** to Jarvis Prime — turning it from a monitoring dashboard into a full **homelab reliability engine**.
+
 ### Chat & Intelligence
 • Chat Lane: pure LLM chat (no riff/persona), works via Gotify, ntfy, or Web UI when LLM is enabled  
 • RAG Integration: if you have set a long lived token and your Home Assistant URL, chat will now answer questions regarding your systems  
@@ -91,117 +184,41 @@ Jarvis Prime includes support for installation as a Progressive Web App (PWA). T
 Jarvis Prime supports Phi-3.5, Phi-4 Q4, Q5, Q6, Q8 for chat, riffs, and message beautification. These settings balance **performance, coherence, memory use, and response length**.
 
 ### Recommended Settings by Model
-| Model       | Context Window (CTX) | Riff Max Tokens | Riff Cutoff Tokens | Message Rewrite Max Tokens | Notes |
-|------------|--------------------|----------------|-----------------|---------------------------|------|
-| Phi-3.5    | 4,096              | 50             | 45              | 45                        | Lightweight, good for smaller systems; less context retention. |
-| Phi-4 Q4   | 8,000              | 55             | 50              | 50                        | Better context than 3.5; slightly slower on CPU. |
-| Phi-4 Q5   | 12,000             | 60             | 55              | 50                        | Recommended sweet spot: fast, coherent, large context. |
-| Phi-4 Q6   | 12,000             | 60             | 55              | 50                        | Slightly higher memory usage than Q5; similar output quality. |
-| Phi-4 Q8   | 12,000             | 60             | 55              | 50                        | Highest memory usage; may slow on low-resource systems. |
-
-### What Each Setting Does
-- **Context Window (CTX)**: Number of prior tokens the model “remembers”; larger CTX preserves more conversation/notification history.  
-- **Riff Max Tokens**: Maximum tokens for generated riffs; model stops naturally if fewer are needed.  
-- **Cutoff Tokens**: Optional buffer to avoid mid-thought truncation.  
-- **Message Rewrite Max Tokens**: Limits length of rewrites; ensures concise, polished output.  
-
-### Middle-Ground Recommendation
-For most users on moderate hardware:  
-- **Model**: Phi-4 Q5  
-- **CTX**: 12,000  
-- **Riff Max Tokens**: 60  
-- **Cutoff Tokens**: 55  
-- **Message Rewrite Max Tokens**: 50  
-
-This combination provides **good performance, coherent responses, and avoids excessive CPU/memory use**.
+| Model | Context Window (CTX) | Riff Max Tokens | Riff Cutoff Tokens | Message Rewrite Max Tokens | Notes |
+|--------|------------------|-----------------|-----------------|------------------------|------|
+| Phi-3.5 | 4096 | 50 | 45 | 45 | Lightweight; low memory. |
+| Phi-4 Q4 | 8000 | 55 | 50 | 50 | Better context, moderate CPU. |
+| Phi-4 Q5 | 12000 | 60 | 55 | 50 | Recommended balance. |
+| Phi-4 Q6 | 12000 | 60 | 55 | 50 | Higher memory. |
+| Phi-4 Q8 | 12000 | 60 | 55 | 50 | Heaviest but most precise. |
 
 ## Intake Setup Details
-### 1. SMTP Intake (Mailrise replacement)
-• Start Jarvis Prime and note the SMTP port (default 2525)  
-• In your app (Duplicati, Proxmox, etc.), set SMTP server to 10.0.0.100 and port 2525  
-• Authentication: any username/password (ignored)  
-• Subject = Jarvis Card title, body = Card body  
-
-### 2. Webhook Intake
-• URL: http://10.0.0.100:2590/webhook  
-• Accepts plain text or JSON  
-
-### 3. Apprise Intake
-• URL: http://10.0.0.100:2591/intake/apprise/notify?token=YOUR_LONG_TOKEN  
-
-### 4. Gotify Intake (proxy)
-• URL: http://10.0.0.100:2580  
-
-### 5. ntfy Intake (proxy)
-• URL: http://10.0.0.100:2580/jarvis  
-
-### 6. WebSocket Intake
-• URL: ws://10.0.0.100:8765/intake/ws?token=YOUR_WS_TOKEN  
-
-### 7. Chat Intake (Gotify/ntfy or Web UI)
-• Prefix your message with "chat" or "talk"  
+1. SMTP Intake: port 2525, LAN-only, accepts any auth  
+2. Webhook Intake: http://10.0.0.100:2590/webhook  
+3. Apprise Intake: http://10.0.0.100:2591/intake/apprise/notify?token=YOUR_TOKEN  
+4. Gotify Proxy: http://10.0.0.100:2580  
+5. ntfy Proxy: http://10.0.0.100:2580/jarvis  
+6. WebSocket Intake: ws://10.0.0.100:8765/intake/ws?token=YOUR_TOKEN  
+7. Chat Intake: prefix messages with “chat” or “talk”  
 
 ## Orchestration Setup
-### Server Management
-1. Navigate to the **Orchestrator** tab in the Web UI  
-2. Add SSH-enabled servers, groups, and test connectivity  
-
-### Playbook Management
-• Upload `.yml`, `.sh`, `.py` playbooks to `/share/jarvis_prime/playbooks/`  
-
-### Running Jobs
-• Select playbook, choose server/group, run now or schedule, see live logs  
-
-### Job History
-• View executions, status, logs, durations, purge old history  
+1. Go to Orchestrator tab → Add servers → Test connectivity  
+2. Upload playbooks/scripts to `/share/jarvis_prime/playbooks/`  
+3. Run jobs manually or schedule with cron-style intervals  
+4. View job history, logs, duration, and results  
 
 ## Analytics & Monitoring Setup
-### Adding Services to Monitor
-1. Navigate to the **Analytics** tab in the Web UI  
-2. Click **Services** sub-tab  
-3. Click **Add Service** button  
-4. Configure service:  
-   - **Service Name**: Friendly name (e.g., "Home Assistant", "Plex", "Proxmox")  
-   - **Endpoint**:  
-     - HTTP: Full URL (http://homeassistant.local:8123)  
-     - TCP: host:port (192.168.1.100:22)  
-     - ICMP Ping: hostname or IP (192.168.1.1)  
-   - **Check Type**: HTTP, TCP, or ICMP Ping  
-   - **Expected Status Code**: For HTTP checks, specify expected code (default: 200)  
-   - **Check Interval**: How often to check in seconds (minimum 10, recommended 60+)  
-   - **Timeout**: How long to wait before marking as failed (1-30 seconds)  
-   - **Enabled**: Toggle monitoring on/off  
-5. Click **Save Service**  
-
-### Monitoring Dashboard
-• **Health Score**: Overall homelab health percentage (99%+ = excellent, 95-99% = good, 90-95% = fair, <90% = poor)  
-• **Service Cards**: Visual status cards showing current status, last check, uptime %, avg response time  
-• **Auto-Refresh**: Dashboard updates every 30 seconds automatically  
-
-### Incident Management
-• **Automatic Detection**: Incidents created automatically when services go down  
-• **Auto-Resolution**: Incidents resolved when services come back up  
-• **Incident History**: View last 7 days of incidents with service name, timestamps, duration, error message  
-
-### Example Monitored Services
-Home Assistant → http://homeassistant.local:8123 (HTTP)  
-Plex Media Server → http://plex.local:32400 (HTTP)  
-Proxmox → https://proxmox.local:8006 (HTTP, expects 200)  
-SSH Server → 192.168.1.10:22 (TCP)  
-Radarr → http://radarr.local:7878 (HTTP)  
-Sonarr → http://sonarr.local:8989 (HTTP)  
-PostgreSQL → 192.168.1.20:5432 (TCP)  
-Redis → 192.168.1.20:6379 (TCP)  
-WiFi Router → 192.168.1.1 (ICMP Ping)  
+1. Open Analytics → Services → Add Service  
+2. Configure endpoints (HTTP/TCP/ICMP), intervals, and timeouts  
+3. Save → Dashboard updates automatically  
+4. View uptime %, response time, incident logs  
 
 ## Web UI Access
-• Ingress via Home Assistant → Add-on → Jarvis Prime → OPEN WEB UI  
-• Or direct browser: http://10.0.0.100:PORT  
+• Ingress via Home Assistant → Add-on → OPEN WEB UI  
+• Or direct: http://10.0.0.100:PORT  
 
 ## Self-Hosting Statement
 Jarvis Prime is fully self-contained. Gotify, ntfy, and WebSocket are optional — use them only if you want push or persistent WS.  
 
 ## Use Cases
-Notification orchestration, infrastructure automation, service monitoring (HTTP/TCP/ICMP Ping), and LLM chat in one platform.
-
-**Jarvis Prime**: Your homelab's unified notification hub, automation command center, and monitoring dashboard.
+Unified notification hub, automation command center, monitoring dashboard, and self-healing reliability engine in one platform.
