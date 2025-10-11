@@ -1224,6 +1224,52 @@ class Sentinel:
         health_score = max(0, uptime_score - repair_penalty)
         return round(health_score, 1)
 
+    def reset_stats(self):
+        """Reset all dashboard statistics and metrics"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            # Delete all statistics but keep current service states
+            c.execute("DELETE FROM sentinel_checks")
+            checks_deleted = c.rowcount
+            
+            c.execute("DELETE FROM sentinel_repairs")
+            repairs_deleted = c.rowcount
+            
+            c.execute("DELETE FROM sentinel_failures")
+            failures_deleted = c.rowcount
+            
+            c.execute("DELETE FROM sentinel_metrics")
+            metrics_deleted = c.rowcount
+            
+            c.execute("DELETE FROM sentinel_logs")
+            logs_deleted = c.rowcount
+            
+            conn.commit()
+            conn.close()
+            
+            # Reset in-memory counters
+            self._failure_counts = {}
+            
+            total = checks_deleted + repairs_deleted + failures_deleted + metrics_deleted + logs_deleted
+            self.logger(f"[sentinel] Stats reset: {total} records deleted")
+            
+            return {
+                "success": True,
+                "deleted": {
+                    "checks": checks_deleted,
+                    "repairs": repairs_deleted,
+                    "failures": failures_deleted,
+                    "metrics": metrics_deleted,
+                    "logs": logs_deleted,
+                    "total": total
+                }
+            }
+        except Exception as e:
+            self.logger(f"[sentinel] Error resetting stats: {e}")
+            return {"success": False, "error": str(e)}
+
     def manual_purge(self, days=None, server_id=None, service_name=None, successful_only=False):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -1390,6 +1436,7 @@ class Sentinel:
         app.router.add_post("/api/sentinel/start-all", self.api_start_all)
         
         app.router.add_post("/api/sentinel/purge", self.api_manual_purge)
+        app.router.add_post("/api/sentinel/reset-stats", self.api_reset_stats)
 
     # API Handlers
     
@@ -1793,4 +1840,8 @@ class Sentinel:
             service_name=data.get("service_name"),
             successful_only=data.get("successful_only", False)
         )
+        return web.json_response(result)
+
+    async def api_reset_stats(self, request):
+        result = self.reset_stats()
         return web.json_response(result)
