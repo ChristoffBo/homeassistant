@@ -52,7 +52,7 @@ Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, Mo
 • **Flap Tracking & Recovery** – The system tracks every state change, applies suppression intelligently, and resumes normal alerting once the suppression window ends.  
 • **Result:** clean, noise-free uptime data with zero false positives — enterprise-grade stability built in.  
 
-## 🛡️ Sentinel — Self-Healing Monitoring Engine
+## 🛡️ Sentinel — Self-Healing Monitoring Engine - Alpha Testing Stage
 
 **Sentinel** is the autonomous self-healing and service-monitoring subsystem inside Jarvis Prime. It runs scheduled checks, performs automatic repairs, and tracks every action in a live dashboard.
 
