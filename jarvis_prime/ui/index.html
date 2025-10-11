@@ -135,20 +135,20 @@
           </div>
         </div>
         
-        <div class="metric-card" onclick="switchTab('inbox')">
+        <div class="metric-card" onclick="switchTab('sentinel')">
           <div class="metric-header">
             <div>
-              <div class="metric-value" id="dash-commands">0</div>
-              <div class="metric-label">Commands</div>
+              <div class="metric-value" id="dash-sentinel-uptime">0%</div>
+              <div class="metric-label">Sentinel Uptime</div>
             </div>
-            <div class="metric-icon" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8;">
+            <div class="metric-icon" style="background: rgba(139, 92, 246, 0.12); color: #8b5cf6;">
               <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
-                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2"/>
+                <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke="currentColor" stroke-width="2"/>
               </svg>
             </div>
           </div>
           <div class="metric-change">
-            <span style="color: var(--text-muted);" id="dash-last-command">No commands sent</span>
+            <span style="color: var(--text-muted);"><span id="dash-sentinel-repairs">0</span> repairs today</span>
           </div>
         </div>
         
@@ -818,6 +818,7 @@
         <button class="orch-tab" data-settings-tab="communications">Communications</button>
         <button class="orch-tab" data-settings-tab="monitoring">Monitoring</button>
         <button class="orch-tab" data-settings-tab="push">Push Notifications</button>
+        <button class="orch-tab" data-settings-tab="sentinel">Sentinel</button>
         <button class="orch-tab" data-settings-tab="backup">Backup & Restore</button>
       </div>
 
@@ -1453,6 +1454,77 @@
               <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
               <button id="backup-restore-btn" class="btn" style="width: 100%;">
                 📤 Select Backup File to Restore
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SENTINEL SETTINGS PANEL -->
+      <div id="settings-sentinel-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Sentinel Configuration</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <span style="font-size: 24px;">🛡️</span>
+                <span style="color: #8b5cf6; font-weight: 600;">Autonomous Service Monitoring</span>
+              </div>
+              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
+                Configure Sentinel's automated monitoring and self-healing capabilities
+              </p>
+            </div>
+            
+            <h4 style="margin: 24px 0 16px 0; color: var(--text-primary);">Template Repository</h4>
+            
+            <div class="form-group">
+              <label class="form-label">GitHub Repository URL</label>
+              <input type="text" id="set-sentinel-github-url" placeholder="https://github.com/username/repo">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                URL to GitHub repository containing service check templates. Used when syncing templates.
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Templates Path (in repo)</label>
+              <input type="text" id="set-sentinel-github-path" placeholder="templates/" value="templates/">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Path within repository where .json template files are stored
+              </div>
+            </div>
+            
+            <h4 style="margin: 32px 0 16px 0; color: var(--text-primary);">Monitoring Schedule</h4>
+            
+            <div class="form-group">
+              <label class="form-label">Quiet Hours</label>
+              <input type="text" id="set-sentinel-quiet-hours" placeholder="23:00-06:00">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Time range when Sentinel will suppress non-critical alerts (format: HH:MM-HH:MM)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-sentinel-quiet-enabled" />
+                <label for="set-sentinel-quiet-enabled">Enable quiet hours</label>
+              </div>
+            </div>
+            
+            <h4 style="margin: 32px 0 16px 0; color: var(--text-primary);">Statistics & Data</h4>
+            
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <span style="font-size: 24px;">⚠️</span>
+                <span style="color: #ef4444; font-weight: 600;">Reset Statistics</span>
+              </div>
+              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+                Reset all Sentinel dashboard statistics (total checks, repairs made, etc.) to zero. Execution history will be preserved.
+              </p>
+              <button id="sentinel-reset-stats-btn" class="btn danger" style="width: 100%;" onclick="sentinelResetStats()">
+                🔄 Reset All Statistics
               </button>
             </div>
           </div>
