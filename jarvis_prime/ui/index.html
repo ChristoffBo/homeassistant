@@ -1925,7 +1925,7 @@
         <h2>Configure Monitoring</h2>
         <button class="btn" onclick="closeModal()">✕</button>
       </div>
-      <form id="sentinel-add-monitoring-form" onsubmit="event.preventDefault(); console.log('TODO: Add monitoring');">
+      <form id="sentinel-add-monitoring-form" onsubmit="event.preventDefault(); sentinelUI.saveMonitoring();">
         <div class="form-group">
           <label class="form-label">Server *</label>
           <select name="server_id" id="sentinel-mon-server-select" required>
