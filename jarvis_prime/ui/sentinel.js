@@ -714,8 +714,117 @@ class SentinelUI {
 
     showAddMonitoringModal() {
         const modal = $('#sentinel-add-monitoring-modal');
-        if (modal) {
-            modal.style.display = 'flex';
+        if (!modal) return;
+        
+        // Populate server dropdown
+        const serverSelect = $('#sentinel-mon-server-select');
+        if (serverSelect) {
+            serverSelect.innerHTML = '<option value="">Select a server...</option>' +
+                this.servers.map(server => 
+                    `<option value="${this.escapeHtml(server.id)}">${this.escapeHtml(server.description || server.id)}</option>`
+                ).join('');
+            
+            // Listen for server selection to show available templates
+            serverSelect.onchange = () => {
+                this.updateMonitoringTemplatesList(serverSelect.value);
+            };
+        }
+        
+        // Clear checkboxes area
+        const checkboxesDiv = $('#sentinel-mon-services-checkboxes');
+        if (checkboxesDiv) {
+            checkboxesDiv.innerHTML = '<div class="text-center text-muted">Select a server first</div>';
+        }
+        
+        modal.style.display = 'flex';
+    }
+    
+    updateMonitoringTemplatesList(serverId) {
+        const checkboxesDiv = $('#sentinel-mon-services-checkboxes');
+        if (!checkboxesDiv) return;
+        
+        if (!serverId) {
+            checkboxesDiv.innerHTML = '<div class="text-center text-muted">Select a server first</div>';
+            return;
+        }
+        
+        // Show all available templates as checkboxes
+        const html = this.templates.map(template => `
+            <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;"
+                   onmouseover="this.style.background='var(--surface-tertiary)'"
+                   onmouseout="this.style.background='transparent'">
+                <input type="checkbox" name="service_template" value="${this.escapeHtml(template.id)}" 
+                       style="cursor: pointer;">
+                <div>
+                    <div style="font-weight: 500;">${this.escapeHtml(template.name)}</div>
+                    <div style="font-size: 11px; color: var(--text-muted);">${this.escapeHtml(template.id)}</div>
+                </div>
+            </label>
+        `).join('');
+        
+        checkboxesDiv.innerHTML = html || '<div class="text-center text-muted">No templates available</div>';
+    }
+    
+    async saveMonitoring() {
+        const form = document.getElementById('sentinel-add-monitoring-form');
+        if (!form) return;
+        
+        const serverId = $('#sentinel-mon-server-select').value;
+        if (!serverId) {
+            if (window.showToast) {
+                window.showToast('Please select a server', 'error');
+            }
+            return;
+        }
+        
+        // Get all checked templates
+        const checkboxes = document.querySelectorAll('input[name="service_template"]:checked');
+        const services = Array.from(checkboxes).map(cb => cb.value);
+        
+        if (services.length === 0) {
+            if (window.showToast) {
+                window.showToast('Please select at least one service to monitor', 'error');
+            }
+            return;
+        }
+        
+        const checkInterval = parseInt(document.querySelector('input[name="check_interval"]').value) || 300;
+        
+        try {
+            const response = await fetch(API('api/sentinel/monitoring'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    server_id: serverId,
+                    services: services,
+                    check_interval: checkInterval
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                if (window.showToast) {
+                    window.showToast('Monitoring configuration saved successfully', 'success');
+                }
+                await this.loadMonitoring();
+                this.renderMonitoring();
+                this.closeModal();
+                
+                // Ask if user wants to start monitoring now
+                if (confirm('Monitoring configuration saved. Start monitoring this server now?')) {
+                    await this.startMonitoring(serverId);
+                }
+            } else {
+                if (window.showToast) {
+                    window.showToast(result.error || 'Failed to save monitoring configuration', 'error');
+                }
+            }
+        } catch (error) {
+            console.error('[Sentinel] Error saving monitoring:', error);
+            if (window.showToast) {
+                window.showToast('Failed to save monitoring configuration', 'error');
+            }
         }
     }
 
