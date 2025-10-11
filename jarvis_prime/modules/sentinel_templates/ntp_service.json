@@ -1,0 +1,12 @@
+{
+  "id": "ntp_service",
+  "name": "NTP Service",
+  "description": "Ensures time synchronization service is active.",
+  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active systemd-timesyncd || systemctl is-active ntp || echo skip; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart systemd-timesyncd || systemctl restart ntp || true; fi",
+  "verify_cmd": "timedatectl status 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

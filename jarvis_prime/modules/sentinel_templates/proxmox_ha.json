@@ -1,0 +1,12 @@
+{
+  "id": "proxmox_ha",
+  "name": "Proxmox HA Service",
+  "description": "Verifies Proxmox HA manager is active.",
+  "check_cmd": "if command -v pveversion >/dev/null; then systemctl is-active pve-ha-lrm || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "systemctl restart pve-ha-lrm || true",
+  "verify_cmd": "systemctl is-active pve-ha-lrm 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

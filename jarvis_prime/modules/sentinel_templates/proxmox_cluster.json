@@ -1,0 +1,12 @@
+{
+  "id": "proxmox_cluster",
+  "name": "Proxmox Cluster Service",
+  "description": "Checks Proxmox cluster quorum and pvecm status.",
+  "check_cmd": "if command -v pvecm >/dev/null; then pvecm status 2>/dev/null | grep -q 'Quorate' && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "systemctl restart pve-cluster || true",
+  "verify_cmd": "pvecm status 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

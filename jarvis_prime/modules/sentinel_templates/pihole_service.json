@@ -1,0 +1,12 @@
+{
+  "id": "pihole_service",
+  "name": "Pi-hole Service",
+  "description": "Checks Pi-hole FTL daemon health.",
+  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active pihole-FTL || echo skip; elif command -v service >/dev/null; then service pihole-FTL status 2>/dev/null | grep -q running && echo active || echo skip; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart pihole-FTL || true; elif command -v service >/dev/null; then service pihole-FTL restart || true; fi",
+  "verify_cmd": "systemctl is-active pihole-FTL 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

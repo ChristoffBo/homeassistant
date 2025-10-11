@@ -1,0 +1,12 @@
+{
+  "id": "disk_usage",
+  "name": "Disk Usage",
+  "description": "Checks root filesystem usage and clears logs or prunes Docker if space is low.",
+  "check_cmd": "df -P / | awk 'NR==2 {print $5+0}'",
+  "expected_output": "num<85",
+  "fix_cmd": "echo 'High disk usage detected - running cleanup'; journalctl --vacuum-time=3d 2>/dev/null || true; if command -v docker >/dev/null; then docker system prune -af >/dev/null 2>&1; fi; rm -rf /var/log/*.gz /tmp/* /var/tmp/* 2>/dev/null || true",
+  "verify_cmd": "df -h / | awk 'NR==2 {print \"Usage after cleanup:\", $5}'",
+  "retry_count": 1,
+  "retry_delay": 120,
+  "ttl_seconds": 3600
+}

@@ -1,0 +1,12 @@
+{
+  "id": "raid_status",
+  "name": "RAID Status",
+  "description": "Verifies mdadm arrays are healthy.",
+  "check_cmd": "grep -q '\\[UU\\]' /proc/mdstat && echo ok || echo degraded",
+  "expected_output": "ok",
+  "fix_cmd": "echo 'RAID degraded—manual check required'",
+  "verify_cmd": "cat /proc/mdstat",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

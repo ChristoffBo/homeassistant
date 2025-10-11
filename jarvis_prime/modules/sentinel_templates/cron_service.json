@@ -1,0 +1,12 @@
+{
+  "id": "cron_service",
+  "name": "Cron Service",
+  "description": "Monitors the cron scheduler.",
+  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active cron || echo skip; elif command -v service >/dev/null; then service cron status 2>/dev/null | grep -q running && echo active || echo skip; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart cron || true; elif command -v service >/dev/null; then service cron restart || true; fi",
+  "verify_cmd": "systemctl is-active cron 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

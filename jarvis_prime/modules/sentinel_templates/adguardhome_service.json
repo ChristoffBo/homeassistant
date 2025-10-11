@@ -1,0 +1,12 @@
+{
+  "id": "adguardhome_service",
+  "name": "AdGuard Home",
+  "description": "Ensures AdGuard Home DNS blocker is active.",
+  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active AdGuardHome || echo skip; elif command -v service >/dev/null; then service AdGuardHome status 2>/dev/null | grep -q running && echo active || echo skip; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart AdGuardHome || true; elif command -v service >/dev/null; then service AdGuardHome restart || true; fi",
+  "verify_cmd": "systemctl is-active AdGuardHome 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

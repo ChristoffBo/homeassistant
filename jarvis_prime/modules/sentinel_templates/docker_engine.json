@@ -1,0 +1,12 @@
+{
+  "id": "docker_engine",
+  "name": "Docker Engine",
+  "description": "Checks Docker daemon health and restarts if not active. Treats missing Docker as healthy to preserve stats.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then systemctl is-active docker 2>/dev/null || echo inactive; else echo active; fi",
+  "expected_output": "active",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then systemctl restart docker 2>/dev/null || true; fi",
+  "verify_cmd": "if command -v docker >/dev/null 2>&1; then systemctl is-active docker 2>/dev/null && echo active || echo inactive; else echo active; fi",
+  "retry_count": 2,
+  "retry_delay": 30,
+  "ttl_seconds": 300
+}

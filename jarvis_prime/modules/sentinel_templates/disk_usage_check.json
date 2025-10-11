@@ -1,0 +1,12 @@
+{
+  "id": "disk_usage_check",
+  "name": "Disk Usage",
+  "description": "Monitors disk utilization; warns if >/ 90%.",
+  "check_cmd": "df -h / | awk 'NR==2 {gsub(\"%\", \"\", $5); if($5>90) print \"degraded\"; else print \"active\"}'",
+  "expected_output": "active|skip",
+  "fix_cmd": "echo 'Clean up disk space manually'",
+  "verify_cmd": "df -h / | awk 'NR==2 {print $5}'",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 1800
+}

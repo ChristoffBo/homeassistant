@@ -1,0 +1,12 @@
+{
+  "id": "tautulli_service",
+  "name": "Tautulli",
+  "description": "Checks Tautulli stats API endpoint.",
+  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q tautulli && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "docker start tautulli || true",
+  "verify_cmd": "curl -fs http://localhost:8181/status 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

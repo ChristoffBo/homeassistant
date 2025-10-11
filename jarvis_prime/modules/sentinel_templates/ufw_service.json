@@ -1,0 +1,12 @@
+{
+  "id": "ufw_service",
+  "name": "UFW Firewall",
+  "description": "Ensures Uncomplicated Firewall (ufw) is active.",
+  "check_cmd": "if command -v ufw >/dev/null 2>&1; then ufw status 2>/dev/null | grep -q 'Status: active' && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v ufw >/dev/null 2>&1; then echo 'y' | ufw enable || true; fi",
+  "verify_cmd": "ufw status 2>/dev/null | head -3 || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

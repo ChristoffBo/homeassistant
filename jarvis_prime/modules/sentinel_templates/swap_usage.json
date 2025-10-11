@@ -1,0 +1,12 @@
+{
+  "id": "swap_usage",
+  "name": "Swap Usage",
+  "description": "Checks that swap usage is under 60%.",
+  "check_cmd": "free | awk '/Swap/ {print int($3/$2*100)}'",
+  "expected_output": "num<60",
+  "fix_cmd": "swapoff -a && swapon -a || true",
+  "verify_cmd": "free -h",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

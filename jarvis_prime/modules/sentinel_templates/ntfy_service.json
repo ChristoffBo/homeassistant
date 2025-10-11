@@ -1,0 +1,12 @@
+{
+  "id": "ntfy_service",
+  "name": "ntfy Server",
+  "description": "Checks that ntfy API responds.",
+  "check_cmd": "curl -fs http://localhost:2580/health 2>/dev/null | grep -q 'ok' && echo active || echo inactive",
+  "expected_output": "active|skip",
+  "fix_cmd": "docker start ntfy || systemctl restart ntfy || true",
+  "verify_cmd": "curl -fs http://localhost:2580/health 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

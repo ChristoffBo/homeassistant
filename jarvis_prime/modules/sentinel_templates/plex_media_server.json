@@ -1,0 +1,11 @@
+{
+  "id": "plex_media_server",
+  "name": "Plex Media Server",
+  "description": "Checks Plex Media Server status and restarts it if not running.",
+  "check_cmd": "systemctl is-active plexmediaserver || service plexmediaserver status | grep -q 'active (running)' && echo active || echo inactive",
+  "expected_output": "active",
+  "fix_cmd": "systemctl restart plexmediaserver || service plexmediaserver restart",
+  "verify_cmd": "systemctl is-active plexmediaserver || service plexmediaserver status | grep -q 'active (running)' && echo active || echo inactive",
+  "retry_count": 2,
+  "retry_delay": 30
+}

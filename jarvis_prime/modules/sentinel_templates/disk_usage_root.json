@@ -1,0 +1,12 @@
+{
+  "id": "disk_usage_root",
+  "name": "Disk Usage /",
+  "description": "Checks root filesystem usage and cleans logs if high.",
+  "check_cmd": "df -P / | awk 'NR==2 {print $5+0}'",
+  "expected_output": "num<85",
+  "fix_cmd": "journalctl --vacuum-time=3d || true; find /tmp -mindepth 1 -delete || true",
+  "verify_cmd": "df -h /",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

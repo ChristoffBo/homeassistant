@@ -1,0 +1,12 @@
+{
+  "id": "qbit_service",
+  "name": "qBittorrent",
+  "description": "Ensures qBittorrent WebUI is available.",
+  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q qbittorrent && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "docker start qbittorrent || true",
+  "verify_cmd": "curl -fs http://localhost:8080 2>/dev/null | grep -q 'qBittorrent' && echo active || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

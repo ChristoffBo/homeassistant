@@ -1,0 +1,12 @@
+{
+  "id": "mqtt_service",
+  "name": "MQTT Broker",
+  "description": "Verifies MQTT broker (Mosquitto, EMQX, or others) is active.",
+  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl is-active mosquitto 2>/dev/null && echo active || systemctl is-active emqx 2>/dev/null && echo active || systemctl is-active mqtt 2>/dev/null && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart mosquitto 2>/dev/null || systemctl restart emqx 2>/dev/null || systemctl restart mqtt 2>/dev/null || echo 'No MQTT broker found'; fi",
+  "verify_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl is-active mosquitto 2>/dev/null || systemctl is-active emqx 2>/dev/null || systemctl is-active mqtt 2>/dev/null || echo verified; else echo verified; fi",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

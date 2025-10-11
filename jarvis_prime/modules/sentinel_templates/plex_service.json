@@ -1,0 +1,12 @@
+{
+  "id": "plex_service",
+  "name": "Plex Media Server",
+  "description": "Checks Plex container or service health.",
+  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q plex && echo active || echo inactive; elif command -v systemctl >/dev/null; then systemctl is-active plexmediaserver || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v docker >/dev/null; then docker start plex || true; elif command -v systemctl >/dev/null; then systemctl restart plexmediaserver || true; fi",
+  "verify_cmd": "curl -fs http://localhost:32400/identity 2>/dev/null | grep -q 'PlexMediaServer' && echo active || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

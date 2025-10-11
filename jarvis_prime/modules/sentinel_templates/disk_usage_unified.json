@@ -1,0 +1,12 @@
+{
+  "id": "disk_usage_unified",
+  "name": "Disk Usage Monitor",
+  "description": "Monitors root filesystem usage. Warns at 85%, runs cleanup at 90%.",
+  "check_cmd": "USAGE=$(df -P / | awk 'NR==2 {print $5+0}'); if [ $USAGE -ge 90 ]; then echo $USAGE; exit 1; elif [ $USAGE -ge 85 ]; then echo $USAGE; exit 1; else echo $USAGE; fi",
+  "expected_output": "num<85",
+  "fix_cmd": "USAGE=$(df -P / | awk 'NR==2 {print $5+0}'); echo \"Current usage: ${USAGE}%\"; if [ $USAGE -ge 90 ]; then echo 'CRITICAL: Running aggressive cleanup'; journalctl --vacuum-time=2d 2>/dev/null || true; if command -v docker >/dev/null 2>&1; then docker system prune -af --volumes >/dev/null 2>&1 || true; fi; find /tmp -type f -mtime +1 -delete 2>/dev/null || true; find /var/tmp -type f -mtime +1 -delete 2>/dev/null || true; rm -rf /var/log/*.gz /var/log/*.[0-9] 2>/dev/null || true; elif [ $USAGE -ge 85 ]; then echo 'WARNING: Running standard cleanup'; journalctl --vacuum-time=7d 2>/dev/null || true; if command -v docker >/dev/null 2>&1; then docker system prune -af >/dev/null 2>&1 || true; fi; rm -rf /tmp/* /var/tmp/* 2>/dev/null || true; fi",
+  "verify_cmd": "df -h / | awk 'NR==2 {print \"Final usage:\", $5}'",
+  "retry_count": 1,
+  "retry_delay": 120,
+  "ttl_seconds": 1800
+}

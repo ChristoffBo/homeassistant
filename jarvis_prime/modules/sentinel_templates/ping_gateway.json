@@ -1,0 +1,12 @@
+{
+  "id": "ping_gateway",
+  "name": "Ping Gateway",
+  "description": "Verifies network connectivity by pinging the default gateway.",
+  "check_cmd": "if command -v ip >/dev/null && command -v ping >/dev/null; then G=$(ip route | awk '/default/ {print $3}' | head -n1); [ -n \"$G\" ] && ping -c1 -W2 $G >/dev/null 2>&1 && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "ip link set $(ip route | awk '/default/ {print $5}' | head -n1) down && sleep 2 && ip link set $(ip route | awk '/default/ {print $5}' | head -n1) up || true",
+  "verify_cmd": "ping -c1 -W2 8.8.8.8 >/dev/null 2>&1 || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

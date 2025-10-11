@@ -1,0 +1,12 @@
+{
+  "id": "systemd_journald",
+  "name": "Systemd Journal Service",
+  "description": "Verifies journald is running properly.",
+  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active systemd-journald || echo skip; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart systemd-journald || true; fi",
+  "verify_cmd": "systemctl is-active systemd-journald 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

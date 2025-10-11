@@ -1,0 +1,15 @@
+{
+  "id": "mount_guard",
+  "name": "Mount Guard",
+  "description": "Checks /etc/fstab for defined mount points, remounts missing ones, and alerts via Gotify.",
+  "check_cmd": "awk '!/^#/ && $3 !~ /^(proc|sysfs|devpts|tmpfs|cgroup|overlay|squashfs|zram|bpf|tracefs|autofs|fusectl|mqueue|debugfs|securityfs|hugetlbfs)/ {print $2}' /etc/fstab | while read m; do mountpoint -q \"$m\" || echo $m; done",
+  "expected_output": "",
+  "fix_cmd": "awk '!/^#/ && $3 !~ /^(proc|sysfs|devpts|tmpfs|cgroup|overlay|squashfs|zram|bpf|tracefs|autofs|fusectl|mqueue|debugfs|securityfs|hugetlbfs)/ {print $2}' /etc/fstab | while read m; do mountpoint -q \"$m\" || mount \"$m\" >/dev/null 2>&1 || true; done",
+  "verify_cmd": "awk '!/^#/ && $3 !~ /^(proc|sysfs|devpts|tmpfs|cgroup|overlay|squashfs|zram|bpf|tracefs|autofs|fusectl|mqueue|debugfs|securityfs|hugetlbfs)/ {print $2}' /etc/fstab | while read m; do mountpoint -q \"$m\" || echo $m; done",
+  "on_fail_notify": true,
+  "notify_title": "Mount Guard Alert",
+  "notify_message": "Missing mounts detected and remounted where possible.",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

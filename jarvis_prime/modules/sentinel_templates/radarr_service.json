@@ -1,0 +1,12 @@
+{
+  "id": "radarr_service",
+  "name": "Radarr",
+  "description": "Monitors Radarr container or daemon.",
+  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q radarr && echo active || echo inactive; elif command -v systemctl >/dev/null; then systemctl is-active radarr || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v docker >/dev/null; then docker start radarr || true; elif command -v systemctl >/dev/null; then systemctl restart radarr || true; fi",
+  "verify_cmd": "curl -fs http://localhost:7878/api/v3/system/status 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

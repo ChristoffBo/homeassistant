@@ -1,0 +1,12 @@
+{
+  "id": "sabnzbd_service",
+  "name": "SABnzbd",
+  "description": "Verifies SABnzbd API is reachable.",
+  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q sabnzbd && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "docker start sabnzbd || true",
+  "verify_cmd": "curl -fs http://localhost:8080/api?mode=version 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

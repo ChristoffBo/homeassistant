@@ -1,0 +1,12 @@
+{
+  "id": "sonarr_service",
+  "name": "Sonarr",
+  "description": "Ensures Sonarr API responds.",
+  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q sonarr && echo active || echo inactive; elif command -v systemctl >/dev/null; then systemctl is-active sonarr || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v docker >/dev/null; then docker start sonarr || true; elif command -v systemctl >/dev/null; then systemctl restart sonarr || true; fi",
+  "verify_cmd": "curl -fs http://localhost:8989/api/v3/system/status 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

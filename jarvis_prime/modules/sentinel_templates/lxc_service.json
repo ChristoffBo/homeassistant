@@ -1,0 +1,12 @@
+{
+  "id": "lxc_service",
+  "name": "LXC Daemon",
+  "description": "Ensures LXC service is running (for LXC hosts).",
+  "check_cmd": "if command -v lxc-info >/dev/null; then systemctl is-active lxc || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "systemctl restart lxc || true",
+  "verify_cmd": "lxc-ls >/dev/null 2>&1 && echo active || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

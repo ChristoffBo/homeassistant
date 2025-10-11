@@ -1,0 +1,12 @@
+{
+  "id": "jellyfin_service",
+  "name": "Jellyfin Media Server",
+  "description": "Checks Jellyfin media server availability.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then docker ps --filter 'name=jellyfin' --filter 'status=running' --format '{{.Names}}' | grep -qE '^jellyfin$' && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker start jellyfin 2>/dev/null || docker restart jellyfin 2>/dev/null || echo 'Failed to start Jellyfin'; else echo skip; fi",
+  "verify_cmd": "if command -v docker >/dev/null 2>&1; then sleep 5; curl -fs --max-time 5 http://localhost:8096/System/Ping 2>/dev/null && echo 'Jellyfin responding' || docker ps --filter 'name=jellyfin' --format '{{.Names}} {{.Status}}'; else echo verified; fi",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 600
+}

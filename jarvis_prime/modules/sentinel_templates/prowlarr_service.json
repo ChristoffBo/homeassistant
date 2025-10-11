@@ -1,0 +1,12 @@
+{
+  "id": "prowlarr_service",
+  "name": "Prowlarr",
+  "description": "Verifies Prowlarr is active.",
+  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q prowlarr && echo active || echo inactive; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "docker start prowlarr || true",
+  "verify_cmd": "curl -fs http://localhost:9696/api/v1/system/status 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}

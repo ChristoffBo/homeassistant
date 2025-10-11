@@ -1,0 +1,12 @@
+{
+  "id": "gotify_service",
+  "name": "Gotify Server",
+  "description": "Ensures Gotify notification server is responding on port 8091.",
+  "check_cmd": "if curl -fs --max-time 3 http://localhost:8091/health 2>/dev/null | grep -q 'ok'; then echo active; else echo inactive; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker ps --filter 'name=gotify' --format '{{.Names}}' | grep -q gotify && docker restart gotify || docker start gotify || true; elif command -v systemctl >/dev/null 2>&1; then systemctl restart gotify || true; fi",
+  "verify_cmd": "sleep 3; curl -fs --max-time 3 http://localhost:8091/health 2>/dev/null | grep -q 'ok' && echo 'Gotify healthy' || echo 'Still down'",
+  "retry_count": 2,
+  "retry_delay": 30,
+  "ttl_seconds": 600
+}

@@ -1,0 +1,12 @@
+{
+  "id": "zfs_status",
+  "name": "ZFS Pool Status",
+  "description": "Monitors ZFS pool health if zpool is available.",
+  "check_cmd": "if command -v zpool >/dev/null; then zpool status -x 2>/dev/null | grep -q 'all pools are healthy' && echo active || echo degraded; else echo skip; fi",
+  "expected_output": "active|skip",
+  "fix_cmd": "if command -v zpool >/dev/null; then zpool clear -a || true; fi",
+  "verify_cmd": "zpool status 2>/dev/null || echo verified",
+  "retry_count": 1,
+  "retry_delay": 60,
+  "ttl_seconds": 3600
+}
