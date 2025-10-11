@@ -641,10 +641,10 @@ class Sentinel:
 
     async def ssh_execute(self, server, command, execution_id=None, service_name="", action="execute", manual=False):
         server_id = server.get("id", "unknown")
-
+        
         if not execution_id:
             execution_id = f"{server_id}_{int(datetime.now().timestamp())}"
-
+        
         try:
             start_log = {
                 "type": "command",
@@ -655,10 +655,10 @@ class Sentinel:
                 "command": command
             }
             self._broadcast_log(execution_id, start_log)
-
+            
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
+            
             await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: client.connect(
@@ -669,28 +669,78 @@ class Sentinel:
                     timeout=10
                 )
             )
-
-            stdin, stdout, stderr = client.exec_command(command, get_pty=False)
-            output = stdout.read().decode(errors="ignore").strip()
-            error = stderr.read().decode(errors="ignore").strip()
+            
+            stdin, stdout, stderr = client.exec_command(command)
+            
+            output_lines = []
+            for line in stdout:
+                line = line.strip()
+                if line:
+                    output_lines.append(line)
+                    line_log = {
+                        "type": "output",
+                        "timestamp": datetime.now().isoformat(),
+                        "line": line
+                    }
+                    self._broadcast_log(execution_id, line_log)
+            
+            error_lines = []
+            for line in stderr:
+                line = line.strip()
+                if line:
+                    error_lines.append(line)
+                    error_log = {
+                        "type": "error",
+                        "timestamp": datetime.now().isoformat(),
+                        "line": line
+                    }
+                    self._broadcast_log(execution_id, error_log)
+            
             exit_code = stdout.channel.recv_exit_status()
             client.close()
-
+            
+            full_output = "\n".join(output_lines) if output_lines else "\n".join(error_lines)
+            self._log_to_db(execution_id, server_id, service_name, action, command, full_output, exit_code, manual)
+            
+            complete_log = {
+                "type": "complete",
+                "timestamp": datetime.now().isoformat(),
+                "exit_code": exit_code,
+                "success": exit_code == 0
+            }
+            self._broadcast_log(execution_id, complete_log)
+            
             return {
                 "success": exit_code == 0,
-                "output": output or error,
+                "output": full_output,
                 "exit_code": exit_code,
                 "execution_id": execution_id
             }
-
+            
         except Exception as e:
+            error_msg = str(e)
+            self._log_to_db(execution_id, server_id, service_name, action, command, error_msg, -1, manual)
+            
+            error_log = {
+                "type": "error",
+                "timestamp": datetime.now().isoformat(),
+                "line": error_msg
+            }
+            self._broadcast_log(execution_id, error_log)
+            
+            complete_log = {
+                "type": "complete",
+                "timestamp": datetime.now().isoformat(),
+                "exit_code": -1,
+                "success": False
+            }
+            self._broadcast_log(execution_id, complete_log)
+            
             return {
                 "success": False,
-                "output": f"[SSH error] {e}",
+                "output": error_msg,
                 "exit_code": -1,
                 "execution_id": execution_id
-            }
-
             }
 
     async def check_service(self, server, service_template, execution_id=None, manual=False):
