@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /app/sentinel.py
-# FIXED: Template view now works + GitHub sync has URL input option
+# FIXED: SSH operations run in thread pool to prevent blocking Jarvis event loop
 
 import os
 import json
@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from aiohttp import web
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import json, os
 
@@ -23,7 +24,7 @@ def ensure_sentinel_defaults(base="/share/jarvis_prime/sentinel"):
             "notify_on_failure": True,
             "notify_recovery": True,
             "auto_reload_templates": True,
-            "github_templates_url": ""  # User can set this
+            "github_templates_url": ""
         },
         "servers.json": [],
         "templates.json": [],
@@ -58,6 +59,10 @@ class Sentinel:
         self._service_states = {}
         self._failure_counts = {}
         self._log_listeners = {}
+        
+        # CRITICAL FIX: Thread pool for blocking SSH operations
+        self._ssh_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sentinel_ssh")
+        
         self.init_storage()
         self.init_db()
 
@@ -93,10 +98,6 @@ class Sentinel:
         except Exception as e:
             self.logger(f"Error saving settings: {e}")
             return False
-
-    # Keep ALL existing methods from your sentinel.py file here
-    # (init_db, load_servers, save_servers, add_server, update_server, delete_server, etc.)
-    # I'm only showing the CHANGED methods below:
 
     def init_db(self):
         """Initialize SQLite database for logging"""
@@ -318,7 +319,6 @@ class Sentinel:
                 return {"success": False, "error": str(e)}
         return {"success": False, "error": "Template not found"}
 
-    # FIXED: GitHub sync now uses stored URL
     async def sync_github_templates(self, custom_url=None):
         """Sync templates from GitHub - uses stored URL or custom URL"""
         settings = self.load_settings()
@@ -327,7 +327,6 @@ class Sentinel:
         if not github_url:
             return {"success": False, "error": "No GitHub URL configured", "skipped": True}
         
-        # Save the URL if it's custom
         if custom_url and custom_url != settings.get("github_templates_url"):
             settings["github_templates_url"] = custom_url
             self.save_settings(settings)
@@ -337,10 +336,7 @@ class Sentinel:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 repo_api = github_url
                 
-                # If it's a standard GitHub repo URL, convert to API
                 if "github.com" in repo_api and "/contents/" not in repo_api:
-                    # Example: https://github.com/user/repo/tree/main/path
-                    # Convert to: https://api.github.com/repos/user/repo/contents/path
                     parts = repo_api.replace("https://github.com/", "").split("/")
                     if len(parts) >= 2:
                         user, repo = parts[0], parts[1]
@@ -408,21 +404,6 @@ class Sentinel:
             self.logger(f"[sentinel] GitHub sync failed: {e}")
             return {"success": False, "error": str(e), "skipped": True}
 
-    # NOTE: Keep ALL other methods from your original sentinel.py:
-    # - auto_sync_templates
-    # - load_monitoring, save_monitoring, add_monitoring, update_monitoring, delete_monitoring
-    # - get_service_interval, disable_service_temporarily
-    # - load_maintenance_windows, save_maintenance_windows, is_in_maintenance_window
-    # - load_quiet_hours, is_quiet_hours
-    # - _log_to_db, _broadcast_log, ssh_execute
-    # - check_service, repair_service, monitor_service
-    # - _send_notification, monitor_loop
-    # - start_monitoring, stop_monitoring, start_all_monitoring
-    # - get_dashboard_metrics, get_live_status, get_recent_activity, get_health_score
-    # - manual_purge, auto_purge
-
-    # I'll add them all here for completeness:
-    
     async def auto_sync_templates(self):
         if not self.config.get("auto_update_templates", False):
             self.logger("[sentinel] Auto-update templates disabled")
@@ -639,35 +620,19 @@ class Sentinel:
             for q in dead:
                 self._log_listeners[execution_id].discard(q)
 
-    async def ssh_execute(self, server, command, execution_id=None, service_name="", action="execute", manual=False):
-        server_id = server.get("id", "unknown")
-        
-        if not execution_id:
-            execution_id = f"{server_id}_{int(datetime.now().timestamp())}"
+    # CRITICAL FIX: Run blocking SSH operations in thread pool
+    def _ssh_execute_blocking(self, server, command):
+        """Blocking SSH execution - runs in thread pool"""
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         
         try:
-            start_log = {
-                "type": "command",
-                "timestamp": datetime.now().isoformat(),
-                "server_id": server_id,
-                "service": service_name,
-                "action": action,
-                "command": command
-            }
-            self._broadcast_log(execution_id, start_log)
-            
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: client.connect(
-                    hostname=server["host"],
-                    port=server["port"],
-                    username=server["username"],
-                    password=server["password"],
-                    timeout=10
-                )
+            client.connect(
+                hostname=server["host"],
+                port=server["port"],
+                username=server["username"],
+                password=server["password"],
+                timeout=10
             )
             
             stdin, stdout, stderr = client.exec_command(command)
@@ -677,71 +642,96 @@ class Sentinel:
                 line = line.strip()
                 if line:
                     output_lines.append(line)
-                    line_log = {
-                        "type": "output",
-                        "timestamp": datetime.now().isoformat(),
-                        "line": line
-                    }
-                    self._broadcast_log(execution_id, line_log)
             
             error_lines = []
             for line in stderr:
                 line = line.strip()
                 if line:
                     error_lines.append(line)
-                    error_log = {
-                        "type": "error",
-                        "timestamp": datetime.now().isoformat(),
-                        "line": line
-                    }
-                    self._broadcast_log(execution_id, error_log)
             
             exit_code = stdout.channel.recv_exit_status()
             client.close()
             
             full_output = "\n".join(output_lines) if output_lines else "\n".join(error_lines)
-            self._log_to_db(execution_id, server_id, service_name, action, command, full_output, exit_code, manual)
-            
-            complete_log = {
-                "type": "complete",
-                "timestamp": datetime.now().isoformat(),
-                "exit_code": exit_code,
-                "success": exit_code == 0
-            }
-            self._broadcast_log(execution_id, complete_log)
             
             return {
                 "success": exit_code == 0,
                 "output": full_output,
                 "exit_code": exit_code,
-                "execution_id": execution_id
+                "output_lines": output_lines,
+                "error_lines": error_lines
             }
             
         except Exception as e:
             error_msg = str(e)
-            self._log_to_db(execution_id, server_id, service_name, action, command, error_msg, -1, manual)
-            
-            error_log = {
-                "type": "error",
-                "timestamp": datetime.now().isoformat(),
-                "line": error_msg
-            }
-            self._broadcast_log(execution_id, error_log)
-            
-            complete_log = {
-                "type": "complete",
-                "timestamp": datetime.now().isoformat(),
-                "exit_code": -1,
-                "success": False
-            }
-            self._broadcast_log(execution_id, complete_log)
-            
             return {
                 "success": False,
                 "output": error_msg,
                 "exit_code": -1,
-                "execution_id": execution_id
+                "output_lines": [],
+                "error_lines": [error_msg]
             }
+        finally:
+            try:
+                client.close()
+            except:
+                pass
+
+    async def ssh_execute(self, server, command, execution_id=None, service_name="", action="execute", manual=False):
+        """Async wrapper - runs SSH in thread pool to prevent blocking"""
+        server_id = server.get("id", "unknown")
+        
+        if not execution_id:
+            execution_id = f"{server_id}_{int(datetime.now().timestamp())}"
+        
+        start_log = {
+            "type": "command",
+            "timestamp": datetime.now().isoformat(),
+            "server_id": server_id,
+            "service": service_name,
+            "action": action,
+            "command": command
+        }
+        self._broadcast_log(execution_id, start_log)
+        
+        # Run blocking SSH in thread pool
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            self._ssh_executor,
+            self._ssh_execute_blocking,
+            server,
+            command
+        )
+        
+        # Broadcast output line by line
+        for line in result.get("output_lines", []):
+            line_log = {
+                "type": "output",
+                "timestamp": datetime.now().isoformat(),
+                "line": line
+            }
+            self._broadcast_log(execution_id, line_log)
+        
+        for line in result.get("error_lines", []):
+            error_log = {
+                "type": "error",
+                "timestamp": datetime.now().isoformat(),
+                "line": line
+            }
+            self._broadcast_log(execution_id, error_log)
+        
+        self._log_to_db(execution_id, server_id, service_name, action, command, result["output"], result["exit_code"], manual)
+        
+        complete_log = {
+            "type": "complete",
+            "timestamp": datetime.now().isoformat(),
+            "exit_code": result["exit_code"],
+            "success": result["success"]
+        }
+        self._broadcast_log(execution_id, complete_log)
+        
+        result["execution_id"] = execution_id
+        return result
 
     async def check_service(self, server, service_template, execution_id=None, manual=False):
         start_time = datetime.now()
@@ -1230,7 +1220,6 @@ class Sentinel:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
             
-            # Delete all statistics but keep current service states
             c.execute("DELETE FROM sentinel_checks")
             checks_deleted = c.rowcount
             
@@ -1249,7 +1238,6 @@ class Sentinel:
             conn.commit()
             conn.close()
             
-            # Reset in-memory counters
             self._failure_counts = {}
             
             total = checks_deleted + repairs_deleted + failures_deleted + metrics_deleted + logs_deleted
@@ -1400,7 +1388,6 @@ class Sentinel:
         app.router.add_delete("/api/sentinel/templates/{filename}", self.api_delete_template)
         app.router.add_post("/api/sentinel/templates/sync", self.api_sync_templates)
         
-        # NEW: Settings endpoint for GitHub URL
         app.router.add_get("/api/sentinel/settings", self.api_get_settings)
         app.router.add_put("/api/sentinel/settings", self.api_update_settings)
         
@@ -1471,7 +1458,6 @@ class Sentinel:
         templates = self.load_templates()
         return web.json_response({"templates": templates})
 
-    # FIXED: Return plain text content, not wrapped JSON
     async def api_download_template(self, request):
         filename = request.match_info["filename"]
         result = self.download_template(filename)
@@ -1495,7 +1481,6 @@ class Sentinel:
         result = self.delete_template(filename)
         return web.json_response(result)
 
-    # FIXED: Accept optional URL parameter
     async def api_sync_templates(self, request):
         try:
             data = await request.json()
@@ -1506,7 +1491,6 @@ class Sentinel:
         result = await self.sync_github_templates(custom_url)
         return web.json_response(result)
 
-    # NEW: Settings endpoints
     async def api_get_settings(self, request):
         settings = self.load_settings()
         return web.json_response(settings)
