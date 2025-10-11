@@ -196,23 +196,37 @@
       if (pane) {
         pane.classList.add('active');
         
-        // Load data when switching to specific tabs
-        if (btn.dataset.tab === 'analytics') {
+        // Auto-open first sub-tab for these modules
+        const tabName = btn.dataset.tab;
+        if (tabName === 'orchestrator') {
+          // Open Playbooks tab
+          const playbooksTab = $('.orch-tab[data-orch-tab="playbooks"]');
+          if (playbooksTab) playbooksTab.click();
+        } else if (tabName === 'sentinel') {
+          // Open Dashboard tab
+          const sentinelDashTab = $('.sentinel-subnav-btn[data-view="dashboard"]');
+          if (sentinelDashTab) sentinelDashTab.click();
+          
+          // Activate Sentinel
+          if (typeof sentinelUI !== 'undefined' && sentinelUI.activate) {
+            sentinelUI.activate();
+          }
+        } else if (tabName === 'analytics') {
+          // Open Dashboard tab
+          const analyticsTab = $('.orch-tab[data-analytics-tab="dashboard"]');
+          if (analyticsTab) analyticsTab.click();
+          
+          // Load analytics data
           if (typeof analyticsLoadHealthScore === 'function') {
             analyticsLoadHealthScore();
             analyticsLoadDashboard();
           }
-        }
-        
-        if (btn.dataset.tab === 'dashboard') {
+        } else if (tabName === 'settings') {
+          // Open General settings tab
+          const generalTab = $('.orch-tab[data-settings-tab="general"]');
+          if (generalTab) generalTab.click();
+        } else if (tabName === 'dashboard') {
           updateDashboardMetrics();
-        }
-        
-        // Activate Sentinel when tab is opened
-        if (btn.dataset.tab === 'sentinel') {
-          if (typeof sentinelUI !== 'undefined' && sentinelUI.activate) {
-            sentinelUI.activate();
-          }
         }
       }
     });
@@ -255,18 +269,8 @@
       dashChatStatus.textContent = chatStatus.textContent || 'Ready';
     }
     
-    // Update commands count
-    const dashCommands = $('#dash-commands');
-    const dashLastCommand = $('#dash-last-command');
-    
-    if (dashCommands && wakeHistory) {
-      dashCommands.textContent = wakeHistory.length;
-    }
-    
-    const lastWake = $('#last-wake');
-    if (dashLastCommand && lastWake) {
-      dashLastCommand.textContent = lastWake.textContent || 'No commands sent';
-    }
+    // Update Sentinel metrics
+    await updateSentinelMetrics();
     
     // Update playbooks/schedules counts
     await updateOrchestrationMetrics();
@@ -292,6 +296,28 @@
     
     // Update activity feed
     updateDashboardActivity();
+  }
+
+  // Update Sentinel metrics on dashboard
+  async function updateSentinelMetrics() {
+    try {
+      const stats = await jfetch(API('api/sentinel/stats')).catch(() => null);
+      if (stats) {
+        const dashSentinelUptime = $('#dash-sentinel-uptime');
+        const dashSentinelRepairs = $('#dash-sentinel-repairs');
+        
+        if (dashSentinelUptime) {
+          const uptime = stats.uptime_24h || 0;
+          dashSentinelUptime.textContent = uptime.toFixed(1) + '%';
+        }
+        
+        if (dashSentinelRepairs) {
+          dashSentinelRepairs.textContent = stats.repairs_made_today || 0;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to update Sentinel metrics:', e);
+    }
   }
 
   // Update orchestration metrics
@@ -360,19 +386,18 @@
       });
     }
     
-    // Add recent wake commands (last 2)
-    if (wakeHistory && wakeHistory.length > 0) {
-      const recentCommands = wakeHistory.slice(0, 2);
-      recentCommands.forEach(cmd => {
-        const timeAgo = getTimeAgo(cmd.timestamp / 1000);
+    // Add recent sentinel repairs (last 2)
+    // This will be populated by sentinel.js if available
+    if (window.sentinelRecentRepairs && window.sentinelRecentRepairs.length > 0) {
+      window.sentinelRecentRepairs.slice(0, 2).forEach(repair => {
         activities.push({
-          icon: '⚡',
-          color: 'rgba(56, 189, 248, 0.12)',
-          iconColor: '#38bdf8',
-          title: `Command executed: jarvis ${cmd.command}`,
-          time: timeAgo,
-          timestamp: cmd.timestamp / 1000,
-          type: 'command'
+          icon: '🔧',
+          color: 'rgba(245, 158, 11, 0.12)',
+          iconColor: '#f59e0b',
+          title: `Sentinel repaired: ${repair.service}`,
+          time: getTimeAgo(repair.timestamp),
+          timestamp: repair.timestamp,
+          type: 'repair'
         });
       });
     }
@@ -427,6 +452,9 @@
           setTimeout(() => {
             selectRowById(messageId);
           }, 200);
+        } else if (type === 'repair') {
+          // Switch to sentinel tab
+          switchTab('sentinel');
         }
       });
     });
