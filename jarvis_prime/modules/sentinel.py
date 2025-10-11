@@ -676,7 +676,7 @@ class Sentinel:
                 raise RuntimeError(f"SSH connection failed: {e}")
 
             try:
-                stdin, stdout, stderr = client.exec_command(command, get_pty=True)
+                stdin, stdout, stderr = client.exec_command(command, get_pty=False)
             except Exception as e:
                 raise RuntimeError(f"SSH exec_command failed: {e}")
 
