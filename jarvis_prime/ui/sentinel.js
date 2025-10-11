@@ -1,6 +1,6 @@
 // /app/www/js/sentinel.js
 // Frontend for Sentinel autonomous monitoring system
-// FIXED: Added edit/delete monitoring, flexible purge (all/1w/1m/3m), delete logs, per-service intervals
+// FIXED: Added edit/delete monitoring, flexible purge (all/1w/1m/3m), delete logs, per-service intervals, reset stats, GitHub URL input
 
 class SentinelUI {
     constructor() {
@@ -522,14 +522,32 @@ class SentinelUI {
         container.innerHTML = html;
     }
 
-    async syncTemplates() {
+    // FIXED: GitHub sync with URL prompt
+    async syncTemplates(url = null) {
+        // If no URL provided, show prompt to ask for URL
+        if (!url) {
+            const savedUrl = localStorage.getItem('sentinel_github_url') || '';
+            url = prompt('Enter GitHub templates URL (leave blank to use saved):\n\nExample: https://api.github.com/repos/user/repo/contents/path', savedUrl);
+            
+            if (url === null) return; // User cancelled
+            
+            // Save URL if provided
+            if (url) {
+                localStorage.setItem('sentinel_github_url', url);
+            } else {
+                url = savedUrl;
+            }
+        }
+        
         if (window.showToast) {
             window.showToast('Syncing templates from GitHub...', 'info');
         }
         
         try {
             const response = await fetch(API('api/sentinel/templates/sync'), {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url || undefined })
             });
 
             const result = await response.json();
@@ -571,20 +589,20 @@ class SentinelUI {
     async viewTemplate(filename) {
         try {
             const response = await fetch(API(`api/sentinel/templates/${filename}`));
-            const result = await response.json();
             
-            if (result.success) {
+            if (response.ok) {
+                const content = await response.text();
                 const modal = $('#sentinel-view-template-modal');
                 if (modal) {
                     const pre = $('pre', modal);
                     if (pre) {
-                        pre.textContent = result.content;
+                        pre.textContent = content;
                     }
                     modal.style.display = 'flex';
                 }
             } else {
                 if (window.showToast) {
-                    window.showToast(result.error || 'Failed to load template', 'error');
+                    window.showToast('Failed to load template', 'error');
                 }
             }
         } catch (error) {
@@ -626,7 +644,7 @@ class SentinelUI {
         }
     }
 
-    // FIXED: Monitoring Configuration with edit/delete
+    // Monitoring Configuration
     renderMonitoring() {
         const container = $('#sentinel-monitoring-list');
         if (!container) return;
@@ -1121,7 +1139,7 @@ class SentinelUI {
         container.scrollTop = container.scrollHeight;
     }
 
-    // FIXED: Log History with delete functionality
+    // Log History
     async renderLogHistory() {
         const container = $('#sentinel-log-history');
         if (!container) return;
@@ -1242,7 +1260,7 @@ class SentinelUI {
         }
     }
 
-    // FIXED: Settings with flexible purge options
+    // Settings
     renderSettings() {
         const container = $('#sentinel-settings-container');
         if (!container) return;
@@ -1272,6 +1290,20 @@ class SentinelUI {
                     </div>
                     <button class="btn primary" style="margin-top: 12px;" onclick="sentinelUI.saveQuietHours()">
                         💾 Save Quiet Hours
+                    </button>
+                </div>
+
+                <h3>Statistics</h3>
+                <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <span style="font-size: 24px;">⚠️</span>
+                        <span style="color: #ef4444; font-weight: 600;">Reset Dashboard Statistics</span>
+                    </div>
+                    <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+                        Clear all check history, repairs, failures, and metrics. Monitoring will continue, but all historical data will be permanently deleted.
+                    </p>
+                    <button class="btn danger" style="width: 100%;" onclick="sentinelUI.resetStats()">
+                        🔄 Reset All Statistics
                     </button>
                 </div>
 
@@ -1325,6 +1357,41 @@ class SentinelUI {
             console.error('[Sentinel] Error saving quiet hours:', error);
             if (window.showToast) {
                 window.showToast('Failed to save quiet hours', 'error');
+            }
+        }
+    }
+
+    async resetStats() {
+        if (!confirm('⚠️ Are you sure you want to reset ALL statistics?\n\nThis will permanently delete:\n• All check history\n• All repair records\n• All failure logs\n• All metrics\n• All execution logs\n\nMonitoring will continue, but historical data cannot be recovered.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(API('api/sentinel/reset-stats'), {
+                method: 'POST'
+            });
+
+            const result = await response.json();
+            
+            if (result.success) {
+                const total = result.deleted?.total || 0;
+                if (window.showToast) {
+                    window.showToast(`Statistics reset: ${total} records deleted`, 'success');
+                }
+                
+                // Refresh dashboard to show zeroed stats
+                await this.loadDashboard();
+                await this.loadLiveStatus();
+                await this.loadRecentActivity(10);
+            } else {
+                if (window.showToast) {
+                    window.showToast(result.error || 'Failed to reset statistics', 'error');
+                }
+            }
+        } catch (error) {
+            console.error('[Sentinel] Error resetting stats:', error);
+            if (window.showToast) {
+                window.showToast('Failed to reset statistics', 'error');
             }
         }
     }
