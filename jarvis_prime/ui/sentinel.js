@@ -1,6 +1,6 @@
 // /app/www/js/sentinel.js
 // Frontend for Sentinel autonomous monitoring system
-// Integrates with Jarvis Prime UI
+// FIXED: Added edit/delete monitoring, flexible purge (all/1w/1m/3m), delete logs, per-service intervals
 
 class SentinelUI {
     constructor() {
@@ -56,10 +56,7 @@ class SentinelUI {
         }
     }
 
-    // ===========================
     // Data Loading
-    // ===========================
-
     async loadServers() {
         try {
             const response = await fetch(API('api/sentinel/servers'));
@@ -139,12 +136,8 @@ class SentinelUI {
         }
     }
 
-    // ===========================
     // Event Listeners
-    // ===========================
-
     setupEventListeners() {
-        // Sub-navigation within Sentinel
         const subNavButtons = document.querySelectorAll('.sentinel-subnav-btn');
         subNavButtons.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -155,23 +148,19 @@ class SentinelUI {
     }
 
     showSubView(viewName) {
-        // Hide all sub-views
         document.querySelectorAll('.sentinel-subview').forEach(view => {
             view.classList.remove('active');
         });
 
-        // Show selected sub-view
         const view = document.querySelector(`.sentinel-subview[data-view="${viewName}"]`);
         if (view) {
             view.classList.add('active');
         }
 
-        // Update sub-nav
         document.querySelectorAll('.sentinel-subnav-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.view === viewName);
         });
 
-        // Load view data
         this.loadSubViewData(viewName);
     }
 
@@ -200,12 +189,8 @@ class SentinelUI {
         }
     }
 
-    // ===========================
     // Dashboard Rendering
-    // ===========================
-
     renderDashboard(metrics) {
-        // Update metric cards
         $('#sentinel-total-checks').textContent = metrics.total_checks || 0;
         $('#sentinel-checks-today').textContent = metrics.checks_today || 0;
         $('#sentinel-services-monitored').textContent = metrics.services_monitored || 0;
@@ -306,10 +291,7 @@ class SentinelUI {
         container.innerHTML = html;
     }
 
-    // ===========================
     // Server Management
-    // ===========================
-
     renderServers() {
         const container = $('#sentinel-servers-list');
         if (!container) return;
@@ -399,7 +381,6 @@ class SentinelUI {
 
         const modal = $('#sentinel-edit-server-modal');
         if (modal) {
-            // Populate form
             $('#sentinel-edit-server-id').value = server.id;
             $('input[name="host"]', modal).value = server.host;
             $('input[name="port"]', modal).value = server.port;
@@ -472,10 +453,7 @@ class SentinelUI {
         }
     }
 
-    // ===========================
     // Template Management
-    // ===========================
-
     renderTemplates() {
         const container = $('#sentinel-templates-list');
         if (!container) return;
@@ -648,10 +626,7 @@ class SentinelUI {
         }
     }
 
-    // ===========================
-    // Monitoring Configuration
-    // ===========================
-
+    // FIXED: Monitoring Configuration with edit/delete
     renderMonitoring() {
         const container = $('#sentinel-monitoring-list');
         if (!container) return;
@@ -682,14 +657,20 @@ class SentinelUI {
                             </span>
                         </div>
                         <div style="display: flex; gap: 8px;">
+                            <button class="btn" onclick="sentinelUI.editMonitoring('${mon.server_id}')">
+                                ✏️ Edit
+                            </button>
                             <button class="btn ${mon.enabled ? '' : 'primary'}" onclick="sentinelUI.toggleMonitoring('${mon.server_id}', ${!mon.enabled})">
                                 ${mon.enabled ? '⏸️ Disable' : '▶️ Enable'}
+                            </button>
+                            <button class="btn danger" onclick="sentinelUI.deleteMonitoring('${mon.server_id}')">
+                                🗑️ Delete
                             </button>
                         </div>
                     </div>
                     <div style="padding: 16px;">
                         <div style="margin-bottom: 8px;">
-                            <strong>Check Interval:</strong> ${mon.check_interval}s
+                            <strong>Default Interval:</strong> ${mon.check_interval}s
                         </div>
                         <div>
                             <strong>Services:</strong> ${mon.services.length}
@@ -716,7 +697,6 @@ class SentinelUI {
         const modal = $('#sentinel-add-monitoring-modal');
         if (!modal) return;
         
-        // Populate server dropdown
         const serverSelect = $('#sentinel-mon-server-select');
         if (serverSelect) {
             serverSelect.innerHTML = '<option value="">Select a server...</option>' +
@@ -724,22 +704,50 @@ class SentinelUI {
                     `<option value="${this.escapeHtml(server.id)}">${this.escapeHtml(server.description || server.id)}</option>`
                 ).join('');
             
-            // Listen for server selection to show available templates
             serverSelect.onchange = () => {
                 this.updateMonitoringTemplatesList(serverSelect.value);
             };
         }
         
-        // Clear checkboxes area
         const checkboxesDiv = $('#sentinel-mon-services-checkboxes');
         if (checkboxesDiv) {
             checkboxesDiv.innerHTML = '<div class="text-center text-muted">Select a server first</div>';
         }
         
+        // Reset form
+        document.querySelector('input[name="check_interval"]').value = 300;
+        
         modal.style.display = 'flex';
     }
-    
-    updateMonitoringTemplatesList(serverId) {
+
+    editMonitoring(serverId) {
+        const mon = this.monitoring.find(m => m.server_id === serverId);
+        if (!mon) return;
+
+        const modal = $('#sentinel-add-monitoring-modal');
+        if (!modal) return;
+
+        // Populate server select
+        const serverSelect = $('#sentinel-mon-server-select');
+        if (serverSelect) {
+            serverSelect.innerHTML = '<option value="">Select a server...</option>' +
+                this.servers.map(server => 
+                    `<option value="${this.escapeHtml(server.id)}" ${server.id === serverId ? 'selected' : ''}>${this.escapeHtml(server.description || server.id)}</option>`
+                ).join('');
+            
+            serverSelect.disabled = true; // Can't change server in edit mode
+        }
+
+        // Load templates and check the ones in this config
+        this.updateMonitoringTemplatesList(serverId, mon.services);
+
+        // Set interval
+        document.querySelector('input[name="check_interval"]').value = mon.check_interval || 300;
+
+        modal.style.display = 'flex';
+    }
+
+    updateMonitoringTemplatesList(serverId, selectedServices = []) {
         const checkboxesDiv = $('#sentinel-mon-services-checkboxes');
         if (!checkboxesDiv) return;
         
@@ -748,19 +756,25 @@ class SentinelUI {
             return;
         }
         
-        // Show all available templates as checkboxes
-        const html = this.templates.map(template => `
-            <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;"
-                   onmouseover="this.style.background='var(--surface-tertiary)'"
-                   onmouseout="this.style.background='transparent'">
-                <input type="checkbox" name="service_template" value="${this.escapeHtml(template.id)}" 
-                       style="cursor: pointer;">
-                <div>
-                    <div style="font-weight: 500;">${this.escapeHtml(template.name)}</div>
-                    <div style="font-size: 11px; color: var(--text-muted);">${this.escapeHtml(template.id)}</div>
-                </div>
-            </label>
-        `).join('');
+        const html = this.templates.map(template => {
+            const checked = selectedServices.includes(template.id) ? 'checked' : '';
+            return `
+                <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;"
+                       onmouseover="this.style.background='var(--surface-tertiary)'"
+                       onmouseout="this.style.background='transparent'">
+                    <input type="checkbox" name="service_template" value="${this.escapeHtml(template.id)}" ${checked}
+                           style="cursor: pointer;">
+                    <div style="flex: 1;">
+                        <div style="font-weight: 500;">${this.escapeHtml(template.name)}</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">${this.escapeHtml(template.id)}</div>
+                    </div>
+                    <input type="number" name="service_interval_${this.escapeHtml(template.id)}" 
+                           placeholder="Default" min="60" max="86400" 
+                           style="width: 80px; padding: 4px 8px; font-size: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--surface-secondary); color: var(--text-primary);"
+                           title="Custom interval (seconds) - leave blank for default">
+                </label>
+            `;
+        }).join('');
         
         checkboxesDiv.innerHTML = html || '<div class="text-center text-muted">No templates available</div>';
     }
@@ -777,7 +791,6 @@ class SentinelUI {
             return;
         }
         
-        // Get all checked templates
         const checkboxes = document.querySelectorAll('input[name="service_template"]:checked');
         const services = Array.from(checkboxes).map(cb => cb.value);
         
@@ -790,6 +803,15 @@ class SentinelUI {
         
         const checkInterval = parseInt(document.querySelector('input[name="check_interval"]').value) || 300;
         
+        // Collect per-service intervals
+        const serviceIntervals = {};
+        services.forEach(serviceId => {
+            const intervalInput = document.querySelector(`input[name="service_interval_${serviceId}"]`);
+            if (intervalInput && intervalInput.value) {
+                serviceIntervals[serviceId] = parseInt(intervalInput.value);
+            }
+        });
+        
         try {
             const response = await fetch(API('api/sentinel/monitoring'), {
                 method: 'POST',
@@ -797,7 +819,8 @@ class SentinelUI {
                 body: JSON.stringify({
                     server_id: serverId,
                     services: services,
-                    check_interval: checkInterval
+                    check_interval: checkInterval,
+                    service_intervals: serviceIntervals
                 })
             });
             
@@ -811,7 +834,6 @@ class SentinelUI {
                 this.renderMonitoring();
                 this.closeModal();
                 
-                // Ask if user wants to start monitoring now
                 if (confirm('Monitoring configuration saved. Start monitoring this server now?')) {
                     await this.startMonitoring(serverId);
                 }
@@ -824,6 +846,37 @@ class SentinelUI {
             console.error('[Sentinel] Error saving monitoring:', error);
             if (window.showToast) {
                 window.showToast('Failed to save monitoring configuration', 'error');
+            }
+        }
+    }
+
+    async deleteMonitoring(serverId) {
+        if (!confirm('Are you sure you want to delete this monitoring configuration?')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(API(`api/sentinel/monitoring/${serverId}`), {
+                method: 'DELETE'
+            });
+
+            const result = await response.json();
+            
+            if (result.success) {
+                if (window.showToast) {
+                    window.showToast('Monitoring configuration deleted', 'success');
+                }
+                await this.loadMonitoring();
+                this.renderMonitoring();
+            } else {
+                if (window.showToast) {
+                    window.showToast(result.error || 'Failed to delete monitoring', 'error');
+                }
+            }
+        } catch (error) {
+            console.error('[Sentinel] Error deleting monitoring:', error);
+            if (window.showToast) {
+                window.showToast('Failed to delete monitoring', 'error');
             }
         }
     }
@@ -845,7 +898,6 @@ class SentinelUI {
                 await this.loadMonitoring();
                 this.renderMonitoring();
                 
-                // Start or stop monitoring
                 if (enabled) {
                     await this.startMonitoring(serverId);
                 } else {
@@ -902,12 +954,8 @@ class SentinelUI {
         }
     }
 
-    // ===========================
     // Manual Testing
-    // ===========================
-
     async manualCheck(serverId, serviceName) {
-        // Find service ID from name
         const template = this.templates.find(t => t.name === serviceName);
         if (!template) {
             if (window.showToast) {
@@ -948,7 +996,6 @@ class SentinelUI {
             return;
         }
 
-        // Find service ID from name
         const template = this.templates.find(t => t.name === serviceName);
         if (!template) {
             if (window.showToast) {
@@ -995,13 +1042,10 @@ class SentinelUI {
         if (logsContainer) logsContainer.innerHTML = '<div class="text-center text-muted">Connecting...</div>';
 
         modal.style.display = 'flex';
-
-        // Start SSE connection
         this.startLogStream(executionId, logsContainer);
     }
 
     startLogStream(executionId, container) {
-        // Close existing stream if any
         if (this.activeLogStreams.has(executionId)) {
             this.activeLogStreams.get(executionId).close();
         }
@@ -1009,7 +1053,6 @@ class SentinelUI {
         const eventSource = new EventSource(API(`api/sentinel/logs/stream?execution_id=${executionId}`));
         this.activeLogStreams.set(executionId, eventSource);
 
-        // Clear container
         container.innerHTML = '';
 
         eventSource.onmessage = (event) => {
@@ -1017,7 +1060,6 @@ class SentinelUI {
                 const data = JSON.parse(event.data);
                 this.appendLogEntry(container, data);
 
-                // Auto-close on completion
                 if (data.type === 'complete') {
                     setTimeout(() => {
                         eventSource.close();
@@ -1079,10 +1121,7 @@ class SentinelUI {
         container.scrollTop = container.scrollHeight;
     }
 
-    // ===========================
-    // Log History
-    // ===========================
-
+    // FIXED: Log History with delete functionality
     async renderLogHistory() {
         const container = $('#sentinel-log-history');
         if (!container) return;
@@ -1113,9 +1152,14 @@ class SentinelUI {
                                     </div>
                                 </div>
                             </div>
-                            <button class="btn" onclick="sentinelUI.viewExecutionLogs('${exec.execution_id}')">
-                                👁️ View Logs
-                            </button>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn" onclick="sentinelUI.viewExecutionLogs('${exec.execution_id}')">
+                                    👁️ View
+                                </button>
+                                <button class="btn danger" onclick="sentinelUI.deleteExecutionLogs('${exec.execution_id}')">
+                                    🗑️ Delete
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -1168,10 +1212,37 @@ class SentinelUI {
         }
     }
 
-    // ===========================
-    // Settings
-    // ===========================
+    async deleteExecutionLogs(executionId) {
+        if (!confirm('Are you sure you want to delete these logs?')) {
+            return;
+        }
 
+        try {
+            const response = await fetch(API(`api/sentinel/logs/${executionId}`), {
+                method: 'DELETE'
+            });
+
+            const result = await response.json();
+            
+            if (result.success) {
+                if (window.showToast) {
+                    window.showToast('Logs deleted successfully', 'success');
+                }
+                await this.renderLogHistory();
+            } else {
+                if (window.showToast) {
+                    window.showToast(result.error || 'Failed to delete logs', 'error');
+                }
+            }
+        } catch (error) {
+            console.error('[Sentinel] Error deleting logs:', error);
+            if (window.showToast) {
+                window.showToast('Failed to delete logs', 'error');
+            }
+        }
+    }
+
+    // FIXED: Settings with flexible purge options
     renderSettings() {
         const container = $('#sentinel-settings-container');
         if (!container) return;
@@ -1205,9 +1276,20 @@ class SentinelUI {
                 </div>
 
                 <h3>Data Management</h3>
-                <button class="btn" onclick="sentinelUI.showPurgeModal()">
-                    🗑️ Purge Old Logs
-                </button>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 16px;">
+                    <button class="btn" onclick="sentinelUI.purgeOldLogs({days: 7})">
+                        🗑️ Purge 1 Week
+                    </button>
+                    <button class="btn" onclick="sentinelUI.purgeOldLogs({days: 30})">
+                        🗑️ Purge 1 Month
+                    </button>
+                    <button class="btn" onclick="sentinelUI.purgeOldLogs({days: 90})">
+                        🗑️ Purge 3 Months
+                    </button>
+                    <button class="btn danger" onclick="sentinelUI.purgeOldLogs({days: null})">
+                        ⚠️ Purge ALL
+                    </button>
+                </div>
                 <p style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">
                     Remove old check/repair logs to free up space
                 </p>
@@ -1247,13 +1329,15 @@ class SentinelUI {
         }
     }
 
-    showPurgeModal() {
-        if (confirm('Purge logs older than 90 days?')) {
-            this.purgeOldLogs({ days: 90 });
-        }
-    }
-
     async purgeOldLogs(options) {
+        const confirmMsg = options.days === null ? 
+            '⚠️ Are you sure you want to purge ALL logs? This cannot be undone!' :
+            `Purge logs older than ${options.days} days?`;
+            
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
         try {
             const response = await fetch(API('api/sentinel/purge'), {
                 method: 'POST',
@@ -1280,19 +1364,14 @@ class SentinelUI {
         }
     }
 
-    // ===========================
     // Auto Refresh
-    // ===========================
-
     startAutoRefresh() {
-        // Refresh dashboard every 30 seconds
         this.dashboardInterval = setInterval(() => {
             if (this.isActive) {
                 this.loadDashboard();
             }
         }, 30000);
 
-        // Refresh live status every 10 seconds
         this.liveStatusInterval = setInterval(() => {
             if (this.isActive) {
                 this.loadLiveStatus();
@@ -1314,14 +1393,17 @@ class SentinelUI {
         this.activeLogStreams.clear();
     }
 
-    // ===========================
     // UI Helpers
-    // ===========================
-
     closeModal() {
         document.querySelectorAll('.modal').forEach(modal => {
             modal.style.display = 'none';
         });
+        
+        // Re-enable server select if it was disabled
+        const serverSelect = $('#sentinel-mon-server-select');
+        if (serverSelect) {
+            serverSelect.disabled = false;
+        }
     }
 
     getFormData(formId) {
@@ -1345,10 +1427,7 @@ class SentinelUI {
         return data;
     }
 
-    // ===========================
     // Utility Functions
-    // ===========================
-
     escapeHtml(text) {
         if (!text) return '';
         const div = document.createElement('div');
@@ -1382,22 +1461,20 @@ class SentinelUI {
     }
 }
 
-// Utility for $ selectors
+// Utility functions
 function $(selector, context = document) {
     return context.querySelector(selector);
 }
 
-// Utility for modal closing
 function closeModal() {
     document.querySelectorAll('.modal').forEach(modal => {
         modal.style.display = 'none';
     });
 }
 
-// Initialize Sentinel UI instance (but don't activate)
+// Initialize Sentinel UI instance
 const sentinelUI = new SentinelUI();
 
-// Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     sentinelUI.init();
 });
