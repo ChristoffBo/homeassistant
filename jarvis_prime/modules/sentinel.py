@@ -639,7 +639,7 @@ class Sentinel:
             for q in dead:
                 self._log_listeners[execution_id].discard(q)
 
-        async def ssh_execute(self, server, command, execution_id=None, service_name="", action="execute", manual=False):
+    async def ssh_execute(self, server, command, execution_id=None, service_name="", action="execute", manual=False):
         import socket
         from paramiko.ssh_exception import SSHException, NoValidConnectionsError
 
