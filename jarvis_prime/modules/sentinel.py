@@ -639,12 +639,14 @@ class Sentinel:
             for q in dead:
                 self._log_listeners[execution_id].discard(q)
 
-    async def ssh_execute(self, server, command, execution_id=None, service_name="", action="execute", manual=False):
+        async def ssh_execute(self, server, command, execution_id=None, service_name="", action="execute", manual=False):
+        import socket
+        from paramiko.ssh_exception import SSHException, NoValidConnectionsError
+
         server_id = server.get("id", "unknown")
-        
         if not execution_id:
             execution_id = f"{server_id}_{int(datetime.now().timestamp())}"
-        
+
         try:
             start_log = {
                 "type": "command",
@@ -655,93 +657,101 @@ class Sentinel:
                 "command": command
             }
             self._broadcast_log(execution_id, start_log)
-            
+
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: client.connect(
-                    hostname=server["host"],
-                    port=server["port"],
-                    username=server["username"],
-                    password=server["password"],
-                    timeout=10
+
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: client.connect(
+                        hostname=server["host"],
+                        port=server["port"],
+                        username=server["username"],
+                        password=server["password"],
+                        timeout=10
+                    )
                 )
-            )
-            
-            stdin, stdout, stderr = client.exec_command(command)
-            
-            output_lines = []
-            for line in stdout:
-                line = line.strip()
-                if line:
-                    output_lines.append(line)
-                    line_log = {
-                        "type": "output",
-                        "timestamp": datetime.now().isoformat(),
-                        "line": line
-                    }
-                    self._broadcast_log(execution_id, line_log)
-            
-            error_lines = []
-            for line in stderr:
-                line = line.strip()
-                if line:
-                    error_lines.append(line)
-                    error_log = {
-                        "type": "error",
-                        "timestamp": datetime.now().isoformat(),
-                        "line": line
-                    }
-                    self._broadcast_log(execution_id, error_log)
-            
-            exit_code = stdout.channel.recv_exit_status()
+            except (socket.error, SSHException, NoValidConnectionsError, asyncio.TimeoutError) as e:
+                raise RuntimeError(f"SSH connection failed: {e}")
+
+            try:
+                stdin, stdout, stderr = client.exec_command(command, get_pty=True)
+            except Exception as e:
+                raise RuntimeError(f"SSH exec_command failed: {e}")
+
+            output_lines, error_lines = [], []
+            try:
+                for line in stdout:
+                    line = line.strip()
+                    if line:
+                        output_lines.append(line)
+                        self._broadcast_log(execution_id, {
+                            "type": "output",
+                            "timestamp": datetime.now().isoformat(),
+                            "line": line
+                        })
+            except (EOFError, OSError, SSHException) as e:
+                output_lines.append(f"[read interrupted: {e}]")
+
+            try:
+                for line in stderr:
+                    line = line.strip()
+                    if line:
+                        error_lines.append(line)
+                        self._broadcast_log(execution_id, {
+                            "type": "error",
+                            "timestamp": datetime.now().isoformat(),
+                            "line": line
+                        })
+            except (EOFError, OSError, SSHException) as e:
+                error_lines.append(f"[stderr interrupted: {e}]")
+
+            try:
+                exit_code = stdout.channel.recv_exit_status()
+            except Exception as e:
+                exit_code = -1
+                error_lines.append(f"[exit status unavailable: {e}]")
+
             client.close()
-            
             full_output = "\n".join(output_lines) if output_lines else "\n".join(error_lines)
             self._log_to_db(execution_id, server_id, service_name, action, command, full_output, exit_code, manual)
-            
-            complete_log = {
+
+            self._broadcast_log(execution_id, {
                 "type": "complete",
                 "timestamp": datetime.now().isoformat(),
                 "exit_code": exit_code,
                 "success": exit_code == 0
-            }
-            self._broadcast_log(execution_id, complete_log)
-            
+            })
+
             return {
                 "success": exit_code == 0,
                 "output": full_output,
                 "exit_code": exit_code,
                 "execution_id": execution_id
             }
-            
+
         except Exception as e:
-            error_msg = str(e)
+            error_msg = f"[SSH safe error] {type(e).__name__}: {e}"
             self._log_to_db(execution_id, server_id, service_name, action, command, error_msg, -1, manual)
-            
-            error_log = {
+            self._broadcast_log(execution_id, {
                 "type": "error",
                 "timestamp": datetime.now().isoformat(),
                 "line": error_msg
-            }
-            self._broadcast_log(execution_id, error_log)
-            
-            complete_log = {
+            })
+            self._broadcast_log(execution_id, {
                 "type": "complete",
                 "timestamp": datetime.now().isoformat(),
                 "exit_code": -1,
                 "success": False
-            }
-            self._broadcast_log(execution_id, complete_log)
-            
+            })
             return {
                 "success": False,
                 "output": error_msg,
                 "exit_code": -1,
                 "execution_id": execution_id
             }
+
 
     async def check_service(self, server, service_template, execution_id=None, manual=False):
         start_time = datetime.now()
