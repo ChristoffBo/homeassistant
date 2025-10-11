@@ -1,3 +1,6 @@
+## latest (2025-10-11 14:21:00)
+Sentinel Added tested working.
+Few more niggles then Jarvis goes Docker.
 ## latest (2025-10-10 14:21:00)
 Started work on last Module, sentinel auto Healing
 ## latest (2025-10-10 14:21:00)
