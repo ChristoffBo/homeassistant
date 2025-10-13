@@ -956,19 +956,17 @@ class Sentinel:
                     priority=8
                 )
 
-    def _send_notification(self, title, body, priority=5):
+    async def _send_notification(self, title, body, priority=5):
+        if self.notify_callback:
             try:
-	            from bot import process_incoming
-                process_incoming(title, body, source="sentinel", priority=priority)
-                self.logger(f"[sentinel] Notification sent: {title}")
+                await self.notify_callback(
+                    title=title,
+                    body=body,
+                    source="sentinel",
+                    priority=priority
+                )
             except Exception as e:
-                   self.logger(f"[sentinel] process_incoming failed: {e}")
-	        try:
-                    from errors import notify_error
-                    notify_error(f"[Sentinel] {title} — {body}", context="sentinel")
-            except Exception:
-                    pass
-
+                self.logger(f"Failed to send notification: {e}")
 
     async def monitor_loop(self, server_id):
         while True:
