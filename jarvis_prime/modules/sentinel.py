@@ -966,7 +966,7 @@ class Sentinel:
 	    try:
                 from errors import notify_error
                 notify_error(f"[Sentinel] {title} — {body}", context="sentinel")
-            except Exception:
+        except Exception:
                 pass
 
 
