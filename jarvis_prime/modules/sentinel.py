@@ -957,8 +957,7 @@ class Sentinel:
                 )
 
     def _send_notification(self, title, body, priority=5):
-    """Send notifications directly through Jarvis Core (like Orchestrator)"""
-			try:
+            try:
 			   from bot import process_incoming
                process_incoming(title, body, source="sentinel", priority=priority)
                self.logger(f"[sentinel] Notification sent: {title}")
