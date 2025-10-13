@@ -1,11 +1,12 @@
 {
   "id": "plex_media_server",
-  "name": "Plex Media Server",
-  "description": "Checks Plex Media Server status and restarts it if not running.",
-  "check_cmd": "systemctl is-active plexmediaserver || service plexmediaserver status | grep -q 'active (running)' && echo active || echo inactive",
+  "name": "plex_media_server",
+  "description": "Checks Plex Media Server status and restarts it if inactive. Uses sudo-safe systemctl for consistency.",
+  "check_cmd": "if sudo systemctl is-active plexmediaserver >/dev/null 2>&1; then echo active; else echo inactive; fi",
   "expected_output": "active",
-  "fix_cmd": "systemctl restart plexmediaserver || service plexmediaserver restart",
-  "verify_cmd": "systemctl is-active plexmediaserver || service plexmediaserver status | grep -q 'active (running)' && echo active || echo inactive",
+  "fix_cmd": "sudo systemctl restart plexmediaserver || true",
+  "verify_cmd": "if sudo systemctl is-active plexmediaserver >/dev/null 2>&1; then echo active; else echo inactive; fi",
   "retry_count": 2,
-  "retry_delay": 30
+  "retry_delay": 30,
+  "ttl_seconds": 300
 }

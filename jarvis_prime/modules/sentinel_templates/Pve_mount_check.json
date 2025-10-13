@@ -1,0 +1,12 @@
+{
+  "id": "pve_storage_mounts",
+  "name": "Storage Mounts",
+  "description": "Ensures all Proxmox storage mounts are available.",
+  "check_cmd": "grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
+  "expected_output": "",
+  "fix_cmd": "grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mount $m 2>/dev/null || true; done",
+  "verify_cmd": "grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
+  "retry_count": 2,
+  "retry_delay": 60,
+  "ttl_seconds": 300
+}

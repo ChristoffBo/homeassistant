@@ -1,0 +1,12 @@
+{
+  "id": "pve_vm_autostart",
+  "name": "Proxmox VM Autostart",
+  "description": "Ensures critical VMs are running. Starts if found stopped.",
+  "check_cmd": "qm list | awk '/(101|102|200)/ {if($3!=\"running\") print $1}'",
+  "expected_output": "",
+  "fix_cmd": "for id in $(qm list | awk '/(101|102|200)/ {if($3!=\"running\") print $1}'); do qm start $id; done",
+  "verify_cmd": "qm list | awk '/(101|102|200)/ {if($3!=\"running\") print $1}'",
+  "retry_count": 1,
+  "retry_delay": 30,
+  "ttl_seconds": 300
+}

@@ -1,0 +1,12 @@
+{
+  "id": "pve_updates",
+  "name": "Proxmox Updates",
+  "description": "Checks for pending Proxmox package updates and alerts if any are found.",
+  "check_cmd": "apt update -qq >/dev/null && apt list --upgradable 2>/dev/null | grep -v Listing | wc -l",
+  "expected_output": "0",
+  "fix_cmd": "echo 'Updates available. Run apt upgrade manually.' && true",
+  "verify_cmd": "apt list --upgradable 2>/dev/null | grep -v Listing | wc -l",
+  "retry_count": 1,
+  "retry_delay": 86400,
+  "ttl_seconds": 86400
+}

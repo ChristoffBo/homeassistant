@@ -1,0 +1,12 @@
+{
+  "id": "unraid_share_mounts",
+  "name": "Share Mounts",
+  "description": "Ensures all Unraid SMB/NFS shares are mounted.",
+  "check_cmd": "grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
+  "expected_output": "",
+  "fix_cmd": "grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mount $m 2>/dev/null || true; done",
+  "verify_cmd": "grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
+  "retry_count": 2,
+  "retry_delay": 60,
+  "ttl_seconds": 300
+}
