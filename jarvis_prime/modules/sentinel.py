@@ -904,7 +904,7 @@ class Sentinel:
             self._failure_counts[state_key] = 0
             
             if self._service_states.get(f"{state_key}:was_down"):
-                self._send_notification(
+                await self._send_notification(
                     f"✅ Service Recovered: {service_name}",
                     f"Service {service_name} on {server_id} is now healthy",
                     priority=3
@@ -931,7 +931,7 @@ class Sentinel:
                 repair_result = await self.repair_service(server, service_template)
                 
                 if repair_result["success"]:
-                    self._send_notification(
+                    await self._send_notification(
                         f"✅ Auto-Repair Successful: {service_name}",
                         f"Service {service_name} on {server_id} was down and has been repaired automatically",
                         priority=3
@@ -942,7 +942,7 @@ class Sentinel:
                 
             elif failure_count == 2:
                 if not self.is_quiet_hours():
-                    self._send_notification(
+                    await self._send_notification(
                         f"⚠️ Service Down: {service_name}",
                         f"Service {service_name} on {server_id} is down (2nd failure). Auto-repair in progress...",
                         priority=5
@@ -950,26 +950,23 @@ class Sentinel:
                 repair_result = await self.repair_service(server, service_template)
                 
             else:
-                self._send_notification(
+                await self._send_notification(
                     f"❌ CRITICAL: {service_name}",
                     f"Service {service_name} on {server_id} has failed {failure_count} times and cannot be repaired automatically",
                     priority=8
                 )
 
-    def _send_notification(self, title, body, priority=5):
-    """Send notifications directly through Jarvis Core (like Orchestrator)"""
-    try:
-        from bot import process_incoming
-        process_incoming(title, body, source="sentinel", priority=priority)
-        self.logger(f"[sentinel] Notification sent: {title}")
-    except Exception as e:
-        self.logger(f"[sentinel] process_incoming failed: {e}")
-        try:
-            from errors import notify_error
-            notify_error(f"[Sentinel] {title} — {body}", context="sentinel")
-        except Exception:
-            pass
-
+    async def _send_notification(self, title, body, priority=5):
+        if self.notify_callback:
+            try:
+                await self.notify_callback(
+                    title=title,
+                    body=body,
+                    source="sentinel",
+                    priority=priority
+                )
+            except Exception as e:
+                self.logger(f"Failed to send notification: {e}")
 
     async def monitor_loop(self, server_id):
         while True:
