@@ -1,3 +1,5 @@
+## latest (2025-10-13 14:21:00)
+Removed Nasty Sentinal dedup glitch.
 ## latest (2025-10-11 14:21:00)
 Sentinel Added tested working.
 Few more niggles then Jarvis goes Docker.
