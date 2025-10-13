@@ -264,7 +264,7 @@ class Sentinel:
             if key not in seen:
                 seen[key] = tpl
         templates = list(seen.values())
-			
+		templates = sorted(templates, key=lambda t: t.get("name", "").lower())	
         
         return templates
 
