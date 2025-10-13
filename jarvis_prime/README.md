@@ -144,10 +144,6 @@ You can import the ready-to-use **Sentinel Monitor Pack** for 18+ essential chec
 - APT updates, WireGuard, Proxmox core services, `/var` usage  
 Download: `sentinel_monitor_pack.json` and import via *Templates → Upload Template*.  
 URL: https://github.com/ChristoffBo/homeassistant/tree/main/jarvis_prime/modules/sentinel_templates
-### File Locations
-Replace these in your Jarvis add-on build if updating manually:
-- `/app/www/js/sentinel.js` – UI logic  
-- `/app/www/index.html` – monitor-form bindings  
 
 ### Summary
 Sentinel adds **automated self-healing**, **manual service selection**, and a **real-time dark-mode dashboard** to Jarvis Prime — turning it from a monitoring dashboard into a full **homelab reliability engine**.
