@@ -257,6 +257,14 @@ class Sentinel:
                             templates.append(template)
                     except Exception as e:
                         self.logger(f"Error loading custom template {filename}: {e}")
+			# --- Deduplicate templates by ID or name (fix for duplicates from GitHub + local) ---
+        seen = {}
+        for tpl in templates:
+            key = tpl.get("id") or tpl.get("name") or tpl.get("filename")
+            if key not in seen:
+                seen[key] = tpl
+        templates = list(seen.values())
+			
         
         return templates
 
