@@ -956,17 +956,20 @@ class Sentinel:
                     priority=8
                 )
 
-    async def _send_notification(self, title, body, priority=5):
-        if self.notify_callback:
-            try:
-                await self.notify_callback(
-                    title=title,
-                    body=body,
-                    source="sentinel",
-                    priority=priority
-                )
-            except Exception as e:
-                self.logger(f"Failed to send notification: {e}")
+    def _send_notification(self, title, body, priority=5):
+    """Send notifications directly through Jarvis Core (like Orchestrator)"""
+			try:
+			   from bot import process_incoming
+               process_incoming(title, body, source="sentinel", priority=priority)
+               self.logger(f"[sentinel] Notification sent: {title}")
+               except Exception as e:
+               self.logger(f"[sentinel] process_incoming failed: {e}")
+			try:
+               from errors import notify_error
+               notify_error(f"[Sentinel] {title} — {body}", context="sentinel")
+            except Exception:
+            pass
+
 
     async def monitor_loop(self, server_id):
         while True:
