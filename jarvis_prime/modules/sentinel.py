@@ -958,16 +958,16 @@ class Sentinel:
 
     def _send_notification(self, title, body, priority=5):
         try:
-	     from bot import process_incoming
-         process_incoming(title, body, source="sentinel", priority=priority)
-         self.logger(f"[sentinel] Notification sent: {title}")
-         except Exception as e:
+	        from bot import process_incoming
+            process_incoming(title, body, source="sentinel", priority=priority)
+            self.logger(f"[sentinel] Notification sent: {title}")
+        except Exception as e:
                self.logger(f"[sentinel] process_incoming failed: {e}")
 	    try:
-         from errors import notify_error
-         notify_error(f"[Sentinel] {title} — {body}", context="sentinel")
-         except Exception:
-           pass
+                from errors import notify_error
+                notify_error(f"[Sentinel] {title} — {body}", context="sentinel")
+            except Exception:
+                pass
 
 
     async def monitor_loop(self, server_id):
