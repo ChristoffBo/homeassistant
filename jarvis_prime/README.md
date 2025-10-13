@@ -95,6 +95,13 @@ Sentinel is a **manual-configuration monitoring system** — it only monitors wh
 - **Flap Detection** – Filters noisy up/down toggles.  
 - **Dashboard Metrics** – Displays uptime %, failed repairs, and total checks.  
 
+### 🧩 Sentinel Template Deduplication Behavior
+Sentinel now automatically **deduplicates templates** when loading from both sources:
+- `/app/sentinel_templates` → GitHub defaults  
+- `/share/jarvis_prime/sentinel/custom_templates` → Local overrides  
+If a template with the same **`id`** and **`name`** exists in both locations, **the GitHub version is always kept**.  
+Ensure that each custom template has a unique **`id`** and **`name`** to prevent it from being replaced by a default GitHub one.
+
 ### Quick Start
 1. Go to **Sentinel → Servers** → add your first server.  
 2. Go to **Templates** → click **Sync from GitHub** to load default templates.  
