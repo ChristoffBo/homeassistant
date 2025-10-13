@@ -143,7 +143,7 @@ You can import the ready-to-use **Sentinel Monitor Pack** for 18+ essential chec
 - SMART, ZFS, RAID, Memory, Swap, CPU Load, Temperature  
 - APT updates, WireGuard, Proxmox core services, `/var` usage  
 Download: `sentinel_monitor_pack.json` and import via *Templates → Upload Template*.  
-
+URL: https://github.com/ChristoffBo/homeassistant/tree/main/jarvis_prime/modules/sentinel_templates
 ### File Locations
 Replace these in your Jarvis add-on build if updating manually:
 - `/app/www/js/sentinel.js` – UI logic  
