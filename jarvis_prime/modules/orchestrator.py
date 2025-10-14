@@ -275,11 +275,7 @@ class Orchestrator:
         for item in playbooks_dir.rglob("*"):
             if item.is_file() and item.suffix.lower() in extensions:
                 rel_path = item.relative_to(playbooks_dir)
-                
-                if len(rel_path.parts) > 1:
-                    category = rel_path.parts[0]
-                else:
-                    category = "root"
+                category = rel_path.parts[0] if len(rel_path.parts) > 1 else "root"
                 
                 if category not in organized:
                     organized[category] = []
@@ -293,8 +289,12 @@ class Orchestrator:
                     "modified": datetime.fromtimestamp(item.stat().st_mtime).isoformat()
                 })
         
+        # Sort playbooks alphabetically within each category
         for category in organized:
-            organized[category].sort(key=lambda x: x["name"])
+            organized[category].sort(key=lambda x: x["name"].lower())
+        
+        # ✅ Sort the categories alphabetically too
+        organized = dict(sorted(organized.items(), key=lambda x: x[0].lower()))
         
         return organized
 
