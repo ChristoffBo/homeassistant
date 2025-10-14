@@ -32,6 +32,19 @@ from typing import Optional, Dict, Any, Tuple, List
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
+# ---------------------------
+# EnviroGuard safety sync
+# ---------------------------
+try:
+    with open("/data/options.json", "r", encoding="utf-8") as f:
+        _opts = json.load(f)
+    if not _opts.get("llm_enabled", True):
+        os.environ["LLM_ENABLED"] = "false"
+    else:
+        os.environ["LLM_ENABLED"] = "true"
+except Exception as e:
+    print(f"[llm_client] EnviroGuard sync failed: {e}", flush=True)
+
 # ---- RAG (optional) ----
 try:
     from rag import inject_context  # /app/rag.py
