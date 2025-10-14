@@ -400,7 +400,11 @@ class Orchestrator:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             if group:
-                cursor.execute("SELECT * FROM orchestration_servers WHERE groups LIKE ? ORDER BY name", (f"%{group}%",))
+                cursor.execute("""
+    SELECT * FROM orchestration_servers
+    WHERE groups LIKE ? OR name = ?
+    ORDER BY name
+""", (f"%{group}%", group))
             else:
                 cursor.execute("SELECT * FROM orchestration_servers ORDER BY name")
             servers = [dict(row) for row in cursor.fetchall()]
