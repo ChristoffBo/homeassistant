@@ -266,6 +266,8 @@ class Sentinel:
         templates = list(seen.values())
 			
         
+        # --- Sort templates alphabetically by name (case-insensitive) ---
+        templates.sort(key=lambda t: (t.get("name") or t.get("id") or "").lower())
         return templates
 
     def get_template(self, template_name):
