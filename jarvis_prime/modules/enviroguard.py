@@ -176,6 +176,26 @@ def _apply_profile(name: str, merged: dict, cfg: Dict[str, Any]) -> None:
             os.environ["BEAUTIFY_LLM_ENABLED"] = "true"
         _state["forced_off"] = False
 
+# --- persist LLM enable/disable in /data/options.json ---
+    try:
+        opts_path = "/data/options.json"
+        if os.path.exists(opts_path):
+            with open(opts_path, "r", encoding="utf-8") as f:
+                opts = json.load(f)
+        else:
+            opts = {}
+
+        if name.lower().strip() == "off":
+            opts["llm_enabled"] = False
+        else:
+            opts["llm_enabled"] = True
+
+        with open(opts_path, "w", encoding="utf-8") as f:
+            json.dump(opts, f, indent=2)
+        print(f"[EnviroGuard] Updated llm_enabled → {opts['llm_enabled']} (profile={name})")
+    except Exception as e:
+        print(f"[EnviroGuard] Failed to update options.json: {e}")
+
     _state["profile"] = name
 
 def _ha_get_temperature(cfg: Dict[str, Any]) -> Optional[float]:
