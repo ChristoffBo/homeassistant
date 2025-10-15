@@ -109,7 +109,7 @@ def main():
     ctrl.start()
     print(f"[smtp] listening on {bind}:{port} — forwarding to {INTERNAL_EMIT_URL}")
     try:
-        asyncio.get_event_loop().run_forever()
+        asyncio.run(asyncio.sleep(float('inf')))
     finally:
         ctrl.stop()
 
