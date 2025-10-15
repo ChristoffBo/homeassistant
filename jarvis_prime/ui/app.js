@@ -221,6 +221,13 @@
             analyticsLoadHealthScore();
             analyticsLoadDashboard();
           }
+        } else if (tabName === 'atlas') {
+          // New Atlas integration
+          if (typeof atlasRender === 'function') {
+            atlasRender();
+          } else {
+            console.warn('[atlas] atlasRender() not found');
+          }
         } else if (tabName === 'settings') {
           // Open General settings tab
           const generalTab = $('.orch-tab[data-settings-tab="general"]');
