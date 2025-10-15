@@ -65,9 +65,8 @@ It renders using an offline local copy of **D3.js**, meaning it works entirely w
 - Displays connections as nodes (hosts, services, and core) with color-coded status.  
 - Zoom and pan supported (mouse, touch, mobile-friendly).  
 - Tooltips show IPs, groups, latency, and current state.  
-- Refreshes automatically every 10 seconds when the Atlas tab is active.  
-- Clicking a node is now **read-only** (no more 404s).  
-- Works fully offline using `/share/jarvis_prime/ui/js/d3.v7.min.js`.  
+- Refreshes automatically every 10 seconds when the Atlas tab is active.
+- Works fully offline. 
 
 ### Legend
 - 🟢 **Green** → Service or Host is healthy (`status: up`)  
