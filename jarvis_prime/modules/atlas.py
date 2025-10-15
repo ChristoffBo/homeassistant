@@ -1,34 +1,32 @@
 #!/usr/bin/env python3
 # /app/atlas.py
 # Jarvis Prime - Atlas Module (Backend)
-# Purpose: Build a live topology from Orchestrator + Analytics without any background load.
-# - Read-only against /data/jarvis.db
-# - No WebSocket loop; zero impact when the Atlas tab is closed
-# - Single endpoint: GET /api/atlas/topology
-# - Jarvis_Prime always at the center
-# - Dedup hosts across Orchestrator + Analytics (auto-merge if Analytics entry is a host check)
-# - Services attach to their parent host via hostname/IP matching; orphans attach to Jarvis_Prime
-# - Names are taken AS-IS from Orchestrator.name and Analytics.service_name
+# Enhanced edition — color mapping, caching, group aggregation, latency stats, URL links, structured logging, alive flag.
 
 import json
 import re
 import sqlite3
 import logging
+import time
+import statistics
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
-
 from aiohttp import web
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("atlas")
+logger.setLevel(logging.INFO)
 
 DB_PATH = "/data/jarvis.db"
+
+# --- internal cache (5 s TTL) ---
+_cache = {"ts": 0.0, "payload": None}
+_CACHE_TTL = 5.0
 
 
 # ==============================
 # Utilities
 # ==============================
-
 def safe_str(val) -> str:
     if val is None:
         return ""
@@ -38,39 +36,24 @@ def safe_str(val) -> str:
 
 
 def extract_host(endpoint: str) -> str:
-    """
-    Extract a hostname/IP from various endpoint formats:
-    - http(s)://10.0.0.21:32400/path
-    - 10.0.0.21:32400
-    - 10.0.0.21
-    - myhost.local
-    """
+    """Extract hostname/IP from any endpoint form."""
     if not endpoint:
         return ""
     endpoint = endpoint.strip()
-
-    # Try URL parse first
     try:
         p = urlparse(endpoint if "://" in endpoint else f"//{endpoint}", scheme="")
-        # urlparse with // will put host in 'netloc'
         host = p.hostname or ""
         if host:
             return host
     except Exception:
         pass
-
-    # Fallback regex for host:port
     m = re.match(r"^\[?([A-Za-z0-9\.\-\:]+)\]?(?::\d+)?$", endpoint)
-    if m:
-        return m.group(1)
-
-    return endpoint
+    return m.group(1) if m else endpoint
 
 
 # ==============================
 # DB access (read-only)
 # ==============================
-
 def q(conn: sqlite3.Connection, query: str, params: Tuple = ()) -> List[dict]:
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
@@ -80,35 +63,22 @@ def q(conn: sqlite3.Connection, query: str, params: Tuple = ()) -> List[dict]:
 
 def fetch_orchestrator_hosts(conn: sqlite3.Connection) -> List[dict]:
     return q(conn, """
-        SELECT
-            id, name, hostname, port, username, groups, description, updated_at
+        SELECT id, name, hostname, port, username, groups, description, updated_at
         FROM orchestration_servers
         ORDER BY name ASC
     """)
 
 
 def fetch_analytics_services(conn: sqlite3.Connection) -> List[dict]:
-    # Pull configured services
     return q(conn, """
-        SELECT
-            id,
-            service_name,
-            endpoint,
-            check_type,
-            expected_status,
-            timeout,
-            check_interval,
-            enabled
+        SELECT id, service_name, endpoint, check_type, expected_status,
+               timeout, check_interval, enabled
         FROM analytics_services
         ORDER BY service_name ASC
     """)
 
 
 def fetch_latest_status_by_service(conn: sqlite3.Connection) -> Dict[str, dict]:
-    """
-    Return a mapping: service_name -> {status, timestamp, response_time, error_message}
-    from the most recent analytics_metrics row for each service.
-    """
     rows = q(conn, """
         SELECT m.service_name, m.status, m.timestamp, m.response_time, m.error_message
         FROM analytics_metrics m
@@ -121,11 +91,12 @@ def fetch_latest_status_by_service(conn: sqlite3.Connection) -> Dict[str, dict]:
     """)
     out = {}
     for r in rows:
-        out[safe_str(r["service_name"])] = {
+        svc = safe_str(r.get("service_name"))
+        out[svc] = {
             "status": safe_str(r.get("status", "unknown")),
             "timestamp": r.get("timestamp"),
             "response_time": r.get("response_time"),
-            "error_message": safe_str(r.get("error_message")) if r.get("error_message") is not None else None
+            "error_message": safe_str(r.get("error_message")) if r.get("error_message") else None,
         }
     return out
 
@@ -133,38 +104,50 @@ def fetch_latest_status_by_service(conn: sqlite3.Connection) -> Dict[str, dict]:
 # ==============================
 # Topology build
 # ==============================
-
 @dataclass
 class Node:
     id: str
-    type: str  # core | host | service
+    type: str               # core | host | service
     status: str = "unknown"
     ip: Optional[str] = None
     group: Optional[str] = None
     description: Optional[str] = None
     last_checked: Optional[int] = None
     latency: Optional[float] = None
+    alive: Optional[bool] = None
+    color: Optional[str] = None
+    severity: Optional[str] = None
+    url: Optional[str] = None
+
+
+_COLOR_MAP = {
+    "up":   ("#00C853", "good"),
+    "ok":   ("#00C853", "good"),
+    "down": ("#D50000", "critical"),
+    "fail": ("#D50000", "critical"),
+    "unknown": ("#9E9E9E", "unknown"),
+}
+
+
+def _status_color(status: str) -> Tuple[str, str]:
+    s = (status or "").lower()
+    return _COLOR_MAP.get(s, _COLOR_MAP["unknown"])
 
 
 def build_topology_snapshot() -> dict:
-    """
-    Core builder: merges Orchestrator + Analytics into a clean graph.
-    - Jarvis_Prime at center
-    - Hosts from Orchestrator (unique by hostname/ip)
-    - Analytics entries:
-        * If endpoint host matches a known Orchestrator host -> attach as service under that host
-        * If service appears to be a host-check (endpoint host equals an Orchestrator hostname,
-          OR service_name equals a server name case-insensitive) -> merge status into that host (no extra node)
-        * If no match -> attach service directly to Jarvis_Prime
-    """
+    """Core builder with enhancements."""
+    now = time.time()
+    if _cache["payload"] and now - _cache["ts"] < _CACHE_TTL:
+        logger.debug("[atlas] returning cached snapshot")
+        return _cache["payload"]
+
     with sqlite3.connect(DB_PATH) as conn:
-        # Collect DB data
         hosts = fetch_orchestrator_hosts(conn)
         services = fetch_analytics_services(conn)
         latest = fetch_latest_status_by_service(conn)
 
-    # Build lookup maps
-    # Orchestrator hostnames normalized (case-insensitive)
+    logger.info("[atlas] building snapshot: %d hosts, %d services", len(hosts), len(services))
+
     host_by_hostname: Dict[str, dict] = {}
     host_by_name_ci: Dict[str, dict] = {}
     for h in hosts:
@@ -173,13 +156,11 @@ def build_topology_snapshot() -> dict:
             host_by_hostname[hn.lower()] = h
         host_by_name_ci[safe_str(h["name"]).lower()] = h
 
-    # Initialize node set with core
     nodes: Dict[str, Node] = {}
     links: List[dict] = []
 
     def ensure_node(node_id: str, **kwargs) -> Node:
         if node_id in nodes:
-            # Patch in any new fields that arrive later
             n = nodes[node_id]
             for k, v in kwargs.items():
                 if getattr(n, k, None) in (None, "unknown") and v not in (None, "unknown"):
@@ -190,19 +171,28 @@ def build_topology_snapshot() -> dict:
         return n
 
     # Core
-    ensure_node("Jarvis_Prime", type="core", status="up")
+    ensure_node("Jarvis_Prime", type="core", status="up", alive=True, color="#00C853", severity="good")
 
-    # Add hosts from Orchestrator (always shown)
+    # --- hosts ---
     for h in hosts:
         name = safe_str(h["name"])
         host_ip = safe_str(h["hostname"])
-        group = safe_str(h.get("groups", "")) if h.get("groups") is not None else None
-        desc = safe_str(h.get("description", "")) if h.get("description") is not None else None
-
-        ensure_node(name, type="host", ip=host_ip or None, group=group, description=desc)
+        group = safe_str(h.get("groups", "")) or None
+        desc = safe_str(h.get("description", "")) or None
+        col, sev = _status_color("unknown")
+        ensure_node(
+            name,
+            type="host",
+            ip=host_ip,
+            group=group,
+            description=desc,
+            color=col,
+            severity=sev,
+            alive=False,
+            url=f"/orchestrator?host={name}"
+        )
         links.append({"source": "Jarvis_Prime", "target": name})
-
-    # Attach analytics services/host-checks
+# --- services ---
     for svc in services:
         sname = safe_str(svc["service_name"])
         endpoint = safe_str(svc["endpoint"])
@@ -212,79 +202,87 @@ def build_topology_snapshot() -> dict:
         last_ts = status_blob.get("timestamp")
         latency = status_blob.get("response_time")
 
-        # Try to find parent host by endpoint host or by service_name matching a host name
         parent_host_obj = None
         if host_part and host_part in host_by_hostname:
             parent_host_obj = host_by_hostname[host_part]
         elif sname.lower() in host_by_name_ci:
             parent_host_obj = host_by_name_ci[sname.lower()]
 
-        # If this Analytics entry is a host-check (i.e., represents the host itself),
-        # then merge status into the host node rather than creating a child node.
+        # Host-check merge
         is_host_check = False
         if parent_host_obj is not None:
-            # It's a host check if the service appears to be checking the host directly,
-            # e.g., check_type == 'ping' or endpoint host matches the host's IP/hostname exactly,
-            # or the service name equals the host name.
             check_type = safe_str(svc.get("check_type"))
             if check_type in ("ping",) or sname.lower() == safe_str(parent_host_obj["name"]).lower():
                 is_host_check = True
 
         if is_host_check and parent_host_obj is not None:
             host_name = safe_str(parent_host_obj["name"])
-            # Update existing host node status/last_checked/latency
+            col, sev = _status_color(status)
             ensure_node(
                 host_name,
                 type="host",
                 status=status,
                 last_checked=last_ts,
                 latency=latency,
+                color=col,
+                severity=sev,
+                alive=status.lower() in ("up", "ok"),
             )
-            # No separate service node
             continue
 
-        # Not a direct host-check: create/attach service node
-        parent_name: Optional[str] = None
+        # service node
+        parent_name = None
         if parent_host_obj is not None:
             parent_name = safe_str(parent_host_obj["name"])
-
-        # Create service node
+        col, sev = _status_color(status)
         ensure_node(
             sname,
             type="service",
             status=status,
             last_checked=last_ts,
             latency=latency,
+            color=col,
+            severity=sev,
+            alive=status.lower() in ("up", "ok"),
+            url=f"/analytics?service={sname}"
         )
 
-        # Link appropriately
-        if parent_name:
-            links.append({"source": parent_name, "target": sname})
-        else:
-            # Orphan - attach to Jarvis_Prime
-            links.append({"source": "Jarvis_Prime", "target": sname})
+        links.append({
+            "source": parent_name or "Jarvis_Prime",
+            "target": sname
+        })
 
-    # Build final payload
+    # --- group + latency stats ---
+    group_counts: Dict[str, int] = {}
+    latencies: List[float] = []
+    for n in nodes.values():
+        if n.group:
+            group_counts[n.group] = group_counts.get(n.group, 0) + 1
+        if isinstance(n.latency, (int, float)):
+            latencies.append(float(n.latency))
+
+    avg_lat = statistics.mean(latencies) if latencies else None
+    med_lat = statistics.median(latencies) if latencies else None
+
     def node_to_dict(n: Node) -> dict:
         d = {
             "id": n.id,
             "type": n.type,
             "status": n.status,
+            "alive": bool(n.alive),
+            "color": n.color,
+            "severity": n.severity,
         }
-        if n.ip:
-            d["ip"] = n.ip
-        if n.group:
-            d["group"] = n.group
-        if n.description:
-            d["description"] = n.description
-        if n.last_checked is not None:
-            d["last_checked"] = n.last_checked
-        if n.latency is not None:
-            d["latency"] = n.latency
+        if n.ip: d["ip"] = n.ip
+        if n.group: d["group"] = n.group
+        if n.description: d["description"] = n.description
+        if n.last_checked is not None: d["last_checked"] = n.last_checked
+        if n.latency is not None: d["latency"] = n.latency
+        if n.url: d["url"] = n.url
         return d
 
     payload = {
-        "timestamp": __import__("time").time(),
+        "timestamp": now,
         "nodes": [node_to_dict(n) for n in nodes.values()],
         "links": links,
         "counts": {
@@ -293,14 +291,18 @@ def build_topology_snapshot() -> dict:
             "total_nodes": len(nodes),
             "total_links": len(links),
         },
+        "groups": group_counts,
+        "latency_stats": {"avg": avg_lat, "median": med_lat},
     }
+
+    _cache.update({"ts": now, "payload": payload})
+    logger.info("[atlas] snapshot built: %d nodes, %d links", len(nodes), len(links))
     return payload
 
 
 # ==============================
 # HTTP API
 # ==============================
-
 def _json(data, status=200):
     return web.Response(
         text=json.dumps(data, ensure_ascii=False),
@@ -319,16 +321,10 @@ async def api_topology(request: web.Request):
 
 
 async def api_ping(request: web.Request):
-    # Tiny health endpoint so you can quickly verify routes are live
     return _json({"atlas": "ok"})
 
 
 def register_routes(app: web.Application):
-    """
-    Mount Atlas routes onto the existing aiohttp app without touching bot.py.
-    Usage:
-        from atlas import register_routes as register_atlas
-        register_atlas(app)
-    """
+    """Mount Atlas routes onto the aiohttp app."""
     app.router.add_get("/api/atlas/topology", api_topology)
     app.router.add_get("/api/atlas/ping", api_ping)
