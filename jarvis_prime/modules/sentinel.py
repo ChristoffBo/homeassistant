@@ -959,16 +959,25 @@ class Sentinel:
                 )
 
     async def _send_notification(self, title, body, priority=5):
-        if self.notify_callback:
+        """Unified notification fan-out through Jarvis Prime"""
+        try:
+            # 1️⃣ Route through Jarvis Prime’s global message router first
             try:
+                from bot import process_incoming
+                process_incoming(title, body, source="sentinel", priority=priority)
+            except Exception as e:
+                self.logger(f"[sentinel] process_incoming fan-out failed: {e}")
+
+            # 2️⃣ Legacy notify_callback (kept for backward compatibility)
+            if self.notify_callback:
                 await self.notify_callback(
                     title=title,
                     body=body,
                     source="sentinel",
                     priority=priority
                 )
-            except Exception as e:
-                self.logger(f"Failed to send notification: {e}")
+        except Exception as e:
+            self.logger(f"[sentinel] Failed to send notification: {e}")
 
     async def monitor_loop(self, server_id):
         while True:
