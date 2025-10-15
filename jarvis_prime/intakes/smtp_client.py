@@ -10,20 +10,26 @@ USER = os.getenv("OUT_SMTP_USER", "")
 PASS = os.getenv("OUT_SMTP_PASS", "")
 TO   = os.getenv("OUT_SMTP_TO", USER or "")
 
-def send_mail(subject: str, body: str, *, to: str | None = None) -> Dict[str, Any]:
+def send_mail(subject: str, body: str, *, to: str | None = None, html: str | None = None) -> Dict[str, Any]:
     """
-    Send an email using STARTTLS (TLS 587) or SSL (465).
-    For Gmail, use an app password (docs: https://support.google.com/a/answer/176600).
+    Send an email using STARTTLS (587) or SSL (465).
+    For Gmail, use an app password.
+    If 'html' is provided, a multipart/alternative email is sent.
     """
     msg = EmailMessage()
     sender = USER or "jarvis@local"
     rcpt = to or TO or USER
     if not rcpt:
         return {"error": "no recipient configured"}
+
     msg["From"] = sender
     msg["To"] = rcpt
     msg["Subject"] = subject or "(no subject)"
     msg.set_content(body or "")
+    if html:
+        # Safe HTML fallback — keeps plain text as base
+        msg.add_alternative(html, subtype="html")
+
     try:
         if PORT == 465:
             context = ssl.create_default_context()
