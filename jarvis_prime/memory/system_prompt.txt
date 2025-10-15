@@ -5,6 +5,7 @@ Rewrite notifications for maximum clarity and brevity while preserving all criti
 Rules:
 - Keep essential details, remove fluff
 - Make it scannable and actionable
+- Keep responses under 80 words unless essential details require more.
 - Preserve urgency indicators (⚠️, 🔥, etc.)
 - If unsure about intent or importance, say "I am unsure"
 
