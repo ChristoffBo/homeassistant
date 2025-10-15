@@ -1,7 +1,6 @@
 // /share/jarvis_prime/ui/js/atlas.js
-// Atlas Module for Jarvis Prime
-// Renders live topology graph from /api/atlas/topology
-// Uses D3.js (auto-included in index.html) and app.js's API() resolver
+// Atlas Module for Jarvis Prime — Enhanced Visualization + Focus Mode
+// Groups by node type, color-codes by latency, pulses alive nodes, includes legend & counts, and interactive focus mode.
 
 const ATLAS_API = (path = '') => {
   if (typeof API === 'function') {
@@ -11,17 +10,13 @@ const ATLAS_API = (path = '') => {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Refresh Atlas whenever tab becomes active
   const atlasTab = document.getElementById('atlas');
   if (!atlasTab) return;
 
   setInterval(() => {
-    if (atlasTab.classList.contains('active')) {
-      atlasRender();
-    }
-  }, 10000);
+    if (atlasTab.classList.contains('active')) atlasRender();
+  }, 15000);
 
-  // First draw
   atlasRender();
 });
 
@@ -55,13 +50,13 @@ function drawAtlasGraph(container, data) {
     .attr('width', '100%')
     .attr('height', '100%')
     .attr('viewBox', [0, 0, width, height])
-    .style('background', '#0b0c10')
+    .style('background', 'radial-gradient(circle at center, #0b0c10 0%, #000 100%)')
     .style('border-radius', '12px');
 
   const g = svg.append('g');
   svg.call(
     d3.zoom()
-      .scaleExtent([0.3, 3])
+      .scaleExtent([0.5, 4])
       .on('zoom', (event) => g.attr('transform', event.transform))
   );
 
@@ -71,23 +66,31 @@ function drawAtlasGraph(container, data) {
     .selectAll('line')
     .data(data.links)
     .join('line')
-    .attr('stroke-width', 1.2);
+    .attr('stroke-width', 1.3);
+
+  const latencyColor = (d) => {
+    if (d.type === 'core') return '#00bcd4';
+    if (!d.latency) return d.color || '#999';
+    if (d.latency > 2) return '#e53935';
+    if (d.latency > 0.5) return '#ffb300';
+    return '#00c853';
+  };
 
   const node = g.append('g')
     .selectAll('circle')
     .data(data.nodes)
     .join('circle')
-    .attr('r', d => d.type === 'core' ? 14 : d.type === 'host' ? 10 : 6)
-    .attr('fill', d => d.color || '#777')
-    .attr('stroke', d => d.type === 'core' ? '#00bcd4' : '#111')
+    .attr('r', d => d.type === 'core' ? 18 : d.type === 'host' ? 13 : 8)
+    .attr('fill', latencyColor)
+    .attr('stroke', '#111')
     .attr('stroke-width', 1.5)
-    .on('click', (event, d) => {
-  // Disable navigation – keep Atlas read-only (no 404s)
-  event.preventDefault();
-  console.log(`[atlas] clicked ${d.id} (${d.type}) — view-only`);
-})
+    .style('cursor', 'pointer')
     .on('mouseover', (event, d) => showAtlasTooltip(event, d))
-    .on('mouseout', hideAtlasTooltip);
+    .on('mouseout', hideAtlasTooltip)
+    .on('click', (event, d) => {
+      event.stopPropagation();
+      focusNode(d, node, link, label);
+    });
 
   const label = g.append('g')
     .selectAll('text')
@@ -95,13 +98,20 @@ function drawAtlasGraph(container, data) {
     .join('text')
     .text(d => d.id)
     .attr('fill', '#ccc')
-    .attr('font-size', 10)
-    .attr('text-anchor', 'middle');
+    .attr('font-size', 11)
+    .attr('text-anchor', 'middle')
+    .attr('pointer-events', 'none')
+    .style('text-shadow', '0 0 2px #000');
 
   const sim = d3.forceSimulation(data.nodes)
-    .force('link', d3.forceLink(data.links).id(d => d.id).distance(80))
-    .force('charge', d3.forceManyBody().strength(-250))
-    .force('center', d3.forceCenter(width / 2, height / 2));
+    .force('link', d3.forceLink(data.links).id(d => d.id).distance(140).strength(0.4))
+    .force('charge', d3.forceManyBody().strength(-480))
+    .force('collide', d3.forceCollide(40))
+    .force('core', d3.forceRadial(0, width / 2, height / 2).strength(d => d.type === 'core' ? 0.5 : 0))
+    .force('hosts', d3.forceRadial(160, width / 2, height / 2).strength(d => d.type === 'host' ? 0.25 : 0))
+    .force('services', d3.forceRadial(300, width / 2, height / 2).strength(d => d.type === 'service' ? 0.15 : 0))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .velocityDecay(0.25);
 
   sim.on('tick', () => {
     link
@@ -116,8 +126,81 @@ function drawAtlasGraph(container, data) {
 
     label
       .attr('x', d => d.x)
-      .attr('y', d => d.y - 14);
+      .attr('y', d => d.y - 18);
   });
+
+  // Pulse animation for alive nodes
+  node.filter(d => d.alive)
+    .transition()
+    .duration(2000)
+    .ease(d3.easeCubic)
+    .attr('r', d => d.type === 'core' ? 20 : d.type === 'host' ? 15 : 9)
+    .transition()
+    .duration(2000)
+    .attr('r', d => d.type === 'core' ? 18 : d.type === 'host' ? 13 : 8)
+    .on('end', function repeat() {
+      d3.select(this)
+        .transition()
+        .duration(2000)
+        .attr('r', d => d.type === 'core' ? 20 : d.type === 'host' ? 15 : 9)
+        .transition()
+        .duration(2000)
+        .attr('r', d => d.type === 'core' ? 18 : d.type === 'host' ? 13 : 8)
+        .on('end', repeat);
+    });
+
+  // Legend & counts overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'atlas-overlay';
+  overlay.style.cssText = `
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(0,0,0,0.6);
+    color: #ccc;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.4;
+  `;
+  overlay.innerHTML = `
+    <div><b>Legend:</b></div>
+    <div>🟢 Fast</div>
+    <div>🟡 Medium</div>
+    <div>🔴 Slow</div>
+    <div>🔵 Core</div>
+    <hr style="border:0;border-top:1px solid #333;margin:4px 0;">
+    <div>Hosts: ${data.counts?.hosts || 0}</div>
+    <div>Services: ${data.counts?.services || 0}</div>
+    <div>Links: ${data.counts?.total_links || 0}</div>
+  `;
+  container.appendChild(overlay);
+
+  // Reset focus when clicking empty space
+  svg.on('click', () => {
+    node.attr('opacity', 1);
+    link.attr('stroke', '#444').attr('stroke-opacity', 0.4);
+    label.attr('opacity', 1);
+  });
+}
+
+// Focus mode: highlight node + direct links
+function focusNode(target, node, link, label) {
+  const connected = new Set();
+  link.each(l => {
+    if (l.source.id === target.id) connected.add(l.target.id);
+    if (l.target.id === target.id) connected.add(l.source.id);
+  });
+  connected.add(target.id);
+
+  node.attr('opacity', d => (connected.has(d.id) ? 1 : 0.15));
+  label.attr('opacity', d => (connected.has(d.id) ? 1 : 0.15));
+  link.attr('stroke', d =>
+    d.source.id === target.id || d.target.id === target.id ? '#00bcd4' : '#333'
+  );
+  link.attr('stroke-opacity', d =>
+    d.source.id === target.id || d.target.id === target.id ? 0.9 : 0.1
+  );
 }
 
 // Tooltip helpers
@@ -130,7 +213,7 @@ function showAtlasTooltip(event, d) {
     position: fixed;
     left: ${event.pageX + 10}px;
     top: ${event.pageY + 10}px;
-    background: rgba(17,17,17,0.9);
+    background: rgba(20,20,25,0.95);
     border: 1px solid #333;
     border-radius: 8px;
     padding: 8px 12px;
@@ -138,6 +221,7 @@ function showAtlasTooltip(event, d) {
     font-size: 12px;
     z-index: 9999;
     pointer-events: none;
+    box-shadow: 0 0 6px rgba(0,0,0,0.5);
   `;
   atlasTooltip.innerHTML = `
     <div><b>${d.id}</b> (${d.type})</div>
