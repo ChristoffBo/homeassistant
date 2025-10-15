@@ -475,12 +475,14 @@ def _make_app() -> web.Application:
             sentinel_instance.start_all_monitoring()
             asyncio.create_task(sentinel_instance.auto_purge())
             print("[sentinel] Monitoring started")
-    # Register atlas routes if available
-        if atlas_module:
-           atlas_module.register_routes(app)
-           print("[atlas] Routes registered")
+
     app.on_startup.append(start_background_tasks)
     
+    # ✅ Ensure Atlas routes are registered before startup (fixes 404)
+    if atlas_module:
+       atlas_module.register_routes(app)
+       print("[atlas] Routes registered (pre-startup)")
+ 
     # API routes
     app.router.add_get("/api/stream", _sse)
     app.router.add_get("/api/messages", api_list_messages)
