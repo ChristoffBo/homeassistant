@@ -82,8 +82,10 @@ function drawAtlasGraph(container, data) {
     .attr('stroke', d => d.type === 'core' ? '#00bcd4' : '#111')
     .attr('stroke-width', 1.5)
     .on('click', (event, d) => {
-      if (d.url) window.open(d.url, '_blank');
-    })
+  // Disable navigation – keep Atlas read-only (no 404s)
+  event.preventDefault();
+  console.log(`[atlas] clicked ${d.id} (${d.type}) — view-only`);
+})
     .on('mouseover', (event, d) => showAtlasTooltip(event, d))
     .on('mouseout', hideAtlasTooltip);
 
