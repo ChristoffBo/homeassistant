@@ -1,6 +1,6 @@
 // /share/jarvis_prime/ui/js/atlas.js
-// Atlas Module for Jarvis Prime — Enhanced Visualization + Focus Mode
-// Groups by node type, color-codes by latency, pulses alive nodes, includes legend & counts, and interactive focus mode.
+// Atlas Module for Jarvis Prime — Enhanced Visualization + Focus + Group Hover + Night Bloom
+// Groups by node type, color-codes by latency, pulses alive nodes, includes legend, focus mode, and hover glow.
 
 const ATLAS_API = (path = '') => {
   if (typeof API === 'function') {
@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setInterval(() => {
     if (atlasTab.classList.contains('active')) atlasRender();
-  }, 15000);
+  }, 45000); // refresh every 45s (was 15s)
 
   atlasRender();
 });
@@ -85,8 +85,17 @@ function drawAtlasGraph(container, data) {
     .attr('stroke', '#111')
     .attr('stroke-width', 1.5)
     .style('cursor', 'pointer')
-    .on('mouseover', (event, d) => showAtlasTooltip(event, d))
-    .on('mouseout', hideAtlasTooltip)
+    .on('mouseover', (event, d) => {
+      showAtlasTooltip(event, d);
+      hoverGroup(d, node, link, label);
+      d3.select(event.currentTarget)
+        .style('filter', 'drop-shadow(0 0 6px #00bcd4)');
+    })
+    .on('mouseout', (event, d) => {
+      hideAtlasTooltip();
+      resetHover(node, link, label);
+      d3.select(event.currentTarget).style('filter', 'none');
+    })
     .on('click', (event, d) => {
       event.stopPropagation();
       focusNode(d, node, link, label);
@@ -178,13 +187,13 @@ function drawAtlasGraph(container, data) {
 
   // Reset focus when clicking empty space
   svg.on('click', () => {
-    node.attr('opacity', 1);
+    node.attr('opacity', 1).style('filter', 'none');
     link.attr('stroke', '#444').attr('stroke-opacity', 0.4);
     label.attr('opacity', 1);
   });
 }
 
-// Focus mode: highlight node + direct links
+// Focus mode
 function focusNode(target, node, link, label) {
   const connected = new Set();
   link.each(l => {
@@ -192,7 +201,6 @@ function focusNode(target, node, link, label) {
     if (l.target.id === target.id) connected.add(l.source.id);
   });
   connected.add(target.id);
-
   node.attr('opacity', d => (connected.has(d.id) ? 1 : 0.15));
   label.attr('opacity', d => (connected.has(d.id) ? 1 : 0.15));
   link.attr('stroke', d =>
@@ -203,7 +211,31 @@ function focusNode(target, node, link, label) {
   );
 }
 
-// Tooltip helpers
+// Group hover mode
+function hoverGroup(target, node, link, label) {
+  const connected = new Set();
+  link.each(l => {
+    if (l.source.id === target.id) connected.add(l.target.id);
+    if (l.target.id === target.id) connected.add(l.source.id);
+  });
+  connected.add(target.id);
+  node.attr('opacity', d => (connected.has(d.id) ? 1 : 0.3));
+  label.attr('opacity', d => (connected.has(d.id) ? 1 : 0.3));
+  link.attr('stroke', d =>
+    d.source.id === target.id || d.target.id === target.id ? '#00e5ff' : '#333'
+  );
+  link.attr('stroke-opacity', d =>
+    d.source.id === target.id || d.target.id === target.id ? 0.9 : 0.1
+  );
+}
+
+function resetHover(node, link, label) {
+  node.attr('opacity', 1);
+  link.attr('stroke', '#444').attr('stroke-opacity', 0.4);
+  label.attr('opacity', 1);
+}
+
+// Tooltip
 let atlasTooltip;
 function showAtlasTooltip(event, d) {
   hideAtlasTooltip();
