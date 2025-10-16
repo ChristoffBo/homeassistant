@@ -1,1 +1,17 @@
-1
+---
+- name: System uptime report
+  hosts: all
+  tasks:
+    - name: Get uptime
+      ansible.builtin.shell: uptime
+      register: uptime_result
+
+    - name: Notify Jarvis
+      ansible.builtin.uri:
+        url: "http://jarvis_prime:2580/message?token=AVICbyEsE_krBsY"
+        method: POST
+        body_format: json
+        body:
+          title: "Uptime Report - {{ inventory_hostname }}"
+          message: "{{ uptime_result.stdout }}"
+          priority: 2
