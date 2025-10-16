@@ -65,9 +65,10 @@ const Auth = {
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.85);
         display: flex; align-items: center; justify-content: center;
-        z-index: 9999; color: #fff; font-family: sans-serif;
+        z-index: 99999; color: #fff; font-family: sans-serif;
       `;
-      document.body.appendChild(overlay);
+      // ⬇ FIX: attach directly to <html> root, bypassing Pico container layers
+      document.documentElement.appendChild(overlay);
     }
 
     overlay.innerHTML = `
