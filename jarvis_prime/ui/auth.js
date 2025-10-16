@@ -1,17 +1,24 @@
 // /share/jarvis_prime/ui/js/auth.js
 // Handles login/setup overlay and JWT auth for Jarvis Prime
 // Works with /api/auth/status, /api/auth/setup, /api/auth/login, /api/auth/validate
+// Now includes 1h auto-logout with idle reset
 
 const Auth = {
   tokenKey: "jarvis_auth_token",
+  expiryKey: "jarvis_auth_expiry",
   overlayId: "auth-overlay",
+  expiryHours: 1, // ⏰ auto logout after 1 hour
+  idleReset: true, // refresh timer on activity
 
   async init() {
     try {
       const token = this.getToken();
       if (token) {
         const ok = await this.validateToken(token);
-        if (ok) return; // already logged in
+        if (ok) {
+          if (this.idleReset) this.bindActivityReset();
+          return; // already logged in
+        }
       }
       await this.showAuthFlow();
     } catch (e) {
@@ -21,15 +28,38 @@ const Auth = {
   },
 
   getToken() {
-    return localStorage.getItem(this.tokenKey);
+    const token = localStorage.getItem(this.tokenKey);
+    const expiry = parseInt(localStorage.getItem(this.expiryKey) || "0", 10);
+    if (!token) return null;
+    if (Date.now() > expiry) {
+      console.warn("[auth] token expired");
+      this.clearToken();
+      return null;
+    }
+    return token;
   },
 
   setToken(token) {
     localStorage.setItem(this.tokenKey, token);
+    this.refreshExpiry();
+  },
+
+  refreshExpiry() {
+    const expiry = Date.now() + this.expiryHours * 60 * 60 * 1000; // 1h
+    localStorage.setItem(this.expiryKey, expiry);
   },
 
   clearToken() {
     localStorage.removeItem(this.tokenKey);
+    localStorage.removeItem(this.expiryKey);
+  },
+
+  bindActivityReset() {
+    const reset = () => this.refreshExpiry();
+    ["click", "keydown", "mousemove", "touchstart"].forEach(ev =>
+      document.addEventListener(ev, reset)
+    );
+    console.log(`[auth] idle timer refresh bound (1h expiry)`);
   },
 
   async validateToken(token) {
@@ -61,7 +91,7 @@ const Auth = {
     if (!overlay) {
       overlay = document.createElement("div");
       overlay.id = this.overlayId;
-      overlay.classList.add("active"); // ✅ make visible per CSS
+      overlay.classList.add("active");
       overlay.style = `
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.85);
@@ -70,7 +100,7 @@ const Auth = {
       `;
       document.body.appendChild(overlay);
     } else {
-      overlay.classList.add("active"); // ✅ ensure visible even if already exists
+      overlay.classList.add("active");
     }
 
     overlay.innerHTML = `
@@ -111,7 +141,7 @@ const Auth = {
         const data = await res.json();
         if (!res.ok || !data.token) throw new Error(data.error || "Failed");
         this.setToken(data.token);
-        overlay.classList.remove("active"); // ✅ hide again
+        overlay.classList.remove("active");
         overlay.remove();
         location.reload();
       } catch (e) {
