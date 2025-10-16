@@ -1,1 +1,50 @@
-1
+---
+- name: Debian/Ubuntu APT maintenance
+  hosts: all
+  become: true
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: true
+      register: upgrade_result
+
+    - name: Dist upgrade
+      ansible.builtin.apt:
+        upgrade: dist
+      register: dist_result
+
+    - name: Autoremove
+      ansible.builtin.apt:
+        autoremove: true
+
+    - name: Autoclean
+      ansible.builtin.apt:
+        autoclean: true
+
+    - name: Check if reboot required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: rb
+
+    - name: Build notification message
+      ansible.builtin.set_fact:
+        notify_message: |
+          APT maintenance finished on {{ inventory_hostname }}
+          - Packages upgraded: {{ upgrade_result.changed | ternary('YES','NO') }}
+          - Dist upgrade run: {{ dist_result.changed | ternary('YES','NO') }}
+          - Reboot required: {{ 'YES' if rb.stat.exists else 'NO' }}
+
+    - name: Send notification to Jarvis
+      ansible.builtin.uri:
+        url: "http://jarvis_prime:2580/message?token=AVICbyEsE_krBsY"
+        method: POST
+        body_format: json
+        body:
+          title: "APT Update on {{ inventory_hostname }}"
+          message: "{{ notify_message }}"
+          priority: 5
