@@ -6,6 +6,7 @@ import importlib.util
 
 # Import LLM client
 import llm_client
+import auth
 
 _THIS_DIR = Path(__file__).resolve().parent
 
@@ -530,6 +531,13 @@ def _make_app() -> web.Application:
         print("[backup] Routes registered")
     except Exception as e:
         print(f"[backup] Failed to register routes: {e}")
+
+# Register authentication routes
+    try:
+        auth.setup_auth_routes(app)
+        print("[auth] Routes registered")
+    except Exception as e:
+        print(f"[auth] Failed to register routes: {e}")
 
     # ONE static root only
     async def _index(_):
