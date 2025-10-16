@@ -18,13 +18,11 @@
       IS_HASSIO = data.is_hassio || false;
       IS_READONLY = data.readonly || false;
       
-      // Show readonly banner if in HA mode
       const banner = $('#settings-readonly-banner');
       if (banner) {
         banner.style.display = IS_READONLY ? 'block' : 'none';
       }
       
-      // Populate all settings forms
       settingsPopulateGeneral();
       settingsPopulateLLM();
       settingsPopulatePersonality();
@@ -40,7 +38,7 @@
     }
   }
 
-  // Save configuration (Docker mode only)
+  // Save configuration
   async function settingsSaveConfig() {
     if (IS_READONLY) {
       window.showToast('Settings are read-only in Home Assistant mode', 'error');
@@ -51,7 +49,6 @@
       const saveBtn = $('#settings-save-btn');
       if (saveBtn) saveBtn.classList.add('loading');
 
-      // Gather all settings from all tabs
       const config = {
         ...settingsGatherGeneral(),
         ...settingsGatherLLM(),
@@ -93,15 +90,17 @@
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
     
     if ($('#set-bot-name')) $('#set-bot-name').value = get('bot_name', 'Jarvis Prime');
-    if ($('#set-bot-icon')) $('#set-bot-icon').value = get('bot_icon', '­ЪДа');
+    if ($('#set-bot-icon')) $('#set-bot-icon').value = get('bot_icon', '🧠');
     if ($('#set-jarvis-app-name')) $('#set-jarvis-app-name').value = get('jarvis_app_name', 'Jarvis');
     if ($('#set-beautify-enabled')) $('#set-beautify-enabled').checked = get('beautify_enabled', true);
     if ($('#set-beautify-inline-images')) $('#set-beautify-inline-images').checked = get('beautify_inline_images', true);
     if ($('#set-silent-repost')) $('#set-silent-repost').checked = get('silent_repost', true);
     if ($('#set-greeting-enabled')) $('#set-greeting-enabled').checked = get('greeting_enabled', true);
+    if ($('#set-greeting-times')) $('#set-greeting-times').value = get('greeting_times', '{"morning":"06:00","afternoon":"12:00","evening":"18:00","late_night":"22:30","early_morning":"03:00"}');
     if ($('#set-retention-days')) $('#set-retention-days').value = get('retention_days', 30);
     if ($('#set-retention-hours')) $('#set-retention-hours').value = get('retention_hours', 24);
     if ($('#set-auto-purge-policy')) $('#set-auto-purge-policy').value = get('auto_purge_policy', 'off');
+    if ($('#set-cache-refresh-minutes')) $('#set-cache-refresh-minutes').value = get('cache_refresh_minutes', 60);
 
     setReadonly('#settings-general-panel');
   }
@@ -109,15 +108,17 @@
   function settingsGatherGeneral() {
     return {
       bot_name: $('#set-bot-name')?.value || 'Jarvis Prime',
-      bot_icon: $('#set-bot-icon')?.value || '­ЪДа',
+      bot_icon: $('#set-bot-icon')?.value || '🧠',
       jarvis_app_name: $('#set-jarvis-app-name')?.value || 'Jarvis',
       beautify_enabled: $('#set-beautify-enabled')?.checked || false,
       beautify_inline_images: $('#set-beautify-inline-images')?.checked || false,
       silent_repost: $('#set-silent-repost')?.checked || false,
       greeting_enabled: $('#set-greeting-enabled')?.checked || false,
+      greeting_times: $('#set-greeting-times')?.value || '{"morning":"06:00","afternoon":"12:00","evening":"18:00","late_night":"22:30","early_morning":"03:00"}',
       retention_days: parseInt($('#set-retention-days')?.value || '30'),
       retention_hours: parseInt($('#set-retention-hours')?.value || '24'),
-      auto_purge_policy: $('#set-auto-purge-policy')?.value || 'off'
+      auto_purge_policy: $('#set-auto-purge-policy')?.value || 'off',
+      cache_refresh_minutes: parseInt($('#set-cache-refresh-minutes')?.value || '60')
     };
   }
 
@@ -128,20 +129,67 @@
     if ($('#set-llm-enabled')) $('#set-llm-enabled').checked = get('llm_enabled', true);
     if ($('#set-llm-persona-riffs-enabled')) $('#set-llm-persona-riffs-enabled').checked = get('llm_persona_riffs_enabled', true);
     if ($('#set-llm-rewrite-enabled')) $('#set-llm-rewrite-enabled').checked = get('llm_rewrite_enabled', false);
+    if ($('#set-llm-cleanup-on-disable')) $('#set-llm-cleanup-on-disable').checked = get('llm_cleanup_on_disable', true);
     if ($('#set-llm-models-dir')) $('#set-llm-models-dir').value = get('llm_models_dir', '/share/jarvis_prime/models');
     if ($('#set-llm-timeout-seconds')) $('#set-llm-timeout-seconds').value = get('llm_timeout_seconds', 20);
     if ($('#set-llm-max-cpu-percent')) $('#set-llm-max-cpu-percent').value = get('llm_max_cpu_percent', 80);
     if ($('#set-llm-ctx-tokens')) $('#set-llm-ctx-tokens').value = get('llm_ctx_tokens', 6096);
+    if ($('#set-llm-riff-max-tokens')) $('#set-llm-riff-max-tokens').value = get('llm_riff_max_tokens', 32);
+    if ($('#set-llm-rewrite-max-tokens')) $('#set-llm-rewrite-max-tokens').value = get('llm_rewrite_max_tokens', 256);
     if ($('#set-llm-gen-tokens')) $('#set-llm-gen-tokens').value = get('llm_gen_tokens', 300);
+    if ($('#set-llm-max-lines')) $('#set-llm-max-lines').value = get('llm_max_lines', 30);
+    if ($('#set-llm-system-prompt')) $('#set-llm-system-prompt').value = get('llm_system_prompt', '');
     if ($('#set-llm-threads')) $('#set-llm-threads').value = get('llm_threads', 3);
     if ($('#set-llm-models-priority')) $('#set-llm-models-priority').value = get('llm_models_priority', 'phi35_q5_uncensored,phi35_q5,phi35_q4,phi3');
+    if ($('#set-llm-memory-enabled')) $('#set-llm-memory-enabled').checked = get('llm_memory_enabled', true);
+    if ($('#set-llm-autodownload')) $('#set-llm-autodownload').checked = get('llm_autodownload', true);
+    if ($('#set-llm-hf-token')) $('#set-llm-hf-token').value = get('llm_hf_token', '');
+    
+    // Phi-4 Models
+    if ($('#set-llm-phi4-q4-enabled')) $('#set-llm-phi4-q4-enabled').checked = get('llm_phi4_q4_enabled', false);
+    if ($('#set-llm-phi4-q4-url')) $('#set-llm-phi4-q4-url').value = get('llm_phi4_q4_url', '');
+    if ($('#set-llm-phi4-q4-path')) $('#set-llm-phi4-q4-path').value = get('llm_phi4_q4_path', '');
+    if ($('#set-llm-phi4-q5-enabled')) $('#set-llm-phi4-q5-enabled').checked = get('llm_phi4_q5_enabled', false);
+    if ($('#set-llm-phi4-q5-url')) $('#set-llm-phi4-q5-url').value = get('llm_phi4_q5_url', '');
+    if ($('#set-llm-phi4-q5-path')) $('#set-llm-phi4-q5-path').value = get('llm_phi4_q5_path', '');
+    if ($('#set-llm-phi4-q6-enabled')) $('#set-llm-phi4-q6-enabled').checked = get('llm_phi4_q6_enabled', false);
+    if ($('#set-llm-phi4-q6-url')) $('#set-llm-phi4-q6-url').value = get('llm_phi4_q6_url', '');
+    if ($('#set-llm-phi4-q6-path')) $('#set-llm-phi4-q6-path').value = get('llm_phi4_q6_path', '');
+    if ($('#set-llm-phi4-q8-enabled')) $('#set-llm-phi4-q8-enabled').checked = get('llm_phi4_q8_enabled', false);
+    if ($('#set-llm-phi4-q8-url')) $('#set-llm-phi4-q8-url').value = get('llm_phi4_q8_url', '');
+    if ($('#set-llm-phi4-q8-path')) $('#set-llm-phi4-q8-path').value = get('llm_phi4_q8_path', '');
+    
+    // Phi-3.5 Models
+    if ($('#set-llm-phi35-q4-enabled')) $('#set-llm-phi35-q4-enabled').checked = get('llm_phi35_q4_enabled', false);
+    if ($('#set-llm-phi35-q4-url')) $('#set-llm-phi35-q4-url').value = get('llm_phi35_q4_url', '');
+    if ($('#set-llm-phi35-q4-path')) $('#set-llm-phi35-q4-path').value = get('llm_phi35_q4_path', '');
+    if ($('#set-llm-phi35-q5-enabled')) $('#set-llm-phi35-q5-enabled').checked = get('llm_phi35_q5_enabled', true);
+    if ($('#set-llm-phi35-q5-url')) $('#set-llm-phi35-q5-url').value = get('llm_phi35_q5_url', '');
+    if ($('#set-llm-phi35-q5-path')) $('#set-llm-phi35-q5-path').value = get('llm_phi35_q5_path', '');
+    if ($('#set-llm-phi35-q5-uncensored-enabled')) $('#set-llm-phi35-q5-uncensored-enabled').checked = get('llm_phi35_q5_uncensored_enabled', false);
+    if ($('#set-llm-phi35-q5-uncensored-url')) $('#set-llm-phi35-q5-uncensored-url').value = get('llm_phi35_q5_uncensored_url', '');
+    if ($('#set-llm-phi35-q5-uncensored-path')) $('#set-llm-phi35-q5-uncensored-path').value = get('llm_phi35_q5_uncensored_path', '');
+    
+    // Phi-3
+    if ($('#set-llm-phi3-enabled')) $('#set-llm-phi3-enabled').checked = get('llm_phi3_enabled', true);
+    if ($('#set-llm-phi3-url')) $('#set-llm-phi3-url').value = get('llm_phi3_url', '');
+    if ($('#set-llm-phi3-path')) $('#set-llm-phi3-path').value = get('llm_phi3_path', '');
     
     // EnviroGuard
     if ($('#set-llm-enviroguard-enabled')) $('#set-llm-enviroguard-enabled').checked = get('llm_enviroguard_enabled', true);
     if ($('#set-llm-enviroguard-poll-minutes')) $('#set-llm-enviroguard-poll-minutes').value = get('llm_enviroguard_poll_minutes', 30);
+    if ($('#set-llm-enviroguard-max-stale-minutes')) $('#set-llm-enviroguard-max-stale-minutes').value = get('llm_enviroguard_max_stale_minutes', 120);
     if ($('#set-llm-enviroguard-hot-c')) $('#set-llm-enviroguard-hot-c').value = get('llm_enviroguard_hot_c', 30);
     if ($('#set-llm-enviroguard-normal-c')) $('#set-llm-enviroguard-normal-c').value = get('llm_enviroguard_normal_c', 22);
     if ($('#set-llm-enviroguard-cold-c')) $('#set-llm-enviroguard-cold-c').value = get('llm_enviroguard_cold_c', 10);
+    if ($('#set-llm-enviroguard-off-c')) $('#set-llm-enviroguard-off-c').value = get('llm_enviroguard_off_c', 42);
+    if ($('#set-llm-enviroguard-boost-c')) $('#set-llm-enviroguard-boost-c').value = get('llm_enviroguard_boost_c', 16);
+    if ($('#set-llm-enviroguard-hysteresis-c')) $('#set-llm-enviroguard-hysteresis-c').value = get('llm_enviroguard_hysteresis_c', 2);
+    if ($('#set-llm-enviroguard-profiles')) $('#set-llm-enviroguard-profiles').value = get('llm_enviroguard_profiles', '');
+    if ($('#set-llm-enviroguard-ha-enabled')) $('#set-llm-enviroguard-ha-enabled').checked = get('llm_enviroguard_ha_enabled', true);
+    if ($('#set-llm-enviroguard-ha-base-url')) $('#set-llm-enviroguard-ha-base-url').value = get('llm_enviroguard_ha_base_url', 'http://homeassistant:8123');
+    if ($('#set-llm-enviroguard-ha-token')) $('#set-llm-enviroguard-ha-token').value = get('llm_enviroguard_ha_token', '');
+    if ($('#set-llm-enviroguard-ha-temp-entity')) $('#set-llm-enviroguard-ha-temp-entity').value = get('llm_enviroguard_ha_temp_entity', 'sensor.living_room_temperature');
 
     setReadonly('#settings-llm-panel');
   }
@@ -151,18 +199,63 @@
       llm_enabled: $('#set-llm-enabled')?.checked || false,
       llm_persona_riffs_enabled: $('#set-llm-persona-riffs-enabled')?.checked || false,
       llm_rewrite_enabled: $('#set-llm-rewrite-enabled')?.checked || false,
+      llm_cleanup_on_disable: $('#set-llm-cleanup-on-disable')?.checked || false,
       llm_models_dir: $('#set-llm-models-dir')?.value || '/share/jarvis_prime/models',
       llm_timeout_seconds: parseInt($('#set-llm-timeout-seconds')?.value || '20'),
       llm_max_cpu_percent: parseInt($('#set-llm-max-cpu-percent')?.value || '80'),
       llm_ctx_tokens: parseInt($('#set-llm-ctx-tokens')?.value || '6096'),
+      llm_riff_max_tokens: parseInt($('#set-llm-riff-max-tokens')?.value || '32'),
+      llm_rewrite_max_tokens: parseInt($('#set-llm-rewrite-max-tokens')?.value || '256'),
       llm_gen_tokens: parseInt($('#set-llm-gen-tokens')?.value || '300'),
+      llm_max_lines: parseInt($('#set-llm-max-lines')?.value || '30'),
+      llm_system_prompt: $('#set-llm-system-prompt')?.value || '',
       llm_threads: parseInt($('#set-llm-threads')?.value || '3'),
       llm_models_priority: $('#set-llm-models-priority')?.value || '',
+      llm_memory_enabled: $('#set-llm-memory-enabled')?.checked || false,
+      llm_autodownload: $('#set-llm-autodownload')?.checked || false,
+      llm_hf_token: $('#set-llm-hf-token')?.value || '',
+      
+      llm_phi4_q4_enabled: $('#set-llm-phi4-q4-enabled')?.checked || false,
+      llm_phi4_q4_url: $('#set-llm-phi4-q4-url')?.value || '',
+      llm_phi4_q4_path: $('#set-llm-phi4-q4-path')?.value || '',
+      llm_phi4_q5_enabled: $('#set-llm-phi4-q5-enabled')?.checked || false,
+      llm_phi4_q5_url: $('#set-llm-phi4-q5-url')?.value || '',
+      llm_phi4_q5_path: $('#set-llm-phi4-q5-path')?.value || '',
+      llm_phi4_q6_enabled: $('#set-llm-phi4-q6-enabled')?.checked || false,
+      llm_phi4_q6_url: $('#set-llm-phi4-q6-url')?.value || '',
+      llm_phi4_q6_path: $('#set-llm-phi4-q6-path')?.value || '',
+      llm_phi4_q8_enabled: $('#set-llm-phi4-q8-enabled')?.checked || false,
+      llm_phi4_q8_url: $('#set-llm-phi4-q8-url')?.value || '',
+      llm_phi4_q8_path: $('#set-llm-phi4-q8-path')?.value || '',
+      
+      llm_phi35_q4_enabled: $('#set-llm-phi35-q4-enabled')?.checked || false,
+      llm_phi35_q4_url: $('#set-llm-phi35-q4-url')?.value || '',
+      llm_phi35_q4_path: $('#set-llm-phi35-q4-path')?.value || '',
+      llm_phi35_q5_enabled: $('#set-llm-phi35-q5-enabled')?.checked || false,
+      llm_phi35_q5_url: $('#set-llm-phi35-q5-url')?.value || '',
+      llm_phi35_q5_path: $('#set-llm-phi35-q5-path')?.value || '',
+      llm_phi35_q5_uncensored_enabled: $('#set-llm-phi35-q5-uncensored-enabled')?.checked || false,
+      llm_phi35_q5_uncensored_url: $('#set-llm-phi35-q5-uncensored-url')?.value || '',
+      llm_phi35_q5_uncensored_path: $('#set-llm-phi35-q5-uncensored-path')?.value || '',
+      
+      llm_phi3_enabled: $('#set-llm-phi3-enabled')?.checked || false,
+      llm_phi3_url: $('#set-llm-phi3-url')?.value || '',
+      llm_phi3_path: $('#set-llm-phi3-path')?.value || '',
+      
       llm_enviroguard_enabled: $('#set-llm-enviroguard-enabled')?.checked || false,
       llm_enviroguard_poll_minutes: parseInt($('#set-llm-enviroguard-poll-minutes')?.value || '30'),
+      llm_enviroguard_max_stale_minutes: parseInt($('#set-llm-enviroguard-max-stale-minutes')?.value || '120'),
       llm_enviroguard_hot_c: parseInt($('#set-llm-enviroguard-hot-c')?.value || '30'),
       llm_enviroguard_normal_c: parseInt($('#set-llm-enviroguard-normal-c')?.value || '22'),
-      llm_enviroguard_cold_c: parseInt($('#set-llm-enviroguard-cold-c')?.value || '10')
+      llm_enviroguard_cold_c: parseInt($('#set-llm-enviroguard-cold-c')?.value || '10'),
+      llm_enviroguard_off_c: parseInt($('#set-llm-enviroguard-off-c')?.value || '42'),
+      llm_enviroguard_boost_c: parseInt($('#set-llm-enviroguard-boost-c')?.value || '16'),
+      llm_enviroguard_hysteresis_c: parseInt($('#set-llm-enviroguard-hysteresis-c')?.value || '2'),
+      llm_enviroguard_profiles: $('#set-llm-enviroguard-profiles')?.value || '',
+      llm_enviroguard_ha_enabled: $('#set-llm-enviroguard-ha-enabled')?.checked || false,
+      llm_enviroguard_ha_base_url: $('#set-llm-enviroguard-ha-base-url')?.value || '',
+      llm_enviroguard_ha_token: $('#set-llm-enviroguard-ha-token')?.value || '',
+      llm_enviroguard_ha_temp_entity: $('#set-llm-enviroguard-ha-temp-entity')?.value || ''
     };
   }
 
@@ -171,6 +264,8 @@
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
     
     if ($('#set-personality-enabled')) $('#set-personality-enabled').checked = get('personality_enabled', true);
+    if ($('#set-personality-persistent')) $('#set-personality-persistent').checked = get('personality_persistent', true);
+    if ($('#set-personality-family-friendly')) $('#set-personality-family-friendly').checked = get('personality_family_friendly', true);
     if ($('#set-active-persona')) $('#set-active-persona').value = get('active_persona', 'auto');
     if ($('#set-personality-min-interval-minutes')) $('#set-personality-min-interval-minutes').value = get('personality_min_interval_minutes', 90);
     if ($('#set-personality-interval-jitter-pct')) $('#set-personality-interval-jitter-pct').value = get('personality_interval_jitter_pct', 20);
@@ -178,13 +273,14 @@
     if ($('#set-personality-quiet-hours')) $('#set-personality-quiet-hours').value = get('personality_quiet_hours', '23:00-06:00');
     if ($('#set-chat-enabled')) $('#set-chat-enabled').checked = get('chat_enabled', true);
     
-    // Enabled personas
     if ($('#set-enable-dude')) $('#set-enable-dude').checked = get('enable_dude', true);
     if ($('#set-enable-chick')) $('#set-enable-chick').checked = get('enable_chick', false);
     if ($('#set-enable-nerd')) $('#set-enable-nerd').checked = get('enable_nerd', false);
     if ($('#set-enable-rager')) $('#set-enable-rager').checked = get('enable_rager', false);
     if ($('#set-enable-comedian')) $('#set-enable-comedian').checked = get('enable_comedian', false);
     if ($('#set-enable-action')) $('#set-enable-action').checked = get('enable_action', false);
+    if ($('#set-enable-jarvis')) $('#set-enable-jarvis').checked = get('enable_jarvis', false);
+    if ($('#set-enable-ops')) $('#set-enable-ops').checked = get('enable_ops', false);
 
     setReadonly('#settings-personality-panel');
   }
@@ -192,6 +288,8 @@
   function settingsGatherPersonality() {
     return {
       personality_enabled: $('#set-personality-enabled')?.checked || false,
+      personality_persistent: $('#set-personality-persistent')?.checked || false,
+      personality_family_friendly: $('#set-personality-family-friendly')?.checked || false,
       active_persona: $('#set-active-persona')?.value || 'auto',
       personality_min_interval_minutes: parseInt($('#set-personality-min-interval-minutes')?.value || '90'),
       personality_interval_jitter_pct: parseInt($('#set-personality-interval-jitter-pct')?.value || '20'),
@@ -203,7 +301,9 @@
       enable_nerd: $('#set-enable-nerd')?.checked || false,
       enable_rager: $('#set-enable-rager')?.checked || false,
       enable_comedian: $('#set-enable-comedian')?.checked || false,
-      enable_action: $('#set-enable-action')?.checked || false
+      enable_action: $('#set-enable-action')?.checked || false,
+      enable_jarvis: $('#set-enable-jarvis')?.checked || false,
+      enable_ops: $('#set-enable-ops')?.checked || false
     };
   }
 
@@ -211,29 +311,27 @@
   function settingsPopulateIntegrations() {
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
     
-    // Weather
     if ($('#set-weather-enabled')) $('#set-weather-enabled').checked = get('weather_enabled', true);
     if ($('#set-weather-lat')) $('#set-weather-lat').value = get('weather_lat', -26.2041);
     if ($('#set-weather-lon')) $('#set-weather-lon').value = get('weather_lon', 28.0473);
     if ($('#set-weather-city')) $('#set-weather-city').value = get('weather_city', 'Odendaalsrus');
     if ($('#set-weather-time')) $('#set-weather-time').value = get('weather_time', '07:00');
+    if ($('#set-weather-show-indoor')) $('#set-weather-show-indoor').checked = get('weather_show_indoor', true);
+    if ($('#set-weather-indoor-sensor-entity')) $('#set-weather-indoor-sensor-entity').value = get('weather_indoor_sensor_entity', 'sensor.indoor_temperature');
     
-    // Digest
     if ($('#set-digest-enabled')) $('#set-digest-enabled').checked = get('digest_enabled', true);
     if ($('#set-digest-time')) $('#set-digest-time').value = get('digest_time', '08:00');
+    if ($('#set-ai-checkins-enabled')) $('#set-ai-checkins-enabled').checked = get('ai_checkins_enabled', true);
     
-    // Heartbeat
     if ($('#set-heartbeat-enabled')) $('#set-heartbeat-enabled').checked = get('heartbeat_enabled', true);
     if ($('#set-heartbeat-interval-minutes')) $('#set-heartbeat-interval-minutes').value = get('heartbeat_interval_minutes', 120);
     if ($('#set-heartbeat-start')) $('#set-heartbeat-start').value = get('heartbeat_start', '06:00');
     if ($('#set-heartbeat-end')) $('#set-heartbeat-end').value = get('heartbeat_end', '20:00');
     
-    // Radarr
     if ($('#set-radarr-enabled')) $('#set-radarr-enabled').checked = get('radarr_enabled', true);
     if ($('#set-radarr-url')) $('#set-radarr-url').value = get('radarr_url', '');
     if ($('#set-radarr-api-key')) $('#set-radarr-api-key').value = get('radarr_api_key', '');
     
-    // Sonarr
     if ($('#set-sonarr-enabled')) $('#set-sonarr-enabled').checked = get('sonarr_enabled', true);
     if ($('#set-sonarr-url')) $('#set-sonarr-url').value = get('sonarr_url', '');
     if ($('#set-sonarr-api-key')) $('#set-sonarr-api-key').value = get('sonarr_api_key', '');
@@ -248,8 +346,11 @@
       weather_lon: parseFloat($('#set-weather-lon')?.value || '28.0473'),
       weather_city: $('#set-weather-city')?.value || 'Odendaalsrus',
       weather_time: $('#set-weather-time')?.value || '07:00',
+      weather_show_indoor: $('#set-weather-show-indoor')?.checked || false,
+      weather_indoor_sensor_entity: $('#set-weather-indoor-sensor-entity')?.value || 'sensor.indoor_temperature',
       digest_enabled: $('#set-digest-enabled')?.checked || false,
       digest_time: $('#set-digest-time')?.value || '08:00',
+      ai_checkins_enabled: $('#set-ai-checkins-enabled')?.checked || false,
       heartbeat_enabled: $('#set-heartbeat-enabled')?.checked || false,
       heartbeat_interval_minutes: parseInt($('#set-heartbeat-interval-minutes')?.value || '120'),
       heartbeat_start: $('#set-heartbeat-start')?.value || '06:00',
@@ -267,23 +368,39 @@
   function settingsPopulateCommunications() {
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
     
-    // SMTP Intake
     if ($('#set-smtp-enabled')) $('#set-smtp-enabled').checked = get('smtp_enabled', true);
+    if ($('#set-smtp-bind')) $('#set-smtp-bind').value = get('smtp_bind', '0.0.0.0');
     if ($('#set-smtp-port')) $('#set-smtp-port').value = get('smtp_port', 2525);
+    if ($('#set-smtp-max-bytes')) $('#set-smtp-max-bytes').value = get('smtp_max_bytes', 262144);
+    if ($('#set-smtp-dummy-rcpt')) $('#set-smtp-dummy-rcpt').value = get('smtp_dummy_rcpt', 'alerts@jarvis.local');
+    if ($('#set-smtp-accept-any-auth')) $('#set-smtp-accept-any-auth').checked = get('smtp_accept_any_auth', true);
+    if ($('#set-smtp-rewrite-title-prefix')) $('#set-smtp-rewrite-title-prefix').value = get('smtp_rewrite_title_prefix', '[SMTP]');
+    if ($('#set-smtp-allow-html')) $('#set-smtp-allow-html').checked = get('smtp_allow_html', true);
+    if ($('#set-smtp-priority-default')) $('#set-smtp-priority-default').value = get('smtp_priority_default', 5);
+    if ($('#set-smtp-priority-map')) $('#set-smtp-priority-map').value = get('smtp_priority_map', '');
     if ($('#set-ingest-smtp-enabled')) $('#set-ingest-smtp-enabled').checked = get('ingest_smtp_enabled', true);
     
-    // Proxy
     if ($('#set-proxy-enabled')) $('#set-proxy-enabled').checked = get('proxy_enabled', true);
+    if ($('#set-proxy-bind')) $('#set-proxy-bind').value = get('proxy_bind', '0.0.0.0');
     if ($('#set-proxy-port')) $('#set-proxy-port').value = get('proxy_port', 2580);
+    if ($('#set-proxy-gotify-url')) $('#set-proxy-gotify-url').value = get('proxy_gotify_url', '');
+    if ($('#set-proxy-ntfy-url')) $('#set-proxy-ntfy-url').value = get('proxy_ntfy_url', '');
     
-    // Webhook
     if ($('#set-webhook-enabled')) $('#set-webhook-enabled').checked = get('webhook_enabled', true);
+    if ($('#set-webhook-bind')) $('#set-webhook-bind').value = get('webhook_bind', '0.0.0.0');
     if ($('#set-webhook-port')) $('#set-webhook-port').value = get('webhook_port', 2590);
+    if ($('#set-webhook-token')) $('#set-webhook-token').value = get('webhook_token', '');
     
-    // Apprise
     if ($('#set-intake-apprise-enabled')) $('#set-intake-apprise-enabled').checked = get('intake_apprise_enabled', true);
     if ($('#set-intake-apprise-port')) $('#set-intake-apprise-port').value = get('intake_apprise_port', 2591);
+    if ($('#set-intake-apprise-token')) $('#set-intake-apprise-token').value = get('intake_apprise_token', '');
+    if ($('#set-intake-apprise-accept-any-key')) $('#set-intake-apprise-accept-any-key').checked = get('intake_apprise_accept_any_key', true);
+    if ($('#set-intake-apprise-allowed-keys')) $('#set-intake-apprise-allowed-keys').value = get('intake_apprise_allowed_keys', '');
     if ($('#set-ingest-apprise-enabled')) $('#set-ingest-apprise-enabled').checked = get('ingest_apprise_enabled', true);
+    
+    if ($('#set-intake-ws-enabled')) $('#set-intake-ws-enabled').checked = get('intake_ws_enabled', true);
+    if ($('#set-intake-ws-port')) $('#set-intake-ws-port').value = get('intake_ws_port', 8765);
+    if ($('#set-intake-ws-token')) $('#set-intake-ws-token').value = get('intake_ws_token', '');
 
     setReadonly('#settings-communications-panel');
   }
@@ -291,15 +408,34 @@
   function settingsGatherCommunications() {
     return {
       smtp_enabled: $('#set-smtp-enabled')?.checked || false,
+      smtp_bind: $('#set-smtp-bind')?.value || '0.0.0.0',
       smtp_port: parseInt($('#set-smtp-port')?.value || '2525'),
+      smtp_max_bytes: parseInt($('#set-smtp-max-bytes')?.value || '262144'),
+      smtp_dummy_rcpt: $('#set-smtp-dummy-rcpt')?.value || 'alerts@jarvis.local',
+      smtp_accept_any_auth: $('#set-smtp-accept-any-auth')?.checked || false,
+      smtp_rewrite_title_prefix: $('#set-smtp-rewrite-title-prefix')?.value || '[SMTP]',
+      smtp_allow_html: $('#set-smtp-allow-html')?.checked || false,
+      smtp_priority_default: parseInt($('#set-smtp-priority-default')?.value || '5'),
+      smtp_priority_map: $('#set-smtp-priority-map')?.value || '',
       ingest_smtp_enabled: $('#set-ingest-smtp-enabled')?.checked || false,
       proxy_enabled: $('#set-proxy-enabled')?.checked || false,
+      proxy_bind: $('#set-proxy-bind')?.value || '0.0.0.0',
       proxy_port: parseInt($('#set-proxy-port')?.value || '2580'),
+      proxy_gotify_url: $('#set-proxy-gotify-url')?.value || '',
+      proxy_ntfy_url: $('#set-proxy-ntfy-url')?.value || '',
       webhook_enabled: $('#set-webhook-enabled')?.checked || false,
+      webhook_bind: $('#set-webhook-bind')?.value || '0.0.0.0',
       webhook_port: parseInt($('#set-webhook-port')?.value || '2590'),
+      webhook_token: $('#set-webhook-token')?.value || '',
       intake_apprise_enabled: $('#set-intake-apprise-enabled')?.checked || false,
       intake_apprise_port: parseInt($('#set-intake-apprise-port')?.value || '2591'),
-      ingest_apprise_enabled: $('#set-ingest-apprise-enabled')?.checked || false
+      intake_apprise_token: $('#set-intake-apprise-token')?.value || '',
+      intake_apprise_accept_any_key: $('#set-intake-apprise-accept-any-key')?.checked || false,
+      intake_apprise_allowed_keys: $('#set-intake-apprise-allowed-keys')?.value || '',
+      ingest_apprise_enabled: $('#set-ingest-apprise-enabled')?.checked || false,
+      intake_ws_enabled: $('#set-intake-ws-enabled')?.checked || false,
+      intake_ws_port: parseInt($('#set-intake-ws-port')?.value || '8765'),
+      intake_ws_token: $('#set-intake-ws-token')?.value || ''
     };
   }
 
@@ -307,15 +443,16 @@
   function settingsPopulateMonitoring() {
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
     
-    // Uptime Kuma
     if ($('#set-uptimekuma-enabled')) $('#set-uptimekuma-enabled').checked = get('uptimekuma_enabled', true);
     if ($('#set-uptimekuma-url')) $('#set-uptimekuma-url').value = get('uptimekuma_url', '');
     if ($('#set-uptimekuma-api-key')) $('#set-uptimekuma-api-key').value = get('uptimekuma_api_key', '');
+    if ($('#set-uptimekuma-status-slug')) $('#set-uptimekuma-status-slug').value = get('uptimekuma_status_slug', '');
     
-    // Technitium DNS
     if ($('#set-technitium-enabled')) $('#set-technitium-enabled').checked = get('technitium_enabled', true);
     if ($('#set-technitium-url')) $('#set-technitium-url').value = get('technitium_url', '');
     if ($('#set-technitium-api-key')) $('#set-technitium-api-key').value = get('technitium_api_key', '');
+    if ($('#set-technitium-user')) $('#set-technitium-user').value = get('technitium_user', 'admin');
+    if ($('#set-technitium-pass')) $('#set-technitium-pass').value = get('technitium_pass', '');
 
     setReadonly('#settings-monitoring-panel');
   }
@@ -325,9 +462,12 @@
       uptimekuma_enabled: $('#set-uptimekuma-enabled')?.checked || false,
       uptimekuma_url: $('#set-uptimekuma-url')?.value || '',
       uptimekuma_api_key: $('#set-uptimekuma-api-key')?.value || '',
+      uptimekuma_status_slug: $('#set-uptimekuma-status-slug')?.value || '',
       technitium_enabled: $('#set-technitium-enabled')?.checked || false,
       technitium_url: $('#set-technitium-url')?.value || '',
-      technitium_api_key: $('#set-technitium-api-key')?.value || ''
+      technitium_api_key: $('#set-technitium-api-key')?.value || '',
+      technitium_user: $('#set-technitium-user')?.value || 'admin',
+      technitium_pass: $('#set-technitium-pass')?.value || ''
     };
   }
 
@@ -335,17 +475,26 @@
   function settingsPopulatePush() {
     const get = (key, def = '') => CURRENT_CONFIG[key] !== undefined ? CURRENT_CONFIG[key] : def;
     
-    // Gotify
     if ($('#set-gotify-url')) $('#set-gotify-url').value = get('gotify_url', '');
     if ($('#set-gotify-client-token')) $('#set-gotify-client-token').value = get('gotify_client_token', '');
     if ($('#set-gotify-app-token')) $('#set-gotify-app-token').value = get('gotify_app_token', '');
     if ($('#set-push-gotify-enabled')) $('#set-push-gotify-enabled').checked = get('push_gotify_enabled', true);
     if ($('#set-ingest-gotify-enabled')) $('#set-ingest-gotify-enabled').checked = get('ingest_gotify_enabled', true);
     
-    // ntfy
     if ($('#set-ntfy-url')) $('#set-ntfy-url').value = get('ntfy_url', '');
     if ($('#set-ntfy-topic')) $('#set-ntfy-topic').value = get('ntfy_topic', '');
+    if ($('#set-ntfy-user')) $('#set-ntfy-user').value = get('ntfy_user', '');
+    if ($('#set-ntfy-pass')) $('#set-ntfy-pass').value = get('ntfy_pass', '');
+    if ($('#set-ntfy-token')) $('#set-ntfy-token').value = get('ntfy_token', '');
     if ($('#set-push-ntfy-enabled')) $('#set-push-ntfy-enabled').checked = get('push_ntfy_enabled', false);
+    if ($('#set-ingest-ntfy-enabled')) $('#set-ingest-ntfy-enabled').checked = get('ingest_ntfy_enabled', false);
+    
+    if ($('#set-push-smtp-enabled')) $('#set-push-smtp-enabled').checked = get('push_smtp_enabled', false);
+    if ($('#set-push-smtp-host')) $('#set-push-smtp-host').value = get('push_smtp_host', 'smtp.gmail.com');
+    if ($('#set-push-smtp-port')) $('#set-push-smtp-port').value = get('push_smtp_port', 587);
+    if ($('#set-push-smtp-user')) $('#set-push-smtp-user').value = get('push_smtp_user', '');
+    if ($('#set-push-smtp-pass')) $('#set-push-smtp-pass').value = get('push_smtp_pass', '');
+    if ($('#set-push-smtp-to')) $('#set-push-smtp-to').value = get('push_smtp_to', '');
 
     setReadonly('#settings-push-panel');
   }
@@ -359,7 +508,17 @@
       ingest_gotify_enabled: $('#set-ingest-gotify-enabled')?.checked || false,
       ntfy_url: $('#set-ntfy-url')?.value || '',
       ntfy_topic: $('#set-ntfy-topic')?.value || '',
-      push_ntfy_enabled: $('#set-push-ntfy-enabled')?.checked || false
+      ntfy_user: $('#set-ntfy-user')?.value || '',
+      ntfy_pass: $('#set-ntfy-pass')?.value || '',
+      ntfy_token: $('#set-ntfy-token')?.value || '',
+      push_ntfy_enabled: $('#set-push-ntfy-enabled')?.checked || false,
+      ingest_ntfy_enabled: $('#set-ingest-ntfy-enabled')?.checked || false,
+      push_smtp_enabled: $('#set-push-smtp-enabled')?.checked || false,
+      push_smtp_host: $('#set-push-smtp-host')?.value || 'smtp.gmail.com',
+      push_smtp_port: parseInt($('#set-push-smtp-port')?.value || '587'),
+      push_smtp_user: $('#set-push-smtp-user')?.value || '',
+      push_smtp_pass: $('#set-push-smtp-pass')?.value || '',
+      push_smtp_to: $('#set-push-smtp-to')?.value || ''
     };
   }
 
@@ -370,7 +529,6 @@
     const panel = $(panelSelector);
     if (!panel) return;
     
-    // Disable all inputs in this panel
     $$('input, select, textarea').forEach(el => {
       if (panel.contains(el)) {
         el.disabled = true;
@@ -392,8 +550,8 @@
       });
     });
   }
+
   // ===== BACKUP & RESTORE FUNCTIONS =====
-  
   async function backupDownloadNow() {
     try {
       const btn = $('#backup-download-btn');
@@ -463,7 +621,6 @@
       if (result.ok) {
         window.showToast('Backup restored successfully. Restarting...', 'success');
         
-        // Reload page after 3 seconds
         setTimeout(() => {
           window.location.reload();
         }, 3000);
@@ -507,7 +664,6 @@
     settingsInitSubTabs();
     backupInitFileInput();
     
-    // Load config when settings tab is clicked
     const settingsNavTab = document.querySelector('.nav-tab[data-tab="settings"]');
     if (settingsNavTab) {
       settingsNavTab.addEventListener('click', () => {
@@ -515,19 +671,16 @@
       });
     }
     
-    // Save button
     const saveBtn = $('#settings-save-btn');
     if (saveBtn) {
       saveBtn.addEventListener('click', settingsSaveConfig);
     }
 
-    // Backup download button
     const backupDownloadBtn = $('#backup-download-btn');
     if (backupDownloadBtn) {
       backupDownloadBtn.addEventListener('click', backupDownloadNow);
     }
 
-    // Backup restore button
     const backupRestoreBtn = $('#backup-restore-btn');
     if (backupRestoreBtn) {
       backupRestoreBtn.addEventListener('click', backupRestoreFromFile);
