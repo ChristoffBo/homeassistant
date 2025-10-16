@@ -68,6 +68,22 @@ export SILENT_REPOST=$(jq -r '.silent_repost // "true"' "$CONFIG_PATH")
 export INBOX_RETENTION_DAYS=$(jq -r '.retention_days // 30' "$CONFIG_PATH")
 export AUTO_PURGE_POLICY=$(jq -r '.auto_purge_policy // "off"' "$CONFIG_PATH")
 
+############################################
+# Jarvis Prime — Default Playbook Loader
+############################################
+
+# Ensure /share/jarvis_prime exists
+mkdir -p /share/jarvis_prime
+
+# Copy default playbooks only if none exist
+if [ ! -d /share/jarvis_prime/playbooks ] || [ -z "$(ls -A /share/jarvis_prime/playbooks 2>/dev/null)" ]; then
+  echo "[init] No user playbooks found — loading defaults..."
+  mkdir -p /share/jarvis_prime/playbooks
+  cp -r /playbooks/defaults/* /share/jarvis_prime/playbooks/ 2>/dev/null || true
+else
+  echo "[init] User playbooks detected — skipping defaults."
+fi
+
 # Weather
 export weather_enabled=$(jq -r '.weather_enabled // false' "$CONFIG_PATH")
 export weather_lat=$(jq -r '.weather_lat // 0' "$CONFIG_PATH")
