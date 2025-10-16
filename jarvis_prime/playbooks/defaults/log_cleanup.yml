@@ -1,1 +1,26 @@
+---
+- name: Clean large log files
+  hosts: all
+  become: true
+  tasks:
+    - name: Truncate oversized logs (>100MB)
+      ansible.builtin.find:
+        paths: /var/log
+        patterns: "*.log"
+        size: 100M
+      register: big_logs
 
+    - name: Truncate found logs
+      ansible.builtin.shell: "cat /dev/null > {{ item.path }}"
+      loop: "{{ big_logs.files }}"
+      when: big_logs.matched > 0
+
+    - name: Notify Jarvis
+      ansible.builtin.uri:
+        url: "http://jarvis_prime:2580/message?token=AVICbyEsE_krBsY"
+        method: POST
+        body_format: json
+        body:
+          title: "Log Cleanup"
+          message: "Truncated {{ big_logs.matched }} large log files on {{ inventory_hostname }}"
+          priority: 3
