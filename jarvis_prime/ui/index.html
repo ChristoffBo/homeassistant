@@ -895,7 +895,14 @@
                 <label for="set-greeting-enabled">Enable greeting messages</label>
               </div>
             </div>
-            
+            <div class="form-group">
+              <label class="form-label">Greeting Times (JSON)</label>
+              <textarea id="set-greeting-times" rows="3" placeholder='{"morning":"06:00","afternoon":"12:00","evening":"18:00","late_night":"22:30","early_morning":"03:00"}'></textarea>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                JSON object defining when greetings are sent
+              </div>
+            </div>
+
             <div class="form-group">
               <label class="form-label">Retention Days</label>
               <input type="number" id="set-retention-days" min="1" placeholder="30">
@@ -917,6 +924,11 @@
                 <option value="weekly">Weekly</option>
               </select>
             </div>
+			<div class="form-group">
+              <label class="form-label">Cache Refresh Interval (minutes)</label>
+              <input type="number" id="set-cache-refresh-minutes" min="1" placeholder="60">
+            </div>
+
           </div>
         </div>
       </div>
@@ -988,6 +1000,185 @@
               </div>
             </div>
             
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-cleanup-on-disable" />
+                <label for="set-llm-cleanup-on-disable">Cleanup models when LLM is disabled</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Riff Max Tokens</label>
+              <input type="number" id="set-llm-riff-max-tokens" min="1" placeholder="32">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Maximum tokens for personality riffs
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Rewrite Max Tokens</label>
+              <input type="number" id="set-llm-rewrite-max-tokens" min="1" placeholder="256">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Maximum tokens for message rewriting
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Max Output Lines</label>
+              <input type="number" id="set-llm-max-lines" min="1" placeholder="30">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">System Prompt (optional)</label>
+              <textarea id="set-llm-system-prompt" rows="4" placeholder="Custom system prompt for the LLM..."></textarea>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-memory-enabled" />
+                <label for="set-llm-memory-enabled">Enable LLM memory/context persistence</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-autodownload" />
+                <label for="set-llm-autodownload">Auto-download missing models</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Hugging Face Token (optional)</label>
+              <input type="password" id="set-llm-hf-token" placeholder="For private model downloads">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Phi-4 Models</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q4-enabled" />
+                <label for="set-llm-phi4-q4-enabled">Enable Phi-4 Q4 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q4 URL</label>
+              <input type="text" id="set-llm-phi4-q4-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q4 Path</label>
+              <input type="text" id="set-llm-phi4-q4-path" placeholder="/share/jarvis_prime/models/phi4-q4.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q5-enabled" />
+                <label for="set-llm-phi4-q5-enabled">Enable Phi-4 Q5 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q5 URL</label>
+              <input type="text" id="set-llm-phi4-q5-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q5 Path</label>
+              <input type="text" id="set-llm-phi4-q5-path" placeholder="/share/jarvis_prime/models/phi4-q5.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q6-enabled" />
+                <label for="set-llm-phi4-q6-enabled">Enable Phi-4 Q6 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q6 URL</label>
+              <input type="text" id="set-llm-phi4-q6-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q6 Path</label>
+              <input type="text" id="set-llm-phi4-q6-path" placeholder="/share/jarvis_prime/models/phi4-q6.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q8-enabled" />
+                <label for="set-llm-phi4-q8-enabled">Enable Phi-4 Q8 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q8 URL</label>
+              <input type="text" id="set-llm-phi4-q8-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q8 Path</label>
+              <input type="text" id="set-llm-phi4-q8-path" placeholder="/share/jarvis_prime/models/phi4-q8.gguf">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Phi-3.5 Models</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi35-q4-enabled" />
+                <label for="set-llm-phi35-q4-enabled">Enable Phi-3.5 Q4 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q4 URL</label>
+              <input type="text" id="set-llm-phi35-q4-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q4 Path</label>
+              <input type="text" id="set-llm-phi35-q4-path" placeholder="/share/jarvis_prime/models/phi35-q4.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi35-q5-enabled" />
+                <label for="set-llm-phi35-q5-enabled">Enable Phi-3.5 Q5 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 URL</label>
+              <input type="text" id="set-llm-phi35-q5-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 Path</label>
+              <input type="text" id="set-llm-phi35-q5-path" placeholder="/share/jarvis_prime/models/phi35-q5.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi35-q5-uncensored-enabled" />
+                <label for="set-llm-phi35-q5-uncensored-enabled">Enable Phi-3.5 Q5 Uncensored Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 Uncensored URL</label>
+              <input type="text" id="set-llm-phi35-q5-uncensored-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 Uncensored Path</label>
+              <input type="text" id="set-llm-phi35-q5-uncensored-path" placeholder="/share/jarvis_prime/models/phi35-q5-uncensored.gguf">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Phi-3 Model</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi3-enabled" />
+                <label for="set-llm-phi3-enabled">Enable Phi-3 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3 URL</label>
+              <input type="text" id="set-llm-phi3-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3 Path</label>
+              <input type="text" id="set-llm-phi3-path" placeholder="/share/jarvis_prime/models/phi3.gguf">
+            </div>
+
+			
             <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">EnviroGuard</h4>
             
             <div class="form-group">
@@ -1016,6 +1207,70 @@
               <label class="form-label">Cold Temperature Threshold (Â°C)</label>
               <input type="number" id="set-llm-enviroguard-cold-c" placeholder="10">
             </div>
+			<div class="form-group">
+              <label class="form-label">Max Stale Minutes</label>
+              <input type="number" id="set-llm-enviroguard-max-stale-minutes" min="1" placeholder="120">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Max time without temperature update before using manual mode
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Hysteresis (°C)</label>
+              <input type="number" id="set-llm-enviroguard-hysteresis-c" placeholder="2">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Temperature buffer to prevent rapid switching
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Off Temperature (°C)</label>
+              <input type="number" id="set-llm-enviroguard-off-c" placeholder="42">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Temperature threshold to disable LLM completely
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Boost Temperature (°C)</label>
+              <input type="number" id="set-llm-enviroguard-boost-c" placeholder="16">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Temperature threshold for boost performance mode
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Performance Profiles (JSON)</label>
+              <textarea id="set-llm-enviroguard-profiles" rows="6" placeholder='{"manual":{"cpu_percent":80,"ctx_tokens":4096,"timeout_seconds":20},...}'></textarea>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Define custom performance profiles for different temperature conditions
+              </div>
+            </div>
+            
+            <h5 style="margin-top: 24px; margin-bottom: 12px; color: var(--text-primary); font-size: 14px;">Home Assistant Integration</h5>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-enviroguard-ha-enabled" />
+                <label for="set-llm-enviroguard-ha-enabled">Enable Home Assistant temperature sensor</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Home Assistant URL</label>
+              <input type="text" id="set-llm-enviroguard-ha-base-url" placeholder="http://homeassistant:8123">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Home Assistant Token</label>
+              <input type="password" id="set-llm-enviroguard-ha-token" placeholder="Long-lived access token">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Temperature Sensor Entity</label>
+              <input type="text" id="set-llm-enviroguard-ha-temp-entity" placeholder="sensor.living_room_temperature">
+            </div>
+
           </div>
         </div>
       </div>
@@ -1034,6 +1289,21 @@
               </div>
             </div>
             
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-personality-persistent" />
+                <label for="set-personality-persistent">Persistent personality (remember previous interactions)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-personality-family-friendly" />
+                <label for="set-personality-family-friendly">Family-friendly mode (filter inappropriate content)</label>
+              </div>
+            </div>
+
+			
             <div class="form-group">
               <label class="form-label">Active Persona</label>
               <select id="set-active-persona">
@@ -1121,6 +1391,20 @@
                 <label for="set-enable-action">Enable Action persona</label>
               </div>
             </div>
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-jarvis" />
+                <label for="set-enable-jarvis">Enable Jarvis persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-ops" />
+                <label for="set-enable-ops">Enable Ops persona</label>
+              </div>
+            </div>
+```
           </div>
         </div>
       </div>
@@ -1161,6 +1445,21 @@
               <label class="form-label">Report Time</label>
               <input type="text" id="set-weather-time" placeholder="07:00">
             </div>
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-weather-show-indoor" />
+                <label for="set-weather-show-indoor">Show indoor temperature in weather reports</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Indoor Temperature Sensor Entity</label>
+              <input type="text" id="set-weather-indoor-sensor-entity" placeholder="sensor.indoor_temperature">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Home Assistant entity ID for indoor temperature
+              </div>
+            </div>
+
             
             <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Daily Digest</h4>
             
@@ -1175,7 +1474,13 @@
               <label class="form-label">Digest Time</label>
               <input type="text" id="set-digest-time" placeholder="08:00">
             </div>
-            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ai-checkins-enabled" />
+                <label for="set-ai-checkins-enabled">Enable AI check-ins (proactive notifications)</label>
+              </div>
+            </div>
+
             <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Heartbeat</h4>
             
             <div class="form-group">
@@ -1269,8 +1574,87 @@
                 <label for="set-ingest-smtp-enabled">Enable SMTP message ingestion</label>
               </div>
             </div>
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">SMTP Intake Server</h4>
             
-            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Proxy</h4>
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-enabled" />
+                <label for="set-smtp-enabled">Enable SMTP server</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Bind Address</label>
+              <input type="text" id="set-smtp-bind" placeholder="0.0.0.0">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Network interface to bind to (0.0.0.0 = all interfaces)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Port</label>
+              <input type="number" id="set-smtp-port" min="1" placeholder="2525">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Max Message Size (bytes)</label>
+              <input type="number" id="set-smtp-max-bytes" min="1" placeholder="262144">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Maximum email size (262144 = 256KB)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Dummy Recipient</label>
+              <input type="text" id="set-smtp-dummy-rcpt" placeholder="alerts@jarvis.local">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Accept emails to any address (this is just a placeholder)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-accept-any-auth" />
+                <label for="set-smtp-accept-any-auth">Accept any authentication (no password checking)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Title Prefix</label>
+              <input type="text" id="set-smtp-rewrite-title-prefix" placeholder="[SMTP]">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Prefix added to subject lines of SMTP messages
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-allow-html" />
+                <label for="set-smtp-allow-html">Allow HTML emails</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Default Priority</label>
+              <input type="number" id="set-smtp-priority-default" min="1" max="10" placeholder="5">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Priority Map (JSON)</label>
+              <textarea id="set-smtp-priority-map" rows="3" placeholder='{"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5}'></textarea>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Map keywords in subject/body to priority levels
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-smtp-enabled" />
+                <label for="set-ingest-smtp-enabled">Enable SMTP message ingestion</label>
+              </div>
+            </div>
+
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Notification Proxy</h4>
             
             <div class="form-group">
               <div class="checkbox-group">
@@ -1280,11 +1664,38 @@
             </div>
             
             <div class="form-group">
+              <label class="form-label">Bind Address</label>
+              <input type="text" id="set-proxy-bind" placeholder="0.0.0.0">
+            </div>
+            
+            <div class="form-group">
               <label class="form-label">Proxy Port</label>
               <input type="number" id="set-proxy-port" min="1" placeholder="2580">
             </div>
             
-            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Webhook</h4>
+            <div class="form-group">
+              <label class="form-label">Gotify Proxy URL</label>
+              <input type="text" id="set-proxy-gotify-url" placeholder="http://10.0.0.99:8091">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Gotify server to proxy messages to
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Proxy URL</label>
+              <input type="text" id="set-proxy-ntfy-url" placeholder="http://10.0.0.99:8080">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                ntfy server to proxy messages to
+              </div>
+            </div>
+
+            
+            <div class="form-group">
+              <label class="form-label">Proxy Port</label>
+              <input type="number" id="set-proxy-port" min="1" placeholder="2580">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Webhook Intake</h4>
             
             <div class="form-group">
               <div class="checkbox-group">
@@ -1294,11 +1705,25 @@
             </div>
             
             <div class="form-group">
+              <label class="form-label">Bind Address</label>
+              <input type="text" id="set-webhook-bind" placeholder="0.0.0.0">
+            </div>
+            
+            <div class="form-group">
               <label class="form-label">Webhook Port</label>
               <input type="number" id="set-webhook-port" min="1" placeholder="2590">
             </div>
             
-            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Apprise</h4>
+            <div class="form-group">
+              <label class="form-label">Webhook Token (optional)</label>
+              <input type="password" id="set-webhook-token" placeholder="Leave blank to accept all requests">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Token for webhook authentication (optional)
+              </div>
+            </div>
+
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Apprise Server</h4>
             
             <div class="form-group">
               <div class="checkbox-group">
@@ -1313,11 +1738,53 @@
             </div>
             
             <div class="form-group">
+              <label class="form-label">Apprise Token</label>
+              <input type="password" id="set-intake-apprise-token" placeholder="change-me-very-long">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Authentication token for Apprise API
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-intake-apprise-accept-any-key" />
+                <label for="set-intake-apprise-accept-any-key">Accept any key (no key validation)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Allowed Keys (comma-separated)</label>
+              <input type="text" id="set-intake-apprise-allowed-keys" placeholder="key1,key2,key3">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Only used if "accept any key" is disabled
+              </div>
+            </div>
+            
+            <div class="form-group">
               <div class="checkbox-group">
                 <input type="checkbox" id="set-ingest-apprise-enabled" />
                 <label for="set-ingest-apprise-enabled">Enable Apprise message ingestion</label>
               </div>
             </div>
+           <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">WebSocket Intake</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-intake-ws-enabled" />
+                <label for="set-intake-ws-enabled">Enable WebSocket intake</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">WebSocket Port</label>
+              <input type="number" id="set-intake-ws-port" min="1" placeholder="8765">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">WebSocket Token</label>
+              <input type="password" id="set-intake-ws-token" placeholder="change-me-very-long">
+            </div>
+
           </div>
         </div>
       </div>
@@ -1348,7 +1815,14 @@
               <label class="form-label">API Key</label>
               <input type="text" id="set-uptimekuma-api-key" placeholder="Enter API key">
             </div>
-            
+            <div class="form-group">
+              <label class="form-label">Status Page Slug (optional)</label>
+              <input type="text" id="set-uptimekuma-status-slug" placeholder="my-status-page">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Slug for public status page
+              </div>
+            </div>
+
             <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Technitium DNS</h4>
             
             <div class="form-group">
@@ -1367,6 +1841,16 @@
               <label class="form-label">API Key</label>
               <input type="text" id="set-technitium-api-key" placeholder="Enter API key">
             </div>
+			<div class="form-group">
+              <label class="form-label">Username</label>
+              <input type="text" id="set-technitium-user" placeholder="admin">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Password</label>
+              <input type="password" id="set-technitium-pass" placeholder="Enter password">
+            </div>
+
           </div>
         </div>
       </div>
@@ -1422,11 +1906,74 @@
             </div>
             
             <div class="form-group">
+              <label class="form-label">ntfy Username (optional)</label>
+              <input type="text" id="set-ntfy-user" placeholder="For authenticated servers">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Password (optional)</label>
+              <input type="password" id="set-ntfy-pass" placeholder="Password">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Token (alternative)</label>
+              <input type="password" id="set-ntfy-token" placeholder="Authentication token">
+            </div>
+            
+            <div class="form-group">
               <div class="checkbox-group">
                 <input type="checkbox" id="set-push-ntfy-enabled" />
                 <label for="set-push-ntfy-enabled">Enable ntfy push notifications</label>
               </div>
             </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-ntfy-enabled" />
+                <label for="set-ingest-ntfy-enabled">Enable ntfy message ingestion</label>
+              </div>
+            </div>
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">SMTP Email Notifications</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-push-smtp-enabled" />
+                <label for="set-push-smtp-enabled">Enable SMTP email notifications</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Host</label>
+              <input type="text" id="set-push-smtp-host" placeholder="smtp.gmail.com">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Port</label>
+              <input type="number" id="set-push-smtp-port" min="1" placeholder="587">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Common ports: 25, 465 (SSL), 587 (TLS)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Username</label>
+              <input type="text" id="set-push-smtp-user" placeholder="your-email@gmail.com">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Password</label>
+              <input type="password" id="set-push-smtp-pass" placeholder="App password">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Send To Email</label>
+              <input type="email" id="set-push-smtp-to" placeholder="recipient@example.com">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Email address to receive notifications
+              </div>
+            </div>
+
+			
           </div>
         </div>
       </div>
