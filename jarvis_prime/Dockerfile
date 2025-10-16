@@ -48,6 +48,7 @@ COPY memory/system_prompt.txt /app/memory/system_prompt.txt
 COPY run.sh /run.sh
 COPY /core/bot.py /app/bot.py
 COPY /core/backup.py /app/backup.py
+COPY /core/auth.py /app/auth.py
 COPY /personality/chat.py /app/chat.py
 COPY /modules/arr.py /app/arr.py
 COPY /modules/weather.py /app/weather.py
