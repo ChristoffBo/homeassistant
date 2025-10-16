@@ -1,1 +1,19 @@
-1
+---
+- name: Docker cleanup (prune)
+  hosts: all
+  become: true
+  tasks:
+    - name: Remove unused Docker resources
+      ansible.builtin.shell: docker system prune -af --volumes
+      register: prune_result
+      ignore_errors: true
+
+    - name: Send notification to Jarvis
+      ansible.builtin.uri:
+        url: "http://jarvis_prime:2580/message?token=AVICbyEsE_krBsY"
+        method: POST
+        body_format: json
+        body:
+          title: "Docker Prune Completed"
+          message: "{{ prune_result.stdout | default('No output') }}"
+          priority: 4
