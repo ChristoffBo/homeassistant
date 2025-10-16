@@ -4,6 +4,8 @@
 
 Jarvis Prime is your standalone Notification Orchestrator, Automation Engine, Monitoring System, and Command Center. It centralizes, beautifies, and orchestrates notifications from across your homelab while providing powerful job scheduling, playbook execution, and real-time service monitoring capabilities. Raw events come in through multiple intakes (SMTP, Proxy, Webhook, Apprise, Gotify, ntfy, WebSocket), are polished by the Beautify Engine, and are pushed back out through Gotify, ntfy, email, or its own sleek dark-mode Web UI. Every notification arrives consistent, enriched, and alive with personality. Jarvis now also includes a Chat lane: a pure chat channel into your local LLM (no riffs, no personas) that works alongside notifications when the LLM is enabled.
 
+Jarvis Prime now includes a built-in authentication system that protects both the Web UI and API. On first startup, an **Initial Setup** overlay appears prompting you to create a username and password. Credentials are stored securely in `/data/users.json` with full encryption and password hashing. Once logged in, your session remains active for one hour of inactivity before automatically logging out for security. If the credentials file is deleted, Jarvis automatically recreates a default admin account on the next startup.
+
 ## Features
 
 ### Notification System
@@ -65,8 +67,8 @@ It renders using an offline local copy of **D3.js**, meaning it works entirely w
 - Displays connections as nodes (hosts, services, and core) with color-coded status.  
 - Zoom and pan supported (mouse, touch, mobile-friendly).  
 - Tooltips show IPs, groups, latency, and current state.  
-- Refreshes automatically every 10 seconds when the Atlas tab is active.
-- Works fully offline. 
+- Refreshes automatically every 10 seconds when the Atlas tab is active.  
+- Works fully offline.  
 
 ### Legend
 - 🟢 **Green** → Service or Host is healthy (`status: up`)  
@@ -124,7 +126,7 @@ Sentinel is a **manual-configuration monitoring system** — it only monitors wh
 - **Dashboard Metrics** – Displays uptime %, failed repairs, and total checks.  
 
 ### 🧩 Sentinel Template Deduplication Behavior
-Sentinel automatically **deduplicates templates** when loading from both sources:
+Sentinel automatically **deduplicates templates** when loading from both sources:  
 - `/app/sentinel_templates` → GitHub defaults  
 - `/share/jarvis_prime/sentinel/custom_templates` → Local overrides  
 If a template with the same **`id`** and **`name`** exists in both locations, **the GitHub version is always kept**.  
