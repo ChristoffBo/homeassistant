@@ -1,1 +1,20 @@
 
+---
+- name: Fail2ban status report
+  hosts: all
+  become: true
+  tasks:
+    - name: Get fail2ban status
+      ansible.builtin.shell: fail2ban-client status
+      register: status_result
+      ignore_errors: true
+
+    - name: Notify Jarvis
+      ansible.builtin.uri:
+        url: "http://jarvis_prime:2580/message?token=AVICbyEsE_krBsY"
+        method: POST
+        body_format: json
+        body:
+          title: "Fail2ban Report - {{ inventory_hostname }}"
+          message: "{{ status_result.stdout | default('Fail2ban not installed') }}"
+          priority: 3
