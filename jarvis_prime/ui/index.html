@@ -2691,13 +2691,26 @@
     </div>
   </div>
 
-  <div id="toast"></div>
-  
-  <!-- Scripts -->
-<div id="auth-overlay"></div>
+<div id="toast"></div>
 
-<!-- Load authentication first -->
-<script src="auth.js?v=1.0"></script>
+<!-- 🔐 Auth Overlay -->
+<div id="auth-overlay"></div>
+<script>
+(async () => {
+  try {
+    const res = await fetch("/api/auth/status");
+    if (!res.ok) throw new Error("Auth API not reachable");
+    const { status } = await res.json();
+    if (status === "setup" || status === "login") {
+      const script = document.createElement("script");
+      script.src = "auth.js?v=" + Date.now(); // bypass cache
+      document.head.appendChild(script);
+    }
+  } catch (e) {
+    console.error("[auth preload]", e);
+  }
+})();
+</script>
 
 <!-- Core application scripts -->
 <script src="app.js?v=5.0"></script>
