@@ -61,14 +61,16 @@ const Auth = {
     if (!overlay) {
       overlay = document.createElement("div");
       overlay.id = this.overlayId;
+      overlay.classList.add("active"); // ✅ make visible per CSS
       overlay.style = `
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.85);
         display: flex; align-items: center; justify-content: center;
         z-index: 99999; color: #fff; font-family: sans-serif;
       `;
-      // ⬇ FIX: attach directly to <html> root, bypassing Pico container layers
-      document.documentElement.appendChild(overlay);
+      document.body.appendChild(overlay);
+    } else {
+      overlay.classList.add("active"); // ✅ ensure visible even if already exists
     }
 
     overlay.innerHTML = `
@@ -109,6 +111,7 @@ const Auth = {
         const data = await res.json();
         if (!res.ok || !data.token) throw new Error(data.error || "Failed");
         this.setToken(data.token);
+        overlay.classList.remove("active"); // ✅ hide again
         overlay.remove();
         location.reload();
       } catch (e) {
