@@ -1,3 +1,7 @@
+
+## latest (2025-10-16 14:21:00)
+Atlas Added.
+Moved all settings to UI.
 ## latest (2025-10-13 14:21:00)
 Removed Nasty Sentinal dedup glitch.
 ## latest (2025-10-11 14:21:00)
