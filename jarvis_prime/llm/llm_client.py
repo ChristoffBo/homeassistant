@@ -936,7 +936,8 @@ def _sigalrm_handler(signum, frame):
 
 def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bool = False) -> str:
     try:
-        if hasattr(signal, "SIGALRM"):
+        # FIXED: Only set signal handlers in main thread (Docker/HA compatibility)
+        if hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGALRM, _sigalrm_handler)
             signal.alarm(max(1, int(timeout)))
 
@@ -955,7 +956,7 @@ def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bo
         ttft = time.time() - t0
         _log(f"TTFT ~ {ttft:.2f}s")
 
-        if hasattr(signal, "SIGALRM"):
+        if hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread():
             signal.alarm(0)
 
         txt = (out.get("choices") or [{}])[0].get("text", "")
