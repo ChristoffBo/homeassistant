@@ -60,7 +60,7 @@ if analytics_spec and analytics_spec.loader and _ANALYTICS_FILE.exists():
         status = event.get("status", "unknown")
         message = event.get("message", "")
         title = f"Analytics: {service}"
-        body = f"Service {service} is {status.upper()} — {message}"
+        body = f"Service {service} is {status.upper()} – {message}"
         priority = 8 if status == "down" else 5
         storage.save_message(title, body, "analytics", priority, {})  # type: ignore
         _broadcast("created")
@@ -346,17 +346,15 @@ async def api_get_config(request: web.Request):
     """GET /api/config - returns current merged config"""
     is_hassio = bool(os.getenv("HASSIO_TOKEN"))
     
-    config_path = Path("/data/config.json")
-    options_path = Path("/data/options.json")
+    # Use JARVIS_CONFIG_PATH if set, otherwise default based on HA mode
+    config_path = Path(os.getenv("JARVIS_CONFIG_PATH", "/data/options.json" if is_hassio else "/data/config.json"))
     
     config = {}
     try:
-        if options_path.exists():
-            config = json.loads(options_path.read_text())
-        elif config_path.exists():
+        if config_path.exists():
             config = json.loads(config_path.read_text())
     except Exception as e:
-        print(f"[config] Failed to load config: {e}")
+        print(f"[config] Failed to load config from {config_path}: {e}")
     
     return _json({
         "config": config,
@@ -376,11 +374,15 @@ async def api_save_config(request: web.Request):
     except Exception:
         return _json({"error": "bad json"}, status=400)
     
-    config_path = Path("/data/config.json")
+    # Use JARVIS_CONFIG_PATH if set, otherwise default to /data/config.json
+    config_path = Path(os.getenv("JARVIS_CONFIG_PATH", "/data/config.json"))
+    
     try:
         config_path.write_text(json.dumps(new_config, indent=2))
+        print(f"[config] Saved config to {config_path}")
         return _json({"ok": True, "restart_required": True})
     except Exception as e:
+        print(f"[config] Failed to save config to {config_path}: {e}")
         return _json({"error": str(e)}, status=500)
 
 # ---- LLM API ----

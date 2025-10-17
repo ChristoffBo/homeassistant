@@ -92,7 +92,7 @@ APP_NAME     = os.getenv("JARVIS_APP_NAME", "Jarvis")
 SILENT_REPOST    = os.getenv("SILENT_REPOST", "true").lower() in ("1","true","yes")
 BEAUTIFY_ENABLED = os.getenv("BEAUTIFY_ENABLED", "true").lower() in ("1","true","yes")
 
-# Feature toggles (env defaults; can be overridden by /data/options.json or /data/config.json)
+# Feature toggles (env defaults; can be overridden by config file)
 RADARR_ENABLED     = os.getenv("radarr_enabled", "false").lower() in ("1","true","yes")
 SONARR_ENABLED     = os.getenv("sonarr_enabled", "false").lower() in ("1","true","yes")
 WEATHER_ENABLED    = os.getenv("weather_enabled", "false").lower() in ("1","true","yes")
@@ -130,8 +130,9 @@ BEAUTIFY_LLM_ENABLED_ENV = os.getenv("BEAUTIFY_LLM_ENABLED", "true").lower() in 
 PROXY_ENABLED = PROXY_ENABLED_ENV
 CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
 DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
+
 # ============================
-# Load /data/options.json (overrides) + /data/config.json (fallback)
+# Load config with JARVIS_CONFIG_PATH support
 # ============================
 def _load_json(path):
     try:
@@ -140,11 +141,21 @@ def _load_json(path):
     except Exception:
         return {}
 
+# Determine config file location based on environment
+IS_HASSIO = bool(os.getenv("HASSIO_TOKEN"))
+CONFIG_PATH = os.getenv("JARVIS_CONFIG_PATH", "/data/options.json" if IS_HASSIO else "/data/config.json")
+
+print(f"[bot] Loading config from: {CONFIG_PATH} (HA mode: {IS_HASSIO})")
+
 merged = {}
 try:
-    options = _load_json("/data/options.json")
-    fallback = _load_json("/data/config.json")
-    merged = {**fallback, **options}
+    # Load the primary config file
+    merged = _load_json(CONFIG_PATH)
+    
+    # If we're in HA mode and options.json doesn't exist but config.json does, try config.json as fallback
+    if IS_HASSIO and not merged and os.path.exists("/data/config.json"):
+        merged = _load_json("/data/config.json")
+        print("[bot] Loaded fallback config from /data/config.json")
 
     RADARR_ENABLED  = bool(merged.get("radarr_enabled", RADARR_ENABLED))
     SONARR_ENABLED  = bool(merged.get("sonarr_enabled", SONARR_ENABLED))
@@ -190,10 +201,12 @@ try:
     _beautify_llm_enabled_opt = bool(merged.get("llm_persona_riffs_enabled", BEAUTIFY_LLM_ENABLED_ENV))
     os.environ["BEAUTIFY_LLM_ENABLED"] = "true" if _beautify_llm_enabled_opt else "false"
 
-except Exception:
+except Exception as e:
+    print(f"[bot] Config load error: {e}")
     PROXY_ENABLED = PROXY_ENABLED_ENV
     CHAT_ENABLED_FILE = CHAT_ENABLED_ENV
     DIGEST_ENABLED_FILE = DIGEST_ENABLED_ENV
+
 # ============================
 # Load optional modules
 # ============================
@@ -214,8 +227,8 @@ _personality = _load_module("personality", "/app/personality.py")
 _pstate = _load_module("personality_state", "/app/personality_state.py")
 _beautify = _load_module("beautify", "/app/beautify.py")
 _llm = _load_module("llm_client", "/app/llm_client.py")
-_heartbeat = _load_module("heartbeat", "/app/heartbeat.py")  # <— NEW: wire heartbeat
-_enviroguard = _load_module("enviroguard", "/app/enviroguard.py")  # <— NEW: external EnviroGuard
+_heartbeat = _load_module("heartbeat", "/app/heartbeat.py")
+_enviroguard = _load_module("enviroguard", "/app/enviroguard.py")
 
 ACTIVE_PERSONA, PERSONA_TOD = "neutral", ""
 if _pstate and hasattr(_pstate, "get_active_persona"):
@@ -356,21 +369,21 @@ def start_sidecars():
     # proxy
     if PROXY_ENABLED:
         if _port_in_use("127.0.0.1", 2580) or _port_in_use("0.0.0.0", 2580):
-            print("[bot] proxy.py already running on :2580 — skipping sidecar")
+            print("[bot] proxy.py already running on :2580 – skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/proxy.py"], "proxy.py", env=_forward_env())
 
     # smtp
     if SMTP_ENABLED and INGEST_SMTP_ENABLED:
         if _port_in_use("127.0.0.1", 2525) or _port_in_use("0.0.0.0", 2525):
-            print("[bot] smtp_server.py already running on :2525 — skipping sidecar")
+            print("[bot] smtp_server.py already running on :2525 – skipping sidecar")
         else:
             _start_sidecar(["python3", "/app/smtp_server.py"], "smtp_server.py", env=_forward_env())
 
     # webhook
     if WEBHOOK_ENABLED:
         if _port_in_use("127.0.0.1", int(WEBHOOK_PORT)) or _port_in_use("0.0.0.0", int(WEBHOOK_PORT)):
-            print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} — skipping sidecar")
+            print(f"[bot] webhook_server.py already running on :{WEBHOOK_PORT} – skipping sidecar")
         else:
             env = _forward_env({"webhook_bind": WEBHOOK_BIND, "webhook_port": str(WEBHOOK_PORT)})
             _start_sidecar(["python3", "/app/webhook_server.py"], "webhook_server.py", env=env)
@@ -378,7 +391,7 @@ def start_sidecars():
     # apprise
     if INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED:
         if _port_in_use("127.0.0.1", int(INTAKE_APPRISE_PORT)) or _port_in_use("0.0.0.0", int(INTAKE_APPRISE_PORT)):
-            print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} — skipping sidecar")
+            print(f"[bot] apprise intake already running on :{INTAKE_APPRISE_PORT} – skipping sidecar")
         else:
             # ensure internal is up before starting
             if not _port_in_use("127.0.0.1", 2599):
@@ -409,7 +422,7 @@ atexit.register(stop_sidecars)
 jarvis_app_id = None
 
 # --- ADDITIVE: bypass list + helper for chat.py payloads ---
-_CHAT_BYPASS_TITLES = {"Joke", "Quip", "Weird Fact", "Chat"}  # <— added "Chat" so chat replies are clean
+_CHAT_BYPASS_TITLES = {"Joke", "Quip", "Weird Fact", "Chat"}
 def _should_bypass_decor(title: str, extras=None) -> bool:
     try:
         if title in _CHAT_BYPASS_TITLES:
@@ -631,7 +644,7 @@ def _llm_then_beautify(title: str, message: str):
                 final,
                 mood=ACTIVE_PERSONA,
                 persona=ACTIVE_PERSONA,
-                persona_quip=True  # <— enable persona riffs for all intakes
+                persona_quip=True
             )
     except Exception as e:
         print(f"[bot] Beautify failed: {e}")
@@ -669,7 +682,7 @@ def _env_status_line() -> str:
     """Builds a single-line EnviroGuard status for the boot card."""
     try:
         if not bool(merged.get("llm_enviroguard_enabled", False)):
-            return "🌡️ EnviroGuard — OFF"
+            return "🌡️ EnviroGuard – OFF"
         prof = ""
         temp_s = ""
         if _enviroguard:
@@ -687,30 +700,30 @@ def _env_status_line() -> str:
                         temp_s = f", {float(t):.1f} °C"
                 except Exception:
                     temp_s = ""
-        return f"🌡️ EnviroGuard — ACTIVE" + (f" (profile={prof}{temp_s})" if prof else "")
+        return f"🌡️ EnviroGuard – ACTIVE" + (f" (profile={prof}{temp_s})" if prof else "")
     except Exception:
-        return "🌡️ EnviroGuard — ACTIVE"
+        return "🌡️ EnviroGuard – ACTIVE"
 
 def post_startup_card():
     lines = [
         "🧬 Prime Neural Boot",
-        f"🛰️ Engine: Neural Core — {'ONLINE' if merged.get('llm_enabled') else 'OFFLINE'}",
+        f"🛰️ Engine: Neural Core – {'ONLINE' if merged.get('llm_enabled') else 'OFFLINE'}",
         f"🧠 LLM: {'Enabled' if merged.get('llm_enabled') else 'Disabled'}",
         f"🗣️ Persona speaking: {ACTIVE_PERSONA} ({PERSONA_TOD})",
         "",
         "Modules:",
-        f"🎬 Radarr — {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
-        f"📺 Sonarr — {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
-        f"🌤️ Weather — {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
-        f"🧾 Digest — {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
-        f"💬 Chat — {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
-        f"📈 Uptime Kuma — {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
-        f"✉️ SMTP Intake — {'ACTIVE' if (SMTP_ENABLED and INGEST_SMTP_ENABLED) else 'OFF'}",
-        f"🔀 Proxy Intake — {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
-        f"🧠 DNS (Technitium) — {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
-        f"🔗 Webhook Intake — {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
-        f"📮 Apprise Intake — {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
-f"📡 WebSocket Intake — {'ACTIVE' if bool(merged.get('intake_ws_enabled', False)) else 'OFF'}",
+        f"🎬 Radarr – {'ACTIVE' if RADARR_ENABLED else 'OFF'}",
+        f"📺 Sonarr – {'ACTIVE' if SONARR_ENABLED else 'OFF'}",
+        f"🌤️ Weather – {'ACTIVE' if WEATHER_ENABLED else 'OFF'}",
+        f"🧾 Digest – {'ACTIVE' if DIGEST_ENABLED_FILE else 'OFF'}",
+        f"💬 Chat – {'ACTIVE' if CHAT_ENABLED_FILE else 'OFF'}",
+        f"📈 Uptime Kuma – {'ACTIVE' if KUMA_ENABLED else 'OFF'}",
+        f"✉️ SMTP Intake – {'ACTIVE' if (SMTP_ENABLED and INGEST_SMTP_ENABLED) else 'OFF'}",
+        f"🔀 Proxy Intake – {'ACTIVE' if PROXY_ENABLED else 'OFF'}",
+        f"🧠 DNS (Technitium) – {'ACTIVE' if TECHNITIUM_ENABLED else 'OFF'}",
+        f"🔗 Webhook Intake – {'ACTIVE' if WEBHOOK_ENABLED else 'OFF'}",
+        f"🔮 Apprise Intake – {'ACTIVE' if (INTAKE_APPRISE_ENABLED and INGEST_APPRISE_ENABLED) else 'OFF'}",
+        f"📡 WebSocket Intake – {'ACTIVE' if bool(merged.get('intake_ws_enabled', False)) else 'OFF'}",
         _env_status_line(),
         "",
         f"LLM rewrite: {'ON' if LLM_REWRITE_ENABLED else 'OFF'}",
@@ -752,10 +765,10 @@ def _handle_command(ncmd: str) -> bool:
                         temp_s = f", {float(t):.1f} °C"
                 except Exception:
                     temp_s = ""
-            msg = f"🌡️ EnviroGuard — ACTIVE (profile={prof}{temp_s})" if prof else "🌡️ EnviroGuard — ACTIVE"
+            msg = f"🌡️ EnviroGuard – ACTIVE (profile={prof}{temp_s})" if prof else "🌡️ EnviroGuard – ACTIVE"
             send_message("EnviroGuard", msg, priority=4, decorate=False)
         else:
-            send_message("EnviroGuard", "🌡️ EnviroGuard — OFF", priority=4, decorate=False)
+            send_message("EnviroGuard", "🌡️ EnviroGuard – OFF", priority=4, decorate=False)
         return True
     # --- end additive ---
 
@@ -768,7 +781,7 @@ def _handle_command(ncmd: str) -> bool:
                     except Exception: pass
                 send_message(
                     "EnviroGuard",
-                    "Auto mode resumed — ambient temperature will control the profile.",
+                    "Auto mode resumed – ambient temperature will control the profile.",
                     priority=4,
                     decorate=False
                 )
@@ -1026,7 +1039,7 @@ def _process_incoming(title: str, body: str, source: str = "intake", original_id
             set_active_persona(persona_switch)
             global ACTIVE_PERSONA, PERSONA_TOD
             ACTIVE_PERSONA, PERSONA_TOD = _pstate.get_active_persona()
-            # strip the wakeword phrases so they don’t clutter messages
+            # strip the wakeword phrases so they don't clutter messages
             for phrase in [
                 "jarvis tappit", "jarvis welkom", "fok",
                 "jarvis nerd", "jarvis dude", "jarvis chick",
@@ -1355,10 +1368,10 @@ async def _run_forever():
     asyncio.create_task(_digest_scheduler_loop())
     asyncio.create_task(listen_gotify())
     asyncio.create_task(_apprise_watchdog())
-    # asyncio.create_task(_joke_scheduler_loop())       # <— NEW
-    asyncio.create_task(_heartbeat_scheduler_loop())  # <— NEW
+    # asyncio.create_task(_joke_scheduler_loop())
+    asyncio.create_task(_heartbeat_scheduler_loop())
 
-    # EnviroGuard background — externalized module
+    # EnviroGuard background – externalized module
     if bool(merged.get("llm_enviroguard_enabled", False)) and _enviroguard:
         try:
             # Try richest signature first
