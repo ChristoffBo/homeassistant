@@ -3,5 +3,5 @@
     "aarch64": "zoraxydocker/zoraxy:latest",
     "amd64": "zoraxydocker/zoraxy:latest"
   },
-  "version": "v3.2.7"
+  "version": "v3.2.8"
 }
