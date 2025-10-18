@@ -1101,22 +1101,22 @@ class Sentinel:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
-        # Get stats summary
+        # Get stats summary - COALESCE handles NULL values when table is empty
         cur.execute("""
             SELECT 
                 COUNT(*) as total_services,
-                SUM(total_checks) as total_checks,
-                SUM(successful_checks) as successful_checks,
-                SUM(failed_checks) as failed_checks,
-                SUM(total_repairs) as total_repairs,
-                SUM(successful_repairs) as successful_repairs
+                COALESCE(SUM(total_checks), 0) as total_checks,
+                COALESCE(SUM(successful_checks), 0) as successful_checks,
+                COALESCE(SUM(failed_checks), 0) as failed_checks,
+                COALESCE(SUM(total_repairs), 0) as total_repairs,
+                COALESCE(SUM(successful_repairs), 0) as successful_repairs
             FROM sentinel_stats
         """)
         
         stats = dict(cur.fetchone())
         
         # Calculate success rate
-        if stats["total_checks"] > 0:
+        if stats["total_checks"] and stats["total_checks"] > 0:
             stats["success_rate"] = round((stats["successful_checks"] / stats["total_checks"]) * 100, 2)
         else:
             stats["success_rate"] = 0
