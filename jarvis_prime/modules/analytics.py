@@ -397,6 +397,13 @@ class AnalyticsDB:
         if row and row['total_checks'] > 0:
             stats = dict(row)
             stats['uptime_percentage'] = (stats['up_checks'] / stats['total_checks']) * 100
+            # Round response times to 2 decimal places
+            if stats.get('avg_response_time'):
+                stats['avg_response_time'] = round(stats['avg_response_time'], 2)
+            if stats.get('min_response_time'):
+                stats['min_response_time'] = round(stats['min_response_time'], 2)
+            if stats.get('max_response_time'):
+                stats['max_response_time'] = round(stats['max_response_time'], 2)
             return stats
         
         return None
@@ -787,47 +794,58 @@ class NetworkScanner:
             logger.info(f"Running network scan: {' '.join(cmd)}")
             
             # Run arp-scan
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0:
-                logger.error(f"arp-scan failed: {stderr.decode()}")
-                # Fallback to ip neigh if arp-scan not available
-                return await self._fallback_scan()
-            
-            # Parse arp-scan output
-            output = stdout.decode()
-            for line in output.split('\n'):
-                # Match lines like: 192.168.1.1  00:11:22:33:44:55  Vendor Name
-                match = re.match(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F:]{17})\s*(.*)', line)
-                if match:
-                    ip, mac, vendor = match.groups()
-                    
-                    # Try to resolve hostname
-                    hostname = await self._resolve_hostname(ip)
-                    
-                    device_dict = {
-                        'ip_address': ip,
-                        'mac_address': mac.upper(),
-                        'hostname': hostname,
-                        'vendor': vendor.strip() if vendor else None
-                    }
-                    devices.append(device_dict)
-            
-            scan_duration = time.time() - start_time
-            logger.info(f"Network scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
-            
-            # Update database
-            await self._process_scan_results(devices)
-            self.db.record_scan(len(devices), scan_duration)
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+                
+                if process.returncode != 0:
+                    error_msg = stderr.decode().strip()
+                    logger.error(f"arp-scan failed (returncode {process.returncode}): {error_msg}")
+                    # Fallback to ip neigh if arp-scan not available
+                    return await self._fallback_scan()
+                
+                # Parse arp-scan output
+                output = stdout.decode()
+                for line in output.split('\n'):
+                    # Match lines like: 192.168.1.1  00:11:22:33:44:55  Vendor Name
+                    match = re.match(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F:]{17})\s*(.*)', line)
+                    if match:
+                        ip, mac, vendor = match.groups()
+                        
+                        # Try to resolve hostname
+                        hostname = await self._resolve_hostname(ip)
+                        
+                        device_dict = {
+                            'ip_address': ip,
+                            'mac_address': mac.upper(),
+                            'hostname': hostname,
+                            'vendor': vendor.strip() if vendor else None
+                        }
+                        devices.append(device_dict)
+                
+                scan_duration = time.time() - start_time
+                logger.info(f"Network scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
+                
+                # Update database
+                await self._process_scan_results(devices)
+                self.db.record_scan(len(devices), scan_duration)
+                
+            except FileNotFoundError:
+                logger.error("arp-scan not found, using fallback method (ip neigh)")
+                devices = await self._fallback_scan()
+            except asyncio.TimeoutError:
+                logger.error("Network scan timed out after 30 seconds")
+            except Exception as scan_error:
+                logger.error(f"arp-scan execution error: {scan_error}")
+                devices = await self._fallback_scan()
             
         except Exception as e:
-            logger.error(f"Network scan error: {e}")
+            logger.error(f"Network scan error: {e}", exc_info=True)
         finally:
             self.scanning = False
         
@@ -837,6 +855,7 @@ class NetworkScanner:
         """Fallback scan using ip neigh (ARP cache)"""
         logger.info("Using fallback scan method (ip neigh)")
         devices = []
+        start_time = time.time()
         
         try:
             process = await asyncio.create_subprocess_exec(
@@ -845,7 +864,7 @@ class NetworkScanner:
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
             output = stdout.decode()
             
             for line in output.split('\n'):
@@ -861,9 +880,18 @@ class NetworkScanner:
                         'hostname': hostname,
                         'vendor': None
                     })
+            
+            # Update database with fallback results
+            if devices:
+                await self._process_scan_results(devices)
+                scan_duration = time.time() - start_time
+                self.db.record_scan(len(devices), scan_duration)
+                logger.info(f"Fallback scan found {len(devices)} devices in {scan_duration:.2f}s")
         
+        except asyncio.TimeoutError:
+            logger.error("Fallback scan timed out")
         except Exception as e:
-            logger.error(f"Fallback scan error: {e}")
+            logger.error(f"Fallback scan error: {e}", exc_info=True)
         
         return devices
     
@@ -1298,15 +1326,31 @@ async def get_health_score(request: web.Request):
     
     if not services:
         return _json({
-            'score': 100,
+            'health_score': 100,
             'status': 'healthy',
-            'message': 'No services configured'
+            'message': 'No services configured',
+            'total_services': 0,
+            'up_services': 0,
+            'down_services': 0,
+            'enabled_services': 0
         })
     
     total_score = 0
+    up_services = 0
+    down_services = 0
+    enabled_count = 0
+    
     for service in services:
         if not service['enabled']:
             continue
+        
+        enabled_count += 1
+        
+        # Count up/down services
+        if service.get('current_status') == 'up':
+            up_services += 1
+        else:
+            down_services += 1
         
         stats = db.get_uptime_stats(service['service_name'], hours=24)
         if stats:
@@ -1314,7 +1358,7 @@ async def get_health_score(request: web.Request):
         else:
             total_score += 100
     
-    avg_score = total_score / len([s for s in services if s['enabled']]) if services else 100
+    avg_score = total_score / enabled_count if enabled_count > 0 else 100
     
     if avg_score >= 95:
         status = 'healthy'
@@ -1324,10 +1368,12 @@ async def get_health_score(request: web.Request):
         status = 'critical'
     
     return _json({
-        'score': round(avg_score, 2),
+        'health_score': round(avg_score, 2),
         'status': status,
         'total_services': len(services),
-        'enabled_services': len([s for s in services if s['enabled']])
+        'up_services': up_services,
+        'down_services': down_services,
+        'enabled_services': enabled_count
     })
 
 
