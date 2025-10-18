@@ -952,25 +952,14 @@ class NetworkScanner:
         scanned_macs = {d['mac_address'] for d in devices}
         
         # Update existing devices and add new ones
-        for device_dict in devices:
+        for device_dict in devices: 
             mac = device_dict['mac_address']
             is_new = mac not in known_macs
-            
-            device = NetworkDevice(
-                mac_address=mac,
-                ip_address=device_dict['ip_address'],
-                hostname=device_dict.get('hostname'),
-                vendor=device_dict.get('vendor'),
-                first_seen=now if is_new else None,
-                last_seen=now
-            )
-            
-            self.db.upsert_device(device)
-            
+
             # Record event for new devices
-            if is_new:
+            if is_new:                   
                 logger.info(f"New device detected: {mac} ({device_dict['ip_address']})")
-				await self.detect_common_services(device_dict['ip_address'])
+                await self.detect_common_services(device_dict['ip_address'])
 
                 self.db.record_network_event(
                     'new_device',
@@ -978,10 +967,16 @@ class NetworkScanner:
                     device_dict['ip_address'],
                     device_dict.get('hostname')
                 )
-                
+
                 # Send notification if alerts enabled
                 if self.alert_new_devices and self.notification_callback:
                     await self._notify_new_device(device_dict)
+
+
+    # Send notification if alerts enabled
+    if self.alert_new_devices and self.notification_callback:
+        await self._notify_new_device(device_dict)
+
         
         # Detect offline monitored devices
         monitored_devices = self.db.get_monitored_devices()
