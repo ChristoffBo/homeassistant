@@ -1839,43 +1839,32 @@ def register_routes(app: web.Application):
 
 async def analytics_notify(source: str, level: str, message: str):
     """
-    Unified fan-out notifier for Analytics & Network events.
-    Sends to Inbox/UI (process_incoming) and all outbound channels (Gotify, ntfy, email).
+    Unified notification handler for Analytics events.
+    Sends alerts via Jarvis pipeline (Inbox, UI, Gotify/ntfy, etc.)
     """
     try:
-        logger.info(f"Analytics notification: [{level}] {source}: {message}")
+        # Prepare message
+        title = f"Analytics — {source}"
+        body = f"[{level.upper()}] {message}"
+        priority = 5 if level.lower() in ["critical", "error", "down"] else 3
 
-        # Import main notifier safely inside function
-        from notify import process_incoming
-        from bot import send_message
+        # Send through Jarvis unified notification system
         try:
-            from notify import broadcast_websocket
-        except ImportError:
-            broadcast_websocket = None
-
-        # 1️⃣ Beautify + Inbox + Web UI
-        await process_incoming({
-            "source": source,
-            "level": level,
-            "message": message,
-            "origin": "analytics"
-        })
-
-        # 2️⃣ External fan-out (Gotify / ntfy / email)
-        title = f"Analytics: {source} [{level.upper()}]"
-        send_message(title, message, priority=5)
-
-        # 3️⃣ Live UI websocket broadcast (if active)
-        if broadcast_websocket:
-            await broadcast_websocket({
-                "type": "analytics_event",
-                "source": source,
-                "level": level,
-                "message": message
-            })
+            from bot import process_incoming
+            process_incoming(title, body, source="analytics", priority=priority)
+            logger.info(f"Analytics notification dispatched: {body}")
+        except Exception as e:
+            logger.warning(f"process_incoming unavailable: {e}")
+            # Fallback to error notifier if Jarvis bot is down
+            try:
+                from errors import notify_error
+                notify_error(f"[Analytics] {body}", context="analytics")
+            except Exception:
+                logger.error(f"Analytics fallback failed: {e}")
 
     except Exception as e:
-        logger.error(f"Analytics fan-out failed: {e}")
+        logger.error(f"Failed to send analytics notification: {e}")
+
 
 
 
