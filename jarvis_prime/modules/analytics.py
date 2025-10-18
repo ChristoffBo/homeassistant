@@ -1839,13 +1839,39 @@ def register_routes(app: web.Application):
 
 async def analytics_notify(source: str, level: str, message: str):
     """
-    Notification callback for analytics module.
-    This is called by the health monitor when incidents occur.
+    Unified fan-out notifier for Analytics & Network events.
+    Called by the health monitor and network scanner when incidents occur.
     """
     try:
         logger.info(f"Analytics notification: [{level}] {source}: {message}")
+
+        # Local imports avoid circular import issues
+        from notify import process_incoming
+        try:
+            from notify import broadcast_websocket
+        except ImportError:
+            broadcast_websocket = None
+
+        # Send to central inbox (Gotify/ntfy/Web UI)
+        await process_incoming({
+            "source": source,
+            "level": level,
+            "message": message,
+            "origin": "analytics"
+        })
+
+        # Live UI push (if WS active)
+        if broadcast_websocket:
+            await broadcast_websocket({
+                "type": "analytics_event",
+                "source": source,
+                "level": level,
+                "message": message
+            })
+
     except Exception as e:
-        logger.error(f"Failed to send analytics notification: {e}")
+        logger.error(f"Analytics fan-out failed: {e}")
+
 
 
 async def init_analytics(app: web.Application, notification_callback: Optional[Callable] = None):
