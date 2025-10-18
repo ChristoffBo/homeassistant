@@ -779,149 +779,130 @@ class AnalyticsDB:
 
 class NetworkScanner:
     """Network device scanner using ARP"""
-    
+
     def __init__(self, db: AnalyticsDB):
         self.db = db
         self.scanning = False
         self.monitoring = False
-        self.monitor_interval = 900  # 5 minutes
+        self.monitor_interval = 900  # 15 minutes
         self.monitor_task = None
         self.alert_new_devices = True
         self.notification_callback = None
-    
+
     def set_notification_callback(self, callback: Callable):
         """Set callback for network notifications"""
         self.notification_callback = callback
-    
+
     async def scan_network(self, interface: str = None, subnet: str = None) -> List[Dict]:
-        """
-        Perform ARP scan of local network
-        Returns list of discovered devices
-        """
+        """Perform ARP scan of local network"""
         if self.scanning:
             logger.warning("Scan already in progress")
             return []
-        
+
         self.scanning = True
         start_time = time.time()
         devices = []
-        
+
         try:
             # Build arp-scan command
             cmd = ['arp-scan', '--localnet', '--retry=3', '--timeout=1000']
-            
             if interface:
                 cmd.extend(['--interface', interface])
-            
             if subnet:
                 cmd = ['arp-scan', subnet, '--retry=3', '--timeout=1000']
                 if interface:
                     cmd.extend(['--interface', interface])
-            
-            logger.info(f"Running network scan: {' '.join(cmd)}")
-            
-            # Run arp-scan
+
+            logger.info(f"[Analytics] Running network scan: {' '.join(cmd)}")
+
             try:
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                
+
                 stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
-                
                 if process.returncode != 0:
                     error_msg = stderr.decode().strip()
-                    logger.error(f"arp-scan failed (returncode {process.returncode}): {error_msg}")
-                    # Fallback to ip neigh if arp-scan not available
+                    logger.error(f"arp-scan failed (return {process.returncode}): {error_msg}")
                     return await self._fallback_scan()
-                
-                # Parse arp-scan output
+
                 output = stdout.decode()
                 for line in output.split('\n'):
-                    # Match lines like: 192.168.1.1  00:11:22:33:44:55  Vendor Name
                     match = re.match(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F:]{17})\s*(.*)', line)
                     if match:
                         ip, mac, vendor = match.groups()
-                        
-                        # Try to resolve hostname
                         hostname = await self._resolve_hostname(ip)
-                        
-                        device_dict = {
+                        devices.append({
                             'ip_address': ip,
                             'mac_address': mac.upper(),
                             'hostname': hostname,
                             'vendor': vendor.strip() if vendor else None
-                        }
-                        devices.append(device_dict)
-                
+                        })
+
                 scan_duration = time.time() - start_time
-                logger.info(f"Network scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
-                
-                # Update database
+                logger.info(f"[Analytics] Network scan complete: {len(devices)} devices in {scan_duration:.2f}s")
+
                 await self._process_scan_results(devices)
                 self.db.record_scan(len(devices), scan_duration)
-                
+
             except FileNotFoundError:
-                logger.error("arp-scan not found, using fallback method (ip neigh)")
+                logger.warning("[Analytics] arp-scan not found, using fallback method (ip neigh)")
                 devices = await self._fallback_scan()
             except asyncio.TimeoutError:
-                logger.error("Network scan timed out after 30 seconds")
+                logger.error("[Analytics] Network scan timed out (30s)")
             except Exception as scan_error:
-                logger.error(f"arp-scan execution error: {scan_error}")
+                logger.error(f"[Analytics] arp-scan execution error: {scan_error}")
                 devices = await self._fallback_scan()
-            
+
         except Exception as e:
-            logger.error(f"Network scan error: {e}", exc_info=True)
+            logger.error(f"[Analytics] Network scan fatal error: {e}", exc_info=True)
         finally:
             self.scanning = False
-        
+
         return devices
-    
+
     async def _fallback_scan(self) -> List[Dict]:
         """Fallback scan using ip neigh (ARP cache)"""
-        logger.info("Using fallback scan method (ip neigh)")
+        logger.info("[Analytics] Using fallback scan method (ip neigh)")
         devices = []
         start_time = time.time()
-        
+
         try:
             process = await asyncio.create_subprocess_exec(
                 'ip', 'neigh', 'show',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10.0)
             output = stdout.decode()
-            
+
             for line in output.split('\n'):
-                # Match lines like: 192.168.1.1 dev eth0 lladdr 00:11:22:33:44:55 REACHABLE
                 match = re.search(r'(\d+\.\d+\.\d+\.\d+).*lladdr\s+([0-9a-fA-F:]{17})', line)
                 if match:
                     ip, mac = match.groups()
                     hostname = await self._resolve_hostname(ip)
-                    
                     devices.append({
                         'ip_address': ip,
                         'mac_address': mac.upper(),
                         'hostname': hostname,
                         'vendor': None
                     })
-            
-            # Update database with fallback results
+
             if devices:
                 await self._process_scan_results(devices)
                 scan_duration = time.time() - start_time
                 self.db.record_scan(len(devices), scan_duration)
-                logger.info(f"Fallback scan found {len(devices)} devices in {scan_duration:.2f}s")
-        
+                logger.info(f"[Analytics] Fallback scan found {len(devices)} devices in {scan_duration:.2f}s")
+
         except asyncio.TimeoutError:
-            logger.error("Fallback scan timed out")
+            logger.error("[Analytics] Fallback scan timed out")
         except Exception as e:
-            logger.error(f"Fallback scan error: {e}", exc_info=True)
-        
+            logger.error(f"[Analytics] Fallback scan error: {e}", exc_info=True)
+
         return devices
-    
+
     async def _resolve_hostname(self, ip: str) -> Optional[str]:
         """Try to resolve hostname from IP"""
         try:
@@ -930,121 +911,105 @@ class NetworkScanner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=2.0)
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=2.0)
             output = stdout.decode()
-            
-            # Parse output like: 1.168.192.in-addr.arpa domain name pointer hostname.local.
             match = re.search(r'pointer\s+(\S+)', output)
             if match:
-                hostname = match.group(1).rstrip('.')
-                return hostname
-        
+                return match.group(1).rstrip('.')
         except Exception:
             pass
-        
         return None
-    
-        async def _process_scan_results(self, devices: List[Dict]):
-            """Process scan results and update database"""
-            now = int(time.time())
-            known_macs = {d['mac_address'] for d in self.db.get_all_devices()}
-            scanned_macs = {d['mac_address'] for d in devices}
 
-        # Update existing devices and add new ones
+    async def _process_scan_results(self, devices: List[Dict]):
+        """Process scan results and update database"""
+        now = int(time.time())
+        known_macs = {d['mac_address'] for d in self.db.get_all_devices()}
+        scanned_macs = {d['mac_address'] for d in devices}
+
         for device_dict in devices:
             mac = device_dict['mac_address']
             is_new = mac not in known_macs
 
-            # Record event for new devices
+            device = NetworkDevice(
+                mac_address=mac,
+                ip_address=device_dict['ip_address'],
+                hostname=device_dict.get('hostname'),
+                vendor=device_dict.get('vendor'),
+                custom_name=device_dict.get('hostname'),
+                first_seen=now,
+                last_seen=now,
+                is_permanent=False,
+                is_monitored=False
+            )
+            self.db.upsert_device(device)
+
             if is_new:
-                logger.info(f"New device detected: {mac} ({device_dict['ip_address']})")
-                await self.detect_common_services(device_dict['ip_address'])
-
-                self.db.record_network_event(
-                    'new_device',
-                    mac,
-                    device_dict['ip_address'],
-                    device_dict.get('hostname')
-                )
-
-                # Send notification if alerts enabled
+                logger.info(f"[Analytics] New device: {mac} ({device_dict['ip_address']})")
+                self.db.record_network_event('new_device', mac, device_dict['ip_address'], device_dict.get('hostname'))
                 if self.alert_new_devices and self.notification_callback:
                     await self._notify_new_device(device_dict)
 
-
-
-        
         # Detect offline monitored devices
         monitored_devices = self.db.get_monitored_devices()
         for device in monitored_devices:
             if device['mac_address'] not in scanned_macs:
                 time_offline = now - device['last_seen']
-                # Only alert if offline for > 10 minutes
                 if time_offline > 600:
-                    logger.warning(f"Monitored device offline: {device['mac_address']}")
+                    logger.warning(f"[Analytics] Device offline: {device['mac_address']}")
                     self.db.record_network_event(
                         'device_offline',
                         device['mac_address'],
                         device['ip_address'],
                         device.get('hostname')
                     )
-                    
                     if self.notification_callback:
                         await self._notify_device_offline(device)
-    
+
+        # Record scan summary
+        self.db.record_scan(len(devices), time.time() - now)
+        logger.info(f"[Analytics] Recorded scan ({len(devices)} devices)")
+
     async def _notify_new_device(self, device: Dict):
-        """Send notification for new device"""
         if not self.notification_callback:
             return
-        
         message = (
-            f"🔍 New device detected on network\n"
+            f"🔍 New device detected\n"
             f"MAC: {device['mac_address']}\n"
             f"IP: {device['ip_address']}\n"
         )
-        
         if device.get('hostname'):
             message += f"Hostname: {device['hostname']}\n"
         if device.get('vendor'):
             message += f"Vendor: {device['vendor']}\n"
-        
         try:
             await self.notification_callback("network", "info", message)
         except Exception as e:
-            logger.error(f"Failed to send new device notification: {e}")
-    
+            logger.error(f"[Analytics] Failed new-device notification: {e}")
+
     async def _notify_device_offline(self, device: Dict):
-        """Send notification for offline monitored device"""
         if not self.notification_callback:
             return
-        
         message = (
-            f"⚠️ Monitored device offline\n"
+            f"⚠️ Device offline\n"
             f"MAC: {device['mac_address']}\n"
             f"IP: {device['ip_address']}\n"
         )
-        
         if device.get('hostname'):
             message += f"Hostname: {device['hostname']}\n"
-        
         try:
             await self.notification_callback("network", "warning", message)
         except Exception as e:
-            logger.error(f"Failed to send offline device notification: {e}")
-    
+            logger.error(f"[Analytics] Failed offline notification: {e}")
+
     async def start_monitoring(self):
-        """Start continuous network monitoring"""
         if self.monitoring:
-            logger.warning("Network monitoring already active")
+            logger.warning("[Analytics] Network monitoring already active")
             return
-        
         self.monitoring = True
         self.monitor_task = asyncio.create_task(self._monitoring_loop())
-        logger.info("Network monitoring started")
-    
+        logger.info("[Analytics] Network monitoring started")
+
     async def stop_monitoring(self):
-        """Stop continuous network monitoring"""
         self.monitoring = False
         if self.monitor_task:
             self.monitor_task.cancel()
@@ -1052,10 +1017,9 @@ class NetworkScanner:
                 await self.monitor_task
             except asyncio.CancelledError:
                 pass
-        logger.info("Network monitoring stopped")
-    
+        logger.info("[Analytics] Network monitoring stopped")
+
     async def _monitoring_loop(self):
-        """Continuous monitoring loop"""
         while self.monitoring:
             try:
                 await self.scan_network()
@@ -1063,13 +1027,13 @@ class NetworkScanner:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Monitoring loop error: {e}")
+                logger.error(f"[Analytics] Monitoring loop error: {e}")
                 await asyncio.sleep(60)
-    
+
     def set_alert_new_devices(self, enabled: bool):
-        """Enable/disable new device alerts"""
         self.alert_new_devices = enabled
-        logger.info(f"New device alerts: {'enabled' if enabled else 'disabled'}")
+        logger.info(f"[Analytics] New-device alerts {'enabled' if enabled else 'disabled'}")
+
 # ─────────────────────────────────────────────────────────────
 # Common Service Port Scan Integration (Extended 110+ ports)
 # ─────────────────────────────────────────────────────────────
