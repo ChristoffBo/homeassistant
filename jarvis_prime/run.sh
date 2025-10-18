@@ -2,6 +2,17 @@
 set -euo pipefail
 CONFIG_PATH=/data/options.json
 
+############################################
+# System Package Self-Heal (Debian Base)
+############################################
+echo "[init] Updating base system packages..."
+apt-get update -y >/dev/null 2>&1 || true
+apt-get upgrade -y >/dev/null 2>&1 || true
+
+echo "[init] Installing required network tools (arp-scan, iproute2, dnsutils)..."
+apt-get install -y --no-install-recommends arp-scan iproute2 dnsutils >/dev/null 2>&1 || true
+echo "[init] Network utilities ready."
+
 banner() {
   local llm="$1"
   local engine="$2"
