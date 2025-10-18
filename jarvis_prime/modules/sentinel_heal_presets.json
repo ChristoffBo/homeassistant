@@ -1,0 +1,62 @@
+[
+  {
+    "label": "Restart Docker Container",
+    "cmd": "docker restart {name}"
+  },
+  {
+    "label": "Restart Systemd Service",
+    "cmd": "systemctl restart {name}"
+  },
+  {
+    "label": "Recreate Container",
+    "cmd": "docker rm -f {name} && docker-compose up -d {name}"
+  },
+  {
+    "label": "Wake Host via MAC",
+    "cmd": "wakeonlan {mac}"
+  },
+  {
+    "label": "Reboot Host",
+    "cmd": "reboot"
+  },
+  {
+    "label": "Restart Docker Engine",
+    "cmd": "systemctl restart docker"
+  },
+  {
+    "label": "Restart SSH Service",
+    "cmd": "systemctl restart ssh"
+  },
+  {
+    "label": "Restart Plex (containerized)",
+    "cmd": "docker restart plex"
+  },
+  {
+    "label": "Restart Transmission",
+    "cmd": "systemctl restart transmission-daemon"
+  },
+  {
+    "label": "Clear Docker Logs",
+    "cmd": "truncate -s 0 $(docker inspect --format='{{.LogPath}}' {name})"
+  },
+  {
+    "label": "Restart Nginx",
+    "cmd": "systemctl restart nginx"
+  },
+  {
+    "label": "Restart PostgreSQL",
+    "cmd": "systemctl restart postgresql"
+  },
+  {
+    "label": "Restart MySQL/MariaDB",
+    "cmd": "systemctl restart mysql"
+  },
+  {
+    "label": "Flush DNS Cache",
+    "cmd": "systemctl restart systemd-resolved"
+  },
+  {
+    "label": "Kill Process by Name",
+    "cmd": "pkill -9 {name}"
+  }
+]

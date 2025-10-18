@@ -1,0 +1,62 @@
+[
+  {
+    "label": "Check Docker Container",
+    "check_command": "docker inspect -f '{{.State.Running}}' {name}",
+    "expected_output": "true"
+  },
+  {
+    "label": "Check HDD SMART Health",
+    "check_command": "smartctl -H /dev/{device}",
+    "expected_output": "PASSED"
+  },
+  {
+    "label": "Check Disk Usage",
+    "check_command": "df -h | grep {mount}",
+    "expected_output": ""
+  },
+  {
+    "label": "Check Systemd Service",
+    "check_command": "systemctl is-active {name}",
+    "expected_output": "active"
+  },
+  {
+    "label": "Check Ping",
+    "check_command": "ping -c1 {host}",
+    "expected_output": "0"
+  },
+  {
+    "label": "Check CPU Load",
+    "check_command": "uptime | awk -F'load average:' '{print $2}'",
+    "expected_output": ""
+  },
+  {
+    "label": "Check Memory Usage",
+    "check_command": "free -m | awk 'NR==2{printf \"%.0f\", $3*100/$2}'",
+    "expected_output": ""
+  },
+  {
+    "label": "Check Process Running",
+    "check_command": "pgrep -c {name}",
+    "expected_output": "1"
+  },
+  {
+    "label": "Check Port Open",
+    "check_command": "nc -z localhost {port} && echo 'open' || echo 'closed'",
+    "expected_output": "open"
+  },
+  {
+    "label": "Check HTTP Response",
+    "check_command": "curl -I -s {url} | head -n 1 | cut -d' ' -f2",
+    "expected_output": "200"
+  },
+  {
+    "label": "Check File Exists",
+    "check_command": "test -f {path} && echo 'exists' || echo 'missing'",
+    "expected_output": "exists"
+  },
+  {
+    "label": "Check Docker Compose Services",
+    "check_command": "docker-compose -f {path} ps --services --filter status=running | wc -l",
+    "expected_output": ""
+  }
+]
