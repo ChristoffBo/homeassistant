@@ -380,7 +380,7 @@ body {
 }
 
 .metric-value {
-  font-size: 48px;
+  font-size: 18px;
   font-weight: 700;
   font-family: 'Roboto Mono', monospace;
   color: var(--text-primary);
@@ -389,7 +389,7 @@ body {
 }
 
 .metric-label {
-  font-size: 12px;
+  font-size: 10px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
