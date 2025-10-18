@@ -1840,19 +1840,20 @@ def register_routes(app: web.Application):
 async def analytics_notify(source: str, level: str, message: str):
     """
     Unified fan-out notifier for Analytics & Network events.
-    Called by the health monitor and network scanner when incidents occur.
+    Sends to Inbox/UI (process_incoming) and all outbound channels (Gotify, ntfy, email).
     """
     try:
         logger.info(f"Analytics notification: [{level}] {source}: {message}")
 
-        # Local imports avoid circular import issues
+        # Import main notifier safely inside function
         from notify import process_incoming
+        from bot import send_message
         try:
             from notify import broadcast_websocket
         except ImportError:
             broadcast_websocket = None
 
-        # Send to central inbox (Gotify/ntfy/Web UI)
+        # 1️⃣ Beautify + Inbox + Web UI
         await process_incoming({
             "source": source,
             "level": level,
@@ -1860,7 +1861,11 @@ async def analytics_notify(source: str, level: str, message: str):
             "origin": "analytics"
         })
 
-        # Live UI push (if WS active)
+        # 2️⃣ External fan-out (Gotify / ntfy / email)
+        title = f"Analytics: {source} [{level.upper()}]"
+        send_message(title, message, priority=5)
+
+        # 3️⃣ Live UI websocket broadcast (if active)
         if broadcast_websocket:
             await broadcast_websocket({
                 "type": "analytics_event",
@@ -1871,6 +1876,7 @@ async def analytics_notify(source: str, level: str, message: str):
 
     except Exception as e:
         logger.error(f"Analytics fan-out failed: {e}")
+
 
 
 
