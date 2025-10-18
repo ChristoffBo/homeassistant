@@ -516,7 +516,6 @@
         <button class="orch-tab sentinel-subnav-btn" data-view="templates">Templates</button>
         <button class="orch-tab sentinel-subnav-btn" data-view="monitoring">Monitoring</button>
         <button class="orch-tab sentinel-subnav-btn" data-view="logs">Logs</button>
-        <button class="orch-tab sentinel-subnav-btn" data-view="autoheal">🔧 Auto-Heal</button>
         <button class="orch-tab sentinel-subnav-btn" data-view="settings">Settings</button>
       </div>
 
@@ -640,37 +639,6 @@
           </div>
           <div id="sentinel-monitoring-list" style="padding: 16px;">
             <div class="text-center text-muted">Loading monitoring configs...</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- AUTO-HEAL SUBVIEW -->
-      <div class="sentinel-subview orch-panel" data-view="autoheal">
-        <div class="panel">
-          <div class="panel-head">
-            <h3>⚙️ Auto-Heal Configuration</h3>
-          </div>
-          <div style="padding: 16px;">
-            <div class="form-group">
-              <label for="auto-heal-mode">Auto-Heal Mode</label>
-              <select id="auto-heal-mode" class="form-control" onchange="updateAutoHealMode()">
-                <option value="off">🚫 Disabled</option>
-                <option value="explicit">✅ Explicit (Recommended)</option>
-                <option value="auto">🤖 Automatic (Future)</option>
-              </select>
-              <small class="form-text text-muted">
-                Explicit mode only runs templates you manually create and enable.
-              </small>
-            </div>
-          </div>
-        </div>
-        
-        <div class="panel" style="margin-top: 24px;">
-          <div class="panel-head">
-            <h3>📋 Heal Templates</h3>
-          </div>
-          <div id="heal-template-container" style="padding: 16px;">
-            <div class="text-center text-muted">Loading auto-heal interface...</div>
           </div>
         </div>
       </div>
@@ -953,8 +921,7 @@
         </div>
       </div>
     </section>
-
-<!-- SETTINGS TAB - FIXED -->
+    <!-- SETTINGS TAB - FIXED -->
     <section id="settings" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -1909,8 +1876,7 @@
                 <input type="checkbox" id="set-ingest-apprise-enabled" />
                 <label for="set-ingest-apprise-enabled">Enable Apprise message ingestion</label>
               </div>
-
-</div>
+            </div>
            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">WebSocket Intake</h4>
             
             <div class="form-group">
