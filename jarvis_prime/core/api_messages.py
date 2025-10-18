@@ -54,26 +54,17 @@ analytics_module = importlib.util.module_from_spec(analytics_spec)  # type: igno
 if analytics_spec and analytics_spec.loader and _ANALYTICS_FILE.exists():
     analytics_spec.loader.exec_module(analytics_module)  # type: ignore
 
-    def notify_via_analytics(event):
+    def notify_via_analytics(source: str, level: str, message: str):
         """Send analytics service UP/DOWN events through inbox + broadcasts"""
-        service = event.get("service", "unknown")
-        status = event.get("status", "unknown")
-        message = event.get("message", "")
-        title = f"Analytics: {service}"
-        body = f"Service {service} is {status.upper()} – {message}"
-        priority = 8 if status == "down" else 5
+        title = f"Analytics: {source}"
+        body = f"{level.upper()}: {message}"
+        priority = 8 if level.lower() in ["down", "critical", "error"] else 5
         storage.save_message(title, body, "analytics", priority, {})  # type: ignore
         _broadcast("created")
 
-    analytics_db, analytics_monitor = analytics_module.init_analytics(
-        os.getenv("JARVIS_DB_PATH", "/data/jarvis.db"),
-        notify_callback=notify_via_analytics
-    )
-    print("[analytics] Initialized")
+    print("[analytics] Module loaded")
 else:
     analytics_module = None
-    analytics_db = None
-    analytics_monitor = None
     print("[analytics] Not found or failed to load")
 
 # ---- sentinel ----
@@ -471,9 +462,9 @@ def _make_app() -> web.Application:
     async def start_background_tasks(app):
         if orchestrator_module:
             orchestrator_module.start_orchestrator_scheduler()
-        if analytics_module and analytics_monitor:
-            await analytics_monitor.start_all_monitors()
-            print("[analytics] Monitoring started")
+        if analytics_module:
+            await analytics_module.init_analytics(app, notification_callback=notify_via_analytics)
+            print("[analytics] Initialized and monitoring started")
         if sentinel_instance:
             sentinel_instance.start_all_monitoring()
             asyncio.create_task(sentinel_instance.auto_purge())
