@@ -970,6 +970,8 @@ class NetworkScanner:
             # Record event for new devices
             if is_new:
                 logger.info(f"New device detected: {mac} ({device_dict['ip_address']})")
+				await self.detect_common_services(device_dict['ip_address'])
+
                 self.db.record_network_event(
                     'new_device',
                     mac,
@@ -1076,6 +1078,78 @@ class NetworkScanner:
         """Enable/disable new device alerts"""
         self.alert_new_devices = enabled
         logger.info(f"New device alerts: {'enabled' if enabled else 'disabled'}")
+# ─────────────────────────────────────────────────────────────
+# Common Service Port Scan Integration (Extended 110+ ports)
+# ─────────────────────────────────────────────────────────────
+
+COMMON_SERVICE_PORTS = {
+    # Media / Streaming
+    32400: "Plex", 8096: "Jellyfin", 8920: "Jellyfin (SSL)", 8086: "Emby",
+    80: "HTTP", 443: "HTTPS", 1900: "UPnP SSDP", 5000: "DLNA / Media Service",
+    32469: "DLNA (Alt)", 10001: "Tautulli", 8324: "Plex Relay",
+    # Arr Stack
+    7878: "Radarr", 8989: "Sonarr", 8686: "Lidarr", 8787: "Readarr",
+    9117: "Jackett", 9696: "Bazarr", 6767: "Prowlarr", 3579: "Mylar",
+    9118: "NZBHydra2",
+    # Downloaders
+    8080: "qBittorrent", 9091: "Transmission", 5075: "SABnzbd", 6789: "NZBGet",
+    51413: "Transmission Peer Port", 6881: "BitTorrent DHT", 1714: "Deluge",
+    58846: "Deluge Daemon",
+    # Monitoring / Infra
+    3000: "Grafana", 9090: "Prometheus", 8125: "Netdata", 19999: "Netdata (alt)",
+    8086: "InfluxDB", 8123: "Home Assistant", 5055: "Uptime Kuma",
+    9393: "Glances", 9100: "Node Exporter", 9001: "Portainer Agent",
+    9443: "Portainer UI", 9005: "Frigate", 8812: "Zabbix Agent",
+    10051: "Zabbix Server", 161: "SNMP", 162: "SNMP Trap", 1883: "MQTT Broker",
+    9009: "Gotify", 5050: "Ntfy", 5672: "RabbitMQ", 15672: "RabbitMQ Dashboard",
+    # Reverse Proxies / Web
+    8081: "Nginx Proxy Manager", 8443: "Traefik Dashboard",
+    9000: "phpMyAdmin", 9444: "Docker UI", 8010: "Caddy Dashboard",
+    81: "CasaOS / Unraid UI", 85: "ZimaOS Dashboard", 2224: "Cockpit",
+    5001: "Synology DSM (HTTPS)", 5000: "Synology DSM (HTTP)",
+    # Storage / NAS / Backup
+    445: "SMB / CIFS", 139: "NetBIOS", 111: "RPCbind", 2049: "NFS", 873: "Rsync",
+    21: "FTP", 22: "SSH", 2200: "Duplicati", 9003: "Rclone WebUI",
+    8082: "Syncthing", 8384: "Syncthing (GUI)", 9097: "Resilio Sync",
+    3306: "MySQL / MariaDB", 5432: "PostgreSQL", 27017: "MongoDB",
+    6379: "Redis", 5984: "CouchDB",
+    # Smart-Home / Automation
+    8123: "Home Assistant", 1880: "Node-RED", 8883: "MQTT (TLS)",
+    51827: "Homebridge", 3001: "ESPHome", 5555: "ADB", 21063: "Zigbee2MQTT",
+    1885: "Tasmoadmin", 6052: "Zigbee2MQTT WebUI",
+    # Network / VPN / Remote
+    51820: "WireGuard", 51821: "WireGuard UI", 1723: "PPTP VPN", 1701: "L2TP VPN",
+    1194: "OpenVPN", 943: "OpenVPN UI", 2222: "Alt SSH", 5900: "VNC",
+    3389: "RDP", 3300: "Guacamole", 6080: "NoVNC", 1080: "SOCKS Proxy",
+    # Dev / Admin / AI
+    8000: "Flask Dev", 8088: "Jenkins", 9092: "Kafka", 5601: "Kibana",
+    9200: "Elasticsearch", 18888: "Code-Server", 7860: "Stable Diffusion",
+    11434: "Ollama API", 11435: "Jarvis LLM", 8501: "Streamlit App",
+    # Miscellaneous
+    631: "CUPS Printer", 2223: "Shellinabox", 7000: "Plex Relay",
+    7096: "Heimdall", 9095: "BookStack", 8181: "OpenSpeedTest", 980: "Lighttpd",
+    9094: "Unifi Controller", 8444: "Unifi Protect", 7443: "Blue Iris",
+    2283: "FileBrowser", 8282: "qBittorrent (Alt)",
+}
+
+async def detect_common_services(self, ip):
+    """Lightweight async scan for common homelab services."""
+    found = []
+    for port, name in COMMON_SERVICE_PORTS.items():
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, port), timeout=1
+            )
+            writer.close()
+            await writer.wait_closed()
+            found.append({"service": name, "port": port})
+        except Exception:
+            continue
+
+    if found:
+        logger.info(f"[Analytics] Services found on {ip}: {found}")
+        # Optional: store in DB if you want persistence
+        # await self.db.add_services(ip, found)
 
 
 class HealthMonitor:
