@@ -974,7 +974,6 @@ class NetworkScanner:
 
 
 
-   
 
         
         # Detect offline monitored devices
