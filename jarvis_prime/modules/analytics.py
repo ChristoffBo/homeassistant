@@ -1852,7 +1852,16 @@ async def analytics_notify(source: str, level: str, message: str):
         try:
             from bot import process_incoming
             process_incoming(title, body, source="analytics", priority=priority)
+
+            # Optional: update Atlas immediately when Analytics fires
+            try:
+                from atlas import update_service_state
+                update_service_state(source, level)
+            except Exception:
+                pass
+
             logger.info(f"Analytics notification dispatched: {body}")
+
         except Exception as e:
             logger.warning(f"process_incoming unavailable: {e}")
             # Fallback to error notifier if Jarvis bot is down
@@ -1864,6 +1873,7 @@ async def analytics_notify(source: str, level: str, message: str):
 
     except Exception as e:
         logger.error(f"Failed to send analytics notification: {e}")
+
 
 
 
