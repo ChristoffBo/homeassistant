@@ -1871,7 +1871,7 @@ async def analytics_notify(source: str, level: str, message: str):
     """
     Unified notification handler for Analytics events.
     Sends alerts via Jarvis pipeline (Inbox, UI, Gotify/ntfy, etc.)
-    FIX: Now properly awaits async process_incoming
+    FIX: Now uses correct dict payload with fanout=True
     """
     try:
         # Prepare message
@@ -1879,10 +1879,17 @@ async def analytics_notify(source: str, level: str, message: str):
         body = f"[{level.upper()}] {message}"
         priority = 5 if level.lower() in ["critical", "error", "down"] else 3
 
-        # Send through Jarvis unified notification system
+        # Send through Jarvis unified notification system with fanout
         try:
-            from bot import _process_incoming_async
-            await _process_incoming_async(title, body, source="analytics", original_id=None, priority=priority)
+            from bot import process_incoming
+            await process_incoming({
+                "source": "analytics",
+                "type": "event",
+                "title": title,
+                "message": body,
+                "priority": priority,
+                "fanout": True
+            })
 
             # Optional: update Atlas immediately when Analytics fires
             try:
@@ -1891,20 +1898,10 @@ async def analytics_notify(source: str, level: str, message: str):
             except Exception:
                 pass
 
-            logger.info(f"✅ Analytics notification sent: {body}")
-
-        except ImportError:
-            logger.warning("⚠️ bot._process_incoming_async not found, trying fallback")
-            # Fallback: try the sync wrapper
-            try:
-                from bot import process_incoming
-                process_incoming(title, body, source="analytics", priority=priority)
-                logger.info(f"✅ Analytics notification sent via fallback: {body}")
-            except Exception as e:
-                logger.error(f"❌ Fallback failed: {e}")
+            logger.info(f"✅ Analytics notification sent with fanout: {body}")
 
         except Exception as e:
-            logger.warning(f"❌ process_incoming failed: {e}")
+            logger.error(f"❌ process_incoming failed: {e}")
             # Last resort: direct Gotify/ntfy if available
             try:
                 from errors import notify_error
