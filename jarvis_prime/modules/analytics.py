@@ -648,6 +648,7 @@ class AnalyticsDB:
         
         cur.execute("DELETE FROM network_devices WHERE mac_address = ?", (mac_address,))
         cur.execute("DELETE FROM network_events WHERE mac_address = ?", (mac_address,))
+
         
         conn.commit()
         conn.close()
@@ -657,6 +658,27 @@ class AnalyticsDB:
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
+
+    # NEW: Sentinel Integration for Auto-Heal
+    async def _notify_sentinel(self, service_name: str, host: str, status: str):
+        """
+        Notify Sentinel of confirmed service failures
+        Triggers auto-heal if template exists
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post("http://localhost:2591/api/sentinel/trigger", json={
+                    "service": service_name,
+                    "host": host,
+                    "status": status
+                }, timeout=aiohttp.ClientTimeout(total=5))
+                logger.info(f"Notified Sentinel about {service_name} status: {status}")
+        except asyncio.TimeoutError:
+            logger.warning(f"Sentinel notification timed out for {service_name}")
+        except aiohttp.ClientConnectorError:
+            logger.debug(f"Sentinel not available (normal if Sentinel module not enabled)")
+        except Exception as e:
+            logger.error(f"Failed to notify Sentinel: {e}")
         cur.execute("""
             INSERT INTO network_scans 
             (scan_timestamp, devices_found, scan_duration, scan_type)
@@ -1298,6 +1320,7 @@ class HealthMonitor:
                     f"({len(tracker.flap_times)} state changes in {config.flap_window}s). "
                     f"Suppressing notifications for {config.suppression_duration}s"
                 )
+
                 tracker.suppressed_until = now + config.suppression_duration
                 return True
         
@@ -1339,6 +1362,9 @@ class HealthMonitor:
                                 'error',
                                 f"Service {service.service_name} is DOWN: {metric.error_message}"
                             )
+                        
+                        # NEW: Notify Sentinel for auto-heal
+                        await self._notify_sentinel(service.service_name, service.endpoint, 'down')
                 
                 elif metric.status == 'up':
                     # Resolve any ongoing incidents
@@ -1971,3 +1997,7 @@ async def shutdown_analytics():
     if scanner:
         await scanner.stop_monitoring()
     logger.info("Analytics module shutdown complete")
+
+
+
+
