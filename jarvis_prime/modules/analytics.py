@@ -1871,46 +1871,33 @@ async def analytics_notify(source: str, level: str, message: str):
     """
     Unified notification handler for Analytics events.
     Sends alerts via Jarvis pipeline (Inbox, UI, Gotify/ntfy, etc.)
-    FIX: Now uses correct dict payload with fanout=True
+    FIXED: Restored direct process_incoming() call for proper fan-out.
     """
     try:
-        # Prepare message
         title = f"Analytics — {source}"
         body = f"[{level.upper()}] {message}"
         priority = 5 if level.lower() in ["critical", "error", "down"] else 3
 
-        # Send through Jarvis unified notification system with fanout
+        # ✅ Main fan-out through Jarvis
+        from bot import process_incoming
+        process_incoming(title, body, source="analytics", priority=priority)
+
+        # ✅ Optional: Atlas state sync (non-blocking)
         try:
-            from bot import process_incoming
-            await process_incoming({
-                "source": "analytics",
-                "type": "event",
-                "title": title,
-                "message": body,
-                "priority": priority,
-                "fanout": True
-            })
+            from atlas import update_service_state
+            update_service_state(source, level)
+        except Exception:
+            pass
 
-            # Optional: update Atlas immediately when Analytics fires
-            try:
-                from atlas import update_service_state
-                update_service_state(source, level)
-            except Exception:
-                pass
-
-            logger.info(f"✅ Analytics notification sent with fanout: {body}")
-
-        except Exception as e:
-            logger.error(f"❌ process_incoming failed: {e}")
-            # Last resort: direct Gotify/ntfy if available
-            try:
-                from errors import notify_error
-                notify_error(f"[Analytics] {body}", context="analytics")
-            except Exception:
-                logger.error(f"All notification methods failed: {e}")
+        logger.info(f"✅ Analytics notification sent with fan-out: {body}")
 
     except Exception as e:
-        logger.error(f"Failed to send analytics notification: {e}")
+        logger.error(f"❌ analytics_notify failed: {e}")
+        try:
+            from errors import notify_error
+            notify_error(f"[Analytics] {body}", context="analytics")
+        except Exception:
+            logger.error(f"All notification methods failed: {e}")
 
 
 
