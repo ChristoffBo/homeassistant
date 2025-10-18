@@ -736,6 +736,7 @@
         <button class="orch-tab active" data-analytics-tab="dashboard">Dashboard</button>
         <button class="orch-tab" data-analytics-tab="services">Services</button>
         <button class="orch-tab" data-analytics-tab="incidents">Incidents</button>
+        <button class="orch-tab" data-analytics-tab="network">Network</button>
       </div>
 
       <div id="analytics-dashboard" class="orch-panel active">
@@ -783,6 +784,116 @@
           </div>
           <div id="analytics-incidents-list" style="margin-top: 16px;">
             <div class="text-center text-muted">Loading incidents...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- NETWORK MONITORING PANEL -->
+      <div id="analytics-network" class="orch-panel">
+        <!-- Network Stats Cards -->
+        <div class="metrics-grid" style="margin-bottom: 24px;">
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Total Devices</div>
+            </div>
+            <div class="metric-value" id="net-total-devices">0</div>
+          </div>
+          
+          <div class="metric-card green">
+            <div class="metric-header">
+              <div class="metric-label">Monitored Devices</div>
+            </div>
+            <div class="metric-value" id="net-monitored-devices">0</div>
+          </div>
+          
+          <div class="metric-card cyan">
+            <div class="metric-header">
+              <div class="metric-label">Permanent Devices</div>
+            </div>
+            <div class="metric-value" id="net-permanent-devices">0</div>
+          </div>
+          
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Scans (24h)</div>
+            </div>
+            <div class="metric-value" id="net-scans-24h">0</div>
+          </div>
+        </div>
+
+        <!-- Network Controls -->
+        <div style="margin-bottom: 24px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+          <button id="btn-network-scan" class="btn primary" onclick="networkRunScan()">
+            🔍 Run Network Scan
+          </button>
+          <button id="btn-toggle-monitoring" class="btn" onclick="networkToggleMonitoringMode()">
+            ▶️ Start Monitoring
+          </button>
+          <div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--surface-secondary); border-radius: 8px;">
+            <input type="checkbox" id="toggle-alert-new-devices" onchange="networkToggleAlerts()" checked />
+            <label for="toggle-alert-new-devices" style="margin: 0; cursor: pointer;">Alert on new devices</label>
+          </div>
+          <div style="margin-left: auto; padding: 8px 16px; background: var(--surface-secondary); border-radius: 8px;">
+            Last scan: <span id="net-last-scan">Never</span>
+          </div>
+        </div>
+
+        <!-- Discovered Devices -->
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Discovered Devices</h3>
+            <div style="font-size: 14px; color: var(--text-muted);">
+              Click device names to rename • Check boxes to monitor
+            </div>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 60px;">Monitor</th>
+                  <th>MAC Address</th>
+                  <th>IP Address</th>
+                  <th>Device Name</th>
+                  <th>Vendor</th>
+                  <th>Status</th>
+                  <th style="width: 120px;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="network-devices-list">
+                <tr>
+                  <td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                    No devices found. Run a network scan to discover devices.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Network Events -->
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>Network Events (Last 24 Hours)</h3>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 60px;"></th>
+                  <th>Event Type</th>
+                  <th>MAC Address</th>
+                  <th>IP Address</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody id="network-events-list">
+                <tr>
+                  <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                    No events in the last 24 hours
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
