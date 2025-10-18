@@ -63,8 +63,7 @@ COPY /modules/beautify.py /app/beautify.py
 COPY /modules/enviroguard.py /app/enviroguard.py
 COPY /modules/sentinel.py /app/sentinel.py
 COPY /modules/atlas.py /app/atlas.py
-COPY /modules/sentinel_check_presets.json /app/sentinel_check_presets.json
-COPY /modules/sentinel_heal_presets.json /app/sentinel_heal_presets.json
+
 # LLM + memory
 COPY /llm/llm_client.py /app/llm_client.py
 COPY /llm/llm_memory.py /app/llm_memory.py
