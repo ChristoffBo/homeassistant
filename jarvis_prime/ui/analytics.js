@@ -2,6 +2,7 @@
 // Handles all analytics UI interactions and API calls
 // UPGRADED: Added retry and flap protection features
 // PATCHED: analyticsLoadIncidents now handles { "incidents": [...] } format consistently
+// UPGRADED: Added network monitoring capabilities
 
 // Use the API() helper from app.js for proper path resolution
 const ANALYTICS_API = (path = '') => {
@@ -70,6 +71,8 @@ function switchAnalyticsTab(tabName) {
     analyticsLoadServices();
   } else if (tabName === 'incidents') {
     analyticsLoadIncidents();
+  } else if (tabName === 'network') {
+    analyticsLoadNetworkDashboard();
   }
 }
 
@@ -234,7 +237,7 @@ async function analyticsLoadServices() {
     tbody.innerHTML = '';
     
     services.forEach(service => {
-      const row = document.createElement('tr');
+      const tr = document.createElement('tr');
       const status = service.current_status || 'unknown';
       const statusColors = {
         up: '#22c55e',
@@ -242,40 +245,28 @@ async function analyticsLoadServices() {
         degraded: '#f59e0b',
         unknown: '#6b7280'
       };
-      
-      // NEW: Add flap indicators
-      const flapIndicator = service.is_suppressed 
-        ? `<div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">🔇 Suppressed</div>`
-        : service.flap_count > 0
-        ? `<div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">${service.flap_count} flaps</div>`
-        : '';
-      
-      row.innerHTML = `
-        <td>
-          ${service.service_name}
-          ${flapIndicator}
-        </td>
-        <td style="font-family: monospace; font-size: 12px;">${service.endpoint}</td>
+
+      tr.innerHTML = `
+        <td>${service.service_name}</td>
+        <td><code style="font-size: 12px;">${service.endpoint}</code></td>
         <td>${service.check_type.toUpperCase()}</td>
-        <td>${service.check_interval}s / ${service.retries || 3}x</td>
         <td>
-          <span style="padding: 4px 12px; background: ${statusColors[status]}22; color: ${statusColors[status]}; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase;">
+          <span style="padding: 4px 8px; background: ${statusColors[status]}22; color: ${statusColors[status]}; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;">
             ${status}
           </span>
         </td>
+        <td>${service.check_interval}s</td>
         <td>
-          <span class="btn ${service.enabled ? 'primary' : ''}" style="padding: 4px 12px; font-size: 11px; cursor: default;">
+          <span class="badge ${service.enabled ? 'badge-success' : 'badge-default'}">
             ${service.enabled ? 'Enabled' : 'Disabled'}
           </span>
         </td>
         <td>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn" style="background: #fb923c; color: white;" onclick="analyticsEditService(${service.id})">Edit</button>
-            <button class="btn danger" onclick="analyticsDeleteService(${service.id}, '${service.service_name}')">Delete</button>
-          </div>
+          <button class="btn btn-sm" onclick="analyticsEditService(${service.id})" title="Edit">✏️</button>
+          <button class="btn btn-sm" onclick="analyticsDeleteService(${service.id}, '${service.service_name}')" title="Delete">🗑️</button>
         </td>
       `;
-      tbody.appendChild(row);
+      tbody.appendChild(tr);
     });
   } catch (error) {
     console.error('Error loading services:', error);
@@ -283,103 +274,99 @@ async function analyticsLoadServices() {
   }
 }
 
-// Load incidents - PATCHED to handle both array and object responses
+// Load incidents
 async function analyticsLoadIncidents() {
-  const list = document.getElementById('analytics-incidents-list');
+  const tbody = document.getElementById('analytics-incidents-list');
   
   try {
     const response = await fetch(ANALYTICS_API('incidents?days=7'));
     const data = await response.json();
     
-    // Handle both array response and object with incidents key
+    // PATCHED: Handle both array and object formats
     const incidents = Array.isArray(data) ? data : (data.incidents || []);
 
     if (incidents.length === 0) {
-      list.innerHTML = `
-        <div class="text-center text-muted">
-          <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">✅</div>
-          <p>No incidents in the last 7 days</p>
-        </div>
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center text-muted">
+            <div style="padding: 2rem;">
+              <div style="font-size: 48px; opacity: 0.5;">✅</div>
+              <p>No incidents in the last 7 days</p>
+            </div>
+          </td>
+        </tr>
       `;
       return;
     }
 
-    list.innerHTML = '';
+    tbody.innerHTML = '';
     
     incidents.forEach(incident => {
-      const item = document.createElement('div');
-      item.style.cssText = `
-        background: var(--surface-secondary);
-        border-left: 4px solid ${incident.status === 'resolved' ? '#22c55e' : '#ef4444'};
-        border-radius: 6px;
-        padding: 16px;
-        margin-bottom: 12px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        ${incident.status === 'resolved' ? 'opacity: 0.7;' : ''}
-      `;
-
+      const tr = document.createElement('tr');
       const startTime = new Date(incident.start_time * 1000).toLocaleString();
       const endTime = incident.end_time 
         ? new Date(incident.end_time * 1000).toLocaleString()
         : 'Ongoing';
       
       const duration = incident.duration 
-        ? analyticsFormatDuration(incident.duration)
+        ? formatDuration(incident.duration)
         : 'Ongoing';
 
-      item.innerHTML = `
-        <div style="flex: 1;">
-          <div style="font-weight: 600; font-size: 16px; margin-bottom: 4px;">${incident.service_name}</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">${startTime} → ${endTime}</div>
-          <div style="font-size: 13px; color: #ef4444; font-family: monospace;">${incident.error_message || 'Unknown error'}</div>
-        </div>
-        <div style="padding: 6px 12px; background: var(--surface-tertiary); border-radius: 6px; font-size: 13px; font-weight: 500;">
-          ⏱ ${duration}
-        </div>
+      const statusColor = incident.status === 'resolved' ? '#22c55e' : '#ef4444';
+
+      tr.innerHTML = `
+        <td>${incident.service}</td>
+        <td>${incident.message || 'Service unavailable'}</td>
+        <td>${startTime}</td>
+        <td>${duration}</td>
+        <td>
+          <span style="padding: 4px 8px; background: ${statusColor}22; color: ${statusColor}; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;">
+            ${incident.status}
+          </span>
+        </td>
       `;
-      
-      list.appendChild(item);
+      tbody.appendChild(tr);
     });
   } catch (error) {
     console.error('Error loading incidents:', error);
-    list.innerHTML = '<div class="text-center text-muted">Error loading incidents</div>';
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Error loading incidents</td></tr>';
   }
 }
 
-// Format duration in seconds to human readable
-function analyticsFormatDuration(seconds) {
+function formatDuration(seconds) {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${minutes}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
 }
 
 // Show add service modal
 function analyticsShowAddService() {
-  document.getElementById('analytics-service-modal-title').textContent = 'Add Service';
-  document.getElementById('analytics-service-form').reset();
   document.getElementById('analytics-service-id').value = '';
+  document.getElementById('analytics-service-name').value = '';
+  document.getElementById('analytics-service-endpoint').value = '';
+  document.getElementById('analytics-check-type').value = 'http';
+  document.getElementById('analytics-expected-status').value = '200';
+  document.getElementById('analytics-check-interval').value = '60';
+  document.getElementById('analytics-check-timeout').value = '5';
+  document.getElementById('analytics-service-enabled').checked = true;
   
-  // Set default values for new services
-  document.getElementById('analytics-retries').value = 3;
-  document.getElementById('analytics-flap-window').value = 3600;
-  document.getElementById('analytics-flap-threshold').value = 5;
-  document.getElementById('analytics-suppression-duration').value = 3600;
+  // NEW: Reset retry and flap protection fields
+  document.getElementById('analytics-retries').value = '3';
+  document.getElementById('analytics-flap-window').value = '3600';
+  document.getElementById('analytics-flap-threshold').value = '5';
+  document.getElementById('analytics-suppression-duration').value = '3600';
   
-  document.getElementById('analytics-service-modal').classList.add('active');
   analyticsToggleStatusCode();
+  document.getElementById('analytics-service-modal').classList.add('active');
 }
 
-// Show edit service modal
-async function analyticsEditService(id) {
+// Edit service
+async function analyticsEditService(serviceId) {
   try {
-    const response = await fetch(ANALYTICS_API(`services/${id}`));
+    const response = await fetch(ANALYTICS_API(`services/${serviceId}`));
     const service = await response.json();
 
-    document.getElementById('analytics-service-modal-title').textContent = 'Edit Service';
     document.getElementById('analytics-service-id').value = service.id;
     document.getElementById('analytics-service-name').value = service.service_name;
     document.getElementById('analytics-service-endpoint').value = service.endpoint;
@@ -404,11 +391,14 @@ async function analyticsEditService(id) {
 }
 
 // Delete service
-async function analyticsDeleteService(id, name) {
-  if (!confirm(`Are you sure you want to delete ${name}?`)) return;
+async function analyticsDeleteService(serviceId, serviceName) {
+  if (!confirm(`Delete service "${serviceName}"? This will also remove all associated metrics.`)) return;
 
   try {
-    await fetch(ANALYTICS_API(`services/${id}`), { method: 'DELETE' });
+    await fetch(ANALYTICS_API(`services/${serviceId}`), {
+      method: 'DELETE'
+    });
+
     showToast('Service deleted', 'success');
     analyticsRefresh();
   } catch (error) {
@@ -616,6 +606,438 @@ async function analyticsPurgeMonth() {
 }
 
 // ============================================
+// NETWORK MONITORING ADDITIONS
+// ============================================
+
+// Network Monitoring State
+let networkDevices = [];
+let networkMonitoringActive = false;
+let networkAlertNewDevices = true;
+let selectedDevicesForMonitoring = new Set();
+
+// Load network monitoring dashboard
+async function analyticsLoadNetworkDashboard() {
+  await Promise.all([
+    analyticsLoadNetworkStats(),
+    analyticsLoadNetworkDevices(),
+    analyticsLoadNetworkEvents(),
+    analyticsLoadNetworkStatus()
+  ]);
+}
+
+// Load network statistics
+async function analyticsLoadNetworkStats() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/stats'));
+    const stats = await response.json();
+
+    document.getElementById('net-total-devices').textContent = stats.total_devices || 0;
+    document.getElementById('net-monitored-devices').textContent = stats.monitored_devices || 0;
+    document.getElementById('net-permanent-devices').textContent = stats.permanent_devices || 0;
+    document.getElementById('net-scans-24h').textContent = stats.scans_24h || 0;
+
+    // Update last scan time
+    if (stats.last_scan) {
+      const lastScan = new Date(stats.last_scan * 1000);
+      document.getElementById('net-last-scan').textContent = formatTimestamp(lastScan);
+    } else {
+      document.getElementById('net-last-scan').textContent = 'Never';
+    }
+  } catch (error) {
+    console.error('Error loading network stats:', error);
+  }
+}
+
+// Load network devices
+async function analyticsLoadNetworkDevices() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/devices'));
+    const data = await response.json();
+    networkDevices = data.devices || [];
+
+    const tbody = document.getElementById('network-devices-list');
+    tbody.innerHTML = '';
+
+    if (networkDevices.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            No devices found. Run a network scan to discover devices.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    networkDevices.forEach(device => {
+      const tr = document.createElement('tr');
+      
+      // Determine display name (custom_name > hostname > "Unknown")
+      const displayName = device.custom_name || device.hostname || '<span style="color: var(--text-muted);">Unknown</span>';
+      
+      // Check if already in services
+      const isInServices = device.in_services || false;
+      const checkboxDisabled = isInServices ? 'disabled' : '';
+      const checkboxTitle = isInServices ? 'Already monitored in Services tab' : 'Monitor this device';
+      
+      tr.innerHTML = `
+        <td>
+          <input type="checkbox" 
+                 class="device-checkbox" 
+                 data-mac="${device.mac_address}"
+                 ${device.is_monitored ? 'checked' : ''}
+                 ${checkboxDisabled}
+                 title="${checkboxTitle}"
+                 onchange="networkToggleMonitoring('${device.mac_address}', this.checked)">
+        </td>
+        <td><code>${device.mac_address}</code></td>
+        <td><code>${device.ip_address || 'Unknown'}</code></td>
+        <td>
+          <span class="device-name-display" id="name-${device.mac_address}" 
+                onclick="networkEditDeviceName('${device.mac_address}')" 
+                style="cursor: pointer;" 
+                title="Click to edit name">
+            ${displayName} ✏️
+          </span>
+          <input type="text" 
+                 class="device-name-input" 
+                 id="name-input-${device.mac_address}" 
+                 style="display: none; width: 150px;"
+                 value="${device.custom_name || device.hostname || ''}"
+                 onblur="networkSaveDeviceName('${device.mac_address}')"
+                 onkeypress="if(event.key==='Enter') networkSaveDeviceName('${device.mac_address}')">
+        </td>
+        <td>${device.vendor || '<span style="color: var(--text-muted);">Unknown</span>'}</td>
+        <td>
+          <span class="badge ${device.is_permanent ? 'badge-success' : 'badge-default'}">
+            ${device.is_permanent ? 'Permanent' : 'Temporary'}
+          </span>
+          ${device.is_monitored ? '<span class="badge badge-info">Monitored</span>' : ''}
+          ${isInServices ? '<span class="badge badge-warning">In Services</span>' : ''}
+        </td>
+        <td>
+          <button class="btn btn-sm" onclick="networkTogglePermanent('${device.mac_address}', ${!device.is_permanent})" 
+                  title="${device.is_permanent ? 'Mark as Temporary' : 'Mark as Permanent'}">
+            ${device.is_permanent ? '📌' : '📍'}
+          </button>
+          <button class="btn btn-sm" onclick="networkDeleteDevice('${device.mac_address}')" title="Delete Device">
+            🗑️
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (error) {
+    console.error('Error loading network devices:', error);
+    showToast('Failed to load devices', 'error');
+  }
+}
+
+// Edit device name
+function networkEditDeviceName(macAddress) {
+  const displayEl = document.getElementById(`name-${macAddress}`);
+  const inputEl = document.getElementById(`name-input-${macAddress}`);
+  
+  if (displayEl && inputEl) {
+    displayEl.style.display = 'none';
+    inputEl.style.display = 'inline-block';
+    inputEl.focus();
+    inputEl.select();
+  }
+}
+
+// Save device name
+async function networkSaveDeviceName(macAddress) {
+  const displayEl = document.getElementById(`name-${macAddress}`);
+  const inputEl = document.getElementById(`name-input-${macAddress}`);
+  
+  if (!inputEl) return;
+  
+  const newName = inputEl.value.trim();
+  
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_name: newName })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(newName ? 'Device renamed' : 'Name cleared', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to rename device', 'error');
+      if (displayEl && inputEl) {
+        displayEl.style.display = 'inline';
+        inputEl.style.display = 'none';
+      }
+    }
+  } catch (error) {
+    console.error('Error saving device name:', error);
+    showToast('Failed to rename device', 'error');
+    if (displayEl && inputEl) {
+      displayEl.style.display = 'inline';
+      inputEl.style.display = 'none';
+    }
+  }
+}
+
+// Run network scan
+async function networkRunScan() {
+  const scanBtn = document.getElementById('btn-network-scan');
+  const originalText = scanBtn.textContent;
+  
+  try {
+    scanBtn.disabled = true;
+    scanBtn.textContent = '🔍 Scanning...';
+    
+    const response = await fetch(ANALYTICS_API('network/scan'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(`Network scan complete: ${result.devices_found} devices found`, 'success');
+      await analyticsLoadNetworkDashboard();
+    } else {
+      showToast('Network scan failed', 'error');
+    }
+  } catch (error) {
+    console.error('Error running network scan:', error);
+    showToast('Failed to run network scan', 'error');
+  } finally {
+    scanBtn.disabled = false;
+    scanBtn.textContent = originalText;
+  }
+}
+
+// Toggle device monitoring
+async function networkToggleMonitoring(macAddress, isMonitored) {
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_monitored: isMonitored })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(isMonitored ? 'Device added to monitoring' : 'Device removed from monitoring', 'success');
+      await analyticsLoadNetworkDashboard();
+    } else {
+      showToast('Failed to update device', 'error');
+    }
+  } catch (error) {
+    console.error('Error toggling monitoring:', error);
+    showToast('Failed to update device', 'error');
+  }
+}
+
+// Toggle permanent status
+async function networkTogglePermanent(macAddress, isPermanent) {
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_permanent: isPermanent })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(isPermanent ? 'Marked as permanent device' : 'Marked as temporary device', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to update device', 'error');
+    }
+  } catch (error) {
+    console.error('Error toggling permanent:', error);
+    showToast('Failed to update device', 'error');
+  }
+}
+
+// Delete device
+async function networkDeleteDevice(macAddress) {
+  if (!confirm('Delete this device from the database?')) return;
+  
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'DELETE'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Device deleted', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to delete device', 'error');
+    }
+  } catch (error) {
+    console.error('Error deleting device:', error);
+    showToast('Failed to delete device', 'error');
+  }
+}
+
+// Start/Stop network monitoring
+async function networkToggleMonitoringMode() {
+  try {
+    const endpoint = networkMonitoringActive ? 'monitoring/stop' : 'monitoring/start';
+    
+    const response = await fetch(ANALYTICS_API(`network/${endpoint}`), {
+      method: 'POST'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      networkMonitoringActive = result.monitoring;
+      showToast(networkMonitoringActive ? 'Network monitoring started' : 'Network monitoring stopped', 'success');
+      await analyticsLoadNetworkStatus();
+    } else {
+      showToast('Failed to toggle monitoring', 'error');
+    }
+  } catch (error) {
+    console.error('Error toggling monitoring:', error);
+    showToast('Failed to toggle monitoring', 'error');
+  }
+}
+
+// Load network monitoring status
+async function analyticsLoadNetworkStatus() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/monitoring/status'));
+    const status = await response.json();
+    
+    networkMonitoringActive = status.monitoring;
+    networkAlertNewDevices = status.alert_new_devices;
+    
+    // Update UI
+    const monitorBtn = document.getElementById('btn-toggle-monitoring');
+    if (monitorBtn) {
+      monitorBtn.textContent = networkMonitoringActive ? '⏸️ Stop Monitoring' : '▶️ Start Monitoring';
+      monitorBtn.classList.toggle('btn-success', !networkMonitoringActive);
+      monitorBtn.classList.toggle('btn-warning', networkMonitoringActive);
+    }
+    
+    const alertToggle = document.getElementById('toggle-alert-new-devices');
+    if (alertToggle) {
+      alertToggle.checked = networkAlertNewDevices;
+    }
+    
+    const statusEl = document.getElementById('network-monitoring-status');
+    if (statusEl) {
+      statusEl.textContent = networkMonitoringActive ? 'Active' : 'Inactive';
+      statusEl.className = `badge ${networkMonitoringActive ? 'badge-success' : 'badge-default'}`;
+    }
+  } catch (error) {
+    console.error('Error loading network status:', error);
+  }
+}
+
+// Toggle new device alerts
+async function networkToggleAlerts() {
+  const enabled = document.getElementById('toggle-alert-new-devices').checked;
+  
+  try {
+    const response = await fetch(ANALYTICS_API('network/settings'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alert_new_devices: enabled })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      networkAlertNewDevices = enabled;
+      showToast(enabled ? 'New device alerts enabled' : 'New device alerts disabled', 'success');
+    } else {
+      showToast('Failed to update settings', 'error');
+    }
+  } catch (error) {
+    console.error('Error updating alerts:', error);
+    showToast('Failed to update settings', 'error');
+  }
+}
+
+// Load network events
+async function analyticsLoadNetworkEvents() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/events?hours=24'));
+    const data = await response.json();
+    const events = data.events || [];
+
+    const tbody = document.getElementById('network-events-list');
+    tbody.innerHTML = '';
+
+    if (events.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            No events in the last 24 hours
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    events.slice(0, 20).forEach(event => {
+      const tr = document.createElement('tr');
+      const eventTime = new Date(event.timestamp * 1000);
+      
+      let eventIcon = '📡';
+      let eventColor = 'var(--text-primary)';
+      
+      if (event.event_type === 'new_device') {
+        eventIcon = '🆕';
+        eventColor = '#10b981';
+      } else if (event.event_type === 'device_offline') {
+        eventIcon = '⚠️';
+        eventColor = '#f59e0b';
+      } else if (event.event_type === 'device_online') {
+        eventIcon = '✅';
+        eventColor = '#3b82f6';
+      }
+      
+      tr.innerHTML = `
+        <td style="color: ${eventColor};">${eventIcon}</td>
+        <td>${event.event_type.replace('_', ' ').toUpperCase()}</td>
+        <td><code>${event.mac_address}</code></td>
+        <td>${event.ip_address || '<span style="color: var(--text-muted);">N/A</span>'}</td>
+        <td>${formatTimestamp(eventTime)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (error) {
+    console.error('Error loading network events:', error);
+  }
+}
+
+// Helper function to format timestamps
+function formatTimestamp(date) {
+  const now = new Date();
+  const diff = (now - date) / 1000; // seconds
+  
+  if (diff < 60) {
+    return 'Just now';
+  } else if (diff < 3600) {
+    const mins = Math.floor(diff / 60);
+    return `${mins} min${mins > 1 ? 's' : ''} ago`;
+  } else if (diff < 86400) {
+    const hours = Math.floor(diff / 3600);
+    return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  } else {
+    return date.toLocaleString();
+  }
+}
+
+// ============================================
 // TOAST FALLBACK - Ensures showToast exists
 // ============================================
 
@@ -642,3 +1064,12 @@ window.analyticsResetServiceData = analyticsResetServiceData;
 window.analyticsPurgeAll = analyticsPurgeAll;
 window.analyticsPurgeWeek = analyticsPurgeWeek;
 window.analyticsPurgeMonth = analyticsPurgeMonth;
+window.networkRunScan = networkRunScan;
+window.networkToggleMonitoring = networkToggleMonitoring;
+window.networkTogglePermanent = networkTogglePermanent;
+window.networkDeleteDevice = networkDeleteDevice;
+window.networkToggleMonitoringMode = networkToggleMonitoringMode;
+window.networkToggleAlerts = networkToggleAlerts;
+window.networkEditDeviceName = networkEditDeviceName;
+window.networkSaveDeviceName = networkSaveDeviceName;
+window.analyticsLoadNetworkDashboard = analyticsLoadNetworkDashboard;
