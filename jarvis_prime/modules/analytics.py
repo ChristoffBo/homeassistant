@@ -556,6 +556,33 @@ class AnalyticsDB:
         conn.close()
         return devices
     
+    def get_device(self, mac_address: str) -> Optional[Dict]:
+        """Get a single device by MAC address"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT 
+                id,
+                mac_address,
+                ip_address,
+                hostname,
+                vendor,
+                custom_name,
+                first_seen,
+                last_seen,
+                is_permanent,
+                is_monitored
+            FROM network_devices
+            WHERE mac_address = ?
+        """, (mac_address,))
+        
+        row = cur.fetchone()
+        conn.close()
+        
+        return dict(row) if row else None
+    
     def get_monitored_devices(self) -> List[Dict]:
         """Get devices that are being monitored"""
         conn = sqlite3.connect(self.db_path)
@@ -1615,14 +1642,20 @@ async def network_scan(request: web.Request):
 
 async def get_network_devices(request: web.Request):
     """Get all known network devices with duplicate detection"""
-    devices = db.get_all_devices()
+    all_devices = db.get_all_devices()
     
-    # Check each device for duplicates in services
-    for device in devices:
+    # Filter out devices that are already in services
+    devices = []
+    for device in all_devices:
         if device['ip_address']:
-            device['in_services'] = db.check_ip_in_services(device['ip_address'])
+            in_services = db.check_ip_in_services(device['ip_address'])
+            # Skip devices that are already in analytics services
+            if not in_services:
+                device['in_services'] = False
+                devices.append(device)
         else:
             device['in_services'] = False
+            devices.append(device)
     
     return _json({'devices': devices})
 
@@ -1646,6 +1679,63 @@ async def update_device(request: web.Request):
     is_monitored = data.get('is_monitored')
     custom_name = data.get('custom_name')
     
+    # Get device info before updating
+    device = db.get_device(mac_address)
+    
+    if not device:
+        return _json({"error": "Device not found"}, status=404)
+    
+    # If marking as permanent, auto-promote to Analytics Services
+    if is_permanent and not device.get('is_permanent'):
+        ip_address = device.get('ip_address')
+        hostname = device.get('hostname') or device.get('custom_name')
+        
+        if ip_address:
+            # Create service name
+            service_name = custom_name or hostname or f"Device-{ip_address}"
+            
+            # Check if service already exists
+            if not db.check_ip_in_services(ip_address):
+                # Create health check service
+                service = HealthCheck(
+                    service_name=service_name,
+                    endpoint=ip_address,
+                    check_type='ping',
+                    expected_status=200,
+                    timeout=5,
+                    interval=300,  # 5 minutes
+                    enabled=True,
+                    retries=3,
+                    flap_window=3600,
+                    flap_threshold=5,
+                    suppression_duration=3600
+                )
+                
+                try:
+                    db.add_service(service)
+                    
+                    # Start monitoring if monitor exists
+                    if monitor:
+                        task = asyncio.create_task(monitor.monitor_service(service))
+                        monitor.monitoring_tasks[service.service_name] = task
+                    
+                    logger.info(f"Auto-promoted device {mac_address} ({ip_address}) to Analytics Services as '{service_name}'")
+                    
+                    # Delete from network devices since it's now in services
+                    db.delete_device(mac_address)
+                    
+                    return _json({
+                        'success': True,
+                        'promoted': True,
+                        'service_name': service_name,
+                        'message': f'Device promoted to Analytics Services as "{service_name}"'
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Failed to promote device to service: {e}")
+                    # Fall through to regular update if promotion fails
+    
+    # Regular update if not promoting
     db.update_device_settings(mac_address, is_permanent, is_monitored, custom_name)
     
     return _json({'success': True})
