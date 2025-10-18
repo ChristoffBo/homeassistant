@@ -698,7 +698,7 @@ class SentinelUI {
             `;
         }).join('');
 
-        container.innerHTML = `
+container.innerHTML = `
             <div style="margin-bottom: 16px; display: flex; gap: 8px;">
                 <button class="btn primary" onclick="sentinelUI.showAddMonitoringModal()">
                     ➕ Add Monitoring
@@ -1398,7 +1398,8 @@ class SentinelUI {
 
     async purgeOldLogs(options) {
         const confirmMsg = options.days === null ? 
-            '⚠️ Are you sure you want to purge ALL logs? This cannot be undone!' :
+
+'⚠️ Are you sure you want to purge ALL logs? This cannot be undone!' :
             `Purge logs older than ${options.days} days?`;
             
         if (!confirm(confirmMsg)) {
@@ -1545,3 +1546,601 @@ const sentinelUI = new SentinelUI();
 document.addEventListener('DOMContentLoaded', () => {
     sentinelUI.init();
 });
+
+
+/* ============================================================================
+   SENTINEL AUTO-HEAL UI ADDITIONS
+   Integrated auto-heal template management
+   ============================================================================ */
+
+/* ============================================================================
+   SENTINEL AUTO-HEAL UI ADDITIONS
+   Add to sentinel.js
+   ============================================================================ */
+
+// ============================================================================
+// API Functions
+// ============================================================================
+
+async function loadHealTemplates() {
+    try {
+        const response = await fetch('/api/sentinel/heal/templates');
+        const data = await response.json();
+        return data.templates || [];
+    } catch (error) {
+        console.error('Failed to load heal templates:', error);
+        return [];
+    }
+}
+
+async function loadPresets() {
+    try {
+        const response = await fetch('/api/sentinel/heal/presets');
+        return await response.json();
+    } catch (error) {
+        console.error('Failed to load presets:', error);
+        return { heal: [], check: [] };
+    }
+}
+
+async function saveHealTemplate(template) {
+    try {
+        const method = template.id ? 'PUT' : 'POST';
+        const url = template.id 
+            ? `/api/sentinel/heal/templates/${template.id}`
+            : '/api/sentinel/heal/templates';
+        
+        const response = await fetch(url, {
+            method,
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(template)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success || data.template) {
+            showNotification('Template saved successfully', 'success');
+            loadHealTemplatesUI();
+            clearHealTemplateForm();
+        } else {
+            throw new Error(data.error || 'Failed to save template');
+        }
+        
+        return data;
+    } catch (error) {
+        console.error('Failed to save template:', error);
+        showNotification('Failed to save template: ' + error.message, 'error');
+    }
+}
+
+async function deleteHealTemplate(templateId) {
+    if (!confirm('Delete this heal template?')) return;
+    
+    try {
+        const response = await fetch(`/api/sentinel/heal/templates/${templateId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Template deleted', 'success');
+            loadHealTemplatesUI();
+        } else {
+            throw new Error(data.error || 'Failed to delete');
+        }
+    } catch (error) {
+        console.error('Failed to delete template:', error);
+        showNotification('Failed to delete template', 'error');
+    }
+}
+
+async function toggleHealTemplate(templateId, enabled) {
+    try {
+        const response = await fetch(`/api/sentinel/heal/templates/${templateId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ enabled })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success || data.template) {
+            showNotification(`Template ${enabled ? 'enabled' : 'disabled'}`, 'success');
+            loadHealTemplatesUI();
+        } else {
+            throw new Error(data.error || 'Failed to toggle');
+        }
+    } catch (error) {
+        console.error('Failed to toggle template:', error);
+        showNotification('Failed to toggle template', 'error');
+    }
+}
+
+async function loadHealHistory(service = null, limit = 50) {
+    try {
+        let url = `/api/sentinel/heal/history?limit=${limit}`;
+        if (service) url += `&service=${service}`;
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        return data.history || [];
+    } catch (error) {
+        console.error('Failed to load heal history:', error);
+        return [];
+    }
+}
+
+async function loadAnalyticsServices() {
+    try {
+        const response = await fetch('/api/analytics/services');
+        const data = await response.json();
+        return data.services || [];
+    } catch (error) {
+        console.error('Failed to load analytics services:', error);
+        return [];
+    }
+}
+
+async function loadServers() {
+    try {
+        const response = await fetch('/api/sentinel/servers');
+        const data = await response.json();
+        return data.servers || [];
+    } catch (error) {
+        console.error('Failed to load servers:', error);
+        return [];
+    }
+}
+
+async function updateAutoHealMode() {
+    const mode = document.getElementById('auto-heal-mode').value;
+    
+    try {
+        const response = await fetch('/api/sentinel/settings', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ auto_heal_mode: mode })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(`Auto-heal mode set to: ${mode}`, 'success');
+        }
+    } catch (error) {
+        console.error('Failed to update auto-heal mode:', error);
+        showNotification('Failed to update settings', 'error');
+    }
+}
+
+// ============================================================================
+// UI Rendering
+// ============================================================================
+
+function renderHealTemplateEditor(container) {
+    const html = `
+        <div class="heal-template-editor">
+            <div class="section-header">
+                <h3>🔧 Auto-Heal Templates</h3>
+                <button class="btn-primary" onclick="showNewHealTemplateForm()">+ New Template</button>
+            </div>
+            
+            <div id="heal-template-form" class="template-form" style="display:none;">
+                <h4 id="heal-form-title">New Heal Template</h4>
+                
+                <div class="form-group">
+                    <label>Service Name *</label>
+                    <input type="text" id="heal-service-name" placeholder="plex" required>
+                    <small>Unique name for this service</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Trigger Source *</label>
+                    <select id="heal-trigger-source">
+                        <option value="analytics">Analytics Only</option>
+                        <option value="manual">Manual Only</option>
+                        <option value="both">Both</option>
+                    </select>
+                    <small>When this template should trigger</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Link to Analytics Service</label>
+                    <select id="heal-analytics-service">
+                        <option value="">None (Manual only)</option>
+                    </select>
+                    <small>Optional: Link to existing Analytics monitored service</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Server *</label>
+                    <select id="heal-server-id" required>
+                        <option value="">Select server...</option>
+                    </select>
+                    <small>Which server to run commands on</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Check Command</label>
+                    <div class="preset-selector">
+                        <select id="heal-check-preset" onchange="applyCheckPreset()">
+                            <option value="">Select preset...</option>
+                        </select>
+                        <input type="text" id="heal-check-command" placeholder="docker inspect -f '{{.State.Running}}' plex">
+                    </div>
+                    <small>Command to verify service is actually down</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Expected Output</label>
+                    <input type="text" id="heal-expected-output" placeholder="true">
+                    <small>What check command should return when service is UP</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Heal Commands *</label>
+                    <div class="preset-selector">
+                        <select id="heal-command-preset">
+                            <option value="">Select preset...</option>
+                        </select>
+                        <button type="button" class="btn-secondary" onclick="addHealCommandFromPreset()">Add Preset</button>
+                    </div>
+                    <textarea id="heal-commands" rows="5" placeholder="docker restart plex
+systemctl restart plexmediaserver" required></textarea>
+                    <small>One command per line. Use {name}, {image}, {mac}, etc. as placeholders</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Verify Command</label>
+                    <input type="text" id="heal-verify-command" placeholder="docker inspect -f '{{.State.Running}}' plex">
+                    <small>Command to verify service recovered (can be same as check command)</small>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Retry Count</label>
+                        <input type="number" id="heal-retry-count" value="3" min="1" max="10">
+                        <small>Max heal attempts</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Retry Delay (seconds)</label>
+                        <input type="number" id="heal-retry-delay" value="10" min="5" max="300">
+                        <small>Wait time between attempts</small>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="heal-enabled" checked>
+                        Enable this template
+                    </label>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn-primary" onclick="saveHealTemplateFromForm()">Save Template</button>
+                    <button type="button" class="btn-secondary" onclick="cancelHealTemplateForm()">Cancel</button>
+                </div>
+            </div>
+            
+            <div class="section-header">
+                <h4>📋 Existing Templates</h4>
+            </div>
+            <div id="heal-templates-list" class="templates-list">
+                <div class="loading">Loading templates...</div>
+            </div>
+            
+            <div class="section-header">
+                <h4>📊 Heal History</h4>
+                <button class="btn-secondary" onclick="loadHealHistoryUI()">Refresh</button>
+            </div>
+            <div id="heal-history-list" class="history-list">
+                <div class="loading">Loading history...</div>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    loadHealTemplatesUI();
+}
+
+async function loadHealTemplatesUI() {
+    const templates = await loadHealTemplates();
+    const servers = await loadServers();
+    const services = await loadAnalyticsServices();
+    const presets = await loadPresets();
+    
+    // Populate server dropdown
+    const serverSelect = document.getElementById('heal-server-id');
+    if (serverSelect) {
+        serverSelect.innerHTML = '<option value="">Select server...</option>';
+        servers.forEach(server => {
+            const opt = document.createElement('option');
+            opt.value = server.id;
+            opt.textContent = server.name || server.host;
+            serverSelect.appendChild(opt);
+        });
+    }
+    
+    // Populate analytics service dropdown
+    const serviceSelect = document.getElementById('heal-analytics-service');
+    if (serviceSelect) {
+        serviceSelect.innerHTML = '<option value="">None (Manual only)</option>';
+        services.forEach(service => {
+            const opt = document.createElement('option');
+            opt.value = service.service_name;
+            opt.textContent = service.service_name;
+            serviceSelect.appendChild(opt);
+        });
+    }
+    
+    // Populate check presets
+    const checkPresetSelect = document.getElementById('heal-check-preset');
+    if (checkPresetSelect) {
+        checkPresetSelect.innerHTML = '<option value="">Select preset...</option>';
+        presets.check.forEach(preset => {
+            const opt = document.createElement('option');
+            opt.value = preset.check_command;
+            opt.textContent = preset.label;
+            opt.dataset.expected = preset.expected_output;
+            checkPresetSelect.appendChild(opt);
+        });
+    }
+    
+    // Populate heal command presets
+    const healPresetSelect = document.getElementById('heal-command-preset');
+    if (healPresetSelect) {
+        healPresetSelect.innerHTML = '<option value="">Select preset...</option>';
+        presets.heal.forEach(preset => {
+            const opt = document.createElement('option');
+            opt.value = preset.cmd;
+            opt.textContent = preset.label;
+            healPresetSelect.appendChild(opt);
+        });
+    }
+    
+    // Render templates list
+    const listDiv = document.getElementById('heal-templates-list');
+    if (listDiv) {
+        if (templates.length === 0) {
+            listDiv.innerHTML = '<div class="empty-state">No heal templates yet. Create one to get started!</div>';
+        } else {
+            listDiv.innerHTML = templates.map(t => `
+                <div class="heal-template-card ${t.enabled ? 'enabled' : 'disabled'}">
+                    <div class="template-header">
+                        <h5>${t.service_name}</h5>
+                        <span class="status-badge ${t.enabled ? 'badge-success' : 'badge-muted'}">
+                            ${t.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                    </div>
+                    <div class="template-details">
+                        <p><strong>Trigger:</strong> ${t.trigger_source}</p>
+                        <p><strong>Retries:</strong> ${t.retry_count} × ${t.retry_delay}s delay</p>
+                        <p><strong>Server:</strong> ${t.server_id}</p>
+                        <p><strong>Commands:</strong> ${(t.heal_commands || []).length}</p>
+                    </div>
+                    <div class="template-actions">
+                        <button class="btn-small btn-primary" onclick="editHealTemplate('${t.id}')">Edit</button>
+                        <button class="btn-small ${t.enabled ? 'btn-warning' : 'btn-success'}" onclick="toggleHealTemplate('${t.id}', ${!t.enabled})">
+                            ${t.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                        <button class="btn-small btn-danger" onclick="deleteHealTemplate('${t.id}')">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+    }
+    
+    // Load history
+    loadHealHistoryUI();
+}
+
+async function loadHealHistoryUI() {
+    const history = await loadHealHistory();
+    const listDiv = document.getElementById('heal-history-list');
+    
+    if (!listDiv) return;
+    
+    if (history.length === 0) {
+        listDiv.innerHTML = '<div class="empty-state">No heal executions yet.</div>';
+        return;
+    }
+    
+    listDiv.innerHTML = history.map(h => {
+        const date = new Date(h.timestamp * 1000);
+        const commands = JSON.parse(h.commands_run || '[]');
+        
+        return `
+            <div class="heal-history-card ${h.success ? 'success' : 'failed'}">
+                <div class="history-header">
+                    <h6>${h.service_name}</h6>
+                    <span class="status-badge ${h.success ? 'badge-success' : 'badge-danger'}">
+                        ${h.success ? '✅ Success' : '❌ Failed'}
+                    </span>
+                </div>
+                <div class="history-details">
+                    <p><strong>Time:</strong> ${date.toLocaleString()}</p>
+                    <p><strong>Source:</strong> ${h.trigger_source}</p>
+                    <p><strong>Attempts:</strong> ${h.attempts}</p>
+                    <p><strong>Final Status:</strong> ${h.final_status || 'unknown'}</p>
+                    ${commands.length > 0 ? `<p><strong>Commands:</strong> ${commands.join(', ')}</p>` : ''}
+                    ${h.error_message ? `<p class="error-message">Error: ${h.error_message}</p>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// ============================================================================
+// Form Handlers
+// ============================================================================
+
+function showNewHealTemplateForm() {
+    const form = document.getElementById('heal-template-form');
+    const title = document.getElementById('heal-form-title');
+    
+    if (form) {
+        form.style.display = 'block';
+        title.textContent = 'New Heal Template';
+        clearHealTemplateForm();
+        form.scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
+function cancelHealTemplateForm() {
+    const form = document.getElementById('heal-template-form');
+    if (form) {
+        form.style.display = 'none';
+        clearHealTemplateForm();
+    }
+}
+
+function clearHealTemplateForm() {
+    document.getElementById('heal-service-name').value = '';
+    document.getElementById('heal-trigger-source').value = 'analytics';
+    document.getElementById('heal-analytics-service').value = '';
+    document.getElementById('heal-server-id').value = '';
+    document.getElementById('heal-check-command').value = '';
+    document.getElementById('heal-expected-output').value = '';
+    document.getElementById('heal-commands').value = '';
+    document.getElementById('heal-verify-command').value = '';
+    document.getElementById('heal-retry-count').value = '3';
+    document.getElementById('heal-retry-delay').value = '10';
+    document.getElementById('heal-enabled').checked = true;
+    
+    // Remove template ID from form
+    delete document.getElementById('heal-template-form').dataset.templateId;
+}
+
+async function saveHealTemplateFromForm() {
+    const form = document.getElementById('heal-template-form');
+    const templateId = form.dataset.templateId;
+    
+    const serviceName = document.getElementById('heal-service-name').value.trim();
+    const serverId = document.getElementById('heal-server-id').value;
+    const commands = document.getElementById('heal-commands').value.trim();
+    
+    if (!serviceName || !serverId || !commands) {
+        showNotification('Please fill required fields: Service Name, Server, Heal Commands', 'error');
+        return;
+    }
+    
+    const template = {
+        service_name: serviceName,
+        trigger_source: document.getElementById('heal-trigger-source').value,
+        analytics_service: document.getElementById('heal-analytics-service').value || null,
+        server_id: serverId,
+        check_command: document.getElementById('heal-check-command').value.trim() || null,
+        expected_output: document.getElementById('heal-expected-output').value.trim() || '',
+        heal_commands: commands.split('\n').filter(c => c.trim()),
+        verify_command: document.getElementById('heal-verify-command').value.trim() || null,
+        retry_count: parseInt(document.getElementById('heal-retry-count').value) || 3,
+        retry_delay: parseInt(document.getElementById('heal-retry-delay').value) || 10,
+        enabled: document.getElementById('heal-enabled').checked
+    };
+    
+    if (templateId) {
+        template.id = templateId;
+    }
+    
+    await saveHealTemplate(template);
+}
+
+async function editHealTemplate(templateId) {
+    const templates = await loadHealTemplates();
+    const template = templates.find(t => t.id === templateId);
+    
+    if (!template) {
+        showNotification('Template not found', 'error');
+        return;
+    }
+    
+    const form = document.getElementById('heal-template-form');
+    const title = document.getElementById('heal-form-title');
+    
+    if (form) {
+        form.style.display = 'block';
+        title.textContent = 'Edit Heal Template';
+        form.dataset.templateId = templateId;
+        
+        document.getElementById('heal-service-name').value = template.service_name || '';
+        document.getElementById('heal-trigger-source').value = template.trigger_source || 'analytics';
+        document.getElementById('heal-analytics-service').value = template.analytics_service || '';
+        document.getElementById('heal-server-id').value = template.server_id || '';
+        document.getElementById('heal-check-command').value = template.check_command || '';
+        document.getElementById('heal-expected-output').value = template.expected_output || '';
+        document.getElementById('heal-commands').value = (template.heal_commands || []).join('\n');
+        document.getElementById('heal-verify-command').value = template.verify_command || '';
+        document.getElementById('heal-retry-count').value = template.retry_count || 3;
+        document.getElementById('heal-retry-delay').value = template.retry_delay || 10;
+        document.getElementById('heal-enabled').checked = template.enabled !== false;
+        
+        form.scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
+function applyCheckPreset() {
+    const select = document.getElementById('heal-check-preset');
+    const opt = select.selectedOptions[0];
+    
+    if (opt && opt.value) {
+        document.getElementById('heal-check-command').value = opt.value;
+        document.getElementById('heal-expected-output').value = opt.dataset.expected || '';
+    }
+}
+
+function addHealCommandFromPreset() {
+    const preset = document.getElementById('heal-command-preset').value;
+    if (!preset) return;
+    
+    const textarea = document.getElementById('heal-commands');
+    const current = textarea.value.trim();
+    textarea.value = current ? `${current}\n${preset}` : preset;
+}
+
+// ============================================================================
+// Settings Loader
+// ============================================================================
+
+async function loadSentinelSettings() {
+    try {
+        const response = await fetch('/api/sentinel/settings');
+        const settings = await response.json();
+        
+        const modeSelect = document.getElementById('auto-heal-mode');
+        if (modeSelect) {
+            modeSelect.value = settings.auto_heal_mode || 'explicit';
+        }
+    } catch (error) {
+        console.error('Failed to load Sentinel settings:', error);
+    }
+}
+
+// ============================================================================
+// Initialization
+// ============================================================================
+
+function initSentinelAutoHeal() {
+    const container = document.getElementById('heal-template-container');
+    if (container) {
+        renderHealTemplateEditor(container);
+    }
+    
+    loadSentinelSettings();
+}
+
+// Auto-initialize on page load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initSentinelAutoHeal);
+} else {
+    initSentinelAutoHeal();
+}
+
+// Helper function for notifications (if not already defined)
+function showNotification(message, type = 'info') {
+    // Replace with your existing notification system
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    alert(message);
+}
+
