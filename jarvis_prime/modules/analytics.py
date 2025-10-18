@@ -648,7 +648,6 @@ class AnalyticsDB:
         
         cur.execute("DELETE FROM network_devices WHERE mac_address = ?", (mac_address,))
         cur.execute("DELETE FROM network_events WHERE mac_address = ?", (mac_address,))
-        
         conn.commit()
         conn.close()
     
@@ -1867,10 +1866,12 @@ def register_routes(app: web.Application):
     app.router.add_get('/api/analytics/network/stats', get_network_stats)
 
 
+
 async def analytics_notify(source: str, level: str, message: str):
     """
     Unified notification handler for Analytics events.
     Sends alerts via Jarvis pipeline (Inbox, UI, Gotify/ntfy, etc.)
+    FIX: Now properly awaits async process_incoming
     """
     try:
         # Prepare message
@@ -1880,8 +1881,8 @@ async def analytics_notify(source: str, level: str, message: str):
 
         # Send through Jarvis unified notification system
         try:
-            from bot import process_incoming
-            process_incoming(title, body, source="analytics", priority=priority)
+            from bot import _process_incoming_async
+            await _process_incoming_async(title, body, source="analytics", original_id=None, priority=priority)
 
             # Optional: update Atlas immediately when Analytics fires
             try:
@@ -1890,16 +1891,26 @@ async def analytics_notify(source: str, level: str, message: str):
             except Exception:
                 pass
 
-            logger.info(f"Analytics notification dispatched: {body}")
+            logger.info(f"✅ Analytics notification sent: {body}")
+
+        except ImportError:
+            logger.warning("⚠️ bot._process_incoming_async not found, trying fallback")
+            # Fallback: try the sync wrapper
+            try:
+                from bot import process_incoming
+                process_incoming(title, body, source="analytics", priority=priority)
+                logger.info(f"✅ Analytics notification sent via fallback: {body}")
+            except Exception as e:
+                logger.error(f"❌ Fallback failed: {e}")
 
         except Exception as e:
-            logger.warning(f"process_incoming unavailable: {e}")
-            # Fallback to error notifier if Jarvis bot is down
+            logger.warning(f"❌ process_incoming failed: {e}")
+            # Last resort: direct Gotify/ntfy if available
             try:
                 from errors import notify_error
                 notify_error(f"[Analytics] {body}", context="analytics")
             except Exception:
-                logger.error(f"Analytics fallback failed: {e}")
+                logger.error(f"All notification methods failed: {e}")
 
     except Exception as e:
         logger.error(f"Failed to send analytics notification: {e}")
@@ -1934,4 +1945,3 @@ async def shutdown_analytics():
         await monitor.stop_all()
     if scanner:
         await scanner.stop_monitoring()
-    logger.info("Analytics module shutdown complete")
