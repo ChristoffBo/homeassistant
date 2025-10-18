@@ -946,10 +946,10 @@ class NetworkScanner:
         return None
     
         async def _process_scan_results(self, devices: List[Dict]):
-        """Process scan results and update database"""
-        now = int(time.time())
-        known_macs = {d['mac_address'] for d in self.db.get_all_devices()}
-        scanned_macs = {d['mac_address'] for d in devices}
+            """Process scan results and update database"""
+            now = int(time.time())
+            known_macs = {d['mac_address'] for d in self.db.get_all_devices()}
+            scanned_macs = {d['mac_address'] for d in devices}
 
         # Update existing devices and add new ones
         for device_dict in devices:
@@ -971,7 +971,6 @@ class NetworkScanner:
                 # Send notification if alerts enabled
                 if self.alert_new_devices and self.notification_callback:
                     await self._notify_new_device(device_dict)
-
 
 
 
