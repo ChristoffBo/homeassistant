@@ -784,7 +784,7 @@ class NetworkScanner:
         self.db = db
         self.scanning = False
         self.monitoring = False
-        self.monitor_interval = 300  # 5 minutes
+        self.monitor_interval = 900  # 5 minutes
         self.monitor_task = None
         self.alert_new_devices = True
         self.notification_callback = None
