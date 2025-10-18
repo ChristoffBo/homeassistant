@@ -967,11 +967,12 @@ class NetworkScanner:
         
         return None
     
-        async def _process_scan_results(self, devices: List[Dict]):
-            """Process scan results and update database"""
-            now = int(time.time())
-            known_macs = {d['mac_address'] for d in self.db.get_all_devices()}
-            scanned_macs = {d['mac_address'] for d in devices}
+
+    async def _process_scan_results(self, devices: List[Dict]):
+        """Process scan results and update database"""
+        now = int(time.time())
+        known_macs = {d['mac_address'] for d in self.db.get_all_devices()}
+        scanned_macs = {d['mac_address'] for d in devices}
 
         # Update existing devices and add new ones
         for device_dict in devices:
@@ -994,9 +995,6 @@ class NetworkScanner:
                 if self.alert_new_devices and self.notification_callback:
                     await self._notify_new_device(device_dict)
 
-
-
-        
         # Detect offline monitored devices
         monitored_devices = self.db.get_monitored_devices()
         for device in monitored_devices:
@@ -1014,7 +1012,6 @@ class NetworkScanner:
                     
                     if self.notification_callback:
                         await self._notify_device_offline(device)
-    
     async def _notify_new_device(self, device: Dict):
         """Send notification for new device"""
         if not self.notification_callback:
@@ -1997,7 +1994,3 @@ async def shutdown_analytics():
     if scanner:
         await scanner.stop_monitoring()
     logger.info("Analytics module shutdown complete")
-
-
-
-
