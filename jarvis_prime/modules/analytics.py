@@ -945,19 +945,19 @@ class NetworkScanner:
         
         return None
     
-    async def _process_scan_results(self, devices: List[Dict]):
+        async def _process_scan_results(self, devices: List[Dict]):
         """Process scan results and update database"""
         now = int(time.time())
         known_macs = {d['mac_address'] for d in self.db.get_all_devices()}
         scanned_macs = {d['mac_address'] for d in devices}
-        
+
         # Update existing devices and add new ones
-        for device_dict in devices: 
+        for device_dict in devices:
             mac = device_dict['mac_address']
             is_new = mac not in known_macs
 
             # Record event for new devices
-            if is_new:                   
+            if is_new:
                 logger.info(f"New device detected: {mac} ({device_dict['ip_address']})")
                 await self.detect_common_services(device_dict['ip_address'])
 
@@ -973,9 +973,8 @@ class NetworkScanner:
                     await self._notify_new_device(device_dict)
 
 
-    # Send notification if alerts enabled
-    if self.alert_new_devices and self.notification_callback:
-        await self._notify_new_device(device_dict)
+
+   
 
         
         # Detect offline monitored devices
