@@ -1058,6 +1058,31 @@ class Sentinel:
         
         return {"success": True, "deleted": deleted}
 
+    async def auto_purge(self):
+        """Background task to auto-purge old data every 24 hours"""
+        while True:
+            try:
+                await asyncio.sleep(86400)  # Wait 24 hours
+                
+                # Purge data older than 90 days
+                cutoff = int((datetime.now() - timedelta(days=90)).timestamp())
+                
+                conn = sqlite3.connect(self.db_path)
+                cur = conn.cursor()
+                
+                # Purge old logs
+                cur.execute("DELETE FROM sentinel_logs WHERE timestamp < ?", (cutoff,))
+                logs_deleted = cur.rowcount
+                
+                conn.commit()
+                conn.close()
+                
+                self.logger(f"[sentinel] Auto-purge completed: {logs_deleted} logs deleted (older than 90 days)")
+                
+            except Exception as e:
+                self.logger(f"[sentinel] Error in auto-purge: {e}")
+                await asyncio.sleep(3600)  # Retry in 1 hour on error
+
     def reset_stats(self):
         """Reset all statistics"""
         conn = sqlite3.connect(self.db_path)
