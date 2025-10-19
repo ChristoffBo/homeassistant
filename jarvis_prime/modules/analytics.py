@@ -471,40 +471,69 @@ class AnalyticsDB:
             services.append(service)
         return services
     
-    def get_service(self, service_id: int) -> Optional[HealthCheck]:
+    def get_all_services(self) -> List[Dict]:
+        """Get all configured services with current status"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT 
+                id,
+                service_name,
+                endpoint,
+                check_type,
+                expected_status,
+                timeout,
+                check_interval,
+                enabled,
+                retries,
+                flap_window,
+                flap_threshold,
+                suppression_duration,
+                (SELECT status FROM analytics_metrics 
+                 WHERE service_name = analytics_services.service_name 
+                 ORDER BY timestamp DESC LIMIT 1) as current_status,
+                (SELECT timestamp FROM analytics_metrics 
+                 WHERE service_name = analytics_services.service_name 
+                 ORDER BY timestamp DESC LIMIT 1) as last_check
+            FROM analytics_services
+            ORDER BY service_name
+        """)
+        
+        services = [dict(row) for row in cur.fetchall()]
+        conn.close()
+        return services
+    
+    def get_service(self, service_id: int) -> Optional[Dict]:
         """Get a specific service by ID"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT * FROM analytics_services WHERE id = ?", (service_id,))
+        
+        cur.execute("""
+            SELECT * FROM analytics_services WHERE id = ?
+        """, (service_id,))
+        
         row = cur.fetchone()
         conn.close()
         
         if row:
-            # Convert Row to dict for safe access
-            row_dict = dict(row)
-            service = HealthCheck(
-                service_name=row_dict['service_name'],
-                endpoint=row_dict['endpoint'],
-                check_type=row_dict['check_type'],
-                expected_status=row_dict['expected_status'],
-                timeout=row_dict['timeout'],
-                interval=row_dict['check_interval'],
-                enabled=bool(row_dict['enabled']),
-                retries=row_dict.get('retries', 3),
-                flap_window=row_dict.get('flap_window', 3600),
-                flap_threshold=row_dict.get('flap_threshold', 5),
-                suppression_duration=row_dict.get('suppression_duration', 3600)
-            )
-            service.id = row_dict['id']
-            return service
+            return dict(row)
         return None
     
     def delete_service(self, service_id: int):
-        """Delete a service"""
+        """Delete a service and its metrics"""
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
-        cur.execute("DELETE FROM analytics_services WHERE id = ?", (service_id,))
+        
+        service = self.get_service(service_id)
+        if service:
+            service_name = service['service_name']
+            cur.execute("DELETE FROM analytics_metrics WHERE service_name = ?", (service_name,))
+            cur.execute("DELETE FROM analytics_incidents WHERE service_name = ?", (service_name,))
+            cur.execute("DELETE FROM analytics_services WHERE id = ?", (service_id,))
+        
         conn.commit()
         conn.close()
     
@@ -1513,38 +1542,27 @@ async def get_health_score(request: web.Request):
 
 
 async def get_services(request: web.Request):
-    """Get all configured services with their latest status"""
-    services = db.get_services()
-    result = []
+    """Get all services with flap detection info"""
+    services = db.get_all_services()
     
-    for service in services:
-        # Get latest metric
-        metrics = db.get_metrics(service.service_name, hours=1)
-        latest_status = metrics[0].status if metrics else 'unknown'
-        latest_response_time = metrics[0].response_time if metrics else None
-        
-        # Get uptime percentage
-        all_metrics = db.get_metrics(service.service_name, hours=24)
-        if all_metrics:
-            uptime = (sum(1 for m in all_metrics if m.status == 'up') / len(all_metrics)) * 100
-        else:
-            uptime = 0
-        
-        result.append({
-            'id': service.id,
-            'service_name': service.service_name,
-            'endpoint': service.endpoint,
-            'check_type': service.check_type,
-            'enabled': service.enabled,
-            'interval': service.interval,
-            'timeout': service.timeout,
-            'retries': service.retries,
-            'latest_status': latest_status,
-            'latest_response_time': latest_response_time,
-            'uptime_24h': round(uptime, 2)
-        })
+    # Add flap tracking info if monitor exists
+    if monitor:
+        for service in services:
+            service_name = service['service_name']
+            if service_name in monitor.flap_trackers:
+                tracker = monitor.flap_trackers[service_name]
+                service['flap_count'] = len(tracker.flap_times)
+                service['is_suppressed'] = (
+                    tracker.suppressed_until is not None and 
+                    time.time() < tracker.suppressed_until
+                )
+                service['suppressed_until'] = tracker.suppressed_until
+            else:
+                service['flap_count'] = 0
+                service['is_suppressed'] = False
+                service['suppressed_until'] = None
     
-    return _json({'services': result})
+    return _json(services)
 
 
 async def add_service(request: web.Request):
