@@ -233,6 +233,7 @@ class HealthCheck:
     flap_window: int = 3600  # seconds (1 hour)
     flap_threshold: int = 5
     suppression_duration: int = 3600  # seconds (1 hour)
+    id: int = None  # Database ID
 
 
 @dataclass
@@ -452,7 +453,7 @@ class AnalyticsDB:
         for row in rows:
             # Convert Row to dict for safe access
             row_dict = dict(row)
-            services.append(HealthCheck(
+            service = HealthCheck(
                 service_name=row_dict['service_name'],
                 endpoint=row_dict['endpoint'],
                 check_type=row_dict['check_type'],
@@ -464,7 +465,10 @@ class AnalyticsDB:
                 flap_window=row_dict.get('flap_window', 3600),
                 flap_threshold=row_dict.get('flap_threshold', 5),
                 suppression_duration=row_dict.get('suppression_duration', 3600)
-            ))
+            )
+            # Store the ID for reference
+            service.id = row_dict['id']
+            services.append(service)
         return services
     
     def get_service(self, service_id: int) -> Optional[HealthCheck]:
@@ -479,7 +483,7 @@ class AnalyticsDB:
         if row:
             # Convert Row to dict for safe access
             row_dict = dict(row)
-            return HealthCheck(
+            service = HealthCheck(
                 service_name=row_dict['service_name'],
                 endpoint=row_dict['endpoint'],
                 check_type=row_dict['check_type'],
@@ -492,6 +496,8 @@ class AnalyticsDB:
                 flap_threshold=row_dict.get('flap_threshold', 5),
                 suppression_duration=row_dict.get('suppression_duration', 3600)
             )
+            service.id = row_dict['id']
+            return service
         return None
     
     def delete_service(self, service_id: int):
@@ -1413,18 +1419,24 @@ class NetworkScanner:
                         self.db.add_or_update_device(device)
                         
                         if self.alert_new_devices and self.notification_callback:
-                            await self.notification_callback(
-                                'Network Scanner',
-                                'info',
-                                f"New device with services: {device.hostname or device.ip_address} - {service_names}"
-                            )
+                            try:
+                                await self.notification_callback(
+                                    'Network Scanner',
+                                    'info',
+                                    f"New device with services: {device.hostname or device.ip_address} - {service_names}"
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to send notification: {e}")
                     else:
                         if self.alert_new_devices and self.notification_callback:
-                            await self.notification_callback(
-                                'Network Scanner',
-                                'info',
-                                f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
-                            )
+                            try:
+                                await self.notification_callback(
+                                    'Network Scanner',
+                                    'info',
+                                    f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to send notification: {e}")
         
         finally:
             self.scanning = False
@@ -1519,6 +1531,7 @@ async def get_services(request: web.Request):
             uptime = 0
         
         result.append({
+            'id': service.id,
             'service_name': service.service_name,
             'endpoint': service.endpoint,
             'check_type': service.check_type,
