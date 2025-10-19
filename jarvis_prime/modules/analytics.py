@@ -1254,7 +1254,7 @@ class HealthMonitor:
                     self.db.create_incident(service.service_name, metric.error_message)
                     
                     if not self.should_suppress_notification(service.service_name, 'down'):
-                        await self.notify(
+                        await analytics_notify(
                             service.service_name,
                             'down',
                             f"Service is DOWN: {metric.error_message or 'No response'}"
@@ -1265,7 +1265,7 @@ class HealthMonitor:
                     self.db.resolve_incident(service.service_name)
                     
                     if not self.should_suppress_notification(service.service_name, 'up'):
-                        await self.notify(
+                        await analytics_notify(
                             service.service_name,
                             'up',
                             f"Service has RECOVERED (response time: {metric.response_time:.2f}s)"
@@ -1463,13 +1463,11 @@ class NetworkScanner:
                         device.vendor = f"Services: {service_names}"
                         self.db.add_or_update_device(device)
                         
-                        logger.info(f"🔔 About to notify - callback is None: {self.notification_callback is None}")
-                        
-                        # Send notification if callback is set
-                        if self.alert_new_devices and self.notification_callback is not None:
+                        # Send notification directly - no callback needed
+                        if self.alert_new_devices:
                             try:
-                                logger.info(f"🚀 Calling notification callback for device with services")
-                                await self.notification_callback(
+                                logger.info(f"🚀 Sending notification for device with services")
+                                await analytics_notify(
                                     'Network Scanner',
                                     'info',
                                     f"New device with services: {device.hostname or device.ip_address} - {service_names}"
@@ -1477,16 +1475,12 @@ class NetworkScanner:
                                 logger.info(f"✅ Notification sent successfully")
                             except Exception as e:
                                 logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
-                        elif self.alert_new_devices:
-                            logger.warning(f"⚠️ New device discovered but notification_callback is None")
                     else:
-                        logger.info(f"🔔 About to notify - callback is None: {self.notification_callback is None}")
-                        
-                        # Send notification if callback is set
-                        if self.alert_new_devices and self.notification_callback is not None:
+                        # Send notification directly - no callback needed
+                        if self.alert_new_devices:
                             try:
-                                logger.info(f"🚀 Calling notification callback for device without services")
-                                await self.notification_callback(
+                                logger.info(f"🚀 Sending notification for device without services")
+                                await analytics_notify(
                                     'Network Scanner',
                                     'info',
                                     f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
@@ -1494,8 +1488,6 @@ class NetworkScanner:
                                 logger.info(f"✅ Notification sent successfully")
                             except Exception as e:
                                 logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
-                        elif self.alert_new_devices:
-                            logger.warning(f"⚠️ New device discovered but notification_callback is None")
         
         finally:
             self.scanning = False
