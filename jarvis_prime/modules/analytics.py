@@ -1448,28 +1448,57 @@ class NetworkScanner:
                         self.db.add_or_update_device(device)
                         
                         # Send notification if callback is set
-                        if self.alert_new_devices and self.notification_callback is not None:
-                            try:
-                                await self.notification_callback(
-                                    'Network Scanner',
-                                    'info',
-                                    f"New device with services: {device.hostname or device.ip_address} - {service_names}"
-                                )
-                            except Exception as e:
-                                logger.error(f"Failed to send notification: {e}")
-                        elif self.alert_new_devices:
-                            logger.warning(f"New device discovered but notification_callback is None")
-                    else:
-                        # Send notification if callback is set
-                        if self.alert_new_devices and self.notification_callback is not None:
-                            try:
-                                await self.notification_callback(
-                                    'Network Scanner',
-                                    'info',
-                                    f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
-                                )
-                            except Exception as e:
-                                logger.error(f"Failed to send notification: {e}")
+if self.alert_new_devices and self.notification_callback is not None:
+    cb = self.notification_callback
+    try:
+        if asyncio.iscoroutinefunction(cb):
+            await cb(
+                'Network Scanner',
+                'info',
+                f"New device with services: {device.hostname or device.ip_address} - {service_names}"
+            )
+        else:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                cb,
+                'Network Scanner',
+                'info',
+                f"New device with services: {device.hostname or device.ip_address} - {service_names}"
+            )
+    except Exception as e:
+        logger.error(f"Failed to send notification: {e}")
+elif self.alert_new_devices:
+    logger.warning("New device discovered but notification_callback is None")
+
+# ---------------
+# And for the second one (the 'else' block below):
+# ---------------
+
+# Send notification if callback is set
+if self.alert_new_devices and self.notification_callback is not None:
+    cb = self.notification_callback
+    try:
+        if asyncio.iscoroutinefunction(cb):
+            await cb(
+                'Network Scanner',
+                'info',
+                f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
+            )
+        else:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                cb,
+                'Network Scanner',
+                'info',
+                f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
+            )
+    except Exception as e:
+        logger.error(f"Failed to send notification: {e}")
+elif self.alert_new_devices:
+    logger.warning("New device discovered but notification_callback is None")
+
                         elif self.alert_new_devices:
                             logger.warning(f"New device discovered but notification_callback is None")
         
