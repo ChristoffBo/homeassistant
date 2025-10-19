@@ -1869,35 +1869,47 @@ def register_routes(app: web.Application):
 
 async def analytics_notify(source: str, level: str, message: str):
     """
-    Unified notification handler for Analytics events.
-    Sends alerts via Jarvis pipeline (Inbox, UI, Gotify/ntfy, etc.)
-    FIXED: Restored direct process_incoming() call for proper fan-out.
+    Unified Analytics notifier with full async fan-out
+    (Inbox + UI + Gotify + Atlas + Lexi overlay if enabled)
     """
     try:
         title = f"Analytics — {source}"
         body = f"[{level.upper()}] {message}"
-        priority = 5 if level.lower() in ["critical", "error", "down"] else 3
+        priority = 5 if level.lower() in ("critical", "error", "down") else 3
 
-        # ✅ Main fan-out through Jarvis
+        # ✅ Properly await the fan-out coroutine
         from bot import process_incoming
-        process_incoming(title, body, source="analytics", priority=priority)
+        if asyncio.iscoroutinefunction(process_incoming):
+            await process_incoming(title, body, source="analytics", priority=priority)
+        else:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, process_incoming, title, body, "analytics", priority)
 
-        # ✅ Optional: Atlas state sync (non-blocking)
+        # ✅ Optional Atlas sync (non-blocking)
         try:
             from atlas import update_service_state
-            update_service_state(source, level)
+            if asyncio.iscoroutinefunction(update_service_state):
+                await update_service_state(source, level)
+            else:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, update_service_state, source, level)
         except Exception:
             pass
 
-        logger.info(f"✅ Analytics notification sent with fan-out: {body}")
+        logger.info(f"✅ Fan-out complete for {source}: {body}")
 
     except Exception as e:
         logger.error(f"❌ analytics_notify failed: {e}")
         try:
             from errors import notify_error
-            notify_error(f"[Analytics] {body}", context="analytics")
-        except Exception:
-            logger.error(f"All notification methods failed: {e}")
+            if asyncio.iscoroutinefunction(notify_error):
+                await notify_error(f"[Analytics] {body}", context="analytics")
+            else:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, notify_error, f"[Analytics] {body}", "analytics")
+        except Exception as inner:
+            logger.error(f"All notification methods failed: {inner}")
+
 
 
 
