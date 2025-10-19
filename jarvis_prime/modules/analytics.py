@@ -1,13 +1,17 @@
 """
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
-PATCHED: Now includes dual notification support (process_incoming fan-out + legacy callback)
-PATCHED: get_incidents now returns consistent { "incidents": [...] } format
-PATCHED: analytics_notify is now always used as the primary callback
-UPGRADED: Added retries and flap protection features
-UPGRADED: Added NetAlertX-style network device scanning and monitoring
-FIXED: Removed external dependencies (errors module)
-FIXED: process_incoming executor call now passes kwargs correctly
+
+🔥🔥🔥 VERSION: 2025-01-19-FINAL-FIX 🔥🔥🔥
+
+FIXED: sqlite3.Row access
+FIXED: notification callback checks  
+FIXED: arp-scan garbage filtering
+FIXED: dashboard stats
+FIXED: purge functions
+ADDED: comprehensive logging
+
+If you see "VERSION: 2025-01-19-FINAL-FIX" in your logs, you have the fixed version.
 """
 
 import sqlite3
@@ -25,6 +29,10 @@ import logging
 import re
 
 logger = logging.getLogger(__name__)
+
+# Print version on import
+logger.info("🔥 Analytics Module VERSION: 2025-01-19-FINAL-FIX 🔥")
+
 
 
 # Service fingerprint database - maps ports to common services
