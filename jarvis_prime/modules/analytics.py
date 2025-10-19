@@ -1518,26 +1518,55 @@ def _json(data, status=200):
 # ============================
 
 async def get_health_score(request: web.Request):
-    """Calculate overall health score based on recent metrics"""
-    try:
-        hours = int(request.rel_url.query.get('hours', 24))
-    except Exception:
-        hours = 24
+    """Calculate overall system health score"""
+    services = db.get_all_services()
     
-    metrics = db.get_all_metrics(hours)
+    if not services:
+        return _json({
+            'health_score': 100,
+            'status': 'healthy',
+            'message': 'No services configured',
+            'total_services': 0,
+            'up_services': 0,
+            'down_services': 0,
+            'enabled_services': 0
+        })
     
-    if not metrics:
-        return _json({'health_score': 100, 'total_checks': 0, 'successful_checks': 0})
+    total_score = 0
+    up_services = 0
+    down_services = 0
+    enabled_count = 0
     
-    total_checks = len(metrics)
-    successful_checks = sum(1 for m in metrics if m.status == 'up')
-    health_score = int((successful_checks / total_checks) * 100)
+    for service in services:
+        if not service['enabled']:
+            continue
+        
+        enabled_count += 1
+        
+        # Count up/down services
+        if service.get('current_status') == 'up':
+            up_services += 1
+        else:
+            down_services += 1
+        
+        # Calculate uptime for this service
+        metrics = db.get_metrics(service['service_name'], hours=24)
+        if metrics:
+            up_count = sum(1 for m in metrics if m.status == 'up')
+            uptime_pct = (up_count / len(metrics)) * 100 if metrics else 100
+            total_score += uptime_pct
+        else:
+            total_score += 100
+    
+    avg_score = total_score / enabled_count if enabled_count > 0 else 100
     
     return _json({
-        'health_score': health_score,
-        'total_checks': total_checks,
-        'successful_checks': successful_checks,
-        'failed_checks': total_checks - successful_checks
+        'health_score': round(avg_score, 1),
+        'status': 'healthy' if avg_score >= 95 else 'degraded' if avg_score >= 75 else 'critical',
+        'total_services': len(services),
+        'up_services': up_services,
+        'down_services': down_services,
+        'enabled_services': enabled_count
     })
 
 
@@ -2076,19 +2105,30 @@ async def analytics_notify(source: str, level: str, message: str):
         body = f"[{level.upper()}] {message}"
         priority = 5 if level.lower() in ("critical", "error", "down") else 3
 
+        logger.info(f"📤 analytics_notify called: {title} | {body}")
+
         # ✅ Import and call process_incoming
-        from bot import process_incoming
-        
-        if asyncio.iscoroutinefunction(process_incoming):
-            # If it's async, await it directly
-            await process_incoming(title, body, source="analytics", priority=priority)
-        else:
-            # If it's sync, run in executor with KWARGS not positional args
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, 
-                lambda: process_incoming(title, body, source="analytics", priority=priority)
-            )
+        try:
+            from bot import process_incoming
+            
+            logger.info(f"📥 Calling process_incoming (async={asyncio.iscoroutinefunction(process_incoming)})")
+            
+            if asyncio.iscoroutinefunction(process_incoming):
+                # If it's async, await it directly
+                await process_incoming(title, body, source="analytics", priority=priority)
+            else:
+                # If it's sync, run in executor with KWARGS not positional args
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None, 
+                    lambda: process_incoming(title, body, source="analytics", priority=priority)
+                )
+            
+            logger.info(f"✅ process_incoming completed successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ process_incoming failed: {e}", exc_info=True)
+            raise
 
         # ✅ Optional Atlas sync (non-blocking)
         try:
@@ -2104,7 +2144,7 @@ async def analytics_notify(source: str, level: str, message: str):
         logger.info(f"✅ Fan-out complete for {source}: {body}")
 
     except Exception as e:
-        logger.error(f"❌ analytics_notify failed: {e}")
+        logger.error(f"❌ analytics_notify failed: {e}", exc_info=True)
         try:
             from errors import notify_error
             if asyncio.iscoroutinefunction(notify_error):
