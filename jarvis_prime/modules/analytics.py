@@ -1775,13 +1775,14 @@ async def reset_health_score(request: web.Request):
 
 
 async def reset_incidents(request: web.Request):
-    """Reset incidents by purging old ones"""
-    try:
-        days = int(request.rel_url.query.get('days', 90))
-    except Exception:
-        days = 90
+    """Clear ALL incidents (not just old ones)"""
+    conn = sqlite3.connect(db.db_path)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM analytics_incidents")
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
     
-    deleted = db.purge_old_incidents(days)
     return _json({'success': True, 'deleted_incidents': deleted})
 
 
@@ -1800,15 +1801,24 @@ async def reset_service_data(request: web.Request):
 
 
 async def purge_all_metrics(request: web.Request):
-    """Purge ALL metrics (emergency reset)"""
+    """Purge ALL metrics AND incidents (complete reset)"""
     conn = sqlite3.connect(db.db_path)
     cur = conn.cursor()
+    
     cur.execute("DELETE FROM analytics_metrics")
-    deleted = cur.rowcount
+    metrics_deleted = cur.rowcount
+    
+    cur.execute("DELETE FROM analytics_incidents")
+    incidents_deleted = cur.rowcount
+    
     conn.commit()
     conn.close()
     
-    return _json({'success': True, 'deleted_metrics': deleted})
+    return _json({
+        'success': True, 
+        'deleted_metrics': metrics_deleted,
+        'deleted_incidents': incidents_deleted
+    })
 
 
 async def purge_week_metrics(request: web.Request):
