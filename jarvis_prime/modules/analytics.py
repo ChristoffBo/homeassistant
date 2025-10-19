@@ -38,6 +38,9 @@ SERVICE_FINGERPRINTS = {
     5055: {'name': 'Overseerr', 'category': 'media', 'path': '/api/v1/status'},
     5056: {'name': 'Jellyseerr', 'category': 'media', 'path': '/api/v1/status'},
     9696: {'name': 'Prowlarr', 'category': 'media', 'path': '/api/v1/system/status'},
+    8191: {'name': 'FlareSolverr', 'category': 'media', 'path': '/'},
+    8265: {'name': 'Tdarr', 'category': 'media', 'path': '/api/v2/status'},
+    8266: {'name': 'Tdarr Server', 'category': 'media', 'path': '/api/v2/status'},
     
     # Download Clients
     8080: {'name': 'SABnzbd', 'category': 'download', 'path': '/api?mode=version'},
@@ -45,17 +48,31 @@ SERVICE_FINGERPRINTS = {
     8112: {'name': 'Deluge', 'category': 'download', 'path': '/'},
     6881: {'name': 'qBittorrent', 'category': 'download', 'path': '/api/v2/app/version'},
     8081: {'name': 'NZBGet', 'category': 'download', 'path': '/'},
+    9117: {'name': 'Jackett', 'category': 'download', 'path': '/api/v2.0/server/config'},
+    5076: {'name': 'NZBHydra2', 'category': 'download', 'path': '/api/system/info'},
+    9117: {'name': 'rTorrent/ruTorrent', 'category': 'download', 'path': '/'},
     
     # Media Servers
     32400: {'name': 'Plex', 'category': 'media-server', 'path': '/identity'},
     8096: {'name': 'Jellyfin', 'category': 'media-server', 'path': '/System/Info/Public'},
     8920: {'name': 'Emby', 'category': 'media-server', 'path': '/System/Info/Public'},
+    8324: {'name': 'Plex for Roku', 'category': 'media-server', 'path': '/'},
+    7359: {'name': 'Plex DLNA', 'category': 'media-server', 'path': None},
+    1900: {'name': 'Plex DLNA', 'category': 'media-server', 'path': None},
+    8200: {'name': 'Tautulli', 'category': 'media-server', 'path': '/api/v2'},
     
     # Home Automation
     8123: {'name': 'Home Assistant', 'category': 'automation', 'path': '/api/'},
     1880: {'name': 'Node-RED', 'category': 'automation', 'path': '/'},
     8088: {'name': 'Domoticz', 'category': 'automation', 'path': '/json.htm'},
     8090: {'name': 'OpenHAB', 'category': 'automation', 'path': '/rest/'},
+    8091: {'name': 'Homebridge', 'category': 'automation', 'path': '/'},
+    51826: {'name': 'Homebridge', 'category': 'automation', 'path': None},
+    8581: {'name': 'Home Assistant Node-RED', 'category': 'automation', 'path': '/'},
+    1883: {'name': 'MQTT Broker', 'category': 'automation', 'path': None},
+    8883: {'name': 'MQTT Broker (SSL)', 'category': 'automation', 'path': None},
+    9883: {'name': 'MQTT Broker (WebSocket)', 'category': 'automation', 'path': None},
+    8125: {'name': 'Zigbee2MQTT', 'category': 'automation', 'path': '/api/info'},
     
     # Monitoring & Management
     3001: {'name': 'Uptime Kuma', 'category': 'monitoring', 'path': '/api/status-page'},
@@ -64,48 +81,141 @@ SERVICE_FINGERPRINTS = {
     3000: {'name': 'Grafana', 'category': 'monitoring', 'path': '/api/health'},
     9090: {'name': 'Prometheus', 'category': 'monitoring', 'path': '/-/healthy'},
     8086: {'name': 'InfluxDB', 'category': 'monitoring', 'path': '/ping'},
+    9093: {'name': 'Alertmanager', 'category': 'monitoring', 'path': '/api/v1/status'},
+    9100: {'name': 'Node Exporter', 'category': 'monitoring', 'path': '/metrics'},
+    9115: {'name': 'Blackbox Exporter', 'category': 'monitoring', 'path': '/metrics'},
+    9182: {'name': 'Cloudflare Exporter', 'category': 'monitoring', 'path': '/metrics'},
+    8082: {'name': 'Chronograf', 'category': 'monitoring', 'path': '/'},
+    8888: {'name': 'Cockpit', 'category': 'monitoring', 'path': '/'},
+    10000: {'name': 'Webmin', 'category': 'management', 'path': '/'},
+    9090: {'name': 'Cockpit', 'category': 'management', 'path': '/'},
     
-    # Network Services
+    # Network Services & DNS
     53: {'name': 'DNS Server', 'category': 'network', 'path': None},
     80: {'name': 'HTTP Server', 'category': 'network', 'path': '/'},
     443: {'name': 'HTTPS Server', 'category': 'network', 'path': '/'},
-    5353: {'name': 'Pi-hole', 'category': 'network', 'path': '/admin/api.php'},
+    5335: {'name': 'Pi-hole', 'category': 'network', 'path': '/admin/api.php'},
     8888: {'name': 'Technitium DNS', 'category': 'network', 'path': '/api/user/session/get'},
+    853: {'name': 'DNS-over-TLS', 'category': 'network', 'path': None},
+    5300: {'name': 'AdGuard Home', 'category': 'network', 'path': '/control/status'},
+    3000: {'name': 'AdGuard Home', 'category': 'network', 'path': '/control/status'},
     
     # VPN & Proxy
     8888: {'name': 'Gluetun', 'category': 'vpn', 'path': '/v1/publicip/ip'},
     1080: {'name': 'Shadowsocks', 'category': 'vpn', 'path': None},
     8388: {'name': 'Shadowsocks', 'category': 'vpn', 'path': None},
+    1194: {'name': 'OpenVPN', 'category': 'vpn', 'path': None},
+    51820: {'name': 'WireGuard', 'category': 'vpn', 'path': None},
+    8118: {'name': 'Privoxy', 'category': 'proxy', 'path': '/'},
+    3128: {'name': 'Squid Proxy', 'category': 'proxy', 'path': '/'},
+    8443: {'name': 'Nginx Proxy Manager', 'category': 'proxy', 'path': '/api/'},
+    81: {'name': 'Nginx Proxy Manager', 'category': 'proxy', 'path': '/api/'},
+    8090: {'name': 'Traefik', 'category': 'proxy', 'path': '/api/overview'},
+    8080: {'name': 'Traefik', 'category': 'proxy', 'path': '/dashboard/'},
+    2019: {'name': 'Caddy', 'category': 'proxy', 'path': '/config/'},
     
     # Storage & Backup
     5000: {'name': 'Synology DSM', 'category': 'storage', 'path': '/'},
     5001: {'name': 'Synology DSM (HTTPS)', 'category': 'storage', 'path': '/'},
     9001: {'name': 'MinIO Console', 'category': 'storage', 'path': '/'},
+    9000: {'name': 'MinIO API', 'category': 'storage', 'path': '/minio/health/live'},
+    8200: {'name': 'Duplicati', 'category': 'backup', 'path': '/api/v1/serverstate'},
+    8083: {'name': 'Restic', 'category': 'backup', 'path': '/'},
+    9090: {'name': 'Kopia', 'category': 'backup', 'path': '/api/v1/repo/status'},
+    5076: {'name': 'Syncthing', 'category': 'storage', 'path': '/rest/system/version'},
+    8384: {'name': 'Syncthing', 'category': 'storage', 'path': '/rest/system/version'},
+    873: {'name': 'Rsync', 'category': 'backup', 'path': None},
+    445: {'name': 'SMB/CIFS', 'category': 'storage', 'path': None},
+    139: {'name': 'NetBIOS', 'category': 'storage', 'path': None},
+    2049: {'name': 'NFS', 'category': 'storage', 'path': None},
     
     # Databases
     3306: {'name': 'MySQL/MariaDB', 'category': 'database', 'path': None},
     5432: {'name': 'PostgreSQL', 'category': 'database', 'path': None},
     6379: {'name': 'Redis', 'category': 'database', 'path': None},
     27017: {'name': 'MongoDB', 'category': 'database', 'path': None},
+    8529: {'name': 'ArangoDB', 'category': 'database', 'path': '/_api/version'},
+    7474: {'name': 'Neo4j', 'category': 'database', 'path': '/'},
+    9042: {'name': 'Cassandra', 'category': 'database', 'path': None},
+    5984: {'name': 'CouchDB', 'category': 'database', 'path': '/'},
+    8091: {'name': 'Couchbase', 'category': 'database', 'path': '/pools'},
     
-    # Communication
+    # Communication & Messaging
     8065: {'name': 'Mattermost', 'category': 'communication', 'path': '/api/v4/system/ping'},
     3478: {'name': 'Gotify', 'category': 'communication', 'path': '/health'},
+    5000: {'name': 'Rocket.Chat', 'category': 'communication', 'path': '/api/info'},
+    9000: {'name': 'Matrix Synapse', 'category': 'communication', 'path': '/_matrix/client/versions'},
+    8008: {'name': 'Matrix Synapse', 'category': 'communication', 'path': '/_matrix/client/versions'},
+    5222: {'name': 'Prosody XMPP', 'category': 'communication', 'path': None},
+    5223: {'name': 'Prosody XMPP (SSL)', 'category': 'communication', 'path': None},
+    1025: {'name': 'MailHog', 'category': 'communication', 'path': '/api/v1/messages'},
+    8025: {'name': 'MailHog', 'category': 'communication', 'path': '/api/v1/messages'},
     
-    # Security
+    # Security & Authentication
     8200: {'name': 'Vault', 'category': 'security', 'path': '/v1/sys/health'},
     3012: {'name': 'Vaultwarden', 'category': 'security', 'path': '/api/'},
     8000: {'name': 'Authelia', 'category': 'security', 'path': '/api/health'},
+    9091: {'name': 'Authentik', 'category': 'security', 'path': '/api/v3/'},
+    8080: {'name': 'Keycloak', 'category': 'security', 'path': '/health'},
+    9000: {'name': 'Keycloak', 'category': 'security', 'path': '/health'},
+    8899: {'name': 'Fail2ban Exporter', 'category': 'security', 'path': '/metrics'},
     
-    # Development
+    # Development & CI/CD
     8080: {'name': 'Jenkins', 'category': 'development', 'path': '/login'},
     9200: {'name': 'Elasticsearch', 'category': 'development', 'path': '/'},
     5601: {'name': 'Kibana', 'category': 'development', 'path': '/api/status'},
+    9000: {'name': 'SonarQube', 'category': 'development', 'path': '/api/system/status'},
+    3000: {'name': 'Gitea', 'category': 'development', 'path': '/api/v1/version'},
+    3001: {'name': 'Gogs', 'category': 'development', 'path': '/api/v1/version'},
+    8080: {'name': 'GitLab', 'category': 'development', 'path': '/-/health'},
+    8929: {'name': 'GitLab', 'category': 'development', 'path': '/-/health'},
+    8083: {'name': 'VS Code Server', 'category': 'development', 'path': '/healthz'},
+    8443: {'name': 'Code Server', 'category': 'development', 'path': '/healthz'},
+    8384: {'name': 'Drone CI', 'category': 'development', 'path': '/healthz'},
+    9999: {'name': 'Argo CD', 'category': 'development', 'path': '/healthz'},
+    8080: {'name': 'Nexus', 'category': 'development', 'path': '/service/rest/v1/status'},
+    8081: {'name': 'Nexus', 'category': 'development', 'path': '/service/rest/v1/status'},
+    
+    # Container & Orchestration
+    2375: {'name': 'Docker API', 'category': 'container', 'path': None},
+    2376: {'name': 'Docker API (TLS)', 'category': 'container', 'path': None},
+    6443: {'name': 'Kubernetes API', 'category': 'container', 'path': '/healthz'},
+    10250: {'name': 'Kubelet', 'category': 'container', 'path': '/healthz'},
+    8001: {'name': 'Kubernetes Dashboard', 'category': 'container', 'path': '/'},
+    9090: {'name': 'Rancher', 'category': 'container', 'path': '/healthz'},
     
     # Game Servers
     25565: {'name': 'Minecraft', 'category': 'gaming', 'path': None},
-    27015: {'name': 'Steam Server', 'category': 'gaming', 'path': None},
+    25575: {'name': 'Minecraft RCON', 'category': 'gaming', 'path': None},
+    27015: {'name': 'Steam/Source Server', 'category': 'gaming', 'path': None},
     7777: {'name': 'Terraria', 'category': 'gaming', 'path': None},
+    7778: {'name': 'Satisfactory', 'category': 'gaming', 'path': None},
+    27016: {'name': 'Rust', 'category': 'gaming', 'path': None},
+    2456: {'name': 'Valheim', 'category': 'gaming', 'path': None},
+    19132: {'name': 'Minecraft Bedrock', 'category': 'gaming', 'path': None},
+    
+    # Smart Home & IoT
+    8086: {'name': 'ESPHome', 'category': 'iot', 'path': '/'},
+    6052: {'name': 'ESPHome', 'category': 'iot', 'path': '/'},
+    8080: {'name': 'Tasmota', 'category': 'iot', 'path': '/cm?cmnd=Status'},
+    8266: {'name': 'ESP8266', 'category': 'iot', 'path': '/'},
+    8888: {'name': 'Shelly', 'category': 'iot', 'path': '/status'},
+    8123: {'name': 'Octoprint', 'category': 'iot', 'path': '/api/version'},
+    5000: {'name': 'Octoprint', 'category': 'iot', 'path': '/api/version'},
+    
+    # Photos & Media Management
+    2342: {'name': 'PhotoPrism', 'category': 'photos', 'path': '/api/v1/status'},
+    2283: {'name': 'Immich', 'category': 'photos', 'path': '/api/server-info/ping'},
+    8080: {'name': 'Photoview', 'category': 'photos', 'path': '/api/graphql'},
+    8787: {'name': 'Kavita', 'category': 'photos', 'path': '/api/health'},
+    8080: {'name': 'Komga', 'category': 'photos', 'path': '/api/v1/actuator/health'},
+    
+    # Miscellaneous
+    8096: {'name': 'Firefly III', 'category': 'finance', 'path': '/api/v1/about'},
+    5252: {'name': 'OctoPrint', 'category': 'misc', 'path': '/api/version'},
+    7575: {'name': 'Speedtest Tracker', 'category': 'misc', 'path': '/api/healthcheck'},
+    8080: {'name': 'Home Assistant Supervisor', 'category': 'misc', 'path': '/supervisor/info'},
+    8112: {'name': 'FileBrowser', 'category': 'misc', 'path': '/api/health'},
 }
 
 
