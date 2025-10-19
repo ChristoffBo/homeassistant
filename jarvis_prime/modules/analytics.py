@@ -450,18 +450,20 @@ class AnalyticsDB:
         
         services = []
         for row in rows:
+            # Convert Row to dict for safe access
+            row_dict = dict(row)
             services.append(HealthCheck(
-                service_name=row['service_name'],
-                endpoint=row['endpoint'],
-                check_type=row['check_type'],
-                expected_status=row['expected_status'],
-                timeout=row['timeout'],
-                interval=row['check_interval'],
-                enabled=bool(row['enabled']),
-                retries=row.get('retries', 3),
-                flap_window=row.get('flap_window', 3600),
-                flap_threshold=row.get('flap_threshold', 5),
-                suppression_duration=row.get('suppression_duration', 3600)
+                service_name=row_dict['service_name'],
+                endpoint=row_dict['endpoint'],
+                check_type=row_dict['check_type'],
+                expected_status=row_dict['expected_status'],
+                timeout=row_dict['timeout'],
+                interval=row_dict['check_interval'],
+                enabled=bool(row_dict['enabled']),
+                retries=row_dict.get('retries', 3),
+                flap_window=row_dict.get('flap_window', 3600),
+                flap_threshold=row_dict.get('flap_threshold', 5),
+                suppression_duration=row_dict.get('suppression_duration', 3600)
             ))
         return services
     
@@ -475,18 +477,20 @@ class AnalyticsDB:
         conn.close()
         
         if row:
+            # Convert Row to dict for safe access
+            row_dict = dict(row)
             return HealthCheck(
-                service_name=row['service_name'],
-                endpoint=row['endpoint'],
-                check_type=row['check_type'],
-                expected_status=row['expected_status'],
-                timeout=row['timeout'],
-                interval=row['check_interval'],
-                enabled=bool(row['enabled']),
-                retries=row.get('retries', 3),
-                flap_window=row.get('flap_window', 3600),
-                flap_threshold=row.get('flap_threshold', 5),
-                suppression_duration=row.get('suppression_duration', 3600)
+                service_name=row_dict['service_name'],
+                endpoint=row_dict['endpoint'],
+                check_type=row_dict['check_type'],
+                expected_status=row_dict['expected_status'],
+                timeout=row_dict['timeout'],
+                interval=row_dict['check_interval'],
+                enabled=bool(row_dict['enabled']),
+                retries=row_dict.get('retries', 3),
+                flap_window=row_dict.get('flap_window', 3600),
+                flap_threshold=row_dict.get('flap_threshold', 5),
+                suppression_duration=row_dict.get('suppression_duration', 3600)
             )
         return None
     
