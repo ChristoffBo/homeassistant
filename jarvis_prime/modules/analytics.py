@@ -480,7 +480,7 @@ class AnalyticsDB:
         return services
     
     def get_all_services(self) -> List[Dict]:
-        """Get all configured services with current status"""
+        """Get all configured services with current status and stats"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -504,12 +504,31 @@ class AnalyticsDB:
                  ORDER BY timestamp DESC LIMIT 1) as current_status,
                 (SELECT timestamp FROM analytics_metrics 
                  WHERE service_name = analytics_services.service_name 
-                 ORDER BY timestamp DESC LIMIT 1) as last_check
+                 ORDER BY timestamp DESC LIMIT 1) as last_check,
+                (SELECT AVG(response_time) FROM analytics_metrics 
+                 WHERE service_name = analytics_services.service_name 
+                 AND timestamp > (strftime('%s', 'now') - 86400)
+                 AND response_time IS NOT NULL) as avg_response_24h,
+                (SELECT COUNT(*) FROM analytics_metrics 
+                 WHERE service_name = analytics_services.service_name 
+                 AND timestamp > (strftime('%s', 'now') - 86400)) as total_checks_24h,
+                (SELECT COUNT(*) FROM analytics_metrics 
+                 WHERE service_name = analytics_services.service_name 
+                 AND status = 'up'
+                 AND timestamp > (strftime('%s', 'now') - 86400)) as successful_checks_24h
             FROM analytics_services
             ORDER BY service_name
         """)
         
         services = [dict(row) for row in cur.fetchall()]
+        
+        # Calculate uptime percentage for each service
+        for service in services:
+            if service['total_checks_24h'] and service['total_checks_24h'] > 0:
+                service['uptime_24h'] = round((service['successful_checks_24h'] / service['total_checks_24h']) * 100, 1)
+            else:
+                service['uptime_24h'] = None
+        
         conn.close()
         return services
     
