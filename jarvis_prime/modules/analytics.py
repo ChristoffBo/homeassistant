@@ -1659,19 +1659,8 @@ async def get_service(request: web.Request):
     if not service:
         return _json({"error": "service not found"}, status=404)
     
-    return _json({
-        'service_name': service.service_name,
-        'endpoint': service.endpoint,
-        'check_type': service.check_type,
-        'expected_status': service.expected_status,
-        'timeout': service.timeout,
-        'interval': service.interval,
-        'enabled': service.enabled,
-        'retries': service.retries,
-        'flap_window': service.flap_window,
-        'flap_threshold': service.flap_threshold,
-        'suppression_duration': service.suppression_duration
-    })
+    # service is already a dict from db.get_service()
+    return _json(service)
 
 
 async def update_service(request: web.Request):
@@ -1687,28 +1676,29 @@ async def update_service(request: web.Request):
     if not service:
         return _json({"error": "service not found"}, status=404)
     
+    # service is a dict, access with ['key']
     # Update service fields
     updated_service = HealthCheck(
-        service_name=data.get('service_name', service.service_name),
-        endpoint=data.get('endpoint', service.endpoint),
-        check_type=data.get('check_type', service.check_type),
-        expected_status=data.get('expected_status', service.expected_status),
-        timeout=data.get('timeout', service.timeout),
-        interval=data.get('interval', service.interval),
-        enabled=data.get('enabled', service.enabled),
-        retries=data.get('retries', service.retries),
-        flap_window=data.get('flap_window', service.flap_window),
-        flap_threshold=data.get('flap_threshold', service.flap_threshold),
-        suppression_duration=data.get('suppression_duration', service.suppression_duration)
+        service_name=data.get('service_name', service['service_name']),
+        endpoint=data.get('endpoint', service['endpoint']),
+        check_type=data.get('check_type', service['check_type']),
+        expected_status=data.get('expected_status', service['expected_status']),
+        timeout=data.get('timeout', service['timeout']),
+        interval=data.get('interval', service['check_interval']),
+        enabled=data.get('enabled', service['enabled']),
+        retries=data.get('retries', service.get('retries', 3)),
+        flap_window=data.get('flap_window', service.get('flap_window', 3600)),
+        flap_threshold=data.get('flap_threshold', service.get('flap_threshold', 5)),
+        suppression_duration=data.get('suppression_duration', service.get('suppression_duration', 3600))
     )
     
     db.add_service(updated_service)
     
     # Restart monitoring task if it exists
-    if monitor and service.service_name in monitor.monitoring_tasks:
-        monitor.monitoring_tasks[service.service_name].cancel()
+    if monitor and service['service_name'] in monitor.monitoring_tasks:
+        monitor.monitoring_tasks[service['service_name']].cancel()
         task = asyncio.create_task(monitor.monitor_service(updated_service))
-        monitor.monitoring_tasks[service.service_name] = task
+        monitor.monitoring_tasks[service['service_name']] = task
     
     return _json({'success': True})
 
@@ -1721,10 +1711,10 @@ async def delete_service_route(request: web.Request):
     if not service:
         return _json({"error": "service not found"}, status=404)
     
-    # Stop monitoring task
-    if monitor and service.service_name in monitor.monitoring_tasks:
-        monitor.monitoring_tasks[service.service_name].cancel()
-        del monitor.monitoring_tasks[service.service_name]
+    # Stop monitoring task (service is a dict)
+    if monitor and service['service_name'] in monitor.monitoring_tasks:
+        monitor.monitoring_tasks[service['service_name']].cancel()
+        del monitor.monitoring_tasks[service['service_name']]
     
     db.delete_service(service_id)
     
