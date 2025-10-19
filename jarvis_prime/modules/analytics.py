@@ -1447,7 +1447,8 @@ class NetworkScanner:
                         device.vendor = f"Services: {service_names}"
                         self.db.add_or_update_device(device)
                         
-                        if self.alert_new_devices and self.notification_callback:
+                        # Send notification if callback is set
+                        if self.alert_new_devices and self.notification_callback is not None:
                             try:
                                 await self.notification_callback(
                                     'Network Scanner',
@@ -1456,8 +1457,11 @@ class NetworkScanner:
                                 )
                             except Exception as e:
                                 logger.error(f"Failed to send notification: {e}")
+                        elif self.alert_new_devices:
+                            logger.warning(f"New device discovered but notification_callback is None")
                     else:
-                        if self.alert_new_devices and self.notification_callback:
+                        # Send notification if callback is set
+                        if self.alert_new_devices and self.notification_callback is not None:
                             try:
                                 await self.notification_callback(
                                     'Network Scanner',
@@ -1466,6 +1470,8 @@ class NetworkScanner:
                                 )
                             except Exception as e:
                                 logger.error(f"Failed to send notification: {e}")
+                        elif self.alert_new_devices:
+                            logger.warning(f"New device discovered but notification_callback is None")
         
         finally:
             self.scanning = False
@@ -2180,9 +2186,13 @@ async def init_analytics(app: web.Application, notification_callback: Optional[C
     # Use provided callback or default
     callback = notification_callback or analytics_notify
     
+    logger.info(f"[analytics] Initializing with callback: {callback.__name__ if hasattr(callback, '__name__') else type(callback)}")
+    
     monitor = HealthMonitor(db, callback)
     scanner = NetworkScanner(db)
     scanner.set_notification_callback(callback)
+    
+    logger.info(f"[analytics] Scanner callback set: {scanner.notification_callback is not None}")
     
     # Start monitoring all enabled services
     await monitor.start_all()
