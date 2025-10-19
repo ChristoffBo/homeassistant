@@ -1382,6 +1382,14 @@ class NetworkScanner:
                             ip_address = parts[0]
                             mac_address = parts[1].upper()
                             
+                            # Validate IP address format
+                            if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip_address):
+                                continue
+                            
+                            # Validate MAC address format
+                            if not re.match(r'^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$', mac_address):
+                                continue
+                            
                             # Try to get hostname
                             hostname = None
                             try:
@@ -1447,31 +1455,39 @@ class NetworkScanner:
                         device.vendor = f"Services: {service_names}"
                         self.db.add_or_update_device(device)
                         
+                        logger.info(f"🔔 About to notify - callback is None: {self.notification_callback is None}")
+                        
                         # Send notification if callback is set
                         if self.alert_new_devices and self.notification_callback is not None:
                             try:
+                                logger.info(f"🚀 Calling notification callback for device with services")
                                 await self.notification_callback(
                                     'Network Scanner',
                                     'info',
                                     f"New device with services: {device.hostname or device.ip_address} - {service_names}"
                                 )
+                                logger.info(f"✅ Notification sent successfully")
                             except Exception as e:
-                                logger.error(f"Failed to send notification: {e}")
+                                logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
                         elif self.alert_new_devices:
-                            logger.warning(f"New device discovered but notification_callback is None")
+                            logger.warning(f"⚠️ New device discovered but notification_callback is None")
                     else:
+                        logger.info(f"🔔 About to notify - callback is None: {self.notification_callback is None}")
+                        
                         # Send notification if callback is set
                         if self.alert_new_devices and self.notification_callback is not None:
                             try:
+                                logger.info(f"🚀 Calling notification callback for device without services")
                                 await self.notification_callback(
                                     'Network Scanner',
                                     'info',
                                     f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
                                 )
+                                logger.info(f"✅ Notification sent successfully")
                             except Exception as e:
-                                logger.error(f"Failed to send notification: {e}")
+                                logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
                         elif self.alert_new_devices:
-                            logger.warning(f"New device discovered but notification_callback is None")
+                            logger.warning(f"⚠️ New device discovered but notification_callback is None")
         
         finally:
             self.scanning = False
@@ -2112,28 +2128,29 @@ def register_routes(app: web.Application):
 
 async def analytics_notify(source: str, level: str, message: str):
     """
-    Unified Analytics notifier with full async fan-out
-    (Inbox + UI + Gotify + Atlas + Lexi overlay if enabled)
-    FIXED: Corrected run_in_executor call to pass kwargs properly
+    Analytics notification handler
     """
+    title = f"Analytics — {source}"
+    body = f"[{level.upper()}] {message}"
+    priority = 5 if level.lower() in ("critical", "error", "down") else 3
+    
+    logger.info(f"📤 analytics_notify START: {title}")
+    logger.info(f"   Message: {body}")
+    
+    # Try to import and use process_incoming
     try:
-        title = f"Analytics — {source}"
-        body = f"[{level.upper()}] {message}"
-        priority = 5 if level.lower() in ("critical", "error", "down") else 3
-
-        logger.info(f"📤 analytics_notify called: {title} | {body}")
-
-        # ✅ Import and call process_incoming
+        logger.info(f"   Attempting to import process_incoming from bot...")
+        from bot import process_incoming
+        logger.info(f"   ✅ Import successful! Function type: {type(process_incoming)}")
+        logger.info(f"   Is coroutine function: {asyncio.iscoroutinefunction(process_incoming)}")
+        
+        # Call it
         try:
-            from bot import process_incoming
-            
-            logger.info(f"📥 Calling process_incoming (async={asyncio.iscoroutinefunction(process_incoming)})")
-            
             if asyncio.iscoroutinefunction(process_incoming):
-                # If it's async, await it directly
+                logger.info(f"   Calling as async function...")
                 await process_incoming(title, body, source="analytics", priority=priority)
             else:
-                # If it's sync, run in executor with KWARGS not positional args
+                logger.info(f"   Calling as sync function via executor...")
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None, 
@@ -2141,35 +2158,19 @@ async def analytics_notify(source: str, level: str, message: str):
                 )
             
             logger.info(f"✅ process_incoming completed successfully")
+            logger.info(f"✅ Fan-out should be complete - check inbox/Gotify/UI")
             
-        except Exception as e:
-            logger.error(f"❌ process_incoming failed: {e}", exc_info=True)
-            raise
-
-        # ✅ Optional Atlas sync (non-blocking)
-        try:
-            from atlas import update_service_state
-            if asyncio.iscoroutinefunction(update_service_state):
-                await update_service_state(source, level)
-            else:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, update_service_state, source, level)
-        except Exception:
-            pass
-
-        logger.info(f"✅ Fan-out complete for {source}: {body}")
-
+        except Exception as call_error:
+            logger.error(f"❌ Error calling process_incoming: {call_error}", exc_info=True)
+            logger.error(f"   This means process_incoming exists but threw an error")
+            
+    except ImportError as import_error:
+        logger.error(f"❌ Cannot import process_incoming from bot: {import_error}")
+        logger.error(f"   This means bot.py doesn't have process_incoming function")
+        logger.error(f"   Notification will ONLY appear in analytics inbox")
     except Exception as e:
-        logger.error(f"❌ analytics_notify failed: {e}", exc_info=True)
-        try:
-            from errors import notify_error
-            if asyncio.iscoroutinefunction(notify_error):
-                await notify_error(f"[Analytics] {body}", context="analytics")
-            else:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, notify_error, f"[Analytics] {body}", "analytics")
-        except Exception as inner:
-            logger.error(f"All notification methods failed: {inner}")
+        logger.error(f"❌ Unexpected error in analytics_notify: {e}", exc_info=True)
+
 
 
 
