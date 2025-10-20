@@ -308,18 +308,18 @@
   // Update Sentinel metrics on dashboard
   async function updateSentinelMetrics() {
     try {
-      const stats = await jfetch(API('api/sentinel/stats')).catch(() => null);
+      const stats = await jfetch(API('api/sentinel/dashboard')).catch(() => null);
       if (stats) {
         const dashSentinelUptime = $('#dash-sentinel-uptime');
         const dashSentinelRepairs = $('#dash-sentinel-repairs');
         
         if (dashSentinelUptime) {
-          const uptime = stats.uptime_24h || 0;
+          const uptime = stats.uptime_percent || 0;
           dashSentinelUptime.textContent = uptime.toFixed(1) + '%';
         }
         
         if (dashSentinelRepairs) {
-          dashSentinelRepairs.textContent = stats.repairs_made_today || 0;
+          dashSentinelRepairs.textContent = stats.repairs_today || 0;
         }
       }
     } catch (e) {
