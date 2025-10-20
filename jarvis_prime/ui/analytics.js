@@ -180,6 +180,15 @@ function analyticsCreateServiceCard(service, uptime) {
        </span>`
     : '';
 
+  // Format average response time from service data
+  let avgResponseDisplay = 'N/A';
+  if (service.avg_response !== null && service.avg_response !== undefined) {
+    const ms = parseFloat(service.avg_response);
+    if (!isNaN(ms)) {
+      avgResponseDisplay = ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
+    }
+  }
+
   card.innerHTML = `
     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
       <div style="flex: 1;">
@@ -203,7 +212,7 @@ function analyticsCreateServiceCard(service, uptime) {
           <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Uptime 24h</div>
         </div>
         <div style="text-align: center;">
-          <div style="font-size: 18px; font-weight: 600;">${uptime.avg_response_time ? uptime.avg_response_time + 's' : 'N/A'}</div>
+          <div style="font-size: 18px; font-weight: 600;">${avgResponseDisplay}</div>
           <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Avg Response</div>
         </div>
         <div style="text-align: center;">
