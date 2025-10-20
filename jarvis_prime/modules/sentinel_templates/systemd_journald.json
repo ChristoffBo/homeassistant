@@ -1,11 +1,11 @@
 {
   "id": "systemd_journald",
   "name": "Systemd Journal Service",
-  "description": "Verifies journald is running properly.",
-  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active systemd-journald || echo skip; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart systemd-journald || true; fi",
-  "verify_cmd": "systemctl is-active systemd-journald 2>/dev/null || echo verified",
+  "description": "Ensures the systemd-journald logging service is active and healthy.",
+  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then if systemctl is-active systemd-journald 2>/dev/null | grep -q '^active$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then echo 'Restarting journald...'; systemctl restart systemd-journald 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 2; if systemctl is-active systemd-journald 2>/dev/null | grep -q '^active$'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

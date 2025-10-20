@@ -1,11 +1,11 @@
 {
   "id": "wireguard_service",
   "name": "WireGuard Service",
-  "description": "Ensures WireGuard VPN interface is up; skips if not present.",
-  "check_cmd": "if command -v wg >/dev/null; then wg show 2>/dev/null | grep -q interface && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart wg-quick@wg0 || true; fi",
-  "verify_cmd": "wg show 2>/dev/null || echo verified",
+  "description": "Ensures WireGuard VPN interface (wg0) is up and running; skips if not installed.",
+  "check_cmd": "if command -v wg >/dev/null 2>&1; then if wg show 2>/dev/null | grep -q '^interface:'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then echo '⚠️ Restarting WireGuard interface wg0...'; systemctl restart wg-quick@wg0 2>/dev/null || true; elif command -v wg-quick >/dev/null 2>&1; then wg-quick down wg0 2>/dev/null; sleep 2; wg-quick up wg0 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 3; if wg show 2>/dev/null | grep -q '^interface:'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

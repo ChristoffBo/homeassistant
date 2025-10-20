@@ -1,11 +1,11 @@
 {
   "id": "technitium_service",
   "name": "Technitium DNS",
-  "description": "Ensures Technitium DNS server is up if installed.",
-  "check_cmd": "if [ -d /opt/techni* ]; then systemctl is-active techni* || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "systemctl restart techni* || true",
-  "verify_cmd": "systemctl is-active techni* 2>/dev/null || echo verified",
+  "description": "Ensures the Technitium DNS server service is active if installed under /opt/Technitium or similar path.",
+  "check_cmd": "if ls /opt/Techni* >/dev/null 2>&1; then if systemctl list-units --type=service 2>/dev/null | grep -qi techni; then if systemctl is-active $(systemctl list-units --type=service | awk '/techni/ {print $1; exit}') 2>/dev/null | grep -q '^active$'; then echo ok; else echo fix; fi; else echo ok; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "UNIT=$(systemctl list-units --type=service | awk '/techni/ {print $1; exit}') && if [ -n \"$UNIT\" ]; then echo \"Restarting $UNIT...\"; systemctl restart \"$UNIT\" 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 3; UNIT=$(systemctl list-units --type=service | awk '/techni/ {print $1; exit}') && if [ -n \"$UNIT\" ] && systemctl is-active \"$UNIT\" 2>/dev/null | grep -q '^active$'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

@@ -1,11 +1,11 @@
 {
   "id": "mdadm_service",
   "name": "mdadm Monitor",
-  "description": "Ensures mdadm monitor service is running.",
-  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active mdmonitor || systemctl is-active mdadm || echo skip; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart mdmonitor || systemctl restart mdadm || true; fi",
-  "verify_cmd": "systemctl is-active mdmonitor 2>/dev/null || echo verified",
+  "description": "Ensures the mdadm (RAID) monitor service is running.",
+  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then if systemctl is-active mdmonitor >/dev/null 2>&1 || systemctl is-active mdadm >/dev/null 2>&1; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart mdmonitor >/dev/null 2>&1 || systemctl restart mdadm >/dev/null 2>&1 || true; fi",
+  "verify_cmd": "if systemctl is-active mdmonitor >/dev/null 2>&1 || systemctl is-active mdadm >/dev/null 2>&1; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

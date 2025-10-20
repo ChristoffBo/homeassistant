@@ -2,10 +2,11 @@
   "id": "opnsense_wireguard",
   "name": "OPNSense WireGuard",
   "description": "Checks whether the WireGuard VPN service is active on OPNSense and restarts it if down.",
-  "check_cmd": "service wireguard status | grep -qi 'running'",
-  "expected_output": "",
-  "fix_cmd": "service wireguard restart",
-  "verify_cmd": "service wireguard status | grep -qi 'running'",
+  "check_cmd": "if service wireguard status 2>/dev/null | grep -qi 'running'; then echo ok; else echo fix; fi",
+  "expected_output": "ok",
+  "fix_cmd": "service wireguard restart 2>/dev/null || true",
+  "verify_cmd": "if service wireguard status 2>/dev/null | grep -qi 'running'; then echo ok; else echo fail; fi",
   "retry_count": 2,
-  "retry_delay": 30
+  "retry_delay": 30,
+  "ttl_seconds": 1800
 }

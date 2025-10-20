@@ -1,11 +1,11 @@
 {
   "id": "overseerr_service",
   "name": "Overseerr",
-  "description": "Ensures Overseerr is responding.",
-  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q overseerr && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "docker start overseerr || true",
-  "verify_cmd": "curl -fs http://localhost:5055/api/v1/status 2>/dev/null || echo verified",
+  "description": "Ensures the Overseerr container is running and its API responds.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then if docker ps --format '{{.Names}}' | grep -q '^overseerr$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker start overseerr 2>/dev/null || docker restart overseerr 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 5; if curl -fs --max-time 5 http://localhost:5055/api/v1/status 2>/dev/null | grep -q 'OK'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

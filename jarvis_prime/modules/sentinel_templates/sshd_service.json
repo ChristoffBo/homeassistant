@@ -1,11 +1,11 @@
 {
   "id": "sshd_service",
   "name": "SSH Service",
-  "description": "Ensures sshd is active; skips gracefully if absent.",
-  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active sshd || echo skip; elif command -v service >/dev/null; then service ssh status 2>/dev/null | grep -q running && echo active || echo skip; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart sshd || true; elif command -v service >/dev/null; then service ssh restart || true; fi",
-  "verify_cmd": "systemctl is-active sshd 2>/dev/null || echo verified",
+  "description": "Ensures the SSH daemon (sshd) is running and responsive; skips if not applicable.",
+  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then if systemctl is-active sshd 2>/dev/null | grep -q '^active$'; then echo ok; else echo fix; fi; elif command -v service >/dev/null 2>&1; then if service ssh status 2>/dev/null | grep -q running; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart sshd 2>/dev/null || true; elif command -v service >/dev/null 2>&1; then service ssh restart 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 3; if systemctl is-active sshd 2>/dev/null | grep -q '^active$'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

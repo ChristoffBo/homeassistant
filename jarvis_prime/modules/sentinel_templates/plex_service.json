@@ -1,11 +1,11 @@
 {
   "id": "plex_service",
   "name": "Plex Media Server",
-  "description": "Checks Plex container or native service health (Docker or systemd).",
-  "check_cmd": "if command -v docker >/dev/null && docker ps --format '{{.Names}}' | grep -iq 'plex'; then echo active; elif command -v systemctl >/dev/null && systemctl is-active plexmediaserver 2>/dev/null | grep -iq '^active$'; then echo active; else echo inactive; fi",
-  "expected_output": "active",
-  "fix_cmd": "if command -v docker >/dev/null && docker ps -a --format '{{.Names}}' | grep -iq 'plex'; then docker start $(docker ps -a --format '{{.Names}}' | grep -im1 'plex') || true; elif command -v systemctl >/dev/null; then systemctl restart plexmediaserver || true; fi",
-  "verify_cmd": "curl -fs http://localhost:32400/identity 2>/dev/null | grep -q 'PlexMediaServer' && echo active || echo verified",
+  "description": "Ensures the Plex Media Server container or native service is running and healthy.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -iq '^plex$'; then echo ok; elif command -v systemctl >/dev/null 2>&1 && systemctl is-active plexmediaserver >/dev/null 2>&1; then echo ok; else echo fix; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -iq '^plex$'; then docker start $(docker ps -a --format '{{.Names}}' | grep -im1 '^plex$') || docker restart $(docker ps -a --format '{{.Names}}' | grep -im1 '^plex$') || true; elif command -v systemctl >/dev/null 2>&1; then systemctl restart plexmediaserver || true; fi",
+  "verify_cmd": "sleep 5; if curl -fs --max-time 5 http://localhost:32400/identity 2>/dev/null | grep -q 'PlexMediaServer'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

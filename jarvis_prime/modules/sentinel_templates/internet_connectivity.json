@@ -1,11 +1,11 @@
 {
   "id": "internet_connectivity",
   "name": "Internet Connectivity",
-  "description": "Checks external internet access via multiple endpoints.",
-  "check_cmd": "if curl -fs --max-time 5 https://1.1.1.1 >/dev/null 2>&1; then echo active; elif curl -fs --max-time 5 https://8.8.8.8 >/dev/null 2>&1; then echo active; elif curl -fs --max-time 5 https://cloudflare.com >/dev/null 2>&1; then echo active; elif ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then echo active; else echo inactive; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "echo 'Internet connectivity lost'; if command -v systemctl >/dev/null 2>&1; then systemctl restart NetworkManager 2>/dev/null || systemctl restart networking 2>/dev/null || true; fi; ip route show | head -5",
-  "verify_cmd": "ping -c3 -W2 1.1.1.1 2>/dev/null && echo 'Connectivity restored' || ping -c3 -W2 8.8.8.8 2>/dev/null && echo 'Connectivity restored' || echo 'Still offline'",
+  "description": "Checks external internet access via multiple endpoints and restarts networking if offline.",
+  "check_cmd": "if curl -fs --max-time 5 https://1.1.1.1 >/dev/null 2>&1 || curl -fs --max-time 5 https://8.8.8.8 >/dev/null 2>&1 || curl -fs --max-time 5 https://cloudflare.com >/dev/null 2>&1 || ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then echo ok; else echo fix; fi",
+  "expected_output": "ok",
+  "fix_cmd": "echo '⚠️  Internet connectivity lost'; if command -v systemctl >/dev/null 2>&1; then systemctl restart NetworkManager 2>/dev/null || systemctl restart networking 2>/dev/null || true; fi; ip route show | head -5",
+  "verify_cmd": "if curl -fs --max-time 5 https://1.1.1.1 >/dev/null 2>&1 || curl -fs --max-time 5 https://8.8.8.8 >/dev/null 2>&1 || ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then echo ok; else echo fail; fi",
   "retry_count": 2,
   "retry_delay": 30,
   "ttl_seconds": 600

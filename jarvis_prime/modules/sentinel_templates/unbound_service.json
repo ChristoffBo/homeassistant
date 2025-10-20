@@ -1,11 +1,11 @@
 {
   "id": "unbound_service",
   "name": "Unbound DNS Service",
-  "description": "Monitors Unbound recursive resolver.",
-  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active unbound || echo skip; elif command -v service >/dev/null; then service unbound status 2>/dev/null | grep -q running && echo active || echo skip; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart unbound || true; elif command -v service >/dev/null; then service unbound restart || true; fi",
-  "verify_cmd": "systemctl is-active unbound 2>/dev/null || echo verified",
+  "description": "Ensures the Unbound recursive DNS resolver is running and responsive.",
+  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then if systemctl is-active unbound 2>/dev/null | grep -q '^active$'; then echo ok; else echo fix; fi; elif command -v service >/dev/null 2>&1; then if service unbound status 2>/dev/null | grep -q running; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart unbound 2>/dev/null || true; elif command -v service >/dev/null 2>&1; then service unbound restart 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 3; if command -v systemctl >/dev/null 2>&1; then if systemctl is-active unbound 2>/dev/null | grep -q '^active$'; then echo ok; else echo fail; fi; elif command -v service >/dev/null 2>&1; then if service unbound status 2>/dev/null | grep -q running; then echo ok; else echo fail; fi; else echo ok; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

@@ -1,11 +1,11 @@
 {
   "id": "smartd_service",
   "name": "SMART Disk Daemon",
-  "description": "Checks that smartd is active to monitor disk health.",
-  "check_cmd": "if command -v smartctl >/dev/null; then systemctl is-active smartd || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "systemctl restart smartd || true",
-  "verify_cmd": "systemctl is-active smartd 2>/dev/null || echo verified",
+  "description": "Ensures smartd (SMART monitoring daemon) is running for disk health checks.",
+  "check_cmd": "if command -v smartctl >/dev/null 2>&1; then if systemctl is-active smartd 2>/dev/null | grep -q '^active$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart smartd 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 3; if systemctl is-active smartd 2>/dev/null | grep -q '^active$'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

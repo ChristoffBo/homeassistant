@@ -1,12 +1,12 @@
 {
   "id": "swap_usage",
   "name": "Swap Usage",
-  "description": "Checks that swap usage is under 60%.",
-  "check_cmd": "free | awk '/Swap/ {print int($3/$2*100)}'",
-  "expected_output": "num<60",
-  "fix_cmd": "swapoff -a && swapon -a || true",
-  "verify_cmd": "free -h",
+  "description": "Ensures swap usage stays under 60% and resets swap if exceeded.",
+  "check_cmd": "if free | awk '/Swap/ {exit ($2==0)}'; then USAGE=$(free | awk '/Swap/ {printf \"%d\", ($3/$2*100)}'); if [ \"$USAGE\" -lt 60 ]; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if free | awk '/Swap/ {exit ($2==0)}'; then echo '⚠️ High swap usage detected — resetting swap...'; swapoff -a && sleep 2 && swapon -a || true; else echo 'No swap enabled, skipping'; fi",
+  "verify_cmd": "if free | awk '/Swap/ {exit ($2==0)}'; then USAGE=$(free | awk '/Swap/ {printf \"%d\", ($3/$2*100)}'); echo \"Swap after fix: ${USAGE}%\"; if [ \"$USAGE\" -lt 60 ]; then echo ok; else echo fail; fi; else echo ok; fi",
   "retry_count": 1,
-  "retry_delay": 60,
+  "retry_delay": 120,
   "ttl_seconds": 3600
 }

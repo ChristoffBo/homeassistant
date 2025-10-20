@@ -1,12 +1,12 @@
 {
   "id": "raid_status",
   "name": "RAID Status",
-  "description": "Verifies mdadm arrays are healthy.",
-  "check_cmd": "grep -q '\\[UU\\]' /proc/mdstat && echo ok || echo degraded",
+  "description": "Checks mdadm software RAID arrays for degradation using /proc/mdstat. Marks degraded if any device missing.",
+  "check_cmd": "if [ -f /proc/mdstat ]; then if grep -q '\\[UU\\]' /proc/mdstat; then echo ok; else echo fix; fi; else echo ok; fi",
   "expected_output": "ok",
-  "fix_cmd": "echo 'RAID degraded—manual check required'",
-  "verify_cmd": "cat /proc/mdstat",
+  "fix_cmd": "echo '⚠️ RAID degraded — manual inspection required: run cat /proc/mdstat or mdadm --detail /dev/md*'",
+  "verify_cmd": "if grep -q '\\[UU\\]' /proc/mdstat 2>/dev/null; then echo ok; else echo fail; fi",
   "retry_count": 1,
-  "retry_delay": 60,
-  "ttl_seconds": 3600
+  "retry_delay": 300,
+  "ttl_seconds": 1800
 }

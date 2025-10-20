@@ -1,11 +1,11 @@
 {
   "id": "prowlarr_service",
   "name": "Prowlarr",
-  "description": "Verifies Prowlarr is active.",
-  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q prowlarr && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "docker start prowlarr || true",
-  "verify_cmd": "curl -fs http://localhost:9696/api/v1/system/status 2>/dev/null || echo verified",
+  "description": "Ensures the Prowlarr container or service is running and responsive.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then if docker ps --format '{{.Names}}' | grep -q '^prowlarr$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker start prowlarr 2>/dev/null || docker restart prowlarr 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 5; if curl -fs --max-time 5 http://localhost:9696/api/v1/system/status 2>/dev/null | grep -q 'Prowlarr'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

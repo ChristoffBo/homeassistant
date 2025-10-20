@@ -1,11 +1,11 @@
 {
   "id": "fail2ban_service",
   "name": "Fail2Ban",
-  "description": "Ensures Fail2Ban intrusion prevention is active.",
-  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl is-active fail2ban 2>/dev/null || echo inactive; elif command -v service >/dev/null 2>&1; then service fail2ban status 2>/dev/null | grep -q 'running\\|active' && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
+  "description": "Ensures Fail2Ban intrusion prevention is active and restarts it if inactive.",
+  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then if systemctl is-active fail2ban >/dev/null 2>&1; then echo ok; else echo fix; fi; elif command -v service >/dev/null 2>&1; then if service fail2ban status 2>/dev/null | grep -q 'running\\|active'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
   "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart fail2ban || true; elif command -v service >/dev/null 2>&1; then service fail2ban restart || true; fi",
-  "verify_cmd": "if command -v fail2ban-client >/dev/null 2>&1; then fail2ban-client status 2>/dev/null | head -1 || echo verified; else systemctl is-active fail2ban 2>/dev/null || echo verified; fi",
+  "verify_cmd": "if command -v fail2ban-client >/dev/null 2>&1; then if fail2ban-client status >/dev/null 2>&1; then echo ok; else echo fail; fi; elif command -v systemctl >/dev/null 2>&1; then if systemctl is-active fail2ban >/dev/null 2>&1; then echo ok; else echo fail; fi; else echo ok; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

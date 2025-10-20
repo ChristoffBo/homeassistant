@@ -1,11 +1,11 @@
 {
   "id": "tautulli_service",
   "name": "Tautulli",
-  "description": "Checks Tautulli stats API endpoint.",
-  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q tautulli && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "docker start tautulli || true",
-  "verify_cmd": "curl -fs http://localhost:8181/status 2>/dev/null || echo verified",
+  "description": "Ensures the Tautulli container is running and its stats API endpoint responds on port 8181.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then if docker ps --format '{{.Names}}' | grep -q '^tautulli$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker start tautulli 2>/dev/null || docker restart tautulli 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 5; if curl -fs --max-time 5 http://localhost:8181/status 2>/dev/null | grep -q 'Tautulli'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

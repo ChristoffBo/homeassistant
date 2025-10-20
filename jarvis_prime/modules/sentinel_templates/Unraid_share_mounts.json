@@ -1,11 +1,11 @@
 {
   "id": "unraid_share_mounts",
   "name": "Share Mounts",
-  "description": "Ensures all Unraid SMB/NFS shares are mounted.",
-  "check_cmd": "grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
-  "expected_output": "",
-  "fix_cmd": "grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mount $m 2>/dev/null || true; done",
-  "verify_cmd": "grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
+  "description": "Verifies that all Unraid SMB/NFS shares listed in /etc/fstab are currently mounted.",
+  "check_cmd": "if [ -f /etc/fstab ]; then MISSING=$(grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q \"$m\" || echo \"$m\"; done); if [ -z \"$MISSING\" ]; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if [ -f /etc/fstab ]; then echo '⚠️ Missing mounts detected — attempting remount...'; grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mount \"$m\" 2>/dev/null || true; done; fi",
+  "verify_cmd": "sleep 3; if [ -f /etc/fstab ]; then MISSING=$(grep -vE 'proc|sysfs|cgroup|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q \"$m\" || echo \"$m\"; done); if [ -z \"$MISSING\" ]; then echo ok; else echo fail; fi; else echo ok; fi",
   "retry_count": 2,
   "retry_delay": 60,
   "ttl_seconds": 300

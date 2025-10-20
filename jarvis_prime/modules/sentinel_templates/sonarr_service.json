@@ -1,11 +1,11 @@
 {
   "id": "sonarr_service",
   "name": "Sonarr",
-  "description": "Ensures Sonarr API responds.",
-  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q sonarr && echo active || echo inactive; elif command -v systemctl >/dev/null; then systemctl is-active sonarr || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v docker >/dev/null; then docker start sonarr || true; elif command -v systemctl >/dev/null; then systemctl restart sonarr || true; fi",
-  "verify_cmd": "curl -fs http://localhost:8989/api/v3/system/status 2>/dev/null || echo verified",
+  "description": "Ensures Sonarr (Docker or native service) is running and API responds on port 8989.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then if docker ps --format '{{.Names}}' | grep -q '^sonarr$'; then echo ok; else echo fix; fi; elif command -v systemctl >/dev/null 2>&1; then if systemctl is-active sonarr 2>/dev/null | grep -q '^active$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker start sonarr 2>/dev/null || docker restart sonarr 2>/dev/null || true; elif command -v systemctl >/dev/null 2>&1; then systemctl restart sonarr 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 5; if curl -fs --max-time 5 http://localhost:8989/api/v3/system/status 2>/dev/null | grep -q 'version'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

@@ -1,12 +1,12 @@
 {
   "id": "speedtest_check",
   "name": "Speedtest CLI",
-  "description": "Runs speedtest if available and checks download speed >1 Mbps.",
-  "check_cmd": "if command -v speedtest >/dev/null; then speedtest -f json --accept-license --accept-gdpr 2>/dev/null | grep -q 'download' && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "echo 'Manual network troubleshooting required'",
-  "verify_cmd": "speedtest -f json --accept-license --accept-gdpr 2>/dev/null || echo verified",
+  "description": "Runs Speedtest CLI (if installed) and verifies download speed exceeds 1 Mbps.",
+  "check_cmd": "if command -v speedtest >/dev/null 2>&1; then DL=$(speedtest -f json --accept-license --accept-gdpr 2>/dev/null | grep -o '\"download\": [0-9]*' | awk '{print $2/1000000}'); if [ -z \"$DL\" ]; then echo fix; elif (( $(echo \"$DL < 1\" | bc -l) )); then echo fix; else echo ok; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "echo '⚠️ Network speed degraded or test failed — manual check recommended (ping, DNS, gateway, or ISP).'",
+  "verify_cmd": "if command -v speedtest >/dev/null 2>&1; then DL=$(speedtest -f json --accept-license --accept-gdpr 2>/dev/null | grep -o '\"download\": [0-9]*' | awk '{print $2/1000000}'); echo \"Download: ${DL} Mbps\"; if [ -n \"$DL\" ] && (( $(echo \"$DL >= 1\" | bc -l) )); then echo ok; else echo fail; fi; else echo ok; fi",
   "retry_count": 1,
-  "retry_delay": 60,
+  "retry_delay": 120,
   "ttl_seconds": 7200
 }

@@ -1,12 +1,12 @@
 {
   "id": "unraid_api",
   "name": "Unraid API Check",
-  "description": "Queries Unraid web API for server status.",
-  "check_cmd": "curl -fsS http://localhost/update.htm 2>/dev/null | grep -q up && echo active || echo inactive",
-  "expected_output": "active|skip",
-  "fix_cmd": "echo 'Manual Unraid restart required'",
-  "verify_cmd": "curl -fsS http://localhost/update.htm 2>/dev/null || echo verified",
-  "retry_count": 1,
+  "description": "Checks if the Unraid web API responds at http://localhost/update.htm and reports server status.",
+  "check_cmd": "if curl -fsS --max-time 5 http://localhost/update.htm 2>/dev/null | grep -q up; then echo ok; else echo fix; fi",
+  "expected_output": "ok",
+  "fix_cmd": "echo '⚠️ Unraid web API not responding — manual server or web service restart required.'",
+  "verify_cmd": "if curl -fsS --max-time 5 http://localhost/update.htm 2>/dev/null | grep -q up; then echo ok; else echo fail; fi",
+  "retry_count": 2,
   "retry_delay": 60,
   "ttl_seconds": 3600
 }

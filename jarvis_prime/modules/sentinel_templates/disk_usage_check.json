@@ -1,11 +1,11 @@
 {
   "id": "disk_usage_check",
   "name": "Disk Usage",
-  "description": "Monitors disk utilization; warns if >/ 90%.",
-  "check_cmd": "df -h / | awk 'NR==2 {gsub(\"%\", \"\", $5); if($5>90) print \"degraded\"; else print \"active\"}'",
-  "expected_output": "active|skip",
-  "fix_cmd": "echo 'Clean up disk space manually'",
-  "verify_cmd": "df -h / | awk 'NR==2 {print $5}'",
+  "description": "Monitors root filesystem usage and warns if usage exceeds 90%.",
+  "check_cmd": "USAGE=$(df -P / | awk 'NR==2 {gsub(\"%\", \"\", $5); print $5}'); if [ \"$USAGE\" -gt 90 ]; then echo fix; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "echo '⚠️  Disk usage above 90%. Clean up disk space manually or prune logs/Docker images.'",
+  "verify_cmd": "USAGE=$(df -P / | awk 'NR==2 {gsub(\"%\", \"\", $5); print $5}'); echo \"Usage after check: ${USAGE}%\"; if [ \"$USAGE\" -le 90 ]; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 1800

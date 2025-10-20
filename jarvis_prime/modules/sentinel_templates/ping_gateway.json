@@ -1,11 +1,11 @@
 {
   "id": "ping_gateway",
   "name": "Ping Gateway",
-  "description": "Verifies network connectivity by pinging the default gateway.",
-  "check_cmd": "if command -v ip >/dev/null && command -v ping >/dev/null; then G=$(ip route | awk '/default/ {print $3}' | head -n1); [ -n \"$G\" ] && ping -c1 -W2 $G >/dev/null 2>&1 && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "ip link set $(ip route | awk '/default/ {print $5}' | head -n1) down && sleep 2 && ip link set $(ip route | awk '/default/ {print $5}' | head -n1) up || true",
-  "verify_cmd": "ping -c1 -W2 8.8.8.8 >/dev/null 2>&1 || echo verified",
+  "description": "Verifies LAN connectivity by pinging the system's default gateway and restarts the interface if it fails.",
+  "check_cmd": "if command -v ip >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then G=$(ip route | awk '/default/ {print $3}' | head -n1); IFACE=$(ip route | awk '/default/ {print $5}' | head -n1); if [ -n \"$G\" ] && ping -c1 -W2 $G >/dev/null 2>&1; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "IFACE=$(ip route | awk '/default/ {print $5}' | head -n1); if [ -n \"$IFACE\" ]; then echo \"⚠️  Gateway unreachable — resetting interface $IFACE\"; ip link set $IFACE down && sleep 2 && ip link set $IFACE up || true; fi",
+  "verify_cmd": "if ping -c1 -W2 8.8.8.8 >/dev/null 2>&1; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

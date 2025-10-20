@@ -1,11 +1,11 @@
 {
   "id": "unraid_docker_service",
   "name": "Docker Service",
-  "description": "Ensures Unraid Docker service is active and responding.",
-  "check_cmd": "pgrep dockerd >/dev/null 2>&1 && echo active || echo inactive",
-  "expected_output": "active",
-  "fix_cmd": "/etc/rc.d/rc.docker start >/dev/null 2>&1 || /etc/rc.d/rc.docker restart >/dev/null 2>&1",
-  "verify_cmd": "pgrep dockerd >/dev/null 2>&1 && echo active || echo inactive",
+  "description": "Ensures the Unraid Docker daemon (dockerd) is active and automatically restarts it if not.",
+  "check_cmd": "if pgrep dockerd >/dev/null 2>&1; then echo ok; else echo fix; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if [ -x /etc/rc.d/rc.docker ]; then echo '⚠️ Restarting Unraid Docker service...'; /etc/rc.d/rc.docker start >/dev/null 2>&1 || /etc/rc.d/rc.docker restart >/dev/null 2>&1 || true; else echo '⚠️ rc.docker script not found'; fi",
+  "verify_cmd": "sleep 3; if pgrep dockerd >/dev/null 2>&1; then echo ok; else echo fail; fi",
   "retry_count": 2,
   "retry_delay": 30,
   "ttl_seconds": 300

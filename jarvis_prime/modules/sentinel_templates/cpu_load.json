@@ -1,11 +1,11 @@
 {
   "id": "cpu_load",
   "name": "CPU Load",
-  "description": "Checks 1-minute load average. Warns if load exceeds 2x CPU cores.",
-  "check_cmd": "CORES=$(nproc 2>/dev/null || echo 4); LOAD=$(awk '{print int($1)}' /proc/loadavg); THRESHOLD=$((CORES * 2)); if [ $LOAD -lt $THRESHOLD ]; then echo \"$LOAD\"; else echo \"$LOAD\"; fi",
-  "expected_output": "num<16",
-  "fix_cmd": "echo '⚠️ High CPU load detected'; echo 'Top CPU consumers:'; ps -eo pid,comm,%cpu --sort=-%cpu | head -10; echo 'Load average:'; uptime",
-  "verify_cmd": "uptime | awk '{print \"Current load:\", $10, $11, $12}'",
+  "description": "Checks 1-minute load average and warns if load exceeds 2× CPU cores.",
+  "check_cmd": "CORES=$(nproc 2>/dev/null || echo 4); LOAD=$(awk '{print int($1)}' /proc/loadavg); THRESHOLD=$((CORES * 2)); if [ $LOAD -lt $THRESHOLD ]; then echo ok; else echo fix; fi",
+  "expected_output": "ok",
+  "fix_cmd": "echo '⚠️  High CPU load detected'; echo 'Top CPU consumers:'; ps -eo pid,comm,%cpu --sort=-%cpu | head -10; echo 'Load average:'; uptime",
+  "verify_cmd": "if awk '{print int($1)}' /proc/loadavg | grep -q '^[0-9]$'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 300

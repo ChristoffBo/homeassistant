@@ -2,10 +2,10 @@
   "id": "dns_resolution",
   "name": "DNS Resolution",
   "description": "Checks whether DNS resolution works by testing multiple domains.",
-  "check_cmd": "if command -v dig >/dev/null; then (dig +short +time=2 google.com >/dev/null 2>&1 || dig +short +time=2 cloudflare.com >/dev/null 2>&1 || dig +short +time=2 1.1.1.1 >/dev/null 2>&1) && echo active || echo inactive; elif command -v nslookup >/dev/null; then (nslookup google.com >/dev/null 2>&1 || nslookup cloudflare.com >/dev/null 2>&1) && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
+  "check_cmd": "if command -v dig >/dev/null; then if (dig +short +time=2 google.com >/dev/null 2>&1 || dig +short +time=2 cloudflare.com >/dev/null 2>&1 || dig +short +time=2 1.1.1.1 >/dev/null 2>&1); then echo ok; else echo fix; fi; elif command -v nslookup >/dev/null; then if (nslookup google.com >/dev/null 2>&1 || nslookup cloudflare.com >/dev/null 2>&1); then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
   "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart systemd-resolved 2>/dev/null || systemctl restart dnsmasq 2>/dev/null || systemctl restart NetworkManager 2>/dev/null || true; else echo 'No systemctl available'; fi",
-  "verify_cmd": "if command -v dig >/dev/null; then dig +short cloudflare.com 2>/dev/null && echo 'DNS working' || echo 'DNS still failing'; else echo 'verified'; fi",
+  "verify_cmd": "if command -v dig >/dev/null; then if dig +short cloudflare.com >/dev/null 2>&1; then echo ok; else echo fail; fi; elif command -v nslookup >/dev/null; then if nslookup cloudflare.com >/dev/null 2>&1; then echo ok; else echo fail; fi; else echo ok; fi",
   "retry_count": 2,
   "retry_delay": 30,
   "ttl_seconds": 1800

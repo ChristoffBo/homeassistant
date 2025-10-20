@@ -1,11 +1,11 @@
 {
   "id": "qbit_service",
   "name": "qBittorrent",
-  "description": "Ensures qBittorrent WebUI is available.",
-  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q qbittorrent && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "docker start qbittorrent || true",
-  "verify_cmd": "curl -fs http://localhost:8080 2>/dev/null | grep -q 'qBittorrent' && echo active || echo verified",
+  "description": "Ensures qBittorrent container and WebUI are reachable on port 8080.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then if docker ps --format '{{.Names}}' | grep -q '^qbittorrent$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker start qbittorrent 2>/dev/null || docker restart qbittorrent 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 5; if curl -fs --max-time 5 http://localhost:8080 2>/dev/null | grep -q 'qBittorrent'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

@@ -1,11 +1,11 @@
 {
   "id": "pve_storage_mounts",
   "name": "Storage Mounts",
-  "description": "Ensures all Proxmox storage mounts are available.",
-  "check_cmd": "grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
-  "expected_output": "",
-  "fix_cmd": "grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mount $m 2>/dev/null || true; done",
-  "verify_cmd": "grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q $m || echo $m; done",
+  "description": "Ensures all Proxmox storage mounts defined in /etc/fstab are available and mounted.",
+  "check_cmd": "if [ -f /etc/fstab ]; then MISSING=$(grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q \"$m\" || echo \"$m\"; done); if [ -z \"$MISSING\" ]; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if [ -f /etc/fstab ]; then for m in $(grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}'); do mount \"$m\" 2>/dev/null || true; done; fi",
+  "verify_cmd": "MISSING=$(grep -vE 'cgroup|proc|sysfs|tmpfs' /etc/fstab | awk '{print $2}' | while read m; do mountpoint -q \"$m\" || echo \"$m\"; done); if [ -z \"$MISSING\" ]; then echo ok; else echo fail; fi",
   "retry_count": 2,
   "retry_delay": 60,
   "ttl_seconds": 300

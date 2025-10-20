@@ -1,11 +1,11 @@
 {
   "id": "nginx_service",
   "name": "Nginx Web Server",
-  "description": "Ensures Nginx is running.",
-  "check_cmd": "if command -v systemctl >/dev/null; then systemctl is-active nginx || echo skip; elif command -v service >/dev/null; then service nginx status 2>/dev/null | grep -q running && echo active || echo skip; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v systemctl >/dev/null; then systemctl restart nginx || true; elif command -v service >/dev/null; then service nginx restart || true; fi",
-  "verify_cmd": "systemctl is-active nginx 2>/dev/null || echo verified",
+  "description": "Ensures the Nginx web server is running.",
+  "check_cmd": "if command -v systemctl >/dev/null 2>&1; then if systemctl is-active nginx >/dev/null 2>&1; then echo ok; else echo fix; fi; elif command -v service >/dev/null 2>&1; then if service nginx status 2>/dev/null | grep -q running; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart nginx || true; elif command -v service >/dev/null 2>&1; then service nginx restart || true; fi",
+  "verify_cmd": "if systemctl is-active nginx >/dev/null 2>&1; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

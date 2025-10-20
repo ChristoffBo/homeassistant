@@ -1,11 +1,11 @@
 {
   "id": "libvirt_service",
   "name": "Libvirt Service",
-  "description": "Monitors libvirt virtualization daemon.",
-  "check_cmd": "if command -v virsh >/dev/null; then systemctl is-active libvirtd || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "systemctl restart libvirtd || true",
-  "verify_cmd": "systemctl is-active libvirtd 2>/dev/null || echo verified",
+  "description": "Ensures the libvirtd virtualization daemon is active.",
+  "check_cmd": "if command -v virsh >/dev/null 2>&1; then if systemctl is-active libvirtd >/dev/null 2>&1; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v systemctl >/dev/null 2>&1; then systemctl restart libvirtd || true; fi",
+  "verify_cmd": "if systemctl is-active libvirtd >/dev/null 2>&1; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

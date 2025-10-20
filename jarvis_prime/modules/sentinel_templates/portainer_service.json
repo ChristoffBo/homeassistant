@@ -1,11 +1,11 @@
 {
   "id": "portainer_service",
   "name": "Portainer",
-  "description": "Monitors Portainer management container.",
-  "check_cmd": "if command -v docker >/dev/null; then docker ps --format '{{.Names}}' | grep -q portainer && echo active || echo inactive; else echo skip; fi",
-  "expected_output": "active|skip",
-  "fix_cmd": "if command -v docker >/dev/null; then docker start portainer || true; fi",
-  "verify_cmd": "docker ps --format '{{.Names}}' | grep -q portainer && echo active || echo verified",
+  "description": "Monitors the Portainer management container and restarts it if inactive.",
+  "check_cmd": "if command -v docker >/dev/null 2>&1; then if docker ps --format '{{.Names}}' | grep -q '^portainer$'; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "if command -v docker >/dev/null 2>&1; then docker start portainer 2>/dev/null || docker restart portainer 2>/dev/null || true; fi",
+  "verify_cmd": "sleep 3; if docker ps --format '{{.Names}}' | grep -q '^portainer$'; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 60,
   "ttl_seconds": 3600

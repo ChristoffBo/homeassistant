@@ -1,11 +1,11 @@
 {
   "id": "pve_updates",
   "name": "Proxmox Updates",
-  "description": "Checks for pending Proxmox package updates and alerts if any are found.",
-  "check_cmd": "apt update -qq >/dev/null && apt list --upgradable 2>/dev/null | grep -v Listing | wc -l",
-  "expected_output": "0",
-  "fix_cmd": "echo 'Updates available. Run apt upgrade manually.' && true",
-  "verify_cmd": "apt list --upgradable 2>/dev/null | grep -v Listing | wc -l",
+  "description": "Checks for available Proxmox and Debian package updates. Marks as ok if none are pending, fix if updates exist.",
+  "check_cmd": "if command -v apt >/dev/null 2>&1; then apt update -qq >/dev/null 2>&1; COUNT=$(apt list --upgradable 2>/dev/null | grep -vc Listing); if [ \"$COUNT\" -eq 0 ]; then echo ok; else echo fix; fi; else echo ok; fi",
+  "expected_output": "ok",
+  "fix_cmd": "echo '🔔 Updates available — manual action required: run apt upgrade or use your patching workflow.'",
+  "verify_cmd": "COUNT=$(apt list --upgradable 2>/dev/null | grep -vc Listing); if [ \"$COUNT\" -eq 0 ]; then echo ok; else echo fail; fi",
   "retry_count": 1,
   "retry_delay": 86400,
   "ttl_seconds": 86400
