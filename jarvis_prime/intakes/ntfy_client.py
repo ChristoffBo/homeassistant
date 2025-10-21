@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/ntfy_client.py — header-safe (Latin-1) + body-safe (UTF-8, no leading whitespace bug)
+# /app/ntfy_client.py — header-safe (Latin-1) + body-safe (UTF-8, collapses all whitespace)
 
 from __future__ import annotations
 import os, json, requests
@@ -22,8 +22,9 @@ _session = requests.Session()
 def _safe_header(val: Union[str, bytes, None]) -> str:
     """
     Make a value safe for HTTP headers.
-    urllib3/requests encodes headers as ISO-8859-1 (latin-1).
-    Strip CR/LF, any whitespace, and drop any chars not representable in latin-1.
+    - Requests encodes headers as ISO-8859-1 (latin-1)
+    - Collapse tabs/newlines/multiple spaces into one
+    - Drop any chars not representable in latin-1
     """
     if val is None:
         return ""
@@ -34,9 +35,10 @@ def _safe_header(val: Union[str, bytes, None]) -> str:
             s = val.decode("latin-1", errors="replace")
     else:
         s = str(val)
-    # headers cannot contain raw newlines or any leading/trailing spaces
-    s = s.replace("\r", " ").replace("\n", " ").strip()
-    # force latin-1 safety: drop characters outside latin-1
+
+    # normalize all whitespace (remove newlines, leading/trailing, collapse multiples)
+    s = " ".join(s.replace("\r", " ").replace("\n", " ").split())
+    # force latin-1 safety
     s = s.encode("latin-1", errors="ignore").decode("latin-1", errors="ignore")
     return s
 
@@ -124,5 +126,5 @@ def publish(
 # CLI quick test
 # -----------------------------
 if __name__ == "__main__":
-    res = publish("Jarvis test 🚀", "Hello from ntfy_client.py ✅ — UTF-8 body 💡", tags="robot,jarvis", priority=3)
+    res = publish("  Jarvis   Prime:   Sonarr - Test  🚀 ", "Hello from ntfy_client.py ✅ — UTF-8 body 💡", tags="robot,jarvis", priority=3)
     print(json.dumps(res, indent=2, ensure_ascii=False))
