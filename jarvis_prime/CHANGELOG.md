@@ -1,3 +1,5 @@
+## latest (2025-10-21 14:21:00)
+Fixed issue with smtp and ntfy fanouts.
 ## latest (2025-10-18 14:21:00)
 Fixed issue with Analytics, and while busy add network monitoring to analytics
 ## latest (2025-10-16 14:21:00)
