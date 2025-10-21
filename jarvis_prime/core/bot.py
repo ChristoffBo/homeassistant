@@ -523,7 +523,7 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     # --- ADD: fan-out to ntfy (optional, via env) ---
     # --- USE UTF-8 SAFE NTFY CLIENT ---
     try:
-        import ntfy
+        import ntfy_client as ntfy
         ntfy.publish(
             f"{BOT_ICON} {BOT_NAME}: {title or ''}",
             message or "",
