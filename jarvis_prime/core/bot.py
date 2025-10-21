@@ -518,31 +518,15 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 
 # --- ADD: fan-out to ntfy (optional, via env) ---
     # --- ADD: fan-out to ntfy (optional, via env) ---
+    # --- USE UTF-8 SAFE NTFY CLIENT ---
     try:
-        ntfy_url   = os.getenv("NTFY_URL", "").rstrip("/")
-        ntfy_topic = os.getenv("NTFY_TOPIC", "").strip()
-        ntfy_token = os.getenv("NTFY_TOKEN", "").strip()
-
-        if ntfy_url and ntfy_topic:
-            title_clean = f"{BOT_ICON} {BOT_NAME}: {title or ''}"
-            title_clean = title_clean.encode("utf-8", errors="replace").decode("utf-8")
-
-            ntfy_headers = {
-                "Title": title_clean,
-                "Priority": str(int(priority)),
-                "Content-Type": "text/plain; charset=utf-8",
-            }
-            if ntfy_token:
-                ntfy_headers["Authorization"] = f"Bearer {ntfy_token}"
-
-            message_bytes = (message or "").encode("utf-8", errors="replace")
-
-            requests.post(
-                f"{ntfy_url}/{ntfy_topic}",
-                data=message_bytes,
-                headers=ntfy_headers,
-                timeout=5,
-            )
+        import ntfy
+        ntfy.publish(
+            f"{BOT_ICON} {BOT_NAME}: {title or ''}",
+            message or "",
+            priority=priority,
+            tags="jarvis"
+        )
     except Exception as e:
         print(f"[bot] ntfy push failed: {e}")
     
