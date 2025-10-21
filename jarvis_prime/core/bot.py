@@ -522,6 +522,20 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
 # --- ADD: fan-out to ntfy (optional, via env) ---
     # --- ADD: fan-out to ntfy (optional, via env) ---
     # --- USE UTF-8 SAFE NTFY CLIENT ---
+    # --- ADDITIVE PATCH: skip NTFY fan-out if disabled in config ---
+    if not bool(merged.get("push_ntfy_enabled", True)):
+        print("[bot] NTFY fan-out disabled by config (push_ntfy_enabled=false via options.json)")
+    else:
+        try:
+            if ntfy_client:
+                ntfy_client.publish(
+                    title,
+                    message,
+                    tags="jarvis,notify",
+                    priority=3,
+                )
+        except Exception as e:
+            print(f"[bot] NTFY fan-out error: {e}")
     try:
         import ntfy_client as ntfy
         ntfy.publish(
@@ -534,7 +548,11 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         print(f"[bot] ntfy push failed: {e}")
     
 
-    # --- ADD: fan-out to SMTP (optional, via env) ---
+    # --- ADD: fan-out to SMTP (optional, via env) --
+    # --- ADDITIVE PATCH: skip SMTP fan-out if disabled in config ---
+    if not bool(merged.get("push_smtp_enabled", True)):
+        print("[bot] SMTP fan-out disabled by config (push_smtp_enabled=false via options.json)")
+        return True
     try:
         smtp_host = os.getenv("SMTP_OUT_HOST", "").strip()
         smtp_port = int(os.getenv("SMTP_OUT_PORT", "587"))
