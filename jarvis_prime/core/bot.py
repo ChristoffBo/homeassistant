@@ -519,7 +519,7 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         except Exception as e:
             print(f"[bot] storage save failed: {e}")
 
-# --- ADD: fan-out to ntfy (optional, via env) ---
+
     # --- ADD: fan-out to ntfy (optional, via env) ---
     # --- USE UTF-8 SAFE NTFY CLIENT ---
     # --- ADDITIVE PATCH: skip NTFY fan-out if disabled in config ---
@@ -549,48 +549,37 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
     
 
     # --- ADD: fan-out to SMTP (optional, via env) --
-    # --- ADDITIVE PATCH: skip SMTP fan-out if disabled in config ---
+    # --- FIXED: fan-out to SMTP (reads both config + env) ---
     if not bool(merged.get("push_smtp_enabled", True)):
         print("[bot] SMTP fan-out disabled by config (push_smtp_enabled=false via options.json)")
         return True
     try:
-        smtp_host = os.getenv("SMTP_OUT_HOST", "").strip()
-        smtp_port = int(os.getenv("SMTP_OUT_PORT", "587"))
-        smtp_user = os.getenv("SMTP_OUT_USER", "").strip()
-        smtp_pass = os.getenv("SMTP_OUT_PASS", "").strip()
-        smtp_from = os.getenv("SMTP_FROM", smtp_user or "jarvis@localhost").strip()
-        smtp_to   = [r.strip() for r in os.getenv("SMTP_RECIPIENTS", "").split(",") if r.strip()]
+        smtp_host = str(merged.get("push_smtp_host") or os.getenv("SMTP_OUT_HOST", "")).strip()
+        smtp_port = int(merged.get("push_smtp_port") or os.getenv("SMTP_OUT_PORT", "587"))
+        smtp_user = str(merged.get("push_smtp_user") or os.getenv("SMTP_OUT_USER", "")).strip()
+        smtp_pass = str(merged.get("push_smtp_pass") or os.getenv("SMTP_OUT_PASS", "")).strip()
+        smtp_to   = [str(merged.get("push_smtp_to") or os.getenv("SMTP_RECIPIENTS", smtp_user)).strip()]
+        smtp_from = smtp_user or "jarvis@localhost"
 
         if smtp_host and smtp_to:
             import smtplib
             from email.mime.text import MIMEText
-
             msg = MIMEText(message or "", _charset="utf-8")
             msg["Subject"] = f"{BOT_ICON} {BOT_NAME}: {title}"
             msg["From"] = smtp_from
             msg["To"] = ", ".join(smtp_to)
-
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=6) as s:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=8) as s:
                 try: s.starttls()
                 except Exception: pass
                 if smtp_user:
                     try: s.login(smtp_user, smtp_pass)
                     except Exception as e: print(f"[bot] smtp login failed: {e}")
                 s.sendmail(smtp_from, smtp_to, msg.as_string())
+            print("[bot] SMTP message sent OK")
+        else:
+            print("[bot] SMTP skipped: missing host or recipients")
     except Exception as e:
         print(f"[bot] smtp outbound failed: {e}")
-
-    return True
-
-def delete_original_message(msg_id: int):
-    try:
-        if not (msg_id and GOTIFY_URL and CLIENT_TOKEN):
-            return
-        url = f"{GOTIFY_URL}/message/{msg_id}"
-        headers = {"X-Gotify-Key": CLIENT_TOKEN}
-        requests.delete(url, headers=headers, timeout=6)
-    except Exception:
-        pass
 
 def resolve_app_id():
     global jarvis_app_id
