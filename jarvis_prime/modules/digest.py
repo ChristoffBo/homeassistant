@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-import os
-import json
-import requests
+import os, json, time, socket, requests
 from datetime import datetime
 from typing import Dict, Tuple, Any, List
 
@@ -18,7 +16,6 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON = os.getenv("BOT_ICON", "🧠")
 JARVIS_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
-# ✅ Multi-host fallback for Home Assistant + Docker
 _API_HOSTS = [
     "http://127.0.0.1:2599/api",
     "http://localhost:2599/api",
@@ -28,18 +25,35 @@ _API_HOSTS = [
 CACHE_PATH = "/data/digest_cache.json"
 
 # ---------------------------------------------------------------------------
-# Internal utility functions
+# Logging + Port Wait Helpers
 # ---------------------------------------------------------------------------
 
 def _log(msg: str):
-    """Basic print logger for debugging (optional)."""
     try:
         print(f"[digest] {msg}", flush=True)
     except Exception:
         pass
 
+def _wait_for_port(host: str, port: int, timeout: int = 20) -> bool:
+    """Wait up to timeout seconds for a TCP port to open."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                _log(f"Port {port} on {host} is open.")
+                return True
+        except Exception:
+            time.sleep(1)
+    _log(f"Port {port} on {host} did not open within {timeout}s.")
+    return False
+
+# ---------------------------------------------------------------------------
+# Network + Emitter Helpers
+# ---------------------------------------------------------------------------
+
 def _get_json(endpoint: str) -> Dict[str, Any]:
-    """Try fetching JSON from multiple possible API base URLs."""
+    """Try multiple API bases, waiting for port 2599 first."""
+    _wait_for_port("127.0.0.1", 2599)
     for base in _API_HOSTS:
         url = f"{base}{endpoint}"
         try:
@@ -48,12 +62,13 @@ def _get_json(endpoint: str) -> Dict[str, Any]:
                 _log(f"Fetched {endpoint} from {base}")
                 return r.json()
         except Exception as e:
-            _log(f"Failed {base}{endpoint}: {e}")
+            _log(f"Failed {url}: {e}")
             continue
     return {}
 
 def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str] | None = None) -> bool:
     try:
+        _wait_for_port("127.0.0.1", 2599)
         payload = {
             "source": "digest",
             "title": f"{BOT_ICON} {BOT_NAME}: {title}",
@@ -71,6 +86,10 @@ def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str]
     except Exception as e:
         _log(f"Emit failed: {e}")
         return False
+
+# ---------------------------------------------------------------------------
+# Local cache + text helpers
+# ---------------------------------------------------------------------------
 
 def _section(title: str, body: str) -> str:
     return f"**{title}**\n{body.strip()}\n" if body else ""
@@ -100,7 +119,7 @@ def _save_cache(data: Dict[str, Any]):
         pass
 
 # ---------------------------------------------------------------------------
-# ARR + Weather
+# ARR + Weather Sections
 # ---------------------------------------------------------------------------
 
 def _movies_today(opts: Dict[str, Any]) -> str:
@@ -166,7 +185,7 @@ def _weather_today(opts: Dict[str, Any]) -> str:
         return ""
 
 # ---------------------------------------------------------------------------
-# API-based summaries (Analytics, Orchestrator, Sentinel)
+# API-based Summaries (Analytics, Orchestrator, Sentinel)
 # ---------------------------------------------------------------------------
 
 def _analytics_summary() -> str:
@@ -176,21 +195,17 @@ def _analytics_summary() -> str:
         up = data.get("up_services", 0)
         down = data.get("down_services", 0)
         total = data.get("total_services", 0)
-        try:
-            health = float(data.get("health_score", 0))
-        except Exception:
-            health = 0.0
+        health = float(data.get("health_score", 0))
         today_key = datetime.now().strftime("%Y-%m-%d")
-        yesterday_health = cache.get("analytics", {}).get("last_health", None)
-        delta_str = ""
-        if yesterday_health is not None:
-            diff = round(health - yesterday_health, 2)
+        yesterday = cache.get("analytics", {}).get("last_health")
+        delta = ""
+        if yesterday is not None:
+            diff = round(health - yesterday, 2)
             if abs(diff) >= 0.1:
-                arrow = "📈" if diff > 0 else "📉"
-                delta_str = f" ({arrow} {diff:+.2f}%)"
+                delta = f" ({'📈' if diff > 0 else '📉'} {diff:+.2f}%)"
         cache["analytics"] = {"last_date": today_key, "last_health": health}
         _save_cache(cache)
-        return f"🟢 Up: {up}/{total} | 🔴 Down: {down} | 📈 Health: {health:.2f}%{delta_str}"
+        return f"🟢 Up: {up}/{total} | 🔴 Down: {down} | 📈 Health: {health:.2f}%{delta}"
     _log("Analytics summary: no data returned.")
     return ""
 
@@ -199,10 +214,10 @@ def _orchestrator_summary() -> str:
     jobs = data.get("jobs", [])
     if isinstance(jobs, list):
         total = len(jobs)
-        succeeded = sum(1 for j in jobs if j.get("status") == "success")
+        success = sum(1 for j in jobs if j.get("status") == "success")
         failed = sum(1 for j in jobs if j.get("status") == "failed")
-        return f"✅ Jobs: {total} | ✅ Success: {succeeded} | ❌ Failed: {failed}"
-    _log("Orchestrator summary: no jobs returned.")
+        return f"✅ Jobs: {total} | ✅ Success: {success} | ❌ Failed: {failed}"
+    _log("Orchestrator summary: no data returned.")
     return ""
 
 def _sentinel_summary() -> str:
@@ -214,13 +229,13 @@ def _sentinel_summary() -> str:
         try:
             uptime_str = f"{float(uptime):.2f}%"
         except Exception:
-            uptime_str = f"{uptime}"
+            uptime_str = str(uptime)
         return f"🛠 Repairs: {repairs} | 🔴 Down: {down} | 📈 Uptime: {uptime_str}"
     _log("Sentinel summary: no data returned.")
     return ""
 
 # ---------------------------------------------------------------------------
-# Digest Builder — Combined view
+# Digest Builder
 # ---------------------------------------------------------------------------
 
 def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
