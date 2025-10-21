@@ -17,12 +17,26 @@ _weather = _try_import("weather")
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON = os.getenv("BOT_ICON", "🧠")
 JARVIS_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
-INTERNAL_API_BASE = "http://127.0.0.1:2599/api"
+
+# Try both localhost and 127.0.0.1 for greater compatibility
+_API_HOSTS = [
+    "http://127.0.0.1:2599/api",
+    "http://localhost:2599/api"
+]
+
 CACHE_PATH = "/data/digest_cache.json"
 
-# ---------------------------------------------------------------------------
-# Utility Helpers
-# ---------------------------------------------------------------------------
+def _get_json(endpoint: str) -> Dict[str, Any]:
+    """Try fetching JSON from the endpoint via any configured host; return empty dict on failure."""
+    for base in _API_HOSTS:
+        url = f"{base}{endpoint}"
+        try:
+            r = requests.get(url, timeout=5)
+            if r.ok:
+                return r.json()
+        except Exception:
+            continue
+    return {}
 
 def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str] | None = None) -> bool:
     try:
@@ -31,11 +45,12 @@ def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str]
             "title": f"{BOT_ICON} {BOT_NAME}: {title}",
             "message": message,
             "priority": priority,
-            "tags": tags or ["digest", "daily"],
+            "tags": tags or ["digest", "daily", "system"],
             "icon": BOT_ICON,
             "app": BOT_NAME,
         }
-        r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6)
+        r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6,
+                          headers={"Content-Type": "application/json; charset=utf-8"})
         r.raise_for_status()
         return True
     except Exception:
@@ -68,12 +83,11 @@ def _save_cache(data: Dict[str, Any]):
     except Exception:
         pass
 
-# ---------------------------------------------------------------------------
-# ARR + Weather
-# ---------------------------------------------------------------------------
+# ARR + Weather sections
 
 def _movies_today(opts: Dict[str,Any]) -> str:
-    if not _arr or not opts.get("radarr_enabled"): return ""
+    if not _arr or not opts.get("radarr_enabled"):
+        return ""
     for fn in ("upcoming_movies","today_upcoming_movies","list_upcoming_movies"):
         if hasattr(_arr, fn):
             try:
@@ -87,7 +101,8 @@ def _movies_today(opts: Dict[str,Any]) -> str:
     return ""
 
 def _series_today(opts: Dict[str,Any]) -> str:
-    if not _arr or not opts.get("sonarr_enabled"): return ""
+    if not _arr or not opts.get("sonarr_enabled"):
+        return ""
     for fn in ("upcoming_series","today_upcoming_series","list_upcoming_series"):
         if hasattr(_arr, fn):
             try:
@@ -124,10 +139,13 @@ def _weather_today(opts: Dict[str,Any]) -> str:
         if not lines:
             return ""
         header = next((l for l in lines[:3] if "Current Weather" in l), None)
-        wanted_keys = ("Outdoor", "Indoor", "Wind", "Solar", "Chance of rain", "Outlook",
-                       "Humidity", "Pressure", "Feels like")
-        wanted_emojis_starts = ("🌡", "🏠", "🌬", "💨", "⚡", "☔", "🌧", "🌤", "🌥", "☀")
-        metrics = [l for l in lines if any(k in l for k in wanted_keys) or l.startswith(wanted_emojis_starts)]
+        wanted_keys = ("Outdoor","Indoor","Wind","Solar","Chance of rain","Outlook",
+                       "Humidity","Pressure","Feels like")
+        wanted_emojis_starts = ("🌡","🏠","🌬","💨","⚡","☔","🌧","🌤","🌥","☀")
+        metrics = []
+        for l in lines:
+            if any(k in l for k in wanted_keys) or l.startswith(wanted_emojis_starts):
+                metrics.append(l)
         parts = [header] if header else []
         parts.extend(metrics[:6])
         if not parts:
@@ -136,72 +154,57 @@ def _weather_today(opts: Dict[str,Any]) -> str:
     except Exception:
         return ""
 
-# ---------------------------------------------------------------------------
-# API-Based Summaries (Analytics with trend)
-# ---------------------------------------------------------------------------
+# API-based summaries
 
 def _analytics_summary() -> str:
     cache = _load_cache()
-    try:
-        r = requests.get(f"{INTERNAL_API_BASE}/analytics/health-score", timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            up = data.get("up_services", 0)
-            down = data.get("down_services", 0)
-            total = data.get("total_services", 0)
+    data = _get_json("/analytics/health-score")
+    if data:
+        up = data.get("up_services", 0)
+        down = data.get("down_services", 0)
+        total = data.get("total_services", 0)
+        try:
             health = float(data.get("health_score", 0))
-            today_key = datetime.now().strftime("%Y-%m-%d")
-
-            yesterday_health = cache.get("analytics", {}).get("last_health", None)
-            delta_str = ""
-            if yesterday_health is not None:
-                diff = round(health - yesterday_health, 2)
-                if abs(diff) >= 0.1:
-                    arrow = "📈" if diff > 0 else "📉"
-                    delta_str = f" ({arrow} {diff:+.2f}%)"
-
-            cache["analytics"] = {"last_date": today_key, "last_health": health}
-            _save_cache(cache)
-            return f"🟢 Up: {up}/{total} | 🔴 Down: {down} | 📈 Health: {health:.2f}%{delta_str}"
-    except Exception:
-        pass
+        except Exception:
+            health = 0.0
+        today_key = datetime.now().strftime("%Y-%m-%d")
+        yesterday_health = cache.get("analytics", {}).get("last_health", None)
+        delta_str = ""
+        if yesterday_health is not None:
+            diff = round(health - yesterday_health, 2)
+            if abs(diff) >= 0.1:
+                arrow = "📈" if diff > 0 else "📉"
+                delta_str = f" ({arrow} {diff:+.2f}%)"
+        cache["analytics"] = {"last_date": today_key, "last_health": health}
+        _save_cache(cache)
+        return f"🟢 Up: {up}/{total} | 🔴 Down: {down} | 📈 Health: {health:.2f}%{delta_str}"
     return ""
 
 def _orchestrator_summary() -> str:
-    try:
-        r = requests.get(f"{INTERNAL_API_BASE}/orchestrator/history?limit=20", timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            jobs = data.get("jobs", [])
-            if isinstance(jobs, list):
-                total = len(jobs)
-                succeeded = sum(1 for j in jobs if j.get("status") == "success")
-                failed = sum(1 for j in jobs if j.get("status") == "failed")
-                return f"✅ Jobs: {total} | ✅ Success: {succeeded} | ❌ Failed: {failed}"
-    except Exception:
-        pass
+    data = _get_json("/orchestrator/history?limit=20")
+    jobs = data.get("jobs", [])
+    if isinstance(jobs, list):
+        total = len(jobs)
+        succeeded = sum(1 for j in jobs if j.get("status") == "success")
+        failed = sum(1 for j in jobs if j.get("status") == "failed")
+        return f"✅ Jobs: {total} | ✅ Success: {succeeded} | ❌ Failed: {failed}"
     return ""
 
 def _sentinel_summary() -> str:
-    try:
-        r = requests.get(f"{INTERNAL_API_BASE}/sentinel/dashboard", timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            down = data.get("services_down", 0)
-            repairs = data.get("repairs_today", 0)
-            uptime = data.get("uptime_percent", "N/A")
-            return f"🛠 Repairs: {repairs} | 🔴 Down: {down} | 📈 Uptime: {uptime}%"
-    except Exception:
-        pass
+    data = _get_json("/sentinel/dashboard")
+    if data:
+        down = data.get("services_down", 0)
+        repairs = data.get("repairs_today", 0)
+        uptime = data.get("uptime_percent", "N/A")
+        try:
+            uptime_str = f"{float(uptime):.2f}%"
+        except Exception:
+            uptime_str = f"{uptime}"
+        return f"🛠 Repairs: {repairs} | 🔴 Down: {down} | 📈 Uptime: {uptime_str}"
     return ""
-
-# ---------------------------------------------------------------------------
-# Digest Builder — Extended with System Overview Sections
-# ---------------------------------------------------------------------------
 
 def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
     title = f"📰 Daily Digest — {datetime.now().strftime('%a %d %b %Y')}"
-
     movies = _movies_today(options)
     series = _series_today(options)
     weather = _weather_today(options)
