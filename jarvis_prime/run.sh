@@ -13,6 +13,12 @@ echo "[init] Installing required network tools (arp-scan, iproute2, dnsutils)...
 apt-get install -y --no-install-recommends arp-scan iproute2 dnsutils >/dev/null 2>&1 || true
 echo "[init] Network utilities ready."
 
+# === NEW FIX: enable HTTPS for ntfy ===
+echo "[init] Installing CA certificates and curl for HTTPS support..."
+apt-get install -y --no-install-recommends ca-certificates curl python3-requests >/dev/null 2>&1 || true
+update-ca-certificates >/dev/null 2>&1 || true
+echo "[init] HTTPS stack ready."
+
 banner() {
   local llm="$1"
   local engine="$2"
