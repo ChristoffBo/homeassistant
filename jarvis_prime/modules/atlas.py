@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /app/atlas.py
 # Jarvis Prime - Atlas Module (Backend)
-# Enhanced edition — color mapping, caching, group aggregation, latency stats, URL links, structured logging, alive flag.
+# Enhanced edition with WebUI click-to-open functionality
 
 import json
 import re
@@ -9,6 +9,8 @@ import sqlite3
 import logging
 import time
 import statistics
+import asyncio
+import aiohttp
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -22,6 +24,10 @@ DB_PATH = "/data/jarvis.db"
 # --- internal cache (5 s TTL) ---
 _cache = {"ts": 0.0, "payload": None}
 _CACHE_TTL = 5.0
+
+# WebUI check cache (15 min TTL)
+_webui_cache: Dict[str, dict] = {}
+_WEBUI_CACHE_TTL = 900.0
 
 
 # ==============================
@@ -49,6 +55,78 @@ def extract_host(endpoint: str) -> str:
         pass
     m = re.match(r"^\[?([A-Za-z0-9\.\-\:]+)\]?(?::\d+)?$", endpoint)
     return m.group(1) if m else endpoint
+
+
+# ==============================
+# WebUI Detection & Health Check
+# ==============================
+async def check_webui_exists(ip: str, node_name: str) -> dict:
+    """
+    Check if device has accessible WebUI.
+    Returns: {has_webui, webui_url, requires_auth, check_method}
+    """
+    cache_key = f"{ip}:{node_name}"
+    now = time.time()
+    
+    # Return cached result if fresh
+    if cache_key in _webui_cache:
+        cached = _webui_cache[cache_key]
+        if now - cached.get("timestamp", 0) < _WEBUI_CACHE_TTL:
+            return cached
+    
+    result = {
+        "has_webui": False,
+        "webui_url": None,
+        "requires_auth": False,
+        "check_method": None,
+        "timestamp": now
+    }
+    
+    if not ip:
+        _webui_cache[cache_key] = result
+        return result
+    
+    # Common WebUI endpoints to check
+    endpoints = [
+        (f"http://{ip}", "root"),
+        (f"http://{ip}/admin", "admin_path"),
+        (f"https://{ip}", "root_https"),
+        (f"http://{ip}:8080", "alt_port_8080"),
+        (f"http://{ip}:8123", "home_assistant"),
+        (f"http://{ip}:9090", "prometheus"),
+        (f"http://{ip}:3000", "grafana"),
+        (f"http://{ip}:5000", "generic_5000"),
+        (f"http://{ip}:80/admin", "pi_hole"),
+    ]
+    
+    timeout = aiohttp.ClientTimeout(total=5)
+    
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for url, method in endpoints:
+            try:
+                async with session.get(
+                    url,
+                    allow_redirects=True,
+                    ssl=False  # Allow self-signed certs
+                ) as response:
+                    # 200 = accessible WebUI
+                    # 401/403 = WebUI exists but needs auth
+                    # 301/302 = redirect (likely WebUI)
+                    if response.status in [200, 301, 302, 401, 403]:
+                        result["has_webui"] = True
+                        result["webui_url"] = url
+                        result["requires_auth"] = response.status in [401, 403]
+                        result["check_method"] = method
+                        logger.info(f"[atlas] WebUI found for {node_name} at {url} (status: {response.status})")
+                        break
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.debug(f"[atlas] WebUI check failed for {url}: {e}")
+                continue
+    
+    _webui_cache[cache_key] = result
+    return result
 
 
 # ==============================
@@ -118,6 +196,9 @@ class Node:
     color: Optional[str] = None
     severity: Optional[str] = None
     url: Optional[str] = None
+    webui_url: Optional[str] = None
+    has_webui: bool = False
+    requires_auth: bool = False
 
 
 _COLOR_MAP = {
@@ -134,8 +215,8 @@ def _status_color(status: str) -> Tuple[str, str]:
     return _COLOR_MAP.get(s, _COLOR_MAP["unknown"])
 
 
-def build_topology_snapshot() -> dict:
-    """Core builder with enhancements."""
+async def build_topology_snapshot_async() -> dict:
+    """Async version with WebUI detection."""
     now = time.time()
     if _cache["payload"] and now - _cache["ts"] < _CACHE_TTL:
         logger.debug("[atlas] returning cached snapshot")
@@ -173,7 +254,8 @@ def build_topology_snapshot() -> dict:
     # Core
     ensure_node("Jarvis_Prime", type="core", status="up", alive=True, color="#00C853", severity="good")
 
-    # --- hosts ---
+    # --- hosts with WebUI detection ---
+    webui_checks = []
     for h in hosts:
         name = safe_str(h["name"])
         host_ip = safe_str(h["hostname"])
@@ -192,7 +274,31 @@ def build_topology_snapshot() -> dict:
             url=f"/orchestrator?host={name}"
         )
         links.append({"source": "Jarvis_Prime", "target": name})
-# --- services ---
+        
+        # Queue WebUI check
+        if host_ip:
+            webui_checks.append((name, host_ip))
+    
+    # Run all WebUI checks concurrently
+    if webui_checks:
+        webui_results = await asyncio.gather(
+            *[check_webui_exists(ip, name) for name, ip in webui_checks],
+            return_exceptions=True
+        )
+        
+        for (name, ip), result in zip(webui_checks, webui_results):
+            if isinstance(result, Exception):
+                logger.warning(f"[atlas] WebUI check failed for {name}: {result}")
+                continue
+            
+            if result.get("has_webui"):
+                node = nodes.get(name)
+                if node:
+                    node.webui_url = result["webui_url"]
+                    node.has_webui = True
+                    node.requires_auth = result["requires_auth"]
+
+    # --- services ---
     for svc in services:
         sname = safe_str(svc["service_name"])
         endpoint = safe_str(svc["endpoint"])
@@ -235,6 +341,12 @@ def build_topology_snapshot() -> dict:
         if parent_host_obj is not None:
             parent_name = safe_str(parent_host_obj["name"])
         col, sev = _status_color(status)
+        
+        # Services can have WebUI too (e.g., web services)
+        service_webui = None
+        if endpoint and status.lower() in ("up", "ok"):
+            service_webui = endpoint if endpoint.startswith("http") else None
+        
         ensure_node(
             sname,
             type="service",
@@ -244,7 +356,9 @@ def build_topology_snapshot() -> dict:
             color=col,
             severity=sev,
             alive=status.lower() in ("up", "ok"),
-            url=f"/analytics?service={sname}"
+            url=f"/analytics?service={sname}",
+            webui_url=service_webui,
+            has_webui=bool(service_webui)
         )
 
         links.append({
@@ -272,6 +386,7 @@ def build_topology_snapshot() -> dict:
             "alive": bool(n.alive),
             "color": n.color,
             "severity": n.severity,
+            "has_webui": n.has_webui,
         }
         if n.ip: d["ip"] = n.ip
         if n.group: d["group"] = n.group
@@ -279,6 +394,8 @@ def build_topology_snapshot() -> dict:
         if n.last_checked is not None: d["last_checked"] = n.last_checked
         if n.latency is not None: d["latency"] = n.latency
         if n.url: d["url"] = n.url
+        if n.webui_url: d["webui_url"] = n.webui_url
+        if n.requires_auth: d["requires_auth"] = n.requires_auth
         return d
 
     payload = {
@@ -290,14 +407,27 @@ def build_topology_snapshot() -> dict:
             "services": sum(1 for n in nodes.values() if n.type == "service"),
             "total_nodes": len(nodes),
             "total_links": len(links),
+            "webui_enabled": sum(1 for n in nodes.values() if n.has_webui),
         },
         "groups": group_counts,
         "latency_stats": {"avg": avg_lat, "median": med_lat},
     }
 
     _cache.update({"ts": now, "payload": payload})
-    logger.info("[atlas] snapshot built: %d nodes, %d links", len(nodes), len(links))
+    logger.info("[atlas] snapshot built: %d nodes, %d links, %d with WebUI", 
+                len(nodes), len(links), payload["counts"]["webui_enabled"])
     return payload
+
+
+def build_topology_snapshot() -> dict:
+    """Sync wrapper for async build."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(build_topology_snapshot_async())
 
 
 # ==============================
@@ -313,7 +443,7 @@ def _json(data, status=200):
 
 async def api_topology(request: web.Request):
     try:
-        payload = build_topology_snapshot()
+        payload = await build_topology_snapshot_async()
         return _json(payload, 200)
     except Exception as e:
         logger.exception("[atlas] topology build failed")
