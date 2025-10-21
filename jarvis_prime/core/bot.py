@@ -15,6 +15,9 @@ import hashlib
 from typing import List, Optional, Tuple
 
 import re as _re_local, time as _time_local
+import sys
+if "/app" not in sys.path:
+    sys.path.append("/app")
 
 _JUNK_LINE_RE = _re_local.compile(
     r'^\s*(Tone:|Context\s*\(|No\s+lists|No\s+numbers|No\s+JSON|No\s+labels)\b',
