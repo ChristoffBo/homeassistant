@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/ntfy_client.py — fully hardened header sanitizer + safe image attach (UTF-8 body, Latin-1 headers)
+# /app/ntfy_client.py — fully hardened header sanitizer + safe image attach + config-aware disable flag
 
 from __future__ import annotations
 import os, json, requests, re, mimetypes
@@ -62,6 +62,22 @@ def _auth_headers() -> Dict[str, str]:
     return h
 
 # -----------------------------
+# Read option flag directly
+# -----------------------------
+def _read_option_flag() -> bool:
+    """Read push_ntfy_enabled from /data/options.json when env var not exported."""
+    try:
+        env_val = os.getenv("PUSH_NTFY_ENABLED")
+        if env_val is not None:
+            return env_val.lower() not in ("false", "0", "no")
+        with open("/data/options.json", "r") as f:
+            cfg = json.load(f)
+        val = cfg.get("push_ntfy_enabled", True)
+        return bool(val)
+    except Exception:
+        return True  # default to enabled if not readable
+
+# -----------------------------
 # Optional: image/file attach helper
 # -----------------------------
 def _auto_attach(path_or_url: Optional[str]) -> Optional[str]:
@@ -115,12 +131,11 @@ def publish(
 ) -> Dict[str, Any]:
     """Publish safely to ntfy (UTF-8 body, Latin-1 headers, image auto-attach)."""
 
-    # 🔒 ADDITIVE GUARD: obey push_ntfy_enabled flag
-    if os.getenv("PUSH_NTFY_ENABLED", "true").lower() in ("false", "0", "no"):
-        print("[ntfy] disabled by config (push_ntfy_enabled=false)")
+    # 🔒 Config-aware disable guard
+    if not _read_option_flag():
+        print("[ntfy] disabled by config (push_ntfy_enabled=false via options.json)")
         return {"status": "disabled"}
 
-    # 🔒 ADDITIVE GUARD: skip entirely if no URL configured
     if not NTFY_URL:
         print("[ntfy] disabled (no ntfy_url set)")
         return {"status": "disabled"}
