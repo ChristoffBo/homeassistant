@@ -25,7 +25,7 @@ def _auth_headers() -> Dict[str, str]:
 
 
 # -----------------------------
-# Publish
+# Publish (UTF-8 safe)
 # -----------------------------
 def publish(
     title: str,
@@ -40,25 +40,13 @@ def publish(
     """
     Publish to an ntfy topic via HTTP POST.
     Docs: https://docs.ntfy.sh/publish/
-
-    Args:
-        title: Notification title
-        message: Notification message
-        topic: Optional override for the topic
-        click: Optional click URL
-        tags: Comma-separated emoji tags or icons
-        priority: 1–5 (low→max)
-        attach: URL or file path to attach
-
-    Returns:
-        dict: {"status": http_status, "id": "..."} or {"error": "..."}
     """
     base = NTFY_URL or "https://ntfy.sh"
     t = topic or (NTFY_TOPIC or "jarvis")
     url = f"{base}/{t}"
     headers = _auth_headers()
 
-    # Add title and metadata headers
+    # Metadata headers
     if title:
         headers["Title"] = title
     if click:
@@ -70,25 +58,19 @@ def publish(
     if attach:
         headers["X-Attach"] = attach
 
-    # ✅ Force UTF-8 encoding for message body
+    # ✅ Force UTF-8 encoding
     utf8_message = (message or "").encode("utf-8")
     headers["Content-Type"] = "text/plain; charset=utf-8"
 
     try:
         if NTFY_USER or NTFY_PASS:
             r = _session.post(
-                url,
-                headers=headers,
-                data=utf8_message,
-                auth=(NTFY_USER, NTFY_PASS),
-                timeout=8,
+                url, headers=headers, data=utf8_message,
+                auth=(NTFY_USER, NTFY_PASS), timeout=8
             )
         else:
             r = _session.post(
-                url,
-                headers=headers,
-                data=utf8_message,
-                timeout=8,
+                url, headers=headers, data=utf8_message, timeout=8
             )
 
         try:
@@ -101,7 +83,7 @@ def publish(
 
 
 # -----------------------------
-# CLI quick test (optional)
+# CLI quick test
 # -----------------------------
 if __name__ == "__main__":
     res = publish("Jarvis test", "Hello from ntfy.py ✅ — UTF-8 verified 🚀", tags="robot", priority=3)
