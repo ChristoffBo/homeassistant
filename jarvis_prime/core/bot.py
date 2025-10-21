@@ -517,14 +517,16 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
             print(f"[bot] storage save failed: {e}")
 
 # --- ADD: fan-out to ntfy (optional, via env) ---
+    # --- ADD: fan-out to ntfy (optional, via env) ---
     try:
         ntfy_url   = os.getenv("NTFY_URL", "").rstrip("/")
         ntfy_topic = os.getenv("NTFY_TOPIC", "").strip()
         ntfy_token = os.getenv("NTFY_TOKEN", "").strip()
+
         if ntfy_url and ntfy_topic:
-            # ✅ Fix: Properly encode title with UTF-8 for emoji support
-            title_clean = f"{BOT_ICON} {BOT_NAME}: {title}"
-            
+            title_clean = f"{BOT_ICON} {BOT_NAME}: {title or ''}"
+            title_clean = title_clean.encode("utf-8", errors="replace").decode("utf-8")
+
             ntfy_headers = {
                 "Title": title_clean,
                 "Priority": str(int(priority)),
@@ -532,10 +534,9 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
             }
             if ntfy_token:
                 ntfy_headers["Authorization"] = f"Bearer {ntfy_token}"
-            
-            # ✅ Ensure message is UTF-8 encoded
-            message_bytes = (message or "").encode("utf-8")
-            
+
+            message_bytes = (message or "").encode("utf-8", errors="replace")
+
             requests.post(
                 f"{ntfy_url}/{ntfy_topic}",
                 data=message_bytes,
@@ -544,6 +545,7 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
             )
     except Exception as e:
         print(f"[bot] ntfy push failed: {e}")
+    
 
     # --- ADD: fan-out to SMTP (optional, via env) ---
     try:
