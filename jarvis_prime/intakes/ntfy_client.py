@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/ntfy_client.py — header-safe (Latin-1) + body-safe (UTF-8)
+# /app/ntfy_client.py — header-safe (Latin-1) + body-safe (UTF-8, no leading whitespace bug)
 
 from __future__ import annotations
 import os, json, requests
@@ -23,7 +23,7 @@ def _safe_header(val: Union[str, bytes, None]) -> str:
     """
     Make a value safe for HTTP headers.
     urllib3/requests encodes headers as ISO-8859-1 (latin-1).
-    Strip CR/LF and drop any chars not representable in latin-1.
+    Strip CR/LF, leading spaces, and drop any chars not representable in latin-1.
     """
     if val is None:
         return ""
@@ -34,8 +34,8 @@ def _safe_header(val: Union[str, bytes, None]) -> str:
             s = val.decode("latin-1", errors="replace")
     else:
         s = str(val)
-    # headers cannot contain raw newlines
-    s = s.replace("\r", " ").replace("\n", " ").strip()
+    # headers cannot contain raw newlines or leading spaces
+    s = s.replace("\r", " ").replace("\n", " ").lstrip()
     # force latin-1 safety: drop characters outside latin-1
     s = s.encode("latin-1", errors="ignore").decode("latin-1", errors="ignore")
     return s
@@ -47,13 +47,10 @@ def _safe_body_bytes(val: Union[str, bytes, None]) -> bytes:
     if val is None:
         return b""
     if isinstance(val, bytes):
-        # assume already UTF-8-ish; if it's not, keep bytes as-is
         try:
-            # normalize via utf-8 -> bytes to avoid surprises
             return val.decode("utf-8", errors="replace").encode("utf-8", errors="replace")
         except Exception:
             return val
-    # string -> utf-8
     return str(val).encode("utf-8", errors="replace")
 
 def _auth_headers() -> Dict[str, str]:
@@ -77,7 +74,7 @@ def publish(
 ) -> Dict[str, Any]:
     """
     Publish to an ntfy topic via HTTP POST with header/body encodings handled safely:
-    - Headers: Latin-1 safe (emojis removed there)
+    - Headers: Latin-1 safe (no emojis, no leading spaces)
     - Body: UTF-8 safe (emojis preserved)
     """
     base = NTFY_URL or "https://ntfy.sh"
@@ -89,7 +86,7 @@ def publish(
         **_auth_headers(),
     }
 
-    # Header metadata — must be latin-1 safe (no emojis)
+    # Header metadata — must be latin-1 safe (no emojis or leading spaces)
     if title:
         headers["Title"] = _safe_header(title)
     if click:
@@ -117,7 +114,6 @@ def publish(
             j = {}
         return {"status": r.status_code, **({"id": j.get("id")} if isinstance(j, dict) else {})}
     except Exception as e:
-        # Make sure error printing itself never crashes
         try:
             err = str(e).encode("utf-8", errors="replace").decode("utf-8")
         except Exception:
@@ -129,7 +125,5 @@ def publish(
 # CLI quick test
 # -----------------------------
 if __name__ == "__main__":
-    # NOTE: Title header will be latin-1 sanitized (emoji dropped),
-    # but the body keeps full UTF-8 (emoji preserved).
     res = publish("Jarvis test 🚀", "Hello from ntfy_client.py ✅ — UTF-8 body 💡", tags="robot,jarvis", priority=3)
     print(json.dumps(res, indent=2, ensure_ascii=False))
