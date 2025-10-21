@@ -23,7 +23,7 @@ def _safe_header(val: Union[str, bytes, None]) -> str:
     """
     Make a value safe for HTTP headers.
     urllib3/requests encodes headers as ISO-8859-1 (latin-1).
-    Strip CR/LF, leading spaces, and drop any chars not representable in latin-1.
+    Strip CR/LF, any whitespace, and drop any chars not representable in latin-1.
     """
     if val is None:
         return ""
@@ -34,8 +34,8 @@ def _safe_header(val: Union[str, bytes, None]) -> str:
             s = val.decode("latin-1", errors="replace")
     else:
         s = str(val)
-    # headers cannot contain raw newlines or leading spaces
-    s = s.replace("\r", " ").replace("\n", " ").lstrip()
+    # headers cannot contain raw newlines or any leading/trailing spaces
+    s = s.replace("\r", " ").replace("\n", " ").strip()
     # force latin-1 safety: drop characters outside latin-1
     s = s.encode("latin-1", errors="ignore").decode("latin-1", errors="ignore")
     return s
@@ -74,7 +74,7 @@ def publish(
 ) -> Dict[str, Any]:
     """
     Publish to an ntfy topic via HTTP POST with header/body encodings handled safely:
-    - Headers: Latin-1 safe (no emojis, no leading spaces)
+    - Headers: Latin-1 safe (no emojis, no whitespace issues)
     - Body: UTF-8 safe (emojis preserved)
     """
     base = NTFY_URL or "https://ntfy.sh"
@@ -86,7 +86,6 @@ def publish(
         **_auth_headers(),
     }
 
-    # Header metadata — must be latin-1 safe (no emojis or leading spaces)
     if title:
         headers["Title"] = _safe_header(title)
     if click:
