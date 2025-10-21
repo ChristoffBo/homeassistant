@@ -16,10 +16,10 @@ BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON = os.getenv("BOT_ICON", "🧠")
 JARVIS_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
 
+# Web API runs on :2581 not :2599
 _API_HOSTS = [
-    "http://127.0.0.1:2599/api",
-    "http://localhost:2599/api",
-    "http://jarvis_prime:2599/api"
+    "http://127.0.0.1:2581/api",
+    "http://localhost:2581/api"
 ]
 
 CACHE_PATH = "/data/digest_cache.json"
@@ -36,7 +36,6 @@ def _log(msg: str):
 
 
 def _wait_for_port(host: str, port: int, timeout: int = 20) -> bool:
-    """Wait for port to become reachable (TCP open)."""
     start = time.time()
     while time.time() - start < timeout:
         try:
@@ -50,10 +49,10 @@ def _wait_for_port(host: str, port: int, timeout: int = 20) -> bool:
 
 
 def _get_json(endpoint: str) -> Dict[str, Any]:
-    """Wait for internal API to respond with valid JSON before giving up."""
-    _wait_for_port("127.0.0.1", 2599)
+    """Wait for API to respond with valid JSON before giving up."""
+    _wait_for_port("127.0.0.1", 2581)
     start = time.time()
-    while time.time() - start < 25:  # 25s grace window
+    while time.time() - start < 25:
         for base in _API_HOSTS:
             url = f"{base}{endpoint}"
             try:
@@ -77,7 +76,7 @@ def _get_json(endpoint: str) -> Dict[str, Any]:
     return {}
 
 # ---------------------------------------------------------------------------
-# Network + Emitter Helpers
+# Emitter + Cache helpers
 # ---------------------------------------------------------------------------
 
 def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str] | None = None) -> bool:
@@ -95,15 +94,12 @@ def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str]
         r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6,
                           headers={"Content-Type": "application/json; charset=utf-8"})
         r.raise_for_status()
-        _log(f"[emit] Digest sent successfully → {JARVIS_EMIT_URL}")
+        _log(f"[emit] Digest sent → {JARVIS_EMIT_URL}")
         return True
     except Exception as e:
         _log(f"[emit] Failed: {e}")
         return False
 
-# ---------------------------------------------------------------------------
-# Local cache + text helpers
-# ---------------------------------------------------------------------------
 
 def _section(title: str, body: str) -> str:
     return f"**{title}**\n{body.strip()}\n" if body else ""
@@ -133,7 +129,7 @@ def _save_cache(data: Dict[str, Any]):
         pass
 
 # ---------------------------------------------------------------------------
-# ARR + Weather Sections
+# ARR + Weather
 # ---------------------------------------------------------------------------
 
 def _movies_today(opts: Dict[str, Any]) -> str:
@@ -199,7 +195,7 @@ def _weather_today(opts: Dict[str, Any]) -> str:
         return ""
 
 # ---------------------------------------------------------------------------
-# API-based Summaries (Analytics, Orchestrator, Sentinel)
+# API-Based Sections
 # ---------------------------------------------------------------------------
 
 def _analytics_summary() -> str:
