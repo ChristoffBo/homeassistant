@@ -1,15 +1,9 @@
+#!/usr/bin/env python3
 import os
-import sys
 import json
 import requests
 from datetime import datetime
 from typing import Dict, Tuple, Any, List
-
-# ---------------------------------------------------------------------------
-# Ensure Home Assistant add-on environment sees /app modules
-# ---------------------------------------------------------------------------
-if '/app' not in sys.path:
-    sys.path.insert(0, '/app')
 
 def _try_import(name: str):
     try:
@@ -23,6 +17,12 @@ _weather = _try_import("weather")
 BOT_NAME = os.getenv("BOT_NAME", "Jarvis Prime")
 BOT_ICON = os.getenv("BOT_ICON", "🧠")
 JARVIS_EMIT_URL = os.getenv("JARVIS_INTERNAL_EMIT_URL", "http://127.0.0.1:2599/internal/emit")
+INTERNAL_API_BASE = "http://127.0.0.1:2599/api"
+CACHE_PATH = "/data/digest_cache.json"
+
+# ---------------------------------------------------------------------------
+# Utility Helpers
+# ---------------------------------------------------------------------------
 
 def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str] | None = None) -> bool:
     try:
@@ -35,12 +35,7 @@ def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str]
             "icon": BOT_ICON,
             "app": BOT_NAME,
         }
-        r = requests.post(
-            JARVIS_EMIT_URL,
-            json=payload,
-            timeout=6,
-            headers={"Content-Type": "application/json; charset=utf-8"},
-        )
+        r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6)
         r.raise_for_status()
         return True
     except Exception:
@@ -55,6 +50,27 @@ def _bulletize(text_or_list, limit: int = 10) -> str:
     else:
         lines = [str(x).strip() for x in (text_or_list or []) if str(x).strip()]
     return "\n".join([("- " + l if not l.startswith("- ") else l) for l in lines[:limit]])
+
+def _load_cache() -> Dict[str, Any]:
+    try:
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_cache(data: Dict[str, Any]):
+    try:
+        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------------------
+# ARR + Weather
+# ---------------------------------------------------------------------------
 
 def _movies_today(opts: Dict[str,Any]) -> str:
     if not _arr or not opts.get("radarr_enabled"): return ""
@@ -101,92 +117,80 @@ def _weather_today(opts: Dict[str,Any]) -> str:
                 return " | ".join(parts)
             elif isinstance(maybe, str):
                 txt = maybe
-
         if not txt and hasattr(_weather, "handle_weather_command"):
             resp = _weather.handle_weather_command("weather")
             txt = resp[0] if isinstance(resp, tuple) else resp or ""
-
         lines = [l.strip() for l in (txt or "").splitlines() if l.strip()]
         if not lines:
             return ""
-
         header = next((l for l in lines[:3] if "Current Weather" in l), None)
-
-        wanted_keys = (
-            "Outdoor", "Indoor", "Wind", "Solar", "Chance of rain", "Outlook",
-            "Humidity", "Pressure", "Feels like"
-        )
+        wanted_keys = ("Outdoor", "Indoor", "Wind", "Solar", "Chance of rain", "Outlook",
+                       "Humidity", "Pressure", "Feels like")
         wanted_emojis_starts = ("🌡", "🏠", "🌬", "💨", "⚡", "☔", "🌧", "🌤", "🌥", "☀")
-
-        metrics: List[str] = []
-        for l in lines:
-            if any(k in l for k in wanted_keys) or l.startswith(wanted_emojis_starts):
-                metrics.append(l)
-
-        parts: List[str] = []
-        if header:
-            parts.append(header)
+        metrics = [l for l in lines if any(k in l for k in wanted_keys) or l.startswith(wanted_emojis_starts)]
+        parts = [header] if header else []
         parts.extend(metrics[:6])
-
         if not parts:
             parts = lines[:6]
-
         return " | ".join(parts)
     except Exception:
         return ""
 
 # ---------------------------------------------------------------------------
-# ADDITIVE EXTENSIONS BELOW — Analytics / Orchestrator / Sentinel Summaries
+# API-Based Summaries (Analytics with trend)
 # ---------------------------------------------------------------------------
 
 def _analytics_summary() -> str:
+    cache = _load_cache()
     try:
-        import analytics
-        if hasattr(analytics, "get_service_summary"):
-            res = analytics.get_service_summary()
-            if isinstance(res, dict):
-                up = res.get("up", 0)
-                down = res.get("down", 0)
-                degraded = res.get("degraded", 0)
-                uptime = res.get("uptime") or res.get("uptime_percent") or None
-                summary = f"🟢 Up: {up} | 🔴 Down: {down} | 🟡 Degraded: {degraded}"
-                if uptime is not None:
-                    try:
-                        pct = float(uptime)
-                        summary += f" | 📈 Uptime: {pct:.2f}%"
-                    except Exception:
-                        summary += f" | 📈 Uptime: {uptime}"
-                return summary
-        elif hasattr(analytics, "get_active_services"):
-            active = len(analytics.get_active_services())
-            return f"🟢 Active services: {active}"
+        r = requests.get(f"{INTERNAL_API_BASE}/analytics/health-score", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            up = data.get("up_services", 0)
+            down = data.get("down_services", 0)
+            total = data.get("total_services", 0)
+            health = float(data.get("health_score", 0))
+            today_key = datetime.now().strftime("%Y-%m-%d")
+
+            yesterday_health = cache.get("analytics", {}).get("last_health", None)
+            delta_str = ""
+            if yesterday_health is not None:
+                diff = round(health - yesterday_health, 2)
+                if abs(diff) >= 0.1:
+                    arrow = "📈" if diff > 0 else "📉"
+                    delta_str = f" ({arrow} {diff:+.2f}%)"
+
+            cache["analytics"] = {"last_date": today_key, "last_health": health}
+            _save_cache(cache)
+            return f"🟢 Up: {up}/{total} | 🔴 Down: {down} | 📈 Health: {health:.2f}%{delta_str}"
     except Exception:
         pass
     return ""
 
 def _orchestrator_summary() -> str:
     try:
-        import orchestrator
-        if hasattr(orchestrator, "get_recent_jobs"):
-            jobs = orchestrator.get_recent_jobs(limit=5)
+        r = requests.get(f"{INTERNAL_API_BASE}/orchestrator/history?limit=20", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            jobs = data.get("jobs", [])
             if isinstance(jobs, list):
-                succeeded = [j for j in jobs if j.get("status") == "success"]
-                failed = [j for j in jobs if j.get("status") == "failed"]
-                return f"✅ Jobs ran: {len(jobs)} | ❌ Failed: {len(failed)} | ✅ Success: {len(succeeded)}"
+                total = len(jobs)
+                succeeded = sum(1 for j in jobs if j.get("status") == "success")
+                failed = sum(1 for j in jobs if j.get("status") == "failed")
+                return f"✅ Jobs: {total} | ✅ Success: {succeeded} | ❌ Failed: {failed}"
     except Exception:
         pass
     return ""
 
 def _sentinel_summary() -> str:
     try:
-        import sentinel
-        if hasattr(sentinel, "get_recent_repairs"):
-            repairs = sentinel.get_recent_repairs(limit=5)
-            if isinstance(repairs, list) and repairs:
-                latest = repairs[0]
-                rid = latest.get("id", "?")
-                name = latest.get("service") or latest.get("name") or latest.get("description") or "unknown"
-                return f"🛠 Repairs today: {len(repairs)} (latest: {rid} — {name})"
+        r = requests.get(f"{INTERNAL_API_BASE}/sentinel/dashboard", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            down = data.get("services_down", 0)
+            repairs = data.get("repairs_today", 0)
+            uptime = data.get("uptime_percent", "N/A")
+            return f"🛠 Repairs: {repairs} | 🔴 Down: {down} | 📈 Uptime: {uptime}%"
     except Exception:
         pass
     return ""
