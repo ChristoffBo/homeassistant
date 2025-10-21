@@ -69,9 +69,7 @@ def publish(
                 auth=(NTFY_USER, NTFY_PASS), timeout=8
             )
         else:
-            r = _session.post(
-                url, headers=headers, data=utf8_message, timeout=8
-            )
+            r = _session.post(url, headers=headers, data=utf8_message, timeout=8)
 
         try:
             j = r.json()
@@ -86,5 +84,5 @@ def publish(
 # CLI quick test
 # -----------------------------
 if __name__ == "__main__":
-    res = publish("Jarvis test", "Hello from ntfy.py ✅ — UTF-8 verified 🚀", tags="robot", priority=3)
+    res = publish("Jarvis test", "Hello from ntfy_client.py ✅ — UTF-8 verified 🚀", tags="robot", priority=3)
     print(json.dumps(res, indent=2))
