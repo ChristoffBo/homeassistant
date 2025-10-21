@@ -114,6 +114,17 @@ def publish(
     attach: Optional[str] = None
 ) -> Dict[str, Any]:
     """Publish safely to ntfy (UTF-8 body, Latin-1 headers, image auto-attach)."""
+
+    # 🔒 ADDITIVE GUARD: obey push_ntfy_enabled flag
+    if os.getenv("PUSH_NTFY_ENABLED", "true").lower() in ("false", "0", "no"):
+        print("[ntfy] disabled by config (push_ntfy_enabled=false)")
+        return {"status": "disabled"}
+
+    # 🔒 ADDITIVE GUARD: skip entirely if no URL configured
+    if not NTFY_URL:
+        print("[ntfy] disabled (no ntfy_url set)")
+        return {"status": "disabled"}
+
     base = NTFY_URL or "https://ntfy.sh"
     t = topic or (NTFY_TOPIC or "jarvis")
     url = f"{base}/{t}"
