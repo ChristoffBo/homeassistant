@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# /app/ntfy_client.py — header-safe (Latin-1) + body-safe (UTF-8, collapses all whitespace)
+# /app/ntfy_client.py — fully hardened header sanitizer (Latin-1 safe, UTF-8 body, de-dupes prefixes)
 
 from __future__ import annotations
-import os, json, requests
+import os, json, requests, re
 from typing import Optional, Dict, Any, Union
 
 # -----------------------------
@@ -19,12 +19,16 @@ _session = requests.Session()
 # -----------------------------
 # Helpers
 # -----------------------------
+def _collapse_ws(text: str) -> str:
+    """Collapse all whitespace and strip ends."""
+    return " ".join(text.split()).strip()
+
 def _safe_header(val: Union[str, bytes, None]) -> str:
     """
-    Make a value safe for HTTP headers.
-    - Requests encodes headers as ISO-8859-1 (latin-1)
-    - Collapse tabs/newlines/multiple spaces into one
-    - Drop any chars not representable in latin-1
+    Make a header value safe for requests:
+    - remove CR/LF and collapse whitespace
+    - enforce latin-1 range
+    - deduplicate accidental 'Jarvis Prime:' prefixes
     """
     if val is None:
         return ""
@@ -36,16 +40,13 @@ def _safe_header(val: Union[str, bytes, None]) -> str:
     else:
         s = str(val)
 
-    # normalize all whitespace (remove newlines, leading/trailing, collapse multiples)
-    s = " ".join(s.replace("\r", " ").replace("\n", " ").split())
-    # force latin-1 safety
+    s = _collapse_ws(s.replace("\r", " ").replace("\n", " "))
+    s = re.sub(r'^(Jarvis\s*Prime:\s*){2,}', r'Jarvis Prime: ', s, flags=re.I)
     s = s.encode("latin-1", errors="ignore").decode("latin-1", errors="ignore")
     return s
 
 def _safe_body_bytes(val: Union[str, bytes, None]) -> bytes:
-    """
-    UTF-8 body with replacement is OK for ntfy message content.
-    """
+    """UTF-8 body with replacement."""
     if val is None:
         return b""
     if isinstance(val, bytes):
@@ -74,11 +75,7 @@ def publish(
     priority: Optional[int] = None,
     attach: Optional[str] = None
 ) -> Dict[str, Any]:
-    """
-    Publish to an ntfy topic via HTTP POST with header/body encodings handled safely:
-    - Headers: Latin-1 safe (no emojis, no whitespace issues)
-    - Body: UTF-8 safe (emojis preserved)
-    """
+    """Publish safely to ntfy."""
     base = NTFY_URL or "https://ntfy.sh"
     t = topic or (NTFY_TOPIC or "jarvis")
     url = f"{base}/{t}"
@@ -98,6 +95,10 @@ def publish(
         headers["X-Priority"] = _safe_header(str(priority))
     if attach:
         headers["X-Attach"] = _safe_header(attach)
+
+    # Final defensive cleanup — guarantees no invalid header
+    for k, v in list(headers.items()):
+        headers[k] = _safe_header(v)
 
     data = _safe_body_bytes(message)
 
@@ -126,5 +127,7 @@ def publish(
 # CLI quick test
 # -----------------------------
 if __name__ == "__main__":
-    res = publish("  Jarvis   Prime:   Sonarr - Test  🚀 ", "Hello from ntfy_client.py ✅ — UTF-8 body 💡", tags="robot,jarvis", priority=3)
+    res = publish("   Jarvis Prime:   Jarvis Prime:  Sonarr - Test 🚀 ",
+                  "Hello from ntfy_client.py ✅ — UTF-8 body 💡",
+                  tags="robot,jarvis", priority=3)
     print(json.dumps(res, indent=2, ensure_ascii=False))
