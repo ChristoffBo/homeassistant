@@ -46,8 +46,8 @@ banner() {
   [[ "$(jq -r '.smtp_enabled' "$CONFIG_PATH")" == "true" ]]       && echo "✉️ SMTP Intake — ACTIVE" || echo "✉️ SMTP Intake — DISABLED"
   [[ "$(jq -r '.proxy_enabled' "$CONFIG_PATH")" == "true" ]]      && echo "🔀 Proxy Intake — ACTIVE" || echo "🔀 Proxy Intake — DISABLED"
   [[ "$(jq -r '.technitium_enabled' "$CONFIG_PATH")" == "true" ]] && echo "🧠 DNS (Technitium) — ACTIVE" || echo "🧠 DNS (Technitium) — DISABLED"
-  echo "🔗 Webhook Intake — ACTIVE"   # always active
-  echo "📮 Apprise Intake — ACTIVE"   # always active
+  echo "🔗 Webhook Intake — ACTIVE"
+  echo "📮 Apprise Intake — ACTIVE"
   [[ "$(jq -r '.llm_enviroguard_enabled' "$CONFIG_PATH")" == "true" ]] && echo "🌡️ EnviroGuard — ACTIVE" || echo "🌡️ EnviroGuard — DISABLED"
   [[ "$ws" == Disabled* ]] && echo "🔌 WebSocket Intake — DISABLED" || echo "🔌 WebSocket Intake — ACTIVE ($ws)"
   echo ""
@@ -78,25 +78,6 @@ export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
 export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_PATH")
 export GOTIFY_CLIENT_TOKEN=$(jq -r '.gotify_client_token' "$CONFIG_PATH")
 export GOTIFY_APP_TOKEN=$(jq -r '.gotify_app_token' "$CONFIG_PATH")
-
-# --- ADDITIVE: NTFY configuration exports ---
-export ntfy_url=$(jq -r '.ntfy_url // ""' "$CONFIG_PATH")
-export ntfy_topic=$(jq -r '.ntfy_topic // ""' "$CONFIG_PATH")
-export ntfy_user=$(jq -r '.ntfy_user // ""' "$CONFIG_PATH")
-export ntfy_pass=$(jq -r '.ntfy_pass // ""' "$CONFIG_PATH")
-export ntfy_token=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
-export push_ntfy_enabled=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
-# --- END ADDITIVE ---
-
-# --- ADDITIVE: SMTP configuration exports ---
-export push_smtp_enabled=$(jq -r '.push_smtp_enabled // false' "$CONFIG_PATH")
-export push_smtp_host=$(jq -r '.push_smtp_host // ""' "$CONFIG_PATH")
-export push_smtp_port=$(jq -r '.push_smtp_port // 587' "$CONFIG_PATH")
-export push_smtp_user=$(jq -r '.push_smtp_user // ""' "$CONFIG_PATH")
-export push_smtp_pass=$(jq -r '.push_smtp_pass // ""' "$CONFIG_PATH")
-export push_smtp_to=$(jq -r '.push_smtp_to // ""' "$CONFIG_PATH")
-# --- END ADDITIVE ---
-
 export JARVIS_APP_NAME=$(jq -r '.jarvis_app_name' "$CONFIG_PATH")
 export RETENTION_HOURS=$(jq -r '.retention_hours' "$CONFIG_PATH")
 export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' "$CONFIG_PATH")
@@ -107,11 +88,7 @@ export AUTO_PURGE_POLICY=$(jq -r '.auto_purge_policy // "off"' "$CONFIG_PATH")
 ############################################
 # Jarvis Prime — Default Playbook Loader
 ############################################
-
-# Ensure /share/jarvis_prime exists
 mkdir -p /share/jarvis_prime
-
-# Copy default playbooks only if none exist
 if [ ! -d /share/jarvis_prime/playbooks ] || [ -z "$(ls -A /share/jarvis_prime/playbooks 2>/dev/null)" ]; then
   echo "[init] No user playbooks found — loading defaults..."
   mkdir -p /share/jarvis_prime/playbooks
@@ -167,6 +144,21 @@ export PROXY_PORT=$(jq -r '.proxy_port // 2580' "$CONFIG_PATH")
 export push_gotify_enabled=$(jq -r '.push_gotify_enabled // false' "$CONFIG_PATH")
 export push_ntfy_enabled=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
 
+# === ADDITIVE FIX: Export NTFY and SMTP configs ===
+export NTFY_URL=$(jq -r '.ntfy_url // ""' "$CONFIG_PATH")
+export NTFY_TOPIC=$(jq -r '.ntfy_topic // "jarvis"' "$CONFIG_PATH")
+export NTFY_USER=$(jq -r '.ntfy_user // ""' "$CONFIG_PATH")
+export NTFY_PASS=$(jq -r '.ntfy_pass // ""' "$CONFIG_PATH")
+export NTFY_TOKEN=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
+
+export push_smtp_enabled=$(jq -r '.push_smtp_enabled // false' "$CONFIG_PATH")
+export push_smtp_host=$(jq -r '.push_smtp_host // ""' "$CONFIG_PATH")
+export push_smtp_port=$(jq -r '.push_smtp_port // 587' "$CONFIG_PATH")
+export push_smtp_user=$(jq -r '.push_smtp_user // ""' "$CONFIG_PATH")
+export push_smtp_pass=$(jq -r '.push_smtp_pass // ""' "$CONFIG_PATH")
+export push_smtp_to=$(jq -r '.push_smtp_to // ""' "$CONFIG_PATH")
+# === END ADDITIVE FIX ===
+
 # Personalities
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
@@ -205,7 +197,21 @@ fi
 
 if [[ "${PROXY_ENABLED}" == "true" ]]; then
   python3 /app/proxy.py & PROXY_PID=$! || true
-  python3 /app/bot.py & BOT_PID=$! || true
+  # --- ADDITIVE: Forward envs persistently ---
+  env \
+    NTFY_URL="$NTFY_URL" \
+    NTFY_TOPIC="$NTFY_TOPIC" \
+    NTFY_USER="$NTFY_USER" \
+    NTFY_PASS="$NTFY_PASS" \
+    NTFY_TOKEN="$NTFY_TOKEN" \
+    push_smtp_enabled="$push_smtp_enabled" \
+    push_smtp_host="$push_smtp_host" \
+    push_smtp_port="$push_smtp_port" \
+    push_smtp_user="$push_smtp_user" \
+    push_smtp_pass="$push_smtp_pass" \
+    push_smtp_to="$push_smtp_to" \
+    python3 /app/bot.py & BOT_PID=$! || true
+  # --- END ADDITIVE ---
 fi
 
 if [[ "${WS_ENABLED}" == "true" ]]; then
