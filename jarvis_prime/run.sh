@@ -78,6 +78,25 @@ export BOT_ICON=$(jq -r '.bot_icon' "$CONFIG_PATH")
 export GOTIFY_URL=$(jq -r '.gotify_url' "$CONFIG_PATH")
 export GOTIFY_CLIENT_TOKEN=$(jq -r '.gotify_client_token' "$CONFIG_PATH")
 export GOTIFY_APP_TOKEN=$(jq -r '.gotify_app_token' "$CONFIG_PATH")
+
+# --- ADDITIVE: NTFY configuration exports ---
+export ntfy_url=$(jq -r '.ntfy_url // ""' "$CONFIG_PATH")
+export ntfy_topic=$(jq -r '.ntfy_topic // ""' "$CONFIG_PATH")
+export ntfy_user=$(jq -r '.ntfy_user // ""' "$CONFIG_PATH")
+export ntfy_pass=$(jq -r '.ntfy_pass // ""' "$CONFIG_PATH")
+export ntfy_token=$(jq -r '.ntfy_token // ""' "$CONFIG_PATH")
+export push_ntfy_enabled=$(jq -r '.push_ntfy_enabled // false' "$CONFIG_PATH")
+# --- END ADDITIVE ---
+
+# --- ADDITIVE: SMTP configuration exports ---
+export push_smtp_enabled=$(jq -r '.push_smtp_enabled // false' "$CONFIG_PATH")
+export push_smtp_host=$(jq -r '.push_smtp_host // ""' "$CONFIG_PATH")
+export push_smtp_port=$(jq -r '.push_smtp_port // 587' "$CONFIG_PATH")
+export push_smtp_user=$(jq -r '.push_smtp_user // ""' "$CONFIG_PATH")
+export push_smtp_pass=$(jq -r '.push_smtp_pass // ""' "$CONFIG_PATH")
+export push_smtp_to=$(jq -r '.push_smtp_to // ""' "$CONFIG_PATH")
+# --- END ADDITIVE ---
+
 export JARVIS_APP_NAME=$(jq -r '.jarvis_app_name' "$CONFIG_PATH")
 export RETENTION_HOURS=$(jq -r '.retention_hours' "$CONFIG_PATH")
 export BEAUTIFY_ENABLED=$(jq -r '.beautify_enabled' "$CONFIG_PATH")
