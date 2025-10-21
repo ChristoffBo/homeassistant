@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# --- UTF-8 Locale Fix (safe for all modules) ---
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+# ----------------------------------------------
+
 CONFIG_PATH=/data/options.json
 
 ############################################
