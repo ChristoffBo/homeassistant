@@ -522,15 +522,23 @@ def send_message(title, message, priority=5, extras=None, decorate=True):
         ntfy_topic = os.getenv("NTFY_TOPIC", "").strip()
         ntfy_token = os.getenv("NTFY_TOKEN", "").strip()
         if ntfy_url and ntfy_topic:
+            # ✅ Fix: Properly encode title with UTF-8 for emoji support
+            title_clean = f"{BOT_ICON} {BOT_NAME}: {title}"
+            
             ntfy_headers = {
-                "Title": f"{BOT_ICON} {BOT_NAME}: {title}",
+                "Title": title_clean,
                 "Priority": str(int(priority)),
+                "Content-Type": "text/plain; charset=utf-8",
             }
             if ntfy_token:
                 ntfy_headers["Authorization"] = f"Bearer {ntfy_token}"
+            
+            # ✅ Ensure message is UTF-8 encoded
+            message_bytes = (message or "").encode("utf-8")
+            
             requests.post(
                 f"{ntfy_url}/{ntfy_topic}",
-                data=(message or "").encode("utf-8"),
+                data=message_bytes,
                 headers=ntfy_headers,
                 timeout=5,
             )
