@@ -34,37 +34,51 @@ def _log(msg: str):
     except Exception:
         pass
 
+
 def _wait_for_port(host: str, port: int, timeout: int = 20) -> bool:
-    """Wait up to timeout seconds for a TCP port to open."""
+    """Wait for port to become reachable (TCP open)."""
     start = time.time()
     while time.time() - start < timeout:
         try:
             with socket.create_connection((host, port), timeout=2):
-                _log(f"Port {port} on {host} is open.")
+                _log(f"[wait] Port {port} open on {host}")
                 return True
-        except Exception:
+        except OSError:
             time.sleep(1)
-    _log(f"Port {port} on {host} did not open within {timeout}s.")
+    _log(f"[wait] Port {port} not open after {timeout}s")
     return False
+
+
+def _get_json(endpoint: str) -> Dict[str, Any]:
+    """Wait for internal API to respond with valid JSON before giving up."""
+    _wait_for_port("127.0.0.1", 2599)
+    start = time.time()
+    while time.time() - start < 25:  # 25s grace window
+        for base in _API_HOSTS:
+            url = f"{base}{endpoint}"
+            try:
+                r = requests.get(url, timeout=5)
+                if r.ok:
+                    try:
+                        data = r.json()
+                        _log(f"[api] {endpoint} → OK via {base}")
+                        return data
+                    except Exception:
+                        _log(f"[api] {endpoint} → invalid JSON from {base}")
+                else:
+                    _log(f"[api] {endpoint} → HTTP {r.status_code}")
+            except Exception as e:
+                if "Connection refused" in str(e) or "timed out" in str(e):
+                    time.sleep(1)
+                    continue
+                _log(f"[api] {endpoint} → {type(e).__name__}: {e}")
+        time.sleep(2)
+    _log(f"[api] {endpoint} → failed after retries")
+    return {}
 
 # ---------------------------------------------------------------------------
 # Network + Emitter Helpers
 # ---------------------------------------------------------------------------
-
-def _get_json(endpoint: str) -> Dict[str, Any]:
-    """Try multiple API bases, waiting for port 2599 first."""
-    _wait_for_port("127.0.0.1", 2599)
-    for base in _API_HOSTS:
-        url = f"{base}{endpoint}"
-        try:
-            r = requests.get(url, timeout=5)
-            if r.ok:
-                _log(f"Fetched {endpoint} from {base}")
-                return r.json()
-        except Exception as e:
-            _log(f"Failed {url}: {e}")
-            continue
-    return {}
 
 def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str] | None = None) -> bool:
     try:
@@ -81,10 +95,10 @@ def _emit_to_jarvis(title: str, message: str, priority: int = 5, tags: List[str]
         r = requests.post(JARVIS_EMIT_URL, json=payload, timeout=6,
                           headers={"Content-Type": "application/json; charset=utf-8"})
         r.raise_for_status()
-        _log(f"Digest emitted successfully to {JARVIS_EMIT_URL}")
+        _log(f"[emit] Digest sent successfully → {JARVIS_EMIT_URL}")
         return True
     except Exception as e:
-        _log(f"Emit failed: {e}")
+        _log(f"[emit] Failed: {e}")
         return False
 
 # ---------------------------------------------------------------------------
@@ -206,7 +220,7 @@ def _analytics_summary() -> str:
         cache["analytics"] = {"last_date": today_key, "last_health": health}
         _save_cache(cache)
         return f"🟢 Up: {up}/{total} | 🔴 Down: {down} | 📈 Health: {health:.2f}%{delta}"
-    _log("Analytics summary: no data returned.")
+    _log("[analytics] summary: no data returned.")
     return ""
 
 def _orchestrator_summary() -> str:
@@ -217,7 +231,7 @@ def _orchestrator_summary() -> str:
         success = sum(1 for j in jobs if j.get("status") == "success")
         failed = sum(1 for j in jobs if j.get("status") == "failed")
         return f"✅ Jobs: {total} | ✅ Success: {success} | ❌ Failed: {failed}"
-    _log("Orchestrator summary: no data returned.")
+    _log("[orchestrator] summary: no data returned.")
     return ""
 
 def _sentinel_summary() -> str:
@@ -231,7 +245,7 @@ def _sentinel_summary() -> str:
         except Exception:
             uptime_str = str(uptime)
         return f"🛠 Repairs: {repairs} | 🔴 Down: {down} | 📈 Uptime: {uptime_str}"
-    _log("Sentinel summary: no data returned.")
+    _log("[sentinel] summary: no data returned.")
     return ""
 
 # ---------------------------------------------------------------------------
