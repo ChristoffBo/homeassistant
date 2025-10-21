@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /app/ntfy.py — UTF-8 safe notification client
+# /app/ntfy.py — UTF-8 safe notification client (final hardened version)
 
 from __future__ import annotations
 import os, json, requests
@@ -27,7 +27,7 @@ def _auth_headers() -> Dict[str, str]:
 
 
 # -----------------------------
-# Publish (UTF-8 safe)
+# Publish (UTF-8 safe + byte-resilient)
 # -----------------------------
 def publish(
     title: str,
@@ -58,9 +58,24 @@ def publish(
         headers["X-Attach"] = str(attach)
     headers["Content-Type"] = "text/plain; charset=utf-8"
 
-    # Encode message body to UTF-8
-    data = (message or "").encode("utf-8", errors="replace")
+    # ✅ Encode message body safely regardless of type
+    try:
+        if isinstance(message, bytes):
+            # Try UTF-8 first, fallback to Latin-1 if misencoded
+            try:
+                message = message.decode("utf-8")
+            except UnicodeDecodeError:
+                message = message.decode("latin-1", errors="replace")
+        else:
+            message = str(message)
+    except Exception:
+        message = "(invalid message payload)"
 
+    data = message.encode("utf-8", errors="replace")
+
+    # -----------------------------
+    # HTTP POST
+    # -----------------------------
     try:
         r = _session.post(
             url,
@@ -74,6 +89,7 @@ def publish(
         except Exception:
             j = {}
         return {"status": r.status_code, **({"id": j.get("id")} if isinstance(j, dict) else {})}
+
     except Exception as e:
         # Ensure even this log prints safely
         print(f"[ntfy] push failed (UTF-8 safe): {str(e).encode('utf-8', errors='replace').decode('utf-8')}")
@@ -84,5 +100,5 @@ def publish(
 # CLI quick test
 # -----------------------------
 if __name__ == "__main__":
-    res = publish("Jarvis test 🚀", "Hello from ntfy_client.py ✅ — UTF-8 verified 💡", tags="robot", priority=3)
+    res = publish("Jarvis test 🚀", "Hello from ntfy.py ✅ — UTF-8 verified 💡", tags="robot", priority=3)
     print(json.dumps(res, indent=2, ensure_ascii=False))
