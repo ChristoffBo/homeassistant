@@ -70,7 +70,7 @@ def publish(
     if attach:
         headers["X-Attach"] = attach
 
-    # Ensure UTF-8 safe message handling
+    # ✅ Force UTF-8 encoding for message body
     utf8_message = (message or "").encode("utf-8")
     headers["Content-Type"] = "text/plain; charset=utf-8"
 
