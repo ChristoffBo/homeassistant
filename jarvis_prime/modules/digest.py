@@ -1,8 +1,15 @@
 import os
+import sys
 import json
 import requests
 from datetime import datetime
 from typing import Dict, Tuple, Any, List
+
+# ---------------------------------------------------------------------------
+# Ensure Home Assistant add-on environment sees /app modules
+# ---------------------------------------------------------------------------
+if '/app' not in sys.path:
+    sys.path.insert(0, '/app')
 
 def _try_import(name: str):
     try:
