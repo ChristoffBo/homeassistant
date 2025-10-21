@@ -1,6 +1,6 @@
 // /share/jarvis_prime/ui/js/atlas.js
 // Atlas Module for Jarvis Prime — PROFESSIONAL ENTERPRISE EDITION
-// Clean colors, better contrast, readable tooltips, professional styling
+// With click-to-open WebUI support
 
 const ATLAS_API = (path = '') => {
   if (typeof API === 'function') {
@@ -61,7 +61,8 @@ function drawAtlasGraph(container, data) {
     text: '#e8eaed',
     textMuted: '#95a5a6',
     tooltipBg: 'rgba(26, 31, 46, 0.98)',
-    tooltipBorder: '#3a4556'
+    tooltipBorder: '#3a4556',
+    webui: '#3498db'
   };
 
   const svg = d3.select(container)
@@ -140,35 +141,65 @@ function drawAtlasGraph(container, data) {
     return 9;
   };
 
-  const node = g.append('g')
-    .selectAll('circle')
+  // Node group for nodes + WebUI indicators
+  const nodeGroup = g.append('g')
+    .selectAll('g')
     .data(data.nodes)
-    .join('circle')
-    .attr('r', getNodeSize)
-    .attr('fill', getNodeColor)
-    .attr('stroke', '#1a1f2e')
-    .attr('stroke-width', 2)
-    .style('cursor', 'pointer')
+    .join('g')
+    .style('cursor', d => d.has_webui ? 'pointer' : 'default')
     .on('mouseover', (event, d) => {
       showAtlasTooltip(event, d);
-      hoverGroup(d, node, link, label);
-      d3.select(event.currentTarget)
+      hoverGroup(d, nodeGroup, link, label);
+      d3.select(event.currentTarget).select('circle')
         .attr('stroke', COLORS.linkActive)
         .attr('stroke-width', 3)
         .style('filter', 'drop-shadow(0 0 8px rgba(82, 148, 226, 0.6))');
     })
     .on('mouseout', (event, d) => {
       hideAtlasTooltip();
-      resetHover(node, link, label);
-      d3.select(event.currentTarget)
+      resetHover(nodeGroup, link, label);
+      d3.select(event.currentTarget).select('circle')
         .attr('stroke', '#1a1f2e')
         .attr('stroke-width', 2)
         .style('filter', 'none');
     })
     .on('click', (event, d) => {
       event.stopPropagation();
-      focusNode(d, node, link, label);
+      if (d.has_webui && d.webui_url) {
+        window.open(d.webui_url, '_blank', 'noopener,noreferrer');
+      } else {
+        focusNode(d, nodeGroup, link, label);
+      }
     });
+
+  // Main node circle
+  nodeGroup.append('circle')
+    .attr('r', getNodeSize)
+    .attr('fill', getNodeColor)
+    .attr('stroke', '#1a1f2e')
+    .attr('stroke-width', 2);
+
+  // WebUI indicator (small icon overlay)
+  nodeGroup.filter(d => d.has_webui)
+    .append('circle')
+    .attr('cx', d => d.type === 'core' ? 12 : d.type === 'host' ? 8 : 5)
+    .attr('cy', d => d.type === 'core' ? -12 : d.type === 'host' ? -8 : -5)
+    .attr('r', 4)
+    .attr('fill', COLORS.webui)
+    .attr('stroke', '#1a1f2e')
+    .attr('stroke-width', 1)
+    .style('cursor', 'pointer');
+
+  // Lock icon for auth-required WebUIs
+  nodeGroup.filter(d => d.has_webui && d.requires_auth)
+    .append('text')
+    .attr('x', d => d.type === 'core' ? 12 : d.type === 'host' ? 8 : 5)
+    .attr('y', d => d.type === 'core' ? -9 : d.type === 'host' ? -5 : -2)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', 6)
+    .attr('fill', '#1a1f2e')
+    .attr('pointer-events', 'none')
+    .text('🔒');
 
   // Labels with better readability
   const label = g.append('g')
@@ -201,9 +232,7 @@ function drawAtlasGraph(container, data) {
       .attr('x2', d => d.target.x)
       .attr('y2', d => d.target.y);
 
-    node
-      .attr('cx', d => d.x)
-      .attr('cy', d => d.y);
+    nodeGroup.attr('transform', d => `translate(${d.x},${d.y})`);
 
     label
       .attr('x', d => d.x)
@@ -211,7 +240,8 @@ function drawAtlasGraph(container, data) {
   });
 
   // Subtle pulse for alive nodes only
-  node.filter(d => d.alive)
+  nodeGroup.filter(d => d.alive)
+    .select('circle:first-child')
     .transition()
     .duration(2500)
     .ease(d3.easeCubicInOut)
@@ -248,7 +278,7 @@ function drawAtlasGraph(container, data) {
   `;
   
   const avgLat = data.latency_stats?.avg;
-  const medLat = data.latency_stats?.median;
+  const webuiCount = data.counts?.webui_enabled || 0;
   
   overlay.innerHTML = `
     <div style="font-weight: 600; margin-bottom: 8px; font-size: 13px;">Network Topology</div>
@@ -259,6 +289,8 @@ function drawAtlasGraph(container, data) {
       <span style="font-weight: 500;">${data.counts?.services || 0}</span>
       <span style="color: ${COLORS.textMuted};">Links:</span>
       <span style="font-weight: 500;">${data.counts?.total_links || 0}</span>
+      <span style="color: ${COLORS.textMuted};">WebUI:</span>
+      <span style="font-weight: 500;">${webuiCount}</span>
       ${avgLat ? `
         <span style="color: ${COLORS.textMuted};">Avg Latency:</span>
         <span style="font-weight: 500;">${avgLat.toFixed(2)}s</span>
@@ -273,9 +305,13 @@ function drawAtlasGraph(container, data) {
         <div style="width: 10px; height: 10px; border-radius: 50%; background: ${COLORS.serviceMed};"></div>
         <span style="color: ${COLORS.textMuted};">Medium (0.5-2s)</span>
       </div>
-      <div style="display: flex; align-items: center; gap: 6px;">
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
         <div style="width: 10px; height: 10px; border-radius: 50%; background: ${COLORS.serviceSlow};"></div>
         <span style="color: ${COLORS.textMuted};">Slow (&gt;2s)</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <div style="width: 10px; height: 10px; border-radius: 50%; background: ${COLORS.webui};"></div>
+        <span style="color: ${COLORS.textMuted};">Click to open WebUI</span>
       </div>
     </div>
   `;
@@ -283,8 +319,7 @@ function drawAtlasGraph(container, data) {
 
   // Reset on click
   svg.on('click', () => {
-    node
-      .attr('opacity', 1)
+    nodeGroup.select('circle:first-child')
       .attr('stroke', '#1a1f2e')
       .attr('stroke-width', 2)
       .style('filter', 'none');
@@ -296,7 +331,7 @@ function drawAtlasGraph(container, data) {
 }
 
 // Focus mode - professional highlighting
-function focusNode(target, node, link, label) {
+function focusNode(target, nodeGroup, link, label) {
   const connected = new Set();
   link.each(l => {
     if (l.source.id === target.id) connected.add(l.target.id);
@@ -304,7 +339,7 @@ function focusNode(target, node, link, label) {
   });
   connected.add(target.id);
   
-  node.attr('opacity', d => (connected.has(d.id) ? 1 : 0.2));
+  nodeGroup.attr('opacity', d => (connected.has(d.id) ? 1 : 0.2));
   label.attr('opacity', d => (connected.has(d.id) ? 1 : 0.2));
   link
     .attr('stroke', d => {
@@ -322,7 +357,7 @@ function focusNode(target, node, link, label) {
 }
 
 // Hover mode - subtle highlight
-function hoverGroup(target, node, link, label) {
+function hoverGroup(target, nodeGroup, link, label) {
   const connected = new Set();
   link.each(l => {
     if (l.source.id === target.id) connected.add(l.target.id);
@@ -330,7 +365,7 @@ function hoverGroup(target, node, link, label) {
   });
   connected.add(target.id);
   
-  node.attr('opacity', d => (connected.has(d.id) ? 1 : 0.4));
+  nodeGroup.attr('opacity', d => (connected.has(d.id) ? 1 : 0.4));
   label.attr('opacity', d => (connected.has(d.id) ? 1 : 0.4));
   link
     .attr('stroke', d => {
@@ -343,15 +378,15 @@ function hoverGroup(target, node, link, label) {
     });
 }
 
-function resetHover(node, link, label) {
-  node.attr('opacity', 1);
+function resetHover(nodeGroup, link, label) {
+  nodeGroup.attr('opacity', 1);
   link
     .attr('stroke', '#3a4556')
     .attr('stroke-opacity', 0.6);
   label.attr('opacity', 1);
 }
 
-// Professional tooltip
+// Professional tooltip with WebUI indication
 let atlasTooltip;
 function showAtlasTooltip(event, d) {
   hideAtlasTooltip();
@@ -412,6 +447,15 @@ function showAtlasTooltip(event, d) {
     html += `
       <span style="color: #95a5a6;">Latency:</span>
       <span style="color: ${latencyColor}; font-weight: 500;">${d.latency.toFixed(3)}s</span>
+    `;
+  }
+  
+  if (d.has_webui) {
+    html += `
+      <span style="color: #95a5a6;">WebUI:</span>
+      <span style="color: #3498db; font-weight: 500;">
+        ${d.requires_auth ? '🔒 ' : ''}Click to open
+      </span>
     `;
   }
   
