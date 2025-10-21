@@ -62,7 +62,8 @@ function drawAtlasGraph(container, data) {
     textMuted: '#95a5a6',
     tooltipBg: 'rgba(26, 31, 46, 0.98)',
     tooltipBorder: '#3a4556',
-    webui: '#3498db'
+    webui: '#3498db',       // Blue for open WebUI
+    webuiAuth: '#9b59b6'    // Purple for auth-required
   };
 
   const svg = d3.select(container)
@@ -179,27 +180,34 @@ function drawAtlasGraph(container, data) {
     .attr('stroke', '#1a1f2e')
     .attr('stroke-width', 2);
 
-  // WebUI indicator (small icon overlay)
-  nodeGroup.filter(d => d.has_webui)
+  // WebUI indicator - professional glow ring
+  const webuiRing = nodeGroup.filter(d => d.has_webui)
     .append('circle')
-    .attr('cx', d => d.type === 'core' ? 12 : d.type === 'host' ? 8 : 5)
-    .attr('cy', d => d.type === 'core' ? -12 : d.type === 'host' ? -8 : -5)
-    .attr('r', 4)
-    .attr('fill', COLORS.webui)
-    .attr('stroke', '#1a1f2e')
-    .attr('stroke-width', 1)
-    .style('cursor', 'pointer');
+    .attr('r', d => getNodeSize(d) + 4)
+    .attr('fill', 'none')
+    .attr('stroke', d => d.requires_auth ? '#9b59b6' : '#3498db')
+    .attr('stroke-width', 2)
+    .attr('stroke-dasharray', '3,3')
+    .attr('opacity', 0.8)
+    .style('cursor', 'pointer')
+    .style('filter', d => {
+      const color = d.requires_auth ? '155, 89, 182' : '52, 152, 219';
+      return `drop-shadow(0 0 4px rgba(${color}, 0.6))`;
+    });
 
-  // Lock icon for auth-required WebUIs
-  nodeGroup.filter(d => d.has_webui && d.requires_auth)
-    .append('text')
-    .attr('x', d => d.type === 'core' ? 12 : d.type === 'host' ? 8 : 5)
-    .attr('y', d => d.type === 'core' ? -9 : d.type === 'host' ? -5 : -2)
-    .attr('text-anchor', 'middle')
-    .attr('font-size', 6)
-    .attr('fill', '#1a1f2e')
-    .attr('pointer-events', 'none')
-    .text('🔒');
+  // Animate the ring
+  webuiRing
+    .transition()
+    .duration(2000)
+    .ease(d3.easeCubicInOut)
+    .attr('stroke-dashoffset', -12)
+    .on('end', function repeat() {
+      d3.select(this)
+        .transition()
+        .duration(2000)
+        .attr('stroke-dashoffset', -24)
+        .on('end', repeat);
+    });
 
   // Labels with better readability
   const label = g.append('g')
@@ -310,8 +318,18 @@ function drawAtlasGraph(container, data) {
         <span style="color: ${COLORS.textMuted};">Slow (&gt;2s)</span>
       </div>
       <div style="display: flex; align-items: center; gap: 6px;">
-        <div style="width: 10px; height: 10px; border-radius: 50%; background: ${COLORS.webui};"></div>
-        <span style="color: ${COLORS.textMuted};">Click to open WebUI</span>
+        <div style="position: relative; width: 18px; height: 18px;">
+          <div style="position: absolute; left: 4px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: #2ecc71;"></div>
+          <div style="position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; border: 2px dashed ${COLORS.webui}; opacity: 0.8;"></div>
+        </div>
+        <span style="color: ${COLORS.textMuted};">WebUI Available</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <div style="position: relative; width: 18px; height: 18px;">
+          <div style="position: absolute; left: 4px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: #2ecc71;"></div>
+          <div style="position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; border: 2px dashed ${COLORS.webuiAuth}; opacity: 0.8;"></div>
+        </div>
+        <span style="color: ${COLORS.textMuted};">Auth Required</span>
       </div>
     </div>
   `;
