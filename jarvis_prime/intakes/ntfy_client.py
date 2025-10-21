@@ -57,8 +57,10 @@ def publish(
     t = topic or (NTFY_TOPIC or "jarvis")
     url = f"{base}/{t}"
     headers = _auth_headers()
-    data = {"title": title or "", "message": message or ""}
 
+    # Add title and metadata headers
+    if title:
+        headers["Title"] = title
     if click:
         headers["X-Click"] = click
     if tags:
@@ -68,11 +70,27 @@ def publish(
     if attach:
         headers["X-Attach"] = attach
 
+    # Ensure UTF-8 safe message handling
+    utf8_message = (message or "").encode("utf-8")
+    headers["Content-Type"] = "text/plain; charset=utf-8"
+
     try:
         if NTFY_USER or NTFY_PASS:
-            r = _session.post(url, headers=headers, data=data, auth=(NTFY_USER, NTFY_PASS), timeout=8)
+            r = _session.post(
+                url,
+                headers=headers,
+                data=utf8_message,
+                auth=(NTFY_USER, NTFY_PASS),
+                timeout=8,
+            )
         else:
-            r = _session.post(url, headers=headers, data=data, timeout=8)
+            r = _session.post(
+                url,
+                headers=headers,
+                data=utf8_message,
+                timeout=8,
+            )
+
         try:
             j = r.json()
         except Exception:
@@ -86,5 +104,5 @@ def publish(
 # CLI quick test (optional)
 # -----------------------------
 if __name__ == "__main__":
-    res = publish("Jarvis test", "Hello from ntfy.py", tags="robot", priority=3)
+    res = publish("Jarvis test", "Hello from ntfy.py ✅ — UTF-8 verified 🚀", tags="robot", priority=3)
     print(json.dumps(res, indent=2))
