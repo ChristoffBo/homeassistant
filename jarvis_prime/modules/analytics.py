@@ -2,7 +2,7 @@
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
 
-🔥🔥🔥 VERSION: 2025-01-19-FINAL-FIX 🔥🔥🔥
+ðŸ”¥ðŸ”¥ðŸ”¥ VERSION: 2025-01-19-FINAL-FIX ðŸ”¥ðŸ”¥ðŸ”¥
 
 FIXED: sqlite3.Row access
 FIXED: notification callback checks  
@@ -31,7 +31,7 @@ import re
 logger = logging.getLogger(__name__)
 
 # Print version on import
-logger.info("🔥 Analytics Module VERSION: 2025-01-19-FINAL-FIX 🔥")
+logger.info("ðŸ”¥ Analytics Module VERSION: 2025-01-19-FINAL-FIX ðŸ”¥")
 
 
 
@@ -1501,28 +1501,28 @@ class NetworkScanner:
                         # Send notification directly - no callback needed
                         if self.alert_new_devices:
                             try:
-                                logger.info(f"🚀 Sending notification for device with services")
+                                logger.info(f"ðŸš€ Sending notification for device with services")
                                 await analytics_notify(
                                     'Network Scanner',
                                     'info',
                                     f"New device with services: {device.hostname or device.ip_address} - {service_names}"
                                 )
-                                logger.info(f"✅ Notification sent successfully")
+                                logger.info(f"âœ… Notification sent successfully")
                             except Exception as e:
-                                logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
+                                logger.error(f"âŒ Failed to send notification: {e}", exc_info=True)
                     else:
                         # Send notification directly - no callback needed
                         if self.alert_new_devices:
                             try:
-                                logger.info(f"🚀 Sending notification for device without services")
+                                logger.info(f"ðŸš€ Sending notification for device without services")
                                 await analytics_notify(
                                     'Network Scanner',
                                     'info',
                                     f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
                                 )
-                                logger.info(f"✅ Notification sent successfully")
+                                logger.info(f"âœ… Notification sent successfully")
                             except Exception as e:
-                                logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
+                                logger.error(f"âŒ Failed to send notification: {e}", exc_info=True)
         
         finally:
             self.scanning = False
@@ -1945,16 +1945,24 @@ async def update_device(request: web.Request):
     
     if not device:
         return _json({"error": "Device not found"}, status=404)
-    
+     # --- SAFETY PATCH: prevent undefined service names ---
+    if not service_name or str(service_name).strip().lower() in ("", "none", "null", "undefinedservice"):
+        service_name = f"Device-{ip_address or 'unknown'}"
+    # -----------------------------------------------------
     # If marking as permanent, auto-promote to Analytics Services
     if is_permanent and not device.get('is_permanent'):
         ip_address = device.get('ip_address')
         hostname = device.get('hostname') or device.get('custom_name')
         
-        if ip_address:
-            # Create service name
-            service_name = custom_name or hostname or f"Device-{ip_address}"
-            
+       if ip_address:
+    # Create service name
+    service_name = custom_name or hostname or f"Device-{ip_address}"
+
+    # --- SAFETY PATCH: prevent undefined service names ---
+    if not service_name or str(service_name).strip().lower() in ("", "none", "null", "undefinedservice"):
+        service_name = f"Device-{ip_address or 'unknown'}"
+    # -----------------------------------------------------
+           # ----------------------------------------------------- 
             # Check if service already exists
             if not db.check_ip_in_services(ip_address):
                 # Create health check service
@@ -2155,18 +2163,18 @@ async def analytics_notify(source: str, level: str, message: str):
     """
     Analytics notification handler
     """
-    title = f"Analytics — {source}"
+    title = f"Analytics â€” {source}"
     body = f"[{level.upper()}] {message}"
     priority = 5 if level.lower() in ("critical", "error", "down") else 3
     
-    logger.info(f"📤 analytics_notify START: {title}")
+    logger.info(f"ðŸ“¤ analytics_notify START: {title}")
     logger.info(f"   Message: {body}")
     
     # Try to import and use process_incoming
     try:
         logger.info(f"   Attempting to import process_incoming from bot...")
         from bot import process_incoming
-        logger.info(f"   ✅ Import successful! Function type: {type(process_incoming)}")
+        logger.info(f"   âœ… Import successful! Function type: {type(process_incoming)}")
         logger.info(f"   Is coroutine function: {asyncio.iscoroutinefunction(process_incoming)}")
         
         # Call it
@@ -2182,19 +2190,19 @@ async def analytics_notify(source: str, level: str, message: str):
                     lambda: process_incoming(title, body, source="analytics", priority=priority)
                 )
             
-            logger.info(f"✅ process_incoming completed successfully")
-            logger.info(f"✅ Fan-out should be complete - check inbox/Gotify/UI")
+            logger.info(f"âœ… process_incoming completed successfully")
+            logger.info(f"âœ… Fan-out should be complete - check inbox/Gotify/UI")
             
         except Exception as call_error:
-            logger.error(f"❌ Error calling process_incoming: {call_error}", exc_info=True)
+            logger.error(f"âŒ Error calling process_incoming: {call_error}", exc_info=True)
             logger.error(f"   This means process_incoming exists but threw an error")
             
     except ImportError as import_error:
-        logger.error(f"❌ Cannot import process_incoming from bot: {import_error}")
+        logger.error(f"âŒ Cannot import process_incoming from bot: {import_error}")
         logger.error(f"   This means bot.py doesn't have process_incoming function")
         logger.error(f"   Notification will ONLY appear in analytics inbox")
     except Exception as e:
-        logger.error(f"❌ Unexpected error in analytics_notify: {e}", exc_info=True)
+        logger.error(f"âŒ Unexpected error in analytics_notify: {e}", exc_info=True)
 
 
 
