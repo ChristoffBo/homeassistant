@@ -1945,24 +1945,16 @@ async def update_device(request: web.Request):
     
     if not device:
         return _json({"error": "Device not found"}, status=404)
-     # --- SAFETY PATCH: prevent undefined service names ---
-    if not service_name or str(service_name).strip().lower() in ("", "none", "null", "undefinedservice"):
-        service_name = f"Device-{ip_address or 'unknown'}"
-    # -----------------------------------------------------
+    
     # If marking as permanent, auto-promote to Analytics Services
     if is_permanent and not device.get('is_permanent'):
         ip_address = device.get('ip_address')
         hostname = device.get('hostname') or device.get('custom_name')
         
-       if ip_address:
-    # Create service name
-    service_name = custom_name or hostname or f"Device-{ip_address}"
-
-    # --- SAFETY PATCH: prevent undefined service names ---
-    if not service_name or str(service_name).strip().lower() in ("", "none", "null", "undefinedservice"):
-        service_name = f"Device-{ip_address or 'unknown'}"
-    # -----------------------------------------------------
-           # ----------------------------------------------------- 
+        if ip_address:
+            # Create service name
+            service_name = custom_name or hostname or f"Device-{ip_address}"
+            
             # Check if service already exists
             if not db.check_ip_in_services(ip_address):
                 # Create health check service
