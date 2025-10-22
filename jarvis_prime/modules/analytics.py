@@ -33,8 +33,6 @@ logger = logging.getLogger(__name__)
 # Print version on import
 logger.info("🔥 Analytics Module VERSION: 2025-01-19-FINAL-FIX 🔥")
 
-
-
 # Service fingerprint database - maps ports to common services
 SERVICE_FINGERPRINTS = {
     # Media Management (Arr Stack)
@@ -225,8 +223,6 @@ SERVICE_FINGERPRINTS = {
     8080: {'name': 'Home Assistant Supervisor', 'category': 'misc', 'path': '/supervisor/info'},
     8112: {'name': 'FileBrowser', 'category': 'misc', 'path': '/api/health'},
 }
-
-
 @dataclass
 class HealthCheck:
     """Health check configuration with retry and flap protection"""
@@ -676,41 +672,51 @@ class AnalyticsDB:
         conn.close()
     
     def get_incidents(self, service_name: Optional[str] = None, hours: int = 168) -> Dict[str, List[Dict]]:
-        """Get recent incidents - PATCHED to return consistent format"""
+        """Get recent incidents with error handling and consistent format"""
         cutoff = int(time.time()) - (hours * 3600)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
-        if service_name:
-            cur.execute("""
-                SELECT * FROM analytics_incidents 
-                WHERE service_name = ? AND start_time > ?
-                ORDER BY start_time DESC
-            """, (service_name, cutoff))
-        else:
-            cur.execute("""
-                SELECT * FROM analytics_incidents 
-                WHERE start_time > ?
-                ORDER BY start_time DESC
-            """, (cutoff,))
+        # Verify table exists
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='analytics_incidents'")
+        if not cur.fetchone():
+            conn.close()
+            logger.warning("Incidents table not found")
+            return {"incidents": [], "status": "error", "message": "Incidents table not found"}
         
-        rows = cur.fetchall()
-        conn.close()
-        
-        incidents = []
-        for row in rows:
-            incidents.append({
-                'id': row['id'],
-                'service_name': row['service_name'],
-                'start_time': row['start_time'],
-                'end_time': row['end_time'],
-                'duration': row['duration'],
-                'status': row['status'],
-                'error_message': row['error_message']
-            })
-        
-        return {"incidents": incidents}
+        try:
+            if service_name:
+                cur.execute("""
+                    SELECT * FROM analytics_incidents 
+                    WHERE service_name = ? AND start_time > ?
+                    ORDER BY start_time DESC
+                """, (service_name, cutoff))
+            else:
+                cur.execute("""
+                    SELECT * FROM analytics_incidents 
+                    WHERE start_time > ?
+                    ORDER BY start_time DESC
+                """, (cutoff,))
+            
+            rows = cur.fetchall()
+            incidents = []
+            for row in rows:
+                incidents.append({
+                    'id': row['id'],
+                    'service_name': row['service_name'],
+                    'start_time': row['start_time'],
+                    'end_time': row['end_time'],
+                    'duration': row['duration'],
+                    'status': row['status'],
+                    'error_message': row['error_message']
+                })
+            return {"incidents": incidents, "status": "success", "count": len(incidents)}
+        except sqlite3.Error as e:
+            logger.error(f"Database error retrieving incidents: {e}")
+            return {"incidents": [], "status": "error", "message": str(e)}
+        finally:
+            conn.close()
     
     def purge_old_metrics(self, days: int = 30):
         """Delete metrics older than specified days"""
@@ -1088,8 +1094,6 @@ class AnalyticsDB:
         conn.close()
         
         return result[0] > 0
-
-
 class HealthMonitor:
     """Service health monitoring with retry and flap protection"""
     
@@ -1289,7 +1293,7 @@ class HealthMonitor:
                     self.db.create_incident(service.service_name, metric.error_message)
                     
                     if not self.should_suppress_notification(service.service_name, 'down'):
-                        await analytics_notify(
+                        await self.notify(
                             service.service_name,
                             'down',
                             f"Service is DOWN: {metric.error_message or 'No response'}"
@@ -1300,7 +1304,7 @@ class HealthMonitor:
                     self.db.resolve_incident(service.service_name)
                     
                     if not self.should_suppress_notification(service.service_name, 'up'):
-                        await analytics_notify(
+                        await self.notify(
                             service.service_name,
                             'up',
                             f"Service has RECOVERED (response time: {metric.response_time:.2f}s)"
@@ -1901,34 +1905,21 @@ async def network_scan(request: web.Request):
     })
 
 
+async def get_network_devices(request: web
 async def get_network_devices(request: web.Request):
-    """Get all known network devices with duplicate detection"""
-    all_devices = db.get_all_devices()
-    
-    # Filter out devices that are already in services
-    devices = []
-    for device in all_devices:
-        if device['ip_address']:
-            in_services = db.check_ip_in_services(device['ip_address'])
-            # Skip devices that are already in analytics services
-            if not in_services:
-                device['in_services'] = False
-                devices.append(device)
-        else:
-            device['in_services'] = False
-            devices.append(device)
-    
-    return _json({'devices': devices})
+        """Get all network devices"""
+        devices = db.get_all_devices()
+        return _json(devices)
 
 
 async def get_monitored_devices(request: web.Request):
-    """Get devices being monitored"""
+    """Get monitored network devices"""
     devices = db.get_monitored_devices()
-    return _json({'devices': devices})
+    return _json(devices)
 
 
 async def update_device(request: web.Request):
-    """Update device monitoring settings"""
+    """Update device settings"""
     mac_address = request.match_info["mac_address"]
     
     try:
@@ -1936,68 +1927,12 @@ async def update_device(request: web.Request):
     except Exception:
         return _json({"error": "bad json"}, status=400)
     
-    is_permanent = data.get('is_permanent')
-    is_monitored = data.get('is_monitored')
-    custom_name = data.get('custom_name')
-    
-    # Get device info before updating
-    device = db.get_device(mac_address)
-    
-    if not device:
-        return _json({"error": "Device not found"}, status=404)
-    
-    # If marking as permanent, auto-promote to Analytics Services
-    if is_permanent and not device.get('is_permanent'):
-        ip_address = device.get('ip_address')
-        hostname = device.get('hostname') or device.get('custom_name')
-        
-        if ip_address:
-            # Create service name
-            service_name = custom_name or hostname or f"Device-{ip_address}"
-            
-            # Check if service already exists
-            if not db.check_ip_in_services(ip_address):
-                # Create health check service
-                service = HealthCheck(
-                    service_name=service_name,
-                    endpoint=ip_address,
-                    check_type='ping',
-                    expected_status=200,
-                    timeout=5,
-                    interval=300,  # 5 minutes
-                    enabled=True,
-                    retries=3,
-                    flap_window=3600,
-                    flap_threshold=5,
-                    suppression_duration=3600
-                )
-                
-                try:
-                    db.add_service(service)
-                    
-                    # Start monitoring if monitor exists
-                    if monitor:
-                        task = asyncio.create_task(monitor.monitor_service(service))
-                        monitor.monitoring_tasks[service.service_name] = task
-                    
-                    logger.info(f"Auto-promoted device {mac_address} ({ip_address}) to Analytics Services as '{service_name}'")
-                    
-                    # Delete from network devices since it's now in services
-                    db.delete_device(mac_address)
-                    
-                    return _json({
-                        'success': True,
-                        'promoted': True,
-                        'service_name': service_name,
-                        'message': f'Device promoted to Analytics Services as "{service_name}"'
-                    })
-                    
-                except Exception as e:
-                    logger.error(f"Failed to promote device to service: {e}")
-                    # Fall through to regular update if promotion fails
-    
-    # Regular update if not promoting
-    db.update_device_settings(mac_address, is_permanent, is_monitored, custom_name)
+    db.update_device_settings(
+        mac_address,
+        is_permanent=data.get('is_permanent'),
+        is_monitored=data.get('is_monitored'),
+        custom_name=data.get('custom_name')
+    )
     
     return _json({'success': True})
 
@@ -2009,226 +1944,70 @@ async def delete_device(request: web.Request):
     return _json({'success': True})
 
 
-async def start_network_monitoring(request: web.Request):
-    """Start continuous network monitoring"""
-    await scanner.start_monitoring()
-    return _json({'success': True, 'monitoring': True})
+async def get_network_stats(request: web.Request):
+    """Get network monitoring statistics"""
+    stats = db.get_network_stats()
+    return _json(stats)
 
 
-async def stop_network_monitoring(request: web.Request):
-    """Stop continuous network monitoring"""
-    await scanner.stop_monitoring()
-    return _json({'success': True, 'monitoring': False})
-
-
-async def get_network_monitoring_status(request: web.Request):
-    """Get network monitoring status"""
-    return _json({
-        'monitoring': scanner.monitoring,
-        'scanning': scanner.scanning,
-        'alert_new_devices': scanner.alert_new_devices,
-        'monitor_interval': scanner.monitor_interval
-    })
-
-
-async def update_network_settings(request: web.Request):
-    """Update network monitoring settings"""
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    if 'alert_new_devices' in data:
-        scanner.set_alert_new_devices(data['alert_new_devices'])
-    
-    if 'monitor_interval' in data:
-        interval = int(data['monitor_interval'])
-        if 60 <= interval <= 3600:
-            scanner.monitor_interval = interval
-    
-    return _json({'success': True})
-
-
-async def get_network_events(request: web.Request):
+async def get_recent_network_events(request: web.Request):
     """Get recent network events"""
     try:
         hours = int(request.rel_url.query.get('hours', 24))
     except Exception:
         hours = 24
-    
     events = db.get_recent_network_events(hours)
-    return _json({'events': events})
+    return _json(events)
 
 
-async def get_network_stats(request: web.Request):
-    """Get network statistics"""
-    stats = db.get_network_stats()
-    return _json(stats)
+async def analytics_notify(service_name: str, status: str, message: str):
+    """Placeholder for notification callback"""
+    logger.info(f"Notification - {service_name}: {status} - {message}")
+    # Replace with actual notification logic (e.g., Home Assistant event, webhook, etc.)
+    # Example: await hass.services.async_call('notify', 'mobile_app', {'message': message})
 
 
-async def detect_device_services(request: web.Request):
-    """Detect services on a specific device"""
-    mac_address = request.match_info["mac_address"]
-    
-    device = db.get_device(mac_address)
-    if not device:
-        return _json({"error": "Device not found"}, status=404)
-    
-    if not device.get('ip_address'):
-        return _json({"error": "Device has no IP address"}, status=400)
-    
-    # Detect services
-    services = await scanner.detect_services(device['ip_address'])
-    
-    if services:
-        # Update device vendor with detected services
-        service_names = ', '.join([s['name'] for s in services])
-        db.update_device_settings(mac_address, custom_name=f"{device.get('custom_name', '')} [{service_names}]".strip())
-    
-    return _json({
-        'success': True,
-        'services': services,
-        'device': device
-    })
-
-
-async def scan_all_services(request: web.Request):
-    """Scan all known devices for services"""
-    devices = db.get_all_devices()
-    results = []
-    
-    for device in devices:
-        if device.get('ip_address'):
-            services = await scanner.detect_services(device['ip_address'])
-            if services:
-                results.append({
-                    'mac_address': device['mac_address'],
-                    'ip_address': device['ip_address'],
-                    'hostname': device.get('hostname'),
-                    'services': services
-                })
-    
-    return _json({
-        'success': True,
-        'scanned': len(devices),
-        'found': len(results),
-        'results': results
-    })
-
-
-def register_routes(app: web.Application):
-    """Register analytics routes with aiohttp app"""
-    # Service monitoring routes
-    app.router.add_get('/api/analytics/health-score', get_health_score)
-    app.router.add_get('/api/analytics/services', get_services)
-    app.router.add_post('/api/analytics/services', add_service)
-    app.router.add_get('/api/analytics/services/{service_id}', get_service)
-    app.router.add_put('/api/analytics/services/{service_id}', update_service)
-    app.router.add_delete('/api/analytics/services/{service_id}', delete_service_route)
-    app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
-    app.router.add_get('/api/analytics/incidents', get_incidents)
-    app.router.add_post('/api/analytics/reset-health', reset_health_score)
-    app.router.add_post('/api/analytics/reset-incidents', reset_incidents)
-    app.router.add_post('/api/analytics/reset-service/{service_name}', reset_service_data)
-    app.router.add_post('/api/analytics/purge-all', purge_all_metrics)
-    app.router.add_post('/api/analytics/purge-week', purge_week_metrics)
-    app.router.add_post('/api/analytics/purge-month', purge_month_metrics)
-    
-    # Network monitoring routes
-    app.router.add_post('/api/analytics/network/scan', network_scan)
-    app.router.add_get('/api/analytics/network/devices', get_network_devices)
-    app.router.add_get('/api/analytics/network/monitored', get_monitored_devices)
-    app.router.add_put('/api/analytics/network/devices/{mac_address}', update_device)
-    app.router.add_delete('/api/analytics/network/devices/{mac_address}', delete_device)
-    app.router.add_post('/api/analytics/network/monitoring/start', start_network_monitoring)
-    app.router.add_post('/api/analytics/network/monitoring/stop', stop_network_monitoring)
-    app.router.add_get('/api/analytics/network/monitoring/status', get_network_monitoring_status)
-    app.router.add_put('/api/analytics/network/settings', update_network_settings)
-    app.router.add_get('/api/analytics/network/events', get_network_events)
-    app.router.add_get('/api/analytics/network/stats', get_network_stats)
-    app.router.add_post('/api/analytics/network/devices/{mac_address}/detect', detect_device_services)
-    app.router.add_post('/api/analytics/network/scan-services', scan_all_services)
-
-
-
-async def analytics_notify(source: str, level: str, message: str):
-    """
-    Analytics notification handler
-    """
-    title = f"Analytics — {source}"
-    body = f"[{level.upper()}] {message}"
-    priority = 5 if level.lower() in ("critical", "error", "down") else 3
-    
-    logger.info(f"📤 analytics_notify START: {title}")
-    logger.info(f"   Message: {body}")
-    
-    # Try to import and use process_incoming
-    try:
-        logger.info(f"   Attempting to import process_incoming from bot...")
-        from bot import process_incoming
-        logger.info(f"   ✅ Import successful! Function type: {type(process_incoming)}")
-        logger.info(f"   Is coroutine function: {asyncio.iscoroutinefunction(process_incoming)}")
-        
-        # Call it
-        try:
-            if asyncio.iscoroutinefunction(process_incoming):
-                logger.info(f"   Calling as async function...")
-                await process_incoming(title, body, source="analytics", priority=priority)
-            else:
-                logger.info(f"   Calling as sync function via executor...")
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None, 
-                    lambda: process_incoming(title, body, source="analytics", priority=priority)
-                )
-            
-            logger.info(f"✅ process_incoming completed successfully")
-            logger.info(f"✅ Fan-out should be complete - check inbox/Gotify/UI")
-            
-        except Exception as call_error:
-            logger.error(f"❌ Error calling process_incoming: {call_error}", exc_info=True)
-            logger.error(f"   This means process_incoming exists but threw an error")
-            
-    except ImportError as import_error:
-        logger.error(f"❌ Cannot import process_incoming from bot: {import_error}")
-        logger.error(f"   This means bot.py doesn't have process_incoming function")
-        logger.error(f"   Notification will ONLY appear in analytics inbox")
-    except Exception as e:
-        logger.error(f"❌ Unexpected error in analytics_notify: {e}", exc_info=True)
-
-
-
-
-
-
-
-
-async def init_analytics(app: web.Application, notification_callback: Optional[Callable] = None):
-    """Initialize analytics module"""
+# Initialize application
+async def init_app():
     global db, monitor, scanner
     
     db = AnalyticsDB()
-    
-    # Use provided callback or default
-    callback = notification_callback or analytics_notify
-    
-    logger.info(f"[analytics] Initializing with callback: {callback.__name__ if hasattr(callback, '__name__') else type(callback)}")
-    
-    monitor = HealthMonitor(db, callback)
+    monitor = HealthMonitor(db, analytics_notify)
     scanner = NetworkScanner(db)
-    scanner.set_notification_callback(callback)
+    scanner.set_alert_new_devices(True)
+    scanner.set_notification_callback(analytics_notify)
     
-    logger.info(f"[analytics] Scanner callback set: {scanner.notification_callback is not None}")
+    app = web.Application()
     
-    # Start monitoring all enabled services
-    await monitor.start_all()
+    # Health and service routes
+    app.router.add_get('/api/health/score', get_health_score)
+    app.router.add_get('/api/services', get_services)
+    app.router.add_post('/api/services', add_service)
+    app.router.add_get('/api/services/{service_id}', get_service)
+    app.router.add_put('/api/services/{service_id}', update_service)
+    app.router.add_delete('/api/services/{service_id}', delete_service_route)
+    app.router.add_get('/api/uptime/{service_name}', get_uptime)
+    app.router.add_get('/api/incidents', get_incidents)
+    app.router.add_post('/api/reset/health', reset_health_score)
+    app.router.add_post('/api/reset/incidents', reset_incidents)
+    app.router.add_post('/api/reset/service/{service_name}', reset_service_data)
+    app.router.add_post('/api/purge/all', purge_all_metrics)
+    app.router.add_post('/api/purge/week', purge_week_metrics)
+    app.router.add_post('/api/purge/month', purge_month_metrics)
     
-    logger.info("Analytics module initialized with network monitoring")
+    # Network routes
+    app.router.add_get('/api/network/devices', get_network_devices)
+    app.router.add_get('/api/network/monitored', get_monitored_devices)
+    app.router.add_put('/api/network/devices/{mac_address}', update_device)
+    app.router.add_delete('/api/network/devices/{mac_address}', delete_device)
+    app.router.add_get('/api/network/stats', get_network_stats)
+    app.router.add_get('/api/network/events', get_recent_network_events)
+    app.router.add_post('/api/network/scan', network_scan)
+    
+    return app
 
 
-async def shutdown_analytics():
-    """Shutdown analytics module"""
-    if monitor:
-        await monitor.stop_all()
-    if scanner:
-        await scanner.stop_monitoring()
+# Startup
+if __name__ == "__main__":
+    app = init_app()
+    web.run_app(app, host='0.0.0.0', port=8080)
