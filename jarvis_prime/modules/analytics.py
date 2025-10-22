@@ -1951,9 +1951,8 @@ async def update_device(request: web.Request):
         ip_address = device.get('ip_address')
         hostname = device.get('hostname') or device.get('custom_name')
         
+       
         if ip_address:
-            # Create service name
-            if ip_address:
     # Create service name
     service_name = custom_name or hostname or f"Device-{ip_address}"
 
