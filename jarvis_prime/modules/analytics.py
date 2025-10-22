@@ -1953,8 +1953,7 @@ async def update_device(request: web.Request):
         
        
         if ip_address:
-    # Create service name
-    service_name = custom_name or hostname or f"Device-{ip_address}"
+           service_name = custom_name or hostname or f"Device-{ip_address}"
 
     # --- SAFETY PATCH: prevent undefined service names ---
     if not service_name or str(service_name).strip().lower() in ("", "none", "null", "undefinedservice"):
