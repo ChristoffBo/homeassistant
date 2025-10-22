@@ -1961,7 +1961,7 @@ async def update_device(request: web.Request):
     # -----------------------------------------------------
             
             # Check if service already exists
-            if not db.check_ip_in_services(ip_address):
+    if not db.check_ip_in_services(ip_address):
                 # Create health check service
                 service = HealthCheck(
                     service_name=service_name,
