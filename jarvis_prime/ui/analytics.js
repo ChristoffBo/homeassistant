@@ -5,7 +5,7 @@
 // UPGRADED: Added network monitoring capabilities
 // FIXED: Line 327 - Changed incident.service to incident.service_name to match backend data
 // ENHANCED: Completely redesigned incident display with card-based layout and better formatting
-// âœ¨ NEW: Added Internet Speed Test monitoring
+// ✨ NEW: Added Internet Speed Test monitoring
 
 // Use the API() helper from app.js for proper path resolution
 const ANALYTICS_API = (path = '') => {
@@ -177,7 +177,7 @@ function analyticsCreateServiceCard(service, uptime) {
   // NEW: Flap protection indicators
   const flapBadge = service.is_suppressed 
     ? `<span style="padding: 4px 8px; background: rgba(245, 158, 11, 0.2); color: #f59e0b; border-radius: 6px; font-size: 10px; font-weight: 600; margin-left: 8px;">
-         ðŸ”‡ SUPPRESSED
+         🔇 SUPPRESSED
        </span>`
     : service.flap_count > 0
     ? `<span style="padding: 4px 8px; background: rgba(245, 158, 11, 0.1); color: #f59e0b; border-radius: 6px; font-size: 10px; margin-left: 8px;">
@@ -208,7 +208,7 @@ function analyticsCreateServiceCard(service, uptime) {
       ${service.endpoint}
     </div>
     <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;">
-      Last check: ${lastCheck} â€¢ ${service.check_type.toUpperCase()} â€¢ ${service.retries || 3} retries
+      Last check: ${lastCheck} • ${service.check_type.toUpperCase()} • ${service.retries || 3} retries
     </div>
     ${uptime ? `
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
@@ -281,8 +281,8 @@ async function analyticsLoadServices() {
           </span>
         </td>
         <td>
-          <button class="btn btn-sm" onclick="analyticsEditService(${service.id})" title="Edit">âœï¸</button>
-          <button class="btn btn-sm" onclick="analyticsDeleteService(${service.id}, '${service.service_name}')" title="Delete">ðŸ—‘ï¸</button>
+          <button class="btn btn-sm" onclick="analyticsEditService(${service.id})" title="Edit">✏️</button>
+          <button class="btn btn-sm" onclick="analyticsDeleteService(${service.id}, '${service.service_name}')" title="Delete">🗑️</button>
         </td>
       `;
       tbody.appendChild(tr);
@@ -309,7 +309,7 @@ async function analyticsLoadIncidents() {
         <tr>
           <td colspan="5" class="text-center text-muted">
             <div style="padding: 2rem;">
-              <div style="font-size: 48px; opacity: 0.5;">âœ…</div>
+              <div style="font-size: 48px; opacity: 0.5;">✅</div>
               <p>No incidents in the last 7 days</p>
             </div>
           </td>
@@ -331,12 +331,12 @@ async function analyticsLoadIncidents() {
 
       const isOngoing = incident.status !== 'resolved';
       const statusColor = isOngoing ? '#ef4444' : '#22c55e';
-      const statusIcon = isOngoing ? 'ðŸ”´' : 'âœ…';
+      const statusIcon = isOngoing ? '🔴' : '✅';
       const statusText = isOngoing ? 'ONGOING' : 'RESOLVED';
 
       // Format timestamps more readably
       const startTimeFormatted = formatIncidentTime(startTime);
-      const endTimeFormatted = endTime ? formatIncidentTime(endTime) : '<span style="color: var(--text-muted);">â€”</span>';
+      const endTimeFormatted = endTime ? formatIncidentTime(endTime) : '<span style="color: var(--text-muted);">—</span>';
 
       // Get error message with better formatting
       const errorMsg = incident.error_message || 'Service unavailable';
@@ -681,7 +681,7 @@ async function analyticsResetServiceData(serviceName) {
 
 // Purge all metrics
 async function analyticsPurgeAll() {
-  if (!confirm('âš ï¸ DANGER: Purge ALL metrics and incidents? This cannot be undone!')) return;
+  if (!confirm('⚠️ DANGER: Purge ALL metrics and incidents? This cannot be undone!')) return;
 
   try {
     const response = await fetch(ANALYTICS_API('purge-all'), {
@@ -819,8 +819,8 @@ async function analyticsLoadNetworkDevices() {
       const isOnline = (Date.now() / 1000 - device.last_seen) < 300; // 5 min threshold
       
       const onlineIndicator = isOnline 
-        ? '<span style="color: #22c55e;">â—</span>' 
-        : '<span style="color: #6b7280;">â—</span>';
+        ? '<span style="color: #22c55e;">●</span>' 
+        : '<span style="color: #6b7280;">●</span>';
       
       const permanentBadge = device.is_permanent 
         ? '<span class="badge badge-primary" style="font-size: 10px;">PERMANENT</span>' 
@@ -849,17 +849,17 @@ async function analyticsLoadNetworkDevices() {
           <button class="btn btn-sm" 
                   onclick="networkTogglePermanent('${device.mac_address}')" 
                   title="${device.is_permanent ? 'Remove from permanent list' : 'Mark as permanent'}">
-            ${device.is_permanent ? 'ðŸ“Œ' : 'ðŸ“'}
+            ${device.is_permanent ? '📌' : '📍'}
           </button>
           <button class="btn btn-sm" 
                   onclick="networkToggleMonitoring('${device.mac_address}')" 
                   title="${device.is_monitored ? 'Stop monitoring' : 'Start monitoring'}">
-            ${device.is_monitored ? 'ðŸ‘ï¸' : 'ðŸ‘ï¸â€ðŸ—¨ï¸'}
+            ${device.is_monitored ? '👁️' : '👁️‍🗨️'}
           </button>
           <button class="btn btn-sm" 
                   onclick="networkDeleteDevice('${device.mac_address}')" 
                   title="Delete device">
-            ðŸ—‘ï¸
+            🗑️
           </button>
         </td>
       `;
@@ -874,7 +874,7 @@ async function analyticsLoadNetworkDevices() {
 async function networkRunScan() {
   const btn = event.target;
   btn.disabled = true;
-  btn.textContent = 'â³ Scanning...';
+  btn.textContent = '⏳ Scanning...';
   
   try {
     const response = await fetch(ANALYTICS_API('network/scan'), {
@@ -894,7 +894,7 @@ async function networkRunScan() {
     showToast('Scan failed', 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'ðŸ” Scan Network';
+    btn.textContent = '🔍 Scan Network';
   }
 }
 
@@ -1049,7 +1049,7 @@ async function analyticsLoadNetworkStatus() {
     // Update UI
     const monitorBtn = document.getElementById('btn-toggle-monitoring');
     if (monitorBtn) {
-      monitorBtn.textContent = networkMonitoringActive ? 'â¸ï¸ Stop Monitoring' : 'â–¶ï¸ Start Monitoring';
+      monitorBtn.textContent = networkMonitoringActive ? '⏸️ Stop Monitoring' : '▶️ Start Monitoring';
       monitorBtn.classList.toggle('btn-success', !networkMonitoringActive);
       monitorBtn.classList.toggle('btn-warning', networkMonitoringActive);
     }
@@ -1119,17 +1119,17 @@ async function analyticsLoadNetworkEvents() {
       const tr = document.createElement('tr');
       const eventTime = new Date(event.timestamp * 1000);
       
-      let eventIcon = 'ðŸ“¡';
+      let eventIcon = '📡';
       let eventColor = 'var(--text-primary)';
       
       if (event.event_type === 'new_device') {
-        eventIcon = 'ðŸ†•';
+        eventIcon = '🆕';
         eventColor = '#10b981';
       } else if (event.event_type === 'device_offline') {
-        eventIcon = 'âš ï¸';
+        eventIcon = '⚠️';
         eventColor = '#f59e0b';
       } else if (event.event_type === 'device_online') {
-        eventIcon = 'âœ…';
+        eventIcon = '✅';
         eventColor = '#3b82f6';
       }
       
@@ -1166,7 +1166,7 @@ function formatTimestamp(date) {
 }
 
 // ============================================
-// âœ¨ INTERNET SPEED TEST ADDITIONS
+// ✨ INTERNET SPEED TEST ADDITIONS
 // ============================================
 
 // Load internet speed test dashboard
@@ -1204,11 +1204,11 @@ async function analyticsLoadInternetDashboard() {
     // Update monitoring button
     const monitorBtn = document.getElementById('speed-monitoring-toggle');
     if (status.monitoring) {
-      monitorBtn.textContent = 'â¸ï¸ Stop Auto-Testing';
+      monitorBtn.textContent = '⏸️ Stop Auto-Testing';
       monitorBtn.classList.remove('btn-success');
       monitorBtn.classList.add('btn-warning');
     } else {
-      monitorBtn.textContent = 'â–¶ï¸ Start Auto-Testing';
+      monitorBtn.textContent = '▶️ Start Auto-Testing';
       monitorBtn.classList.remove('btn-warning');
       monitorBtn.classList.add('btn-success');
     }
@@ -1216,10 +1216,10 @@ async function analyticsLoadInternetDashboard() {
     // Update test button state
     if (status.testing) {
       document.getElementById('speed-test-btn').disabled = true;
-      document.getElementById('speed-test-btn').textContent = 'â³ Testing...';
+      document.getElementById('speed-test-btn').textContent = '⏳ Testing...';
     } else {
       document.getElementById('speed-test-btn').disabled = false;
-      document.getElementById('speed-test-btn').textContent = 'ðŸš€ Run Test Now';
+      document.getElementById('speed-test-btn').textContent = '🚀 Run Test Now';
     }
     
     // Load history
@@ -1278,7 +1278,7 @@ function analyticsDisplayLatestSpeedTest(test) {
 async function analyticsRunSpeedTest() {
   const btn = document.getElementById('speed-test-btn');
   btn.disabled = true;
-  btn.textContent = 'â³ Testing...';
+  btn.textContent = '⏳ Testing...';
   
   showToast('Speed test started (may take 30-60 seconds)...', 'info');
   
@@ -1300,7 +1300,7 @@ async function analyticsRunSpeedTest() {
     showToast('Speed test failed', 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'ðŸš€ Run Test Now';
+    btn.textContent = '🚀 Run Test Now';
   }
 }
 
