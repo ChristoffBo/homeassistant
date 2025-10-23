@@ -60,6 +60,7 @@ Analytics & Monitoring
 • Offline Detection – Devices marked as monitored are flagged and logged if no longer seen for a defined period.
 • Network Stats Dashboard – Displays total discovered devices, monitored ones, and recent scan activity inside the Analytics interface.
 • API Endpoints – All network scan and device operations are exposed under /api/analytics/network/* for automation and integration.
+• Internet Speed Monitoring – Integrated Internet performance testing powered by the official Ookla Speedtest CLI. Jarvis automatically runs scheduled speed tests at configurable intervals (default 12 hours), storing download, upload, ping, jitter, and server data in Analytics history. Trend analysis compares results against recent averages, automatically detecting degradations or recoveries. Notifications are sent via Gotify when speeds fall below thresholds, latency spikes, or connectivity drops for multiple consecutive tests. Results are visualized within the Analytics tab as time-series charts with full test history and the ability to purge results. Auto-test interval is user-adjustable, and all data persists in the internal SQLite database for long-term tracking.
 
 🗺️ Atlas — Network Topology Visualization (New)
 
