@@ -1,17 +1,11 @@
+#!/usr/bin/env python3
 """
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
 
-🔥🔥🔥 VERSION: 2025-01-19-FINAL-FIX 🔥🔥🔥
+VERSION: 2025-01-19-FINAL-FIX + SPEED TEST INTEGRATION
 
-FIXED: sqlite3.Row access
-FIXED: notification callback checks  
-FIXED: arp-scan garbage filtering
-FIXED: dashboard stats
-FIXED: purge functions
-ADDED: comprehensive logging
-
-If you see "VERSION: 2025-01-19-FINAL-FIX" in your logs, you have the fixed version.
+Complete file with Internet Speed Testing integrated
 """
 
 import sqlite3
@@ -27,12 +21,12 @@ from aiohttp import web
 from collections import deque
 import logging
 import re
+import socket
 
 logger = logging.getLogger(__name__)
 
 # Print version on import
-logger.info("🔥 Analytics Module VERSION: 2025-01-19-FINAL-FIX 🔥")
-
+logger.info("ðŸ”¥ Analytics Module VERSION: 2025-01-19-FINAL-FIX + SPEED TEST ðŸ”¥")
 
 
 # Service fingerprint database - maps ports to common services
@@ -58,28 +52,17 @@ SERVICE_FINGERPRINTS = {
     8081: {'name': 'NZBGet', 'category': 'download', 'path': '/'},
     9117: {'name': 'Jackett', 'category': 'download', 'path': '/api/v2.0/server/config'},
     5076: {'name': 'NZBHydra2', 'category': 'download', 'path': '/api/system/info'},
-    9117: {'name': 'rTorrent/ruTorrent', 'category': 'download', 'path': '/'},
     
     # Media Servers
     32400: {'name': 'Plex', 'category': 'media-server', 'path': '/identity'},
     8096: {'name': 'Jellyfin', 'category': 'media-server', 'path': '/System/Info/Public'},
     8920: {'name': 'Emby', 'category': 'media-server', 'path': '/System/Info/Public'},
-    8324: {'name': 'Plex for Roku', 'category': 'media-server', 'path': '/'},
-    7359: {'name': 'Plex DLNA', 'category': 'media-server', 'path': None},
-    1900: {'name': 'Plex DLNA', 'category': 'media-server', 'path': None},
     8200: {'name': 'Tautulli', 'category': 'media-server', 'path': '/api/v2'},
     
     # Home Automation
     8123: {'name': 'Home Assistant', 'category': 'automation', 'path': '/api/'},
     1880: {'name': 'Node-RED', 'category': 'automation', 'path': '/'},
     8088: {'name': 'Domoticz', 'category': 'automation', 'path': '/json.htm'},
-    8090: {'name': 'OpenHAB', 'category': 'automation', 'path': '/rest/'},
-    8091: {'name': 'Homebridge', 'category': 'automation', 'path': '/'},
-    51826: {'name': 'Homebridge', 'category': 'automation', 'path': None},
-    8581: {'name': 'Home Assistant Node-RED', 'category': 'automation', 'path': '/'},
-    1883: {'name': 'MQTT Broker', 'category': 'automation', 'path': None},
-    8883: {'name': 'MQTT Broker (SSL)', 'category': 'automation', 'path': None},
-    9883: {'name': 'MQTT Broker (WebSocket)', 'category': 'automation', 'path': None},
     8125: {'name': 'Zigbee2MQTT', 'category': 'automation', 'path': '/api/info'},
     
     # Monitoring & Management
@@ -89,141 +72,32 @@ SERVICE_FINGERPRINTS = {
     3000: {'name': 'Grafana', 'category': 'monitoring', 'path': '/api/health'},
     9090: {'name': 'Prometheus', 'category': 'monitoring', 'path': '/-/healthy'},
     8086: {'name': 'InfluxDB', 'category': 'monitoring', 'path': '/ping'},
-    9093: {'name': 'Alertmanager', 'category': 'monitoring', 'path': '/api/v1/status'},
-    9100: {'name': 'Node Exporter', 'category': 'monitoring', 'path': '/metrics'},
-    9115: {'name': 'Blackbox Exporter', 'category': 'monitoring', 'path': '/metrics'},
-    9182: {'name': 'Cloudflare Exporter', 'category': 'monitoring', 'path': '/metrics'},
-    8082: {'name': 'Chronograf', 'category': 'monitoring', 'path': '/'},
-    8888: {'name': 'Cockpit', 'category': 'monitoring', 'path': '/'},
-    10000: {'name': 'Webmin', 'category': 'management', 'path': '/'},
-    9090: {'name': 'Cockpit', 'category': 'management', 'path': '/'},
     
     # Network Services & DNS
     53: {'name': 'DNS Server', 'category': 'network', 'path': None},
     80: {'name': 'HTTP Server', 'category': 'network', 'path': '/'},
     443: {'name': 'HTTPS Server', 'category': 'network', 'path': '/'},
     5335: {'name': 'Pi-hole', 'category': 'network', 'path': '/admin/api.php'},
-    8888: {'name': 'Technitium DNS', 'category': 'network', 'path': '/api/user/session/get'},
-    853: {'name': 'DNS-over-TLS', 'category': 'network', 'path': None},
     5300: {'name': 'AdGuard Home', 'category': 'network', 'path': '/control/status'},
-    3000: {'name': 'AdGuard Home', 'category': 'network', 'path': '/control/status'},
     
     # VPN & Proxy
     8888: {'name': 'Gluetun', 'category': 'vpn', 'path': '/v1/publicip/ip'},
-    1080: {'name': 'Shadowsocks', 'category': 'vpn', 'path': None},
-    8388: {'name': 'Shadowsocks', 'category': 'vpn', 'path': None},
-    1194: {'name': 'OpenVPN', 'category': 'vpn', 'path': None},
-    51820: {'name': 'WireGuard', 'category': 'vpn', 'path': None},
-    8118: {'name': 'Privoxy', 'category': 'proxy', 'path': '/'},
-    3128: {'name': 'Squid Proxy', 'category': 'proxy', 'path': '/'},
     8443: {'name': 'Nginx Proxy Manager', 'category': 'proxy', 'path': '/api/'},
     81: {'name': 'Nginx Proxy Manager', 'category': 'proxy', 'path': '/api/'},
-    8090: {'name': 'Traefik', 'category': 'proxy', 'path': '/api/overview'},
-    8080: {'name': 'Traefik', 'category': 'proxy', 'path': '/dashboard/'},
-    2019: {'name': 'Caddy', 'category': 'proxy', 'path': '/config/'},
     
     # Storage & Backup
     5000: {'name': 'Synology DSM', 'category': 'storage', 'path': '/'},
     5001: {'name': 'Synology DSM (HTTPS)', 'category': 'storage', 'path': '/'},
     9001: {'name': 'MinIO Console', 'category': 'storage', 'path': '/'},
-    9000: {'name': 'MinIO API', 'category': 'storage', 'path': '/minio/health/live'},
     8200: {'name': 'Duplicati', 'category': 'backup', 'path': '/api/v1/serverstate'},
-    8083: {'name': 'Restic', 'category': 'backup', 'path': '/'},
-    9090: {'name': 'Kopia', 'category': 'backup', 'path': '/api/v1/repo/status'},
     5076: {'name': 'Syncthing', 'category': 'storage', 'path': '/rest/system/version'},
     8384: {'name': 'Syncthing', 'category': 'storage', 'path': '/rest/system/version'},
-    873: {'name': 'Rsync', 'category': 'backup', 'path': None},
-    445: {'name': 'SMB/CIFS', 'category': 'storage', 'path': None},
-    139: {'name': 'NetBIOS', 'category': 'storage', 'path': None},
-    2049: {'name': 'NFS', 'category': 'storage', 'path': None},
     
     # Databases
     3306: {'name': 'MySQL/MariaDB', 'category': 'database', 'path': None},
     5432: {'name': 'PostgreSQL', 'category': 'database', 'path': None},
     6379: {'name': 'Redis', 'category': 'database', 'path': None},
     27017: {'name': 'MongoDB', 'category': 'database', 'path': None},
-    8529: {'name': 'ArangoDB', 'category': 'database', 'path': '/_api/version'},
-    7474: {'name': 'Neo4j', 'category': 'database', 'path': '/'},
-    9042: {'name': 'Cassandra', 'category': 'database', 'path': None},
-    5984: {'name': 'CouchDB', 'category': 'database', 'path': '/'},
-    8091: {'name': 'Couchbase', 'category': 'database', 'path': '/pools'},
-    
-    # Communication & Messaging
-    8065: {'name': 'Mattermost', 'category': 'communication', 'path': '/api/v4/system/ping'},
-    3478: {'name': 'Gotify', 'category': 'communication', 'path': '/health'},
-    5000: {'name': 'Rocket.Chat', 'category': 'communication', 'path': '/api/info'},
-    9000: {'name': 'Matrix Synapse', 'category': 'communication', 'path': '/_matrix/client/versions'},
-    8008: {'name': 'Matrix Synapse', 'category': 'communication', 'path': '/_matrix/client/versions'},
-    5222: {'name': 'Prosody XMPP', 'category': 'communication', 'path': None},
-    5223: {'name': 'Prosody XMPP (SSL)', 'category': 'communication', 'path': None},
-    1025: {'name': 'MailHog', 'category': 'communication', 'path': '/api/v1/messages'},
-    8025: {'name': 'MailHog', 'category': 'communication', 'path': '/api/v1/messages'},
-    
-    # Security & Authentication
-    8200: {'name': 'Vault', 'category': 'security', 'path': '/v1/sys/health'},
-    3012: {'name': 'Vaultwarden', 'category': 'security', 'path': '/api/'},
-    8000: {'name': 'Authelia', 'category': 'security', 'path': '/api/health'},
-    9091: {'name': 'Authentik', 'category': 'security', 'path': '/api/v3/'},
-    8080: {'name': 'Keycloak', 'category': 'security', 'path': '/health'},
-    9000: {'name': 'Keycloak', 'category': 'security', 'path': '/health'},
-    8899: {'name': 'Fail2ban Exporter', 'category': 'security', 'path': '/metrics'},
-    
-    # Development & CI/CD
-    8080: {'name': 'Jenkins', 'category': 'development', 'path': '/login'},
-    9200: {'name': 'Elasticsearch', 'category': 'development', 'path': '/'},
-    5601: {'name': 'Kibana', 'category': 'development', 'path': '/api/status'},
-    9000: {'name': 'SonarQube', 'category': 'development', 'path': '/api/system/status'},
-    3000: {'name': 'Gitea', 'category': 'development', 'path': '/api/v1/version'},
-    3001: {'name': 'Gogs', 'category': 'development', 'path': '/api/v1/version'},
-    8080: {'name': 'GitLab', 'category': 'development', 'path': '/-/health'},
-    8929: {'name': 'GitLab', 'category': 'development', 'path': '/-/health'},
-    8083: {'name': 'VS Code Server', 'category': 'development', 'path': '/healthz'},
-    8443: {'name': 'Code Server', 'category': 'development', 'path': '/healthz'},
-    8384: {'name': 'Drone CI', 'category': 'development', 'path': '/healthz'},
-    9999: {'name': 'Argo CD', 'category': 'development', 'path': '/healthz'},
-    8080: {'name': 'Nexus', 'category': 'development', 'path': '/service/rest/v1/status'},
-    8081: {'name': 'Nexus', 'category': 'development', 'path': '/service/rest/v1/status'},
-    
-    # Container & Orchestration
-    2375: {'name': 'Docker API', 'category': 'container', 'path': None},
-    2376: {'name': 'Docker API (TLS)', 'category': 'container', 'path': None},
-    6443: {'name': 'Kubernetes API', 'category': 'container', 'path': '/healthz'},
-    10250: {'name': 'Kubelet', 'category': 'container', 'path': '/healthz'},
-    8001: {'name': 'Kubernetes Dashboard', 'category': 'container', 'path': '/'},
-    9090: {'name': 'Rancher', 'category': 'container', 'path': '/healthz'},
-    
-    # Game Servers
-    25565: {'name': 'Minecraft', 'category': 'gaming', 'path': None},
-    25575: {'name': 'Minecraft RCON', 'category': 'gaming', 'path': None},
-    27015: {'name': 'Steam/Source Server', 'category': 'gaming', 'path': None},
-    7777: {'name': 'Terraria', 'category': 'gaming', 'path': None},
-    7778: {'name': 'Satisfactory', 'category': 'gaming', 'path': None},
-    27016: {'name': 'Rust', 'category': 'gaming', 'path': None},
-    2456: {'name': 'Valheim', 'category': 'gaming', 'path': None},
-    19132: {'name': 'Minecraft Bedrock', 'category': 'gaming', 'path': None},
-    
-    # Smart Home & IoT
-    8086: {'name': 'ESPHome', 'category': 'iot', 'path': '/'},
-    6052: {'name': 'ESPHome', 'category': 'iot', 'path': '/'},
-    8080: {'name': 'Tasmota', 'category': 'iot', 'path': '/cm?cmnd=Status'},
-    8266: {'name': 'ESP8266', 'category': 'iot', 'path': '/'},
-    8888: {'name': 'Shelly', 'category': 'iot', 'path': '/status'},
-    8123: {'name': 'Octoprint', 'category': 'iot', 'path': '/api/version'},
-    5000: {'name': 'Octoprint', 'category': 'iot', 'path': '/api/version'},
-    
-    # Photos & Media Management
-    2342: {'name': 'PhotoPrism', 'category': 'photos', 'path': '/api/v1/status'},
-    2283: {'name': 'Immich', 'category': 'photos', 'path': '/api/server-info/ping'},
-    8080: {'name': 'Photoview', 'category': 'photos', 'path': '/api/graphql'},
-    8787: {'name': 'Kavita', 'category': 'photos', 'path': '/api/health'},
-    8080: {'name': 'Komga', 'category': 'photos', 'path': '/api/v1/actuator/health'},
-    
-    # Miscellaneous
-    8096: {'name': 'Firefly III', 'category': 'finance', 'path': '/api/v1/about'},
-    5252: {'name': 'OctoPrint', 'category': 'misc', 'path': '/api/version'},
-    7575: {'name': 'Speedtest Tracker', 'category': 'misc', 'path': '/api/healthcheck'},
-    8080: {'name': 'Home Assistant Supervisor', 'category': 'misc', 'path': '/supervisor/info'},
-    8112: {'name': 'FileBrowser', 'category': 'misc', 'path': '/api/health'},
 }
 
 
@@ -275,6 +149,19 @@ class NetworkDevice:
     last_seen: Optional[int] = None
     is_permanent: bool = False
     is_monitored: bool = False
+
+
+@dataclass
+class SpeedTestResult:
+    """Internet speed test result"""
+    timestamp: int
+    download: float  # Mbps
+    upload: float    # Mbps
+    ping: float      # milliseconds
+    server: str
+    jitter: Optional[float] = None
+    packet_loss: Optional[float] = None
+    status: str = 'normal'  # normal, degraded, offline
 
 
 class AnalyticsDB:
@@ -382,6 +269,21 @@ class AnalyticsDB:
             )
         """)
         
+        # Internet speed test table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS network_speed (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                download REAL NOT NULL,
+                upload REAL NOT NULL,
+                ping REAL NOT NULL,
+                server TEXT,
+                jitter REAL,
+                packet_loss REAL,
+                status TEXT DEFAULT 'normal'
+            )
+        """)
+        
         # Create indices
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_network_devices_mac 
@@ -391,13 +293,17 @@ class AnalyticsDB:
             CREATE INDEX IF NOT EXISTS idx_network_events_time 
             ON network_events(timestamp DESC)
         """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_speed_timestamp 
+            ON network_speed(timestamp DESC)
+        """)
         
         # Migrate existing tables
         self._migrate_tables(cur)
         
         conn.commit()
         conn.close()
-        logger.info("Analytics database initialized with network monitoring")
+        logger.info("Analytics database initialized with network and speed test monitoring")
     
     def _migrate_tables(self, cur):
         """Add new columns to existing tables if they don't exist"""
@@ -459,7 +365,6 @@ class AnalyticsDB:
         
         services = []
         for row in rows:
-            # Convert Row to dict for safe access
             row_dict = dict(row)
             service = HealthCheck(
                 service_name=row_dict['service_name'],
@@ -474,7 +379,6 @@ class AnalyticsDB:
                 flap_threshold=row_dict.get('flap_threshold', 5),
                 suppression_duration=row_dict.get('suppression_duration', 3600)
             )
-            # Store the ID for reference
             service.id = row_dict['id']
             services.append(service)
         return services
@@ -525,23 +429,19 @@ class AnalyticsDB:
         
         services = [dict(row) for row in cur.fetchall()]
         
-        # Calculate uptime percentage and format response time for each service
         for service in services:
-            # Uptime percentage
             if service['total_checks_24h'] and service['total_checks_24h'] > 0:
                 service['uptime_24h'] = round((service['successful_checks_24h'] / service['total_checks_24h']) * 100, 1)
             else:
                 service['uptime_24h'] = 100.0 if service.get('current_status') == 'up' else 0.0
             
-            # Response time - use average if available, otherwise use latest
             if service['avg_response_24h'] is not None:
-                service['avg_response'] = round(service['avg_response_24h'] * 1000, 1)  # Convert to ms
+                service['avg_response'] = round(service['avg_response_24h'] * 1000, 1)
             elif service['latest_response_time'] is not None:
-                service['avg_response'] = round(service['latest_response_time'] * 1000, 1)  # Convert to ms
+                service['avg_response'] = round(service['latest_response_time'] * 1000, 1)
             else:
                 service['avg_response'] = None
             
-            # Clean up temporary fields
             if 'latest_response_time' in service:
                 del service['latest_response_time']
         
@@ -651,7 +551,6 @@ class AnalyticsDB:
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
-        # Find the most recent unresolved incident
         cur.execute("""
             SELECT id, start_time FROM analytics_incidents 
             WHERE service_name = ? AND status = 'ongoing'
@@ -676,7 +575,7 @@ class AnalyticsDB:
         conn.close()
     
     def get_incidents(self, service_name: Optional[str] = None, hours: int = 168) -> Dict[str, List[Dict]]:
-        """Get recent incidents - PATCHED to return consistent format"""
+        """Get recent incidents"""
         cutoff = int(time.time()) - (hours * 3600)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -753,7 +652,6 @@ class AnalyticsDB:
         conn.commit()
         conn.close()
         return deleted
-    
     # Network device methods
     
     def add_or_update_device(self, device: NetworkDevice):
@@ -763,19 +661,16 @@ class AnalyticsDB:
         
         now = int(time.time())
         
-        # Check if device exists
         cur.execute("SELECT first_seen FROM network_devices WHERE mac_address = ?", (device.mac_address,))
         row = cur.fetchone()
         
         if row:
-            # Update existing device
             cur.execute("""
                 UPDATE network_devices 
                 SET ip_address = ?, hostname = ?, vendor = ?, last_seen = ?, updated_at = ?
                 WHERE mac_address = ?
             """, (device.ip_address, device.hostname, device.vendor, now, now, device.mac_address))
         else:
-            # Insert new device
             cur.execute("""
                 INSERT INTO network_devices 
                 (mac_address, ip_address, hostname, vendor, first_seen, last_seen, is_permanent, is_monitored)
@@ -1019,19 +914,15 @@ class AnalyticsDB:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
-        # Total devices
         cur.execute("SELECT COUNT(*) as total FROM network_devices")
         total = cur.fetchone()['total']
         
-        # Monitored devices
         cur.execute("SELECT COUNT(*) as monitored FROM network_devices WHERE is_monitored = 1")
         monitored = cur.fetchone()['monitored']
         
-        # Permanent devices
         cur.execute("SELECT COUNT(*) as permanent FROM network_devices WHERE is_permanent = 1")
         permanent = cur.fetchone()['permanent']
         
-        # Recent scans
         cur.execute("""
             SELECT COUNT(*) as scan_count 
             FROM network_scans 
@@ -1039,7 +930,6 @@ class AnalyticsDB:
         """, (int(time.time()) - 86400,))
         scans_24h = cur.fetchone()['scan_count']
         
-        # Recent events
         cur.execute("""
             SELECT COUNT(*) as event_count 
             FROM network_events 
@@ -1047,12 +937,10 @@ class AnalyticsDB:
         """, (int(time.time()) - 86400,))
         events_24h = cur.fetchone()['event_count']
         
-        # Devices seen in last 24 hours
         cutoff = int(time.time()) - 86400
         cur.execute("SELECT COUNT(*) FROM network_devices WHERE last_seen > ?", (cutoff,))
         active_24h = cur.fetchone()[0]
         
-        # Last scan time
         cur.execute("""
             SELECT MAX(scan_timestamp) as last_scan 
             FROM network_scans
@@ -1077,7 +965,6 @@ class AnalyticsDB:
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         
-        # Check if endpoint contains this IP
         cur.execute("""
             SELECT COUNT(*) as count
             FROM analytics_services
@@ -1088,7 +975,148 @@ class AnalyticsDB:
         conn.close()
         
         return result[0] > 0
+    
+    # Speed test methods
+    
+    def record_speed_test(self, result: SpeedTestResult):
+        """Record speed test result"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        cur.execute("""
+            INSERT INTO network_speed 
+            (timestamp, download, upload, ping, server, jitter, packet_loss, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            result.timestamp,
+            result.download,
+            result.upload,
+            result.ping,
+            result.server,
+            result.jitter,
+            result.packet_loss,
+            result.status
+        ))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Speed test recorded: {result.download:.1f}/{result.upload:.1f} Mbps, {result.ping:.1f}ms")
+    
+    def get_speed_test_history(self, hours: int = 168) -> List[Dict]:
+        """Get speed test history (default 7 days)"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cutoff = int(time.time()) - (hours * 3600)
+        
+        cur.execute("""
+            SELECT * FROM network_speed 
+            WHERE timestamp > ?
+            ORDER BY timestamp DESC
+        """, (cutoff,))
+        
+        rows = cur.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
+    
+    def get_speed_test_averages(self, last_n: int = 5) -> Dict[str, float]:
+        """Get rolling averages for last N tests"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT 
+                AVG(download) as avg_download,
+                AVG(upload) as avg_upload,
+                AVG(ping) as avg_ping
+            FROM (
+                SELECT download, upload, ping 
+                FROM network_speed 
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            )
+        """, (last_n,))
+        
+        row = cur.fetchone()
+        conn.close()
+        
+        if not row or not row[0]:
+            return {'avg_download': 0, 'avg_upload': 0, 'avg_ping': 0}
+        
+        return {
+            'avg_download': round(row[0], 2),
+            'avg_upload': round(row[1], 2),
+            'avg_ping': round(row[2], 2)
+        }
+    
+    def get_latest_speed_test(self) -> Optional[Dict]:
+        """Get most recent speed test"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT * FROM network_speed 
+            ORDER BY timestamp DESC 
+            LIMIT 1
+        """)
+        
+        row = cur.fetchone()
+        conn.close()
+        
+        return dict(row) if row else None
+    
+    def update_speed_test_status(self, timestamp: int, status: str):
+        """Update status of a speed test"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        cur.execute("""
+            UPDATE network_speed 
+            SET status = ?
+            WHERE timestamp = ?
+        """, (status, timestamp))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_speed_test_stats(self) -> Dict:
+        """Get speed test statistics"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        cur.execute("SELECT COUNT(*) FROM network_speed")
+        total_tests = cur.fetchone()[0]
+        
+        cur.execute("SELECT MAX(timestamp) FROM network_speed")
+        last_test_row = cur.fetchone()
+        last_test = last_test_row[0] if last_test_row else None
+        
+        cur.execute("""
+            SELECT 
+                AVG(download) as avg_download,
+                AVG(upload) as avg_upload,
+                AVG(ping) as avg_ping
+            FROM network_speed
+        """)
+        row = cur.fetchone()
+        
+        conn.close()
+        
+        return {
+            'total_tests': total_tests,
+            'last_test': last_test,
+            'avg_download': round(row[0], 2) if row and row[0] else 0,
+            'avg_upload': round(row[1], 2) if row and row[1] else 0,
+            'avg_ping': round(row[2], 2) if row and row[2] else 0
+        }
 
+
+# ============================================================================
+# HEALTH MONITOR CLASS
+# ============================================================================
 
 class HealthMonitor:
     """Service health monitoring with retry and flap protection"""
@@ -1215,7 +1243,6 @@ class HealthMonitor:
                     error_message=str(e)
                 )
         
-        # Should never reach here, but just in case
         return ServiceMetric(
             service_name=service.service_name,
             timestamp=int(time.time()),
@@ -1232,19 +1259,15 @@ class HealthMonitor:
         tracker = self.flap_trackers[service_name]
         now = time.time()
         
-        # Check if currently suppressed
         if tracker.suppressed_until and now < tracker.suppressed_until:
             return True
         
-        # If status hasn't changed, not a flap
         if tracker.last_status == status:
             return False
         
-        # Record this state change
         tracker.flap_times.append(now)
         tracker.last_status = status
         
-        # Clean old flap times outside window
         service = None
         for s in self.db.get_services():
             if s.service_name == service_name:
@@ -1254,11 +1277,9 @@ class HealthMonitor:
         if not service:
             return False
         
-        # Remove flaps outside the window
         while tracker.flap_times and now - tracker.flap_times[0] > service.flap_window:
             tracker.flap_times.popleft()
         
-        # Check if flapping threshold exceeded
         if len(tracker.flap_times) >= service.flap_threshold:
             tracker.suppressed_until = now + service.suppression_duration
             logger.warning(f"Flapping detected for {service_name}, suppressing notifications for {service.suppression_duration}s")
@@ -1279,13 +1300,10 @@ class HealthMonitor:
                 metric = await self.check_service(service)
                 self.db.add_metric(metric)
                 
-                # Get previous status
                 recent_metrics = self.db.get_metrics(service.service_name, hours=1)
                 previous_status = recent_metrics[1].status if len(recent_metrics) > 1 else None
                 
-                # Handle status changes
                 if metric.status == 'down' and previous_status != 'down':
-                    # Service went down
                     self.db.create_incident(service.service_name, metric.error_message)
                     
                     if not self.should_suppress_notification(service.service_name, 'down'):
@@ -1296,7 +1314,6 @@ class HealthMonitor:
                         )
                 
                 elif metric.status == 'up' and previous_status == 'down':
-                    # Service recovered
                     self.db.resolve_incident(service.service_name)
                     
                     if not self.should_suppress_notification(service.service_name, 'up'):
@@ -1331,15 +1348,225 @@ class HealthMonitor:
         self.monitoring_tasks.clear()
 
 
+# ============================================================================
+# NETWORK SCANNER CLASS
+# ============================================================================
+
 class NetworkScanner:
-    """Network device scanner and monitor"""
+    """Network device discovery and monitoring"""
     
     def __init__(self, db: AnalyticsDB):
         self.db = db
         self.monitoring = False
-        self.scanning = False
-        self.monitor_interval = 300  # 5 minutes default
         self.alert_new_devices = True
+        self.notification_callback = None
+        self._monitor_task = None
+    
+    def set_notification_callback(self, callback: Callable):
+        """Set the notification callback for network events"""
+        self.notification_callback = callback
+    
+    async def scan_network(self) -> List[NetworkDevice]:
+        """Scan local network for devices using ARP"""
+        start_time = time.time()
+        devices = []
+        
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                'arp', '-a',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await proc.communicate()
+            
+            if proc.returncode != 0:
+                logger.error(f"ARP scan failed: {stderr.decode()}")
+                return devices
+            
+            output = stdout.decode()
+            
+            for line in output.split('\n'):
+                match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]+)', line)
+                if match:
+                    ip = match.group(1)
+                    mac = match.group(2).upper()
+                    
+                    if mac == 'FF:FF:FF:FF:FF:FF' or mac.startswith('00:00:00'):
+                        continue
+                    
+                    hostname = await self._resolve_hostname(ip)
+                    vendor = self._lookup_vendor(mac)
+                    
+                    device = NetworkDevice(
+                        mac_address=mac,
+                        ip_address=ip,
+                        hostname=hostname,
+                        vendor=vendor,
+                        first_seen=int(time.time()),
+                        last_seen=int(time.time())
+                    )
+                    devices.append(device)
+            
+            scan_duration = time.time() - start_time
+            self.db.record_scan(len(devices), scan_duration)
+            
+            logger.info(f"Network scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
+            
+        except Exception as e:
+            logger.error(f"Network scan error: {e}")
+        
+        return devices
+    
+    async def _resolve_hostname(self, ip: str) -> Optional[str]:
+        """Resolve hostname from IP address"""
+        try:
+            loop = asyncio.get_event_loop()
+            hostname = await asyncio.wait_for(
+                loop.run_in_executor(None, socket.gethostbyaddr, ip),
+                timeout=2.0
+            )
+            return hostname[0] if hostname else None
+        except:
+            return None
+    
+    def _lookup_vendor(self, mac: str) -> Optional[str]:
+        """Lookup vendor from MAC address OUI (first 3 octets)"""
+        oui = mac[:8].replace(':', '').upper()
+        
+        vendors = {
+            '001B63': 'Apple',
+            '0050F2': 'Microsoft',
+            '00D0CA': 'Cisco',
+            'B827EB': 'Raspberry Pi',
+            'DCA632': 'Raspberry Pi',
+            'E45F01': 'Raspberry Pi',
+            '001DD8': 'Synology',
+            '001132': 'Synology',
+            '0011D8': 'Synology',
+            '8086F2': 'Intel',
+            '9CFCE8': 'Intel',
+            '001EC0': 'Samsung',
+            '002454': 'Samsung',
+        }
+        
+        return vendors.get(oui[:6], None)
+    
+    async def update_device_status(self):
+        """Scan network and update device statuses"""
+        current_devices = await self.scan_network()
+        known_devices = self.db.get_devices()
+        
+        current_macs = {d.mac_address for d in current_devices}
+        known_macs = {d.mac_address for d in known_devices}
+        
+        for device in current_devices:
+            existing = self.db.get_device(device.mac_address)
+            
+            if not existing:
+                self.db.add_or_update_device(device)
+                self.db.record_network_event('new_device', device.mac_address, device.ip_address, device.hostname)
+                
+                if self.alert_new_devices:
+                    await self._notify_new_device(device)
+            else:
+                self.db.add_or_update_device(device)
+                
+                was_offline = (time.time() - existing.get('last_seen', 0)) > 300
+                if was_offline and existing.get('is_monitored'):
+                    self.db.record_network_event('device_online', device.mac_address, device.ip_address, device.hostname)
+                    await self._notify_device_online(device)
+        
+        for known_device in known_devices:
+            if known_device.mac_address not in current_macs:
+                if known_device.is_monitored:
+                    time_since_seen = time.time() - known_device.last_seen
+                    if time_since_seen > 300 and time_since_seen < 600:
+                        self.db.record_network_event('device_offline', known_device.mac_address, known_device.ip_address, known_device.hostname)
+                        await self._notify_device_offline(known_device)
+    
+    async def _notify_new_device(self, device: NetworkDevice):
+        """Send notification for new device"""
+        name = device.custom_name or device.hostname or device.ip_address
+        vendor_info = f" ({device.vendor})" if device.vendor else ""
+        
+        await analytics_notify(
+            'Network Monitor',
+            'info',
+            f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}"
+        )
+    
+    async def _notify_device_offline(self, device: NetworkDevice):
+        """Send notification for device going offline"""
+        name = device.custom_name or device.hostname or device.ip_address
+        
+        await analytics_notify(
+            'Network Monitor',
+            'warning',
+            f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}"
+        )
+    
+    async def _notify_device_online(self, device: NetworkDevice):
+        """Send notification for device coming back online"""
+        name = device.custom_name or device.hostname or device.ip_address
+        
+        await analytics_notify(
+            'Network Monitor',
+            'info',
+            f"âœ… Device online: {name}\nIP: {device.ip_address}"
+        )
+    
+    async def monitor_loop(self):
+        """Continuous network monitoring loop"""
+        while self.monitoring:
+            try:
+                await self.update_device_status()
+                await asyncio.sleep(300)  # Scan every 5 minutes
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Network monitoring error: {e}")
+                await asyncio.sleep(60)
+    
+    async def start_monitoring(self):
+        """Start continuous network monitoring"""
+        if self.monitoring:
+            return
+        
+        self.monitoring = True
+        self._monitor_task = asyncio.create_task(self.monitor_loop())
+        logger.info("Network monitoring started")
+    
+    async def stop_monitoring(self):
+        """Stop continuous network monitoring"""
+        if not self.monitoring:
+            return
+        
+        self.monitoring = False
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Network monitoring stopped")
+
+
+# ============================================================================
+# SPEED TEST MONITOR CLASS
+# ============================================================================
+
+class SpeedTestMonitor:
+    """Internet speed testing and monitoring"""
+    
+    def __init__(self, db: AnalyticsDB):
+        self.db = db
+        self.monitoring = False
+        self.testing = False
+        self.interval_hours = 12
+        self.degrade_threshold = 0.7
+        self.ping_threshold = 1.5
+        self.consecutive_failures = 0
         self.notification_callback = None
         self._monitor_task = None
     
@@ -1347,320 +1574,303 @@ class NetworkScanner:
         """Set the notification callback"""
         self.notification_callback = callback
     
-    def set_alert_new_devices(self, enabled: bool):
-        """Enable/disable alerts for new devices"""
-        self.alert_new_devices = enabled
-    
-    async def detect_services(self, ip_address: str) -> List[Dict]:
-        """Probe device for known services by scanning common ports"""
-        detected_services = []
+    async def run_speedtest(self) -> Optional[SpeedTestResult]:
+        """Run a speed test using speedtest-cli"""
+        if self.testing:
+            logger.warning("Speed test already in progress")
+            return None
         
-        # Scan common ports for services
-        for port, service_info in SERVICE_FINGERPRINTS.items():
-            try:
-                # Try to connect to the port with short timeout
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(ip_address, port),
-                    timeout=2
-                )
-                writer.close()
-                await writer.wait_closed()
-                
-                # Port is open, verify service if HTTP path available
-                service_name = service_info['name']
-                verified = False
-                
-                if service_info['path']:
-                    try:
-                        # Try HTTP request to verify service
-                        async with aiohttp.ClientSession() as session:
-                            url = f"http://{ip_address}:{port}{service_info['path']}"
-                            async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as response:
-                                if response.status < 500:  # Any non-server-error means service is there
-                                    verified = True
-                    except:
-                        # If HTTP fails but port is open, still count it
-                        verified = True
-                else:
-                    # No HTTP check needed, port being open is enough
-                    verified = True
-                
-                if verified:
-                    detected_services.append({
-                        'name': service_name,
-                        'port': port,
-                        'category': service_info['category'],
-                        'endpoint': f"{ip_address}:{port}"
-                    })
-                    logger.info(f"Detected {service_name} on {ip_address}:{port}")
-                
-            except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
-                # Port closed or service not responding
-                pass
-            except Exception as e:
-                # Unexpected error, log but continue
-                logger.debug(f"Error probing {ip_address}:{port}: {e}")
-        
-        return detected_services
-    
-    async def scan_network(self) -> List[NetworkDevice]:
-        """Scan network for devices using ARP"""
-        self.scanning = True
-        devices = []
+        self.testing = True
+        logger.info("Starting internet speed test...")
         
         try:
-            # Use arp-scan if available, otherwise fall back to arp -a
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    'arp-scan', '-l', '-q',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await proc.communicate()
-                
-                if proc.returncode == 0:
-                    for line in stdout.decode().splitlines():
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            ip_address = parts[0]
-                            mac_address = parts[1].upper()
-                            
-                            # Validate IP address format
-                            if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip_address):
-                                continue
-                            
-                            # Validate MAC address format
-                            if not re.match(r'^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$', mac_address):
-                                continue
-                            
-                            # Try to get hostname
-                            hostname = None
-                            try:
-                                hostname = socket.gethostbyaddr(ip_address)[0]
-                            except:
-                                pass
-                            
-                            devices.append(NetworkDevice(
-                                mac_address=mac_address,
-                                ip_address=ip_address,
-                                hostname=hostname,
-                                first_seen=int(time.time()),
-                                last_seen=int(time.time())
-                            ))
+            # Check if speedtest-cli is installed
+            proc = await asyncio.create_subprocess_exec(
+                'which', 'speedtest',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
             
-            except FileNotFoundError:
-                # Fall back to arp -a
-                proc = await asyncio.create_subprocess_exec(
-                    'arp', '-a',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await proc.communicate()
-                
-                for line in stdout.decode().splitlines():
-                    # Parse arp -a output
-                    match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\) at ([0-9a-fA-F:]+)', line)
-                    if match:
-                        ip_address = match.group(1)
-                        mac_address = match.group(2).upper()
-                        
-                        # Try to get hostname
-                        hostname = None
-                        try:
-                            hostname = socket.gethostbyaddr(ip_address)[0]
-                        except:
-                            pass
-                        
-                        devices.append(NetworkDevice(
-                            mac_address=mac_address,
-                            ip_address=ip_address,
-                            hostname=hostname,
-                            first_seen=int(time.time()),
-                            last_seen=int(time.time())
-                        ))
+            if proc.returncode != 0:
+                logger.error("speedtest-cli not installed. Install with: pip install speedtest-cli")
+                return None
             
-            # Update database and check for new devices
-            existing_macs = {d.mac_address for d in self.db.get_devices()}
+            # Run speed test
+            proc = await asyncio.create_subprocess_exec(
+                'speedtest', '--format=json', '--accept-license', '--accept-gdpr',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
             
-            for device in devices:
-                is_new = device.mac_address not in existing_macs
-                self.db.add_or_update_device(device)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            
+            if proc.returncode != 0:
+                logger.error(f"Speed test failed: {stderr.decode()}")
+                self.consecutive_failures += 1
                 
-                if is_new:
-                    self.db.add_network_event('new_device', device.mac_address, device.ip_address, device.hostname)
-                    
-                    # Detect services on new device
-                    services = await self.detect_services(device.ip_address)
-                    
-                    if services:
-                        # Store detected services as vendor info
-                        service_names = ', '.join([s['name'] for s in services])
-                        device.vendor = f"Services: {service_names}"
-                        self.db.add_or_update_device(device)
-                        
-                        # Send notification directly - no callback needed
-                        if self.alert_new_devices:
-                            try:
-                                logger.info(f"🚀 Sending notification for device with services")
-                                await analytics_notify(
-                                    'Network Scanner',
-                                    'info',
-                                    f"New device with services: {device.hostname or device.ip_address} - {service_names}"
-                                )
-                                logger.info(f"✅ Notification sent successfully")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
-                    else:
-                        # Send notification directly - no callback needed
-                        if self.alert_new_devices:
-                            try:
-                                logger.info(f"🚀 Sending notification for device without services")
-                                await analytics_notify(
-                                    'Network Scanner',
-                                    'info',
-                                    f"New device discovered: {device.hostname or device.ip_address} ({device.mac_address})"
-                                )
-                                logger.info(f"✅ Notification sent successfully")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to send notification: {e}", exc_info=True)
-        
+                if self.consecutive_failures >= 3:
+                    await self._notify_offline()
+                
+                return None
+            
+            # Parse JSON
+            result = json.loads(stdout.decode())
+            
+            download_mbps = result['download']['bandwidth'] / 125000
+            upload_mbps = result['upload']['bandwidth'] / 125000
+            ping_ms = result['ping']['latency']
+            server_name = f"{result['server']['name']} ({result['server']['location']})"
+            jitter_ms = result['ping'].get('jitter', None)
+            packet_loss = result.get('packetLoss', None)
+            
+            speed_result = SpeedTestResult(
+                timestamp=int(time.time()),
+                download=round(download_mbps, 2),
+                upload=round(upload_mbps, 2),
+                ping=round(ping_ms, 2),
+                server=server_name,
+                jitter=round(jitter_ms, 2) if jitter_ms else None,
+                packet_loss=round(packet_loss, 2) if packet_loss else None
+            )
+            
+            self.consecutive_failures = 0
+            self.db.record_speed_test(speed_result)
+            await self._analyze_and_notify(speed_result)
+            
+            logger.info(f"Speed test complete: â†“{download_mbps:.1f} Mbps â†‘{upload_mbps:.1f} Mbps {ping_ms:.1f}ms")
+            
+            return speed_result
+            
+        except asyncio.TimeoutError:
+            logger.error("Speed test timed out")
+            self.consecutive_failures += 1
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Speed test error: {e}", exc_info=True)
+            self.consecutive_failures += 1
+            return None
         finally:
-            self.scanning = False
+            self.testing = False
+    
+    async def _analyze_and_notify(self, result: SpeedTestResult):
+        """Compare result to average and notify"""
+        averages = self.db.get_speed_test_averages(last_n=5)
         
-        return devices
+        if not averages or averages['avg_download'] == 0:
+            await analytics_notify(
+                'Internet Monitor',
+                'info',
+                f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms"
+            )
+            return
+        
+        # Calculate variance
+        down_var = ((result.download - averages['avg_download']) / averages['avg_download']) * 100
+        up_var = ((result.upload - averages['avg_upload']) / averages['avg_upload']) * 100
+        ping_var = ((result.ping - averages['avg_ping']) / averages['avg_ping']) * 100
+        
+        # Check degradation
+        is_degraded = False
+        issues = []
+        
+        if result.download < (averages['avg_download'] * self.degrade_threshold):
+            is_degraded = True
+            issues.append(f"Download â†“{abs(down_var):.0f}% ({result.download:.1f} vs {averages['avg_download']:.1f} Mbps)")
+        
+        if result.upload < (averages['avg_upload'] * self.degrade_threshold):
+            is_degraded = True
+            issues.append(f"Upload â†“{abs(up_var):.0f}% ({result.upload:.1f} vs {averages['avg_upload']:.1f} Mbps)")
+        
+        if result.ping > (averages['avg_ping'] * self.ping_threshold):
+            is_degraded = True
+            issues.append(f"Latency â†‘{abs(ping_var):.0f}% ({result.ping:.1f} vs {averages['avg_ping']:.1f}ms)")
+        
+        if is_degraded:
+            self.db.update_speed_test_status(result.timestamp, 'degraded')
+            message = "ðŸš¨ Internet Degraded\n\n" + "\n".join(issues)
+            await analytics_notify('Internet Monitor', 'warning', message)
+        else:
+            # Check recovery
+            recent = self.db.get_speed_test_history(hours=24)
+            if recent and len(recent) > 1:
+                if recent[1].get('status') == 'degraded':
+                    await analytics_notify(
+                        'Internet Monitor',
+                        'info',
+                        f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms"
+                    )
+            
+            # Normal notification
+            variance_msg = ""
+            if abs(down_var) > 5 or abs(up_var) > 5:
+                variance_msg = f"\n\nDownload: {down_var:+.0f}%\nUpload: {up_var:+.0f}%\nPing: {ping_var:+.0f}%"
+            
+            await analytics_notify(
+                'Internet Monitor',
+                'info',
+                f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}"
+            )
+    
+    async def _notify_offline(self):
+        """Offline notification"""
+        await analytics_notify(
+            'Internet Monitor',
+            'critical',
+            f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures"
+        )
     
     async def monitor_loop(self):
-        """Continuous monitoring loop"""
+        """Monitoring loop"""
         while self.monitoring:
             try:
-                await self.scan_network()
-                await asyncio.sleep(self.monitor_interval)
+                await self.run_speedtest()
+                wait_seconds = self.interval_hours * 3600
+                logger.info(f"Next speed test in {self.interval_hours}h")
+                await asyncio.sleep(wait_seconds)
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                logger.error(f"Network monitoring error: {e}")
-                await asyncio.sleep(60)
+                logger.error(f"Monitoring error: {e}")
+                await asyncio.sleep(300)
     
-    async def start_monitoring(self):
-        """Start continuous network monitoring"""
-        if not self.monitoring:
-            self.monitoring = True
-            self._monitor_task = asyncio.create_task(self.monitor_loop())
-            logger.info("Network monitoring started")
+    async def start_monitoring(self, interval_hours: int = None):
+        """Start monitoring"""
+        if self.monitoring:
+            return
+        
+        if interval_hours:
+            self.interval_hours = interval_hours
+        
+        self.monitoring = True
+        self._monitor_task = asyncio.create_task(self.monitor_loop())
+        logger.info(f"Speed test monitoring started ({self.interval_hours}h interval)")
     
     async def stop_monitoring(self):
-        """Stop continuous network monitoring"""
-        if self.monitoring:
-            self.monitoring = False
-            if self._monitor_task:
-                self._monitor_task.cancel()
-                try:
-                    await self._monitor_task
-                except asyncio.CancelledError:
-                    pass
-            logger.info("Network monitoring stopped")
+        """Stop monitoring"""
+        if not self.monitoring:
+            return
+        
+        self.monitoring = False
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Speed test monitoring stopped")
 
 
-# Global instances
+# ============================================================================
+# GLOBAL INSTANCES
+# ============================================================================
+
 db: Optional[AnalyticsDB] = None
 monitor: Optional[HealthMonitor] = None
 scanner: Optional[NetworkScanner] = None
+speed_monitor: Optional[SpeedTestMonitor] = None
 
 
-def _json(data, status=200):
-    """Helper to create JSON response"""
+# ============================================================================
+# NOTIFICATION HELPER
+# ============================================================================
+
+async def analytics_notify(service_name: str, severity: str, message: str):
+    """Send notification via Gotify"""
+    try:
+        import os
+        gotify_url = os.getenv('GOTIFY_URL')
+        gotify_token = os.getenv('GOTIFY_TOKEN')
+        
+        if not gotify_url or not gotify_token:
+            logger.debug("Gotify not configured, skipping notification")
+            return
+        
+        priority_map = {
+            'info': 5,
+            'up': 5,
+            'warning': 7,
+            'down': 8,
+            'critical': 10
+        }
+        
+        priority = priority_map.get(severity, 5)
+        
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                f"{gotify_url}/message",
+                json={
+                    'title': f'[Analytics] {service_name}',
+                    'message': message,
+                    'priority': priority
+                },
+                headers={'X-Gotify-Key': gotify_token},
+                timeout=aiohttp.ClientTimeout(total=5)
+            )
+    except Exception as e:
+        logger.error(f"Failed to send notification: {e}")
+
+
+# ============================================================================
+# API ROUTES - SERVICE MANAGEMENT
+# ============================================================================
+
+def _json(data: dict, status: int = 200):
+    """Helper to return JSON response"""
     return web.json_response(data, status=status)
 
-
-# ============================
-# API Routes
-# ============================
-
 async def get_health_score(request: web.Request):
-    """Calculate overall system health score"""
+    """Get overall health score"""
     services = db.get_all_services()
     
     if not services:
         return _json({
             'health_score': 100,
-            'status': 'healthy',
-            'message': 'No services configured',
             'total_services': 0,
             'up_services': 0,
-            'down_services': 0,
-            'enabled_services': 0
+            'down_services': 0
         })
     
-    total_score = 0
-    up_services = 0
-    down_services = 0
-    enabled_count = 0
+    up_count = sum(1 for s in services if s.get('current_status') == 'up')
+    total = len(services)
     
-    for service in services:
-        if not service['enabled']:
-            continue
-        
-        enabled_count += 1
-        
-        # Count up/down services
-        if service.get('current_status') == 'up':
-            up_services += 1
-        else:
-            down_services += 1
-        
-        # Calculate uptime for this service
-        metrics = db.get_metrics(service['service_name'], hours=24)
-        if metrics:
-            up_count = sum(1 for m in metrics if m.status == 'up')
-            uptime_pct = (up_count / len(metrics)) * 100 if metrics else 100
-            total_score += uptime_pct
-        else:
-            total_score += 100
-    
-    avg_score = total_score / enabled_count if enabled_count > 0 else 100
+    health_score = round((up_count / total) * 100, 1) if total > 0 else 100
     
     return _json({
-        'health_score': round(avg_score, 1),
-        'status': 'healthy' if avg_score >= 95 else 'degraded' if avg_score >= 75 else 'critical',
-        'total_services': len(services),
-        'up_services': up_services,
-        'down_services': down_services,
-        'enabled_services': enabled_count
+        'health_score': health_score,
+        'total_services': total,
+        'up_services': up_count,
+        'down_services': total - up_count
     })
 
-
-async def get_services(request: web.Request):
-    """Get all services with flap detection info"""
+async def list_services(request: web.Request):
+    """List all configured services"""
     services = db.get_all_services()
-    
-    # Add flap tracking info if monitor exists
-    if monitor:
-        for service in services:
-            service_name = service['service_name']
-            if service_name in monitor.flap_trackers:
-                tracker = monitor.flap_trackers[service_name]
-                service['flap_count'] = len(tracker.flap_times)
-                service['is_suppressed'] = (
-                    tracker.suppressed_until is not None and 
-                    time.time() < tracker.suppressed_until
-                )
-                service['suppressed_until'] = tracker.suppressed_until
-            else:
-                service['flap_count'] = 0
-                service['is_suppressed'] = False
-                service['suppressed_until'] = None
-    
     return _json(services)
 
+async def get_service(request: web.Request):
+    """Get a specific service"""
+    service_id = int(request.match_info['service_id'])
+    service = db.get_service(service_id)
+    
+    if not service:
+        return _json({'error': 'Service not found'}, status=404)
+    
+    return _json(service)
 
 async def add_service(request: web.Request):
-    """Add a new service to monitor"""
+    """Add a new service"""
     try:
         data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
+    except:
+        return _json({'error': 'Invalid JSON'}, status=400)
     
     required = ['service_name', 'endpoint', 'check_type']
     if not all(k in data for k in required):
-        return _json({"error": "missing required fields"}, status=400)
+        return _json({'error': 'Missing required fields'}, status=400)
     
     service = HealthCheck(
         service_name=data['service_name'],
@@ -1668,7 +1878,7 @@ async def add_service(request: web.Request):
         check_type=data['check_type'],
         expected_status=data.get('expected_status', 200),
         timeout=data.get('timeout', 5),
-        interval=data.get('interval', 60),
+        interval=data.get('check_interval', 60),
         enabled=data.get('enabled', True),
         retries=data.get('retries', 3),
         flap_window=data.get('flap_window', 3600),
@@ -1678,91 +1888,77 @@ async def add_service(request: web.Request):
     
     db.add_service(service)
     
-    # Start monitoring if enabled
-    if service.enabled and monitor:
+    if service.enabled:
         task = asyncio.create_task(monitor.monitor_service(service))
         monitor.monitoring_tasks[service.service_name] = task
     
-    return _json({'success': True, 'service': data})
-
-
-async def get_service(request: web.Request):
-    """Get a specific service by ID"""
-    service_id = int(request.match_info["service_id"])
-    service = db.get_service(service_id)
-    
-    if not service:
-        return _json({"error": "service not found"}, status=404)
-    
-    # service is already a dict from db.get_service()
-    return _json(service)
-
+    return _json({'success': True, 'service': service.service_name})
 
 async def update_service(request: web.Request):
-    """Update a service"""
-    service_id = int(request.match_info["service_id"])
+    """Update an existing service"""
+    service_id = int(request.match_info['service_id'])
     
     try:
         data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
+    except:
+        return _json({'error': 'Invalid JSON'}, status=400)
     
-    service = db.get_service(service_id)
-    if not service:
-        return _json({"error": "service not found"}, status=404)
+    existing = db.get_service(service_id)
+    if not existing:
+        return _json({'error': 'Service not found'}, status=404)
     
-    # service is a dict, access with ['key']
-    # Update service fields
-    updated_service = HealthCheck(
-        service_name=data.get('service_name', service['service_name']),
-        endpoint=data.get('endpoint', service['endpoint']),
-        check_type=data.get('check_type', service['check_type']),
-        expected_status=data.get('expected_status', service['expected_status']),
-        timeout=data.get('timeout', service['timeout']),
-        interval=data.get('interval', service['check_interval']),
-        enabled=data.get('enabled', service['enabled']),
-        retries=data.get('retries', service.get('retries', 3)),
-        flap_window=data.get('flap_window', service.get('flap_window', 3600)),
-        flap_threshold=data.get('flap_threshold', service.get('flap_threshold', 5)),
-        suppression_duration=data.get('suppression_duration', service.get('suppression_duration', 3600))
+    service = HealthCheck(
+        service_name=data.get('service_name', existing['service_name']),
+        endpoint=data.get('endpoint', existing['endpoint']),
+        check_type=data.get('check_type', existing['check_type']),
+        expected_status=data.get('expected_status', existing['expected_status']),
+        timeout=data.get('timeout', existing['timeout']),
+        interval=data.get('check_interval', existing['check_interval']),
+        enabled=data.get('enabled', bool(existing['enabled'])),
+        retries=data.get('retries', existing.get('retries', 3)),
+        flap_window=data.get('flap_window', existing.get('flap_window', 3600)),
+        flap_threshold=data.get('flap_threshold', existing.get('flap_threshold', 5)),
+        suppression_duration=data.get('suppression_duration', existing.get('suppression_duration', 3600))
     )
     
-    db.add_service(updated_service)
+    db.add_service(service)
     
-    # Restart monitoring task if it exists
-    if monitor and service['service_name'] in monitor.monitoring_tasks:
-        monitor.monitoring_tasks[service['service_name']].cancel()
-        task = asyncio.create_task(monitor.monitor_service(updated_service))
-        monitor.monitoring_tasks[service['service_name']] = task
+    old_name = existing['service_name']
+    if old_name in monitor.monitoring_tasks:
+        monitor.monitoring_tasks[old_name].cancel()
+        del monitor.monitoring_tasks[old_name]
+    
+    if service.enabled:
+        task = asyncio.create_task(monitor.monitor_service(service))
+        monitor.monitoring_tasks[service.service_name] = task
     
     return _json({'success': True})
 
-
-async def delete_service_route(request: web.Request):
+async def delete_service(request: web.Request):
     """Delete a service"""
-    service_id = int(request.match_info["service_id"])
+    service_id = int(request.match_info['service_id'])
+    
     service = db.get_service(service_id)
-    
     if not service:
-        return _json({"error": "service not found"}, status=404)
+        return _json({'error': 'Service not found'}, status=404)
     
-    # Stop monitoring task (service is a dict)
-    if monitor and service['service_name'] in monitor.monitoring_tasks:
-        monitor.monitoring_tasks[service['service_name']].cancel()
-        del monitor.monitoring_tasks[service['service_name']]
+    service_name = service['service_name']
+    
+    if service_name in monitor.monitoring_tasks:
+        monitor.monitoring_tasks[service_name].cancel()
+        del monitor.monitoring_tasks[service_name]
     
     db.delete_service(service_id)
     
     return _json({'success': True})
 
-
 async def get_uptime(request: web.Request):
-    """Get uptime statistics for a service"""
-    service_name = request.match_info["service_name"]
+    """Get uptime stats for a service"""
+    service_name = request.match_info['service_name']
     
     try:
         hours = int(request.rel_url.query.get('hours', 24))
-    except Exception:
+    except:
         hours = 24
     
     metrics = db.get_metrics(service_name, hours)
@@ -1770,461 +1966,383 @@ async def get_uptime(request: web.Request):
     if not metrics:
         return _json({
             'service_name': service_name,
-            'uptime_percentage': 0,
+            'uptime_percentage': 100,
             'total_checks': 0,
             'successful_checks': 0,
-            'failed_checks': 0
+            'failed_checks': 0,
+            'avg_response_time': 0
         })
     
-    total_checks = len(metrics)
-    successful_checks = sum(1 for m in metrics if m.status == 'up')
-    uptime_percentage = (successful_checks / total_checks) * 100
+    total = len(metrics)
+    successful = sum(1 for m in metrics if m.status == 'up')
+    uptime_pct = round((successful / total) * 100, 1) if total > 0 else 100
+    
+    response_times = [m.response_time for m in metrics if m.response_time]
+    avg_response = round(sum(response_times) / len(response_times), 3) if response_times else 0
     
     return _json({
         'service_name': service_name,
-        'uptime_percentage': round(uptime_percentage, 2),
-        'total_checks': total_checks,
-        'successful_checks': successful_checks,
-        'failed_checks': total_checks - successful_checks,
-        'metrics': [
-            {
-                'timestamp': m.timestamp,
-                'status': m.status,
-                'response_time': m.response_time,
-                'error_message': m.error_message
-            }
-            for m in metrics
-        ]
+        'uptime_percentage': uptime_pct,
+        'total_checks': total,
+        'successful_checks': successful,
+        'failed_checks': total - successful,
+        'avg_response_time': avg_response
     })
-
 
 async def get_incidents(request: web.Request):
-    """Get incidents - PATCHED to handle consistent format"""
-    service_name = request.rel_url.query.get('service_name')
-    
+    """Get recent incidents"""
     try:
-        hours = int(request.rel_url.query.get('hours', 168))
-    except Exception:
-        hours = 168
+        days = int(request.rel_url.query.get('days', 7))
+    except:
+        days = 7
     
-    return _json(db.get_incidents(service_name, hours))
+    hours = days * 24
+    incidents_data = db.get_incidents(hours=hours)
+    
+    return _json(incidents_data)
 
-
-async def reset_health_score(request: web.Request):
-    """Reset health score by purging old metrics"""
+async def reset_health(request: web.Request):
+    """Reset all health data"""
     try:
-        days = int(request.rel_url.query.get('days', 30))
-    except Exception:
-        days = 30
-    
-    deleted = db.purge_old_metrics(days)
-    return _json({'success': True, 'deleted_metrics': deleted})
-
+        deleted_metrics = db.purge_old_metrics(days=0)
+        return _json({'success': True, 'deleted_metrics': deleted_metrics})
+    except Exception as e:
+        return _json({'error': str(e)}, status=500)
 
 async def reset_incidents(request: web.Request):
-    """Clear ALL incidents (not just old ones)"""
-    conn = sqlite3.connect(db.db_path)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM analytics_incidents")
-    deleted = cur.rowcount
-    conn.commit()
-    conn.close()
-    
-    return _json({'success': True, 'deleted_incidents': deleted})
-
+    """Clear all incidents"""
+    try:
+        deleted_incidents = db.purge_old_incidents(days=0)
+        return _json({'success': True, 'deleted': deleted_incidents})
+    except Exception as e:
+        return _json({'error': str(e)}, status=500)
 
 async def reset_service_data(request: web.Request):
-    """Reset all data for a specific service"""
-    service_name = request.match_info["service_name"]
+    """Reset data for a specific service"""
+    service_name = request.match_info['service_name']
     
-    metrics_deleted = db.reset_service_metrics(service_name)
-    incidents_deleted = db.reset_service_incidents(service_name)
-    
-    return _json({
-        'success': True,
-        'deleted_metrics': metrics_deleted,
-        'deleted_incidents': incidents_deleted
-    })
+    try:
+        deleted_metrics = db.reset_service_metrics(service_name)
+        deleted_incidents = db.reset_service_incidents(service_name)
+        
+        return _json({
+            'success': True,
+            'deleted_metrics': deleted_metrics,
+            'deleted_incidents': deleted_incidents
+        })
+    except Exception as e:
+        return _json({'error': str(e)}, status=500)
 
+async def purge_all(request: web.Request):
+    """Purge all metrics and incidents"""
+    try:
+        deleted_metrics = db.purge_old_metrics(days=0)
+        deleted_incidents = db.purge_old_incidents(days=0)
+        return _json({
+            'success': True,
+            'deleted_metrics': deleted_metrics,
+            'deleted_incidents': deleted_incidents
+        })
+    except Exception as e:
+        return _json({'error': str(e)}, status=500)
 
-async def purge_all_metrics(request: web.Request):
-    """Purge ALL metrics AND incidents (complete reset)"""
-    conn = sqlite3.connect(db.db_path)
-    cur = conn.cursor()
-    
-    cur.execute("DELETE FROM analytics_metrics")
-    metrics_deleted = cur.rowcount
-    
-    cur.execute("DELETE FROM analytics_incidents")
-    incidents_deleted = cur.rowcount
-    
-    conn.commit()
-    conn.close()
-    
-    return _json({
-        'success': True, 
-        'deleted_metrics': metrics_deleted,
-        'deleted_incidents': incidents_deleted
-    })
-
-
-async def purge_week_metrics(request: web.Request):
+async def purge_week(request: web.Request):
     """Purge metrics older than 1 week"""
-    deleted = db.purge_old_metrics(7)
-    return _json({'success': True, 'deleted_metrics': deleted})
+    try:
+        deleted = db.purge_old_metrics(days=7)
+        return _json({'success': True, 'deleted': deleted})
+    except Exception as e:
+        return _json({'error': str(e)}, status=500)
 
-
-async def purge_month_metrics(request: web.Request):
+async def purge_month(request: web.Request):
     """Purge metrics older than 1 month"""
-    deleted = db.purge_old_metrics(30)
-    return _json({'success': True, 'deleted_metrics': deleted})
+    try:
+        deleted = db.purge_old_metrics(days=30)
+        return _json({'success': True, 'deleted': deleted})
+    except Exception as e:
+        return _json({'error': str(e)}, status=500)
 
 
-# Network monitoring routes
+# ============================================================================
+# API ROUTES - NETWORK MONITORING
+# ============================================================================
 
 async def network_scan(request: web.Request):
     """Trigger a network scan"""
     devices = await scanner.scan_network()
     
+    for device in devices:
+        db.add_or_update_device(device)
+    
+    new_devices = sum(1 for d in devices if not db.get_device(d.mac_address))
+    
     return _json({
         'success': True,
         'devices_found': len(devices),
-        'devices': [
-            {
-                'mac_address': d.mac_address,
-                'ip_address': d.ip_address,
-                'hostname': d.hostname,
-                'vendor': d.vendor
-            }
-            for d in devices
-        ]
+        'new_devices': new_devices
     })
 
-
-async def get_network_devices(request: web.Request):
-    """Get all known network devices with duplicate detection"""
-    all_devices = db.get_all_devices()
-    
-    # Filter out devices that are already in services
-    devices = []
-    for device in all_devices:
-        if device['ip_address']:
-            in_services = db.check_ip_in_services(device['ip_address'])
-            # Skip devices that are already in analytics services
-            if not in_services:
-                device['in_services'] = False
-                devices.append(device)
-        else:
-            device['in_services'] = False
-            devices.append(device)
-    
+async def network_devices_list(request: web.Request):
+    """List all network devices"""
+    devices = db.get_all_devices()
     return _json({'devices': devices})
 
-
-async def get_monitored_devices(request: web.Request):
-    """Get devices being monitored"""
-    devices = db.get_monitored_devices()
-    return _json({'devices': devices})
-
-
-async def update_device(request: web.Request):
-    """Update device monitoring settings"""
-    mac_address = request.match_info["mac_address"]
-    
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    is_permanent = data.get('is_permanent')
-    is_monitored = data.get('is_monitored')
-    custom_name = data.get('custom_name')
-    
-    # Get device info before updating
+async def network_device_get(request: web.Request):
+    """Get a specific device"""
+    mac_address = request.match_info['mac_address']
     device = db.get_device(mac_address)
     
     if not device:
-        return _json({"error": "Device not found"}, status=404)
+        return _json({'error': 'Device not found'}, status=404)
     
-    # If marking as permanent, auto-promote to Analytics Services
-    if is_permanent and not device.get('is_permanent'):
-        ip_address = device.get('ip_address')
-        hostname = device.get('hostname') or device.get('custom_name')
-        
-        if ip_address:
-            # Create service name
-            service_name = custom_name or hostname or f"Device-{ip_address}"
-            
-            # Check if service already exists
-            if not db.check_ip_in_services(ip_address):
-                # Create health check service
-                service = HealthCheck(
-                    service_name=service_name,
-                    endpoint=ip_address,
-                    check_type='ping',
-                    expected_status=200,
-                    timeout=5,
-                    interval=300,  # 5 minutes
-                    enabled=True,
-                    retries=3,
-                    flap_window=3600,
-                    flap_threshold=5,
-                    suppression_duration=3600
-                )
-                
-                try:
-                    db.add_service(service)
-                    
-                    # Start monitoring if monitor exists
-                    if monitor:
-                        task = asyncio.create_task(monitor.monitor_service(service))
-                        monitor.monitoring_tasks[service.service_name] = task
-                    
-                    logger.info(f"Auto-promoted device {mac_address} ({ip_address}) to Analytics Services as '{service_name}'")
-                    
-                    # Delete from network devices since it's now in services
-                    db.delete_device(mac_address)
-                    
-                    return _json({
-                        'success': True,
-                        'promoted': True,
-                        'service_name': service_name,
-                        'message': f'Device promoted to Analytics Services as "{service_name}"'
-                    })
-                    
-                except Exception as e:
-                    logger.error(f"Failed to promote device to service: {e}")
-                    # Fall through to regular update if promotion fails
+    return _json({'device': device})
+
+async def network_device_update(request: web.Request):
+    """Update device settings"""
+    mac_address = request.match_info['mac_address']
     
-    # Regular update if not promoting
-    db.update_device_settings(mac_address, is_permanent, is_monitored, custom_name)
+    try:
+        data = await request.json()
+    except:
+        return _json({'error': 'Invalid JSON'}, status=400)
+    
+    device = db.get_device(mac_address)
+    if not device:
+        return _json({'error': 'Device not found'}, status=404)
+    
+    db.update_device_settings(
+        mac_address,
+        is_permanent=data.get('is_permanent'),
+        is_monitored=data.get('is_monitored'),
+        custom_name=data.get('custom_name')
+    )
     
     return _json({'success': True})
 
-
-async def delete_device(request: web.Request):
+async def network_device_delete(request: web.Request):
     """Delete a device"""
-    mac_address = request.match_info["mac_address"]
+    mac_address = request.match_info['mac_address']
     db.delete_device(mac_address)
     return _json({'success': True})
 
+async def network_stats(request: web.Request):
+    """Get network monitoring statistics"""
+    stats = db.get_network_stats()
+    return _json(stats)
 
-async def start_network_monitoring(request: web.Request):
-    """Start continuous network monitoring"""
-    await scanner.start_monitoring()
-    return _json({'success': True, 'monitoring': True})
-
-
-async def stop_network_monitoring(request: web.Request):
-    """Stop continuous network monitoring"""
-    await scanner.stop_monitoring()
-    return _json({'success': True, 'monitoring': False})
-
-
-async def get_network_monitoring_status(request: web.Request):
-    """Get network monitoring status"""
-    return _json({
-        'monitoring': scanner.monitoring,
-        'scanning': scanner.scanning,
-        'alert_new_devices': scanner.alert_new_devices,
-        'monitor_interval': scanner.monitor_interval
-    })
-
-
-async def update_network_settings(request: web.Request):
-    """Update network monitoring settings"""
-    try:
-        data = await request.json()
-    except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    if 'alert_new_devices' in data:
-        scanner.set_alert_new_devices(data['alert_new_devices'])
-    
-    if 'monitor_interval' in data:
-        interval = int(data['monitor_interval'])
-        if 60 <= interval <= 3600:
-            scanner.monitor_interval = interval
-    
-    return _json({'success': True})
-
-
-async def get_network_events(request: web.Request):
-    """Get recent network events"""
+async def network_events_list(request: web.Request):
+    """List recent network events"""
     try:
         hours = int(request.rel_url.query.get('hours', 24))
-    except Exception:
+    except:
         hours = 24
     
     events = db.get_recent_network_events(hours)
     return _json({'events': events})
 
+async def network_monitoring_start(request: web.Request):
+    """Start network monitoring"""
+    await scanner.start_monitoring()
+    return _json({'success': True, 'monitoring': True})
 
-async def get_network_stats(request: web.Request):
-    """Get network statistics"""
-    stats = db.get_network_stats()
-    return _json(stats)
+async def network_monitoring_stop(request: web.Request):
+    """Stop network monitoring"""
+    await scanner.stop_monitoring()
+    return _json({'success': True, 'monitoring': False})
 
-
-async def detect_device_services(request: web.Request):
-    """Detect services on a specific device"""
-    mac_address = request.match_info["mac_address"]
-    
-    device = db.get_device(mac_address)
-    if not device:
-        return _json({"error": "Device not found"}, status=404)
-    
-    if not device.get('ip_address'):
-        return _json({"error": "Device has no IP address"}, status=400)
-    
-    # Detect services
-    services = await scanner.detect_services(device['ip_address'])
-    
-    if services:
-        # Update device vendor with detected services
-        service_names = ', '.join([s['name'] for s in services])
-        db.update_device_settings(mac_address, custom_name=f"{device.get('custom_name', '')} [{service_names}]".strip())
-    
+async def network_monitoring_status(request: web.Request):
+    """Get network monitoring status"""
     return _json({
-        'success': True,
-        'services': services,
-        'device': device
+        'monitoring': scanner.monitoring,
+        'alert_new_devices': scanner.alert_new_devices
     })
 
-
-async def scan_all_services(request: web.Request):
-    """Scan all known devices for services"""
-    devices = db.get_all_devices()
-    results = []
+async def network_settings_update(request: web.Request):
+    """Update network monitoring settings"""
+    try:
+        data = await request.json()
+    except:
+        return _json({'error': 'Invalid JSON'}, status=400)
     
-    for device in devices:
-        if device.get('ip_address'):
-            services = await scanner.detect_services(device['ip_address'])
-            if services:
-                results.append({
-                    'mac_address': device['mac_address'],
-                    'ip_address': device['ip_address'],
-                    'hostname': device.get('hostname'),
-                    'services': services
-                })
+    if 'alert_new_devices' in data:
+        scanner.alert_new_devices = bool(data['alert_new_devices'])
+    
+    return _json({'success': True})
+
+
+# ============================================================================
+# API ROUTES - SPEED TEST
+# ============================================================================
+
+async def speedtest_run(request: web.Request):
+    """Trigger a manual speed test"""
+    if speed_monitor.testing:
+        return _json({"error": "Speed test already in progress"}, status=429)
+    
+    result = await speed_monitor.run_speedtest()
+    
+    if result:
+        return _json({
+            'success': True,
+            'result': {
+                'download': result.download,
+                'upload': result.upload,
+                'ping': result.ping,
+                'server': result.server,
+                'jitter': result.jitter,
+                'packet_loss': result.packet_loss,
+                'timestamp': result.timestamp
+            }
+        })
+    else:
+        return _json({"error": "Speed test failed"}, status=500)
+
+async def speedtest_history(request: web.Request):
+    """Get speed test history"""
+    try:
+        hours = int(request.rel_url.query.get('hours', 168))
+    except:
+        hours = 168
+    
+    history = db.get_speed_test_history(hours)
+    return _json({'tests': history})
+
+async def speedtest_latest(request: web.Request):
+    """Get latest speed test"""
+    latest = db.get_latest_speed_test()
+    if latest:
+        return _json({'test': latest})
+    else:
+        return _json({"error": "No tests found"}, status=404)
+
+async def speedtest_stats(request: web.Request):
+    """Get speed test statistics"""
+    stats = db.get_speed_test_stats()
+    averages = db.get_speed_test_averages(last_n=5)
     
     return _json({
-        'success': True,
-        'scanned': len(devices),
-        'found': len(results),
-        'results': results
+        **stats,
+        'recent_avg_download': averages['avg_download'],
+        'recent_avg_upload': averages['avg_upload'],
+        'recent_avg_ping': averages['avg_ping']
     })
 
+async def speedtest_start_monitoring(request: web.Request):
+    """Start automatic monitoring"""
+    try:
+        data = await request.json()
+        interval_hours = data.get('interval_hours', 12)
+    except:
+        interval_hours = 12
+    
+    await speed_monitor.start_monitoring(interval_hours)
+    return _json({'success': True, 'monitoring': True, 'interval_hours': interval_hours})
+
+async def speedtest_stop_monitoring(request: web.Request):
+    """Stop automatic monitoring"""
+    await speed_monitor.stop_monitoring()
+    return _json({'success': True, 'monitoring': False})
+
+async def speedtest_monitoring_status(request: web.Request):
+    """Get monitoring status"""
+    return _json({
+        'monitoring': speed_monitor.monitoring,
+        'testing': speed_monitor.testing,
+        'interval_hours': speed_monitor.interval_hours,
+        'consecutive_failures': speed_monitor.consecutive_failures
+    })
+
+async def speedtest_update_settings(request: web.Request):
+    """Update settings"""
+    try:
+        data = await request.json()
+    except:
+        return _json({"error": "bad json"}, status=400)
+    
+    if 'interval_hours' in data:
+        interval = int(data['interval_hours'])
+        if 1 <= interval <= 24:
+            speed_monitor.interval_hours = interval
+    
+    if 'degrade_threshold' in data:
+        threshold = float(data['degrade_threshold'])
+        if 0.1 <= threshold <= 1.0:
+            speed_monitor.degrade_threshold = threshold
+    
+    if 'ping_threshold' in data:
+        threshold = float(data['ping_threshold'])
+        if 1.0 <= threshold <= 3.0:
+            speed_monitor.ping_threshold = threshold
+    
+    return _json({'success': True})
+
+
+# ============================================================================
+# MODULE INITIALIZATION
+# ============================================================================
 
 def register_routes(app: web.Application):
-    """Register analytics routes with aiohttp app"""
-    # Service monitoring routes
+    """Register all analytics API routes"""
+    # Service management
     app.router.add_get('/api/analytics/health-score', get_health_score)
-    app.router.add_get('/api/analytics/services', get_services)
-    app.router.add_post('/api/analytics/services', add_service)
+    app.router.add_get('/api/analytics/services', list_services)
     app.router.add_get('/api/analytics/services/{service_id}', get_service)
+    app.router.add_post('/api/analytics/services', add_service)
     app.router.add_put('/api/analytics/services/{service_id}', update_service)
-    app.router.add_delete('/api/analytics/services/{service_id}', delete_service_route)
+    app.router.add_delete('/api/analytics/services/{service_id}', delete_service)
     app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
     app.router.add_get('/api/analytics/incidents', get_incidents)
-    app.router.add_post('/api/analytics/reset-health', reset_health_score)
+    
+    # Data management
+    app.router.add_post('/api/analytics/reset-health', reset_health)
     app.router.add_post('/api/analytics/reset-incidents', reset_incidents)
     app.router.add_post('/api/analytics/reset-service/{service_name}', reset_service_data)
-    app.router.add_post('/api/analytics/purge-all', purge_all_metrics)
-    app.router.add_post('/api/analytics/purge-week', purge_week_metrics)
-    app.router.add_post('/api/analytics/purge-month', purge_month_metrics)
+    app.router.add_post('/api/analytics/purge-all', purge_all)
+    app.router.add_post('/api/analytics/purge-week', purge_week)
+    app.router.add_post('/api/analytics/purge-month', purge_month)
     
-    # Network monitoring routes
+    # Network monitoring
     app.router.add_post('/api/analytics/network/scan', network_scan)
-    app.router.add_get('/api/analytics/network/devices', get_network_devices)
-    app.router.add_get('/api/analytics/network/monitored', get_monitored_devices)
-    app.router.add_put('/api/analytics/network/devices/{mac_address}', update_device)
-    app.router.add_delete('/api/analytics/network/devices/{mac_address}', delete_device)
-    app.router.add_post('/api/analytics/network/monitoring/start', start_network_monitoring)
-    app.router.add_post('/api/analytics/network/monitoring/stop', stop_network_monitoring)
-    app.router.add_get('/api/analytics/network/monitoring/status', get_network_monitoring_status)
-    app.router.add_put('/api/analytics/network/settings', update_network_settings)
-    app.router.add_get('/api/analytics/network/events', get_network_events)
-    app.router.add_get('/api/analytics/network/stats', get_network_stats)
-    app.router.add_post('/api/analytics/network/devices/{mac_address}/detect', detect_device_services)
-    app.router.add_post('/api/analytics/network/scan-services', scan_all_services)
-
-
-
-async def analytics_notify(source: str, level: str, message: str):
-    """
-    Analytics notification handler
-    """
-    title = f"Analytics — {source}"
-    body = f"[{level.upper()}] {message}"
-    priority = 5 if level.lower() in ("critical", "error", "down") else 3
+    app.router.add_get('/api/analytics/network/devices', network_devices_list)
+    app.router.add_get('/api/analytics/network/devices/{mac_address}', network_device_get)
+    app.router.add_put('/api/analytics/network/devices/{mac_address}', network_device_update)
+    app.router.add_delete('/api/analytics/network/devices/{mac_address}', network_device_delete)
+    app.router.add_get('/api/analytics/network/stats', network_stats)
+    app.router.add_get('/api/analytics/network/events', network_events_list)
+    app.router.add_post('/api/analytics/network/monitoring/start', network_monitoring_start)
+    app.router.add_post('/api/analytics/network/monitoring/stop', network_monitoring_stop)
+    app.router.add_get('/api/analytics/network/monitoring/status', network_monitoring_status)
+    app.router.add_put('/api/analytics/network/settings', network_settings_update)
     
-    logger.info(f"📤 analytics_notify START: {title}")
-    logger.info(f"   Message: {body}")
-    
-    # Try to import and use process_incoming
-    try:
-        logger.info(f"   Attempting to import process_incoming from bot...")
-        from bot import process_incoming
-        logger.info(f"   ✅ Import successful! Function type: {type(process_incoming)}")
-        logger.info(f"   Is coroutine function: {asyncio.iscoroutinefunction(process_incoming)}")
-        
-        # Call it
-        try:
-            if asyncio.iscoroutinefunction(process_incoming):
-                logger.info(f"   Calling as async function...")
-                await process_incoming(title, body, source="analytics", priority=priority)
-            else:
-                logger.info(f"   Calling as sync function via executor...")
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None, 
-                    lambda: process_incoming(title, body, source="analytics", priority=priority)
-                )
-            
-            logger.info(f"✅ process_incoming completed successfully")
-            logger.info(f"✅ Fan-out should be complete - check inbox/Gotify/UI")
-            
-        except Exception as call_error:
-            logger.error(f"❌ Error calling process_incoming: {call_error}", exc_info=True)
-            logger.error(f"   This means process_incoming exists but threw an error")
-            
-    except ImportError as import_error:
-        logger.error(f"❌ Cannot import process_incoming from bot: {import_error}")
-        logger.error(f"   This means bot.py doesn't have process_incoming function")
-        logger.error(f"   Notification will ONLY appear in analytics inbox")
-    except Exception as e:
-        logger.error(f"❌ Unexpected error in analytics_notify: {e}", exc_info=True)
-
-
-
-
-
-
-
+    # Speed test routes
+    app.router.add_post('/api/analytics/speedtest/run', speedtest_run)
+    app.router.add_get('/api/analytics/speedtest/history', speedtest_history)
+    app.router.add_get('/api/analytics/speedtest/latest', speedtest_latest)
+    app.router.add_get('/api/analytics/speedtest/stats', speedtest_stats)
+    app.router.add_post('/api/analytics/speedtest/monitoring/start', speedtest_start_monitoring)
+    app.router.add_post('/api/analytics/speedtest/monitoring/stop', speedtest_stop_monitoring)
+    app.router.add_get('/api/analytics/speedtest/monitoring/status', speedtest_monitoring_status)
+    app.router.add_put('/api/analytics/speedtest/settings', speedtest_update_settings)
 
 async def init_analytics(app: web.Application, notification_callback: Optional[Callable] = None):
     """Initialize analytics module"""
-    global db, monitor, scanner
+    global db, monitor, scanner, speed_monitor
     
     db = AnalyticsDB()
     
-    # Use provided callback or default
     callback = notification_callback or analytics_notify
-    
-    logger.info(f"[analytics] Initializing with callback: {callback.__name__ if hasattr(callback, '__name__') else type(callback)}")
     
     monitor = HealthMonitor(db, callback)
     scanner = NetworkScanner(db)
     scanner.set_notification_callback(callback)
+    speed_monitor = SpeedTestMonitor(db)
+    speed_monitor.set_notification_callback(callback)
     
-    logger.info(f"[analytics] Scanner callback set: {scanner.notification_callback is not None}")
-    
-    # Start monitoring all enabled services
     await monitor.start_all()
     
-    logger.info("Analytics module initialized with network monitoring")
-
+    register_routes(app)
+    
+    logger.info("Analytics module initialized with speed test monitoring")
 
 async def shutdown_analytics():
     """Shutdown analytics module"""
@@ -2232,3 +2350,5 @@ async def shutdown_analytics():
         await monitor.stop_all()
     if scanner:
         await scanner.stop_monitoring()
+    if speed_monitor:
+        await speed_monitor.stop_monitoring()
