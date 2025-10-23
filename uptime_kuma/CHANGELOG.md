@@ -1,3 +1,7 @@
+## 2.0.2-slim (2025-10-23 04:02:28)
+- Update from 2.0.1-slim to 2.0.2-slim
+- Docker Image: [louislam/uptime-kuma:2.0.2-slim](https://hub.docker.com/r/louislam/uptime-kuma/tags)
+
 ## 2.0.1-slim (2025-10-21 04:02:12)
 - Update from 1.23.16-debian to 2.0.1-slim
 - Docker Image: [louislam/uptime-kuma:2.0.1-slim](https://hub.docker.com/r/louislam/uptime-kuma/tags)
