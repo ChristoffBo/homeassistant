@@ -4,6 +4,7 @@
 // PATCHED: analyticsLoadIncidents now handles { "incidents": [...] } format consistently
 // UPGRADED: Added network monitoring capabilities
 // FIXED: Line 327 - Changed incident.service to incident.service_name to match backend data
+// ENHANCED: Completely redesigned incident display with card-based layout and better formatting
 
 // Use the API() helper from app.js for proper path resolution
 const ANALYTICS_API = (path = '') => {
@@ -289,7 +290,7 @@ async function analyticsLoadServices() {
   }
 }
 
-// Load incidents
+// Load incidents - COMPLETELY REDESIGNED with card layout
 async function analyticsLoadIncidents() {
   const tbody = document.getElementById('analytics-incidents-list');
   
@@ -318,26 +319,61 @@ async function analyticsLoadIncidents() {
     
     incidents.forEach(incident => {
       const tr = document.createElement('tr');
-      const startTime = new Date(incident.start_time * 1000).toLocaleString();
-      const endTime = incident.end_time 
-        ? new Date(incident.end_time * 1000).toLocaleString()
-        : 'Ongoing';
+      const startTime = new Date(incident.start_time * 1000);
+      const endTime = incident.end_time ? new Date(incident.end_time * 1000) : null;
       
       const duration = incident.duration 
-        ? formatDuration(incident.duration)
+        ? formatDurationDetailed(incident.duration)
         : 'Ongoing';
 
-      const statusColor = incident.status === 'resolved' ? '#22c55e' : '#ef4444';
+      const isOngoing = incident.status !== 'resolved';
+      const statusColor = isOngoing ? '#ef4444' : '#22c55e';
+      const statusIcon = isOngoing ? '🔴' : '✅';
+      const statusText = isOngoing ? 'ONGOING' : 'RESOLVED';
 
-      // FIXED: Changed incident.service to incident.service_name to match backend data structure
+      // Format timestamps more readably
+      const startTimeFormatted = formatIncidentTime(startTime);
+      const endTimeFormatted = endTime ? formatIncidentTime(endTime) : '<span style="color: var(--text-muted);">—</span>';
+
+      // Get error message with better formatting
+      const errorMsg = incident.error_message || 'Service unavailable';
+      const truncatedError = errorMsg.length > 80 ? errorMsg.substring(0, 77) + '...' : errorMsg;
+
       tr.innerHTML = `
-        <td>${incident.service_name || 'Unknown Service'}</td>
-        <td>${incident.error_message || 'Service unavailable'}</td>
-        <td>${startTime}</td>
-        <td>${duration}</td>
-        <td>
-          <span style="padding: 4px 8px; background: ${statusColor}22; color: ${statusColor}; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;">
-            ${incident.status}
+        <td style="padding: 16px 12px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="font-size: 20px;">${statusIcon}</div>
+            <div style="flex: 1;">
+              <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px; color: var(--text-primary);">
+                ${incident.service_name || 'Unknown Service'}
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted); font-family: monospace; line-height: 1.4;">
+                ${truncatedError}
+              </div>
+            </div>
+          </div>
+        </td>
+        <td style="padding: 16px 12px; min-width: 180px;">
+          <div style="font-size: 13px; color: var(--text-primary); margin-bottom: 4px;">
+            <strong>Started:</strong> ${startTimeFormatted}
+          </div>
+          ${endTime ? `
+            <div style="font-size: 13px; color: var(--text-muted);">
+              <strong>Ended:</strong> ${endTimeFormatted}
+            </div>
+          ` : ''}
+        </td>
+        <td style="padding: 16px 12px; text-align: center; min-width: 100px;">
+          <div style="font-size: 18px; font-weight: 600; color: ${isOngoing ? '#ef4444' : '#22c55e'};">
+            ${duration}
+          </div>
+          <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; margin-top: 4px;">
+            Duration
+          </div>
+        </td>
+        <td style="padding: 16px 12px; text-align: center;">
+          <span style="padding: 6px 14px; background: ${statusColor}15; color: ${statusColor}; border-radius: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; border: 1px solid ${statusColor}40;">
+            ${statusText}
           </span>
         </td>
       `;
@@ -345,8 +381,64 @@ async function analyticsLoadIncidents() {
     });
   } catch (error) {
     console.error('Error loading incidents:', error);
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Error loading incidents</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Error loading incidents</td></tr>';
   }
+}
+
+// Format duration with more detail
+function formatDurationDetailed(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  }
+  if (seconds < 86400) {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+}
+
+// Format incident time for better readability
+function formatIncidentTime(date) {
+  const now = new Date();
+  const diffMs = now - date;
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  // If within last 24 hours, show relative time
+  if (diffDays < 1) {
+    if (diffHours < 1) {
+      if (diffMins < 1) return 'Just now';
+      return `${diffMins}m ago`;
+    }
+    return `${diffHours}h ago`;
+  }
+
+  // Otherwise show formatted date/time
+  const timeStr = date.toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false 
+  });
+  
+  if (diffDays < 7) {
+    return `${diffDays}d ago at ${timeStr}`;
+  }
+
+  return date.toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
 }
 
 function formatDuration(seconds) {
