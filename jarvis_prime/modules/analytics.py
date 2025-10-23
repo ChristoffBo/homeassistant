@@ -3,7 +3,7 @@
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
 
-VERSION: 2025-01-19-FINAL-FIX + SPEED TEST INTEGRATION
+VERSION: 2025-01-23-SPEEDTEST-PURGE-SCHEDULER
 
 Complete file with Internet Speed Testing integrated
 """
@@ -14,8 +14,8 @@ import json
 import asyncio
 import subprocess
 import aiohttp
-from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from datetime import datetime, time as dt_time
+from typing import Dict, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 from aiohttp import web
 from collections import deque
@@ -162,6 +162,14 @@ class SpeedTestResult:
     jitter: Optional[float] = None
     packet_loss: Optional[float] = None
     status: str = 'normal'  # normal, degraded, offline
+
+
+
+@dataclass
+class SpeedTestSchedule:
+    """Speed test schedule configuration"""
+    enabled: bool = False
+    test_times: List[str] = field(default_factory=list)  # List of times in "HH:MM" format
 
 
 class AnalyticsDB:
@@ -840,7 +848,7 @@ class AnalyticsDB:
         cur = conn.cursor()
         
         cur.execute("""
-            INSERT INTO network_scans 
+        INSERT INTO network_scans 
             (scan_timestamp, devices_found, scan_duration, scan_type)
             VALUES (?, ?, ?, ?)
         """, (int(time.time()), devices_found, scan_duration, scan_type))
@@ -1117,6 +1125,52 @@ class AnalyticsDB:
 # ============================================================================
 # HEALTH MONITOR CLASS
 # ============================================================================
+
+
+    def get_speed_test_schedule(self) -> SpeedTestSchedule:
+        """Get speed test schedule configuration"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM speed_test_schedule WHERE id = 1")
+        row = cur.fetchone()
+        conn.close()
+        
+        if row:
+            return SpeedTestSchedule(
+                enabled=bool(row['enabled']),
+                test_times=json.loads(row['test_times'])
+            )
+        return SpeedTestSchedule()
+    
+    def save_speed_test_schedule(self, schedule: SpeedTestSchedule):
+        """Save speed test schedule configuration"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE speed_test_schedule 
+            SET enabled = ?, test_times = ?
+            WHERE id = 1
+        """, (int(schedule.enabled), json.dumps(schedule.test_times)))
+        conn.commit()
+        conn.close()
+    
+    def purge_speed_tests(self, older_than_seconds: Optional[int] = None) -> int:
+        """Purge speed test results older than specified time. If None, purge all."""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        if older_than_seconds is None:
+            cur.execute("DELETE FROM network_speed")
+        else:
+            cutoff = int(time.time()) - older_than_seconds
+            cur.execute("DELETE FROM network_speed WHERE timestamp < ?", (cutoff,))
+        
+        deleted = cur.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+
 
 class HealthMonitor:
     """Service health monitoring with retry and flap protection"""
@@ -2034,35 +2088,46 @@ async def reset_service_data(request: web.Request):
         return _json({'error': str(e)}, status=500)
 
 async def purge_all(request: web.Request):
-    """Purge all metrics and incidents"""
-    try:
-        deleted_metrics = db.purge_old_metrics(days=0)
-        deleted_incidents = db.purge_old_incidents(days=0)
-        return _json({
-            'success': True,
-            'deleted_metrics': deleted_metrics,
-            'deleted_incidents': deleted_incidents
-        })
-    except Exception as e:
-        return _json({'error': str(e)}, status=500)
-
+    """Purge ALL metrics, incidents, and speed tests"""
+    metrics_deleted = db.purge_metrics()
+    incidents_deleted = db.purge_incidents()
+    speedtest_deleted = db.purge_speed_tests()
+    
+    return _json({
+        'success': True,
+        'metrics_deleted': metrics_deleted,
+        'incidents_deleted': incidents_deleted,
+        'speedtest_deleted': speedtest_deleted,
+        'total_deleted': metrics_deleted + incidents_deleted + speedtest_deleted
+    })
 async def purge_week(request: web.Request):
-    """Purge metrics older than 1 week"""
-    try:
-        deleted = db.purge_old_metrics(days=7)
-        return _json({'success': True, 'deleted': deleted})
-    except Exception as e:
-        return _json({'error': str(e)}, status=500)
-
+    """Purge metrics, incidents, and speed tests older than 1 week"""
+    week_seconds = 7 * 24 * 3600
+    metrics_deleted = db.purge_metrics(week_seconds)
+    incidents_deleted = db.purge_incidents(week_seconds)
+    speedtest_deleted = db.purge_speed_tests(week_seconds)
+    
+    return _json({
+        'success': True,
+        'metrics_deleted': metrics_deleted,
+        'incidents_deleted': incidents_deleted,
+        'speedtest_deleted': speedtest_deleted,
+        'total_deleted': metrics_deleted + incidents_deleted + speedtest_deleted
+    })
 async def purge_month(request: web.Request):
-    """Purge metrics older than 1 month"""
-    try:
-        deleted = db.purge_old_metrics(days=30)
-        return _json({'success': True, 'deleted': deleted})
-    except Exception as e:
-        return _json({'error': str(e)}, status=500)
-
-
+    """Purge metrics, incidents, and speed tests older than 1 month"""
+    month_seconds = 30 * 24 * 3600
+    metrics_deleted = db.purge_metrics(month_seconds)
+    incidents_deleted = db.purge_incidents(month_seconds)
+    speedtest_deleted = db.purge_speed_tests(month_seconds)
+    
+    return _json({
+        'success': True,
+        'metrics_deleted': metrics_deleted,
+        'incidents_deleted': incidents_deleted,
+        'speedtest_deleted': speedtest_deleted,
+        'total_deleted': metrics_deleted + incidents_deleted + speedtest_deleted
+    })
 # ============================================================================
 # API ROUTES - NETWORK MONITORING
 # ============================================================================
@@ -2246,10 +2311,41 @@ async def speedtest_stop_monitoring(request: web.Request):
 async def speedtest_monitoring_status(request: web.Request):
     """Get monitoring status"""
     return _json({
-        'monitoring': speed_monitor.monitoring,
+        'schedule_enabled': speed_monitor.schedule_enabled,
         'testing': speed_monitor.testing,
-        'interval_hours': speed_monitor.interval_hours,
+        'test_times': speed_monitor.test_times,
         'consecutive_failures': speed_monitor.consecutive_failures
+    })
+
+async def speedtest_start_scheduled(request: web.Request):
+    """Start scheduled testing"""
+    try:
+        data = await request.json()
+        test_times = data.get('test_times', [])
+        
+        if not test_times:
+            return _json({'error': 'test_times required'}, status=400)
+        
+        await speed_monitor.start_scheduled_testing(test_times)
+        return _json({
+            'success': True,
+            'schedule_enabled': True,
+            'test_times': test_times
+        })
+    except Exception as e:
+        return _json({'error': str(e)}, status=400)
+
+async def speedtest_stop_scheduled(request: web.Request):
+    """Stop scheduled testing"""
+    await speed_monitor.stop_scheduled_testing()
+    return _json({'success': True, 'schedule_enabled': False})
+
+async def speedtest_get_schedule(request: web.Request):
+    """Get current schedule configuration"""
+    schedule = db.get_speed_test_schedule()
+    return _json({
+        'enabled': schedule.enabled,
+        'test_times': schedule.test_times
     })
 
 async def speedtest_update_settings(request: web.Request):
@@ -2323,6 +2419,9 @@ def register_routes(app: web.Application):
     app.router.add_post('/api/analytics/speedtest/monitoring/stop', speedtest_stop_monitoring)
     app.router.add_get('/api/analytics/speedtest/monitoring/status', speedtest_monitoring_status)
     app.router.add_put('/api/analytics/speedtest/settings', speedtest_update_settings)
+    app.router.add_post('/api/analytics/speedtest/schedule/start', speedtest_start_scheduled)
+    app.router.add_post('/api/analytics/speedtest/schedule/stop', speedtest_stop_scheduled)
+    app.router.add_get('/api/analytics/speedtest/schedule', speedtest_get_schedule)
 
 async def init_analytics(app: web.Application, notification_callback: Optional[Callable] = None):
     """Initialize analytics module"""
@@ -2342,7 +2441,13 @@ async def init_analytics(app: web.Application, notification_callback: Optional[C
     
     register_routes(app)
     
-    logger.info("Analytics module initialized with speed test monitoring")
+        
+    # Start scheduled testing if enabled
+    schedule = db.get_speed_test_schedule()
+    if schedule.enabled and schedule.test_times:
+        await speed_monitor.start_scheduled_testing(schedule.test_times)
+    
+logger.info("Analytics module initialized with speed test monitoring")
 
 async def shutdown_analytics():
     """Shutdown analytics module"""
@@ -2351,4 +2456,5 @@ async def shutdown_analytics():
     if scanner:
         await scanner.stop_monitoring()
     if speed_monitor:
-        await speed_monitor.stop_monitoring()
+        await speed_monitor.stop_scheduled_testing()
+            
