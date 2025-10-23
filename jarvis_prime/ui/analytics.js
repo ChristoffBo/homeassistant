@@ -3,6 +3,7 @@
 // UPGRADED: Added retry and flap protection features
 // PATCHED: analyticsLoadIncidents now handles { "incidents": [...] } format consistently
 // UPGRADED: Added network monitoring capabilities
+// FIXED: Line 327 - Changed incident.service to incident.service_name to match backend data
 
 // Use the API() helper from app.js for proper path resolution
 const ANALYTICS_API = (path = '') => {
@@ -226,7 +227,7 @@ function analyticsCreateServiceCard(service, uptime) {
   return card;
 }
 
-// Load services table
+// Load services list
 async function analyticsLoadServices() {
   const tbody = document.getElementById('analytics-services-list');
   
@@ -237,7 +238,12 @@ async function analyticsLoadServices() {
     if (services.length === 0) {
       tbody.innerHTML = `
         <tr>
-          <td colspan="7" class="text-center text-muted">No services configured yet</td>
+          <td colspan="7" class="text-center text-muted">
+            <div style="padding: 2rem;">
+              <p>No services configured yet</p>
+              <button class="btn primary" onclick="analyticsShowAddService()">Add Your First Service</button>
+            </div>
+          </td>
         </tr>
       `;
       return;
@@ -323,9 +329,10 @@ async function analyticsLoadIncidents() {
 
       const statusColor = incident.status === 'resolved' ? '#22c55e' : '#ef4444';
 
+      // FIXED: Changed incident.service to incident.service_name to match backend data structure
       tr.innerHTML = `
-        <td>${incident.service}</td>
-        <td>${incident.message || 'Service unavailable'}</td>
+        <td>${incident.service_name || 'Unknown Service'}</td>
+        <td>${incident.error_message || 'Service unavailable'}</td>
         <td>${startTime}</td>
         <td>${duration}</td>
         <td>
@@ -395,21 +402,29 @@ async function analyticsEditService(serviceId) {
     document.getElementById('analytics-service-modal').classList.add('active');
   } catch (error) {
     console.error('Error loading service:', error);
-    showToast('Failed to load service', 'error');
+    showToast('Failed to load service details', 'error');
   }
 }
 
 // Delete service
 async function analyticsDeleteService(serviceId, serviceName) {
-  if (!confirm(`Delete service "${serviceName}"? This will also remove all associated metrics.`)) return;
+  if (!confirm(`Delete service "${serviceName}"? This will also remove all metrics and incidents.`)) {
+    return;
+  }
 
   try {
-    await fetch(ANALYTICS_API(`services/${serviceId}`), {
+    const response = await fetch(ANALYTICS_API(`services/${serviceId}`), {
       method: 'DELETE'
     });
 
-    showToast('Service deleted', 'success');
-    analyticsRefresh();
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Service deleted successfully', 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to delete service', 'error');
+    }
   } catch (error) {
     console.error('Error deleting service:', error);
     showToast('Failed to delete service', 'error');
@@ -421,47 +436,73 @@ function analyticsCloseServiceModal() {
   document.getElementById('analytics-service-modal').classList.remove('active');
 }
 
-// Toggle status code field based on check type
+// Toggle status code field visibility
 function analyticsToggleStatusCode() {
   const checkType = document.getElementById('analytics-check-type').value;
-  const statusGroup = document.getElementById('analytics-status-code-group');
-  statusGroup.style.display = checkType === 'http' ? 'block' : 'none';
+  const statusCodeField = document.getElementById('analytics-status-code-field');
+  statusCodeField.style.display = checkType === 'http' ? 'block' : 'none';
 }
 
-// Save service - UPDATED to include retry and flap protection
+// Save service
 async function analyticsSaveService(event) {
   event.preventDefault();
 
   const serviceId = document.getElementById('analytics-service-id').value;
-  const data = {
-    service_name: document.getElementById('analytics-service-name').value,
-    endpoint: document.getElementById('analytics-service-endpoint').value,
-    check_type: document.getElementById('analytics-check-type').value,
-    expected_status: parseInt(document.getElementById('analytics-expected-status').value),
-    timeout: parseInt(document.getElementById('analytics-check-timeout').value),
-    check_interval: parseInt(document.getElementById('analytics-check-interval').value),
-    enabled: document.getElementById('analytics-service-enabled').checked,
-    
-    // NEW: Include retry and flap protection fields
-    retries: parseInt(document.getElementById('analytics-retries').value) || 3,
-    flap_window: parseInt(document.getElementById('analytics-flap-window').value) || 3600,
-    flap_threshold: parseInt(document.getElementById('analytics-flap-threshold').value) || 5,
-    suppression_duration: parseInt(document.getElementById('analytics-suppression-duration').value) || 3600
+  const serviceName = document.getElementById('analytics-service-name').value;
+  const endpoint = document.getElementById('analytics-service-endpoint').value;
+  const checkType = document.getElementById('analytics-check-type').value;
+  const expectedStatus = document.getElementById('analytics-expected-status').value;
+  const checkInterval = parseInt(document.getElementById('analytics-check-interval').value);
+  const timeout = parseInt(document.getElementById('analytics-check-timeout').value);
+  const enabled = document.getElementById('analytics-service-enabled').checked;
+  
+  // NEW: Collect retry and flap protection values
+  const retries = parseInt(document.getElementById('analytics-retries').value);
+  const flapWindow = parseInt(document.getElementById('analytics-flap-window').value);
+  const flapThreshold = parseInt(document.getElementById('analytics-flap-threshold').value);
+  const suppressionDuration = parseInt(document.getElementById('analytics-suppression-duration').value);
+
+  const service = {
+    service_name: serviceName,
+    endpoint: endpoint,
+    check_type: checkType,
+    expected_status: checkType === 'http' ? parseInt(expectedStatus) : null,
+    check_interval: checkInterval,
+    timeout: timeout,
+    enabled: enabled,
+    retries: retries,
+    flap_window: flapWindow,
+    flap_threshold: flapThreshold,
+    suppression_duration: suppressionDuration
   };
 
   try {
-    const url = serviceId ? ANALYTICS_API(`services/${serviceId}`) : ANALYTICS_API('services');
-    const method = serviceId ? 'PUT' : 'POST';
+    let response;
+    if (serviceId) {
+      // Update existing service
+      response = await fetch(ANALYTICS_API(`services/${serviceId}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(service)
+      });
+    } else {
+      // Add new service
+      response = await fetch(ANALYTICS_API('services'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(service)
+      });
+    }
 
-    await fetch(url, {
-      method: method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-
-    showToast(serviceId ? 'Service updated' : 'Service added', 'success');
-    analyticsCloseServiceModal();
-    analyticsRefresh();
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(serviceId ? 'Service updated successfully' : 'Service added successfully', 'success');
+      analyticsCloseServiceModal();
+      analyticsRefresh();
+    } else {
+      showToast(result.error || 'Failed to save service', 'error');
+    }
   } catch (error) {
     console.error('Error saving service:', error);
     showToast('Failed to save service', 'error');
@@ -470,12 +511,13 @@ async function analyticsSaveService(event) {
 
 // Reset health scores
 async function analyticsResetHealth() {
-  if (!confirm('Reset all health scores? This will clear all metrics history and start fresh.')) return;
+  if (!confirm('Reset all health scores? This will clear service status history but keep the services.')) {
+    return;
+  }
 
   try {
     const response = await fetch(ANALYTICS_API('reset-health'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
+      method: 'POST'
     });
     
     const result = await response.json();
@@ -484,31 +526,32 @@ async function analyticsResetHealth() {
       showToast('Health scores reset successfully', 'success');
       analyticsRefresh();
     } else {
-      showToast('Failed to reset: ' + result.error, 'error');
+      showToast('Failed to reset health scores', 'error');
     }
   } catch (error) {
-    console.error('Error resetting health scores:', error);
+    console.error('Error resetting health:', error);
     showToast('Failed to reset health scores', 'error');
   }
 }
 
-// Reset incidents
+// Clear all incidents
 async function analyticsResetIncidents() {
-  if (!confirm('Clear all incidents? This will permanently delete all incident history.')) return;
+  if (!confirm('Clear all incidents from history?')) {
+    return;
+  }
 
   try {
     const response = await fetch(ANALYTICS_API('reset-incidents'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
+      method: 'POST'
     });
     
     const result = await response.json();
     
     if (result.success) {
-      showToast('All incidents cleared', 'success');
-      analyticsRefresh();
+      showToast(`Cleared ${result.deleted} incidents`, 'success');
+      analyticsLoadIncidents();
     } else {
-      showToast('Failed to clear: ' + result.error, 'error');
+      showToast('Failed to clear incidents', 'error');
     }
   } catch (error) {
     console.error('Error clearing incidents:', error);
@@ -516,38 +559,34 @@ async function analyticsResetIncidents() {
   }
 }
 
-// Reset service data (optional - for per-service reset)
+// Reset specific service data
 async function analyticsResetServiceData(serviceName) {
-  if (!confirm(`Reset all data for ${serviceName}? This will clear metrics and incidents for this service only.`)) return;
+  if (!confirm(`Reset all data for ${serviceName}? This will clear metrics and incidents.`)) {
+    return;
+  }
 
   try {
     const response = await fetch(ANALYTICS_API(`reset-service/${encodeURIComponent(serviceName)}`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
+      method: 'POST'
     });
     
     const result = await response.json();
     
     if (result.success) {
-      showToast(`Data reset for ${serviceName}`, 'success');
+      showToast('Service data reset successfully', 'success');
       analyticsRefresh();
     } else {
-      showToast('Failed to reset: ' + result.error, 'error');
+      showToast('Failed to reset service data', 'error');
     }
   } catch (error) {
-    console.error('Error resetting service data:', error);
+    console.error('Error resetting service:', error);
     showToast('Failed to reset service data', 'error');
   }
 }
 
-// ============================================
-// PURGE FUNCTIONS - FIXED ROUTES
-// ============================================
-
-// Purge ALL metrics
+// Purge all metrics
 async function analyticsPurgeAll() {
-  if (!confirm('⚠️ DANGER: Purge ALL metrics history? This cannot be undone!')) return;
-  if (!confirm('Are you absolutely sure? This will delete EVERYTHING.')) return;
+  if (!confirm('⚠️ DANGER: Purge ALL metrics and incidents? This cannot be undone!')) return;
 
   try {
     const response = await fetch(ANALYTICS_API('purge-all'), {
@@ -557,18 +596,18 @@ async function analyticsPurgeAll() {
     
     const result = await response.json();
     if (result.success) {
-      showToast(`Purged all ${result.deleted} metrics`, 'success');
+      showToast(`Purged ${result.deleted_metrics} metrics and ${result.deleted_incidents} incidents`, 'success');
       analyticsRefresh();
     } else {
       showToast('Failed to purge: ' + result.error, 'error');
     }
   } catch (error) {
-    console.error('Error purging all metrics:', error);
-    showToast('Failed to purge metrics', 'error');
+    console.error('Error purging all:', error);
+    showToast('Failed to purge data', 'error');
   }
 }
 
-// Purge metrics older than 1 week
+// Purge week metrics
 async function analyticsPurgeWeek() {
   if (!confirm('Purge metrics older than 1 week (7 days)?')) return;
 
@@ -591,7 +630,7 @@ async function analyticsPurgeWeek() {
   }
 }
 
-// Purge metrics older than 1 month
+// Purge month metrics
 async function analyticsPurgeMonth() {
   if (!confirm('Purge metrics older than 1 month (30 days)?')) return;
 
@@ -671,7 +710,7 @@ async function analyticsLoadNetworkDevices() {
       tbody.innerHTML = `
         <tr>
           <td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">
-            No devices found. Run a network scan to discover devices.
+            No devices found. Run a scan to discover devices on your network.
           </td>
         </tr>
       `;
@@ -681,55 +720,50 @@ async function analyticsLoadNetworkDevices() {
     networkDevices.forEach(device => {
       const tr = document.createElement('tr');
       
-      // Determine display name (custom_name > hostname > "Unknown")
-      const displayName = device.custom_name || device.hostname || '<span style="color: var(--text-muted);">Unknown</span>';
+      const lastSeen = new Date(device.last_seen * 1000);
+      const isOnline = (Date.now() / 1000 - device.last_seen) < 300; // 5 min threshold
       
-      // Check if already in services
-      const isInServices = device.in_services || false;
-      const checkboxDisabled = isInServices ? 'disabled' : '';
-      const checkboxTitle = isInServices ? 'Already monitored in Services tab' : 'Monitor this device';
+      const onlineIndicator = isOnline 
+        ? '<span style="color: #22c55e;">●</span>' 
+        : '<span style="color: #6b7280;">●</span>';
       
+      const permanentBadge = device.is_permanent 
+        ? '<span class="badge badge-primary" style="font-size: 10px;">PERMANENT</span>' 
+        : '';
+      
+      const monitoredBadge = device.is_monitored 
+        ? '<span class="badge badge-success" style="font-size: 10px;">MONITORED</span>' 
+        : '';
+
       tr.innerHTML = `
+        <td>${onlineIndicator}</td>
         <td>
-          <input type="checkbox" 
-                 class="device-checkbox" 
-                 data-mac="${device.mac_address}"
-                 ${device.is_monitored ? 'checked' : ''}
-                 ${checkboxDisabled}
-                 title="${checkboxTitle}"
-                 onchange="networkToggleMonitoring('${device.mac_address}', this.checked)">
+          <code style="font-size: 11px;">${device.mac_address}</code>
         </td>
-        <td><code>${device.mac_address}</code></td>
-        <td><code>${device.ip_address || 'Unknown'}</code></td>
         <td>
-          <span class="device-name-display" id="name-${device.mac_address}" 
-                onclick="networkEditDeviceName('${device.mac_address}')" 
-                style="cursor: pointer;" 
-                title="Click to edit name">
-            ${displayName} ✏️
+          <span id="device-name-${device.mac_address.replace(/:/g, '')}" style="cursor: pointer;" 
+                onclick="networkEditDeviceName('${device.mac_address}')">
+            ${device.custom_name || device.hostname || '<span style="color: var(--text-muted);">Unknown</span>'}
           </span>
-          <input type="text" 
-                 class="device-name-input" 
-                 id="name-input-${device.mac_address}" 
-                 style="display: none; width: 150px;"
-                 value="${device.custom_name || device.hostname || ''}"
-                 onblur="networkSaveDeviceName('${device.mac_address}')"
-                 onkeypress="if(event.key==='Enter') networkSaveDeviceName('${device.mac_address}')">
         </td>
-        <td>${device.vendor || '<span style="color: var(--text-muted);">Unknown</span>'}</td>
+        <td>${device.ip_address || '<span style="color: var(--text-muted);">N/A</span>'}</td>
+        <td style="font-size: 11px;">${device.vendor || '<span style="color: var(--text-muted);">Unknown</span>'}</td>
+        <td style="font-size: 11px;">${formatTimestamp(lastSeen)}</td>
         <td>
-          <span class="badge ${device.is_permanent ? 'badge-success' : 'badge-default'}">
-            ${device.is_permanent ? 'Permanent' : 'Temporary'}
-          </span>
-          ${device.is_monitored ? '<span class="badge badge-info">Monitored</span>' : ''}
-          ${isInServices ? '<span class="badge badge-warning">In Services</span>' : ''}
-        </td>
-        <td>
-          <button class="btn btn-sm" onclick="networkTogglePermanent('${device.mac_address}', ${!device.is_permanent})" 
-                  title="${device.is_permanent ? 'Mark as Temporary' : 'Mark as Permanent'}">
+          ${permanentBadge} ${monitoredBadge}
+          <button class="btn btn-sm" 
+                  onclick="networkTogglePermanent('${device.mac_address}')" 
+                  title="${device.is_permanent ? 'Remove from permanent list' : 'Mark as permanent'}">
             ${device.is_permanent ? '📌' : '📍'}
           </button>
-          <button class="btn btn-sm" onclick="networkDeleteDevice('${device.mac_address}')" title="Delete Device">
+          <button class="btn btn-sm" 
+                  onclick="networkToggleMonitoring('${device.mac_address}')" 
+                  title="${device.is_monitored ? 'Stop monitoring' : 'Start monitoring'}">
+            ${device.is_monitored ? '👁️' : '👁️‍🗨️'}
+          </button>
+          <button class="btn btn-sm" 
+                  onclick="networkDeleteDevice('${device.mac_address}')" 
+                  title="Delete device">
             🗑️
           </button>
         </td>
@@ -738,129 +772,119 @@ async function analyticsLoadNetworkDevices() {
     });
   } catch (error) {
     console.error('Error loading network devices:', error);
-    showToast('Failed to load devices', 'error');
-  }
-}
-
-// Edit device name
-function networkEditDeviceName(macAddress) {
-  const displayEl = document.getElementById(`name-${macAddress}`);
-  const inputEl = document.getElementById(`name-input-${macAddress}`);
-  
-  if (displayEl && inputEl) {
-    displayEl.style.display = 'none';
-    inputEl.style.display = 'inline-block';
-    inputEl.focus();
-    inputEl.select();
-  }
-}
-
-// Save device name
-async function networkSaveDeviceName(macAddress) {
-  const displayEl = document.getElementById(`name-${macAddress}`);
-  const inputEl = document.getElementById(`name-input-${macAddress}`);
-  
-  if (!inputEl) return;
-  
-  const newName = inputEl.value.trim();
-  
-  try {
-    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ custom_name: newName })
-    });
-    
-    const result = await response.json();
-    
-    if (result.success) {
-      showToast(newName ? 'Device renamed' : 'Name cleared', 'success');
-      await analyticsLoadNetworkDevices();
-    } else {
-      showToast('Failed to rename device', 'error');
-      if (displayEl && inputEl) {
-        displayEl.style.display = 'inline';
-        inputEl.style.display = 'none';
-      }
-    }
-  } catch (error) {
-    console.error('Error saving device name:', error);
-    showToast('Failed to rename device', 'error');
-    if (displayEl && inputEl) {
-      displayEl.style.display = 'inline';
-      inputEl.style.display = 'none';
-    }
   }
 }
 
 // Run network scan
 async function networkRunScan() {
-  const scanBtn = document.getElementById('btn-network-scan');
-  const originalText = scanBtn.textContent;
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning...';
   
   try {
-    scanBtn.disabled = true;
-    scanBtn.textContent = '🔍 Scanning...';
-    
     const response = await fetch(ANALYTICS_API('network/scan'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
+      method: 'POST'
     });
     
     const result = await response.json();
     
     if (result.success) {
-      showToast(`Network scan complete: ${result.devices_found} devices found`, 'success');
+      showToast(`Found ${result.devices_found} devices (${result.new_devices} new)`, 'success');
       await analyticsLoadNetworkDashboard();
     } else {
-      showToast('Network scan failed', 'error');
+      showToast('Scan failed: ' + result.error, 'error');
     }
   } catch (error) {
-    console.error('Error running network scan:', error);
-    showToast('Failed to run network scan', 'error');
+    console.error('Error running scan:', error);
+    showToast('Scan failed', 'error');
   } finally {
-    scanBtn.disabled = false;
-    scanBtn.textContent = originalText;
+    btn.disabled = false;
+    btn.textContent = '🔍 Scan Network';
+  }
+}
+
+// Edit device name
+function networkEditDeviceName(macAddress) {
+  const device = networkDevices.find(d => d.mac_address === macAddress);
+  if (!device) return;
+  
+  const currentName = device.custom_name || device.hostname || '';
+  const newName = prompt('Enter device name:', currentName);
+  
+  if (newName !== null && newName !== currentName) {
+    networkSaveDeviceName(macAddress, newName);
+  }
+}
+
+// Save device name
+async function networkSaveDeviceName(macAddress, customName) {
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_name: customName })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Device name updated', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to update device name', 'error');
+    }
+  } catch (error) {
+    console.error('Error updating device name:', error);
+    showToast('Failed to update device name', 'error');
   }
 }
 
 // Toggle device monitoring
-async function networkToggleMonitoring(macAddress, isMonitored) {
+async function networkToggleMonitoring(macAddress) {
+  const device = networkDevices.find(d => d.mac_address === macAddress);
+  if (!device) return;
+  
+  const newState = !device.is_monitored;
+  
   try {
     const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_monitored: isMonitored })
+      body: JSON.stringify({ is_monitored: newState })
     });
     
     const result = await response.json();
     
     if (result.success) {
-      showToast(isMonitored ? 'Device added to monitoring' : 'Device removed from monitoring', 'success');
-      await analyticsLoadNetworkDashboard();
+      showToast(newState ? 'Monitoring enabled' : 'Monitoring disabled', 'success');
+      await analyticsLoadNetworkDevices();
     } else {
-      showToast('Failed to update device', 'error');
+      showToast('Failed to update monitoring', 'error');
     }
   } catch (error) {
     console.error('Error toggling monitoring:', error);
-    showToast('Failed to update device', 'error');
+    showToast('Failed to update monitoring', 'error');
   }
 }
 
-// Toggle permanent status
-async function networkTogglePermanent(macAddress, isPermanent) {
+// Toggle permanent device
+async function networkTogglePermanent(macAddress) {
+  const device = networkDevices.find(d => d.mac_address === macAddress);
+  if (!device) return;
+  
+  const newState = !device.is_permanent;
+  
   try {
     const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_permanent: isPermanent })
+      body: JSON.stringify({ is_permanent: newState })
     });
     
     const result = await response.json();
     
     if (result.success) {
-      showToast(isPermanent ? 'Marked as permanent device' : 'Marked as temporary device', 'success');
+      showToast(newState ? 'Marked as permanent' : 'Removed from permanent list', 'success');
       await analyticsLoadNetworkDevices();
     } else {
       showToast('Failed to update device', 'error');
