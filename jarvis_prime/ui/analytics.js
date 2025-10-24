@@ -1174,14 +1174,16 @@ async function analyticsLoadInternetDashboard() {
   console.log('Loading internet speed test dashboard...');
   
   try {
-    const [statsResponse, latestResponse, statusResponse] = await Promise.all([
+    const [statsResponse, latestResponse, statusResponse, scheduleResponse] = await Promise.all([
       fetch(ANALYTICS_API('speedtest/stats')),
       fetch(ANALYTICS_API('speedtest/latest')).catch(() => ({ ok: false })),
-      fetch(ANALYTICS_API('speedtest/monitoring/status'))
+      fetch(ANALYTICS_API('speedtest/monitoring/status')),
+      fetch(ANALYTICS_API('speedtest/schedule'))
     ]);
     
     const stats = await statsResponse.json();
     const status = await statusResponse.json();
+    const schedule = await scheduleResponse.json();
     
     // Update stats
     document.getElementById('speed-avg-download').textContent = stats.recent_avg_download ? 
@@ -1200,6 +1202,9 @@ async function analyticsLoadInternetDashboard() {
       document.getElementById('speed-latest-result').innerHTML = 
         '<p style="text-align: center; color: #888;">No tests yet. Click "Run Test Now"</p>';
     }
+    
+    // Update schedule UI
+    analyticsUpdateScheduleUI(schedule, status);
     
     // Update monitoring button
     const monitorBtn = document.getElementById('speed-monitoring-toggle');
@@ -1314,14 +1319,21 @@ async function analyticsToggleSpeedMonitoring() {
       'speedtest/monitoring/stop' : 
       'speedtest/monitoring/start';
     
+    // Get current schedule settings
+    const scheduleResponse = await fetch(ANALYTICS_API('speedtest/schedule'));
+    const schedule = await scheduleResponse.json();
+    
     const response = await fetch(ANALYTICS_API(endpoint), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ interval_hours: 12 })
+      body: JSON.stringify(schedule)
     });
     
     if (response.ok) {
-      showToast(isCurrentlyMonitoring ? 'Auto-testing stopped' : 'Auto-testing started (12h interval)', 'success');
+      const mode = schedule.schedule_mode === 'interval' ? 
+        `${schedule.interval_hours}h interval` : 
+        `scheduled at ${schedule.schedule_times.join(', ')}`;
+      showToast(isCurrentlyMonitoring ? 'Auto-testing stopped' : `Auto-testing started (${mode})`, 'success');
       analyticsLoadInternetDashboard();
     } else {
       showToast('Failed to toggle auto-testing', 'error');
@@ -1329,6 +1341,173 @@ async function analyticsToggleSpeedMonitoring() {
   } catch (error) {
     console.error('Failed to toggle monitoring:', error);
     showToast('Failed to toggle auto-testing', 'error');
+  }
+}
+
+// Update schedule UI based on settings
+function analyticsUpdateScheduleUI(schedule, status) {
+  const mode = schedule.schedule_mode || 'interval';
+  
+  // Update mode buttons
+  const intervalBtn = document.getElementById('schedule-mode-interval');
+  const scheduledBtn = document.getElementById('schedule-mode-scheduled');
+  
+  if (intervalBtn && scheduledBtn) {
+    intervalBtn.classList.toggle('active', mode === 'interval');
+    scheduledBtn.classList.toggle('active', mode === 'scheduled');
+  }
+  
+  // Show/hide appropriate controls
+  const intervalControls = document.getElementById('interval-controls');
+  const scheduledControls = document.getElementById('scheduled-controls');
+  
+  if (intervalControls && scheduledControls) {
+    intervalControls.style.display = mode === 'interval' ? 'block' : 'none';
+    scheduledControls.style.display = mode === 'scheduled' ? 'block' : 'none';
+  }
+  
+  // Update interval slider
+  const intervalSlider = document.getElementById('interval-hours');
+  const intervalValue = document.getElementById('interval-value');
+  if (intervalSlider && intervalValue) {
+    intervalSlider.value = schedule.interval_hours || 12;
+    intervalValue.textContent = `${schedule.interval_hours || 12} hours`;
+  }
+  
+  // Update scheduled times list
+  analyticsDisplayScheduledTimes(schedule.schedule_times || []);
+}
+
+// Display scheduled times
+function analyticsDisplayScheduledTimes(times) {
+  const container = document.getElementById('scheduled-times-list');
+  if (!container) return;
+  
+  if (times.length === 0) {
+    container.innerHTML = '<p style="color: #888; text-align: center;">No times scheduled</p>';
+    return;
+  }
+  
+  container.innerHTML = times.map(time => `
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: #2a2a2a; border-radius: 4px; margin-bottom: 0.5rem;">
+      <span style="font-size: 1.1rem; font-weight: 500;">${time}</span>
+      <button onclick="analyticsRemoveScheduledTime('${time}')" class="btn btn-sm btn-danger" style="padding: 0.25rem 0.5rem;">✕</button>
+    </div>
+  `).join('');
+}
+
+// Switch schedule mode
+async function analyticsSwitchScheduleMode(mode) {
+  try {
+    const response = await fetch(ANALYTICS_API('speedtest/schedule'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule_mode: mode })
+    });
+    
+    if (response.ok) {
+      showToast(`Switched to ${mode} mode`, 'success');
+      analyticsLoadInternetDashboard();
+    } else {
+      showToast('Failed to switch mode', 'error');
+    }
+  } catch (error) {
+    console.error('Failed to switch schedule mode:', error);
+    showToast('Failed to switch mode', 'error');
+  }
+}
+
+// Update interval hours
+async function analyticsUpdateInterval() {
+  const slider = document.getElementById('interval-hours');
+  const hours = parseInt(slider.value);
+  
+  try {
+    const response = await fetch(ANALYTICS_API('speedtest/schedule'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interval_hours: hours })
+    });
+    
+    if (response.ok) {
+      document.getElementById('interval-value').textContent = `${hours} hours`;
+      showToast(`Interval updated to ${hours} hours`, 'success');
+    } else {
+      showToast('Failed to update interval', 'error');
+    }
+  } catch (error) {
+    console.error('Failed to update interval:', error);
+    showToast('Failed to update interval', 'error');
+  }
+}
+
+// Add scheduled time
+async function analyticsAddScheduledTime() {
+  const input = document.getElementById('scheduled-time-input');
+  const time = input.value;
+  
+  if (!time) {
+    showToast('Please select a time', 'error');
+    return;
+  }
+  
+  try {
+    // Get current schedule
+    const scheduleResponse = await fetch(ANALYTICS_API('speedtest/schedule'));
+    const schedule = await scheduleResponse.json();
+    
+    // Add new time if not already exists
+    if (!schedule.schedule_times.includes(time)) {
+      schedule.schedule_times.push(time);
+      schedule.schedule_times.sort();
+      
+      const response = await fetch(ANALYTICS_API('speedtest/schedule'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule_times: schedule.schedule_times })
+      });
+      
+      if (response.ok) {
+        showToast(`Added ${time} to schedule`, 'success');
+        input.value = '';
+        analyticsLoadInternetDashboard();
+      } else {
+        showToast('Failed to add time', 'error');
+      }
+    } else {
+      showToast('Time already scheduled', 'error');
+    }
+  } catch (error) {
+    console.error('Failed to add scheduled time:', error);
+    showToast('Failed to add time', 'error');
+  }
+}
+
+// Remove scheduled time
+async function analyticsRemoveScheduledTime(time) {
+  try {
+    // Get current schedule
+    const scheduleResponse = await fetch(ANALYTICS_API('speedtest/schedule'));
+    const schedule = await scheduleResponse.json();
+    
+    // Remove time
+    schedule.schedule_times = schedule.schedule_times.filter(t => t !== time);
+    
+    const response = await fetch(ANALYTICS_API('speedtest/schedule'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule_times: schedule.schedule_times })
+    });
+    
+    if (response.ok) {
+      showToast(`Removed ${time} from schedule`, 'success');
+      analyticsLoadInternetDashboard();
+    } else {
+      showToast('Failed to remove time', 'error');
+    }
+  } catch (error) {
+    console.error('Failed to remove scheduled time:', error);
+    showToast('Failed to remove time', 'error');
   }
 }
 
