@@ -1317,8 +1317,7 @@ class HealthMonitor:
                     if not self.should_suppress_notification(service.service_name, 'up'):
                         await self.notify(
                             f"[Analytics] {service.service_name}",
-                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)", "analytics"
-                        )
+                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)", "analytics")
                 
                 await asyncio.sleep(service.interval)
                 
@@ -1487,25 +1486,31 @@ class NetworkScanner:
         name = device.custom_name or device.hostname or device.ip_address
         vendor_info = f" ({device.vendor})" if device.vendor else ""
         
-        await self.notification_callback(
-            "🌐 Network Monitor",
-            f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}", "analytics")
+        await (self.notification_callback or analytics_notify)(
+            'Network Monitor',
+            'info',
+            f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}"
+        )
     
     async def _notify_device_offline(self, device: NetworkDevice):
         """Send notification for device going offline"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await self.notification_callback(
-            "🌐 Network Monitor",
-            f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}", "analytics")
+        await (self.notification_callback or analytics_notify)(
+            'Network Monitor',
+            'warning',
+            f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}"
+        )
     
     async def _notify_device_online(self, device: NetworkDevice):
         """Send notification for device coming back online"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await self.notification_callback(
-            "🌐 Network Monitor",
-            f"âœ… Device online: {name}\nIP: {device.ip_address}", "analytics")
+        await (self.notification_callback or analytics_notify)(
+            'Network Monitor',
+            'info',
+            f"âœ… Device online: {name}\nIP: {device.ip_address}"
+        )
     
     async def monitor_loop(self):
         """Continuous network monitoring loop"""
@@ -1652,9 +1657,11 @@ class SpeedTestMonitor:
         averages = self.db.get_speed_test_averages(last_n=5)
         
         if not averages or averages['avg_download'] == 0:
-            await self.notification_callback(
-                "🌐 Internet Monitor",
-                f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms", "analytics")
+            await (self.notification_callback or analytics_notify)(
+                'Internet Monitor',
+                'info',
+                f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms"
+            )
             return
         
         # Calculate variance
@@ -1681,30 +1688,36 @@ class SpeedTestMonitor:
         if is_degraded:
             self.db.update_speed_test_status(result.timestamp, 'degraded')
             message = "ðŸš¨ Internet Degraded\n\n" + "\n".join(issues)
-            await self.notification_callback("🌐 Internet Monitor", message, "analytics")
+            await (self.notification_callback or analytics_notify)("🌐 Internet Monitor", message, "analytics")
         else:
             # Check recovery
             recent = self.db.get_speed_test_history(hours=24)
             if recent and len(recent) > 1:
                 if recent[1].get('status') == 'degraded':
-                    await self.notification_callback(
-                        "🌐 Internet Monitor",
-                        f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms", "analytics")
+                    await (self.notification_callback or analytics_notify)(
+                        'Internet Monitor',
+                        'info',
+                        f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms"
+                    )
             
             # Normal notification
             variance_msg = ""
             if abs(down_var) > 5 or abs(up_var) > 5:
                 variance_msg = f"\n\nDownload: {down_var:+.0f}%\nUpload: {up_var:+.0f}%\nPing: {ping_var:+.0f}%"
             
-            await self.notification_callback(
-                "🌐 Internet Monitor",
-                f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}", "analytics")
+            await (self.notification_callback or analytics_notify)(
+                'Internet Monitor',
+                'info',
+                f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}"
+            )
     
     async def _notify_offline(self):
         """Offline notification"""
-        await self.notification_callback(
-            "🌐 Internet Monitor",
-            f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures", "analytics")
+        await (self.notification_callback or analytics_notify)(
+            'Internet Monitor',
+            'critical',
+            f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures"
+        )
     
     async def monitor_loop(self):
         """Monitoring loop"""
@@ -1763,17 +1776,14 @@ speed_monitor: Optional[SpeedTestMonitor] = None
 
 async def analytics_notify(title: str, body: str, source: str = "analytics"):
     """
-    Fallback notification function - tries to use process_incoming from bot.py for proper fan-out.
-    If not available, falls back to direct Gotify notification.
+    Fallback notification - tries process_incoming for fan-out, falls back to Gotify
     """
     try:
-        # Try to use bot.py's process_incoming for proper fan-out
         from bot import process_incoming
         process_incoming(title, body, source=source)
         logger.debug(f"Notification sent via process_incoming: {title}")
     except Exception as e:
-        # Fallback to direct Gotify if process_incoming is not available
-        logger.debug(f"process_incoming not available, using Gotify fallback: {e}")
+        logger.debug(f"process_incoming not available ({e}), using Gotify fallback")
         try:
             import os
             gotify_url = os.getenv('GOTIFY_URL')
@@ -1783,23 +1793,16 @@ async def analytics_notify(title: str, body: str, source: str = "analytics"):
                 logger.debug("Gotify not configured, skipping notification")
                 return
             
-            # Determine priority from title/body content
             priority = 5
-            if "DOWN" in body or "OFFLINE" in body or "FAILED" in body:
+            if "DOWN" in body or "OFFLINE" in body:
                 priority = 8
             elif "Degraded" in body or "offline" in body:
                 priority = 7
-            elif "RECOVERED" in body or "recovered" in body:
-                priority = 5
             
             async with aiohttp.ClientSession() as session:
                 await session.post(
                     f"{gotify_url}/message",
-                    json={
-                        'title': title,
-                        'message': body,
-                        'priority': priority
-                    },
+                    json={'title': title, 'message': body, 'priority': priority},
                     headers={'X-Gotify-Key': gotify_token},
                     timeout=aiohttp.ClientTimeout(total=5)
                 )
