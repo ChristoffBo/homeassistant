@@ -1486,31 +1486,28 @@ class NetworkScanner:
         name = device.custom_name or device.hostname or device.ip_address
         vendor_info = f" ({device.vendor})" if device.vendor else ""
         
-        await (self.notification_callback if self.notification_callback else analytics_notify)(
-            'Network Monitor',
-            'info',
+        await notify(
+            "🌐 Network Monitor",
             f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}"
-        )
+        , "analytics")
     
     async def _notify_device_offline(self, device: NetworkDevice):
         """Send notification for device going offline"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await (self.notification_callback if self.notification_callback else analytics_notify)(
-            'Network Monitor',
-            'warning',
+        await notify(
+            "🌐 Network Monitor",
             f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}"
-        )
+        , "analytics")
     
     async def _notify_device_online(self, device: NetworkDevice):
         """Send notification for device coming back online"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await (self.notification_callback if self.notification_callback else analytics_notify)(
-            'Network Monitor',
-            'info',
+        await notify(
+            "🌐 Network Monitor",
             f"âœ… Device online: {name}\nIP: {device.ip_address}"
-        )
+        , "analytics")
     
     async def monitor_loop(self):
         """Continuous network monitoring loop"""
@@ -1655,13 +1652,13 @@ class SpeedTestMonitor:
     async def _analyze_and_notify(self, result: SpeedTestResult):
         """Compare result to average and notify"""
         averages = self.db.get_speed_test_averages(last_n=5)
+        notify = self.notification_callback or analytics_notify
         
         if not averages or averages['avg_download'] == 0:
-            await (self.notification_callback if self.notification_callback else analytics_notify)(
-                'Internet Monitor',
-                'info',
+            await notify(
+                "🌐 Internet Monitor",
                 f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms"
-            )
+            , "analytics")
             return
         
         # Calculate variance
@@ -1688,36 +1685,33 @@ class SpeedTestMonitor:
         if is_degraded:
             self.db.update_speed_test_status(result.timestamp, 'degraded')
             message = "ðŸš¨ Internet Degraded\n\n" + "\n".join(issues)
-            await (self.notification_callback if self.notification_callback else analytics_notify)("🌐 Internet Monitor", message, "analytics")
+            await notify("🌐 Internet Monitor", message, "analytics")
         else:
             # Check recovery
             recent = self.db.get_speed_test_history(hours=24)
             if recent and len(recent) > 1:
                 if recent[1].get('status') == 'degraded':
-                    await (self.notification_callback if self.notification_callback else analytics_notify)(
-                        'Internet Monitor',
-                        'info',
+                    await notify(
+                        "🌐 Internet Monitor",
                         f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms"
-                    )
+                    , "analytics")
             
             # Normal notification
             variance_msg = ""
             if abs(down_var) > 5 or abs(up_var) > 5:
                 variance_msg = f"\n\nDownload: {down_var:+.0f}%\nUpload: {up_var:+.0f}%\nPing: {ping_var:+.0f}%"
             
-            await (self.notification_callback if self.notification_callback else analytics_notify)(
-                'Internet Monitor',
-                'info',
+            await notify(
+                "🌐 Internet Monitor",
                 f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}"
-            )
+            , "analytics")
     
     async def _notify_offline(self):
         """Offline notification"""
-        await (self.notification_callback if self.notification_callback else analytics_notify)(
-            'Internet Monitor',
-            'critical',
+        await notify(
+            "🌐 Internet Monitor",
             f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures"
-        )
+        , "analytics")
     
     async def monitor_loop(self):
         """Monitoring loop"""
@@ -1775,30 +1769,19 @@ speed_monitor: Optional[SpeedTestMonitor] = None
 # ============================================================================
 
 async def analytics_notify(title: str, body: str, source: str = "analytics"):
-    """
-    Fallback notification - tries process_incoming for fan-out, falls back to Gotify
-    """
+    """Fallback notification - tries process_incoming, falls back to Gotify"""
     try:
         from bot import process_incoming
         process_incoming(title, body, source=source)
-        logger.debug(f"Notification sent via process_incoming: {title}")
     except Exception as e:
-        logger.debug(f"process_incoming not available ({e}), using Gotify fallback")
+        logger.debug(f"process_incoming not available, using Gotify fallback")
         try:
             import os
             gotify_url = os.getenv('GOTIFY_URL')
             gotify_token = os.getenv('GOTIFY_TOKEN')
-            
             if not gotify_url or not gotify_token:
-                logger.debug("Gotify not configured, skipping notification")
                 return
-            
-            priority = 5
-            if "DOWN" in body or "OFFLINE" in body:
-                priority = 8
-            elif "Degraded" in body or "offline" in body:
-                priority = 7
-            
+            priority = 8 if "DOWN" in body or "OFFLINE" in body else 7 if "Degraded" in body or "offline" in body else 5
             async with aiohttp.ClientSession() as session:
                 await session.post(
                     f"{gotify_url}/message",
@@ -1806,8 +1789,8 @@ async def analytics_notify(title: str, body: str, source: str = "analytics"):
                     headers={'X-Gotify-Key': gotify_token},
                     timeout=aiohttp.ClientTimeout(total=5)
                 )
-        except Exception as fallback_error:
-            logger.error(f"Failed to send notification: {fallback_error}")
+        except Exception:
+            pass
 
 
 # ============================================================================
