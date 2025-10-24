@@ -1486,7 +1486,7 @@ class NetworkScanner:
         name = device.custom_name or device.hostname or device.ip_address
         vendor_info = f" ({device.vendor})" if device.vendor else ""
         
-        await (self.notification_callback or analytics_notify)(
+        await (self.notification_callback if self.notification_callback else analytics_notify)(
             'Network Monitor',
             'info',
             f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}"
@@ -1496,7 +1496,7 @@ class NetworkScanner:
         """Send notification for device going offline"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await (self.notification_callback or analytics_notify)(
+        await (self.notification_callback if self.notification_callback else analytics_notify)(
             'Network Monitor',
             'warning',
             f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}"
@@ -1506,7 +1506,7 @@ class NetworkScanner:
         """Send notification for device coming back online"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await (self.notification_callback or analytics_notify)(
+        await (self.notification_callback if self.notification_callback else analytics_notify)(
             'Network Monitor',
             'info',
             f"âœ… Device online: {name}\nIP: {device.ip_address}"
@@ -1657,7 +1657,7 @@ class SpeedTestMonitor:
         averages = self.db.get_speed_test_averages(last_n=5)
         
         if not averages or averages['avg_download'] == 0:
-            await (self.notification_callback or analytics_notify)(
+            await (self.notification_callback if self.notification_callback else analytics_notify)(
                 'Internet Monitor',
                 'info',
                 f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms"
@@ -1688,13 +1688,13 @@ class SpeedTestMonitor:
         if is_degraded:
             self.db.update_speed_test_status(result.timestamp, 'degraded')
             message = "ðŸš¨ Internet Degraded\n\n" + "\n".join(issues)
-            await (self.notification_callback or analytics_notify)("🌐 Internet Monitor", message, "analytics")
+            await (self.notification_callback if self.notification_callback else analytics_notify)("🌐 Internet Monitor", message, "analytics")
         else:
             # Check recovery
             recent = self.db.get_speed_test_history(hours=24)
             if recent and len(recent) > 1:
                 if recent[1].get('status') == 'degraded':
-                    await (self.notification_callback or analytics_notify)(
+                    await (self.notification_callback if self.notification_callback else analytics_notify)(
                         'Internet Monitor',
                         'info',
                         f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms"
@@ -1705,7 +1705,7 @@ class SpeedTestMonitor:
             if abs(down_var) > 5 or abs(up_var) > 5:
                 variance_msg = f"\n\nDownload: {down_var:+.0f}%\nUpload: {up_var:+.0f}%\nPing: {ping_var:+.0f}%"
             
-            await (self.notification_callback or analytics_notify)(
+            await (self.notification_callback if self.notification_callback else analytics_notify)(
                 'Internet Monitor',
                 'info',
                 f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}"
@@ -1713,7 +1713,7 @@ class SpeedTestMonitor:
     
     async def _notify_offline(self):
         """Offline notification"""
-        await (self.notification_callback or analytics_notify)(
+        await (self.notification_callback if self.notification_callback else analytics_notify)(
             'Internet Monitor',
             'critical',
             f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures"
