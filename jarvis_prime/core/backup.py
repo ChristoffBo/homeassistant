@@ -250,6 +250,14 @@ def backup_orchestrator_data(backup_root):
             json.dump(history_data, f, indent=2, default=str)
         logger.info(f"[backup] Backed up {len(history_data)} recent orchestrator jobs")
         
+        # Backup options.json (orchestrator runtime options)
+        options_file = Path("/data/options.json")
+        if options_file.exists():
+            shutil.copy2(options_file, orch_dir / "options.json")
+            logger.info(f"[backup] Backed up options.json")
+        else:
+            logger.info(f"[backup] No options.json found")
+        
     except Exception as e:
         logger.error(f"[backup] Failed to backup orchestrator data: {e}")
     finally:
@@ -293,6 +301,7 @@ def create_backup_manifest(backup_root):
         "backup_contents": {
             "database": os.path.exists(backup_root / "jarvis.db"),
             "config": os.path.exists(backup_root / "config.yaml"),
+            "options": os.path.exists(backup_root / "orchestrator/options.json"),
             "playbooks": os.path.exists(backup_root / "playbooks"),
             "models": os.path.exists(backup_root / "models"),
             "sentinel_templates": os.path.exists(backup_root / "sentinel/templates"),
@@ -595,6 +604,13 @@ async def restore_backup(request):
             if config_backup.exists():
                 shutil.copy2(config_backup, config_target)
                 logger.info("[restore] ✓ Restored config")
+
+            # 7. Restore options.json
+            options_backup = backup_root / "orchestrator/options.json"
+            options_target = Path("/data/options.json")
+            if options_backup.exists():
+                shutil.copy2(options_backup, options_target)
+                logger.info("[restore] ✓ Restored options.json")
 
         tmp_path.unlink(missing_ok=True)
         
