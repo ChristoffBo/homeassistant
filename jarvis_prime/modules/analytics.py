@@ -1309,9 +1309,7 @@ class HealthMonitor:
                     if not self.should_suppress_notification(service.service_name, 'down'):
                         await self.notify(
                             f"[Analytics] {service.service_name}",
-                            f"Service is DOWN: {metric.error_message or 'No response'}",
-                            source="analytics",
-                            priority=8
+                            f"Service is DOWN: {metric.error_message or 'No response'}", "analytics", priority=8
                         )
                 
                 elif metric.status == 'up' and previous_status == 'down':
@@ -1320,9 +1318,7 @@ class HealthMonitor:
                     if not self.should_suppress_notification(service.service_name, 'up'):
                         await self.notify(
                             f"[Analytics] {service.service_name}",
-                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)",
-                            source="analytics",
-                            priority=5
+                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)", "analytics", priority=5
                         )
                 
                 await asyncio.sleep(service.interval)
@@ -1494,9 +1490,7 @@ class NetworkScanner:
         
         await self.notification_callback(
             "🌐 Network Monitor",
-            f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}",
-            source="analytics",
-            priority=5
+            f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}", "analytics", priority=5
         )
     
     async def _notify_device_offline(self, device: NetworkDevice):
@@ -1505,9 +1499,7 @@ class NetworkScanner:
         
         await self.notification_callback(
             "🌐 Network Monitor",
-            f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}",
-            source="analytics",
-            priority=7
+            f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}", "analytics", priority=7
         )
     
     async def _notify_device_online(self, device: NetworkDevice):
@@ -1516,9 +1508,7 @@ class NetworkScanner:
         
         await self.notification_callback(
             "🌐 Network Monitor",
-            f"âœ… Device online: {name}\nIP: {device.ip_address}",
-            source="analytics",
-            priority=5
+            f"âœ… Device online: {name}\nIP: {device.ip_address}", "analytics", priority=5
         )
     
     async def monitor_loop(self):
@@ -1668,9 +1658,7 @@ class SpeedTestMonitor:
         if not averages or averages['avg_download'] == 0:
             await self.notification_callback(
                 "🌐 Internet Monitor",
-                f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms",
-                source="analytics",
-                priority=5
+                f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms", "analytics", priority=5
             )
             return
         
@@ -1698,7 +1686,7 @@ class SpeedTestMonitor:
         if is_degraded:
             self.db.update_speed_test_status(result.timestamp, 'degraded')
             message = "ðŸš¨ Internet Degraded\n\n" + "\n".join(issues)
-            await self.notification_callback("🌐 Internet Monitor", message, source="analytics", priority=7)
+            await self.notification_callback("🌐 Internet Monitor", message, "analytics", priority=7)
         else:
             # Check recovery
             recent = self.db.get_speed_test_history(hours=24)
@@ -1706,9 +1694,7 @@ class SpeedTestMonitor:
                 if recent[1].get('status') == 'degraded':
                     await self.notification_callback(
                         "🌐 Internet Monitor",
-                        f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms",
-                        source="analytics",
-                        priority=5
+                        f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms", "analytics", priority=5
                     )
             
             # Normal notification
@@ -1718,18 +1704,14 @@ class SpeedTestMonitor:
             
             await self.notification_callback(
                 "🌐 Internet Monitor",
-                f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}",
-                source="analytics",
-                priority=5
+                f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}", "analytics", priority=5
             )
     
     async def _notify_offline(self):
         """Offline notification"""
         await self.notification_callback(
             "🌐 Internet Monitor",
-            f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures",
-            source="analytics",
-            priority=10
+            f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures", "analytics", priority=10
         )
     
     async def monitor_loop(self):
