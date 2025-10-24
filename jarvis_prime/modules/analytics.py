@@ -1652,7 +1652,18 @@ class SpeedTestMonitor:
     async def _analyze_and_notify(self, result: SpeedTestResult):
         """Compare result to average and notify"""
         averages = self.db.get_speed_test_averages(last_n=5)
-        notify = self.notification_callback or analytics_notify
+        
+        async def notify(title, body, source="analytics"):
+            """Send notification via callback or fallback"""
+            if self.notification_callback:
+                await self.notification_callback(title, body, source)
+            else:
+                # Fallback to process_incoming
+                try:
+                    from bot import process_incoming
+                    process_incoming(title, body, source=source)
+                except Exception:
+                    pass  # Silent fail if no notification available
         
         if not averages or averages['avg_download'] == 0:
             await notify(
