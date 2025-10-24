@@ -1761,40 +1761,50 @@ speed_monitor: Optional[SpeedTestMonitor] = None
 # NOTIFICATION HELPER
 # ============================================================================
 
-async def analytics_notify(service_name: str, severity: str, message: str):
-    """Send notification via Gotify"""
+async def analytics_notify(title: str, body: str, source: str = "analytics"):
+    """
+    Fallback notification function - tries to use process_incoming from bot.py for proper fan-out.
+    If not available, falls back to direct Gotify notification.
+    """
     try:
-        import os
-        gotify_url = os.getenv('GOTIFY_URL')
-        gotify_token = os.getenv('GOTIFY_TOKEN')
-        
-        if not gotify_url or not gotify_token:
-            logger.debug("Gotify not configured, skipping notification")
-            return
-        
-        priority_map = {
-            'info': 5,
-            'up': 5,
-            'warning': 7,
-            'down': 8,
-            'critical': 10
-        }
-        
-        priority = priority_map.get(severity, 5)
-        
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                f"{gotify_url}/message",
-                json={
-                    'title': f'[Analytics] {service_name}',
-                    'message': message,
-                    'priority': priority
-                },
-                headers={'X-Gotify-Key': gotify_token},
-                timeout=aiohttp.ClientTimeout(total=5)
-            )
+        # Try to use bot.py's process_incoming for proper fan-out
+        from bot import process_incoming
+        process_incoming(title, body, source=source)
+        logger.debug(f"Notification sent via process_incoming: {title}")
     except Exception as e:
-        logger.error(f"Failed to send notification: {e}")
+        # Fallback to direct Gotify if process_incoming is not available
+        logger.debug(f"process_incoming not available, using Gotify fallback: {e}")
+        try:
+            import os
+            gotify_url = os.getenv('GOTIFY_URL')
+            gotify_token = os.getenv('GOTIFY_TOKEN')
+            
+            if not gotify_url or not gotify_token:
+                logger.debug("Gotify not configured, skipping notification")
+                return
+            
+            # Determine priority from title/body content
+            priority = 5
+            if "DOWN" in body or "OFFLINE" in body or "FAILED" in body:
+                priority = 8
+            elif "Degraded" in body or "offline" in body:
+                priority = 7
+            elif "RECOVERED" in body or "recovered" in body:
+                priority = 5
+            
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"{gotify_url}/message",
+                    json={
+                        'title': title,
+                        'message': body,
+                        'priority': priority
+                    },
+                    headers={'X-Gotify-Key': gotify_token},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                )
+        except Exception as fallback_error:
+            logger.error(f"Failed to send notification: {fallback_error}")
 
 
 # ============================================================================
