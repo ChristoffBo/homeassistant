@@ -1392,20 +1392,22 @@ class HealthMonitor:
                     self.db.create_incident(service.service_name, metric.error_message)
                     
                     if not self.should_suppress_notification(service.service_name, 'down'):
-                        await analytics_notify(
-                            service.service_name,
-                            'down',
-                            f"Service is DOWN: {metric.error_message or 'No response'}"
+                        await self.notify(
+                            f"[Analytics] {service.service_name}",
+                            f"Service is DOWN: {metric.error_message or 'No response'}",
+                            source="analytics",
+                            priority=8
                         )
                 
                 elif metric.status == 'up' and previous_status == 'down':
                     self.db.resolve_incident(service.service_name)
                     
                     if not self.should_suppress_notification(service.service_name, 'up'):
-                        await analytics_notify(
-                            service.service_name,
-                            'up',
-                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)"
+                        await self.notify(
+                            f"[Analytics] {service.service_name}",
+                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)",
+                            source="analytics",
+                            priority=5
                         )
                 
                 await asyncio.sleep(service.interval)
@@ -1762,11 +1764,14 @@ class SpeedTestMonitor:
         averages = self.db.get_speed_test_averages(last_n=5)
         
         if not averages or averages['avg_download'] == 0:
-            await analytics_notify(
-                'Internet Monitor',
-                'info',
-                f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms"
-            )
+            # First test or not enough data - only notify if enabled
+            if self.notify_on_every_test:
+                await self.notification_callback(
+                    "🌐 Internet Monitor",
+                    f"Speed test: ↓{result.download} Mbps ↑{result.upload} Mbps {result.ping}ms",
+                    source="analytics",
+                    priority=5
+                )
             return
         
         # Calculate variance
@@ -1791,30 +1796,44 @@ class SpeedTestMonitor:
             issues.append(f"Latency â†‘{abs(ping_var):.0f}% ({result.ping:.1f} vs {averages['avg_ping']:.1f}ms)")
         
         if is_degraded:
+            # ALWAYS notify on degraded status
             self.db.update_speed_test_status(result.timestamp, 'degraded')
             message = "ðŸš¨ Internet Degraded\n\n" + "\n".join(issues)
-            await analytics_notify('Internet Monitor', 'warning', message)
+            await self.notification_callback(
+                "🌐 Internet Monitor",
+                message,
+                source="analytics",
+                priority=7
+            )
         else:
             # Check recovery
             recent = self.db.get_speed_test_history(hours=24)
             if recent and len(recent) > 1:
                 if recent[1].get('status') == 'degraded':
+                    # ALWAYS notify on recovery
                     await analytics_notify(
                         'Internet Monitor',
                         'info',
                         f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms"
                     )
             
-            # Normal notification
-            variance_msg = ""
-            if abs(down_var) > 5 or abs(up_var) > 5:
-                variance_msg = f"\n\nDownload: {down_var:+.0f}%\nUpload: {up_var:+.0f}%\nPing: {ping_var:+.0f}%"
-            
-            await analytics_notify(
-                'Internet Monitor',
-                'info',
-                f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}"
-            )
+            # Normal status - only notify if enabled
+            if self.notify_on_every_test:
+                variance_msg = ""
+                if abs(down_var) > 5 or abs(up_var) > 5:
+                    variance_msg = f"
+
+Download: {down_var:+.0f}%
+Upload: {up_var:+.0f}%
+Ping: {ping_var:+.0f}%"
+                
+                await analytics_notify(
+                    'Internet Monitor',
+                    'info',
+                    f"🌐 Speed Test
+
+↓{result.download:.1f} Mbps ↑{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}"
+                )
     
     async def _notify_offline(self):
         """Offline notification"""
@@ -1882,6 +1901,7 @@ class SpeedTestMonitor:
             self.schedule_times = settings.get('schedule_times', self.schedule_times)
             self.degrade_threshold = settings.get('degrade_threshold', self.degrade_threshold)
             self.ping_threshold = settings.get('ping_threshold', self.ping_threshold)
+            self.notify_on_every_test = settings.get('notify_on_every_test', self.notify_on_every_test)
             
             # Save to database
             self.db.update_speed_test_settings({
@@ -1889,7 +1909,8 @@ class SpeedTestMonitor:
                 'interval_hours': self.interval_hours,
                 'schedule_times': self.schedule_times,
                 'degrade_threshold': self.degrade_threshold,
-                'ping_threshold': self.ping_threshold
+                'ping_threshold': self.ping_threshold,
+                'notify_on_every_test': self.notify_on_every_test
             })
         else:
             # Reload from database
@@ -1932,40 +1953,42 @@ speed_monitor: Optional[SpeedTestMonitor] = None
 # NOTIFICATION HELPER
 # ============================================================================
 
-async def analytics_notify(service_name: str, severity: str, message: str):
-    """Send notification via Gotify"""
+async def analytics_notify(title: str, body: str, source: str = "analytics", priority: int = 5):
+    """
+    Fallback notification function - tries to use process_incoming from bot.py for proper fan-out.
+    If not available, falls back to direct Gotify notification.
+    """
     try:
-        import os
-        gotify_url = os.getenv('GOTIFY_URL')
-        gotify_token = os.getenv('GOTIFY_TOKEN')
-        
-        if not gotify_url or not gotify_token:
-            logger.debug("Gotify not configured, skipping notification")
-            return
-        
-        priority_map = {
-            'info': 5,
-            'up': 5,
-            'warning': 7,
-            'down': 8,
-            'critical': 10
-        }
-        
-        priority = priority_map.get(severity, 5)
-        
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                f"{gotify_url}/message",
-                json={
-                    'title': f'[Analytics] {service_name}',
-                    'message': message,
-                    'priority': priority
-                },
-                headers={'X-Gotify-Key': gotify_token},
-                timeout=aiohttp.ClientTimeout(total=5)
-            )
+        # Try to use bot.py's process_incoming for proper fan-out
+        from bot import process_incoming
+        process_incoming(title, body, source=source, priority=priority)
+        logger.debug(f"Notification sent via process_incoming: {title}")
     except Exception as e:
-        logger.error(f"Failed to send notification: {e}")
+        # Fallback to direct Gotify if process_incoming is not available
+        logger.debug(f"process_incoming not available, using Gotify fallback: {e}")
+        try:
+            import os
+            gotify_url = os.getenv('GOTIFY_URL')
+            gotify_token = os.getenv('GOTIFY_TOKEN')
+            
+            if not gotify_url or not gotify_token:
+                logger.debug("Gotify not configured, skipping notification")
+                return
+            
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"{gotify_url}/message",
+                    json={
+                        'title': title,
+                        'message': body,
+                        'priority': priority
+                    },
+                    headers={'X-Gotify-Key': gotify_token},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                )
+        except Exception as fallback_error:
+            logger.error(f"Failed to send notification: {fallback_error}")
+
 
 
 # ============================================================================
@@ -2503,6 +2526,9 @@ async def speedtest_update_schedule(request: web.Request):
         if 1.0 <= threshold <= 3.0:
             settings['ping_threshold'] = threshold
     
+    if 'notify_on_every_test' in data:
+        settings['notify_on_every_test'] = bool(data['notify_on_every_test'])
+    
     # Save to database
     db.update_speed_test_settings(settings)
     
@@ -2513,6 +2539,7 @@ async def speedtest_update_schedule(request: web.Request):
         speed_monitor.schedule_times = settings['schedule_times']
         speed_monitor.degrade_threshold = settings['degrade_threshold']
         speed_monitor.ping_threshold = settings['ping_threshold']
+        speed_monitor.notify_on_every_test = settings['notify_on_every_test']
     
     return _json({'success': True, 'settings': settings})
 
@@ -2568,7 +2595,15 @@ def register_routes(app: web.Application):
     app.router.add_post('/api/analytics/speedtest/schedule', speedtest_update_schedule)
 
 async def init_analytics(app: web.Application, notification_callback: Optional[Callable] = None):
-    """Initialize analytics module"""
+    """
+    Initialize analytics module
+    
+    Args:
+        app: aiohttp web application
+        notification_callback: Callback for notifications (should be bot.process_incoming for fan-out)
+                              Signature: callback(title: str, body: str, source: str, priority: int)
+                              If None, uses analytics_notify fallback
+    """
     global db, monitor, scanner, speed_monitor
     
     db = AnalyticsDB()
