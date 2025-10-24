@@ -38,6 +38,26 @@ DEFAULT_CONFIG = {
     "max_storage_gb": 50,
     "purge_history_days": 30,
     "notifications_enabled": True,
+    "storage_backend": {
+        "type": "local",  # local, nfs, smb
+        "local": {
+            "path": "/share/jarvis_prime/registry"
+        },
+        "nfs": {
+            "server": "",
+            "export": "",
+            "mount_point": "/mnt/registry-nfs",
+            "options": "rw,sync,hard,intr"
+        },
+        "smb": {
+            "server": "",
+            "share": "",
+            "username": "",
+            "password": "",
+            "mount_point": "/mnt/registry-smb",
+            "options": "vers=3.0,dir_mode=0777,file_mode=0666"
+        }
+    },
     "supported_registries": {
         "docker.io": {
             "name": "Docker Hub",
@@ -166,6 +186,271 @@ def get_db():
     return _db_conn
 
 # ============================================================================
+# STORAGE BACKEND MANAGEMENT
+# ============================================================================
+
+def mount_nfs_storage(config: Dict[str, Any]) -> bool:
+    """Mount NFS storage backend"""
+    try:
+        nfs_config = config["storage_backend"]["nfs"]
+        server = nfs_config["server"]
+        export = nfs_config["export"]
+        mount_point = nfs_config["mount_point"]
+        options = nfs_config.get("options", "rw,sync,hard,intr")
+        
+        if not server or not export:
+            _logger.error("NFS server and export path required")
+            return False
+        
+        # Create mount point
+        os.makedirs(mount_point, exist_ok=True)
+        
+        # Check if already mounted
+        result = subprocess.run(["mountpoint", "-q", mount_point], capture_output=True)
+        if result.returncode == 0:
+            _logger.info(f"NFS already mounted at {mount_point}")
+            return True
+        
+        # Mount NFS
+        mount_source = f"{server}:{export}"
+        mount_cmd = ["mount", "-t", "nfs", "-o", options, mount_source, mount_point]
+        
+        _logger.info(f"Mounting NFS: {mount_source} to {mount_point}")
+        result = subprocess.run(mount_cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            _logger.error(f"Failed to mount NFS: {result.stderr}")
+            return False
+        
+        _logger.info(f"NFS mounted successfully at {mount_point}")
+        return True
+        
+    except Exception as e:
+        _logger.error(f"Error mounting NFS: {e}")
+        return False
+
+def mount_smb_storage(config: Dict[str, Any]) -> bool:
+    """Mount SMB/CIFS storage backend"""
+    try:
+        smb_config = config["storage_backend"]["smb"]
+        server = smb_config["server"]
+        share = smb_config["share"]
+        username = smb_config.get("username", "")
+        password = smb_config.get("password", "")
+        mount_point = smb_config["mount_point"]
+        options = smb_config.get("options", "vers=3.0,dir_mode=0777,file_mode=0666")
+        
+        if not server or not share:
+            _logger.error("SMB server and share required")
+            return False
+        
+        # Create mount point
+        os.makedirs(mount_point, exist_ok=True)
+        
+        # Check if already mounted
+        result = subprocess.run(["mountpoint", "-q", mount_point], capture_output=True)
+        if result.returncode == 0:
+            _logger.info(f"SMB already mounted at {mount_point}")
+            return True
+        
+        # Build mount source
+        mount_source = f"//{server}/{share}"
+        
+        # Build options with credentials
+        mount_options = options
+        if username:
+            mount_options += f",username={username}"
+        if password:
+            mount_options += f",password={password}"
+        else:
+            mount_options += ",guest"
+        
+        mount_cmd = ["mount", "-t", "cifs", "-o", mount_options, mount_source, mount_point]
+        
+        _logger.info(f"Mounting SMB: {mount_source} to {mount_point}")
+        result = subprocess.run(mount_cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            _logger.error(f"Failed to mount SMB: {result.stderr}")
+            return False
+        
+        _logger.info(f"SMB mounted successfully at {mount_point}")
+        return True
+        
+    except Exception as e:
+        _logger.error(f"Error mounting SMB: {e}")
+        return False
+
+def unmount_storage(mount_point: str) -> bool:
+    """Unmount storage backend"""
+    try:
+        # Check if mounted
+        result = subprocess.run(["mountpoint", "-q", mount_point], capture_output=True)
+        if result.returncode != 0:
+            _logger.info(f"Nothing mounted at {mount_point}")
+            return True
+        
+        # Unmount
+        _logger.info(f"Unmounting {mount_point}")
+        result = subprocess.run(["umount", mount_point], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            _logger.error(f"Failed to unmount: {result.stderr}")
+            return False
+        
+        _logger.info(f"Unmounted {mount_point} successfully")
+        return True
+        
+    except Exception as e:
+        _logger.error(f"Error unmounting storage: {e}")
+        return False
+
+def setup_storage_backend(config: Dict[str, Any]) -> Optional[str]:
+    """Setup storage backend and return storage path"""
+    try:
+        backend_type = config["storage_backend"]["type"]
+        
+        if backend_type == "local":
+            storage_path = config["storage_backend"]["local"]["path"]
+            os.makedirs(storage_path, exist_ok=True)
+            _logger.info(f"Using local storage: {storage_path}")
+            return storage_path
+            
+        elif backend_type == "nfs":
+            if mount_nfs_storage(config):
+                storage_path = config["storage_backend"]["nfs"]["mount_point"]
+                os.makedirs(storage_path, exist_ok=True)
+                _logger.info(f"Using NFS storage: {storage_path}")
+                return storage_path
+            else:
+                _logger.error("Failed to mount NFS storage")
+                return None
+                
+        elif backend_type == "smb":
+            if mount_smb_storage(config):
+                storage_path = config["storage_backend"]["smb"]["mount_point"]
+                os.makedirs(storage_path, exist_ok=True)
+                _logger.info(f"Using SMB storage: {storage_path}")
+                return storage_path
+            else:
+                _logger.error("Failed to mount SMB storage")
+                return None
+        else:
+            _logger.error(f"Unknown storage backend type: {backend_type}")
+            return None
+            
+    except Exception as e:
+        _logger.error(f"Error setting up storage backend: {e}")
+        return None
+
+def test_storage_connection(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Test storage backend connection"""
+    try:
+        backend_type = config["storage_backend"]["type"]
+        
+        if backend_type == "local":
+            path = config["storage_backend"]["local"]["path"]
+            
+            # Test write access
+            test_file = os.path.join(path, ".storage_test")
+            os.makedirs(path, exist_ok=True)
+            
+            with open(test_file, 'w') as f:
+                f.write("test")
+            
+            os.remove(test_file)
+            
+            # Get disk space
+            stat = os.statvfs(path)
+            total_gb = (stat.f_blocks * stat.f_frsize) / (1024**3)
+            free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
+            
+            return {
+                "success": True,
+                "type": "local",
+                "path": path,
+                "total_gb": round(total_gb, 2),
+                "free_gb": round(free_gb, 2)
+            }
+            
+        elif backend_type == "nfs":
+            nfs_config = config["storage_backend"]["nfs"]
+            mount_point = nfs_config["mount_point"]
+            
+            # Check if mounted
+            result = subprocess.run(["mountpoint", "-q", mount_point], capture_output=True)
+            is_mounted = result.returncode == 0
+            
+            if is_mounted:
+                stat = os.statvfs(mount_point)
+                total_gb = (stat.f_blocks * stat.f_frsize) / (1024**3)
+                free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
+                
+                return {
+                    "success": True,
+                    "type": "nfs",
+                    "server": nfs_config["server"],
+                    "export": nfs_config["export"],
+                    "mounted": True,
+                    "total_gb": round(total_gb, 2),
+                    "free_gb": round(free_gb, 2)
+                }
+            else:
+                # Try to mount
+                if mount_nfs_storage(config):
+                    return test_storage_connection(config)
+                else:
+                    return {
+                        "success": False,
+                        "type": "nfs",
+                        "error": "Failed to mount NFS share"
+                    }
+                    
+        elif backend_type == "smb":
+            smb_config = config["storage_backend"]["smb"]
+            mount_point = smb_config["mount_point"]
+            
+            # Check if mounted
+            result = subprocess.run(["mountpoint", "-q", mount_point], capture_output=True)
+            is_mounted = result.returncode == 0
+            
+            if is_mounted:
+                stat = os.statvfs(mount_point)
+                total_gb = (stat.f_blocks * stat.f_frsize) / (1024**3)
+                free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
+                
+                return {
+                    "success": True,
+                    "type": "smb",
+                    "server": smb_config["server"],
+                    "share": smb_config["share"],
+                    "mounted": True,
+                    "total_gb": round(total_gb, 2),
+                    "free_gb": round(free_gb, 2)
+                }
+            else:
+                # Try to mount
+                if mount_smb_storage(config):
+                    return test_storage_connection(config)
+                else:
+                    return {
+                        "success": False,
+                        "type": "smb",
+                        "error": "Failed to mount SMB share"
+                    }
+        else:
+            return {
+                "success": False,
+                "error": f"Unknown storage backend type: {backend_type}"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+# ============================================================================
 # REGISTRY BINARY MANAGEMENT
 # ============================================================================
 
@@ -211,7 +496,7 @@ def download_registry_binary(url: str, dest: str) -> bool:
         _logger.error(f"Failed to download registry binary: {e}")
         return False
 
-def create_registry_config(config: Dict[str, Any]) -> str:
+def create_registry_config(config: Dict[str, Any], storage_path: str) -> str:
     """Create registry configuration file - Docker Hub as primary upstream"""
     config_path = "/tmp/registry_config.yml"
     
@@ -220,7 +505,7 @@ def create_registry_config(config: Dict[str, Any]) -> str:
     upstream_url = config["supported_registries"]["docker.io"]["url"]
     
     content = REGISTRY_CONFIG_TEMPLATE.format(
-        storage_path=config["storage_path"],
+        storage_path=storage_path,
         host=config["registry_host"],
         port=config["registry_port"],
         upstream=upstream_url
@@ -989,7 +1274,8 @@ def api_get_settings():
             "keep_versions": config.get("keep_versions", 2),
             "max_storage_gb": config.get("max_storage_gb", 50),
             "purge_history_days": config.get("purge_history_days", 30),
-            "notifications_enabled": config.get("notifications_enabled", True)
+            "notifications_enabled": config.get("notifications_enabled", True),
+            "storage_backend": config.get("storage_backend", DEFAULT_CONFIG["storage_backend"])
         }
         
         return jsonify(user_config)
@@ -1013,6 +1299,24 @@ def api_save_settings():
     except Exception as e:
         _logger.error(f"Error saving settings: {e}")
         return jsonify({"error": str(e)}), 500
+
+@registry_bp.route('/storage/test', methods=['POST'])
+def api_test_storage():
+    """Test storage backend connection"""
+    try:
+        data = request.get_json()
+        
+        # Create temporary config with test settings
+        test_config = load_config().copy()
+        test_config["storage_backend"] = data.get("storage_backend", test_config["storage_backend"])
+        
+        result = test_storage_connection(test_config)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        _logger.error(f"Error testing storage: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @registry_bp.route('/stats', methods=['GET'])
 def api_get_stats():
@@ -1177,8 +1481,11 @@ def init_registry(notify_callback: Optional[Callable] = None, db_path: str = Non
     # Load config
     config = load_config()
     
-    # Create storage directory
-    os.makedirs(config["storage_path"], exist_ok=True)
+    # Setup storage backend
+    storage_path = setup_storage_backend(config)
+    if not storage_path:
+        _logger.error("Failed to setup storage backend")
+        return False
     
     # Download registry binary if needed
     if not download_registry_binary(
@@ -1188,8 +1495,8 @@ def init_registry(notify_callback: Optional[Callable] = None, db_path: str = Non
         _logger.error("Failed to setup registry binary")
         return False
     
-    # Create registry config
-    config_path = create_registry_config(config)
+    # Create registry config with actual storage path
+    config_path = create_registry_config(config, storage_path)
     
     # Start registry process
     if not start_registry_process(config["registry_binary_path"], config_path):
@@ -1213,6 +1520,20 @@ def shutdown_registry():
     _logger.info("Shutting down Registry Hub")
     
     stop_registry_process()
+    
+    # Unmount remote storage if configured
+    try:
+        config = load_config()
+        backend_type = config.get("storage_backend", {}).get("type", "local")
+        
+        if backend_type == "nfs":
+            mount_point = config["storage_backend"]["nfs"]["mount_point"]
+            unmount_storage(mount_point)
+        elif backend_type == "smb":
+            mount_point = config["storage_backend"]["smb"]["mount_point"]
+            unmount_storage(mount_point)
+    except Exception as e:
+        _logger.warning(f"Error during storage unmount: {e}")
     
     if _db_conn:
         _db_conn.close()
