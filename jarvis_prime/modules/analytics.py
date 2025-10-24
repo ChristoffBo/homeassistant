@@ -542,4 +542,885 @@ function analyticsToggleStatusCode() {
 async function analyticsSaveService(event) {
   event.preventDefault();
 
-  const serviceId = document.getEl
+  const serviceId = document.getElementById('analytics-service-id').value;
+  const serviceName = document.getElementById('analytics-service-name').value;
+  const endpoint = document.getElementById('analytics-service-endpoint').value;
+  const checkType = document.getElementById('analytics-check-type').value;
+  const expectedStatus = document.getElementById('analytics-expected-status').value;
+  const checkInterval = parseInt(document.getElementById('analytics-check-interval').value);
+  const timeout = parseInt(document.getElementById('analytics-check-timeout').value);
+  const enabled = document.getElementById('analytics-service-enabled').checked;
+  
+  // NEW: Collect retry and flap protection values
+  const retries = parseInt(document.getElementById('analytics-retries').value);
+  const flapWindow = parseInt(document.getElementById('analytics-flap-window').value);
+  const flapThreshold = parseInt(document.getElementById('analytics-flap-threshold').value);
+  const suppressionDuration = parseInt(document.getElementById('analytics-suppression-duration').value);
+
+  const service = {
+    service_name: serviceName,
+    endpoint: endpoint,
+    check_type: checkType,
+    expected_status: checkType === 'http' ? parseInt(expectedStatus) : null,
+    check_interval: checkInterval,
+    timeout: timeout,
+    enabled: enabled,
+    retries: retries,
+    flap_window: flapWindow,
+    flap_threshold: flapThreshold,
+    suppression_duration: suppressionDuration
+  };
+
+  try {
+    let response;
+    if (serviceId) {
+      // Update existing service
+      response = await fetch(ANALYTICS_API(`services/${serviceId}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(service)
+      });
+    } else {
+      // Add new service
+      response = await fetch(ANALYTICS_API('services'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(service)
+      });
+    }
+
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(serviceId ? 'Service updated successfully' : 'Service added successfully', 'success');
+      analyticsCloseServiceModal();
+      analyticsRefresh();
+    } else {
+      showToast(result.error || 'Failed to save service', 'error');
+    }
+  } catch (error) {
+    console.error('Error saving service:', error);
+    showToast('Failed to save service', 'error');
+  }
+}
+
+// Reset health scores
+async function analyticsResetHealth() {
+  if (!confirm('Reset all health scores? This will clear service status history but keep the services.')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(ANALYTICS_API('reset-health'), {
+      method: 'POST'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Health scores reset successfully', 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to reset health scores', 'error');
+    }
+  } catch (error) {
+    console.error('Error resetting health:', error);
+    showToast('Failed to reset health scores', 'error');
+  }
+}
+
+// Clear all incidents
+async function analyticsResetIncidents() {
+  if (!confirm('Clear all incidents from history?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(ANALYTICS_API('reset-incidents'), {
+      method: 'POST'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(`Cleared ${result.deleted} incidents`, 'success');
+      analyticsLoadIncidents();
+    } else {
+      showToast('Failed to clear incidents', 'error');
+    }
+  } catch (error) {
+    console.error('Error clearing incidents:', error);
+    showToast('Failed to clear incidents', 'error');
+  }
+}
+
+// Reset specific service data
+async function analyticsResetServiceData(serviceName) {
+  if (!confirm(`Reset all data for ${serviceName}? This will clear metrics and incidents.`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(ANALYTICS_API(`reset-service/${encodeURIComponent(serviceName)}`), {
+      method: 'POST'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Service data reset successfully', 'success');
+      analyticsRefresh();
+    } else {
+      showToast('Failed to reset service data', 'error');
+    }
+  } catch (error) {
+    console.error('Error resetting service:', error);
+    showToast('Failed to reset service data', 'error');
+  }
+}
+
+// Purge all metrics
+async function analyticsPurgeAll() {
+  if (!confirm('⚠️ DANGER: Purge ALL metrics, incidents, and speed test data? This cannot be undone!')) return;
+
+  try {
+    const response = await fetch(ANALYTICS_API('purge-all'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'all' }) // Include speedtest in scope
+    });
+    
+    const result = await response.json();
+    if (result.success) {
+      showToast(`Purged ${result.deleted_metrics} metrics, ${result.deleted_incidents} incidents, and ${result.deleted_speedtests || 0} speed tests`, 'success');
+      analyticsRefresh();
+      analyticsLoadInternetDashboard(); // Refresh speed test UI
+    } else {
+      showToast('Failed to purge: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error purging all:', error);
+    showToast('Failed to purge data', 'error');
+  }
+}
+
+// Purge week metrics
+async function analyticsPurgeWeek() {
+  if (!confirm('Purge metrics, incidents, and speed test data older than 1 week (7 days)?')) return;
+
+  try {
+    const response = await fetch(ANALYTICS_API('purge-week'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'all' }) // Include speedtest in scope
+    });
+    
+    const result = await response.json();
+    if (result.success) {
+      showToast(`Purged ${result.deleted} metrics, incidents, and speed tests older than 1 week`, 'success');
+      analyticsRefresh();
+      analyticsLoadInternetDashboard(); // Refresh speed test UI
+    } else {
+      showToast('Failed to purge: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error purging week metrics:', error);
+    showToast('Failed to purge metrics', 'error');
+  }
+}
+
+// Purge month metrics
+async function analyticsPurgeMonth() {
+  if (!confirm('Purge metrics, incidents, and speed test data older than 1 month (30 days)?')) return;
+
+  try {
+    const response = await fetch(ANALYTICS_API('purge-month'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'all' }) // Include speedtest in scope
+    });
+    
+    const result = await response.json();
+    if (result.success) {
+      showToast(`Purged ${result.deleted} metrics, incidents, and speed tests older than 1 month`, 'success');
+      analyticsRefresh();
+      analyticsLoadInternetDashboard(); // Refresh speed test UI
+    } else {
+      showToast('Failed to purge: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error purging month metrics:', error);
+    showToast('Failed to purge metrics', 'error');
+  }
+}
+
+// ============================================
+// NETWORK MONITORING ADDITIONS
+// ============================================
+
+// Network Monitoring State
+let networkDevices = [];
+let networkMonitoringActive = false;
+let networkAlertNewDevices = true;
+let selectedDevicesForMonitoring = new Set();
+
+// Load network monitoring dashboard
+async function analyticsLoadNetworkDashboard() {
+  await Promise.all([
+    analyticsLoadNetworkStats(),
+    analyticsLoadNetworkDevices(),
+    analyticsLoadNetworkEvents(),
+    analyticsLoadNetworkStatus()
+  ]);
+}
+
+// Load network statistics
+async function analyticsLoadNetworkStats() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/stats'));
+    const stats = await response.json();
+
+    document.getElementById('net-total-devices').textContent = stats.total_devices || 0;
+    document.getElementById('net-monitored-devices').textContent = stats.monitored_devices || 0;
+    document.getElementById('net-permanent-devices').textContent = stats.permanent_devices || 0;
+    document.getElementById('net-scans-24h').textContent = stats.scans_24h || 0;
+
+    // Update last scan time
+    if (stats.last_scan) {
+      const lastScan = new Date(stats.last_scan * 1000);
+      document.getElementById('net-last-scan').textContent = formatTimestamp(lastScan);
+    } else {
+      document.getElementById('net-last-scan').textContent = 'Never';
+    }
+  } catch (error) {
+    console.error('Error loading network stats:', error);
+  }
+}
+
+// Load network devices
+async function analyticsLoadNetworkDevices() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/devices'));
+    const data = await response.json();
+    networkDevices = data.devices || [];
+
+    const tbody = document.getElementById('network-devices-list');
+    tbody.innerHTML = '';
+
+    if (networkDevices.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            No devices found. Run a scan to discover devices on your network.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    networkDevices.forEach(device => {
+      const tr = document.createElement('tr');
+      
+      const lastSeen = new Date(device.last_seen * 1000);
+      const isOnline = (Date.now() / 1000 - device.last_seen) < 300; // 5 min threshold
+      
+      const onlineIndicator = isOnline 
+        ? '<span style="color: #22c55e;">●</span>' 
+        : '<span style="color: #6b7280;">●</span>';
+      
+      const permanentBadge = device.is_permanent 
+        ? '<span class="badge badge-primary" style="font-size: 10px;">PERMANENT</span>' 
+        : '';
+      
+      const monitoredBadge = device.is_monitored 
+        ? '<span class="badge badge-success" style="font-size: 10px;">MONITORED</span>' 
+        : '';
+
+      tr.innerHTML = `
+        <td>${onlineIndicator}</td>
+        <td>
+          <code style="font-size: 11px;">${device.mac_address}</code>
+        </td>
+        <td>
+          <span id="device-name-${device.mac_address.replace(/:/g, '')}" style="cursor: pointer;" 
+                onclick="networkEditDeviceName('${device.mac_address}')">
+            ${device.custom_name || device.hostname || '<span style="color: var(--text-muted);">Unknown</span>'}
+          </span>
+        </td>
+        <td>${device.ip_address || '<span style="color: var(--text-muted);">N/A</span>'}</td>
+        <td style="font-size: 11px;">${device.vendor || '<span style="color: var(--text-muted);">Unknown</span>'}</td>
+        <td style="font-size: 11px;">${formatTimestamp(lastSeen)}</td>
+        <td>
+          ${permanentBadge} ${monitoredBadge}
+          <button class="btn btn-sm" 
+                  onclick="networkTogglePermanent('${device.mac_address}')" 
+                  title="${device.is_permanent ? 'Remove from permanent list' : 'Mark as permanent'}">
+            ${device.is_permanent ? '📌' : '📍'}
+          </button>
+          <button class="btn btn-sm" 
+                  onclick="networkToggleMonitoring('${device.mac_address}')" 
+                  title="${device.is_monitored ? 'Stop monitoring' : 'Start monitoring'}">
+            ${device.is_monitored ? '👁️' : '👁️‍🗨️'}
+          </button>
+          <button class="btn btn-sm" 
+                  onclick="networkDeleteDevice('${device.mac_address}')" 
+                  title="Delete device">
+            🗑️
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (error) {
+    console.error('Error loading network devices:', error);
+  }
+}
+
+// Run network scan
+async function networkRunScan() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning...';
+  
+  try {
+    const response = await fetch(ANALYTICS_API('network/scan'), {
+      method: 'POST'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(`Found ${result.devices_found} devices (${result.new_devices} new)`, 'success');
+      await analyticsLoadNetworkDashboard();
+    } else {
+      showToast('Scan failed: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('Error running scan:', error);
+    showToast('Scan failed', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Scan Network';
+  }
+}
+
+// Edit device name
+function networkEditDeviceName(macAddress) {
+  const device = networkDevices.find(d => d.mac_address === macAddress);
+  if (!device) return;
+  
+  const currentName = device.custom_name || device.hostname || '';
+  const newName = prompt('Enter device name:', currentName);
+  
+  if (newName !== null && newName !== currentName) {
+    networkSaveDeviceName(macAddress, newName);
+  }
+}
+
+// Save device name
+async function networkSaveDeviceName(macAddress, customName) {
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_name: customName })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Device name updated', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to update device name', 'error');
+    }
+  } catch (error) {
+    console.error('Error updating device name:', error);
+    showToast('Failed to update device name', 'error');
+  }
+}
+
+// Toggle device monitoring
+async function networkToggleMonitoring(macAddress) {
+  const device = networkDevices.find(d => d.mac_address === macAddress);
+  if (!device) return;
+  
+  const newState = !device.is_monitored;
+  
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_monitored: newState })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(newState ? 'Monitoring enabled' : 'Monitoring disabled', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to update monitoring', 'error');
+    }
+  } catch (error) {
+    console.error('Error toggling monitoring:', error);
+    showToast('Failed to update monitoring', 'error');
+  }
+}
+
+// Toggle permanent device
+async function networkTogglePermanent(macAddress) {
+  const device = networkDevices.find(d => d.mac_address === macAddress);
+  if (!device) return;
+  
+  const newState = !device.is_permanent;
+  
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_permanent: newState })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(newState ? 'Marked as permanent' : 'Removed from permanent list', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to update device', 'error');
+    }
+  } catch (error) {
+    console.error('Error toggling permanent:', error);
+    showToast('Failed to update device', 'error');
+  }
+}
+
+// Delete device
+async function networkDeleteDevice(macAddress) {
+  if (!confirm('Delete this device from the database?')) return;
+  
+  try {
+    const response = await fetch(ANALYTICS_API(`network/devices/${macAddress}`), {
+      method: 'DELETE'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast('Device deleted', 'success');
+      await analyticsLoadNetworkDevices();
+    } else {
+      showToast('Failed to delete device', 'error');
+    }
+  } catch (error) {
+    console.error('Error deleting device:', error);
+    showToast('Failed to delete device', 'error');
+  }
+}
+
+// Start/Stop network monitoring
+async function networkToggleMonitoringMode() {
+  try {
+    const endpoint = networkMonitoringActive ? 'monitoring/stop' : 'monitoring/start';
+    
+    const response = await fetch(ANALYTICS_API(`network/${endpoint}`), {
+      method: 'POST'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      networkMonitoringActive = result.monitoring;
+      showToast(networkMonitoringActive ? 'Network monitoring started' : 'Network monitoring stopped', 'success');
+      await analyticsLoadNetworkStatus();
+    } else {
+      showToast('Failed to toggle monitoring', 'error');
+    }
+  } catch (error) {
+    console.error('Error toggling monitoring:', error);
+    showToast('Failed to toggle monitoring', 'error');
+  }
+}
+
+// Load network monitoring status
+async function analyticsLoadNetworkStatus() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/monitoring/status'));
+    const status = await response.json();
+    
+    networkMonitoringActive = status.monitoring;
+    networkAlertNewDevices = status.alert_new_devices;
+    
+    // Update UI
+    const monitorBtn = document.getElementById('btn-toggle-monitoring');
+    if (monitorBtn) {
+      monitorBtn.textContent = networkMonitoringActive ? '⏸️ Stop Monitoring' : '▶️ Start Monitoring';
+      monitorBtn.classList.toggle('btn-success', !networkMonitoringActive);
+      monitorBtn.classList.toggle('btn-warning', networkMonitoringActive);
+    }
+    
+    const alertToggle = document.getElementById('toggle-alert-new-devices');
+    if (alertToggle) {
+      alertToggle.checked = networkAlertNewDevices;
+    }
+    
+    const statusEl = document.getElementById('network-monitoring-status');
+    if (statusEl) {
+      statusEl.textContent = networkMonitoringActive ? 'Active' : 'Inactive';
+      statusEl.className = `badge ${networkMonitoringActive ? 'badge-success' : 'badge-default'}`;
+    }
+  } catch (error) {
+    console.error('Error loading network status:', error);
+  }
+}
+
+// Toggle new device alerts
+async function networkToggleAlerts() {
+  const enabled = document.getElementById('toggle-alert-new-devices').checked;
+  
+  try {
+    const response = await fetch(ANALYTICS_API('network/settings'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alert_new_devices: enabled })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      networkAlertNewDevices = enabled;
+      showToast(enabled ? 'New device alerts enabled' : 'New device alerts disabled', 'success');
+    } else {
+      showToast('Failed to update settings', 'error');
+    }
+  } catch (error) {
+    console.error('Error updating alerts:', error);
+    showToast('Failed to update settings', 'error');
+  }
+}
+
+// Load network events
+async function analyticsLoadNetworkEvents() {
+  try {
+    const response = await fetch(ANALYTICS_API('network/events?hours=24'));
+    const data = await response.json();
+    const events = data.events || [];
+
+    const tbody = document.getElementById('network-events-list');
+    tbody.innerHTML = '';
+
+    if (events.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            No events in the last 24 hours
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    events.slice(0, 20).forEach(event => {
+      const tr = document.createElement('tr');
+      const eventTime = new Date(event.timestamp * 1000);
+      
+      let eventIcon = '📡';
+      let eventColor = 'var(--text-primary)';
+      
+      if (event.event_type === 'new_device') {
+        eventIcon = '🆕';
+        eventColor = '#10b981';
+      } else if (event.event_type === 'device_offline') {
+        eventIcon = '⚠️';
+        eventColor = '#f59e0b';
+      } else if (event.event_type === 'device_online') {
+        eventIcon = '✅';
+        eventColor = '#3b82f6';
+      }
+      
+      tr.innerHTML = `
+        <td style="color: ${eventColor};">${eventIcon}</td>
+        <td>${event.event_type.replace('_', ' ').toUpperCase()}</td>
+        <td><code>${event.mac_address}</code></td>
+        <td>${event.ip_address || '<span style="color: var(--text-muted);">N/A</span>'}</td>
+        <td>${formatTimestamp(eventTime)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (error) {
+    console.error('Error loading network events:', error);
+  }
+}
+
+// Helper function to format timestamps
+function formatTimestamp(date) {
+  const now = new Date();
+  const diff = (now - date) / 1000; // seconds
+  
+  if (diff < 60) {
+    return 'Just now';
+  } else if (diff < 3600) {
+    const mins = Math.floor(diff / 60);
+    return `${mins} min${mins > 1 ? 's' : ''} ago`;
+  } else if (diff < 86400) {
+    const hours = Math.floor(diff / 3600);
+    return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  } else {
+    return date.toLocaleString();
+  }
+}
+
+// ============================================
+// ✨ INTERNET SPEED TEST ADDITIONS
+// ============================================
+
+// Load internet speed test dashboard
+async function analyticsLoadInternetDashboard() {
+  console.log('Loading internet speed test dashboard...');
+  
+  try {
+    const [statsResponse, latestResponse, statusResponse] = await Promise.all([
+      fetch(ANALYTICS_API('speedtest/stats')),
+      fetch(ANALYTICS_API('speedtest/latest')).catch(() => ({ ok: false })),
+      fetch(ANALYTICS_API('speedtest/monitoring/status'))
+    ]);
+    
+    const stats = await statsResponse.json();
+    const status = await statusResponse.json();
+    
+    // Update stats
+    document.getElementById('speed-avg-download').textContent = stats.recent_avg_download ? 
+      stats.recent_avg_download.toFixed(1) + ' Mbps' : 'N/A';
+    document.getElementById('speed-avg-upload').textContent = stats.recent_avg_upload ? 
+      stats.recent_avg_upload.toFixed(1) + ' Mbps' : 'N/A';
+    document.getElementById('speed-avg-ping').textContent = stats.recent_avg_ping ? 
+      stats.recent_avg_ping.toFixed(1) + ' ms' : 'N/A';
+    document.getElementById('speed-total-tests').textContent = stats.total_tests;
+    
+    // Display latest result
+    if (latestResponse.ok) {
+      const latest = await latestResponse.json();
+      analyticsDisplayLatestSpeedTest(latest.test);
+    } else {
+      document.getElementById('speed-latest-result').innerHTML = 
+        '<p style="text-align: center; color: #888;">No tests yet. Click "Run Test Now"</p>';
+    }
+    
+    // Update monitoring button
+    const monitorBtn = document.getElementById('speed-monitoring-toggle');
+    if (status.monitoring) {
+      monitorBtn.textContent = '⏸️ Stop Auto-Testing';
+      monitorBtn.classList.remove('btn-success');
+      monitorBtn.classList.add('btn-warning');
+    } else {
+      monitorBtn.textContent = '▶️ Start Auto-Testing';
+      monitorBtn.classList.remove('btn-warning');
+      monitorBtn.classList.add('btn-success');
+    }
+    
+    // Update test button state
+    if (status.testing) {
+      document.getElementById('speed-test-btn').disabled = true;
+      document.getElementById('speed-test-btn').textContent = '⏳ Testing...';
+    } else {
+      document.getElementById('speed-test-btn').disabled = false;
+      document.getElementById('speed-test-btn').textContent = '🚀 Run Test Now';
+    }
+    
+    // Load history
+    await analyticsLoadSpeedTestHistory();
+    
+  } catch (error) {
+    console.error('Failed to load internet dashboard:', error);
+    showToast('Failed to load internet dashboard', 'error');
+  }
+}
+
+// Display latest speed test result
+function analyticsDisplayLatestSpeedTest(test) {
+  const resultDiv = document.getElementById('speed-latest-result');
+  const timestamp = new Date(test.timestamp * 1000).toLocaleString();
+  
+  const statusClass = test.status === 'normal' ? 'status-up' : 
+                     test.status === 'degraded' ? 'status-degraded' : 'status-down';
+  
+  const statusColor = test.status === 'normal' ? '#22c55e' : 
+                      test.status === 'degraded' ? '#f59e0b' : '#ef4444';
+  
+  resultDiv.innerHTML = `
+    <div style="padding: 2rem; background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%); border-radius: 12px; border: 2px solid ${statusColor};">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 2rem; margin-bottom: 1.5rem;">
+        <div style="text-align: center;">
+          <div style="font-size: 12px; color: #888; margin-bottom: 0.5rem;">DOWNLOAD</div>
+          <div style="font-size: 2.5rem; font-weight: bold; color: ${statusColor};">
+            ${test.download} <span style="font-size: 1rem; color: #888;">Mbps</span>
+          </div>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 12px; color: #888; margin-bottom: 0.5rem;">UPLOAD</div>
+          <div style="font-size: 2.5rem; font-weight: bold; color: ${statusColor};">
+            ${test.upload} <span style="font-size: 1rem; color: #888;">Mbps</span>
+          </div>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 12px; color: #888; margin-bottom: 0.5rem;">PING</div>
+          <div style="font-size: 2.5rem; font-weight: bold; color: ${statusColor};">
+            ${test.ping} <span style="font-size: 1rem; color: #888;">ms</span>
+          </div>
+        </div>
+      </div>
+      <div style="padding-top: 1rem; border-top: 1px solid #333; font-size: 12px; color: #888;">
+        <div style="margin-bottom: 0.5rem;"><strong>Server:</strong> ${test.server}</div>
+        <div style="margin-bottom: 0.5rem;"><strong>Time:</strong> ${timestamp}</div>
+        ${test.jitter ? `<div style="margin-bottom: 0.5rem;"><strong>Jitter:</strong> ${test.jitter} ms</div>` : ''}
+        ${test.packet_loss ? `<div><strong>Packet Loss:</strong> ${test.packet_loss}%</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// Run speed test
+async function analyticsRunSpeedTest() {
+  const btn = document.getElementById('speed-test-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Testing...';
+  
+  showToast('Speed test started (may take 30-60 seconds)...', 'info');
+  
+  try {
+    const response = await fetch(ANALYTICS_API('speedtest/run'), {
+      method: 'POST'
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      showToast('Speed test completed', 'success');
+      analyticsLoadInternetDashboard();
+    } else {
+      const error = await response.json();
+      showToast(error.error || 'Speed test failed', 'error');
+    }
+  } catch (error) {
+    console.error('Speed test error:', error);
+    showToast('Speed test failed', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🚀 Run Test Now';
+  }
+}
+
+// Toggle speed test monitoring
+async function analyticsToggleSpeedMonitoring() {
+  const btn = document.getElementById('speed-monitoring-toggle');
+  const isCurrentlyMonitoring = btn.textContent.includes('Stop');
+  
+  try {
+    const endpoint = isCurrentlyMonitoring ? 
+      'speedtest/monitoring/stop' : 
+      'speedtest/monitoring/start';
+    
+    const response = await fetch(ANALYTICS_API(endpoint), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interval_hours: 12 })
+    });
+    
+    if (response.ok) {
+      showToast(isCurrentlyMonitoring ? 'Auto-testing stopped' : 'Auto-testing started (12h interval)', 'success');
+      analyticsLoadInternetDashboard();
+    } else {
+      showToast('Failed to toggle auto-testing', 'error');
+    }
+  } catch (error) {
+    console.error('Failed to toggle monitoring:', error);
+    showToast('Failed to toggle auto-testing', 'error');
+  }
+}
+
+// Load speed test history
+async function analyticsLoadSpeedTestHistory() {
+  try {
+    const response = await fetch(ANALYTICS_API('speedtest/history?hours=168'));
+    const data = await response.json();
+    
+    analyticsRenderSpeedTestHistory(data.tests);
+    
+  } catch (error) {
+    console.error('Failed to load speed test history:', error);
+  }
+}
+
+// Render speed test history table
+function analyticsRenderSpeedTestHistory(tests) {
+  const tbody = document.getElementById('speed-history-tbody');
+  tbody.innerHTML = '';
+  
+  if (tests.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: #888;">No test history. Run a test to get started.</td></tr>';
+    return;
+  }
+  
+  tests.slice(0, 20).forEach(test => {
+    const tr = document.createElement('tr');
+    const timestamp = new Date(test.timestamp * 1000).toLocaleString();
+    
+    const statusColor = test.status === 'normal' ? '#22c55e' : 
+                       test.status === 'degraded' ? '#f59e0b' : '#ef4444';
+    
+    tr.innerHTML = `
+      <td style="font-size: 12px;">${timestamp}</td>
+      <td style="font-weight: 600; color: ${statusColor};">${test.download} Mbps</td>
+      <td style="font-weight: 600; color: ${statusColor};">${test.upload} Mbps</td>
+      <td>${test.ping} ms</td>
+      <td>
+        <span style="padding: 4px 8px; background: ${statusColor}22; color: ${statusColor}; border-radius: 6px; font-size: 10px; font-weight: 600; text-transform: uppercase;">
+          ${test.status}
+        </span>
+      </td>
+      <td style="font-size: 11px; color: #888;">${test.server}</td>
+    `;
+    
+    tbody.appendChild(tr);
+  });
+}
+
+// ============================================
+// TOAST FALLBACK - Ensures showToast exists
+// ============================================
+
+if (typeof window.showToast !== "function") {
+  window.showToast = function (msg, type = "info") {
+    console.log(`[TOAST ${type.toUpperCase()}] ${msg}`);
+    alert(`[${type}] ${msg}`);
+  };
+}
+
+// Export functions to global scope
+window.analyticsRefresh = analyticsRefresh;
+window.analyticsLoadHealthScore = analyticsLoadHealthScore;
+window.analyticsLoadDashboard = analyticsLoadDashboard;
+window.analyticsShowAddService = analyticsShowAddService;
+window.analyticsEditService = analyticsEditService;
+window.analyticsDeleteService = analyticsDeleteService;
+window.analyticsCloseServiceModal = analyticsCloseServiceModal;
+window.analyticsToggleStatusCode = analyticsToggleStatusCode;
+window.analyticsSaveService = analyticsSaveService;
+window.analyticsResetHealth = analyticsResetHealth;
+window.analyticsResetIncidents = analyticsResetIncidents;
+window.analyticsResetServiceData = analyticsResetServiceData;
+window.analyticsPurgeAll = analyticsPurgeAll;
+window.analyticsPurgeWeek = analyticsPurgeWeek;
+window.analyticsPurgeMonth = analyticsPurgeMonth;
+window.networkRunScan = networkRunScan;
+window.networkToggleMonitoring = networkToggleMonitoring;
+window.networkTogglePermanent = networkTogglePermanent;
+window.networkDeleteDevice = networkDeleteDevice;
+window.networkToggleMonitoringMode = networkToggleMonitoringMode;
+window.networkToggleAlerts = networkToggleAlerts;
+window.networkEditDeviceName = networkEditDeviceName;
+window.networkSaveDeviceName = networkSaveDeviceName;
+window.analyticsLoadNetworkDashboard = analyticsLoadNetworkDashboard;
+window.analyticsLoadInternetDashboard = analyticsLoadInternetDashboard;
+window.analyticsRunSpeedTest = analyticsRunSpeedTest;
+window.analyticsToggleSpeedMonitoring = analyticsToggleSpeedMonitoring;
