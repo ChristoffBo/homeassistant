@@ -284,6 +284,25 @@ class AnalyticsDB:
             )
         """)
         
+        # Speed test settings table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS speed_test_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                schedule_mode TEXT DEFAULT 'interval',
+                interval_hours INTEGER DEFAULT 12,
+                schedule_times TEXT DEFAULT '[]',
+                degrade_threshold REAL DEFAULT 0.7,
+                ping_threshold REAL DEFAULT 1.5,
+                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+            )
+        """)
+        
+        # Insert default settings if not exists
+        cur.execute("""
+            INSERT OR IGNORE INTO speed_test_settings (id, schedule_mode, interval_hours, schedule_times)
+            VALUES (1, 'interval', 12, '[]')
+        """)
+        
         # Create indices
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_network_devices_mac 
@@ -628,6 +647,17 @@ class AnalyticsDB:
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
         cur.execute("DELETE FROM analytics_incidents WHERE start_time < ?", (cutoff,))
+        deleted = cur.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+    
+    def purge_speed_tests(self, days: int = 30):
+        """Delete speed tests older than specified days"""
+        cutoff = int(time.time()) - (days * 86400)
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM network_speed WHERE timestamp < ?", (cutoff,))
         deleted = cur.rowcount
         conn.commit()
         conn.close()
@@ -1112,6 +1142,61 @@ class AnalyticsDB:
             'avg_upload': round(row[1], 2) if row and row[1] else 0,
             'avg_ping': round(row[2], 2) if row and row[2] else 0
         }
+    
+    def get_speed_test_settings(self) -> Dict:
+        """Get speed test schedule settings"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute("SELECT * FROM speed_test_settings WHERE id = 1")
+        row = cur.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                'schedule_mode': row['schedule_mode'],
+                'interval_hours': row['interval_hours'],
+                'schedule_times': json.loads(row['schedule_times']),
+                'degrade_threshold': row['degrade_threshold'],
+                'ping_threshold': row['ping_threshold']
+            }
+        else:
+            return {
+                'schedule_mode': 'interval',
+                'interval_hours': 12,
+                'schedule_times': [],
+                'degrade_threshold': 0.7,
+                'ping_threshold': 1.5
+            }
+    
+    def update_speed_test_settings(self, settings: Dict):
+        """Update speed test schedule settings"""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        
+        schedule_times_json = json.dumps(settings.get('schedule_times', []))
+        
+        cur.execute("""
+            UPDATE speed_test_settings 
+            SET schedule_mode = ?,
+                interval_hours = ?,
+                schedule_times = ?,
+                degrade_threshold = ?,
+                ping_threshold = ?,
+                updated_at = ?
+            WHERE id = 1
+        """, (
+            settings.get('schedule_mode', 'interval'),
+            settings.get('interval_hours', 12),
+            schedule_times_json,
+            settings.get('degrade_threshold', 0.7),
+            settings.get('ping_threshold', 1.5),
+            int(time.time())
+        ))
+        
+        conn.commit()
+        conn.close()
 
 
 # ============================================================================
@@ -1307,17 +1392,21 @@ class HealthMonitor:
                     self.db.create_incident(service.service_name, metric.error_message)
                     
                     if not self.should_suppress_notification(service.service_name, 'down'):
-                        await self.notify(
-                            f"[Analytics] {service.service_name}",
-                            f"Service is DOWN: {metric.error_message or 'No response'}", "analytics")
+                        await analytics_notify(
+                            service.service_name,
+                            'down',
+                            f"Service is DOWN: {metric.error_message or 'No response'}"
+                        )
                 
                 elif metric.status == 'up' and previous_status == 'down':
                     self.db.resolve_incident(service.service_name)
                     
                     if not self.should_suppress_notification(service.service_name, 'up'):
-                        await self.notify(
-                            f"[Analytics] {service.service_name}",
-                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)", "analytics")
+                        await analytics_notify(
+                            service.service_name,
+                            'up',
+                            f"Service has RECOVERED (response time: {metric.response_time:.2f}s)"
+                        )
                 
                 await asyncio.sleep(service.interval)
                 
@@ -1486,28 +1575,31 @@ class NetworkScanner:
         name = device.custom_name or device.hostname or device.ip_address
         vendor_info = f" ({device.vendor})" if device.vendor else ""
         
-        await notify(
-            "🌐 Network Monitor",
+        await analytics_notify(
+            'Network Monitor',
+            'info',
             f"ðŸ†• New device: {name}{vendor_info}\nMAC: {device.mac_address}\nIP: {device.ip_address}"
-        , "analytics")
+        )
     
     async def _notify_device_offline(self, device: NetworkDevice):
         """Send notification for device going offline"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await notify(
-            "🌐 Network Monitor",
+        await analytics_notify(
+            'Network Monitor',
+            'warning',
             f"âš ï¸ Device offline: {name}\nMAC: {device.mac_address}"
-        , "analytics")
+        )
     
     async def _notify_device_online(self, device: NetworkDevice):
         """Send notification for device coming back online"""
         name = device.custom_name or device.hostname or device.ip_address
         
-        await notify(
-            "🌐 Network Monitor",
+        await analytics_notify(
+            'Network Monitor',
+            'info',
             f"âœ… Device online: {name}\nIP: {device.ip_address}"
-        , "analytics")
+        )
     
     async def monitor_loop(self):
         """Continuous network monitoring loop"""
@@ -1556,12 +1648,28 @@ class SpeedTestMonitor:
         self.db = db
         self.monitoring = False
         self.testing = False
+        self.schedule_mode = 'interval'
         self.interval_hours = 12
+        self.schedule_times = []
         self.degrade_threshold = 0.7
         self.ping_threshold = 1.5
         self.consecutive_failures = 0
         self.notification_callback = None
         self._monitor_task = None
+        self._load_settings()
+    
+    def _load_settings(self):
+        """Load settings from database"""
+        try:
+            settings = self.db.get_speed_test_settings()
+            self.schedule_mode = settings['schedule_mode']
+            self.interval_hours = settings['interval_hours']
+            self.schedule_times = settings['schedule_times']
+            self.degrade_threshold = settings['degrade_threshold']
+            self.ping_threshold = settings['ping_threshold']
+            logger.info(f"Loaded speed test settings: mode={self.schedule_mode}, interval={self.interval_hours}h, times={self.schedule_times}")
+        except Exception as e:
+            logger.error(f"Failed to load speed test settings: {e}")
     
     def set_notification_callback(self, callback: Callable):
         """Set the notification callback"""
@@ -1653,23 +1761,12 @@ class SpeedTestMonitor:
         """Compare result to average and notify"""
         averages = self.db.get_speed_test_averages(last_n=5)
         
-        async def notify(title, body, source="analytics"):
-            """Send notification via callback or fallback"""
-            if self.notification_callback:
-                await self.notification_callback(title, body, source)
-            else:
-                # Fallback to process_incoming
-                try:
-                    from bot import process_incoming
-                    process_incoming(title, body, source=source)
-                except Exception:
-                    pass  # Silent fail if no notification available
-        
         if not averages or averages['avg_download'] == 0:
-            await notify(
-                "🌐 Internet Monitor",
+            await analytics_notify(
+                'Internet Monitor',
+                'info',
                 f"Speed test: â†“{result.download} Mbps â†‘{result.upload} Mbps {result.ping}ms"
-            , "analytics")
+            )
             return
         
         # Calculate variance
@@ -1696,59 +1793,115 @@ class SpeedTestMonitor:
         if is_degraded:
             self.db.update_speed_test_status(result.timestamp, 'degraded')
             message = "ðŸš¨ Internet Degraded\n\n" + "\n".join(issues)
-            await notify("🌐 Internet Monitor", message, "analytics")
+            await analytics_notify('Internet Monitor', 'warning', message)
         else:
             # Check recovery
             recent = self.db.get_speed_test_history(hours=24)
             if recent and len(recent) > 1:
                 if recent[1].get('status') == 'degraded':
-                    await notify(
-                        "🌐 Internet Monitor",
+                    await analytics_notify(
+                        'Internet Monitor',
+                        'info',
                         f"âœ… Internet recovered\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms"
-                    , "analytics")
+                    )
             
             # Normal notification
             variance_msg = ""
             if abs(down_var) > 5 or abs(up_var) > 5:
                 variance_msg = f"\n\nDownload: {down_var:+.0f}%\nUpload: {up_var:+.0f}%\nPing: {ping_var:+.0f}%"
             
-            await notify(
-                "🌐 Internet Monitor",
+            await analytics_notify(
+                'Internet Monitor',
+                'info',
                 f"ðŸŒ Speed Test\n\nâ†“{result.download:.1f} Mbps â†‘{result.upload:.1f} Mbps {result.ping:.1f}ms{variance_msg}"
-            , "analytics")
+            )
     
     async def _notify_offline(self):
         """Offline notification"""
-        await notify(
-            "🌐 Internet Monitor",
+        await analytics_notify(
+            'Internet Monitor',
+            'critical',
             f"ðŸ”´ Internet OFFLINE\n\n{self.consecutive_failures} consecutive failures"
-        , "analytics")
+        )
     
     async def monitor_loop(self):
-        """Monitoring loop"""
+        """Monitoring loop - supports both interval and scheduled modes"""
+        logger.info(f"Speed test monitoring started in {self.schedule_mode} mode")
+        
         while self.monitoring:
             try:
-                await self.run_speedtest()
-                wait_seconds = self.interval_hours * 3600
-                logger.info(f"Next speed test in {self.interval_hours}h")
-                await asyncio.sleep(wait_seconds)
+                if self.schedule_mode == 'interval':
+                    # Interval mode - run test then wait
+                    await self.run_speedtest()
+                    wait_seconds = self.interval_hours * 3600
+                    logger.info(f"Next speed test in {self.interval_hours}h")
+                    await asyncio.sleep(wait_seconds)
+                    
+                elif self.schedule_mode == 'scheduled':
+                    # Scheduled mode - check if it's time to run
+                    if not self.schedule_times:
+                        logger.warning("No scheduled times configured, waiting 5 minutes")
+                        await asyncio.sleep(300)
+                        continue
+                    
+                    from datetime import datetime
+                    now = datetime.now()
+                    current_time = now.strftime("%H:%M")
+                    
+                    # Check if current time matches any scheduled time
+                    should_run = False
+                    for scheduled_time in self.schedule_times:
+                        if current_time == scheduled_time:
+                            should_run = True
+                            break
+                    
+                    if should_run:
+                        logger.info(f"Running scheduled speed test at {current_time}")
+                        await self.run_speedtest()
+                        # Sleep for 61 seconds to avoid running twice in the same minute
+                        await asyncio.sleep(61)
+                    else:
+                        # Check every 30 seconds
+                        await asyncio.sleep(30)
+                
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Monitoring error: {e}")
                 await asyncio.sleep(300)
     
-    async def start_monitoring(self, interval_hours: int = None):
-        """Start monitoring"""
+    async def start_monitoring(self, settings: Dict = None):
+        """Start monitoring with optional settings update"""
         if self.monitoring:
             return
         
-        if interval_hours:
-            self.interval_hours = interval_hours
+        # Update settings if provided
+        if settings:
+            self.schedule_mode = settings.get('schedule_mode', self.schedule_mode)
+            self.interval_hours = settings.get('interval_hours', self.interval_hours)
+            self.schedule_times = settings.get('schedule_times', self.schedule_times)
+            self.degrade_threshold = settings.get('degrade_threshold', self.degrade_threshold)
+            self.ping_threshold = settings.get('ping_threshold', self.ping_threshold)
+            
+            # Save to database
+            self.db.update_speed_test_settings({
+                'schedule_mode': self.schedule_mode,
+                'interval_hours': self.interval_hours,
+                'schedule_times': self.schedule_times,
+                'degrade_threshold': self.degrade_threshold,
+                'ping_threshold': self.ping_threshold
+            })
+        else:
+            # Reload from database
+            self._load_settings()
         
         self.monitoring = True
         self._monitor_task = asyncio.create_task(self.monitor_loop())
-        logger.info(f"Speed test monitoring started ({self.interval_hours}h interval)")
+        
+        if self.schedule_mode == 'interval':
+            logger.info(f"Speed test monitoring started ({self.interval_hours}h interval)")
+        else:
+            logger.info(f"Speed test monitoring started (scheduled at {self.schedule_times})")
     
     async def stop_monitoring(self):
         """Stop monitoring"""
@@ -1779,29 +1932,40 @@ speed_monitor: Optional[SpeedTestMonitor] = None
 # NOTIFICATION HELPER
 # ============================================================================
 
-async def analytics_notify(title: str, body: str, source: str = "analytics"):
-    """Fallback notification - tries process_incoming, falls back to Gotify"""
+async def analytics_notify(service_name: str, severity: str, message: str):
+    """Send notification via Gotify"""
     try:
-        from bot import process_incoming
-        process_incoming(title, body, source=source)
+        import os
+        gotify_url = os.getenv('GOTIFY_URL')
+        gotify_token = os.getenv('GOTIFY_TOKEN')
+        
+        if not gotify_url or not gotify_token:
+            logger.debug("Gotify not configured, skipping notification")
+            return
+        
+        priority_map = {
+            'info': 5,
+            'up': 5,
+            'warning': 7,
+            'down': 8,
+            'critical': 10
+        }
+        
+        priority = priority_map.get(severity, 5)
+        
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                f"{gotify_url}/message",
+                json={
+                    'title': f'[Analytics] {service_name}',
+                    'message': message,
+                    'priority': priority
+                },
+                headers={'X-Gotify-Key': gotify_token},
+                timeout=aiohttp.ClientTimeout(total=5)
+            )
     except Exception as e:
-        logger.debug(f"process_incoming not available, using Gotify fallback")
-        try:
-            import os
-            gotify_url = os.getenv('GOTIFY_URL')
-            gotify_token = os.getenv('GOTIFY_TOKEN')
-            if not gotify_url or not gotify_token:
-                return
-            priority = 8 if "DOWN" in body or "OFFLINE" in body else 7 if "Degraded" in body or "offline" in body else 5
-            async with aiohttp.ClientSession() as session:
-                await session.post(
-                    f"{gotify_url}/message",
-                    json={'title': title, 'message': body, 'priority': priority},
-                    headers={'X-Gotify-Key': gotify_token},
-                    timeout=aiohttp.ClientTimeout(total=5)
-                )
-        except Exception:
-            pass
+        logger.error(f"Failed to send notification: {e}")
 
 
 # ============================================================================
@@ -2024,31 +2188,50 @@ async def reset_service_data(request: web.Request):
         return _json({'error': str(e)}, status=500)
 
 async def purge_all(request: web.Request):
-    """Purge all metrics and incidents"""
+    """Purge all metrics, incidents, and speed tests"""
     try:
         deleted_metrics = db.purge_old_metrics(days=0)
         deleted_incidents = db.purge_old_incidents(days=0)
+        deleted_speedtests = db.purge_speed_tests(days=0)
         return _json({
             'success': True,
             'deleted_metrics': deleted_metrics,
-            'deleted_incidents': deleted_incidents
+            'deleted_incidents': deleted_incidents,
+            'deleted_speedtests': deleted_speedtests,
+            'total_deleted': deleted_metrics + deleted_incidents + deleted_speedtests
         })
     except Exception as e:
         return _json({'error': str(e)}, status=500)
 
 async def purge_week(request: web.Request):
-    """Purge metrics older than 1 week"""
+    """Purge metrics, incidents, and speed tests older than 1 week"""
     try:
-        deleted = db.purge_old_metrics(days=7)
-        return _json({'success': True, 'deleted': deleted})
+        deleted_metrics = db.purge_old_metrics(days=7)
+        deleted_incidents = db.purge_old_incidents(days=7)
+        deleted_speedtests = db.purge_speed_tests(days=7)
+        return _json({
+            'success': True,
+            'deleted_metrics': deleted_metrics,
+            'deleted_incidents': deleted_incidents,
+            'deleted_speedtests': deleted_speedtests,
+            'total_deleted': deleted_metrics + deleted_incidents + deleted_speedtests
+        })
     except Exception as e:
         return _json({'error': str(e)}, status=500)
 
 async def purge_month(request: web.Request):
-    """Purge metrics older than 1 month"""
+    """Purge metrics, incidents, and speed tests older than 1 month"""
     try:
-        deleted = db.purge_old_metrics(days=30)
-        return _json({'success': True, 'deleted': deleted})
+        deleted_metrics = db.purge_old_metrics(days=30)
+        deleted_incidents = db.purge_old_incidents(days=30)
+        deleted_speedtests = db.purge_speed_tests(days=30)
+        return _json({
+            'success': True,
+            'deleted_metrics': deleted_metrics,
+            'deleted_incidents': deleted_incidents,
+            'deleted_speedtests': deleted_speedtests,
+            'total_deleted': deleted_metrics + deleted_incidents + deleted_speedtests
+        })
     except Exception as e:
         return _json({'error': str(e)}, status=500)
 
@@ -2218,15 +2401,27 @@ async def speedtest_stats(request: web.Request):
     })
 
 async def speedtest_start_monitoring(request: web.Request):
-    """Start automatic monitoring"""
+    """Start automatic monitoring with settings"""
     try:
         data = await request.json()
-        interval_hours = data.get('interval_hours', 12)
     except:
-        interval_hours = 12
+        data = {}
     
-    await speed_monitor.start_monitoring(interval_hours)
-    return _json({'success': True, 'monitoring': True, 'interval_hours': interval_hours})
+    settings = {
+        'schedule_mode': data.get('schedule_mode', 'interval'),
+        'interval_hours': data.get('interval_hours', 12),
+        'schedule_times': data.get('schedule_times', []),
+        'degrade_threshold': data.get('degrade_threshold', 0.7),
+        'ping_threshold': data.get('ping_threshold', 1.5)
+    }
+    
+    await speed_monitor.start_monitoring(settings)
+    
+    return _json({
+        'success': True,
+        'monitoring': True,
+        'settings': settings
+    })
 
 async def speedtest_stop_monitoring(request: web.Request):
     """Stop automatic monitoring"""
@@ -2238,7 +2433,9 @@ async def speedtest_monitoring_status(request: web.Request):
     return _json({
         'monitoring': speed_monitor.monitoring,
         'testing': speed_monitor.testing,
+        'schedule_mode': speed_monitor.schedule_mode,
         'interval_hours': speed_monitor.interval_hours,
+        'schedule_times': speed_monitor.schedule_times,
         'consecutive_failures': speed_monitor.consecutive_failures
     })
 
@@ -2265,6 +2462,60 @@ async def speedtest_update_settings(request: web.Request):
             speed_monitor.ping_threshold = threshold
     
     return _json({'success': True})
+
+async def speedtest_get_settings(request: web.Request):
+    """Get current speed test settings"""
+    settings = db.get_speed_test_settings()
+    return _json(settings)
+
+async def speedtest_update_schedule(request: web.Request):
+    """Update schedule settings (mode, interval, or times)"""
+    try:
+        data = await request.json()
+    except:
+        return _json({"error": "Invalid JSON"}, status=400)
+    
+    settings = db.get_speed_test_settings()
+    
+    # Update settings
+    if 'schedule_mode' in data:
+        if data['schedule_mode'] in ['interval', 'scheduled']:
+            settings['schedule_mode'] = data['schedule_mode']
+    
+    if 'interval_hours' in data:
+        interval = int(data['interval_hours'])
+        if 1 <= interval <= 24:
+            settings['interval_hours'] = interval
+    
+    if 'schedule_times' in data:
+        # Validate times format (HH:MM)
+        times = data['schedule_times']
+        if isinstance(times, list):
+            settings['schedule_times'] = times
+    
+    if 'degrade_threshold' in data:
+        threshold = float(data['degrade_threshold'])
+        if 0.1 <= threshold <= 1.0:
+            settings['degrade_threshold'] = threshold
+    
+    if 'ping_threshold' in data:
+        threshold = float(data['ping_threshold'])
+        if 1.0 <= threshold <= 3.0:
+            settings['ping_threshold'] = threshold
+    
+    # Save to database
+    db.update_speed_test_settings(settings)
+    
+    # Update monitor if it's running
+    if speed_monitor.monitoring:
+        speed_monitor.schedule_mode = settings['schedule_mode']
+        speed_monitor.interval_hours = settings['interval_hours']
+        speed_monitor.schedule_times = settings['schedule_times']
+        speed_monitor.degrade_threshold = settings['degrade_threshold']
+        speed_monitor.ping_threshold = settings['ping_threshold']
+    
+    return _json({'success': True, 'settings': settings})
+
 
 
 # ============================================================================
@@ -2313,6 +2564,8 @@ def register_routes(app: web.Application):
     app.router.add_post('/api/analytics/speedtest/monitoring/stop', speedtest_stop_monitoring)
     app.router.add_get('/api/analytics/speedtest/monitoring/status', speedtest_monitoring_status)
     app.router.add_put('/api/analytics/speedtest/settings', speedtest_update_settings)
+    app.router.add_get('/api/analytics/speedtest/schedule', speedtest_get_settings)
+    app.router.add_post('/api/analytics/speedtest/schedule', speedtest_update_schedule)
 
 async def init_analytics(app: web.Application, notification_callback: Optional[Callable] = None):
     """Initialize analytics module"""
