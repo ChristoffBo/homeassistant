@@ -955,6 +955,61 @@
           </button>
         </div>
 
+        <!-- Schedule Configuration -->
+        <div class="panel" style="margin-bottom: 2rem;">
+          <div class="panel-head">
+            <h3>⏰ Test Schedule</h3>
+          </div>
+          <div class="panel-body">
+            <!-- Mode Selection -->
+            <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+              <button id="schedule-mode-interval" class="btn active" onclick="analyticsSwitchScheduleMode('interval')" style="flex: 1;">
+                ⏱️ Interval Mode
+              </button>
+              <button id="schedule-mode-scheduled" class="btn" onclick="analyticsSwitchScheduleMode('scheduled')" style="flex: 1;">
+                🕐 Scheduled Times
+              </button>
+            </div>
+
+            <!-- Interval Controls -->
+            <div id="interval-controls" style="display: block;">
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Run every:</label>
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <input 
+                  type="range" 
+                  id="interval-hours" 
+                  min="1" 
+                  max="24" 
+                  value="12" 
+                  onchange="analyticsUpdateInterval()"
+                  style="flex: 1;"
+                />
+                <span id="interval-value" style="min-width: 80px; font-weight: 500;">12 hours</span>
+              </div>
+            </div>
+
+            <!-- Scheduled Times Controls -->
+            <div id="scheduled-controls" style="display: none;">
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Add test time:</label>
+              <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <input 
+                  type="time" 
+                  id="scheduled-time-input" 
+                  class="form-input" 
+                  style="flex: 1;"
+                />
+                <button class="btn btn-success" onclick="analyticsAddScheduledTime()">
+                  ➕ Add
+                </button>
+              </div>
+              
+              <div id="scheduled-times-list">
+                <p style="color: #888; text-align: center;">No times scheduled</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Latest Result -->
         <div style="margin-bottom: 2rem;">
           <h4>Latest Result</h4>
