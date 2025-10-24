@@ -1933,7 +1933,20 @@ speed_monitor: Optional[SpeedTestMonitor] = None
 # ============================================================================
 
 async def analytics_notify(service_name: str, severity: str, message: str):
-    """Send notification via Gotify"""
+    """Send notification via process_incoming (with Gotify fallback)"""
+    # Try process_incoming for fan-out first
+    try:
+        from bot import process_incoming
+        title = f'[Analytics] {service_name}'
+        priority_map = {'info': 5, 'up': 5, 'warning': 7, 'down': 8, 'critical': 10}
+        priority = priority_map.get(severity, 5)
+        process_incoming(title, message, source="analytics", priority=priority)
+        logger.debug(f"Notification sent via process_incoming: {title}")
+        return
+    except Exception as e:
+        logger.debug(f"process_incoming not available: {e}, falling back to Gotify")
+    
+    # Fallback to Gotify
     try:
         import os
         gotify_url = os.getenv('GOTIFY_URL')
