@@ -14,7 +14,9 @@ const RegistryState = {
     loading: false,
     settingsPanelOpen: false,
     pullModalOpen: false,
-    selectedImage: null
+    selectedImage: null,
+    storageTestInProgress: false,
+    storageTestResult: null
 };
 
 // ============================================================================
@@ -114,6 +116,18 @@ function setupRegistryEventListeners() {
     const settingsSaveBtn = document.getElementById('settings-save-btn');
     if (settingsSaveBtn) {
         settingsSaveBtn.addEventListener('click', () => saveSettings());
+    }
+    
+    // Storage type selector
+    const storageTypeSelect = document.getElementById('storage-type');
+    if (storageTypeSelect) {
+        storageTypeSelect.addEventListener('change', (e) => updateStorageForm(e.target.value));
+    }
+    
+    // Test storage button
+    const testStorageBtn = document.getElementById('test-storage-btn');
+    if (testStorageBtn) {
+        testStorageBtn.addEventListener('click', () => testStorageConnection());
     }
     
     // Settings panel - purge buttons
@@ -254,7 +268,8 @@ async function saveSettings() {
             keep_versions: parseInt(document.getElementById('setting-keep-versions').value),
             max_storage_gb: parseInt(document.getElementById('setting-max-storage').value),
             purge_history_days: parseInt(document.getElementById('setting-purge-days').value),
-            notifications_enabled: document.getElementById('setting-notifications').checked
+            notifications_enabled: document.getElementById('setting-notifications').checked,
+            storage_backend: collectStorageBackendSettings()
         };
         
         const response = await fetch('/api/registry/settings', {
@@ -567,6 +582,11 @@ function renderSettings() {
     if (notificationsEl) {
         notificationsEl.checked = RegistryState.settings.notifications_enabled;
     }
+    
+    // Storage backend
+    if (RegistryState.settings.storage_backend) {
+        renderStorageBackendSettings(RegistryState.settings.storage_backend);
+    }
 }
 
 function viewImageDetails(imageId) {
@@ -731,6 +751,191 @@ function showToast(message, type = 'info') {
     
     // Fallback to console
     console.log(`[Registry] ${type.toUpperCase()}: ${message}`);
+}
+
+// ============================================================================
+// STORAGE BACKEND MANAGEMENT
+// ============================================================================
+
+function renderStorageBackendSettings(storageBackend) {
+    const storageTypeEl = document.getElementById('storage-type');
+    if (storageTypeEl) {
+        storageTypeEl.value = storageBackend.type || 'local';
+    }
+    
+    // Show appropriate form based on type
+    updateStorageForm(storageBackend.type || 'local');
+    
+    // Populate local settings
+    const localPathEl = document.getElementById('storage-local-path');
+    if (localPathEl && storageBackend.local) {
+        localPathEl.value = storageBackend.local.path || '';
+    }
+    
+    // Populate NFS settings
+    if (storageBackend.nfs) {
+        const nfsServerEl = document.getElementById('storage-nfs-server');
+        const nfsExportEl = document.getElementById('storage-nfs-export');
+        const nfsMountEl = document.getElementById('storage-nfs-mount');
+        const nfsOptionsEl = document.getElementById('storage-nfs-options');
+        
+        if (nfsServerEl) nfsServerEl.value = storageBackend.nfs.server || '';
+        if (nfsExportEl) nfsExportEl.value = storageBackend.nfs.export || '';
+        if (nfsMountEl) nfsMountEl.value = storageBackend.nfs.mount_point || '';
+        if (nfsOptionsEl) nfsOptionsEl.value = storageBackend.nfs.options || '';
+    }
+    
+    // Populate SMB settings
+    if (storageBackend.smb) {
+        const smbServerEl = document.getElementById('storage-smb-server');
+        const smbShareEl = document.getElementById('storage-smb-share');
+        const smbUserEl = document.getElementById('storage-smb-username');
+        const smbPassEl = document.getElementById('storage-smb-password');
+        const smbMountEl = document.getElementById('storage-smb-mount');
+        const smbOptionsEl = document.getElementById('storage-smb-options');
+        
+        if (smbServerEl) smbServerEl.value = storageBackend.smb.server || '';
+        if (smbShareEl) smbShareEl.value = storageBackend.smb.share || '';
+        if (smbUserEl) smbUserEl.value = storageBackend.smb.username || '';
+        if (smbPassEl) smbPassEl.value = storageBackend.smb.password || '';
+        if (smbMountEl) smbMountEl.value = storageBackend.smb.mount_point || '';
+        if (smbOptionsEl) smbOptionsEl.value = storageBackend.smb.options || '';
+    }
+}
+
+function updateStorageForm(storageType) {
+    // Hide all storage forms
+    const localForm = document.getElementById('storage-local-form');
+    const nfsForm = document.getElementById('storage-nfs-form');
+    const smbForm = document.getElementById('storage-smb-form');
+    
+    if (localForm) localForm.style.display = 'none';
+    if (nfsForm) nfsForm.style.display = 'none';
+    if (smbForm) smbForm.style.display = 'none';
+    
+    // Show selected form
+    if (storageType === 'local' && localForm) {
+        localForm.style.display = 'block';
+    } else if (storageType === 'nfs' && nfsForm) {
+        nfsForm.style.display = 'block';
+    } else if (storageType === 'smb' && smbForm) {
+        smbForm.style.display = 'block';
+    }
+    
+    // Clear test result
+    clearStorageTestResult();
+}
+
+function collectStorageBackendSettings() {
+    const storageType = document.getElementById('storage-type')?.value || 'local';
+    
+    const config = {
+        type: storageType,
+        local: {
+            path: document.getElementById('storage-local-path')?.value || '/share/jarvis_prime/registry'
+        },
+        nfs: {
+            server: document.getElementById('storage-nfs-server')?.value || '',
+            export: document.getElementById('storage-nfs-export')?.value || '',
+            mount_point: document.getElementById('storage-nfs-mount')?.value || '/mnt/registry-nfs',
+            options: document.getElementById('storage-nfs-options')?.value || 'rw,sync,hard,intr'
+        },
+        smb: {
+            server: document.getElementById('storage-smb-server')?.value || '',
+            share: document.getElementById('storage-smb-share')?.value || '',
+            username: document.getElementById('storage-smb-username')?.value || '',
+            password: document.getElementById('storage-smb-password')?.value || '',
+            mount_point: document.getElementById('storage-smb-mount')?.value || '/mnt/registry-smb',
+            options: document.getElementById('storage-smb-options')?.value || 'vers=3.0,dir_mode=0777,file_mode=0666'
+        }
+    };
+    
+    return config;
+}
+
+async function testStorageConnection() {
+    if (RegistryState.storageTestInProgress) {
+        return;
+    }
+    
+    try {
+        RegistryState.storageTestInProgress = true;
+        updateStorageTestUI('testing');
+        
+        const storageBackend = collectStorageBackendSettings();
+        
+        const response = await fetch('/api/registry/storage/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ storage_backend: storageBackend })
+        });
+        
+        const data = await response.json();
+        
+        RegistryState.storageTestResult = data;
+        
+        if (data.success) {
+            updateStorageTestUI('success', data);
+            showToast('Storage connection successful', 'success');
+        } else {
+            updateStorageTestUI('error', data);
+            showToast(data.error || 'Storage connection failed', 'error');
+        }
+    } catch (error) {
+        console.error('[Registry] Error testing storage:', error);
+        RegistryState.storageTestResult = { success: false, error: error.message };
+        updateStorageTestUI('error', { error: error.message });
+        showToast('Storage connection test failed', 'error');
+    } finally {
+        RegistryState.storageTestInProgress = false;
+    }
+}
+
+function updateStorageTestUI(status, data = null) {
+    const testBtn = document.getElementById('test-storage-btn');
+    const resultEl = document.getElementById('storage-test-result');
+    
+    if (!testBtn || !resultEl) return;
+    
+    if (status === 'testing') {
+        testBtn.disabled = true;
+        testBtn.textContent = 'Testing...';
+        resultEl.className = 'storage-test-result testing';
+        resultEl.textContent = 'Testing connection...';
+        resultEl.style.display = 'block';
+    } else if (status === 'success' && data) {
+        testBtn.disabled = false;
+        testBtn.textContent = 'Test Connection';
+        resultEl.className = 'storage-test-result success';
+        
+        let message = '✓ Connection successful';
+        if (data.total_gb && data.free_gb) {
+            message += ` - ${data.free_gb.toFixed(1)}GB free of ${data.total_gb.toFixed(1)}GB`;
+        }
+        if (data.type === 'nfs') {
+            message += ` (NFS: ${data.server}:${data.export})`;
+        } else if (data.type === 'smb') {
+            message += ` (SMB: //${data.server}/${data.share})`;
+        }
+        
+        resultEl.textContent = message;
+        resultEl.style.display = 'block';
+    } else if (status === 'error' && data) {
+        testBtn.disabled = false;
+        testBtn.textContent = 'Test Connection';
+        resultEl.className = 'storage-test-result error';
+        resultEl.textContent = `✗ ${data.error || 'Connection failed'}`;
+        resultEl.style.display = 'block';
+    }
+}
+
+function clearStorageTestResult() {
+    const resultEl = document.getElementById('storage-test-result');
+    if (resultEl) {
+        resultEl.style.display = 'none';
+        resultEl.textContent = '';
+    }
+    RegistryState.storageTestResult = null;
 }
 
 // ============================================================================
