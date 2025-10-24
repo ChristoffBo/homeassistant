@@ -1376,6 +1376,12 @@ function analyticsUpdateScheduleUI(schedule, status) {
   
   // Update scheduled times list
   analyticsDisplayScheduledTimes(schedule.schedule_times || []);
+  
+  // Update notification toggle
+  const notifyToggle = document.getElementById('notify-on-every-test');
+  if (notifyToggle) {
+    notifyToggle.checked = schedule.notify_on_every_test !== false;
+  }
 }
 
 // Display scheduled times
@@ -1508,6 +1514,31 @@ async function analyticsRemoveScheduledTime(time) {
   } catch (error) {
     console.error('Failed to remove scheduled time:', error);
     showToast('Failed to remove time', 'error');
+  }
+}
+
+// Toggle notify on every test
+async function analyticsToggleNotifyOnEveryTest() {
+  const checkbox = document.getElementById('notify-on-every-test');
+  const enabled = checkbox.checked;
+  
+  try {
+    const response = await fetch(ANALYTICS_API('speedtest/schedule'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notify_on_every_test: enabled })
+    });
+    
+    if (response.ok) {
+      showToast(enabled ? 'Will notify on every test' : 'Will only notify on problems', 'success');
+    } else {
+      showToast('Failed to update notification setting', 'error');
+      checkbox.checked = !enabled; // Revert
+    }
+  } catch (error) {
+    console.error('Failed to toggle notification setting:', error);
+    showToast('Failed to update setting', 'error');
+    checkbox.checked = !enabled; // Revert
   }
 }
 
