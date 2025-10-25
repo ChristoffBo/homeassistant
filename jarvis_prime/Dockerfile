@@ -29,6 +29,15 @@ RUN apt-get update && apt-get install -y curl gnupg \
  && apt-get update && apt-get install -y speedtest \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# ----------------------------
+# Download Docker Registry binary at build time (for Registry Hub)
+# ----------------------------
+RUN curl -fsSL https://github.com/distribution/distribution/releases/download/v2.8.3/registry_2.8.3_linux_amd64.tar.gz -o /tmp/registry.tar.gz \
+ && tar -xzf /tmp/registry.tar.gz -C /tmp \
+ && mv /tmp/registry /usr/local/bin/registry \
+ && chmod +x /usr/local/bin/registry \
+ && rm /tmp/registry.tar.gz
+
 WORKDIR /app
 
 # ----------------------------
