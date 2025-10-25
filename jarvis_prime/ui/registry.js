@@ -1,6 +1,6 @@
 /**
  * Jarvis Registry Hub - Frontend
- * Manages Docker registry cache, image pulling, updates, and settings
+ * Manages Docker registry cache with sub-tab navigation
  */
 
 // ============================================================================
@@ -12,11 +12,9 @@ const RegistryState = {
     stats: null,
     settings: null,
     loading: false,
-    settingsPanelOpen: false,
+    currentView: 'images', // images, settings, stats
     pullModalOpen: false,
-    selectedImage: null,
-    storageTestInProgress: false,
-    storageTestResult: null
+    selectedImage: null
 };
 
 // ============================================================================
@@ -26,23 +24,79 @@ const RegistryState = {
 function initRegistry() {
     console.log('[Registry] Initializing');
     
+    // Setup sub-tab navigation
+    setupRegistrySubnav();
+    
+    // Setup event listeners
+    setupRegistryEventListeners();
+    
     // Load initial data
     loadRegistryImages();
     loadRegistryStats();
     loadRegistrySettings();
     
-    // Setup event listeners
-    setupRegistryEventListeners();
-    
     // Auto-refresh every 30 seconds
     setInterval(() => {
         if (document.querySelector('#registry.active')) {
-            loadRegistryImages();
-            loadRegistryStats();
+            if (RegistryState.currentView === 'images') {
+                loadRegistryImages();
+            }
+            loadRegistryStats(); // Always refresh stats for cards
         }
     }, 30000);
     
     console.log('[Registry] Initialized');
+}
+
+// ============================================================================
+// SUB-TAB NAVIGATION (matching Sentinel/Orchestrator pattern)
+// ============================================================================
+
+function setupRegistrySubnav() {
+    const subnavButtons = document.querySelectorAll('.registry-subnav-btn');
+    
+    subnavButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const view = btn.dataset.view;
+            switchRegistryView(view);
+        });
+    });
+    
+    // Default to images view
+    switchRegistryView('images');
+}
+
+function switchRegistryView(view) {
+    RegistryState.currentView = view;
+    
+    // Update active button
+    document.querySelectorAll('.registry-subnav-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    const activeBtn = document.querySelector(`.registry-subnav-btn[data-view="${view}"]`);
+    if (activeBtn) {
+        activeBtn.classList.add('active');
+    }
+    
+    // Hide all views
+    document.querySelectorAll('.registry-view').forEach(v => {
+        v.style.display = 'none';
+    });
+    
+    // Show selected view
+    const selectedView = document.getElementById(`registry-${view}-view`);
+    if (selectedView) {
+        selectedView.style.display = 'block';
+    }
+    
+    // Load data for view if needed
+    if (view === 'images') {
+        loadRegistryImages();
+    } else if (view === 'settings') {
+        loadRegistrySettings();
+    } else if (view === 'stats') {
+        renderStatsView();
+    }
 }
 
 // ============================================================================
@@ -56,17 +110,15 @@ function setupRegistryEventListeners() {
         pullBtn.addEventListener('click', () => openPullModal());
     }
     
-    // Settings button
-    const settingsBtn = document.getElementById('registry-settings-btn');
-    if (settingsBtn) {
-        settingsBtn.addEventListener('click', () => toggleSettingsPanel());
-    }
-    
     // Refresh button
     const refreshBtn = document.getElementById('registry-refresh-btn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            loadRegistryImages();
+            if (RegistryState.currentView === 'images') {
+                loadRegistryImages();
+            } else if (RegistryState.currentView === 'settings') {
+                loadRegistrySettings();
+            }
             loadRegistryStats();
             showToast('Refreshing registry data...', 'info');
         });
@@ -99,123 +151,339 @@ function setupRegistryEventListeners() {
     // Pull modal - image input (Enter key)
     const pullImageInput = document.getElementById('pull-image-input');
     if (pullImageInput) {
-        pullImageInput.addEventListener('keypress', (e) => {
+        pullImageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
+                e.preventDefault();
                 executePull();
             }
         });
     }
     
-    // Settings panel - close button
-    const settingsClose = document.getElementById('settings-panel-close');
-    if (settingsClose) {
-        settingsClose.addEventListener('click', () => closeSettingsPanel());
+    // Settings form - save button
+    const saveSettingsBtn = document.getElementById('registry-save-settings');
+    if (saveSettingsBtn) {
+        saveSettingsBtn.addEventListener('click', () => saveSettings());
     }
     
-    // Settings panel - save button
-    const settingsSaveBtn = document.getElementById('settings-save-btn');
-    if (settingsSaveBtn) {
-        settingsSaveBtn.addEventListener('click', () => saveSettings());
-    }
-    
-    // Storage type selector
-    const storageTypeSelect = document.getElementById('storage-type');
-    if (storageTypeSelect) {
-        storageTypeSelect.addEventListener('change', (e) => updateStorageForm(e.target.value));
-    }
-    
-    // Test storage button
-    const testStorageBtn = document.getElementById('test-storage-btn');
+    // Storage test button
+    const testStorageBtn = document.getElementById('registry-test-storage');
     if (testStorageBtn) {
         testStorageBtn.addEventListener('click', () => testStorageConnection());
     }
-    
-    // Settings panel - purge buttons
-    const purgeHistoryBtn = document.getElementById('purge-history-btn');
-    if (purgeHistoryBtn) {
-        purgeHistoryBtn.addEventListener('click', () => purgeHistory());
-    }
-    
-    const cleanOrphanedBtn = document.getElementById('clean-orphaned-btn');
-    if (cleanOrphanedBtn) {
-        cleanOrphanedBtn.addEventListener('click', () => cleanOrphaned());
-    }
-    
-    const resetDbBtn = document.getElementById('reset-db-btn');
-    if (resetDbBtn) {
-        resetDbBtn.addEventListener('click', () => resetDatabase());
-    }
-    
-    const cleanupStorageBtn = document.getElementById('cleanup-storage-btn');
-    if (cleanupStorageBtn) {
-        cleanupStorageBtn.addEventListener('click', () => cleanupStorage());
-    }
-    
-    // Common images shortcuts
-    document.querySelectorAll('.common-image-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const imageName = e.target.dataset.image;
-            document.getElementById('pull-image-input').value = imageName;
-        });
-    });
 }
 
 // ============================================================================
-// API CALLS
+// DATA LOADING
 // ============================================================================
 
 async function loadRegistryImages() {
     try {
-        const response = await fetch('/api/registry/images');
-        const data = await response.json();
+        RegistryState.loading = true;
+        renderImagesLoading();
         
-        if (data.images) {
-            RegistryState.images = data.images;
-            renderImageList();
-        }
+        const data = await fetch(window.API('api/registry/images')).then(r => r.json());
+        RegistryState.images = data.images || [];
+        
+        renderImages();
     } catch (error) {
-        console.error('[Registry] Error loading images:', error);
-        showToast('Failed to load images', 'error');
+        console.error('[Registry] Failed to load images:', error);
+        renderImagesError(error.message);
+    } finally {
+        RegistryState.loading = false;
     }
 }
 
 async function loadRegistryStats() {
     try {
-        const response = await fetch('/api/registry/stats');
-        const data = await response.json();
-        
-        if (data) {
-            RegistryState.stats = data;
-            renderStats();
-        }
+        const data = await fetch(window.API('api/registry/stats')).then(r => r.json());
+        RegistryState.stats = data;
+        renderStatsCards();
     } catch (error) {
-        console.error('[Registry] Error loading stats:', error);
+        console.error('[Registry] Failed to load stats:', error);
+        renderStatsError();
     }
 }
 
 async function loadRegistrySettings() {
     try {
-        const response = await fetch('/api/registry/settings');
-        const data = await response.json();
-        
-        if (data) {
-            RegistryState.settings = data;
-            renderSettings();
-        }
+        const data = await fetch(window.API('api/registry/settings')).then(r => r.json());
+        RegistryState.settings = data;
+        renderSettings();
     } catch (error) {
-        console.error('[Registry] Error loading settings:', error);
+        console.error('[Registry] Failed to load settings:', error);
+        renderSettingsError(error.message);
     }
 }
 
-async function pullImage(imageName) {
-    try {
-        showToast(`Pulling ${imageName}...`, 'info');
+// ============================================================================
+// RENDERING - STATS CARDS (always visible)
+// ============================================================================
+
+function renderStatsCards() {
+    const stats = RegistryState.stats || {};
+    
+    // Update stat cards
+    const cachedImagesEl = document.getElementById('registry-stat-cached-images');
+    if (cachedImagesEl) {
+        cachedImagesEl.textContent = stats.cached_images || 0;
+    }
+    
+    const storageUsedEl = document.getElementById('registry-stat-storage-used');
+    if (storageUsedEl) {
+        const gb = ((stats.storage_used || 0) / 1024 / 1024 / 1024).toFixed(2);
+        storageUsedEl.textContent = `${gb} GB`;
+    }
+    
+    const updatesAvailableEl = document.getElementById('registry-stat-updates');
+    if (updatesAvailableEl) {
+        updatesAvailableEl.textContent = stats.updates_available || 0;
+    }
+}
+
+function renderStatsError() {
+    const cachedImagesEl = document.getElementById('registry-stat-cached-images');
+    if (cachedImagesEl) cachedImagesEl.textContent = '-';
+    
+    const storageUsedEl = document.getElementById('registry-stat-storage-used');
+    if (storageUsedEl) storageUsedEl.textContent = '-';
+    
+    const updatesAvailableEl = document.getElementById('registry-stat-updates');
+    if (updatesAvailableEl) updatesAvailableEl.textContent = '-';
+}
+
+// ============================================================================
+// RENDERING - IMAGES VIEW
+// ============================================================================
+
+function renderImagesLoading() {
+    const container = document.getElementById('registry-images-list');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="text-center"><div class="spinner"></div><p>Loading images...</p></div>';
+}
+
+function renderImagesError(message) {
+    const container = document.getElementById('registry-images-list');
+    if (!container) return;
+    
+    container.innerHTML = `<div class="alert alert-danger">Failed to load images: ${message}</div>`;
+}
+
+function renderImages() {
+    const container = document.getElementById('registry-images-list');
+    if (!container) return;
+    
+    const images = RegistryState.images;
+    
+    if (images.length === 0) {
+        container.innerHTML = '<div class="text-center text-muted">No images cached yet. Pull an image to get started.</div>';
+        return;
+    }
+    
+    container.innerHTML = images.map(img => `
+        <div class="registry-image-card">
+            <div class="registry-image-header">
+                <span class="registry-image-name">${escapeHtml(img.name || 'unknown')}</span>
+                <span class="registry-image-tag">${escapeHtml(img.tag || 'latest')}</span>
+            </div>
+            <div class="registry-image-details">
+                <div class="registry-image-detail">
+                    <span class="label">Digest:</span>
+                    <span class="value">${escapeHtml((img.digest || '').substring(0, 16))}...</span>
+                </div>
+                <div class="registry-image-detail">
+                    <span class="label">Size:</span>
+                    <span class="value">${formatBytes(img.size || 0)}</span>
+                </div>
+                <div class="registry-image-detail">
+                    <span class="label">Pulled:</span>
+                    <span class="value">${formatDate(img.pulled_at)}</span>
+                </div>
+                ${img.update_available ? '<div class="registry-update-badge">Update Available</div>' : ''}
+            </div>
+            <div class="registry-image-actions">
+                <button class="btn btn-sm" onclick="deleteImage('${escapeHtml(img.id || '')}')">Delete</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function filterImages(query) {
+    const cards = document.querySelectorAll('.registry-image-card');
+    const lowerQuery = query.toLowerCase();
+    
+    cards.forEach(card => {
+        const name = card.querySelector('.registry-image-name')?.textContent.toLowerCase() || '';
+        const tag = card.querySelector('.registry-image-tag')?.textContent.toLowerCase() || '';
         
-        const response = await fetch('/api/registry/images/pull', {
+        if (name.includes(lowerQuery) || tag.includes(lowerQuery)) {
+            card.style.display = 'block';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+// ============================================================================
+// RENDERING - SETTINGS VIEW
+// ============================================================================
+
+function renderSettings() {
+    const settings = RegistryState.settings || {};
+    
+    // Auto-pull enabled
+    const autoPullEl = document.getElementById('registry-auto-pull');
+    if (autoPullEl) {
+        autoPullEl.checked = settings.auto_pull !== false;
+    }
+    
+    // Check interval
+    const intervalEl = document.getElementById('registry-check-interval');
+    if (intervalEl) {
+        intervalEl.value = settings.check_interval_hours || 12;
+    }
+    
+    // Keep versions
+    const keepVersionsEl = document.getElementById('registry-keep-versions');
+    if (keepVersionsEl) {
+        keepVersionsEl.value = settings.keep_versions || 2;
+    }
+    
+    // Max storage
+    const maxStorageEl = document.getElementById('registry-max-storage');
+    if (maxStorageEl) {
+        maxStorageEl.value = settings.max_storage_gb || 50;
+    }
+    
+    // Storage backend type
+    const storageTypeEl = document.getElementById('registry-storage-type');
+    if (storageTypeEl) {
+        const backend = settings.storage_backend || {};
+        storageTypeEl.value = backend.type || 'local';
+        updateStorageFields(backend.type || 'local');
+    }
+}
+
+function renderSettingsError(message) {
+    const container = document.getElementById('registry-settings-view');
+    if (!container) return;
+    
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-danger';
+    alert.textContent = `Failed to load settings: ${message}`;
+    container.insertBefore(alert, container.firstChild);
+}
+
+function updateStorageFields(type) {
+    // Show/hide storage backend fields based on type
+    document.querySelectorAll('.storage-backend-field').forEach(el => {
+        el.style.display = 'none';
+    });
+    
+    const typeFields = document.querySelectorAll(`.storage-backend-field[data-backend="${type}"]`);
+    typeFields.forEach(el => {
+        el.style.display = 'block';
+    });
+}
+
+// ============================================================================
+// RENDERING - STATS VIEW
+// ============================================================================
+
+function renderStatsView() {
+    const container = document.getElementById('registry-stats-view');
+    if (!container) return;
+    
+    const stats = RegistryState.stats || {};
+    
+    container.innerHTML = `
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Cached Images</h3>
+                <div class="stat-value">${stats.cached_images || 0}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Storage Used</h3>
+                <div class="stat-value">${formatBytes(stats.storage_used || 0)}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Updates Available</h3>
+                <div class="stat-value">${stats.updates_available || 0}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Pulls</h3>
+                <div class="stat-value">${stats.total_pulls || 0}</div>
+            </div>
+        </div>
+        
+        <div class="stats-details">
+            <h3>Registry Status</h3>
+            <table class="table">
+                <tr>
+                    <td>Registry Port</td>
+                    <td>${stats.registry_port || 5001}</td>
+                </tr>
+                <tr>
+                    <td>Storage Path</td>
+                    <td>${escapeHtml(stats.storage_path || '/share/jarvis_prime/registry')}</td>
+                </tr>
+                <tr>
+                    <td>Auto-Pull</td>
+                    <td>${stats.auto_pull ? 'Enabled' : 'Disabled'}</td>
+                </tr>
+                <tr>
+                    <td>Last Update Check</td>
+                    <td>${formatDate(stats.last_check || null)}</td>
+                </tr>
+            </table>
+        </div>
+    `;
+}
+
+// ============================================================================
+// ACTIONS - PULL IMAGE
+// ============================================================================
+
+function openPullModal() {
+    const modal = document.getElementById('registry-pull-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        RegistryState.pullModalOpen = true;
+        document.getElementById('pull-image-input')?.focus();
+    }
+}
+
+function closePullModal() {
+    const modal = document.getElementById('registry-pull-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        RegistryState.pullModalOpen = false;
+        document.getElementById('pull-image-input').value = '';
+    }
+}
+
+async function executePull() {
+    const input = document.getElementById('pull-image-input');
+    const imageName = input?.value.trim();
+    
+    if (!imageName) {
+        showToast('Please enter an image name', 'error');
+        return;
+    }
+    
+    const btn = document.getElementById('pull-modal-btn');
+    if (btn) btn.classList.add('loading');
+    
+    try {
+        const response = await fetch(window.API('api/registry/pull'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image: imageName })
         });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
         
         const data = await response.json();
         
@@ -225,748 +493,167 @@ async function pullImage(imageName) {
             loadRegistryImages();
             loadRegistryStats();
         } else {
-            showToast(data.error || 'Pull failed', 'error');
+            throw new Error(data.error || 'Pull failed');
         }
     } catch (error) {
-        console.error('[Registry] Error pulling image:', error);
-        showToast('Failed to pull image', 'error');
+        console.error('[Registry] Pull error:', error);
+        showToast(`Failed to pull image: ${error.message}`, 'error');
+    } finally {
+        if (btn) btn.classList.remove('loading');
     }
 }
 
-async function deleteImage(imageId, imageName) {
-    if (!confirm(`Delete ${imageName}?\n\nThis will remove the cached image from the registry.`)) {
-        return;
-    }
+// ============================================================================
+// ACTIONS - DELETE IMAGE
+// ============================================================================
+
+async function deleteImage(imageId) {
+    if (!confirm('Delete this image from cache?')) return;
     
     try {
-        showToast(`Deleting ${imageName}...`, 'info');
-        
-        const response = await fetch(`/api/registry/images/${imageId}`, {
+        const response = await fetch(window.API(`api/registry/images/${imageId}`), {
             method: 'DELETE'
         });
         
-        const data = await response.json();
-        
-        if (data.success) {
-            showToast(`Deleted ${imageName}`, 'success');
-            loadRegistryImages();
-            loadRegistryStats();
-        } else {
-            showToast(data.error || 'Delete failed', 'error');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
         }
+        
+        showToast('Image deleted', 'success');
+        loadRegistryImages();
+        loadRegistryStats();
     } catch (error) {
-        console.error('[Registry] Error deleting image:', error);
-        showToast('Failed to delete image', 'error');
+        console.error('[Registry] Delete error:', error);
+        showToast(`Failed to delete image: ${error.message}`, 'error');
     }
 }
 
-async function saveSettings() {
+// ============================================================================
+// ACTIONS - CHECK UPDATES
+// ============================================================================
+
+async function checkForUpdates() {
+    const btn = document.getElementById('registry-check-updates-btn');
+    if (btn) btn.classList.add('loading');
+    
     try {
-        const settings = {
-            auto_pull: document.getElementById('setting-auto-pull').checked,
-            check_interval_hours: parseInt(document.getElementById('setting-check-interval').value),
-            keep_versions: parseInt(document.getElementById('setting-keep-versions').value),
-            max_storage_gb: parseInt(document.getElementById('setting-max-storage').value),
-            purge_history_days: parseInt(document.getElementById('setting-purge-days').value),
-            notifications_enabled: document.getElementById('setting-notifications').checked,
-            storage_backend: collectStorageBackendSettings()
-        };
+        const response = await fetch(window.API('api/registry/check-updates'), {
+            method: 'POST'
+        });
         
-        const response = await fetch('/api/registry/settings', {
-            method: 'PUT',
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        showToast('Update check complete', 'success');
+        loadRegistryImages();
+        loadRegistryStats();
+    } catch (error) {
+        console.error('[Registry] Update check error:', error);
+        showToast(`Update check failed: ${error.message}`, 'error');
+    } finally {
+        if (btn) btn.classList.remove('loading');
+    }
+}
+
+// ============================================================================
+// ACTIONS - SAVE SETTINGS
+// ============================================================================
+
+async function saveSettings() {
+    const settings = {
+        auto_pull: document.getElementById('registry-auto-pull')?.checked || false,
+        check_interval_hours: parseInt(document.getElementById('registry-check-interval')?.value || '12'),
+        keep_versions: parseInt(document.getElementById('registry-keep-versions')?.value || '2'),
+        max_storage_gb: parseInt(document.getElementById('registry-max-storage')?.value || '50'),
+        storage_backend: {
+            type: document.getElementById('registry-storage-type')?.value || 'local'
+        }
+    };
+    
+    const btn = document.getElementById('registry-save-settings');
+    if (btn) btn.classList.add('loading');
+    
+    try {
+        const response = await fetch(window.API('api/registry/settings'), {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings)
         });
         
-        const data = await response.json();
-        
-        if (data.success) {
-            showToast('Settings saved', 'success');
-            RegistryState.settings = settings;
-            closeSettingsPanel();
-        } else {
-            showToast('Failed to save settings', 'error');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
         }
+        
+        showToast('Settings saved', 'success');
+        loadRegistrySettings();
     } catch (error) {
-        console.error('[Registry] Error saving settings:', error);
-        showToast('Failed to save settings', 'error');
+        console.error('[Registry] Save settings error:', error);
+        showToast(`Failed to save settings: ${error.message}`, 'error');
+    } finally {
+        if (btn) btn.classList.remove('loading');
     }
 }
 
-async function checkForUpdates() {
-    try {
-        showToast('Checking for updates...', 'info');
-        
-        const response = await fetch('/api/registry/check-updates', {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            const count = data.updates_found;
-            if (count > 0) {
-                showToast(`Found ${count} update${count > 1 ? 's' : ''}`, 'success');
-            } else {
-                showToast('All images are up to date', 'success');
-            }
-            loadRegistryImages();
-            loadRegistryStats();
-        } else {
-            showToast('Update check failed', 'error');
-        }
-    } catch (error) {
-        console.error('[Registry] Error checking updates:', error);
-        showToast('Failed to check updates', 'error');
-    }
-}
+// ============================================================================
+// ACTIONS - TEST STORAGE
+// ============================================================================
 
-async function purgeHistory() {
-    const days = RegistryState.settings?.purge_history_days || 30;
+async function testStorageConnection() {
+    const storageType = document.getElementById('registry-storage-type')?.value;
     
-    if (!confirm(`Purge history older than ${days} days?`)) {
-        return;
-    }
+    const btn = document.getElementById('registry-test-storage');
+    if (btn) btn.classList.add('loading');
     
     try {
-        const response = await fetch('/api/registry/db/purge-history', {
+        const response = await fetch(window.API('api/registry/storage/test'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ days })
+            body: JSON.stringify({ storage_backend: { type: storageType } })
         });
         
         const data = await response.json();
         
         if (data.success) {
-            showToast(`Purged ${data.deleted} old records`, 'success');
-            loadRegistryStats();
+            showToast('Storage connection successful', 'success');
         } else {
-            showToast('Purge failed', 'error');
+            showToast(`Storage test failed: ${data.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
-        console.error('[Registry] Error purging history:', error);
-        showToast('Failed to purge history', 'error');
+        console.error('[Registry] Storage test error:', error);
+        showToast(`Storage test failed: ${error.message}`, 'error');
+    } finally {
+        if (btn) btn.classList.remove('loading');
     }
-}
-
-async function cleanOrphaned() {
-    if (!confirm('Clean orphaned database records?\n\nThis will remove metadata for images no longer in cache.')) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/registry/db/clean-orphaned', {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showToast(`Cleaned ${data.deleted} orphaned records`, 'success');
-            loadRegistryImages();
-            loadRegistryStats();
-        } else {
-            showToast('Cleanup failed', 'error');
-        }
-    } catch (error) {
-        console.error('[Registry] Error cleaning orphaned:', error);
-        showToast('Failed to clean orphaned records', 'error');
-    }
-}
-
-async function resetDatabase() {
-    const confirmation = prompt('⚠️ DANGER: Reset Registry Database?\n\nThis will delete ALL registry data from the database.\nCached images will remain on disk.\n\nType "RESET" to confirm:');
-    
-    if (confirmation !== 'RESET') {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/registry/db/reset', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confirmation: 'RESET' })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showToast('Database reset complete', 'success');
-            loadRegistryImages();
-            loadRegistryStats();
-            loadRegistrySettings();
-        } else {
-            showToast('Reset failed', 'error');
-        }
-    } catch (error) {
-        console.error('[Registry] Error resetting database:', error);
-        showToast('Failed to reset database', 'error');
-    }
-}
-
-async function cleanupStorage() {
-    if (!confirm('Run storage garbage collection?\n\nThis will remove unused image layers to free space.')) {
-        return;
-    }
-    
-    try {
-        showToast('Running garbage collection...', 'info');
-        
-        const response = await fetch('/api/registry/storage/cleanup', {
-            method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showToast('Storage cleanup complete', 'success');
-            loadRegistryStats();
-        } else {
-            showToast('Cleanup failed', 'error');
-        }
-    } catch (error) {
-        console.error('[Registry] Error cleaning storage:', error);
-        showToast('Failed to cleanup storage', 'error');
-    }
-}
-
-// ============================================================================
-// RENDERING
-// ============================================================================
-
-function renderImageList() {
-    const container = document.getElementById('registry-images-list');
-    if (!container) return;
-    
-    if (RegistryState.images.length === 0) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-icon">📦</div>
-                <div class="empty-title">No cached images</div>
-                <div class="empty-text">Pull an image to get started</div>
-                <button class="btn btn-primary" onclick="openPullModal()">Pull Image</button>
-            </div>
-        `;
-        return;
-    }
-    
-    let html = '';
-    
-    RegistryState.images.forEach(image => {
-        const updateBadge = image.update_available ? 
-            '<span class="badge badge-warning">🔄 Update Available</span>' : 
-            '<span class="badge badge-success">✅ Up to date</span>';
-        
-        const size = formatBytes(image.size);
-        const pulledAt = formatTimeAgo(image.pulled_at);
-        
-        html += `
-            <div class="registry-image-card" data-image-id="${image.id}">
-                <div class="image-card-header">
-                    <div class="image-info">
-                        <div class="image-name">${escapeHtml(image.name)}:${escapeHtml(image.tag)}</div>
-                        <div class="image-meta">
-                            ${size} • ${pulledAt}
-                        </div>
-                    </div>
-                    <div class="image-status">
-                        ${updateBadge}
-                    </div>
-                </div>
-                <div class="image-card-actions">
-                    ${image.update_available ? 
-                        `<button class="btn btn-sm btn-primary" onclick="pullImage('${escapeHtml(image.name)}:${escapeHtml(image.tag)}')">
-                            Update Now
-                        </button>` : 
-                        ''
-                    }
-                    <button class="btn btn-sm btn-secondary" onclick="viewImageDetails('${escapeHtml(image.id)}')">
-                        View
-                    </button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteImage('${escapeHtml(image.id)}', '${escapeHtml(image.name)}:${escapeHtml(image.tag)}')">
-                        Delete
-                    </button>
-                </div>
-            </div>
-        `;
-    });
-    
-    container.innerHTML = html;
-}
-
-function renderStats() {
-    if (!RegistryState.stats) return;
-    
-    // Image count
-    const imageCountEl = document.getElementById('stat-image-count');
-    if (imageCountEl) {
-        imageCountEl.textContent = RegistryState.stats.database.image_count || 0;
-    }
-    
-    // Storage used
-    const storageUsedEl = document.getElementById('stat-storage-used');
-    if (storageUsedEl) {
-        const used = formatBytes(RegistryState.stats.storage.used || 0);
-        const total = formatBytes(RegistryState.stats.storage.total || 0);
-        const percent = RegistryState.stats.storage.percent || 0;
-        storageUsedEl.textContent = `${used} / ${total} (${percent.toFixed(1)}%)`;
-    }
-    
-    // Updates available
-    const updatesEl = document.getElementById('stat-updates-available');
-    if (updatesEl) {
-        const count = RegistryState.stats.updates_available || 0;
-        updatesEl.textContent = count;
-        
-        // Add warning class if updates available
-        if (count > 0) {
-            updatesEl.classList.add('text-warning');
-        } else {
-            updatesEl.classList.remove('text-warning');
-        }
-    }
-    
-    // Storage progress bar
-    const storageBarEl = document.getElementById('storage-progress-bar');
-    if (storageBarEl) {
-        const percent = RegistryState.stats.storage.percent || 0;
-        storageBarEl.style.width = `${percent}%`;
-        
-        // Color based on usage
-        storageBarEl.className = 'progress-bar';
-        if (percent > 90) {
-            storageBarEl.classList.add('bg-danger');
-        } else if (percent > 75) {
-            storageBarEl.classList.add('bg-warning');
-        } else {
-            storageBarEl.classList.add('bg-success');
-        }
-    }
-}
-
-function renderSettings() {
-    if (!RegistryState.settings) return;
-    
-    // Auto-pull
-    const autoPullEl = document.getElementById('setting-auto-pull');
-    if (autoPullEl) {
-        autoPullEl.checked = RegistryState.settings.auto_pull;
-    }
-    
-    // Check interval
-    const checkIntervalEl = document.getElementById('setting-check-interval');
-    if (checkIntervalEl) {
-        checkIntervalEl.value = RegistryState.settings.check_interval_hours;
-    }
-    
-    // Keep versions
-    const keepVersionsEl = document.getElementById('setting-keep-versions');
-    if (keepVersionsEl) {
-        keepVersionsEl.value = RegistryState.settings.keep_versions;
-    }
-    
-    // Max storage
-    const maxStorageEl = document.getElementById('setting-max-storage');
-    if (maxStorageEl) {
-        maxStorageEl.value = RegistryState.settings.max_storage_gb;
-    }
-    
-    // Purge days
-    const purgeDaysEl = document.getElementById('setting-purge-days');
-    if (purgeDaysEl) {
-        purgeDaysEl.value = RegistryState.settings.purge_history_days;
-    }
-    
-    // Notifications
-    const notificationsEl = document.getElementById('setting-notifications');
-    if (notificationsEl) {
-        notificationsEl.checked = RegistryState.settings.notifications_enabled;
-    }
-    
-    // Storage backend
-    if (RegistryState.settings.storage_backend) {
-        renderStorageBackendSettings(RegistryState.settings.storage_backend);
-    }
-}
-
-function viewImageDetails(imageId) {
-    const image = RegistryState.images.find(img => img.id === imageId);
-    if (!image) return;
-    
-    const details = `
-Image: ${image.name}:${image.tag}
-Digest: ${image.digest}
-Size: ${formatBytes(image.size)}
-Pulled: ${new Date(image.pulled_at).toLocaleString()}
-Last Checked: ${image.last_checked ? new Date(image.last_checked).toLocaleString() : 'Never'}
-Update Available: ${image.update_available ? 'Yes' : 'No'}
-    `.trim();
-    
-    alert(details);
-}
-
-// ============================================================================
-// MODALS & PANELS
-// ============================================================================
-
-function openPullModal() {
-    const modal = document.getElementById('pull-modal');
-    if (modal) {
-        modal.classList.add('active');
-        RegistryState.pullModalOpen = true;
-        
-        // Focus input
-        setTimeout(() => {
-            document.getElementById('pull-image-input')?.focus();
-        }, 100);
-    }
-}
-
-function closePullModal() {
-    const modal = document.getElementById('pull-modal');
-    if (modal) {
-        modal.classList.remove('active');
-        RegistryState.pullModalOpen = false;
-        
-        // Clear input
-        const input = document.getElementById('pull-image-input');
-        if (input) input.value = '';
-    }
-}
-
-function executePull() {
-    const input = document.getElementById('pull-image-input');
-    if (!input) return;
-    
-    const imageName = input.value.trim();
-    
-    if (!imageName) {
-        showToast('Please enter an image name', 'warning');
-        return;
-    }
-    
-    // Add :latest if no tag specified
-    const fullImageName = imageName.includes(':') ? imageName : `${imageName}:latest`;
-    
-    pullImage(fullImageName);
-}
-
-function toggleSettingsPanel() {
-    if (RegistryState.settingsPanelOpen) {
-        closeSettingsPanel();
-    } else {
-        openSettingsPanel();
-    }
-}
-
-function openSettingsPanel() {
-    const panel = document.getElementById('settings-panel');
-    if (panel) {
-        panel.classList.add('active');
-        RegistryState.settingsPanelOpen = true;
-    }
-}
-
-function closeSettingsPanel() {
-    const panel = document.getElementById('settings-panel');
-    if (panel) {
-        panel.classList.remove('active');
-        RegistryState.settingsPanelOpen = false;
-    }
-}
-
-// ============================================================================
-// SEARCH & FILTER
-// ============================================================================
-
-function filterImages(searchTerm) {
-    const term = searchTerm.toLowerCase();
-    
-    document.querySelectorAll('.registry-image-card').forEach(card => {
-        const imageId = card.dataset.imageId;
-        const image = RegistryState.images.find(img => img.id === imageId);
-        
-        if (!image) {
-            card.style.display = 'none';
-            return;
-        }
-        
-        const searchableText = `${image.name} ${image.tag}`.toLowerCase();
-        
-        if (searchableText.includes(term)) {
-            card.style.display = 'block';
-        } else {
-            card.style.display = 'none';
-        }
-    });
 }
 
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
-    
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function formatTimeAgo(timestamp) {
-    if (!timestamp) return 'Unknown';
-    
-    const now = new Date();
-    const then = new Date(timestamp);
-    const seconds = Math.floor((now - then) / 1000);
-    
-    if (seconds < 60) return 'Just now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
-    if (seconds < 2592000) return `${Math.floor(seconds / 604800)}w ago`;
-    
-    return then.toLocaleDateString();
-}
-
-function escapeHtml(text) {
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return text.replace(/[&<>"']/g, m => map[m]);
-}
-
-function showToast(message, type = 'info') {
-    // Use existing Jarvis toast system if available
-    if (typeof showNotification === 'function') {
-        showNotification(message, type);
-        return;
-    }
-    
-    // Fallback to console
-    console.log(`[Registry] ${type.toUpperCase()}: ${message}`);
-}
-
-// ============================================================================
-// STORAGE BACKEND MANAGEMENT
-// ============================================================================
-
-function renderStorageBackendSettings(storageBackend) {
-    const storageTypeEl = document.getElementById('storage-type');
-    if (storageTypeEl) {
-        storageTypeEl.value = storageBackend.type || 'local';
-    }
-    
-    // Show appropriate form based on type
-    updateStorageForm(storageBackend.type || 'local');
-    
-    // Populate local settings
-    const localPathEl = document.getElementById('storage-local-path');
-    if (localPathEl && storageBackend.local) {
-        localPathEl.value = storageBackend.local.path || '';
-    }
-    
-    // Populate NFS settings
-    if (storageBackend.nfs) {
-        const nfsServerEl = document.getElementById('storage-nfs-server');
-        const nfsExportEl = document.getElementById('storage-nfs-export');
-        const nfsMountEl = document.getElementById('storage-nfs-mount');
-        const nfsOptionsEl = document.getElementById('storage-nfs-options');
-        
-        if (nfsServerEl) nfsServerEl.value = storageBackend.nfs.server || '';
-        if (nfsExportEl) nfsExportEl.value = storageBackend.nfs.export || '';
-        if (nfsMountEl) nfsMountEl.value = storageBackend.nfs.mount_point || '';
-        if (nfsOptionsEl) nfsOptionsEl.value = storageBackend.nfs.options || '';
-    }
-    
-    // Populate SMB settings
-    if (storageBackend.smb) {
-        const smbServerEl = document.getElementById('storage-smb-server');
-        const smbShareEl = document.getElementById('storage-smb-share');
-        const smbUserEl = document.getElementById('storage-smb-username');
-        const smbPassEl = document.getElementById('storage-smb-password');
-        const smbMountEl = document.getElementById('storage-smb-mount');
-        const smbOptionsEl = document.getElementById('storage-smb-options');
-        
-        if (smbServerEl) smbServerEl.value = storageBackend.smb.server || '';
-        if (smbShareEl) smbShareEl.value = storageBackend.smb.share || '';
-        if (smbUserEl) smbUserEl.value = storageBackend.smb.username || '';
-        if (smbPassEl) smbPassEl.value = storageBackend.smb.password || '';
-        if (smbMountEl) smbMountEl.value = storageBackend.smb.mount_point || '';
-        if (smbOptionsEl) smbOptionsEl.value = storageBackend.smb.options || '';
-    }
-}
-
-function updateStorageForm(storageType) {
-    // Hide all storage forms
-    const localForm = document.getElementById('storage-local-form');
-    const nfsForm = document.getElementById('storage-nfs-form');
-    const smbForm = document.getElementById('storage-smb-form');
-    
-    if (localForm) localForm.style.display = 'none';
-    if (nfsForm) nfsForm.style.display = 'none';
-    if (smbForm) smbForm.style.display = 'none';
-    
-    // Show selected form
-    if (storageType === 'local' && localForm) {
-        localForm.style.display = 'block';
-    } else if (storageType === 'nfs' && nfsForm) {
-        nfsForm.style.display = 'block';
-    } else if (storageType === 'smb' && smbForm) {
-        smbForm.style.display = 'block';
-    }
-    
-    // Clear test result
-    clearStorageTestResult();
-}
-
-function collectStorageBackendSettings() {
-    const storageType = document.getElementById('storage-type')?.value || 'local';
-    
-    const config = {
-        type: storageType,
-        local: {
-            path: document.getElementById('storage-local-path')?.value || '/share/jarvis_prime/registry'
-        },
-        nfs: {
-            server: document.getElementById('storage-nfs-server')?.value || '',
-            export: document.getElementById('storage-nfs-export')?.value || '',
-            mount_point: document.getElementById('storage-nfs-mount')?.value || '/mnt/registry-nfs',
-            options: document.getElementById('storage-nfs-options')?.value || 'rw,sync,hard,intr'
-        },
-        smb: {
-            server: document.getElementById('storage-smb-server')?.value || '',
-            share: document.getElementById('storage-smb-share')?.value || '',
-            username: document.getElementById('storage-smb-username')?.value || '',
-            password: document.getElementById('storage-smb-password')?.value || '',
-            mount_point: document.getElementById('storage-smb-mount')?.value || '/mnt/registry-smb',
-            options: document.getElementById('storage-smb-options')?.value || 'vers=3.0,dir_mode=0777,file_mode=0666'
-        }
-    };
-    
-    return config;
-}
-
-async function testStorageConnection() {
-    if (RegistryState.storageTestInProgress) {
-        return;
-    }
-    
+function formatDate(timestamp) {
+    if (!timestamp) return 'Never';
     try {
-        RegistryState.storageTestInProgress = true;
-        updateStorageTestUI('testing');
-        
-        const storageBackend = collectStorageBackendSettings();
-        
-        const response = await fetch('/api/registry/storage/test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ storage_backend: storageBackend })
-        });
-        
-        const data = await response.json();
-        
-        RegistryState.storageTestResult = data;
-        
-        if (data.success) {
-            updateStorageTestUI('success', data);
-            showToast('Storage connection successful', 'success');
-        } else {
-            updateStorageTestUI('error', data);
-            showToast(data.error || 'Storage connection failed', 'error');
-        }
-    } catch (error) {
-        console.error('[Registry] Error testing storage:', error);
-        RegistryState.storageTestResult = { success: false, error: error.message };
-        updateStorageTestUI('error', { error: error.message });
-        showToast('Storage connection test failed', 'error');
-    } finally {
-        RegistryState.storageTestInProgress = false;
+        return new Date(timestamp).toLocaleString();
+    } catch {
+        return 'Invalid date';
     }
 }
 
-function updateStorageTestUI(status, data = null) {
-    const testBtn = document.getElementById('test-storage-btn');
-    const resultEl = document.getElementById('storage-test-result');
-    
-    if (!testBtn || !resultEl) return;
-    
-    if (status === 'testing') {
-        testBtn.disabled = true;
-        testBtn.textContent = 'Testing...';
-        resultEl.className = 'storage-test-result testing';
-        resultEl.textContent = 'Testing connection...';
-        resultEl.style.display = 'block';
-    } else if (status === 'success' && data) {
-        testBtn.disabled = false;
-        testBtn.textContent = 'Test Connection';
-        resultEl.className = 'storage-test-result success';
-        
-        let message = '✓ Connection successful';
-        if (data.total_gb && data.free_gb) {
-            message += ` - ${data.free_gb.toFixed(1)}GB free of ${data.total_gb.toFixed(1)}GB`;
-        }
-        if (data.type === 'nfs') {
-            message += ` (NFS: ${data.server}:${data.export})`;
-        } else if (data.type === 'smb') {
-            message += ` (SMB: //${data.server}/${data.share})`;
-        }
-        
-        resultEl.textContent = message;
-        resultEl.style.display = 'block';
-    } else if (status === 'error' && data) {
-        testBtn.disabled = false;
-        testBtn.textContent = 'Test Connection';
-        resultEl.className = 'storage-test-result error';
-        resultEl.textContent = `✗ ${data.error || 'Connection failed'}`;
-        resultEl.style.display = 'block';
-    }
-}
-
-function clearStorageTestResult() {
-    const resultEl = document.getElementById('storage-test-result');
-    if (resultEl) {
-        resultEl.style.display = 'none';
-        resultEl.textContent = '';
-    }
-    RegistryState.storageTestResult = null;
-}
-
-// ============================================================================
-// EXPORT FOR GLOBAL ACCESS
-// ============================================================================
-
-// Make functions globally available
-window.RegistryHub = {
-    init: initRegistry,
-    pullImage: pullImage,
-    deleteImage: deleteImage,
-    viewImageDetails: viewImageDetails,
-    openPullModal: openPullModal,
-    closePullModal: closePullModal,
-    openSettingsPanel: openSettingsPanel,
-    closeSettingsPanel: closeSettingsPanel,
-    checkForUpdates: checkForUpdates,
-    refresh: () => {
-        loadRegistryImages();
-        loadRegistryStats();
-    }
-};
-
-// Auto-initialize when tab becomes active
-document.addEventListener('DOMContentLoaded', () => {
-    const registryTab = document.querySelector('[data-tab="registry"]');
-    if (registryTab) {
-        registryTab.addEventListener('click', () => {
-            setTimeout(initRegistry, 100);
-        });
-    }
-});
-
-console.log('[Registry] Module loaded');
+// Expose functions globally
+window.initRegistry = initRegistry;
+window.deleteImage = deleteImage;
