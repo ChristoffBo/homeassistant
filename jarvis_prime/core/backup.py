@@ -633,5 +633,5 @@ async def restore_backup(request):
 
 def register_routes(app):
     """Register backup/restore routes"""
-    app.router.add_get("/api/backup/create", create_backup)
+    app.router.add_post("/api/backup/create", create_backup)
     app.router.add_post("/api/backup/restore", restore_backup)
