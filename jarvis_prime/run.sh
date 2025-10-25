@@ -220,28 +220,9 @@ if [[ "${PROXY_ENABLED}" == "true" ]]; then
   # --- END ADDITIVE ---
 fi
 
-# ------------------------------------------------------------------------
-# ADDITIVE: Start Registry Hub (Docker Registry Proxy + Update Monitor)
-# ------------------------------------------------------------------------
-echo "[INFO] Starting Registry Hub service..."
-python3 /app/registry_hub.py &
-REGISTRY_PID=$!
-echo "[INFO] Registry Hub started (PID: $REGISTRY_PID)"
-# ------------------------------------------------------------------------
-
 if [[ "${WS_ENABLED}" == "true" ]]; then
   WS_TOKEN=$(jq -r '.intake_ws_token // "changeme"' "$CONFIG_PATH")
   WS_PORT=$WS_PORT WS_TOKEN=$WS_TOKEN python3 /app/websocket.py & WS_PID=$! || true
 fi
-
-# ------------------------------------------------------------------------
-# ADDITIVE: Trap for graceful shutdown of Registry Hub
-# ------------------------------------------------------------------------
-trap "echo '[INFO] Stopping Registry Hub...'; \
-      if [ -n \"\$REGISTRY_PID\" ] && ps -p \$REGISTRY_PID > /dev/null 2>&1; then \
-        kill \$REGISTRY_PID; wait \$REGISTRY_PID 2>/dev/null; \
-        echo '[INFO] Registry Hub stopped.'; \
-      fi; exit 0" SIGTERM SIGINT
-# ------------------------------------------------------------------------
 
 wait "$API_PID"
