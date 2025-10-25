@@ -1563,8 +1563,9 @@ def register_routes(app):
     # Images endpoints
     async def get_images_handler(request):
         try:
-            # Run in thread to avoid blocking event loop
-            images = await asyncio.to_thread(list_cached_images)
+            # Load config and run in thread
+            config = await asyncio.to_thread(load_config)
+            images = await asyncio.to_thread(list_cached_images, config)
             return web.json_response({"images": images})
         except Exception as e:
             _logger.error(f"Error in get_images: {e}")
@@ -1574,10 +1575,23 @@ def register_routes(app):
         try:
             data = await request.json()
             image_name = data.get("image")
-            registry = data.get("registry", "docker.io")
+            if not image_name:
+                return web.json_response({"error": "image name required"}, status=400)
+            
+            # Parse image name and tag
+            if ":" in image_name:
+                name, tag = image_name.rsplit(":", 1)
+            else:
+                name, tag = image_name, "latest"
+            
+            config = await asyncio.to_thread(load_config)
             # Run pull in thread - it can take a while and does network I/O
-            result = await asyncio.to_thread(manual_pull_image, image_name, registry)
-            return web.json_response(result)
+            result = await asyncio.to_thread(pull_image_to_cache, name, tag, config)
+            
+            if result:
+                return web.json_response({"success": True, "image": image_name})
+            else:
+                return web.json_response({"success": False, "error": "Pull failed"}, status=500)
         except Exception as e:
             _logger.error(f"Error in pull_image: {e}")
             return web.json_response({"error": str(e)}, status=500)
@@ -1585,8 +1599,16 @@ def register_routes(app):
     async def delete_image_handler(request):
         try:
             image_id = request.match_info.get('image_id')
+            config = await asyncio.to_thread(load_config)
+            
+            # Parse image_id (format: name:digest or name:tag)
+            if ":" in image_id:
+                name, digest = image_id.rsplit(":", 1)
+            else:
+                return web.json_response({"error": "invalid image_id format"}, status=400)
+            
             # Run delete in thread
-            result = await asyncio.to_thread(delete_image, image_id)
+            result = await asyncio.to_thread(delete_image_from_cache, name, digest, config)
             return web.json_response({"success": result})
         except Exception as e:
             _logger.error(f"Error in delete_image: {e}")
@@ -1595,8 +1617,8 @@ def register_routes(app):
     async def check_updates_handler(request):
         try:
             # Run update check in thread - can take time with network requests
-            result = await asyncio.to_thread(check_for_updates_manual)
-            return web.json_response({"success": True, "updates": result})
+            await asyncio.to_thread(check_for_updates)
+            return web.json_response({"success": True})
         except Exception as e:
             _logger.error(f"Error in check_updates: {e}")
             return web.json_response({"error": str(e)}, status=500)
@@ -1604,8 +1626,16 @@ def register_routes(app):
     # Stats endpoint
     async def get_stats_handler(request):
         try:
-            # Run in thread
-            stats = await asyncio.to_thread(get_registry_stats)
+            # Get both database and storage stats
+            config = await asyncio.to_thread(load_config)
+            db_stats = await asyncio.to_thread(get_database_stats)
+            storage_stats = await asyncio.to_thread(get_storage_stats, config)
+            
+            # Combine stats
+            stats = {
+                **db_stats,
+                **storage_stats
+            }
             return web.json_response(stats)
         except Exception as e:
             _logger.error(f"Error in get_stats: {e}")
@@ -1625,7 +1655,7 @@ def register_routes(app):
         try:
             data = await request.json()
             # Run in thread
-            result = await asyncio.to_thread(save_config, data)
+            await asyncio.to_thread(save_config, data)
             return web.json_response({"success": True})
         except Exception as e:
             _logger.error(f"Error in put_settings: {e}")
