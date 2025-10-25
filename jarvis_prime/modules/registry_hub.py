@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
 import requests
 from flask import Blueprint, request, jsonify, Response
+from aiohttp import web
+import asyncio
 import logging
 
 # ============================================================================
@@ -1537,6 +1539,133 @@ def shutdown_registry():
     
     if _db_conn:
         _db_conn.close()
+
+# ============================================================================
+# AIOHTTP COMPATIBILITY LAYER (runs all operations in threads)
+# ============================================================================
+
+async def init_registry_async(app, notification_callback, db_path):
+    """Async wrapper for init_registry that also registers routes"""
+    # Run init_registry in a thread so it doesn't block the event loop
+    success = await asyncio.to_thread(
+        init_registry,
+        notify_callback=notification_callback,
+        db_path=db_path
+    )
+    if success:
+        # Register routes after successful init
+        register_routes(app)
+    return success
+
+def register_routes(app):
+    """Register aiohttp routes (all operations run in threads)"""
+    
+    # Images endpoints
+    async def get_images_handler(request):
+        try:
+            # Run in thread to avoid blocking event loop
+            images = await asyncio.to_thread(list_cached_images)
+            return web.json_response({"images": images})
+        except Exception as e:
+            _logger.error(f"Error in get_images: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    async def pull_image_handler(request):
+        try:
+            data = await request.json()
+            image_name = data.get("image")
+            registry = data.get("registry", "docker.io")
+            # Run pull in thread - it can take a while and does network I/O
+            result = await asyncio.to_thread(manual_pull_image, image_name, registry)
+            return web.json_response(result)
+        except Exception as e:
+            _logger.error(f"Error in pull_image: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    async def delete_image_handler(request):
+        try:
+            image_id = request.match_info.get('image_id')
+            # Run delete in thread
+            result = await asyncio.to_thread(delete_image, image_id)
+            return web.json_response({"success": result})
+        except Exception as e:
+            _logger.error(f"Error in delete_image: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    async def check_updates_handler(request):
+        try:
+            # Run update check in thread - can take time with network requests
+            result = await asyncio.to_thread(check_for_updates_manual)
+            return web.json_response({"success": True, "updates": result})
+        except Exception as e:
+            _logger.error(f"Error in check_updates: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    # Stats endpoint
+    async def get_stats_handler(request):
+        try:
+            # Run in thread
+            stats = await asyncio.to_thread(get_registry_stats)
+            return web.json_response(stats)
+        except Exception as e:
+            _logger.error(f"Error in get_stats: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    # Settings endpoints
+    async def get_settings_handler(request):
+        try:
+            # Run in thread
+            config = await asyncio.to_thread(load_config)
+            return web.json_response(config)
+        except Exception as e:
+            _logger.error(f"Error in get_settings: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    async def put_settings_handler(request):
+        try:
+            data = await request.json()
+            # Run in thread
+            result = await asyncio.to_thread(save_config, data)
+            return web.json_response({"success": True})
+        except Exception as e:
+            _logger.error(f"Error in put_settings: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    # Storage test endpoint
+    async def test_storage_handler(request):
+        try:
+            data = await request.json()
+            # Run in thread - may do I/O
+            result = await asyncio.to_thread(test_storage_connection, data)
+            return web.json_response(result)
+        except Exception as e:
+            _logger.error(f"Error in test_storage: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    # Database purge endpoint
+    async def purge_history_handler(request):
+        try:
+            data = await request.json()
+            days = data.get("days", 30)
+            # Run in thread
+            result = await asyncio.to_thread(purge_old_history, days)
+            return web.json_response({"success": True, "deleted": result})
+        except Exception as e:
+            _logger.error(f"Error in purge_history: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    # Register all routes with aiohttp
+    app.router.add_get('/api/registry/images', get_images_handler)
+    app.router.add_post('/api/registry/pull', pull_image_handler)
+    app.router.add_delete('/api/registry/images/{image_id}', delete_image_handler)
+    app.router.add_post('/api/registry/check-updates', check_updates_handler)
+    app.router.add_get('/api/registry/stats', get_stats_handler)
+    app.router.add_get('/api/registry/settings', get_settings_handler)
+    app.router.add_post('/api/registry/settings', put_settings_handler)
+    app.router.add_post('/api/registry/storage/test', test_storage_handler)
+    app.router.add_post('/api/registry/purge', purge_history_handler)
+    
+    _logger.info("[registry] aiohttp routes registered (all operations run in threads)")
 
 # ============================================================================
 # MAIN (for testing)
